@@ -162,6 +162,7 @@ export function JobOutcomePanel({ jobId }: JobOutcomePanelProps) {
       ) : null}
       {data ? (
         <>
+          {data.interpretationStatus?.status === "unavailable" ? <div className="banner inline" role="status">Email outcome interpretation unavailable: {data.interpretationStatus.failureCode}. Retry feedback sync after resolving the model or budget failure.</div> : null}
           <ManualOutcomeForm jobId={jobId} />
           <OutcomeTimeline outcomes={data.outcomes} />
           <OutcomeSuggestionsPanel suggestions={pendingSuggestions} />
@@ -546,11 +547,14 @@ export function OutcomeTimeline({ outcomes }: OutcomeTimelineProps) {
 
 export interface OutcomeSuggestionsPanelProps {
   readonly suggestions: readonly OutcomeSuggestion[];
+  readonly interpretationStatus?: {readonly status:"available"|"unavailable"|"not_requested";readonly failureCode:string|null} | undefined;
 }
 
 export function OutcomeSuggestionsPanel({
   suggestions,
+  interpretationStatus,
 }: OutcomeSuggestionsPanelProps) {
+  if (interpretationStatus?.status === "unavailable") return <div className="banner inline" role="status">Email outcome interpretation unavailable: {interpretationStatus.failureCode}. Retry feedback sync after resolving the model or budget failure.</div>;
   if (!suggestions.length) {
     return <Empty title="No pending outcome suggestions." />;
   }
@@ -665,6 +669,10 @@ function OutcomeSuggestionCard({
         <StatusBadge tone="info">Pending</StatusBadge>
       </header>
       <p>{suggestion.rationale}</p>
+      {suggestion.citations.map((citation, index) => <blockquote key={`${citation.source_id}:${index}`}>{citation.quote}</blockquote>)}
+      <p className="meta">{suggestion.determination
+        ? `Model: ${suggestion.determination.provider}/${suggestion.determination.model} · Prompt: ${suggestion.determination.prompt_version} · Source: ${suggestion.determination.input_fingerprint}`
+        : "No recorded determination"}</p>
       <div className="row-actions">
         <Button
           type="button"

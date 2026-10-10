@@ -239,54 +239,6 @@ const demoSeed = {
       },
     ],
   },
-  scenarios: [
-    {
-      scenarioId: "scenario-score-success",
-      capability: "simulated_async",
-      operation: "rescoreJob",
-      steps: [
-        { state: "queued", at: minutes(0), message: "Score refresh queued." },
-        { state: "running", at: minutes(1), message: "Evaluating grounded evidence." },
-      ],
-      terminal: { state: "succeeded", at: minutes(2), summary: "Synthetic score refresh completed." },
-    },
-    {
-      scenarioId: "scenario-tailoring-retry",
-      capability: "simulated_async",
-      operation: "retailorJob",
-      steps: [
-        { state: "queued", at: minutes(0), message: "Tailoring rehearsal queued." },
-        { state: "running", at: minutes(1), message: "Checking artifact grounding." },
-      ],
-      terminal: {
-        state: "failed",
-        at: minutes(2),
-        errorCode: "demo_grounding_gate",
-        retryable: true,
-        summary: "The synthetic quality gate stopped this attempt; the accepted artifact remains." ,
-      },
-    },
-    {
-      scenarioId: "scenario-stage-cancelled",
-      capability: "simulated_async",
-      operation: "runJobStage",
-      steps: [
-        { state: "queued", at: minutes(0), message: "Stage rehearsal queued." },
-        { state: "running", at: minutes(1), message: "Running the selected stage." },
-      ],
-      terminal: { state: "cancelled", at: minutes(2), summary: "Synthetic stage rehearsal cancelled." },
-    },
-    {
-      scenarioId: "scenario-stage-retry",
-      capability: "simulated_async",
-      operation: "retryStage",
-      steps: [
-        { state: "queued", at: minutes(0), message: "Stage retry queued." },
-        { state: "running", at: minutes(1), message: "Retrying the selected stage." },
-      ],
-      terminal: { state: "succeeded", at: minutes(2), summary: "Synthetic stage retry completed." },
-    },
-  ],
   receipts: [
     {
       receiptId: "receipt-application-dry-run",

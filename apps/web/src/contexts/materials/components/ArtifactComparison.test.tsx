@@ -70,7 +70,7 @@ describe("<ArtifactComparison>", () => {
                 passed: false,
                 verdict: "REVIEW",
                 score: 0.72,
-                minScore: 0.82,
+
                 issues: ["Check one claim."],
                 unsupportedClaims: [],
                 fabrications: [],
@@ -119,7 +119,7 @@ describe("<ArtifactComparison>", () => {
       "tabler-icon-circle-x",
     );
     expect(
-      screen.getByText(/score 72% \/ minimum 82%; 1 issues/),
+      screen.getByText(/score 72%; 1 issues/),
     ).toBeInTheDocument();
   });
 

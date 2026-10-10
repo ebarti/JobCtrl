@@ -117,9 +117,13 @@ def test_disconnected_guest_linkedin_persists_clean_description_without_llm(
             self.url = target
             return _SpyPage.goto(self, target, **kwargs)
 
-    page = Page(_guest_linkedin_html(
-        oversized=True, removable_prefix=removable_prefix, main_container=main_container,
-    ))
+    page = Page(
+        _guest_linkedin_html(
+            oversized=True,
+            removable_prefix=removable_prefix,
+            main_container=main_container,
+        )
+    )
     _SpyPage.__init__(page, navigations)
     browser = SimpleNamespace(
         close=lambda: closed.append(True),
@@ -144,8 +148,12 @@ def test_disconnected_guest_linkedin_persists_clean_description_without_llm(
         job_id = _seed_discovered(conn, url)
         notified = []
         stats = detail.scrape_site_batch(
-            conn, "linkedin", [(job_id, "Synthetic engineering role")],
-            gateway=offline_gateway(), discovery_execution=execution(), on_job_enriched=notified.append,
+            conn,
+            "linkedin",
+            [(job_id, "Synthetic engineering role")],
+            gateway=offline_gateway(),
+            discovery_execution=execution(),
+            on_job_enriched=notified.append,
         )
         assert stats["processed"] == 1
         assert stats["partial"] == 1  # The description succeeds without an external application URL.
@@ -174,9 +182,11 @@ def test_disconnected_guest_linkedin_persists_clean_description_without_llm(
         snapshots = SqlitePostingSnapshotSetRepository(conn).load(LOCAL_TENANT, job_id)
         assert snapshots is not None and snapshots.latest_snapshot is not None
         assert snapshots.latest_snapshot.extraction_tier == "css_selectors"
-        assert snapshots.latest_active_state.value == "unknown"
+        assert snapshots.latest_active_state.value == "active"
         assert snapshots.latest_snapshot.quarantine_reason.value == "none"
-        assert conn.execute("SELECT COUNT(*) FROM discovery_quarantine_entries WHERE status='pending'").fetchone()[0] == 0
+        assert (
+            conn.execute("SELECT COUNT(*) FROM discovery_quarantine_entries WHERE status='pending'").fetchone()[0] == 0
+        )
         event = conn.execute(
             "SELECT payload_json FROM job_events WHERE job_id = ? AND stage = 'enrich' AND event_type = 'StageCompleted'",
             (str(job_id),),
@@ -294,9 +304,7 @@ def test_workday_search_detail_and_persistence_keep_execution_on_both_transports
         }
     }
     try:
-        result = workday._process_one(
-            "acme", employers, "Director of Engineering", False, [], [], discovery_execution=execution()
-        )
+        result = workday._process_one("acme", employers, "Director of Engineering", discovery_execution=execution())
         assert result["new"] == 1
         assert_cohort(conn, "workday")
         assert broker.status_checks == 1  # search and detail share the selected client
@@ -365,7 +373,7 @@ def test_smartextract_parses_and_persists_on_both_transports(tmp_path, monkeypat
     monkeypatch.setattr(smartextract, "ask_llm", lambda _prompt: (plan, 0, {"response_chars": len(plan)}))
     try:
         result = smartextract._run_all(
-            [{"name": "Acme", "url": "https://careers.example/jobs"}], [], [], discovery_execution=execution()
+            [{"name": "Acme", "url": "https://careers.example/jobs"}], {}, discovery_execution=execution()
         )
         assert result["total_new"] == 1
         assert_cohort(conn, "smartextract")
@@ -931,3 +939,17 @@ def test_anonymous_provider_cancellation_during_dns_never_reaches_socket(monkeyp
             provider.session.get("http://jobs.example/start")
     finally:
         provider.close()
+
+
+@pytest.fixture(autouse=True)
+def semantic_workflow_models(monkeypatch):
+    from tests.workflow_determination_fakes import install_page_models
+
+    install_page_models(monkeypatch)
+
+
+@pytest.fixture(autouse=True)
+def explicit_semantic_ports(monkeypatch):
+    from tests.workflow_determination_fakes import install_page_models
+
+    install_page_models(monkeypatch)

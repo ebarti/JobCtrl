@@ -72,7 +72,6 @@ export function AiExecutionPolicyPanel() {
       generatorPrimary: generators[0] ?? "",
       generatorFallback: generators[1] ?? "",
       tailoringJudgeModel: response?.settings.tailoringJudgeModel ?? "",
-      tailoringJudgeMinScore: response?.settings.tailoringJudgeMinScore ?? 0.82,
     },
     onSubmit: async ({ value, formApi }) => {
       if (!response) return;
@@ -95,9 +94,6 @@ export function AiExecutionPolicyPanel() {
         ...(response.effectiveSettings.tailoringJudgeModel.editable
           ? { tailoringJudgeModel: value.tailoringJudgeModel || null }
           : {}),
-        ...(response.effectiveSettings.tailoringJudgeMinScore.editable
-          ? { tailoringJudgeMinScore: value.tailoringJudgeMinScore }
-          : {}),
       };
       const parsed = SettingsUpdateRequestSchema.safeParse(request);
       if (!parsed.success) {
@@ -115,7 +111,6 @@ export function AiExecutionPolicyPanel() {
           generatorPrimary: savedGenerators[0] ?? "",
           generatorFallback: savedGenerators[1] ?? "",
           tailoringJudgeModel: saved.settings.tailoringJudgeModel ?? "",
-          tailoringJudgeMinScore: saved.settings.tailoringJudgeMinScore,
         });
         setStatus({
           kind: "success",
@@ -138,7 +133,6 @@ export function AiExecutionPolicyPanel() {
       generatorPrimary: savedGenerators[0] ?? "",
       generatorFallback: savedGenerators[1] ?? "",
       tailoringJudgeModel: response.settings.tailoringJudgeModel ?? "",
-      tailoringJudgeMinScore: response.settings.tailoringJudgeMinScore,
     });
   }, [form, response]);
 
@@ -167,13 +161,11 @@ export function AiExecutionPolicyPanel() {
     generatorPrimary: generators[0] ?? "",
     generatorFallback: generators[1] ?? "",
     tailoringJudgeModel: response.settings.tailoringJudgeModel ?? "",
-    tailoringJudgeMinScore: response.settings.tailoringJudgeMinScore,
   };
   const allReadOnly =
     !effective.analysisLegs.editable &&
     !effective.tailoringGeneratorModels.editable &&
-    !effective.tailoringJudgeModel.editable &&
-    !effective.tailoringJudgeMinScore.editable;
+    !effective.tailoringJudgeModel.editable;
 
   function clearSaveStatus() {
     setStatus(null);
@@ -311,36 +303,6 @@ export function AiExecutionPolicyPanel() {
                 field.handleChange(value);
               }}
             />
-          )}
-        </form.Field>
-        <form.Field name="tailoringJudgeMinScore">
-          {(field) => (
-            <Field className="field">
-              <FieldLabel htmlFor="tailoring-judge-score">
-                Minimum judge score
-              </FieldLabel>
-              <Input
-                id="tailoring-judge-score"
-                name="tailoringJudgeMinScore"
-                type="number"
-                min={0}
-                max={1}
-                step={0.01}
-                readOnly={!effective.tailoringJudgeMinScore.editable}
-                aria-describedby="tailoring-judge-score-help"
-                value={field.state.value}
-                onChange={(event) => {
-                  clearSaveStatus();
-                  field.handleChange(Number(event.target.value));
-                }}
-              />
-              <FieldDescription id="tailoring-judge-score-help">
-                {context(
-                  effective.tailoringJudgeMinScore.source,
-                  "next tailoring workflow",
-                )}
-              </FieldDescription>
-            </Field>
           )}
         </form.Field>
         <form.Subscribe

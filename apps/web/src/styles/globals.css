@@ -5657,6 +5657,12 @@ input[type="radio"] {
   font-size: var(--jh-type-label-size);
 }
 
+.candidate-interpretation-status {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: var(--jh-type-metadata-line-height);
+}
+
 .status-line.warning {
   background: color-mix(in oklch, var(--warning) 12%, var(--card));
   color: var(--warning-foreground);

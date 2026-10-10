@@ -24,6 +24,7 @@ from jobctrl.domain.materials.analysis import (
     EmployerAnalysis,
     JobAnalysis,
     JobAnalysisDraft,
+    PROMPT_VERSION,
 )
 from jobctrl.domain.tenant import TenantId
 
@@ -48,19 +49,19 @@ class SqliteEmployerAnalysisRepository:
             row = self._conn.execute(
                 """
                 SELECT * FROM job_employer_analysis
-                WHERE tenant_id = ? AND job_id = ?
+                WHERE tenant_id = ? AND job_id = ? AND prompt_version = ?
                 ORDER BY generation DESC
                 LIMIT 1
                 """,
-                (str(tenant_id), str(stable_job_id)),
+                (str(tenant_id), str(stable_job_id), PROMPT_VERSION),
             ).fetchone()
         else:
             row = self._conn.execute(
                 """
                 SELECT * FROM job_employer_analysis
-                WHERE tenant_id = ? AND job_id = ? AND generation = ?
+                WHERE tenant_id = ? AND job_id = ? AND generation = ? AND prompt_version = ?
                 """,
-                (str(tenant_id), str(stable_job_id), int(generation)),
+                (str(tenant_id), str(stable_job_id), int(generation), PROMPT_VERSION),
             ).fetchone()
         if row is None:
             return None
@@ -76,11 +77,11 @@ class SqliteEmployerAnalysisRepository:
         row = self._conn.execute(
             """
             SELECT * FROM job_employer_analysis
-            WHERE tenant_id = ? AND job_id = ? AND cache_key = ?
+            WHERE tenant_id = ? AND job_id = ? AND cache_key = ? AND prompt_version = ?
             ORDER BY generation DESC
             LIMIT 1
             """,
-            (str(tenant_id), str(stable_job_id), cache_key),
+            (str(tenant_id), str(stable_job_id), cache_key, PROMPT_VERSION),
         ).fetchone()
         if row is None:
             return None
@@ -205,6 +206,39 @@ class SqliteEmployerAnalysisRepository:
                 ),
             )
 
+        if analysis.determination_ids:
+            from jobctrl.infrastructure.determinations import SqliteDeterminationRepository, save_artifact_anchors
+
+            artifact_id = str(job_id) + ":analysis:" + str(generation)
+            save_artifact_anchors(
+                self._conn,
+                tenant_id=tenant,
+                artifact_kind="employer_analysis",
+                artifact_id=artifact_id,
+                generation=generation,
+                determination_id=analysis.determination_ids["canonical"],
+                anchors=analysis.line_anchors,
+                expected_entity_id=str(job_id),
+            )
+            determinations = SqliteDeterminationRepository(self._conn)
+            determinations.bind(
+                tenant_id=tenant,
+                entity_kind="job",
+                entity_id=str(job_id),
+                entity_version=analysis.snapshot_hash,
+                determination_kind="job_interpretation",
+                determination_id=analysis.determination_ids["job_interpretation"],
+            )
+            for key, determination_id in analysis.determination_ids.items():
+                determinations.bind(
+                    tenant_id=tenant,
+                    entity_kind="employer_analysis",
+                    entity_id=str(job_id),
+                    entity_version=str(generation),
+                    determination_kind=key,
+                    determination_id=determination_id,
+                )
+
     def next_generation(self, tenant_id: TenantId, job_id: JobId) -> int:
         """Return the next generation to write for ``(tenant, job)`` (>= 1)."""
         stable_job_id = canonical_job_id(str(job_id))
@@ -262,10 +296,32 @@ class SqliteEmployerAnalysisRepository:
             for f in failure_rows
         )
         eeo_screen_hits = tuple(EeoScreenHit.from_dict(item) for item in _json_list(row["eeo_screen_json"]))
+        refs = {
+            item["determination_kind"]: item["determination_id"]
+            for item in self._conn.execute(
+                "SELECT determination_kind, determination_id FROM semantic_entity_bindings WHERE tenant_id=? AND entity_kind='employer_analysis' AND entity_id=? AND entity_version=?",
+                (str(tenant_id), str(job_id), str(generation)),
+            ).fetchall()
+        }
+        anchors = tuple(
+            {
+                "line_id": item["line_id"],
+                "evidence_ids": json.loads(item["evidence_ids_json"]),
+                "requirement_ids": json.loads(item["requirement_ids_json"]),
+                "transform_type": item["transform_type"],
+                "reason": item["reason"],
+            }
+            for item in self._conn.execute(
+                "SELECT * FROM artifact_line_anchors WHERE tenant_id=? AND artifact_kind='employer_analysis' AND artifact_id=? AND generation=? ORDER BY line_id",
+                (str(tenant_id), str(job_id) + ":analysis:" + str(generation), generation),
+            ).fetchall()
+        )
         return EmployerAnalysis(
             tenant_id=tenant_id,
             job_id=job_id,
             generation=generation,
+            determination_ids=refs,
+            line_anchors=anchors,
             snapshot_hash=row["snapshot_hash"],
             prompt_version=row["prompt_version"],
             sdk_set_version=row["sdk_set_version"],

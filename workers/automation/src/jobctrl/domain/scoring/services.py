@@ -25,14 +25,11 @@ Two services live here:
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from jobctrl.domain.compensation import PostedCompensationFact, parse_posted_compensation
 from jobctrl.domain.scoring.eligibility import (
     eligibility_blocks_downstream,
-    normalize_eligibility_for_downstream,
 )
 from jobctrl.domain.scoring.value_objects import (
     EligibilityAssessment,
@@ -131,9 +128,7 @@ class ScoreParser:
 
         reasoning = str(payload.get("reasoning") or "").strip()
         keywords_raw = payload.get("keywords", [])
-        keywords = MatchedKeywords.from_iterable(
-            keywords_raw if isinstance(keywords_raw, list) else None
-        )
+        keywords = MatchedKeywords.from_iterable(keywords_raw if isinstance(keywords_raw, list) else None)
         parser_warnings: list[str] = []
 
         score_raw = payload.get("score")
@@ -207,9 +202,7 @@ class ScoreParser:
         )
 
         eligibility_raw = payload.get("eligibility")
-        eligibility = EligibilityAssessment.from_dict(
-            eligibility_raw if isinstance(eligibility_raw, dict) else None
-        )
+        eligibility = EligibilityAssessment.from_dict(eligibility_raw if isinstance(eligibility_raw, dict) else None)
 
         breakdown = ScoreBreakdown(
             technical_fit=_clamp_dim(payload.get("technical_fit")),
@@ -381,8 +374,7 @@ def _parse_requirement_fit(
             kind="transferable",
             evidence_ids=evidence_ids,
             gap=_text_field(fit_raw, "gap"),
-            bridge=_text_field(fit_raw, "bridge")
-            or "Candidate has adjacent evidence but no direct match.",
+            bridge=_text_field(fit_raw, "bridge") or "Candidate has adjacent evidence but no direct match.",
         )
     if kind == "missing":
         return RequirementFitStatus(
@@ -498,110 +490,6 @@ def _number_field(data: dict[str, Any], *keys: str) -> float:
 # ---------------------------------------------------------------------------
 
 
-class ConstraintChecker:
-    """Deterministic eligibility checks over local criteria and job text."""
-
-    _COMPENSATION_CONTEXT = re.compile(
-        r"\b(?:salary|compensation|base\s+pay|base\s+salary|pay\s+range|"
-        r"remuneration|wage|ote|on-target\s+earnings|annual\s+package)\b",
-        re.IGNORECASE,
-    )
-    _ONSITE_TERMS = ("on-site", "onsite", "office-based", "office based")
-    _REMOTE_TERMS = ("remote", "work from home", "distributed")
-    _NO_SPONSORSHIP_TERMS = (
-        "no sponsorship",
-        "not sponsor",
-        "without sponsorship",
-        "must be authorized",
-        "must already be authorized",
-    )
-
-    def evaluate(self, *, job: dict[str, Any], criteria: ScoringCriteria) -> EligibilityAssessment:
-        text = _job_text(job)
-        prefs = criteria.profile_preferences
-        blockers: list[str] = []
-        warnings: list[str] = []
-
-        work_auth = prefs.get("work_authorization", {})
-        if isinstance(work_auth, dict):
-            needs_sponsorship = _truthy_text(work_auth.get("require_sponsorship"))
-            if needs_sponsorship and any(term in text for term in self._NO_SPONSORSHIP_TERMS):
-                blockers.append("candidate requires sponsorship but posting says sponsorship is unavailable")
-
-        target_work_models = _split_preferences(prefs.get("target_work_models"))
-        if "remote" in target_work_models and not any(term in text for term in self._REMOTE_TERMS):
-            matched_onsite = next((term for term in self._ONSITE_TERMS if term in text), "")
-            if matched_onsite:
-                warnings.append(
-                    "target work model is remote but posting appears onsite-only "
-                    f"(matched '{matched_onsite}' in job text with no remote signal)"
-                )
-
-        target_locations = _split_preferences(prefs.get("target_locations"))
-        location = str(job.get("location") or "").strip().lower()
-        if target_locations and location:
-            if not any(loc in location or location in loc for loc in target_locations):
-                warnings.append("posting location does not match target locations")
-
-        compensation = prefs.get("compensation", {})
-        if isinstance(compensation, dict):
-            desired_min = _first_number(compensation.get("salary_range_min")) or _first_number(
-                compensation.get("salary_expectation")
-            )
-            if desired_min:
-                signal = _posted_compensation_signal(job)
-                if signal is not None and signal.annual_ceiling < desired_min:
-                    reason = _compensation_reason(signal, desired_min)
-                    warnings.append(reason)
-
-        excluded = _explicit_exclusions(criteria.criteria_text, criteria.target_criteria)
-        for phrase in excluded:
-            if phrase and phrase in text:
-                blockers.append(f"posting matches excluded criterion: {phrase}")
-
-        status = "blocked" if blockers else ("warning" if warnings else "eligible")
-        blocker_categories = tuple(
-            "work_authorization" if "sponsorship" in blocker else "explicit_exclusion"
-            for blocker in blockers
-        )
-        return EligibilityAssessment(
-            status=status,
-            hard_blockers=blockers,
-            hard_blocker_categories=blocker_categories,
-            warnings=warnings,
-        )
-
-    def apply(self, *, parse: ScoreParseResult, job: dict[str, Any]) -> ScoreParseResult:
-        deterministic = self.evaluate(job=job, criteria=parse.criteria)
-        model_eligibility = normalize_eligibility_for_downstream(parse.breakdown.eligibility)
-        merged = model_eligibility.merge(deterministic)
-        if merged == parse.breakdown.eligibility:
-            return parse
-        breakdown = ScoreBreakdown(
-            technical_fit=parse.breakdown.technical_fit,
-            experience_fit=parse.breakdown.experience_fit,
-            role_fit=parse.breakdown.role_fit,
-            reasoning=parse.breakdown.reasoning,
-            fit_band=parse.breakdown.fit_band,
-            confidence=parse.breakdown.confidence,
-            eligibility=merged,
-            matched_signals=parse.breakdown.matched_signals,
-            missing_signals=parse.breakdown.missing_signals,
-            transferable_signals=parse.breakdown.transferable_signals,
-        )
-        return ScoreParseResult(
-            ok=parse.ok,
-            fit_score=parse.fit_score,
-            breakdown=breakdown,
-            keywords=parse.keywords,
-            requirement_assessments=parse.requirement_assessments,
-            employer_analysis_generation=parse.employer_analysis_generation,
-            criteria=parse.criteria,
-            trace=parse.trace,
-            error=parse.error,
-        )
-
-
 # ---------------------------------------------------------------------------
 # EligibilityChecker
 # ---------------------------------------------------------------------------
@@ -626,153 +514,3 @@ class EligibilityChecker:
         if eligibility is not None and eligibility_blocks_downstream(eligibility):
             return False
         return fit_score.value >= criteria.min_fit_score
-
-
-def _job_text(job: dict[str, Any]) -> str:
-    return " ".join(
-        str(job.get(key) or "")
-        for key in ("title", "site", "company", "location", "salary", "description", "full_description")
-    ).lower()
-
-
-def _truthy_text(value: Any) -> bool:
-    return str(value or "").strip().lower() in {"yes", "true", "1", "y", "required", "requires sponsorship"}
-
-
-def _split_preferences(value: Any) -> set[str]:
-    return {
-        part.strip().lower()
-        for part in re.split(r"[,;/|]", str(value or ""))
-        if part.strip()
-    }
-
-
-def _first_number(value: Any) -> int | None:
-    match = re.search(r"(\d[\d,]*)", str(value or ""))
-    if not match:
-        return None
-    return int(match.group(1).replace(",", ""))
-
-
-_ANNUAL_SALARY_FLOOR = 12_000
-_WORK_WEEKS_PER_YEAR = 52
-_WORK_DAYS_PER_YEAR = 260
-_WEEKLY_MARKER = re.compile(r"/\s*wk\b|/\s*week\b|\bper\s+week\b|\bweekly\b", re.IGNORECASE)
-_DAILY_MARKER = re.compile(r"/\s*day\b|\bper\s+day\b|\bday\s*rate\b|\bper\s+diem\b|\bdaily\b", re.IGNORECASE)
-
-
-@dataclass(frozen=True)
-class _PostedCompensationSignal:
-    """A posted-compensation reading retained for preference audit only.
-
-    Compensation preferences never decide eligibility. Even an explicit
-    annual figure below the preferred range remains a warning so the job can
-    continue through tailoring and the user can make the final trade-off.
-    """
-
-    annual_ceiling: int
-    source_field: str
-    period: str
-    assumption: str
-
-
-def _posted_compensation_signal(job: dict[str, Any]) -> _PostedCompensationSignal | None:
-    salary = str(job.get("salary") or "").strip()
-    if salary:
-        signal = _signal_from_fact(
-            parse_posted_compensation(salary, source_field="jobs.salary"),
-        )
-        if signal is not None:
-            return signal
-
-    description = "\n".join(str(job.get(key) or "") for key in ("description", "full_description"))
-    best: _PostedCompensationSignal | None = None
-    for window in _compensation_windows(description):
-        signal = _signal_from_fact(
-            parse_posted_compensation(window, source_field="jobs.description"),
-        )
-        if signal is None:
-            continue
-        if best is None or signal.annual_ceiling > best.annual_ceiling:
-            best = signal
-    return best
-
-
-def _signal_from_fact(
-    fact: PostedCompensationFact,
-) -> _PostedCompensationSignal | None:
-    if fact.parse_state != "parsed_range":
-        return None
-    if fact.period in ("year", "month", "hour"):
-        ceiling = fact.annualized_maximum_amount
-        if ceiling is None:
-            return None
-        return _PostedCompensationSignal(
-            annual_ceiling=ceiling,
-            source_field=fact.source_field,
-            period=fact.period,
-            assumption=fact.annualization_assumption or "",
-        )
-    ceiling = fact.maximum_amount
-    if ceiling is None:
-        return None
-    subannual = _subannual_from_text(fact.source_text)
-    if subannual is not None:
-        period, factor, assumption = subannual
-        return _PostedCompensationSignal(
-            annual_ceiling=ceiling * factor,
-            source_field=fact.source_field,
-            period=period,
-            assumption=assumption,
-        )
-    if ceiling < _ANNUAL_SALARY_FLOOR:
-        return None
-    return _PostedCompensationSignal(
-        annual_ceiling=ceiling,
-        source_field=fact.source_field,
-        period="unknown",
-        assumption="amount without an explicit pay period; read as annual",
-    )
-
-
-def _subannual_from_text(source_text: str | None) -> tuple[str, int, str] | None:
-    """Detect a week/day pay marker the posted-comp parser leaves as unknown.
-
-    The shared parser only classifies hour/month/year; a salary-field figure
-    like "$15,000/week" would otherwise be read as a raw annual amount and
-    could fabricate a below-minimum hard blocker on a ~$780k/yr role. Weekly
-    and daily rates are annualized here and always kept as warnings, never
-    hard blockers, because they rely on a fixed-schedule assumption.
-    """
-    text = source_text or ""
-    if _DAILY_MARKER.search(text):
-        return ("day", _WORK_DAYS_PER_YEAR, "daily rate annualized by multiplying by 260 working days")
-    if _WEEKLY_MARKER.search(text):
-        return ("week", _WORK_WEEKS_PER_YEAR, "weekly rate annualized by multiplying by 52 weeks")
-    return None
-
-
-def _compensation_reason(signal: _PostedCompensationSignal, desired_min: int) -> str:
-    provenance = f"source {signal.source_field}, period {signal.period}"
-    if signal.assumption:
-        provenance = f"{provenance}, {signal.assumption}"
-    return (
-        "posted compensation appears below profile minimum: "
-        f"${signal.annual_ceiling:,} vs profile minimum ${desired_min:,} ({provenance})"
-    )
-
-
-def _compensation_windows(text: str) -> list[str]:
-    windows: list[str] = []
-    for segment in re.split(r"[\n.;]", text):
-        if ConstraintChecker._COMPENSATION_CONTEXT.search(segment):
-            windows.append(segment)
-    return windows
-
-
-def _explicit_exclusions(*texts: str) -> tuple[str, ...]:
-    exclusions: list[str] = []
-    for text in texts:
-        for match in re.findall(r"(?:avoid|exclude|no)\s+([^.;\n]+)", text.lower()):
-            exclusions.append(match.strip())
-    return tuple(exclusions)

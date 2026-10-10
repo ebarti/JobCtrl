@@ -31,11 +31,7 @@ from jobctrl.domain.contact.outreach import (
 )
 from jobctrl.domain.contact.outreach_gates import DraftGateResults
 from jobctrl.domain.contact.outreach_use_cases import ScheduleFollowUpUseCase
-from jobctrl.domain.materials.value_objects import (
-    ArtifactStatus,
-    JudgeVerdict,
-    ValidationResult,
-)
+from jobctrl.domain.ports.artifact_review import ArtifactStatus, JudgeVerdict, ValidationResult
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.contact.outreach_repository import (
     SqliteOutreachThreadRepository,
@@ -84,16 +80,12 @@ def test_accepts_trailing_z_timezone() -> None:
 
 
 def test_follow_up_is_due_only_when_scheduled_and_arrived() -> None:
-    scheduled = FollowUpSchedule(
-        state=FollowUpState.SCHEDULED, due_at="2026-07-08T00:00:00+00:00", basis="x"
-    )
+    scheduled = FollowUpSchedule(state=FollowUpState.SCHEDULED, due_at="2026-07-08T00:00:00+00:00", basis="x")
     assert follow_up_is_due(scheduled, now="2026-07-09T00:00:00+00:00") is True
     assert follow_up_is_due(scheduled, now="2026-07-07T00:00:00+00:00") is False
     # A completed/none schedule is never due.
     assert follow_up_is_due(FollowUpSchedule(), now="2027-01-01T00:00:00+00:00") is False
-    completed = FollowUpSchedule(
-        state=FollowUpState.COMPLETED, due_at="2026-07-08T00:00:00+00:00", basis="x"
-    )
+    completed = FollowUpSchedule(state=FollowUpState.COMPLETED, due_at="2026-07-08T00:00:00+00:00", basis="x")
     assert follow_up_is_due(completed, now="2026-07-09T00:00:00+00:00") is False
 
 

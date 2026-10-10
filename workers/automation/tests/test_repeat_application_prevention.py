@@ -24,7 +24,7 @@ from jobctrl.domain.apply.repeat_application import (
     evaluate_repeat_application,
     repeat_evidence_fingerprint,
 )
-from jobctrl.domain.apply.value_objects import ApplyPrompt
+from jobctrl.domain.apply.value_objects import ApplyPrompt, Failed
 from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.tenant import TenantId
 from jobctrl.state import ensure_job_stage_rows, record_job_event, set_stage_state
@@ -106,6 +106,7 @@ def _insert_job(
     )
     if ready:
         from .availability_fixture import seed_fresh_availability
+
         seed_fresh_availability(conn, str(stable_job_id), str(tenant_id))
         conn.execute(
             """
@@ -236,6 +237,8 @@ def _seed_equivalent_repeat(db_path: Path) -> sqlite3.Connection:
         ready=True,
     )
     _confirm_application(conn)
+    record_equivalence(conn, TARGET_JOB_ID, LOCAL_TENANT)
+    conn.commit()
     return conn
 
 
@@ -246,7 +249,9 @@ def _evaluate(
     tenant_id: TenantId = LOCAL_TENANT,
     record_audit: bool = True,
     evaluated_at: str | None = None,
+    equivalent_prior_id: JobId = PRIOR_JOB_ID,
 ) -> dict:
+    record_equivalence(conn, job_id, tenant_id, equivalent_prior_id=equivalent_prior_id)
     return evaluate_repeat_application(
         conn,
         tenant_id=tenant_id,
@@ -309,7 +314,12 @@ def test_exact_canonical_and_accepted_duplicate_identities_block(tmp_path: Path)
         )
     conn.commit()
 
-    exact = _evaluate(conn)
+    unknown_prior_id = _insert_job(
+        conn, url="https://jobs.example.test/uninterpreted-prior",
+        title="Uninterpreted prior role", company="Other employer",
+    )
+    _confirm_application(conn, job_id=unknown_prior_id)
+    exact = evaluate_repeat_application(conn, target_job_id=TARGET_JOB_ID)
     assert exact["status"] == "blocked"
     assert exact["matches"][0]["relationship"] == "canonical_identity"
 
@@ -328,6 +338,63 @@ def test_exact_canonical_and_accepted_duplicate_identities_block(tmp_path: Path)
     linked = _evaluate(conn)
     assert linked["status"] == "blocked"
     assert linked["matches"][0]["relationship"] == "accepted_duplicate"
+
+
+def test_prepare_reuses_an_accepted_pair_without_a_provider_or_spend(tmp_path: Path) -> None:
+    from jobctrl.domain.apply.repeat_application import prepare_repeat_application
+    from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+
+    conn = init_db(tmp_path / "jobs.db")
+    _insert_job(conn, url=PRIOR, title="Synthetic prior", company="Synthetic")
+    _insert_job(conn, url=TARGET, title="Synthetic target", company="Synthetic")
+    _confirm_application(conn)
+    accepted = _evaluate(conn)
+
+    def deny_new_spend():
+        pytest.fail("An accepted current pair must not request another call")
+
+    reused = prepare_repeat_application(
+        conn, target_job_id=TARGET_JOB_ID,
+        dependencies=dict(
+            llm=None, repository=SqliteDeterminationRepository(conn), tenant_id="local",
+            provider="unavailable", model="unavailable", lane="apply", preflight=deny_new_spend,
+        ),
+    )
+    assert reused["status"] == accepted["status"] == "confirmation_required"
+    assert reused["evidenceFingerprint"] == accepted["evidenceFingerprint"]
+    assert conn.execute("SELECT COUNT(*) FROM semantic_determinations").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("failure", ["provider_unavailable", "repeat_equivalence_uncertain"])
+def test_prepare_fails_distinctly_when_equivalence_cannot_be_decided(tmp_path: Path, failure: str) -> None:
+    from jobctrl.domain.apply.repeat_application import prepare_repeat_application
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+
+    conn = init_db(tmp_path / "jobs.db")
+    _insert_job(conn, url=PRIOR, title="Synthetic prior", company="Synthetic")
+    _insert_job(conn, url=TARGET, title="Synthetic target", company="Synthetic")
+    _confirm_application(conn)
+
+    class UncertainModel:
+        def chat_json(self, messages, **kwargs):
+            sources = json.loads(messages[1].content)["sources"]
+            return {
+                "verdict": "uncertain",
+                "citations": [{"source_id": row["source_id"], "quote": row["text"]} for row in sources],
+                "rationale": "The model cannot determine equivalence from these sources.",
+            }
+
+    with pytest.raises(DeterminationFailure, match=failure):
+        prepare_repeat_application(
+            conn, target_job_id=TARGET_JOB_ID,
+            dependencies=dict(
+                llm=None if failure == "provider_unavailable" else UncertainModel(),
+                repository=SqliteDeterminationRepository(conn), tenant_id="local",
+                provider="synthetic", model="synthetic", lane="apply", preflight=lambda: None,
+            ),
+        )
+    assert conn.execute("SELECT COUNT(*) FROM application_repeat_overrides").fetchone()[0] == 0
 
 
 def test_projected_employer_preserves_repeat_evidence_when_job_company_is_missing(tmp_path: Path) -> None:
@@ -353,35 +420,8 @@ def test_projected_employer_preserves_repeat_evidence_when_job_company_is_missin
     assert assessment["status"] == "confirmation_required"
     match = assessment["matches"][0]
     assert match["relationship"] == "same_employer_equivalent_role"
-    assert match["priorApplication"]["company"] == "Acme Inc"
-    assert match["identityEvidence"][0] == "employer:acme"
-
-
-def test_equivalent_role_requires_confirmation_but_distinct_and_similar_employers_clear(
-    tmp_path: Path,
-) -> None:
-    conn = _seed_equivalent_repeat(tmp_path / "jobs.db")
-    assert _evaluate(conn)["status"] == "confirmation_required"
-
-    conn.execute(
-        """
-        UPDATE jobs SET title = 'Engineering Manager'
-        WHERE tenant_id = ? AND job_id = ?
-        """,
-        (str(LOCAL_TENANT), str(TARGET_JOB_ID)),
-    )
-    conn.commit()
-    assert _evaluate(conn)["status"] == "clear"
-
-    conn.execute(
-        """
-        UPDATE jobs SET title = 'Senior Backend Engineer', company = 'Acme Health'
-        WHERE tenant_id = ? AND job_id = ?
-        """,
-        (str(LOCAL_TENANT), str(TARGET_JOB_ID)),
-    )
-    conn.commit()
-    assert _evaluate(conn)["status"] == "clear"
+    assert match["priorApplication"]["company"] == "Unknown company"
+    assert match["identityEvidence"][0].startswith("determination:")
 
 
 def test_audit_trail_orders_equal_timestamps_by_sqlite_insertion_order(tmp_path: Path) -> None:
@@ -653,7 +693,7 @@ def test_standing_loop_skips_protected_candidate_and_processes_distinct_role(
     def simulated_failure(job: dict, **_kwargs) -> tuple[str, int]:
         assert job["url"] == clear_job
         launcher._stop_event.set()
-        return "failed:simulated_boundary", 1
+        return Failed("simulated_boundary", False), 1
 
     monkeypatch.setattr("jobctrl.apply.launcher.run_job", simulated_failure)
     launcher._stop_event.clear()
@@ -720,7 +760,8 @@ def test_worker_batch_uses_unique_attempt_ids_for_two_repeat_overrides(
             fit_score=fit_score,
         )
         _confirm_application(conn, _job_id_for(prior))
-        assessment = _evaluate(conn, _job_id_for(target))
+    for index, (prior, target, _title, _company, _score) in enumerate(targets, start=1):
+        assessment = _evaluate(conn, _job_id_for(target), equivalent_prior_id=_job_id_for(prior))
         _insert_override(
             conn,
             assessment,
@@ -735,7 +776,7 @@ def test_worker_batch_uses_unique_attempt_ids_for_two_repeat_overrides(
     )
     monkeypatch.setattr(
         "jobctrl.apply.launcher.run_job",
-        lambda _job, **_kwargs: ("failed:simulated_boundary", 1),
+        lambda _job, **_kwargs: (Failed("simulated_boundary", False), 1),
     )
     launcher._stop_event.clear()
 
@@ -961,3 +1002,65 @@ def test_repeat_application_tables_are_exact_v7_and_preserve_application_facts(
     assert {"target_job_id", "prior_job_id"} <= {
         str(row[1]) for row in conn.execute("PRAGMA table_info(application_repeat_overrides)").fetchall()
     }
+
+
+def record_equivalence(conn, job_id, tenant_id, verdict="equivalent", *, equivalent_prior_id=PRIOR_JOB_ID):
+    from jobctrl.domain.apply.repeat_application import prepare_repeat_application
+    from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+
+    class Model:
+        def chat_json(self, messages, **kwargs):
+            data = json.loads(messages[1].content)
+            return {
+                "verdict": verdict
+                if json.loads(data["sources"][1]["text"])["job_id"] == str(equivalent_prior_id)
+                else "different",
+                "citations": [{"source_id": row["source_id"], "quote": row["text"][:1000]} for row in data["sources"]],
+                "rationale": "Explicit synthetic equivalence",
+            }
+
+    prepare_repeat_application(
+        conn,
+        target_job_id=job_id,
+        tenant_id=tenant_id,
+        dependencies=dict(
+            llm=Model(),
+            repository=SqliteDeterminationRepository(conn),
+            tenant_id=str(tenant_id),
+            provider="synthetic",
+            model="synthetic",
+            lane="apply",
+            preflight=lambda: None,
+        ),
+        record_audit=False,
+    )
+
+
+@pytest.fixture(autouse=True)
+def repeat_model_ports(monkeypatch):
+    import jobctrl.infrastructure.determinations as infrastructure
+    from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+
+    class Model:
+        def chat_json(self, messages, **kwargs):
+            data = json.loads(messages[1].content)
+            target = json.loads(data["sources"][0]["text"])
+            verdict = "equivalent" if target["job_id"] == str(TARGET_JOB_ID) else "different"
+            return {
+                "verdict": verdict,
+                "citations": [{"source_id": row["source_id"], "quote": row["text"][:1000]} for row in data["sources"]],
+                "rationale": "Explicit test choice by canonical job ID",
+            }
+
+    def dependencies(conn, **kwargs):
+        return dict(
+            llm=Model(),
+            repository=SqliteDeterminationRepository(conn),
+            tenant_id=str(kwargs.get("tenant_id", "local")),
+            provider="synthetic",
+            model="synthetic",
+            lane="apply",
+            preflight=lambda: None,
+        )
+
+    monkeypatch.setattr(infrastructure, "determination_dependencies", dependencies)

@@ -63,9 +63,7 @@ def _valid_profile_dict() -> dict:
                     "date": "2019",
                 }
             ],
-            "skill_categories": [
-                {"id": "lang", "label": "Languages", "items": ["Python", "Go"]}
-            ],
+            "skill_categories": [{"id": "lang", "label": "Languages", "items": ["Python", "Go"]}],
             "tailoring_rules": {
                 "required_experience_entry_ids": ["role_1"],
                 "required_skill_category_ids": ["lang"],
@@ -92,107 +90,6 @@ def test_from_dict_parses_valid_profile():
     assert profile.experience_entries[0].achievement_evidence == ()
     assert profile.tailoring_rules.max_experience_bullets == 3
     assert profile.resume_constraints.real_metrics == ("40%",)
-
-
-def test_from_dict_preserves_unassigned_legacy_metrics_in_compatibility_index():
-    raw = _valid_profile_dict()
-    raw["resume_constraints"] = {
-        "real_metrics": ["Unassigned synthetic legacy metric: 99.9% uptime"]
-    }
-
-    profile = Profile.from_dict(LOCAL_TENANT, raw)
-
-    assert profile.resume_constraints.real_metrics == (
-        "40%",
-        "Unassigned synthetic legacy metric: 99.9% uptime",
-    )
-
-
-def test_get_achievement_evidence_derives_legacy_bullets_when_explicit_evidence_missing():
-    evidence = get_achievement_evidence(_valid_profile_dict())
-
-    assert [item["id"] for item in evidence] == ["role_1_bullet_1", "role_1_bullet_2"]
-    assert [item["source_text"] for item in evidence] == ["Built APIs.", "Reduced incidents 40%."]
-    assert evidence[1]["metrics"] == ["40%"]
-    assert all(item["experience_entry_id"] == "role_1" for item in evidence)
-    assert all(item["evidence_strength"] == "supported" for item in evidence)
-    assert all(item["user_confirmed"] is True for item in evidence)
-
-
-def test_get_achievement_evidence_rederives_materialized_legacy_bullets():
-    profile = _valid_profile_dict()
-    entry = profile["resume"]["experience_entries"][0]
-    entry["achievement_evidence"] = [
-        {
-            "id": "role_1_bullet_1",
-            "source_text": "Reduced incidents 40%.",
-            "scope": "Software Engineer Acme",
-            "action": "Reduced incidents 40%.",
-            "tools": [],
-            "metrics": ["40%"],
-            "outcome": "Reduced incidents 40%.",
-            "seniority_signal": "",
-            "evidence_strength": "supported",
-            "claim_confidence": 0.8,
-            "user_confirmed": True,
-            "tags": [],
-        }
-    ]
-    entry["bullets"] = ["Reduced incidents 55%."]
-
-    evidence = get_achievement_evidence(profile)
-
-    assert [item["id"] for item in evidence] == ["role_1_bullet_1"]
-    assert evidence[0]["source_text"] == "Reduced incidents 55%."
-    assert evidence[0]["metrics"] == ["55%"]
-
-
-@pytest.mark.parametrize("with_authored", [False, True])
-def test_reordering_bullets_preserves_evidence_occurrences_and_refreshes_later_edits(with_authored):
-    profile = _valid_profile_dict()
-    entry = profile["resume"]["experience_entries"][0]
-    entry["bullets"] = ["Reduced incidents 40%.", "Built APIs.", "Reduced incidents 40%."]
-    entry["achievement_evidence"] = get_achievement_evidence(profile)
-    if with_authored:
-        entry["achievement_evidence"][1].update(id="authored_api", tags=["authored"])
-    original = {item["id"]: item for item in entry["achievement_evidence"]}
-    entry["bullets"] = [" ", "  Built APIs.  ", "Reduced incidents 40%.", "Reduced incidents 40%.", ""]
-
-    reordered = get_achievement_evidence(profile)
-
-    assert {item["id"]: item for item in reordered} == original
-    entry["achievement_evidence"] = reordered
-    profile["personal"]["preferred_name"] = "Jordan"
-    assert get_achievement_evidence(profile) == reordered
-
-    entry["bullets"] = ["Built APIs.", "Reduced incidents 55%.", "Reduced incidents 40%."]
-    updated = get_achievement_evidence(profile)
-    incidents = [item for item in updated if item["id"] != ("authored_api" if with_authored else "role_1_bullet_2")]
-    assert sorted(item["metrics"] for item in incidents) == [["40%"], ["55%"]]
-    assert len({item["id"] for item in updated}) == 3
-    entry["achievement_evidence"] = updated
-    entry["bullets"] = ["Built APIs.", "Reduced incidents 40%."]
-    assert all(item["metrics"] != ["55%"] for item in get_achievement_evidence(profile))
-
-
-@pytest.mark.parametrize("authored_first", [False, True])
-def test_reordering_preserves_authored_and_derived_evidence_sharing_one_bullet(authored_first):
-    profile = _valid_profile_dict()
-    entry = profile["resume"]["experience_entries"][0]
-    entry["bullets"] = ["Reduced incidents 40%.", "Built APIs."]
-    materialized = get_achievement_evidence(profile)
-    authored = {**materialized[0], "id": "authored_incidents", "tags": ["authored"]}
-    entry["achievement_evidence"] = (
-        [authored, *materialized] if authored_first else [*materialized, authored]
-    )
-    original = entry["achievement_evidence"]
-    entry["bullets"] = list(reversed(entry["bullets"]))
-
-    reordered = get_achievement_evidence(profile)
-
-    assert reordered == original
-    entry["achievement_evidence"] = reordered
-    assert get_achievement_evidence(profile) == original
 
 
 def test_from_dict_rejects_missing_resume_block():
@@ -282,7 +179,6 @@ def test_to_dict_round_trips_achievement_evidence_and_claim_controls():
             "tools": ["Python", "PostgreSQL"],
             "metrics": ["35% latency reduction"],
             "outcome": "faster API responses",
-            "seniority_signal": "technical ownership",
             "evidence_strength": "verified",
             "claim_confidence": 0.95,
             "user_confirmed": True,
@@ -414,7 +310,6 @@ def test_resume_profile_helpers_return_normalized_evidence_controls():
             "tools": [],
             "metrics": [],
             "outcome": "",
-            "seniority_signal": "",
             "evidence_strength": "verified",
             "claim_confidence": 0.9,
             "user_confirmed": True,
@@ -455,9 +350,7 @@ def test_extra_fields_are_immutable_after_parsing():
 
 def test_required_bullets_mapping_is_immutable_after_parsing():
     raw = _valid_profile_dict()
-    raw["resume"]["tailoring_rules"]["required_bullets_by_experience_id"] = {
-        "role_1": ["bullet"]
-    }
+    raw["resume"]["tailoring_rules"]["required_bullets_by_experience_id"] = {"role_1": ["bullet"]}
     parsed = Profile.from_dict(LOCAL_TENANT, raw)
 
     with pytest.raises(TypeError):
@@ -466,9 +359,7 @@ def test_required_bullets_mapping_is_immutable_after_parsing():
 
 def test_required_skills_mapping_is_immutable_after_parsing():
     raw = _valid_profile_dict()
-    raw["resume"]["tailoring_rules"]["required_skills_by_category_id"] = {
-        "lang": ["Python"]
-    }
+    raw["resume"]["tailoring_rules"]["required_skills_by_category_id"] = {"lang": ["Python"]}
     parsed = Profile.from_dict(LOCAL_TENANT, raw)
 
     assert parsed.tailoring_rules.required_skills_by_category_id["lang"] == ("Python",)

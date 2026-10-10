@@ -6,8 +6,8 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { refreshProjections } from "../src/projections.js";
-import { EXACT_V12_SCHEMA_MANIFEST, schemaManifest } from "../src/schema-manifest.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { EXACT_V14_SCHEMA_MANIFEST, schemaManifest } from "../src/schema-manifest.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const JOB_ID = "00000000-0000-4000-8000-000000000071";
 const ARTIFACT_JOB_ID = "00000000-0000-4000-8000-000000000072";
@@ -25,11 +25,11 @@ describe("exact-v7 projection refresh", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-v7-projections-"));
     cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
     const dbPath = path.join(dir, "jobs.db");
-    initializeExactV7Database(dbPath);
+    initializeExactDatabase(dbPath);
     const db = new Database(dbPath);
     db.pragma("foreign_keys = ON");
-    const before = schemaManifest(db, EXACT_V12_SCHEMA_MANIFEST.version);
-    expect(before).toEqual(EXACT_V12_SCHEMA_MANIFEST);
+    const before = schemaManifest(db, EXACT_V14_SCHEMA_MANIFEST.version);
+    expect(before).toEqual(EXACT_V14_SCHEMA_MANIFEST);
 
     const insertJob = db.prepare(
       `INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at)
@@ -86,7 +86,7 @@ describe("exact-v7 projection refresh", () => {
         .prepare("SELECT title FROM job_list_projections WHERE tenant_id = ? AND job_id = ?")
         .get("other", JOB_ID),
     ).toEqual({ title: "Other title" });
-    expect(schemaManifest(db, EXACT_V12_SCHEMA_MANIFEST.version)).toEqual(before);
+    expect(schemaManifest(db, EXACT_V14_SCHEMA_MANIFEST.version)).toEqual(before);
     db.close();
   });
 
@@ -94,7 +94,7 @@ describe("exact-v7 projection refresh", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-v7-contact-projections-"));
     cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
     const dbPath = path.join(dir, "jobs.db");
-    initializeExactV7Database(dbPath);
+    initializeExactDatabase(dbPath);
     const db = new Database(dbPath);
     db.pragma("foreign_keys = ON");
 
@@ -151,7 +151,7 @@ describe("exact-v7 projection refresh", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-v7-artifact-refresh-"));
     cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
     const dbPath = path.join(dir, "jobs.db");
-    initializeExactV7Database(dbPath);
+    initializeExactDatabase(dbPath);
     const db = new Database(dbPath);
     db.pragma("foreign_keys = ON");
 
@@ -263,7 +263,7 @@ describe("exact-v7 projection refresh", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-v7-canonical-projections-"));
     cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
     const dbPath = path.join(dir, "jobs.db");
-    initializeExactV7Database(dbPath);
+    initializeExactDatabase(dbPath);
     const db = new Database(dbPath);
     db.pragma("foreign_keys = ON");
 
@@ -417,7 +417,7 @@ describe("exact-v7 projection refresh", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-v7-company-projection-"));
     cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
     const dbPath = path.join(dir, "jobs.db");
-    initializeExactV7Database(dbPath);
+    initializeExactDatabase(dbPath);
     const db = new Database(dbPath);
     db.pragma("foreign_keys = ON");
 

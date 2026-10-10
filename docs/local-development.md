@@ -427,9 +427,9 @@ consent read, and exact denied/granted cookie boundary.
 
 ## Verify
 
-Schema v12 migrations must run with JobCtrl stopped and must write a separate
-candidate. For a synthetic exact-v11 source, exercise the private boundary with
-`python -m jobctrl.infrastructure.migrations.v11_to_v12_execute --source
+Schema v14 migrations must run with JobCtrl stopped and must write a separate
+candidate. For a synthetic exact-v13 source, exercise the private boundary with
+`python -m jobctrl.infrastructure.migrations.v13_to_v14_execute --source
 <source.db> --candidate <candidate.db>`. The command never installs the
 candidate. Normal installations use `jobctrl update`, whose native lifecycle
 owns quiescence, paired backup, candidate activation, readiness, and rollback.

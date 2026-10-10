@@ -7,7 +7,7 @@ import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 
 import { resolveJobId } from "../src/write-model.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const LOCAL_JOB_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_JOB_ID = "22222222-2222-4222-8222-222222222222";
@@ -17,7 +17,7 @@ describe("canonical job identity resolution", () => {
   it("resolves an external locator once without crossing tenant boundaries", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-job-id-resolution-"));
     const dbPath = path.join(directory, "jobctrl.db");
-    initializeExactV7Database(dbPath);
+    initializeExactDatabase(dbPath);
     const db = new Database(dbPath);
     const insert = db.prepare(
       `INSERT INTO jobs (tenant_id, job_id, url)

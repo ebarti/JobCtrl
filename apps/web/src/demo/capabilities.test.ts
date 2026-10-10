@@ -1,30 +1,26 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { DEMO_CAPABILITY_MANIFEST } from "./capabilities.js";
-import { DEMO_SIMULATED_ASYNC_OPERATIONS } from "./contracts.js";
 import { DemoApiClientAdapter } from "./DemoApiClientAdapter.js";
 import {
   DemoWorkspaceRepository,
   InMemoryDemoWorkspaceStore,
 } from "./workspace/index.js";
 
-describe("supported public demo scenarios", () => {
-  it("keeps the intentional async and external rehearsal allowlists", () => {
+describe("offline model capabilities", () => {
+  it("keeps external rehearsals bounded and model capabilities unavailable", () => {
     const methodsInClass = (capabilityClass: string) => Object.entries(DEMO_CAPABILITY_MANIFEST)
       .filter(([, capability]) => capability.class === capabilityClass)
       .map(([method]) => method)
       .toSorted();
 
-    expect(methodsInClass("simulated_async")).toEqual([
-      "rescoreJob", "retailorJob", "retryStage", "runJobStage",
-    ]);
     expect(methodsInClass("rehearsed_external")).toEqual([
-      "applyJob", "discoverySourcePreview", "markApplied", "openArtifact",
+      "markApplied", "openArtifact",
     ]);
     expect(DEMO_CAPABILITY_MANIFEST.requiredBulletSuggestions.class).toBe("unavailable");
   });
 
-  it("does not expose deferred operations just because the internal scenario engine supports them", async () => {
+  it("fails unavailable model operations without changing saved artifacts or using the network", async () => {
     const deferredOperations = [
       "renderResumeReviewDraft",
       "ensureCurrentResumeMaterials",
@@ -38,6 +34,9 @@ describe("supported public demo scenarios", () => {
       "reviseOutreachDraft",
       "generateMaterials",
       "generateInterviewPrep",
+      "rescoreJob", "retailorJob", "retryStage", "runJobStage",
+      "targetRoleSuggestions", "requiredBulletSuggestions", "importResume",
+      "discoverySourcePreview", "importManualCapture",
     ] as const;
     const repository = new DemoWorkspaceRepository({
       store: new InMemoryDemoWorkspaceStore(),
@@ -50,7 +49,6 @@ describe("supported public demo scenarios", () => {
     try {
       const before = repository.snapshotNow();
       for (const operation of deferredOperations) {
-        expect(DEMO_SIMULATED_ASYNC_OPERATIONS, operation).toContain(operation);
         expect(DEMO_CAPABILITY_MANIFEST[operation].class, operation).toBe("unavailable");
         const invoke = adapter[operation] as (...args: unknown[]) => unknown;
         await expect(Promise.resolve().then(() => invoke())).rejects.toMatchObject({

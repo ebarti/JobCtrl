@@ -28,18 +28,12 @@ posting detail to use it.” The current decision path is:
    description text cannot prove closure. Login/challenge pages, HTTP access
    failures, lost posting identity, invalid deadlines and conflicting current
    signals remain unknown. A nonempty body alone cannot prove availability.
-3. **Assign confidence from the posting-content evidence.** Description length
-   and extraction tier determine whether the posting text is trustworthy. An
-   application URL can strengthen structured extraction, but its absence never
-   downgrades an otherwise complete description:
-
-   | Extraction result | High | Medium | Low |
-   | --- | --- | --- | --- |
-   | JSON-LD | Application URL and at least 200 characters | At least 200 characters without the URL | Fewer than 200 characters |
-   | CSS selectors | Application URL and at least 400 characters | At least 200 characters | Fewer than 200 characters |
-   | LLM-assisted | — | At least 400 characters, with or without an application URL | Fewer than 400 characters |
-   | Other configured tier | — | At least 200 characters | Fewer than 200 characters |
-
+3. **Determine content quality from the captured sources.** A model records
+   whether the description is usable and trustworthy, citing verbatim captured text
+   and explaining its confidence. Code validates those citations and the posting
+   identity. Description length and extraction tier do not set a trust verdict.
+   An absent provider, denied budget or invalid response blocks this determination
+   and preserves the last accepted snapshot.
 4. **Quarantine low-confidence content.** Low content confidence without an
    override is held for review. An explicit operator
    override can admit a low-confidence snapshot and is persisted with the audit
@@ -49,10 +43,10 @@ posting detail to use it.” The current decision path is:
    readable posting content or block Tailor. A posting verified as closed,
    expired, or removed is recorded separately as `posting_inactive` rather than
    mislabeled as a low-confidence extraction.
-5. **Surface duplicate candidates from content evidence.** An exact description
-   hash is a `1.0` signal, the same normalized application URL is `0.95`, and
-   token-Jaccard content similarity must reach `0.85`. These signals propose a
-   duplicate for Discovery to resolve; Enrichment does not silently merge jobs.
+5. **Resolve duplicate identity.** Exact canonical fields or an identical full
+   content fingerprint can link duplicate representations. Semantic equivalence
+   requires a cited duplicate determination; token overlap does not merge jobs
+   or authorize reusing another posting's score.
 
 A failed fetch or exhausted cascade records a retryable attempt without
 manufacturing a snapshot. Failure remains isolated to that job, so useful
@@ -351,3 +345,10 @@ user. The exact selector rules are owned by the
 | Workflow entry | Discover starts through the pipeline action routes documented in [Operations & Events API](../api/operations-and-events.md#starting-work). |
 | Live worker path | `workers/automation/src/jobctrl/pipeline/runner.py` and `workers/automation/src/jobctrl/enrichment/detail.py`, with fetch adapters under `workers/automation/src/jobctrl/infrastructure/enrichment/`. |
 | Deep architecture | [Stage Walkthrough → Detail Enrichment](../architecture/pipeline/stages.md#detail-enrichment), [Crawl Politeness](discovery.md#crawl-politeness), and [Storage](../architecture/storage.md). |
+
+
+## Semantic Determination Authority
+
+Page availability, individual-posting state and description quality use cited model determinations over the bound rendered page. HTTP status, exact ATS identity, URL safety and DOM visibility remain code. Automatic duplicate identity uses exact keys/full-content fingerprints; no token-Jaccard threshold merges jobs. Failed semantic checks preserve accepted snapshots and materials.
+
+See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

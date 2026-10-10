@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
-import unicodedata
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -24,29 +22,6 @@ _RELATIONSHIP_RANK = {
     "accepted_duplicate": 2,
     "same_employer_equivalent_role": 3,
 }
-_LEGAL_SUFFIXES = {
-    "inc",
-    "incorporated",
-    "llc",
-    "ltd",
-    "limited",
-    "corp",
-    "corporation",
-    "plc",
-    "gmbh",
-}
-_ROLE_ALIASES = {
-    "sr": "senior",
-    "jr": "junior",
-    "eng": "engineer",
-    "engr": "engineer",
-    "mgr": "manager",
-    "dev": "developer",
-    "ii": "2",
-    "iii": "3",
-    "iv": "4",
-}
-_PRESENTATION_ONLY_ROLE_TOKENS = {"remote", "hybrid", "onsite", "fulltime"}
 
 
 def _utc_now() -> str:
@@ -140,18 +115,21 @@ def evaluate_repeat_application(
     if target is None:
         raise ValueError(f"job not found: {stable_job_id}")
 
-    matches = [
-        match
-        for fact in _confirmed_application_facts(conn, tenant_id=tenant_id)
-        if (
-            match := _relationship_match(
-                conn,
-                tenant_id=tenant_id,
-                target=target,
-                fact=fact,
-            )
-        ) is not None
-    ]
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    matches = []
+    determination_failure = None
+    for fact in _confirmed_application_facts(conn, tenant_id=tenant_id):
+        try:
+            match = _relationship_match(conn, tenant_id=tenant_id, target=target, fact=fact)
+            if match is not None:
+                matches.append(match)
+        except DeterminationFailure as error:
+            determination_failure = determination_failure or error
+    if determination_failure is not None and not any(
+        match["relationship"] != "same_employer_equivalent_role" for match in matches
+    ):
+        raise determination_failure
     matches.sort(key=_match_sort_key)
     if not matches:
         return {
@@ -315,24 +293,115 @@ def _match_sort_key(match: dict[str, Any]) -> tuple[int, bytes, bytes]:
     )
 
 
-def normalize_employer(value: str | None) -> str:
-    tokens = _normalize_tokens(value)
-    while len(tokens) > 1 and tokens[-1] in _LEGAL_SUFFIXES:
-        tokens.pop()
-    return " ".join(tokens)
+def pair_version(target, prior):
+    values = [
+        str(record.get(key) or "")
+        for record in (target, prior)
+        for key in (
+            "job_id",
+            "title",
+            "company",
+            "application_url",
+            "location",
+            "salary",
+            "description",
+            "interpretation_id",
+        )
+    ]
+    return hashlib.sha256(json.dumps(values, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
 
 
-def normalize_role_title(value: str | None) -> str:
-    return " ".join(
-        _ROLE_ALIASES.get(token, token)
-        for token in _normalize_tokens(value)
-        if _ROLE_ALIASES.get(token, token) not in _PRESENTATION_ONLY_ROLE_TOKENS
+def prepare_repeat_application(
+    conn, *, target_job_id, tenant_id=LOCAL_TENANT, dependencies=None, record_audit=True, evaluated_at=None
+):
+    from jobctrl.domain.apply.role_equivalence import ModelRoleEquivalence
+    from jobctrl.infrastructure.determinations import determination_dependencies, SqliteDeterminationRepository
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    target = _job_identity(conn, tenant_id=tenant_id, job_id=canonical_job_id(str(target_job_id)))
+    if target is None:
+        raise DeterminationFailure("foreign_source_id")
+    try:
+        existing = evaluate_repeat_application(
+            conn, target_job_id=target_job_id, tenant_id=tenant_id,
+            record_audit=record_audit, evaluated_at=evaluated_at,
+        )
+    except DeterminationFailure:
+        existing = None
+    if existing is not None:
+        return existing
+    service = ModelRoleEquivalence(
+        **(dependencies or determination_dependencies(conn, tenant_id=str(tenant_id), lane="apply"))
+    )
+    repository = SqliteDeterminationRepository(conn)
+    for fact in _confirmed_application_facts(conn, tenant_id=tenant_id):
+        prior = _job_identity(conn, tenant_id=tenant_id, job_id=canonical_job_id(str(fact["job_id"])))
+        if prior is None or target["job_id"] == prior["job_id"]:
+            continue
+        if (
+            _canonical_identity_relationship(
+                conn,
+                tenant_id=tenant_id,
+                target_job_id=canonical_job_id(target["job_id"]),
+                prior_job_id=canonical_job_id(prior["job_id"]),
+            )
+            is not None
+        ):
+            continue
+        if (
+            _accepted_duplicate_relationship(
+                conn,
+                tenant_id=tenant_id,
+                target_job_id=canonical_job_id(target["job_id"]),
+                prior_job_id=canonical_job_id(prior["job_id"]),
+            )
+            is not None
+        ):
+            continue
+        version = pair_version(target, prior)
+        result, envelope = service.determine(target=target, prior=prior, pair_version=version)
+        repository.bind(
+            tenant_id=str(tenant_id),
+            entity_kind="repeat_pair",
+            entity_id=target["job_id"] + ":" + prior["job_id"],
+            entity_version=version,
+            determination_kind="repeat_equivalence",
+            determination_id=envelope.determination_id,
+        )
+        if result.verdict == "uncertain":
+            raise DeterminationFailure("repeat_equivalence_uncertain")
+    return evaluate_repeat_application(
+        conn, target_job_id=target_job_id, tenant_id=tenant_id, record_audit=record_audit, evaluated_at=evaluated_at
     )
 
 
-def _normalize_tokens(value: str | None) -> list[str]:
-    normalized = unicodedata.normalize("NFKC", str(value or "")).lower().replace("&", " and ")
-    return [token for token in re.sub(r"[^a-z0-9]+", " ", normalized).strip().split() if token]
+def _recorded_equivalence(conn, tenant_id, target, prior):
+    from jobctrl.domain.determinations import DeterminationEnvelope, DeterminationFailure
+    from jobctrl.domain.apply.role_equivalence import RoleEquivalence
+
+    row = conn.execute(
+        "SELECT d.envelope_json FROM semantic_entity_bindings b JOIN semantic_determinations d ON d.tenant_id=b.tenant_id AND d.determination_id=b.determination_id WHERE b.tenant_id=? AND b.entity_kind='repeat_pair' AND b.entity_id=? AND b.entity_version=? AND b.determination_kind='repeat_equivalence'",
+        (str(tenant_id), target["job_id"] + ":" + prior["job_id"], pair_version(target, prior)),
+    ).fetchone()
+    if row is None:
+        raise DeterminationFailure("repeat_determination_unavailable")
+    try:
+        envelope = DeterminationEnvelope.model_validate_json(row[0])
+        result = RoleEquivalence.model_validate(envelope.result)
+    except ValueError:
+        raise DeterminationFailure("schema_violation") from None
+    if (
+        envelope.tenant_id != str(tenant_id)
+        or envelope.entity_id != target["job_id"] + ":" + prior["job_id"]
+        or envelope.kind != "repeat_equivalence"
+        or envelope.schema_version != "2"
+        or envelope.prompt_version != "repeat-equivalence-v2"
+        or envelope.determination_id != envelope.input_fingerprint
+    ):
+        raise DeterminationFailure("cache_binding_invalid")
+    if result.verdict == "uncertain":
+        raise DeterminationFailure("repeat_equivalence_uncertain")
+    return result, envelope
 
 
 def _job_identity(
@@ -343,20 +412,14 @@ def _job_identity(
 ) -> dict[str, Any] | None:
     company_expression = "j.company"
     company_params: tuple[str, ...] = ()
-    if _table_exists(conn, "job_list_projections"):
-        company_expression = """
-            COALESCE(
-              NULLIF(j.company, ''),
-              (SELECT jlp.employer
-                FROM job_list_projections jlp
-                WHERE jlp.tenant_id = ? AND jlp.job_id = j.job_id
-                LIMIT 1)
-            )
-        """
-        company_params = (str(tenant_id),)
     row = conn.execute(
         f"""
-        SELECT j.job_id, j.url, j.title, {company_expression} AS company,
+        SELECT j.job_id, j.url, j.title, j.location, j.salary, j.description,
+          COALESCE((SELECT je.full_description FROM job_enrichments je
+                    WHERE je.tenant_id=j.tenant_id AND je.job_id=j.job_id
+                      AND je.current_status='enriched' AND length(trim(je.full_description))>0
+                    ORDER BY je.updated_at DESC LIMIT 1), j.full_description) AS full_description,
+          {company_expression} AS company,
                COALESCE(
                  (SELECT je.application_url
                     FROM job_enrichments je
@@ -371,12 +434,28 @@ def _job_identity(
     ).fetchone()
     if row is None:
         return None
+    from jobctrl.domain.job_snapshot import build_jd_snapshot, compute_snapshot_hash
+
+    snapshot_version = compute_snapshot_hash(build_jd_snapshot(dict(row)))
+    interpreted = (
+        conn.execute(
+            "SELECT d.determination_id,d.envelope_json FROM semantic_entity_bindings b JOIN semantic_determinations d ON d.tenant_id=b.tenant_id AND d.determination_id=b.determination_id WHERE b.tenant_id=? AND b.entity_kind='job' AND b.entity_id=? AND b.entity_version=? AND b.determination_kind='job_interpretation'",
+            (str(tenant_id), str(job_id), snapshot_version),
+        ).fetchone()
+        if _table_exists(conn, "semantic_entity_bindings")
+        else None
+    )
     return {
         "job_id": str(row["job_id"]),
         "url": str(row["url"]),
         "title": str(row["title"] or ""),
         "company": str(row["company"] or ""),
         "application_url": str(row["application_url"]) if row["application_url"] else None,
+        "location": str(row["location"] or ""),
+        "salary": str(row["salary"] or ""),
+        "description": str(row["full_description"] or row["description"] or ""),
+        "interpretation_id": str(interpreted[0]) if interpreted else "",
+        "interpretation": json.loads(interpreted[1])["result"] if interpreted else None,
     }
 
 
@@ -485,13 +564,12 @@ def _relationship_match(
         relationship = "accepted_duplicate"
         reason = "An accepted duplicate link connects this representation to the previously applied opening."
         evidence = duplicate
-    elif _equivalent_employer_role(target, prior):
-        relationship = "same_employer_equivalent_role"
-        reason = "The employer identity matches exactly and the normalized role titles are materially equivalent."
-        evidence = [
-            f"employer:{normalize_employer(target['company'])}",
-            f"role:{normalize_role_title(target['title'])}",
-        ]
+    else:
+        result, envelope = _recorded_equivalence(conn, tenant_id, target, prior)
+        if result.verdict == "equivalent":
+            relationship = "same_employer_equivalent_role"
+            reason = result.rationale
+            evidence = ["determination:" + envelope.determination_id]
     if relationship is None:
         return None
     return {
@@ -603,17 +681,6 @@ def _job_aliases(
     for row in rows:
         aliases.update(str(value) for value in row if value)
     return aliases
-
-
-def _equivalent_employer_role(target: dict[str, Any], prior: dict[str, Any]) -> bool:
-    employer = normalize_employer(target["company"])
-    if not employer or employer != normalize_employer(prior["company"]):
-        return False
-    target_role = normalize_role_title(target["title"])
-    prior_role = normalize_role_title(prior["title"])
-    if not target_role or not prior_role:
-        return False
-    return target_role == prior_role or sorted(target_role.split()) == sorted(prior_role.split())
 
 
 def _matching_override(

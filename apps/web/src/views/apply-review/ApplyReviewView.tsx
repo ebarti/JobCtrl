@@ -22,6 +22,7 @@ import {
   useCreateResumeReviewDraftMutation,
   useRenderResumeReviewDraftMutation,
   useRepeatApplicationOverrideMutation,
+  useRepeatApplicationCheckMutation,
   useReplyToResumeReviewCommentMutation,
   useSaveResumeReviewDraftRevisionMutation,
   useSeedResumeReviewCommentThreadsMutation,
@@ -1088,7 +1089,9 @@ function ResumeLineReview({
   const currentDraftRenderResult = renderedDraftResult?.draft.draftId === draft?.draftId
     ? renderedDraftResult : null;
   const draftError = createDraft.error instanceof Error ? createDraft.error.message : null;
-  const saveError = saveDraftRevision.error instanceof Error ? saveDraftRevision.error.message : null;
+  const savedIntentStatus = saveDraftRevision.data?.editIntent;
+  const saveError = saveDraftRevision.error instanceof Error ? saveDraftRevision.error.message
+    : savedIntentStatus?.status === "unavailable" ? `Your edit is saved. Edit interpretation is unavailable (${savedIntentStatus.failureCode}); retry review before rendering.` : null;
   const seedError = seedCommentThreads.error instanceof Error ? seedCommentThreads.error.message : null;
   const replyError = replyToComment.error instanceof Error ? replyToComment.error.message : null;
   const renderError = renderDraft.error instanceof Error ? renderDraft.error.message : null;
@@ -1286,6 +1289,7 @@ function ResumeReviewSurface({
 
 function repeatApplicationLiveBlock(item: ApplyReviewQueueItem): string | null {
   const { status } = item.repeatApplication;
+  if(status==="unavailable" || status==="uncertain")return item.repeatApplication.summary;
   if (status === "blocked") {
     return "Live-submit authorization is blocked by a confirmed application to this canonical opening.";
   }
@@ -1329,6 +1333,7 @@ function relationshipLabel(
 function RepeatApplicationGuardPanel({ item }: { readonly item: ApplyReviewQueueItem }) {
   const assessment = item.repeatApplication;
   const mutation = useRepeatApplicationOverrideMutation();
+  const check=useRepeatApplicationCheckMutation();
   const [reason, setReason] = useState("");
   const [selectedPriorJobId, setSelectedPriorJobId] = useState<string | null>(null);
   const needsAttention = ["blocked", "confirmation_required", "override_consumed"].includes(
@@ -1369,6 +1374,7 @@ function RepeatApplicationGuardPanel({ item }: { readonly item: ApplyReviewQueue
         <AlertDescription>{assessment.summary}</AlertDescription>
       </Alert>
 
+      {["unavailable","uncertain"].includes(assessment.status) && <div><Button disabled={check.isPending} onClick={()=>check.mutate({jobId:item.jobKey})}>{check.isPending?"Checking…":"Check prior applications"}</Button>{check.error && <p role="alert">{check.error.message}</p>}</div>}
       <div className="repeat-application-evidence">
         {assessment.matches.map((match) => (
           <article key={`${match.relationship}:${match.priorApplication.factId}`}>

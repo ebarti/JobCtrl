@@ -1,3 +1,4 @@
+import { readCandidateInterpretationStatus } from "./candidate-interpretations.js";
 import { isDeepStrictEqual } from "node:util";
 import { ZodError } from "zod";
 
@@ -63,32 +64,6 @@ const DEFAULT_STYLE = {
 };
 
 const DEFAULT_RESUME_TEMPLATE = "{{ personal_data }}\n\n{{ resume_body }}\n";
-const ACHIEVEMENT_METRIC_PATTERN =
-  /(?:[$€£]\s?\d+(?:[,.]\d+)*(?:\s?(?:k|m|b|million|billion))?\+?|\b\d+(?:[,.]\d+)*\+?\s?(?:bps|basis\s+points?)\b|\b\d+(?:[,.]\d+)*\s?%|\b\d+(?:[,.]\d+)*\s?x\b|\b\d+(?:[,.]\d+)*(?:k|m|b)?\+?\s?(?:users?|customers?|requests?|req\/s|qps|events?|engineers?|developers?|teams?|services?|systems?|pipelines?|applications?|apps?|employees?|incidents?|deployments?|releases?|countries?|markets?|regions?|clients?|accounts?|features?|projects?|products?|servers?|nodes?|transactions?|records?|tickets?|ms|milliseconds?|seconds?|secs?|minutes?|hours?|days?|weeks?|months?|years?|revenue|savings|costs?|budget|latency|uptime|availability|throughput)\b|\b24\/7\b|\b(?!(?:19|20)\d{2}\b)\d+(?:[,.]\d+)*\+?\b)/gi;
-// Recognition-only compatibility for auto-derived evidence written before the
-// canonical extractor above. New rows never use this narrower pattern.
-const LEGACY_BULLET_METRIC_PATTERN_V1 =
-  /(?:\$\s?\d+(?:[,.]\d+)*(?:\.\d+)?\s?(?:k|m|b|million|billion)?|\d+(?:\.\d+)?%|\d+(?:\.\d+)?x|\d+(?:\.\d+)?\s?(?:ms|milliseconds?|seconds?|minutes?|hours?|days?|weeks?|months?|years?|qps|req\/s))/gi;
-const LEGACY_BULLET_SENIORITY_TERMS = [
-  "own",
-  "owned",
-  "ownership",
-  "scope",
-  "influence",
-  "influenced",
-  "cross-team",
-  "stakeholder",
-  "stakeholders",
-  "led",
-  "lead",
-  "mentor",
-  "mentored",
-  "architect",
-  "architected",
-  "strategy",
-  "technical leadership",
-] as const;
-
 const SUPPORTED_PROFILE_TOP_LEVEL_KEYS = new Set([
   "personal",
   "work_authorization",
@@ -308,7 +283,6 @@ export function ensureProfileTables(db: SqliteDatabase): void {
       tools_json TEXT NOT NULL DEFAULT '[]',
       metrics_json TEXT NOT NULL DEFAULT '[]',
       outcome TEXT NOT NULL DEFAULT '',
-      seniority_signal TEXT NOT NULL DEFAULT '',
       evidence_strength TEXT NOT NULL DEFAULT 'supported',
       claim_confidence REAL NOT NULL DEFAULT 0,
       user_confirmed INTEGER NOT NULL DEFAULT 0,
@@ -393,7 +367,6 @@ export function ensureProfileTables(db: SqliteDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_candidate_profile_skill_order
       ON candidate_profile_skill_categories(tenant_id, profile_id, position_index);
   `);
-  backfillAchievementEvidenceFromBullets(db);
 }
 
 /** Read a version without running legacy table/evidence initialization. */
@@ -521,6 +494,7 @@ function readProfileConfigFromInitializedTables(db: SqliteDatabase): ProfileConf
   return {
     ok: true,
     profileVersion: Number(row.version ?? 1),
+    candidateInterpretation: readCandidateInterpretationStatus(db,Number(row.version??1)),
     profile: rowToProfile(db, row),
     style: styleFromRow(row),
     templateText: String(row.resume_template_text || DEFAULT_RESUME_TEMPLATE),
@@ -586,6 +560,14 @@ export function writeProfileConfig(
       if (!existing && !profile) {
         throw new ProfileInputError("profile must be initialized before updating style or template settings.");
       }
+      if (request.acceptedCandidateInterpretationId) {
+        if (request.expectedProfileVersion === undefined || !profile) throw new ProfileInputError("Candidate confirmation requires an authored profile save and its version.");
+        const suggestion=db.prepare("SELECT determination_id FROM candidate_interpretation_suggestions WHERE tenant_id=? AND profile_id=? AND profile_version=? AND determination_id=? AND status='pending_confirmation'").get(TENANT_ID,PROFILE_ID,actualVersion,request.acceptedCandidateInterpretationId);
+        if (!suggestion) throw new ProfileInputError("Candidate suggestion is missing, already resolved, or stale.");
+        const recorded=readCandidateInterpretationStatus(db,actualVersion!);
+        if(recorded.status!=="pending_confirmation" || recorded.determination?.determination_id!==request.acceptedCandidateInterpretationId) throw new ProfileInputError("Candidate determination is unavailable or stale.");
+        db.prepare("UPDATE candidate_interpretation_suggestions SET status='confirmed',confirmed_at=? WHERE tenant_id=? AND profile_id=? AND profile_version=? AND determination_id=?").run(new Date().toISOString(),TENANT_ID,PROFILE_ID,actualVersion,request.acceptedCandidateInterpretationId);
+      }
       const nextProfile = profile ?? rowToProfile(db, existing as ProfileRow);
       const existingStyle = existing ? styleFromRow(existing) : DEFAULT_STYLE;
       const nextStyle = stylePatch ? normalizeStyle({ ...existingStyle, ...stylePatch }) : existingStyle;
@@ -594,10 +576,17 @@ export function writeProfileConfig(
         (existing ? String(existing.resume_template_text || DEFAULT_RESUME_TEMPLATE) : DEFAULT_RESUME_TEMPLATE);
       previousResponse = existing ? readProfileConfig(db) : null;
       const nextVersion = existing ? Number(existing.version ?? 0) + 1 : 1;
-      replaceProfile(db, nextProfile, nextStyle, nextTemplate, nextVersion);
-      response = readProfileConfig(db);
-      if (previousResponse && sameProfileContent(previousResponse, response)) {
-        throw NO_PROFILE_CHANGE;
+      try {
+        db.transaction(() => {
+          replaceProfile(db, nextProfile, nextStyle, nextTemplate, nextVersion);
+          response = readProfileConfig(db);
+          if (previousResponse && sameProfileContent(previousResponse, response)) throw NO_PROFILE_CHANGE;
+        })();
+      } catch (error) {
+        if (error !== NO_PROFILE_CHANGE) throw error;
+        // Roll back only the replacement: confirming the current suggestion is
+        // a real change even when the authored profile bytes are unchanged.
+        response = readProfileConfig(db);
       }
     })();
   } catch (error) {
@@ -636,7 +625,6 @@ function replaceProfile(
   templateText: string,
   version: number,
 ): void {
-  const preservedLegacyMetrics = legacyUnassignedMetricIndex(db);
   const transaction = db.transaction(() => {
     for (const table of CHILD_TABLES) {
       db.prepare(`DELETE FROM ${table} WHERE tenant_id = ? AND profile_id = ?`).run(TENANT_ID, PROFILE_ID);
@@ -652,7 +640,7 @@ function replaceProfile(
       ON CONFLICT(tenant_id, profile_id) DO UPDATE SET ${assignments}
     `).run(...rootValues(profile, style, templateText, version));
 
-    insertChildren(db, profile, preservedLegacyMetrics);
+    insertChildren(db, profile);
   });
   transaction();
 }
@@ -660,7 +648,6 @@ function replaceProfile(
 function insertChildren(
   db: SqliteDatabase,
   profile: ProfileShape,
-  preservedLegacyMetrics: readonly string[] = [],
 ): void {
   const experienceEntries = asRecordArray(record(profile.resume).experience_entries);
   const insertExperience = db.prepare(`
@@ -677,9 +664,9 @@ function insertChildren(
     INSERT INTO candidate_profile_achievement_evidence (
       tenant_id, profile_id, entry_id, evidence_index,
       evidence_id, source_text, scope, action, tools_json,
-      metrics_json, outcome, seniority_signal, evidence_strength,
+      metrics_json, outcome, evidence_strength,
       claim_confidence, user_confirmed, tags_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   experienceEntries.forEach((entry, index) => {
     const entryId = text(entry.id);
@@ -710,8 +697,7 @@ function insertChildren(
         jsonTextArray(evidence.tools),
         jsonTextArray(evidence.metrics),
         text(evidence.outcome),
-        text(evidence.seniority_signal),
-        text(evidence.evidence_strength, "supported"),
+        text(evidence.evidence_strength, "draft"),
         confidenceNumber(evidence.claim_confidence),
         boolInt(evidence.user_confirmed, false),
         jsonTextArray(evidence.tags),
@@ -783,287 +769,13 @@ function insertChildren(
       tenant_id, profile_id, metric_index, metric_text
     ) VALUES (?, ?, ?, ?)
   `);
-  compatibilityMetricIndex(profile, preservedLegacyMetrics).forEach((metric, index) => {
+  asTextArray(record(profile.resume_constraints).real_metrics).forEach((metric, index) => {
     insertMetric.run(TENANT_ID, PROFILE_ID, index, metric);
   });
 }
 
-function achievementEvidenceForEntry(entry: Record<string, unknown>, entryId: string): Array<Record<string, unknown>> {
-  const explicitEvidence = asRecordArray(entry.achievement_evidence);
-  if (!entryId) {
-    return explicitEvidence;
-  }
-  const derivedEvidence = legacyBulletAchievementEvidenceForEntry(entry, entryId);
-  if (explicitEvidence.length === 0) {
-    return derivedEvidence;
-  }
-  const materialized = explicitEvidence.map((evidence) => isMaterializedLegacyBulletEvidence(evidence, entryId));
-  const allDerived = materialized.every(Boolean);
-  const available = new Set(derivedEvidence.map((_, index) => index));
-  const matched = new Map<number, number>();
-  // Claim unchanged occurrences before refreshing edited bullets. Position is
-  // only an allocation hint: a saved evidence ID already owns its source text.
-  // Authored records may share a source with derived records, so reserve their
-  // otherwise-unclaimed sources only after matching materialized occurrences.
-  const matchingOrder = explicitEvidence.map((_, index) => index)
-    .sort((left, right) => Number(materialized[right]) - Number(materialized[left]));
-  matchingOrder.forEach((index) => {
-    const evidence = explicitEvidence[index]!;
-    const bulletIndex = [...available].find((candidate) =>
-      text(derivedEvidence[candidate]!.source_text) === text(evidence.source_text).trim());
-    if (bulletIndex !== undefined) {
-      matched.set(index, bulletIndex);
-      available.delete(bulletIndex);
-    }
-  });
-  explicitEvidence.forEach((evidence, index) => {
-    if (!materialized[index] || matched.has(index)) return;
-    const preferred = allDerived ? index : (legacyBulletEvidenceIndex(text(evidence.id), entryId) ?? 0) - 1;
-    const bulletIndex = available.has(preferred) ? preferred : available.values().next().value;
-    if (bulletIndex !== undefined) {
-      matched.set(index, bulletIndex);
-      available.delete(bulletIndex);
-    }
-  });
-  const replacements = new Map<number, Record<string, unknown>>();
-  const byBullet = new Map<number, Record<string, unknown>>();
-  for (const [index, bulletIndex] of matched) {
-    if (!materialized[index]) continue;
-    const replacement = { ...derivedEvidence[bulletIndex], id: text(explicitEvidence[index]!.id) };
-    replacements.set(index, replacement);
-    byBullet.set(bulletIndex, replacement);
-  }
-  if (!allDerived) {
-    return explicitEvidence.flatMap((evidence, index) =>
-      materialized[index] ? (replacements.has(index) ? [replacements.get(index)!] : []) : [evidence]);
-  }
-  const reservedIds = new Set(explicitEvidence.map((evidence) => text(evidence.id)));
-  return derivedEvidence.map((evidence, index) => {
-    const replacement = byBullet.get(index);
-    if (replacement) return replacement;
-    let suffix = index + 1;
-    while (reservedIds.has(legacyBulletEvidenceId(entryId, suffix))) suffix += 1;
-    const id = legacyBulletEvidenceId(entryId, suffix);
-    reservedIds.add(id);
-    return { ...evidence, id };
-  });
-}
-
-function legacyBulletAchievementEvidenceForEntry(
-  entry: Record<string, unknown>,
-  entryId: string,
-): Array<Record<string, unknown>> {
-  const scope = legacyBulletEvidenceScope(entry);
-  return asTextArray(entry.bullets).map((bullet) => bullet.trim()).filter(Boolean).map((bullet, index) => {
-    const sourceText = bullet.trim();
-    const normalized = legacyBulletEvidenceNormalizedText(entry, sourceText);
-    return {
-      id: legacyBulletEvidenceId(entryId, index + 1),
-      source_text: sourceText,
-      scope,
-      action: sourceText,
-      tools: [],
-      metrics: extractedAchievementMetrics(sourceText),
-      outcome: sourceText,
-      seniority_signal: LEGACY_BULLET_SENIORITY_TERMS.some((term) => normalized.includes(term))
-        ? "resume bullet contains seniority signal"
-        : "",
-      evidence_strength: "supported",
-      claim_confidence: 0.8,
-      user_confirmed: true,
-      tags: [],
-    };
-  });
-}
-
-function isMaterializedLegacyBulletEvidence(evidence: Record<string, unknown>, entryId: string): boolean {
-  if (!legacyBulletEvidenceIndex(text(evidence.id), entryId)) {
-    return false;
-  }
-  const sourceText = text(evidence.source_text).trim();
-  if (!sourceText) {
-    return false;
-  }
-  return text(evidence.action).trim() === sourceText
-    && text(evidence.outcome).trim() === sourceText
-    && asTextArray(evidence.tools).length === 0
-    && (
-      arraysEqual(asTextArray(evidence.metrics), extractedAchievementMetrics(sourceText))
-      || arraysEqual(asTextArray(evidence.metrics), extractedLegacyBulletMetricsV1(sourceText))
-    )
-    && text(evidence.evidence_strength, "supported").trim() === "supported"
-    && confidenceNumber(evidence.claim_confidence) === 0.8
-    && boolValue(evidence.user_confirmed, false)
-    && asTextArray(evidence.tags).length === 0;
-}
-
-function backfillAchievementEvidenceFromBullets(db: SqliteDatabase): void {
-  const rows = db.prepare(`
-    SELECT entries.tenant_id, entries.profile_id, entries.entry_id, entries.title, entries.company,
-           bullets.bullet_index, bullets.bullet_text
-    FROM candidate_profile_experience_entries AS entries
-    JOIN candidate_profile_experience_bullets AS bullets
-      ON bullets.tenant_id = entries.tenant_id
-     AND bullets.profile_id = entries.profile_id
-     AND bullets.entry_id = entries.entry_id
-    WHERE NOT EXISTS (
-      SELECT 1
-      FROM candidate_profile_achievement_evidence AS evidence
-      WHERE evidence.tenant_id = entries.tenant_id
-        AND evidence.profile_id = entries.profile_id
-        AND evidence.entry_id = entries.entry_id
-    )
-    ORDER BY entries.tenant_id, entries.profile_id, entries.position_index, bullets.bullet_index
-  `).all() as Array<Record<string, unknown>>;
-  if (rows.length === 0) {
-    return;
-  }
-  const insertEvidence = db.prepare(`
-    INSERT INTO candidate_profile_achievement_evidence (
-      tenant_id, profile_id, entry_id, evidence_index,
-      evidence_id, source_text, scope, action, tools_json,
-      metrics_json, outcome, seniority_signal, evidence_strength,
-      claim_confidence, user_confirmed, tags_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const transaction = db.transaction(() => {
-    for (const row of rows) {
-      const entryId = text(row.entry_id);
-      const sourceText = text(row.bullet_text).trim();
-      const scope = legacyBulletEvidenceScope(row);
-      const normalized = legacyBulletEvidenceNormalizedText(row, sourceText);
-      const bulletIndex = Number(row.bullet_index ?? 0);
-      insertEvidence.run(
-        text(row.tenant_id, TENANT_ID),
-        text(row.profile_id, PROFILE_ID),
-        entryId,
-        bulletIndex,
-        legacyBulletEvidenceId(entryId, bulletIndex + 1),
-        sourceText,
-        scope,
-        sourceText,
-        "[]",
-        JSON.stringify(extractedAchievementMetrics(sourceText)),
-        sourceText,
-        LEGACY_BULLET_SENIORITY_TERMS.some((term) => normalized.includes(term))
-          ? "resume bullet contains seniority signal"
-          : "",
-        "supported",
-        0.8,
-        1,
-        "[]",
-      );
-    }
-  });
-  transaction();
-}
-
-function legacyBulletEvidenceScope(entry: Record<string, unknown>): string {
-  return [text(entry.title), text(entry.company)].filter(Boolean).join(" ");
-}
-
-function legacyBulletEvidenceNormalizedText(entry: Record<string, unknown>, sourceText: string): string {
-  return [text(entry.title), text(entry.company), sourceText].join(" ").toLowerCase().replace(/\s+/g, " ");
-}
-
-function legacyBulletEvidenceId(entryId: string, bulletIndex: number): string {
-  const safeEntryId = entryId.replace(/[^a-zA-Z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "") || "experience";
-  return `${safeEntryId}_bullet_${Math.max(1, Math.trunc(bulletIndex))}`;
-}
-
-function legacyBulletEvidenceIndex(evidenceId: string, entryId: string): number | null {
-  const match = evidenceId.match(/_bullet_([1-9]\d*)$/);
-  const rawIndex = match?.[1];
-  if (!rawIndex) {
-    return null;
-  }
-  const bulletIndex = Number(rawIndex);
-  return evidenceId === legacyBulletEvidenceId(entryId, bulletIndex) ? bulletIndex : null;
-}
-
-function extractedAchievementMetrics(sourceText: string): string[] {
-  const seen = new Set<string>();
-  const metrics: string[] = [];
-  for (const match of sourceText.matchAll(ACHIEVEMENT_METRIC_PATTERN)) {
-    const metric = match[0].trim().replace(/\s+/g, " ");
-    const key = metric.toLocaleLowerCase();
-    if (metric && !seen.has(key)) {
-      seen.add(key);
-      metrics.push(metric);
-    }
-  }
-  return metrics;
-}
-
-function extractedLegacyBulletMetricsV1(sourceText: string): string[] {
-  const seen = new Set<string>();
-  const metrics: string[] = [];
-  for (const match of sourceText.matchAll(LEGACY_BULLET_METRIC_PATTERN_V1)) {
-    const metric = match[0].trim().replace(/\s+/g, " ");
-    const key = metric.toLocaleLowerCase();
-    if (metric && !seen.has(key)) {
-      seen.add(key);
-      metrics.push(metric);
-    }
-  }
-  return metrics;
-}
-
-function achievementMetricIndex(profile: ProfileShape): string[] {
-  return achievementMetricIndexFromEntries(
-    asRecordArray(record(profile.resume).experience_entries),
-  );
-}
-
-function mergeMetricIndexes(...indexes: ReadonlyArray<readonly string[]>): string[] {
-  const seen = new Set<string>();
-  const metrics: string[] = [];
-  for (const index of indexes) {
-    for (const metric of index) {
-      const normalized = metric.trim().replace(/\s+/g, " ");
-      const key = normalized.toLocaleLowerCase();
-      if (normalized && !seen.has(key)) {
-        seen.add(key);
-        metrics.push(normalized);
-      }
-    }
-  }
-  return metrics;
-}
-
-function compatibilityMetricIndex(
-  profile: ProfileShape,
-  preservedLegacyMetrics: readonly string[] = [],
-): string[] {
-  return mergeMetricIndexes(
-    achievementMetricIndex(profile),
-    preservedLegacyMetrics,
-  );
-}
-
-function achievementMetricIndexFromEntries(entries: Array<Record<string, unknown>>): string[] {
-  const seen = new Set<string>();
-  const metrics: string[] = [];
-  const collect = (value: unknown): void => {
-    for (const metric of extractedAchievementMetrics(text(value))) {
-      const key = metric.toLocaleLowerCase();
-      if (!seen.has(key)) {
-        seen.add(key);
-        metrics.push(metric);
-      }
-    }
-  };
-  for (const entry of entries) {
-    asTextArray(entry.bullets).forEach(collect);
-    for (const evidence of achievementEvidenceForEntry(entry, text(entry.id))) {
-      asTextArray(evidence.metrics).forEach(collect);
-      collect(evidence.source_text);
-      collect(evidence.scope);
-      collect(evidence.action);
-      collect(evidence.outcome);
-    }
-  }
-  return metrics;
+function achievementEvidenceForEntry(entry: Record<string, unknown>, _entryId: string): Array<Record<string, unknown>> {
+  return asRecordArray(entry.achievement_evidence);
 }
 
 function storedMetricIndex(db: SqliteDatabase): string[] {
@@ -1073,13 +785,6 @@ function storedMetricIndex(db: SqliteDatabase): string[] {
     "metric_text",
     "metric_index",
   );
-}
-
-function legacyUnassignedMetricIndex(db: SqliteDatabase): string[] {
-  const derived = new Set(
-    achievementMetricIndexFromEntries(experienceRows(db)).map((metric) => metric.toLocaleLowerCase()),
-  );
-  return storedMetricIndex(db).filter((metric) => !derived.has(metric.toLocaleLowerCase()));
 }
 
 function arraysEqual(left: readonly string[], right: readonly string[]): boolean {
@@ -1171,12 +876,7 @@ function rowToProfile(db: SqliteDatabase, row: ProfileRow): ProfileShape {
       tailoring_rules: tailoringRules(db, row),
     },
     resume_constraints: {
-      // Non-authoritative compatibility projection. Achievement metrics lead;
-      // unmatched legacy rows remain visible so a profile round-trip is lossless.
-      real_metrics: mergeMetricIndexes(
-        achievementMetricIndexFromEntries(experienceEntries),
-        storedMetricIndex(db),
-      ),
+      real_metrics: storedMetricIndex(db),
     },
   };
   return ProfileSchema.parse(profile);
@@ -1275,7 +975,7 @@ function experienceRows(db: SqliteDatabase): Array<Record<string, unknown>> {
 function achievementEvidenceRows(db: SqliteDatabase, entryId: string): Array<Record<string, unknown>> {
   const rows = db.prepare(`
     SELECT evidence_id, source_text, scope, action, tools_json, metrics_json,
-           outcome, seniority_signal, evidence_strength, claim_confidence,
+           outcome, evidence_strength, claim_confidence,
            user_confirmed, tags_json
     FROM candidate_profile_achievement_evidence
     WHERE tenant_id = ? AND profile_id = ? AND entry_id = ?
@@ -1289,8 +989,7 @@ function achievementEvidenceRows(db: SqliteDatabase, entryId: string): Array<Rec
     tools: parseTextArray(row.tools_json),
     metrics: parseTextArray(row.metrics_json),
     outcome: text(row.outcome),
-    seniority_signal: text(row.seniority_signal),
-    evidence_strength: text(row.evidence_strength, "supported"),
+    evidence_strength: text(row.evidence_strength, "draft"),
     claim_confidence: confidenceNumber(row.claim_confidence),
     user_confirmed: Boolean(Number(row.user_confirmed ?? 0)),
     tags: parseTextArray(row.tags_json),
@@ -1577,7 +1276,6 @@ function parseProfileInput(profile: unknown, profileText: string | undefined): P
   // Existing unassigned values are recovered from the database inside
   // replaceProfile(); this prevents a fetched, now-stale derived value from
   // becoming permanent legacy data after its achievement bullet changes.
-  validated.data.resume_constraints.real_metrics = achievementMetricIndex(validated.data);
   return validated.data;
 }
 

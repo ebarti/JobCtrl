@@ -786,6 +786,10 @@ Consequences:
 Cites: `docs/plans/implemented/2026-06-01-apply-review-outcome-feedback.md`;
 PRs #115, #116, #117.
 
+### Amendment 2026-10-07
+
+Amended 2026-10-07 by [Semantic Judgments Are LLM Determinations](#_2026-10-07-semantic-judgments-are-llm-determinations). A bounded scan starts from confirmed application anchors and applies exact recipient/date/thread/domain checks. A model determines linking from bounded metadata before a body is read, then classifies the linked body into the closed outcome enum with verbatim evidence, confidence and rationale. Both determinations persist provenance. Provider or validation failure records an actionable blocked scan and creates no suggestion. Human acceptance/correction alone creates a reviewed outcome. Raw bodies remain in local canonical evidence and never enter broad projections or logs.
+
 ## 2026-06-03: Resume Tailoring Quality Is A Product System, Not Prompt Wording
 
 Status: accepted
@@ -828,6 +832,10 @@ Consequences:
 
 Cites: `docs/plans/implemented/2026-06-03-resume-tailoring-quality.md`;
 PRs #124, #125, #126, #127, #128.
+
+### Amendment 2026-10-07
+
+Amended 2026-10-07 by [Semantic Judgments Are LLM Determinations](#_2026-10-07-semantic-judgments-are-llm-determinations). Materials retain strict generation schemas, canonical profile/requirement IDs, verbatim source binding, exact values, structural rendering and version fences. A separate claim-verification determination judges support, prohibited claims, voice and self-talk; the existing quality judge remains a separate model call. The model decides seniority alignment and whether required evidence is represented. Unsupported findings drive repair or failure without altering the last accepted generation. Acceptance depends on typed verdicts, never a score threshold or phrase list. Tests prove model authority and failure handling, without evaluation corpora.
 
 ## 2026-06-09: Employer Analysis Via A 3-SDK Agent Ensemble
 
@@ -940,6 +948,10 @@ Cites: PRs #142 (per-bullet provenance), #143 (voice pass + final audit against
 rendered text), #144 (serve audit from canonical rows), #148 (formatting-tolerant
 grounding). See `docs/architecture/tailoring.md`.
 
+### Amendment 2026-10-07
+
+Amended 2026-10-07 by [Semantic Judgments Are LLM Determinations](#_2026-10-07-semantic-judgments-are-llm-determinations). Generation emits per-line IDs, evidence IDs, requirement IDs, transforms and reasons. Claim verification independently records source contributions, served requirements and findings against those line IDs. Code validates ID membership and verbatim spans, then commits the accepted artifact, envelope references and anchors together. The API and Apply Review join by ID. They never reconstruct sources or findings with substring/token similarity. A historical or edited line without an accepted anchor displays “No recorded source”. Coverage arithmetic uses the verifier's typed requirement bindings.
+
 ## 2026-06-15: Requirement-Fit Ledger — Scores Resolve From Weighted Requirement Fit
 
 Status: accepted
@@ -1020,6 +1032,10 @@ Consequences:
   discovery
 
 Cites: PRs #180, #181, #182, #183, #184, #185, #187.
+
+### Amendment 2026-10-07
+
+Amended 2026-10-07 by [Semantic Judgments Are LLM Determinations](#_2026-10-07-semantic-judgments-are-llm-determinations). Pay-in-prose extraction determines period, component, currency and bounds with exact numeric/quote checks. Job and provider-row interpretations use the shared occupation/seniority/place codes. Matching uses code equality and arithmetic; Levels.fyi routes use static code-to-slug maps and fixed-format source parsing. Each displayed row cites its classification determination. Compensation remains warning-only. A provider, spend or schema failure withholds a new estimate and preserves a previously accepted one; it cannot guess from salary cues or title/location words.
 
 ## 2026-06-24: HTML/CSS Resume Rendering Replaces LaTeX
 
@@ -1135,6 +1151,10 @@ Consequences:
 
 Cites: PR #212 (building on earlier dedup work #108).
 
+### Amendment 2026-10-07
+
+Amended 2026-10-07 by [Semantic Judgments Are LLM Determinations](#_2026-10-07-semantic-judgments-are-llm-determinations). Automatic identity uses exact ATS keys, normalized posting/application URLs or an exact fingerprint over full canonical title, employer and description. Every source observation remains attributable. Shingle and token-Jaccard matching are removed. Distinct identities remain distinct unless an accepted determination establishes a relationship. Scores cannot be reused through agency/repost wording. Exact identity and accepted duplicate links retain their canonical ownership and concurrency fences.
+
 ## 2026-07-03: At-Most-Once Apply With Binding Approval Gate
 
 Status: accepted
@@ -1206,6 +1226,10 @@ Consequences:
   claims cannot bypass or reuse the confirmation; and
 - the identity and audit contract can support later policy gates without adding
   those policies here.
+
+### Amendment 2026-10-07
+
+Amended 2026-10-07 by [Semantic Judgments Are LLM Determinations](#_2026-10-07-semantic-judgments-are-llm-determinations). Only reviewed application facts establish prior application history. Exact canonical identity and accepted duplicate links block repeat submissions. A model determines materially equivalent roles at the same employer, citing the two canonical job records; both runtimes read its persisted result. Missing and uncertain determinations are visible and block live submission. Equivalent roles require a reasoned confirmation bound to the exact evidence fingerprint, with one-attempt consumption. No employer suffix list or title aliases infer equivalence. Native write leases and explicit submission authorization remain mandatory.
 
 ## 2026-07-29: Keep Final Browser Submit Below The Page-Reading Model
 
@@ -1682,6 +1706,10 @@ remain later phases; the existing no-live-assistance decision still applies.
 Owners: [Materials](architecture/materials.md#stored-interview-preparation),
 [Storage](architecture/storage.md), and the
 [API contract](api/complete-contract.md#interview-catalog-preparation-and-notes).
+
+### Amendment 2026-10-07
+
+Amended 2026-10-07 by [Semantic Judgments Are LLM Determinations](#_2026-10-07-semantic-judgments-are-llm-determinations). The public catalog, explicit selections, immutable generation context/digest, notes and factual confirmation boundaries remain. Automatic question selection and evidence relevance/authority are model determinations with catalog/profile ID fences. Each question is generated separately using only that question's accepted evidence. An explicit empty selection produces gaps and guidance, never borrowed history. A claim verifier extracts propositions and judges support and C07 negotiation guidance. The independent quality judge remains. Unsupported or invalid output enters repair/fail handling and a failed refresh retains accepted prep. The grammar engine and sentence corpus are removed.
 
 ## 2026-07-05: Outcome Analytics Are Read-Only And Sample-Gated
 
@@ -2223,8 +2251,8 @@ already present in the current or resumed provider checkpoint.
 
 Amended (2026-08-29): the provider pin advances to JobStreaming 0.0.5. Provider
 search remains listing-only by default. JobCtrl may request detail for one
-already-known LinkedIn card only after its existing title/location policy admits
-the lead and only when the sparse card could collide with another stored job on
+already-known LinkedIn card after applying saved literal title exclusions,
+and only when the sparse card could collide with another stored job on
 normalized title and genuine employer. JobStreaming owns that targeted
 transport without changing the search checkpoint; JobCtrl owns the decision,
 content-identity comparison, durable receipt, limit, and acknowledgement. A
@@ -2614,3 +2642,22 @@ remain failures and preserve reviewed output; no lexical or canned-question
 fallback is allowed. The offline demo therefore reports this capability
 unavailable. See [the API contract](api/complete-contract.md) and
 [source ownership](developer/repository-and-ownership-map.md).
+
+
+## 2026-10-07: Semantic Judgments Are LLM Determinations
+
+Every decision that depends on understanding text is a typed LLM determination. This generalizes Required-Bullet Coaching (2026-10-05) to job and candidate interpretation, claim support, voice, requirement scope, evidence relevance, email intent/linking, page state, edit intent, form mapping and role equivalence. Regexes and lists describe formats, identifiers, security rules and literal user filters; they never determine meaning.
+
+The owning context supplies minimized canonical IDs and texts to `LlmPort.chat_json` in a Temporal activity or interactive sync RPC. A strict schema rejects extra fields and unknown enums. Each judgment carries source IDs, verbatim quotes and a rationale. Code checks membership, quote/number/date/currency binding, version fences and arithmetic. One shared versioned codes-and-labels taxonomy lives in Contracts, with no synonyms or aliases.
+
+An accepted envelope persists its kind, schema and prompt versions, provider/model, input fingerprint and typed result. Identical inputs and versions reuse the stored determination without another call. The lane and BR-050 spend preflight run before a new call. Provider unavailability, spend denial, malformed JSON, schema violations, foreign IDs and invalid quotes/numbers have distinct safe failure codes. A failed refresh preserves the last accepted artifact and records the blocked attempt. There is no lexical fallback; affected offline-demo capabilities report unavailable.
+
+Saved search controls are already authoritative when the user saves them. Source/query planning executes their literal values and performs no model reinterpretation or second approval. Downstream determinations assess posting meaning against the supplied saved criteria without replacing those choices. Scoring receives the exact saved target-source snapshot and profile version; later profile edits cannot rewrite earlier determinations’ sources. Provider search/filter execution belongs to JobStreaming. Structurally valid fetched listings proceed through canonical ingestion to full-posting analysis and scoring without a separate intake model gate. Source-native listing flags, exact identity, limits, security rules and literal user-authored title exclusions remain mechanical.
+
+Owner correction (2026-10-07): remove the separate metadata-only intake filter, its queue and batch/model settings. JobStreaming executes saved provider searches; supported filters and unsupported-filter warnings belong to its adapters. Company ATS feeds may expose all listed vacancies and currently use JobCtrl’s direct API adapters; their suitability is assessed from full postings downstream. Historical intake captures and envelopes remain under the frozen native schema. Unconsumed source payloads recover through canonical ingestion in bounded source-family batches, with current literal exclusions and limits; the retired verdict, preferences and envelope are never consulted. Each new determination uses one provider. Employer analysis retains its optional ensemble; BR-058 permits one ready provider. Claim verification is a separate call alongside the existing quality judge. Generators record line IDs, evidence/requirement IDs, transform and reason; the verifier affirms source contributions and findings by line ID. Readers join recorded IDs; unanchored lines say “No recorded source”.
+
+Candidate interpretations are pending suggestions until the owner confirms selected values in a version-fenced profile save. Inferred seniority or strength never becomes an authored evidence fact. Job interpretation owns requirement scope and posting taxonomy; scoring resolves arithmetic over model verdicts and typed blockers. Scoring limits use recency and stable IDs rather than vocabulary overlap. Exact canonical identity and exact full-content fingerprints may deduplicate; non-exact role equivalence requires a determination.
+
+Exact schema 13 removed inferred seniority fields and withdrew unconfirmed old classification, provenance, pay and benchmark outputs for recomputation. Authored profile text, reviewed outcomes, comments and accepted artifact content remain; the paired backup is recoverable. No startup lexical reparse or silent admission repairs old records. Exact schema 14 follows the same stopped-runtime native backup/candidate/activation boundary. The v13-to-v14 cutover removes the redundant preference-approval foreign key, supersedes earlier intake decisions and retains their raw posting captures and historical determination envelopes. Canonical jobs, authored profile cells and accepted files are preserved.
+
+Validation uses fake-model authority tests, strict failure/binding tests, one-off deletion searches and owned synthetic product-path QA. No eval sets, labeled sentence corpora, baseline comparisons or recorded-output replay fixtures are permitted. Temporal replay consumes persisted results; it does not call a provider. Merge and release remain owner decisions.

@@ -19,7 +19,6 @@ from jobctrl.domain.materials.voice import (
     apply_voice_to_payload,
     build_voice_request,
     summary_voice_rejection_reason,
-    voice_scope_violations,
 )
 
 
@@ -35,26 +34,21 @@ def _payload() -> dict:
 
 
 def test_build_request_extracts_prose_grouped_by_id() -> None:
-    request = build_voice_request(_payload(), banned_terms=("spearheaded",))
+    request = build_voice_request(_payload())
     assert request.executive_profile == "Spearheaded robust solutions."
     assert request.executive_profile_sentences == ("Spearheaded robust solutions.",)
     assert request.experience_bullets == (("acme", ("Leveraged synergy.", "Drove value.")),)
-    assert request.banned_terms == ("spearheaded",)
 
 
 def test_apply_replaces_prose_and_preserves_skills_and_structure() -> None:
     result = VoiceResult(
         executive_profile="Cut deploy time to ten minutes by rebuilding the pipeline.",
-        executive_profile_sentences=(
-            "Cut deploy time to ten minutes by rebuilding the pipeline.",
-        ),
+        executive_profile_sentences=("Cut deploy time to ten minutes by rebuilding the pipeline.",),
         experience_bullets=(("acme", ("Cut latency 40%.", "Owned billing end to end.")),),
     )
     voiced = apply_voice_to_payload(_payload(), result)
     assert voiced["executive_profile"].startswith("Cut deploy time")
-    assert voiced["executive_profile_sentences"] == [
-        "Cut deploy time to ten minutes by rebuilding the pipeline."
-    ]
+    assert voiced["executive_profile_sentences"] == ["Cut deploy time to ten minutes by rebuilding the pipeline."]
     assert voiced["experience_updates"][0]["bullets"] == [
         "Cut latency 40%.",
         "Owned billing end to end.",
@@ -99,40 +93,6 @@ def test_apply_rebinds_claim_mapping_text_to_the_final_voiced_surface() -> None:
     ]
 
 
-def test_voice_scope_rejects_changes_to_clean_claims() -> None:
-    source = {
-        "executive_profile": "Engineering leader.",
-        "executive_profile_sentences": ["Engineering leader."],
-        "experience_updates": [
-            {
-                "id": "acme",
-                "title": "",
-                "bullets": [
-                    "Reduced synthetic warehouse energy spend by £240k.",
-                    "Spearheaded a robust platform migration.",
-                ],
-            }
-        ],
-    }
-    voiced = {
-        **source,
-        "experience_updates": [
-            {
-                "id": "acme",
-                "title": "",
-                "bullets": [
-                    "Found £240k by cutting warehouse power bills.",
-                    "Led a platform migration.",
-                ],
-            }
-        ],
-    }
-
-    assert voice_scope_violations(source, voiced, banned_terms=("spearheaded", "robust")) == (
-        "experience.acme.bullets[0] changed without a banned phrase in the source",
-    )
-
-
 def test_apply_does_not_mutate_the_input_payload() -> None:
     original = _payload()
     result = VoiceResult(
@@ -152,14 +112,18 @@ def test_apply_keeps_original_bullets_on_count_mismatch() -> None:
         executive_profile="",
         experience_bullets=(("acme", ("Only one bullet now.",)),),  # source has 2
     )
-    voiced = apply_voice_to_payload(_payload(), result)
-    assert voiced["experience_updates"][0]["bullets"] == ["Leveraged synergy.", "Drove value."]
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    with pytest.raises(DeterminationFailure, match="schema_violation"):
+        apply_voice_to_payload(_payload(), result)
 
 
 def test_apply_skips_empty_executive_profile() -> None:
     result = VoiceResult(executive_profile="   ", experience_bullets=())
-    voiced = apply_voice_to_payload(_payload(), result)
-    assert voiced["executive_profile"] == "Spearheaded robust solutions."
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    with pytest.raises(DeterminationFailure, match="schema_violation"):
+        apply_voice_to_payload(_payload(), result)
 
 
 def test_apply_keeps_original_summary_when_sentence_contract_does_not_reconstruct() -> None:
@@ -169,14 +133,12 @@ def test_apply_keeps_original_summary_when_sentence_contract_does_not_reconstruc
         experience_bullets=(),
     )
 
-    voiced = apply_voice_to_payload(_payload(), result)
+    from jobctrl.domain.determinations import DeterminationFailure
 
-    assert voiced["executive_profile"] == "Spearheaded robust solutions."
-    assert voiced["executive_profile_sentences"] == ["Spearheaded robust solutions."]
-    assert (
-        summary_voice_rejection_reason(_payload(), result)
-        == "voiced_summary_sentence_join_mismatch"
-    )
+    with pytest.raises(DeterminationFailure, match="schema_violation"):
+        apply_voice_to_payload(_payload(), result)
+
+    assert summary_voice_rejection_reason(_payload(), result) == "voiced_summary_sentence_join_mismatch"
 
 
 def test_apply_keeps_original_summary_when_voiced_profile_has_outer_whitespace() -> None:
@@ -186,14 +148,12 @@ def test_apply_keeps_original_summary_when_voiced_profile_has_outer_whitespace()
         experience_bullets=(),
     )
 
-    voiced = apply_voice_to_payload(_payload(), result)
+    from jobctrl.domain.determinations import DeterminationFailure
 
-    assert voiced["executive_profile"] == "Spearheaded robust solutions."
-    assert voiced["executive_profile_sentences"] == ["Spearheaded robust solutions."]
-    assert (
-        summary_voice_rejection_reason(_payload(), result)
-        == "voiced_summary_sentence_join_mismatch"
-    )
+    with pytest.raises(DeterminationFailure, match="schema_violation"):
+        apply_voice_to_payload(_payload(), result)
+
+    assert summary_voice_rejection_reason(_payload(), result) == "voiced_summary_sentence_join_mismatch"
 
 
 @pytest.mark.parametrize(
@@ -248,11 +208,18 @@ def test_summary_voice_rejection_reason_labels_every_identity_gate_branch(
     yields an inspectable reason, and "" means the voiced summary is adopted."""
     assert summary_voice_rejection_reason(_payload(), result) == expected_reason
 
-    voiced = apply_voice_to_payload(_payload(), result)
     if expected_reason:
-        assert voiced["executive_profile"] == "Spearheaded robust solutions."
+        from jobctrl.domain.determinations import DeterminationFailure
+
+        with pytest.raises(DeterminationFailure, match="schema_violation"):
+            apply_voice_to_payload(_payload(), result)
     else:
-        assert voiced["executive_profile"] == "Rebuilt the pipeline."
+        complete = VoiceResult(
+            executive_profile=result.executive_profile,
+            executive_profile_sentences=result.executive_profile_sentences,
+            experience_bullets=(("acme", ("Revised first.", "Revised second.")),),
+        )
+        assert apply_voice_to_payload(_payload(), complete)["executive_profile"] == complete.executive_profile
 
 
 def test_voice_payload_schema_requires_summary_sentences() -> None:
@@ -265,9 +232,7 @@ def test_voice_payload_schema_requires_summary_sentences() -> None:
     with pytest.raises(ValidationError):
         VoicePayload.model_validate({"executive_profile": "x", "experience_updates": []})
     with pytest.raises(ValidationError):
-        VoicePayload.model_validate(
-            {"executive_profile": "x", "executive_profile_sentences": []}
-        )
+        VoicePayload.model_validate({"executive_profile": "x", "executive_profile_sentences": []})
 
 
 def test_voice_pass_record_round_trips_summary_rejection_reason() -> None:

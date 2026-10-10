@@ -56,8 +56,8 @@ function compact<T extends Record<string, unknown>>(obj: T): Record<string, unkn
 }
 
 describe("§8.5 state machine — TS parity", () => {
-  it("VALID_KIND_TRANSITIONS has the expected 16 rows", () => {
-    expect(VALID_KIND_TRANSITIONS).toHaveLength(16);
+  it("VALID_KIND_TRANSITIONS has the expected 17 rows", () => {
+    expect(VALID_KIND_TRANSITIONS).toHaveLength(17);
   });
 
   it("StageTransitions matches the canonical 11 triggers (parity vector)", () => {

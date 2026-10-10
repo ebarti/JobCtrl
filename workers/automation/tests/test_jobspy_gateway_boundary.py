@@ -110,3 +110,26 @@ def test_jobspy_searches_are_paced_between_invocations(monkeypatch) -> None:
 
     # Three searches paced by the 3.0s min interval => at least two 3.0s gaps.
     assert clock.now() >= 2 * 3.0
+
+
+def test_stored_sdk_country_enum_round_trips_without_aliases():
+    from jobstreaming import JobPost
+    from jobstreaming.model import Country, Location
+
+    original = JobPost(title="Synthetic role", company_name="Example", job_url="https://example.test/jobs/1", location=Location(country=Country.SPAIN))
+    payload = original.model_dump(mode="json")
+    restored = jobspy._restore_provider_job(payload)
+    assert restored.location.country is Country.SPAIN
+    assert restored.model_dump(mode="json") == payload
+    assert isinstance(payload["location"]["country"], list)
+
+
+def test_invalid_stored_country_fails_safely_without_guessing():
+    import pytest
+    from jobstreaming import JobPost
+
+    payload = JobPost(title="Synthetic role", company_name="Example", job_url="https://example.test/jobs/1").model_dump(mode="json")
+    payload["location"] = {"country": ["synthetic-private-country", "INVALID"]}
+    with pytest.raises(ValueError) as failure:
+        jobspy._restore_provider_job(payload)
+    assert str(failure.value) == "provider_job_invalid_country"

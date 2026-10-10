@@ -265,6 +265,7 @@ describe("application outcome components", () => {
             suggestionId: "suggestion-2",
             jobKey: "job-7",
             evidenceId: "evidence-2",
+            determination: null, citations: [],
             suggestedKind: "rejection",
             rationale: "Employer reply indicates a rejection.",
           },

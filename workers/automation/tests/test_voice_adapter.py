@@ -86,19 +86,14 @@ def _request() -> VoiceRequest:
         executive_profile="Spearheaded robust scalable solutions.",
         executive_profile_sentences=("Spearheaded robust scalable solutions.",),
         experience_bullets=(("acme", ("Leveraged synergy to drive value.",)),),
-        banned_terms=("spearheaded", "robust", "synergy"),
     )
 
 
 def _voiced_structured() -> dict[str, Any]:
     return {
         "executive_profile": "Rebuilt the deploy pipeline so releases dropped to ten minutes.",
-        "executive_profile_sentences": [
-            "Rebuilt the deploy pipeline so releases dropped to ten minutes."
-        ],
-        "experience_updates": [
-            {"id": "acme", "bullets": ["Cut API latency 40% by batching writes."]}
-        ],
+        "executive_profile_sentences": ["Rebuilt the deploy pipeline so releases dropped to ten minutes."],
+        "experience_updates": [{"id": "acme", "bullets": ["Cut API latency 40% by batching writes."]}],
     }
 
 
@@ -110,9 +105,7 @@ async def test_parses_structured_output_into_voice_result() -> None:
     )
     result = await adapter.rewrite("system", _request())
     assert result.executive_profile.startswith("Rebuilt the deploy pipeline")
-    assert result.executive_profile_sentences == (
-        "Rebuilt the deploy pipeline so releases dropped to ten minutes.",
-    )
+    assert result.executive_profile_sentences == ("Rebuilt the deploy pipeline so releases dropped to ten minutes.",)
     assert result.experience_bullets == (("acme", ("Cut API latency 40% by batching writes.",)),)
 
 

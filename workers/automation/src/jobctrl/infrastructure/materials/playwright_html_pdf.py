@@ -17,11 +17,8 @@ import uuid
 from pathlib import Path
 
 from jobctrl.domain.materials.entities import Artifact
-from jobctrl.domain.materials.value_objects import (
-    ArtifactStatus,
-    ArtifactType,
-    RenderFormat,
-)
+from jobctrl.domain.ports.artifact_review import ArtifactStatus
+from jobctrl.domain.materials.value_objects import ArtifactType, RenderFormat
 
 log = logging.getLogger(__name__)
 
@@ -131,9 +128,7 @@ class PlaywrightHtmlPdfAdapter:
         resume_theme: dict | None = None,
         resume_template: dict | None = None,
     ) -> Artifact:
-        raise NotImplementedError(
-            "PlaywrightHtmlPdfAdapter does not render resumes; use HtmlResumePdfAdapter."
-        )
+        raise NotImplementedError("PlaywrightHtmlPdfAdapter does not render resumes; use HtmlResumePdfAdapter.")
 
     def render_cover_letter_to_pdf(
         self,

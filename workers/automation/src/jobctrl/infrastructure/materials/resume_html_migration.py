@@ -17,11 +17,11 @@ from typing import Callable, Iterable
 from jobctrl.infrastructure.materials.html_resume_pdf import (
     RESUME_PAGE_VIEWPORT,
     build_resume_html_document,
-    contact_items_from_text,
     contact_items_html,
-    contact_items_text,
     normalize_resume_date_range,
 )
+
+from jobctrl.domain.materials.resume_document import contact_items_from_text, contact_items_text
 
 LayoutBox = dict[str, object]
 RenderHtmlToPdf = Callable[[str, str], list[LayoutBox]]
@@ -200,7 +200,11 @@ def build_legacy_resume_html(resume_text: str) -> str:
     if content_indexes:
         first = content_indexes[0]
         line("personal:full_name", raw_lines[first], tag="h1", class_name="resume-name")
-        second = content_indexes[1] if len(content_indexes) > 1 and section_key(raw_lines[content_indexes[1]].strip()) is None else None
+        second = (
+            content_indexes[1]
+            if len(content_indexes) > 1 and section_key(raw_lines[content_indexes[1]].strip()) is None
+            else None
+        )
         start_index = first + 1
         if second is not None:
             contact_items = contact_items_from_text(raw_lines[second])
@@ -305,7 +309,7 @@ def migrate_legacy_resume_pdfs(
     sql = f"""
         SELECT job_url, generation, artifact_id, path, render_format, metadata_json
         FROM job_materials_artifacts
-        WHERE {' AND '.join(where)}
+        WHERE {" AND ".join(where)}
         ORDER BY created_at DESC
     """
     if limit is not None:
@@ -334,7 +338,11 @@ def _migrate_one(
     html_path = pdf_path.with_suffix(".html")
     metadata = _json_object(row["metadata_json"])
     metadata_backup_path = metadata.get("legacy_pdf_backup_path")
-    backup_path = Path(str(metadata_backup_path)) if isinstance(metadata_backup_path, str) else pdf_path.with_suffix(".legacy-latex.pdf")
+    backup_path = (
+        Path(str(metadata_backup_path))
+        if isinstance(metadata_backup_path, str)
+        else pdf_path.with_suffix(".legacy-latex.pdf")
+    )
     is_html_pdf = str(row["render_format"] or "") == "html_pdf"
 
     if not pdf_path.exists():
@@ -354,8 +362,10 @@ def _migrate_one(
 
     now_dt = datetime.now(timezone.utc)
     now = now_dt.isoformat()
-    backup_for_rollback = backup_path if not is_html_pdf else pdf_path.with_name(
-        f"{pdf_path.stem}.pre-refresh-{now_dt.strftime('%Y%m%dT%H%M%S%fZ')}{pdf_path.suffix}"
+    backup_for_rollback = (
+        backup_path
+        if not is_html_pdf
+        else pdf_path.with_name(f"{pdf_path.stem}.pre-refresh-{now_dt.strftime('%Y%m%dT%H%M%S%fZ')}{pdf_path.suffix}")
     )
     tmp_html_path = _temporary_sibling(html_path)
     tmp_pdf_path = _temporary_sibling(pdf_path)

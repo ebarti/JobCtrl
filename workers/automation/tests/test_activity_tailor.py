@@ -58,7 +58,6 @@ async def test_tailor_activity_invokes_observed_tailor_core():
                         retailor=True,
                         tailor_models=("codex:draft-a", "claude:draft-b"),
                         tailor_judge_model="gemini:judge-c",
-                        tailor_judge_min_score=0.9,
                     ),
                     id=f"tailor-wf-{uuid.uuid4()}",
                     task_queue=queue,
@@ -72,7 +71,6 @@ async def test_tailor_activity_invokes_observed_tailor_core():
     assert args[2]["retailor"] is True
     assert args[2]["tailor_models"] == ("codex:draft-a", "claude:draft-b")
     assert args[2]["tailor_judge_model"] == "gemini:judge-c"
-    assert args[2]["tailor_judge_min_score"] == 0.9
     assert kwargs["mode"] == "workflow"
     assert output.status == "ok"
     assert output.elapsed == pytest.approx(0.4)

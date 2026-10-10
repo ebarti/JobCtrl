@@ -67,7 +67,6 @@ def build_run_stage_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
         stages=stages,
         tenant_id=tenant_id,
     )
-    raw_judge_min_score = params.get("tailorJudgeMinScore")
     if stages == ["discover"]:
         payload = DiscoverWorkflowInput(
             tenant_id=tenant_id,
@@ -79,7 +78,6 @@ def build_run_stage_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
             validation_mode=str(params.get("validationMode", "normal")),
             tailor_models=tuple(str(item) for item in (params.get("tailorModels") or ())),
             tailor_judge_model=str(params["tailorJudgeModel"]) if params.get("tailorJudgeModel") else None,
-            tailor_judge_min_score=(float(raw_judge_min_score) if raw_judge_min_score is not None else None),
             source_ids=_source_ids(params),
             llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
         )
@@ -111,24 +109,15 @@ def build_run_stage_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
         retailor=bool(params.get("retailor", False)),
         tailor_models=tuple(str(item) for item in (params.get("tailorModels") or ())),
         tailor_judge_model=str(params["tailorJudgeModel"]) if params.get("tailorJudgeModel") else None,
-        tailor_judge_min_score=(
-            float(raw_judge_min_score) if raw_judge_min_score is not None else None
-        ),
         job_id=(
             apply_selector.job_id
             if apply_selector is not None and apply_selector.job_id is not None
             else _optional_job_id(params, "jobId")
         ),
-        job_ids=(
-            ()
-            if apply_selector is not None and apply_selector.job_id is not None
-            else _job_ids(params)
-        ),
+        job_ids=(() if apply_selector is not None and apply_selector.job_id is not None else _job_ids(params)),
         # ``coverJobIds`` is an internal key written only by the material
         # cohort freeze above; ignore it on unresolved requests.
-        cover_job_ids=(
-            _job_ids(params, key="coverJobIds") if material_selection_resolved else ()
-        ),
+        cover_job_ids=(_job_ids(params, key="coverJobIds") if material_selection_resolved else ()),
         apply_selector_keys=apply_selector.keys if apply_selector else (),
         material_selection_resolved=material_selection_resolved,
         source_ids=_source_ids(params),
@@ -225,16 +214,11 @@ def build_pipeline_workflow_spec(
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
 ) -> WorkflowStartSpec:
-    apply_selector = (
-        _apply_selector(params, job_id=job_id, job_ids=job_ids)
-        if "apply" in stages
-        else None
-    )
+    apply_selector = _apply_selector(params, job_id=job_id, job_ids=job_ids) if "apply" in stages else None
     if "apply" in stages:
         _require_auto_apply_browser_capability()
     _reject_legacy_pipeline_job_urls(params)
     tenant_id = _tenant_id(params)
-    raw_judge_min_score = params.get("tailorJudgeMinScore")
     payload = JobPipelineWorkflowInput(
         tenant_id=tenant_id,
         expected_app_dir=params.get("expectedAppDir"),
@@ -249,9 +233,6 @@ def build_pipeline_workflow_spec(
         retailor=retailor,
         tailor_models=tuple(str(item) for item in (params.get("tailorModels") or ())),
         tailor_judge_model=str(params["tailorJudgeModel"]) if params.get("tailorJudgeModel") else None,
-        tailor_judge_min_score=(
-            float(raw_judge_min_score) if raw_judge_min_score is not None else None
-        ),
         job_id=apply_selector.job_id if apply_selector is not None else job_id,
         job_ids=() if apply_selector is not None else job_ids,
         apply_selector_keys=apply_selector.keys if apply_selector else (),
@@ -283,11 +264,7 @@ def build_apply_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
         continuous=bool(params.get("continuous", False)),
         approval_required=bool(params.get("applyApprovalRequired", True)),
     )
-    workflow_id = (
-        apply_workflow_id(tenant_id, str(selector.job_id))
-        if selector.job_id is not None
-        else None
-    )
+    workflow_id = apply_workflow_id(tenant_id, str(selector.job_id)) if selector.job_id is not None else None
     return WorkflowStartSpec(workflow=ApplyWorkflow, args=(payload,), workflow_id=workflow_id)
 
 
@@ -321,9 +298,7 @@ def _apply_selector(
     if not keys:
         return _ApplySelector()
     if keys != ("jobId",):
-        raise ValueError(
-            "apply accepts only a canonical jobId; omit all selector keys for batch apply"
-        )
+        raise ValueError("apply accepts only a canonical jobId; omit all selector keys for batch apply")
 
     raw_job_id = job_id if job_id is not None else params["jobId"]
     if not isinstance(raw_job_id, str) or not raw_job_id.strip():
@@ -349,16 +324,17 @@ def _require_auto_apply_browser_capability() -> None:
 def build_interview_prep_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
     tenant_id = _tenant_id(params)
     if "jobUrl" in params:
-        raise ValueError(
-            "interview prep requires jobId; jobUrl is only a locator at the RPC boundary"
-        )
+        raise ValueError("interview prep requires jobId; jobUrl is only a locator at the RPC boundary")
     job_id = canonical_job_id(str(_require(params, "jobId")))
     selection = selection_from_rpc(params)
     if "selectedQuestionIds" in selection:
         validate_interview_selection(selection["selectedQuestionIds"], catalog_binding=selection.get("catalogBinding"))
     elif "catalogBinding" in selection:
         catalog = load_interview_catalog()
-        if selection["catalogBinding"] != {"catalogRevision": catalog["catalogRevision"], "catalogDigest": catalog["catalogDigest"]}:
+        if selection["catalogBinding"] != {
+            "catalogRevision": catalog["catalogRevision"],
+            "catalogDigest": catalog["catalogDigest"],
+        }:
             raise ValueError("catalog_mismatch")
     payload = InterviewPrepWorkflowInput(
         tenant_id=tenant_id,
@@ -384,9 +360,7 @@ def build_contact_research_workflow_spec(params: dict[str, Any]) -> WorkflowStar
     """
     tenant_id = _tenant_id(params)
     if "jobUrl" in params:
-        raise ValueError(
-            "contact research requires jobId; jobUrl is only a locator at the RPC boundary"
-        )
+        raise ValueError("contact research requires jobId; jobUrl is only a locator at the RPC boundary")
     task_id = str(_require(params, "taskId"))
     employer = str(params.get("employer") or "").strip() or None
     raw_job_id = params.get("jobId")

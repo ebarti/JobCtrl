@@ -769,6 +769,7 @@ export function ProfileForm({
   const suggestionReviewRequiredRef = useRef(false);
   const suggestionReviewResolvedVersionRef = useRef<number | undefined>(undefined);
   const plateProfileProjectionRef = useRef<PlateProfileProjectionState | null>(null);
+  const acceptedCandidateInterpretationRef = useRef<string | undefined>(undefined);
   const expectedProfileVersionRef = useRef<number | undefined>(undefined);
   const requiredAcceptPendingRef = useRef(false);
   const profileSaveVersionFenceRef = useRef<number | undefined>(undefined);
@@ -806,6 +807,7 @@ export function ProfileForm({
       && suggestionReviewResolvedVersionRef.current === undefined
     ) {
       expectedProfileVersionRef.current = undefined;
+      acceptedCandidateInterpretationRef.current = undefined;
       setSuggestionDerivedDraft(false);
     }
     return {
@@ -886,7 +888,8 @@ export function ProfileForm({
           profileResponse = await updateProfile.mutateAsync(
             // Every full-profile edit is conditional on the snapshot that
             // actually supplied this form. A new profile has no version yet.
-            toUpdateRequest(value, formBaseVersion ?? undefined),
+            { ...toUpdateRequest(value, formBaseVersion ?? undefined),
+              ...((submittedSuggestions.roles.length > 0 || submittedSuggestions.preferences.length > 0) && acceptedCandidateInterpretationRef.current ? {acceptedCandidateInterpretationId: acceptedCandidateInterpretationRef.current} : {}) },
           );
         } catch {
           // The mutation owns the displayed error and rollback. Keep the local
@@ -899,6 +902,7 @@ export function ProfileForm({
       }
       if (serializeProfileValues(formApi.state.values) === submittedValues) {
         expectedProfileVersionRef.current = undefined;
+      acceptedCandidateInterpretationRef.current = undefined;
         requiredPinConflictRef.current = null;
         formBaseResponseRef.current = profileResponse;
         formBaseValuesRef.current = structuredClone(toProfileFormValues(profileResponse));
@@ -952,6 +956,7 @@ export function ProfileForm({
           suggestionReviewRequiredRef.current = true;
           suggestionReviewResolvedVersionRef.current = undefined;
           expectedProfileVersionRef.current = undefined;
+      acceptedCandidateInterpretationRef.current = undefined;
           setSuggestionDerivedDraft(true);
           if (!jsonValuesEqual(cleanedProfile, currentProfile)) {
             formApi.setFieldValue("profile", cleanedProfile);
@@ -973,6 +978,7 @@ export function ProfileForm({
           setSuggestionDerivedDraft(true);
         } else {
           expectedProfileVersionRef.current = undefined;
+      acceptedCandidateInterpretationRef.current = undefined;
           setSuggestionDerivedDraft(false);
         }
         setStatusTone("warning");
@@ -1027,6 +1033,7 @@ export function ProfileForm({
     }
     plateProfileProjectionRef.current = null;
     expectedProfileVersionRef.current = undefined;
+      acceptedCandidateInterpretationRef.current = undefined;
     profileSaveVersionFenceRef.current = undefined;
     requiredPinConflictRef.current = null;
     const initialValues = toProfileFormValues(initial);
@@ -1100,6 +1107,7 @@ export function ProfileForm({
     suggestionReviewResolvedVersionRef.current = undefined;
     setFormBaseVersion(initial.profileVersion);
     expectedProfileVersionRef.current = undefined;
+      acceptedCandidateInterpretationRef.current = undefined;
     if (profileSaveVersionFenceRef.current !== undefined) {
       profileSaveVersionFenceRef.current = initial.profileVersion ?? undefined;
     }
@@ -1240,6 +1248,7 @@ export function ProfileForm({
       if (jsonValuesEqual(form.state.values, submittedBase)
         || jsonValuesEqual(form.state.values, nextValues)) {
         expectedProfileVersionRef.current = undefined;
+      acceptedCandidateInterpretationRef.current = undefined;
         requiredPinConflictRef.current = null;
         plateProfileProjectionRef.current = null;
         form.reset(toProfileFormValues(response));
@@ -1437,6 +1446,7 @@ export function ProfileForm({
         event.preventDefault();
         plateProfileProjectionRef.current = null;
         expectedProfileVersionRef.current = undefined;
+      acceptedCandidateInterpretationRef.current = undefined;
         requiredPinConflictRef.current = null;
         const savedFence = profileSaveVersionFenceRef.current;
         const useSavedResponse = savedFence !== undefined
@@ -1472,6 +1482,9 @@ export function ProfileForm({
           {statusMessage}
         </div>
       ) : null}
+      {isProfileSection && initial.candidateInterpretation ? <div className="status-line candidate-interpretation-status" data-typography="metadata" role="status">
+        {initial.candidateInterpretation.determination ? <>Candidate interpretation {initial.candidateInterpretation.status === "confirmed" ? "confirmed" : "awaits your confirmation"}. Model {initial.candidateInterpretation.determination.model}; prompt {initial.candidateInterpretation.determination.prompt_version}; input {initial.candidateInterpretation.determination.input_fingerprint}. Review the target-role suggestions before saving them.</> : <>Candidate interpretation unavailable{initial.candidateInterpretation.failureCode ? `: ${initial.candidateInterpretation.failureCode}` : " until a model determination is recorded"}. Use Suggest target roles to retry.</>}
+      </div> : null}
       <form.Subscribe
         selector={(state) => ({
           isDirty: state.isDirty,
@@ -1555,7 +1568,8 @@ export function ProfileForm({
                     profileVersion={initial.profileVersion}
                     onRebase={rebaseOntoSavedProfile}
                     onResolveWithoutAcceptance={resolveSuggestionReviewWithoutAcceptance}
-                    onAccept={(titles, preferences, expectedProfileVersion) => {
+                    onAccept={(titles, preferences, expectedProfileVersion, determinationId) => {
+                      acceptedCandidateInterpretationRef.current = determinationId;
                       const rolesBefore = targetRoles(profileField.state.value);
                       const preferencesBefore = targetPreferenceRows(profileField.state.value);
                       const nextProfile = appendTargetPreferences(

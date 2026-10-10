@@ -15,11 +15,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from jobctrl.domain.materials.value_objects import (
-    ArtifactStatus,
-    ArtifactType,
-    RenderFormat,
-)
+from jobctrl.domain.ports.artifact_review import ArtifactStatus
+from jobctrl.domain.materials.value_objects import ArtifactType, RenderFormat
 
 
 # ---------------------------------------------------------------------------
@@ -69,43 +66,28 @@ class Artifact:
         if not isinstance(self.artifact_id, str) or not self.artifact_id.strip():
             raise ValueError("Artifact.artifact_id must be a non-empty string")
         if not isinstance(self.type, ArtifactType):
-            raise TypeError(
-                f"Artifact.type must be an ArtifactType, got {type(self.type).__name__}"
-            )
+            raise TypeError(f"Artifact.type must be an ArtifactType, got {type(self.type).__name__}")
         if not isinstance(self.status, ArtifactStatus):
-            raise TypeError(
-                f"Artifact.status must be an ArtifactStatus, got {type(self.status).__name__}"
-            )
+            raise TypeError(f"Artifact.status must be an ArtifactStatus, got {type(self.status).__name__}")
         if not isinstance(self.render_format, RenderFormat):
-            raise TypeError(
-                "Artifact.render_format must be a RenderFormat, "
-                f"got {type(self.render_format).__name__}"
-            )
+            raise TypeError(f"Artifact.render_format must be a RenderFormat, got {type(self.render_format).__name__}")
         if not isinstance(self.path, str) or not self.path.strip():
             raise ValueError("Artifact.path must be a non-empty string")
         if self.size_bytes is not None:
             if not isinstance(self.size_bytes, int) or isinstance(self.size_bytes, bool):
                 raise TypeError("Artifact.size_bytes must be an int or None")
             if self.size_bytes < 0:
-                raise ValueError(
-                    f"Artifact.size_bytes must be non-negative, got {self.size_bytes}"
-                )
+                raise ValueError(f"Artifact.size_bytes must be non-negative, got {self.size_bytes}")
         if not isinstance(self.created_at, str) or not self.created_at.strip():
-            raise ValueError(
-                "Artifact.created_at must be a non-empty ISO-8601 timestamp"
-            )
+            raise ValueError("Artifact.created_at must be a non-empty ISO-8601 timestamp")
         if not isinstance(self.metadata, dict):
             raise TypeError("Artifact.metadata must be a dict")
         if self.status is ArtifactStatus.SUPERSEDED:
             if not self.superseded_at or not str(self.superseded_at).strip():
-                raise ValueError(
-                    "Artifact.status == SUPERSEDED requires a non-empty superseded_at"
-                )
+                raise ValueError("Artifact.status == SUPERSEDED requires a non-empty superseded_at")
         else:
             if self.superseded_at is not None:
-                raise ValueError(
-                    "Artifact.superseded_at must be None unless status is SUPERSEDED"
-                )
+                raise ValueError("Artifact.superseded_at must be None unless status is SUPERSEDED")
 
     # ------------------------------------------------------------------
     # Construction helpers
@@ -153,9 +135,7 @@ class Artifact:
         artifact otherwise.
         """
         if status is ArtifactStatus.SUPERSEDED and not superseded_at:
-            raise ValueError(
-                "with_status(SUPERSEDED) requires superseded_at; use supersede(at=…) instead"
-            )
+            raise ValueError("with_status(SUPERSEDED) requires superseded_at; use supersede(at=…) instead")
         return Artifact(
             artifact_id=self.artifact_id,
             type=self.type,
@@ -227,17 +207,9 @@ class Artifact:
             path=str(data["path"]),
             render_format=RenderFormat(data["render_format"]),
             created_at=str(data["created_at"]),
-            size_bytes=(
-                int(data["size_bytes"])
-                if data.get("size_bytes") is not None
-                else None
-            ),
+            size_bytes=(int(data["size_bytes"]) if data.get("size_bytes") is not None else None),
             metadata=dict(data.get("metadata") or {}),
-            superseded_at=(
-                str(data["superseded_at"])
-                if data.get("superseded_at")
-                else None
-            ),
+            superseded_at=(str(data["superseded_at"]) if data.get("superseded_at") else None),
         )
 
 

@@ -87,9 +87,7 @@ def test_detection_is_preference_ordered_and_does_not_adopt_or_launch(
     monkeypatch.setattr(
         browser_capabilities.subprocess,
         "run",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("detection must not launch a browser")
-        ),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("detection must not launch a browser")),
     )
 
     detected = detect_supported_browsers()
@@ -110,9 +108,7 @@ def test_macos_candidate_order_prefers_google_chrome(monkeypatch: pytest.MonkeyP
     ids = [candidate.id for candidate in candidates]
 
     assert ids[0] == "google-chrome"
-    assert ids.index("chromium") > max(
-        index for index, browser_id in enumerate(ids) if browser_id == "google-chrome"
-    )
+    assert ids.index("chromium") > max(index for index, browser_id in enumerate(ids) if browser_id == "google-chrome")
 
 
 def test_default_profile_detection_requires_a_supported_browser_and_standard_default_directory(
@@ -143,9 +139,7 @@ def test_default_profile_detection_requires_a_supported_browser_and_standard_def
     assert detect_default_browser_profile("chromium") is None
 
 
-def test_profile_detection_lists_safe_labels_with_opaque_ids(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_profile_detection_lists_safe_labels_with_opaque_ids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from jobctrl import browser_capabilities
 
     profile_root = tmp_path / "Chrome"
@@ -188,13 +182,8 @@ def test_profile_detection_lists_safe_labels_with_opaque_ids(
     profiles = detect_browser_profiles("google-chrome")
 
     assert [profile.label for profile in profiles] == ["Work", "Personal"]
-    assert all(
-        profile.id.startswith("profile-") and len(profile.id) == 40
-        for profile in profiles
-    )
-    assert str(profile_root) not in repr(
-        [(profile.id, profile.label) for profile in profiles]
-    )
+    assert all(profile.id.startswith("profile-") and len(profile.id) == 40 for profile in profiles)
+    assert str(profile_root) not in repr([(profile.id, profile.label) for profile in profiles])
 
 
 def test_profile_detection_uses_gaia_name_only_for_chrome_default_labels(
@@ -326,27 +315,19 @@ def test_detected_profile_copy_resolves_the_host_path_without_a_caller_path(
     monkeypatch.setattr(
         browser_capabilities,
         "detect_supported_browsers",
-        lambda: (
-            DetectedBrowser("google-chrome", "Google Chrome", browser_executable),
-        ),
+        lambda: (DetectedBrowser("google-chrome", "Google Chrome", browser_executable),),
     )
     monkeypatch.setattr(
         browser_capabilities,
         "_default_browser_profile_locations",
         lambda _browser_id: (profile_root,),
     )
-    enable_system_browser_capability(
-        "authenticated-linkedin-browser", browser_executable, app_dir=tmp_path
-    )
+    enable_system_browser_capability("authenticated-linkedin-browser", browser_executable, app_dir=tmp_path)
 
-    destination = copy_detected_authenticated_linkedin_profile(
-        "google-chrome", consent=True, app_dir=tmp_path
-    )
+    destination = copy_detected_authenticated_linkedin_profile("google-chrome", consent=True, app_dir=tmp_path)
 
     assert (destination / "Default" / "Preferences").read_text(encoding="utf-8") == "{}"
-    copied_local_state = json.loads(
-        (destination / "Local State").read_text(encoding="utf-8")
-    )
+    copied_local_state = json.loads((destination / "Local State").read_text(encoding="utf-8"))
     assert copied_local_state == {
         "os_crypt": {"encrypted_key": "required"},
         "profile": {
@@ -387,23 +368,15 @@ def test_detected_profile_copy_normalizes_the_explicitly_selected_profile(
     monkeypatch.setattr(
         browser_capabilities,
         "detect_supported_browsers",
-        lambda: (
-            DetectedBrowser("google-chrome", "Google Chrome", browser_executable),
-        ),
+        lambda: (DetectedBrowser("google-chrome", "Google Chrome", browser_executable),),
     )
     monkeypatch.setattr(
         browser_capabilities,
         "_default_browser_profile_locations",
         lambda _browser_id: (profile_root,),
     )
-    enable_system_browser_capability(
-        "authenticated-linkedin-browser", browser_executable, app_dir=tmp_path
-    )
-    selected = next(
-        profile
-        for profile in detect_browser_profiles("google-chrome")
-        if profile.label == "Signed in"
-    )
+    enable_system_browser_capability("authenticated-linkedin-browser", browser_executable, app_dir=tmp_path)
+    selected = next(profile for profile in detect_browser_profiles("google-chrome") if profile.label == "Signed in")
 
     destination = copy_detected_authenticated_linkedin_profile(
         "google-chrome",
@@ -414,12 +387,8 @@ def test_detected_profile_copy_normalizes_the_explicitly_selected_profile(
 
     assert (destination / "Default" / "Cookies").read_text(encoding="utf-8") == "selected"
     assert not (destination / "Profile 1").exists()
-    copied_local_state = json.loads(
-        (destination / "Local State").read_text(encoding="utf-8")
-    )
-    assert copied_local_state["profile"]["info_cache"] == {
-        "Default": {"name": "Signed in"}
-    }
+    copied_local_state = json.loads((destination / "Local State").read_text(encoding="utf-8"))
+    assert copied_local_state["profile"]["info_cache"] == {"Default": {"name": "Signed in"}}
 
 
 def test_detected_profile_metadata_is_sanitized_before_destination_publish(
@@ -438,9 +407,7 @@ def test_detected_profile_metadata_is_sanitized_before_destination_publish(
     monkeypatch.setattr(
         browser_capabilities,
         "detect_supported_browsers",
-        lambda: (
-            DetectedBrowser("google-chrome", "Google Chrome", browser_executable),
-        ),
+        lambda: (DetectedBrowser("google-chrome", "Google Chrome", browser_executable),),
     )
     monkeypatch.setattr(
         browser_capabilities,
@@ -455,9 +422,7 @@ def test_detected_profile_metadata_is_sanitized_before_destination_publish(
     monkeypatch.setattr(
         browser_capabilities,
         "_sanitize_detected_profile_local_state_at",
-        lambda _descriptor, _profile_name: (_ for _ in ()).throw(
-            RuntimeError("interrupted")
-        ),
+        lambda _descriptor, _profile_name: (_ for _ in ()).throw(RuntimeError("interrupted")),
     )
 
     with pytest.raises(BrowserCapabilityError):
@@ -500,26 +465,16 @@ def test_explicit_detected_profile_replaces_an_existing_owned_copy_after_staging
     monkeypatch.setattr(
         browser_capabilities,
         "detect_supported_browsers",
-        lambda: (
-            DetectedBrowser("google-chrome", "Google Chrome", browser_executable),
-        ),
+        lambda: (DetectedBrowser("google-chrome", "Google Chrome", browser_executable),),
     )
     monkeypatch.setattr(
         browser_capabilities,
         "_default_browser_profile_locations",
         lambda _browser_id: (profile_root,),
     )
-    enable_system_browser_capability(
-        "authenticated-linkedin-browser", browser_executable, app_dir=tmp_path
-    )
-    copy_detected_authenticated_linkedin_profile(
-        "google-chrome", consent=True, app_dir=tmp_path
-    )
-    selected = next(
-        profile
-        for profile in detect_browser_profiles("google-chrome")
-        if profile.label == "New"
-    )
+    enable_system_browser_capability("authenticated-linkedin-browser", browser_executable, app_dir=tmp_path)
+    copy_detected_authenticated_linkedin_profile("google-chrome", consent=True, app_dir=tmp_path)
+    selected = next(profile for profile in detect_browser_profiles("google-chrome") if profile.label == "New")
 
     destination = copy_detected_authenticated_linkedin_profile(
         "google-chrome",
@@ -559,26 +514,16 @@ def test_failed_detected_profile_replacement_preserves_the_existing_copy(
     monkeypatch.setattr(
         browser_capabilities,
         "detect_supported_browsers",
-        lambda: (
-            DetectedBrowser("google-chrome", "Google Chrome", browser_executable),
-        ),
+        lambda: (DetectedBrowser("google-chrome", "Google Chrome", browser_executable),),
     )
     monkeypatch.setattr(
         browser_capabilities,
         "_default_browser_profile_locations",
         lambda _browser_id: (profile_root,),
     )
-    enable_system_browser_capability(
-        "authenticated-linkedin-browser", browser_executable, app_dir=tmp_path
-    )
-    destination = copy_detected_authenticated_linkedin_profile(
-        "google-chrome", consent=True, app_dir=tmp_path
-    )
-    selected = next(
-        profile
-        for profile in detect_browser_profiles("google-chrome")
-        if profile.label == "New"
-    )
+    enable_system_browser_capability("authenticated-linkedin-browser", browser_executable, app_dir=tmp_path)
+    destination = copy_detected_authenticated_linkedin_profile("google-chrome", consent=True, app_dir=tmp_path)
+    selected = next(profile for profile in detect_browser_profiles("google-chrome") if profile.label == "New")
     original_copy_directory = browser_capabilities._copy_profile_directory
 
     def interrupted_copy(*args, **kwargs) -> None:
@@ -626,26 +571,16 @@ def test_profile_replacement_restores_existing_copy_when_capability_changes_afte
     monkeypatch.setattr(
         browser_capabilities,
         "detect_supported_browsers",
-        lambda: (
-            DetectedBrowser("google-chrome", "Google Chrome", browser_executable),
-        ),
+        lambda: (DetectedBrowser("google-chrome", "Google Chrome", browser_executable),),
     )
     monkeypatch.setattr(
         browser_capabilities,
         "_default_browser_profile_locations",
         lambda _browser_id: (profile_root,),
     )
-    enable_system_browser_capability(
-        "authenticated-linkedin-browser", browser_executable, app_dir=tmp_path
-    )
-    destination = copy_detected_authenticated_linkedin_profile(
-        "google-chrome", consent=True, app_dir=tmp_path
-    )
-    selected = next(
-        profile
-        for profile in detect_browser_profiles("google-chrome")
-        if profile.label == "New"
-    )
+    enable_system_browser_capability("authenticated-linkedin-browser", browser_executable, app_dir=tmp_path)
+    destination = copy_detected_authenticated_linkedin_profile("google-chrome", consent=True, app_dir=tmp_path)
+    selected = next(profile for profile in detect_browser_profiles("google-chrome") if profile.label == "New")
     original_copy_profile_tree = browser_capabilities._copy_profile_tree
 
     def copied_then_revoked(*args, **kwargs):
@@ -705,28 +640,18 @@ def test_concurrent_profile_replacement_waits_for_failed_rollback_before_publish
     monkeypatch.setattr(
         browser_capabilities,
         "detect_supported_browsers",
-        lambda: (
-            DetectedBrowser("google-chrome", "Google Chrome", browser_executable),
-        ),
+        lambda: (DetectedBrowser("google-chrome", "Google Chrome", browser_executable),),
     )
     monkeypatch.setattr(
         browser_capabilities,
         "_default_browser_profile_locations",
         lambda _browser_id: (profile_root,),
     )
-    enable_system_browser_capability(
-        "authenticated-linkedin-browser", browser_executable, app_dir=tmp_path
-    )
-    destination = copy_detected_authenticated_linkedin_profile(
-        "google-chrome", consent=True, app_dir=tmp_path
-    )
+    enable_system_browser_capability("authenticated-linkedin-browser", browser_executable, app_dir=tmp_path)
+    destination = copy_detected_authenticated_linkedin_profile("google-chrome", consent=True, app_dir=tmp_path)
     profiles = detect_browser_profiles("google-chrome")
-    selected_a = next(
-        profile for profile in profiles if profile.label == "Replacement A"
-    )
-    selected_b = next(
-        profile for profile in profiles if profile.label == "Replacement B"
-    )
+    selected_a = next(profile for profile in profiles if profile.label == "Replacement A")
+    selected_b = next(profile for profile in profiles if profile.label == "Replacement B")
 
     a_validation_started = threading.Event()
     allow_a_failure = threading.Event()
@@ -745,9 +670,7 @@ def test_concurrent_profile_replacement_waits_for_failed_rollback_before_publish
             if a_state_transactions == 2:
                 a_validation_started.set()
                 assert allow_a_failure.wait(timeout=5)
-                raise browser_capabilities.BrowserCapabilityStateError(
-                    "forced post-publish validation failure"
-                )
+                raise browser_capabilities.BrowserCapabilityStateError("forced post-publish validation failure")
         with original_state_transaction(*args, **kwargs) as state:
             yield state
 
@@ -806,9 +729,7 @@ def test_concurrent_profile_replacement_waits_for_failed_rollback_before_publish
     assert isinstance(errors.get("replacement-a"), BrowserCapabilityError)
     assert "replacement-b" not in errors
     assert b_copy_started.is_set()
-    assert (
-        destination / "Default" / "Cookies"
-    ).read_text(encoding="utf-8") == "replacement-b"
+    assert (destination / "Default" / "Cookies").read_text(encoding="utf-8") == "replacement-b"
     assert list((tmp_path / "browser-profiles").glob(".*.copy-*")) == []
     assert list((tmp_path / "browser-profiles").glob(".*.replaced-*")) == []
 
@@ -824,9 +745,7 @@ def test_explicit_detected_browser_id_is_resolved_and_enabled(
         lambda: (DetectedBrowser("google-chrome", "Google Chrome", browser_executable),),
     )
 
-    status = enable_detected_browser_capability(
-        "auto-apply-browser", "google-chrome", app_dir=tmp_path
-    )
+    status = enable_detected_browser_capability("auto-apply-browser", "google-chrome", app_dir=tmp_path)
 
     assert status.status == "ready"
     assert require_system_browser_capability("auto-apply-browser", app_dir=tmp_path) == browser_executable.resolve()
@@ -846,9 +765,7 @@ def test_detected_browser_id_fails_closed_when_installation_disappears(
     browser_executable.unlink()
 
     with pytest.raises(DetectedBrowserUnavailableError, match="no longer available"):
-        enable_detected_browser_capability(
-            "auto-apply-browser", "google-chrome", app_dir=tmp_path
-        )
+        enable_detected_browser_capability("auto-apply-browser", "google-chrome", app_dir=tmp_path)
 
     assert not browser_capability_config_path(app_dir=tmp_path).exists()
 
@@ -950,9 +867,7 @@ def test_enabled_auto_apply_launch_uses_a_clean_owned_profile_without_host_copy(
     assert list(profile.iterdir()) == [profile / "Default"]
 
 
-def test_standing_apply_loop_rechecks_capability_before_the_next_candidate(
-    monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_standing_apply_loop_rechecks_capability_before_the_next_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
     from jobctrl import browser_capabilities
     from jobctrl.apply import launcher
 
@@ -978,7 +893,19 @@ def test_standing_apply_loop_rechecks_capability_before_the_next_candidate(
 
     monkeypatch.setattr(browser_capabilities, "require_system_browser_capability", check_capability)
     monkeypatch.setattr(launcher, "acquire_job", acquire)
-    monkeypatch.setattr(launcher, "run_job", lambda *_args, **_kwargs: runs.append("run") or ("dry_run", 1))
+    monkeypatch.setattr(
+        launcher,
+        "run_job",
+        lambda *_args, **_kwargs: (
+            runs.append("run")
+            or (
+                __import__("jobctrl.domain.apply.value_objects", fromlist=["DryRunComplete"]).DryRunComplete(
+                    navigated_to="", coverage="partial"
+                ),
+                1,
+            )
+        ),
+    )
     monkeypatch.setattr(launcher, "mark_result", lambda *_args, **_kwargs: None)
 
     launcher.worker_loop(worker_id=7, limit=2, dry_run=True, snapshot=object())
@@ -991,16 +918,14 @@ def test_standing_apply_loop_rechecks_capability_before_the_next_candidate(
 def test_enable_adopts_only_an_explicit_executable_and_writes_private_state(
     tmp_path: Path, browser_executable: Path
 ) -> None:
-    status = enable_system_browser_capability(
-        "auto-apply-browser", browser_executable, app_dir=tmp_path
-    )
+    status = enable_system_browser_capability("auto-apply-browser", browser_executable, app_dir=tmp_path)
 
     state_path = browser_capability_config_path(app_dir=tmp_path)
     persisted = json.loads(state_path.read_text(encoding="utf-8"))
     assert status.status == "ready"
-    assert require_system_browser_capability("auto-apply-browser", app_dir=tmp_path) == Path(
-        browser_executable
-    ).resolve()
+    assert (
+        require_system_browser_capability("auto-apply-browser", app_dir=tmp_path) == Path(browser_executable).resolve()
+    )
     assert persisted["browser_capabilities"]["capabilities"]["auto-apply-browser"] == {
         "enabled": True,
         "systemBrowser": {"executable": str(browser_executable.resolve())},
@@ -1088,9 +1013,7 @@ def test_concurrent_enable_cannot_overwrite_a_completed_disable(
 
 def test_enable_missing_executable_leaves_capability_disabled(tmp_path: Path) -> None:
     with pytest.raises(BrowserCapabilityError, match="cannot enable"):
-        enable_system_browser_capability(
-            "auto-apply-browser", tmp_path / "missing-browser", app_dir=tmp_path
-        )
+        enable_system_browser_capability("auto-apply-browser", tmp_path / "missing-browser", app_dir=tmp_path)
 
     assert browser_capability_status("auto-apply-browser", app_dir=tmp_path).status == "disabled"
 
@@ -1107,9 +1030,7 @@ def test_linkedin_enable_without_profile_copy_stays_missing_and_never_starts_bro
 ) -> None:
     from jobctrl.infrastructure.enrichment import linkedin_apply_resolver as resolver_module
 
-    status = enable_system_browser_capability(
-        "authenticated-linkedin-browser", browser_executable, app_dir=tmp_path
-    )
+    status = enable_system_browser_capability("authenticated-linkedin-browser", browser_executable, app_dir=tmp_path)
     uncreated_profile = tmp_path / "uncreated-profile"
     resolver = resolver_module.LinkedInApplyUrlResolver(
         profile_dir=uncreated_profile,
@@ -1118,9 +1039,7 @@ def test_linkedin_enable_without_profile_copy_stays_missing_and_never_starts_bro
     monkeypatch.setattr(
         resolver_module,
         "require_system_browser_capability",
-        lambda _capability: require_system_browser_capability(
-            "authenticated-linkedin-browser", app_dir=tmp_path
-        ),
+        lambda _capability: require_system_browser_capability("authenticated-linkedin-browser", app_dir=tmp_path),
     )
 
     assert status.status == "missing"
@@ -1130,9 +1049,7 @@ def test_linkedin_enable_without_profile_copy_stays_missing_and_never_starts_bro
     assert not uncreated_profile.exists()
 
 
-def test_disabling_linkedin_capability_closes_an_already_open_context(
-    monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_disabling_linkedin_capability_closes_an_already_open_context(monkeypatch: pytest.MonkeyPatch) -> None:
     from types import SimpleNamespace
 
     from jobctrl.infrastructure.enrichment import linkedin_apply_resolver as resolver_module
@@ -1153,9 +1070,7 @@ def test_disabling_linkedin_capability_closes_an_already_open_context(
     assert resolver.started is False
 
 
-def test_disable_removes_readiness_without_deleting_owned_profile(
-    tmp_path: Path, browser_executable: Path
-) -> None:
+def test_disable_removes_readiness_without_deleting_owned_profile(tmp_path: Path, browser_executable: Path) -> None:
     enable_system_browser_capability("authenticated-linkedin-browser", browser_executable, app_dir=tmp_path)
     destination = capability_profile_dir("authenticated-linkedin-browser", app_dir=tmp_path)
     destination.mkdir(parents=True)
@@ -1191,9 +1106,7 @@ def test_profile_copy_requires_separate_consent_and_never_persists_source_path(
     assert destination == capability_profile_dir("authenticated-linkedin-browser", app_dir=tmp_path)
     assert (destination / "Cookies").read_text(encoding="utf-8") == "synthetic-cookie"
     assert str(source) not in raw_state
-    state = load_browser_capability_state(app_dir=tmp_path)["capabilities"][
-        "authenticated-linkedin-browser"
-    ]
+    state = load_browser_capability_state(app_dir=tmp_path)["capabilities"]["authenticated-linkedin-browser"]
     assert state["profileCopied"] is True
     consent = state["profileCopyConsent"]
     assert consent["method"] == "explicit-cli"
@@ -1252,9 +1165,7 @@ def test_profile_copy_does_not_overwrite_a_concurrent_disable_after_a_stale_lock
     assert not destination.exists()
 
 
-def test_profile_copy_does_not_follow_source_symlinks(
-    tmp_path: Path, browser_executable: Path
-) -> None:
+def test_profile_copy_does_not_follow_source_symlinks(tmp_path: Path, browser_executable: Path) -> None:
     if not hasattr(os, "symlink"):
         pytest.skip("symlinks are unavailable")
     enable_system_browser_capability("authenticated-linkedin-browser", browser_executable, app_dir=tmp_path)
@@ -1269,9 +1180,7 @@ def test_profile_copy_does_not_follow_source_symlinks(
     assert not (destination / "linked-secret").exists()
 
 
-def test_profile_copy_rejects_preexisting_unconsented_destination(
-    tmp_path: Path, browser_executable: Path
-) -> None:
+def test_profile_copy_rejects_preexisting_unconsented_destination(tmp_path: Path, browser_executable: Path) -> None:
     enable_system_browser_capability("authenticated-linkedin-browser", browser_executable, app_dir=tmp_path)
     source = tmp_path / "outside-profile"
     source.mkdir()
@@ -1281,16 +1190,12 @@ def test_profile_copy_rejects_preexisting_unconsented_destination(
     with pytest.raises(BrowserCapabilityError, match="cannot be adopted"):
         copy_authenticated_linkedin_profile(source, consent=True, app_dir=tmp_path)
 
-    state = load_browser_capability_state(app_dir=tmp_path)["capabilities"][
-        "authenticated-linkedin-browser"
-    ]
+    state = load_browser_capability_state(app_dir=tmp_path)["capabilities"]["authenticated-linkedin-browser"]
     assert state["profileCopied"] is False
     assert state["profileCopyConsent"] is None
 
 
-def test_profile_copy_readiness_and_use_reject_symlinked_ancestry(
-    tmp_path: Path, browser_executable: Path
-) -> None:
+def test_profile_copy_readiness_and_use_reject_symlinked_ancestry(tmp_path: Path, browser_executable: Path) -> None:
     if not hasattr(os, "symlink"):
         pytest.skip("symlinks are unavailable")
     enable_system_browser_capability("authenticated-linkedin-browser", browser_executable, app_dir=tmp_path)
@@ -1362,8 +1267,6 @@ def test_profile_copy_parent_swap_stays_anchored_and_never_writes_external_data(
     assert swapped is True
     assert list(external_parent.iterdir()) == []
     assert not (displaced_parent / destination.name).exists()
-    state = load_browser_capability_state(app_dir=tmp_path)["capabilities"][
-        "authenticated-linkedin-browser"
-    ]
+    state = load_browser_capability_state(app_dir=tmp_path)["capabilities"]["authenticated-linkedin-browser"]
     assert state["profileCopied"] is False
     assert state["profileCopyConsent"] is None

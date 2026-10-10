@@ -3,13 +3,13 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { expect, it } from 'vitest';
-import { initializeExactV7Database } from './v7-schema.js';
+import { initializeExactDatabase } from './exact-schema.js';
 import { loadInterviewPrepReadModel } from '../src/projections.js';
 
 it('projects canonical failed/history rows and explicit legacy without invented bindings', () => {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'jobctrl-interview-v12-'));
   const file=path.join(dir,'synthetic.db');
-  initializeExactV7Database(file);
+  initializeExactDatabase(file);
   const db=new Database(file);
   try {
     db.pragma('foreign_keys=ON');

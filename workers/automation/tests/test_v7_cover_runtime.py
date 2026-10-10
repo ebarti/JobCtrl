@@ -57,6 +57,27 @@ class _CoverLlm:
             "Candidate\nEND_OF_COVER_LETTER"
         )
 
+    def chat_json(self, messages, *, response_schema, **kwargs):
+        if response_schema["title"] != "GeneratedProseDraft":
+            from tests.determination_fakes import VerificationModel
+
+            return VerificationModel().chat_json(messages, response_schema=response_schema, **kwargs)
+        text = self.chat(messages).removesuffix("END_OF_COVER_LETTER").strip()
+        return {
+            "lines": [
+                {
+                    "line_id": f"cover:{index + 1}",
+                    "text": line,
+                    "evidence_ids": [],
+                    "requirement_ids": [],
+                    "transform_type": "rephrase",
+                    "reason": "Explicit synthetic generator anchor",
+                }
+                for index, line in enumerate(text.splitlines())
+                if line.strip()
+            ]
+        }
+
 
 class _PdfRenderer:
     def render_cover_letter_to_pdf(
@@ -76,7 +97,7 @@ class _PdfRenderer:
         )
 
 
-class _FailingCoverLlm:
+class _FailingCoverLlm(_CoverLlm):
     model = "test-model"
 
     def __init__(self) -> None:
@@ -99,6 +120,7 @@ class _CancelingCoverLlm(_CoverLlm):
 
 @pytest.fixture()
 def conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
+    monkeypatch.setattr("jobctrl.llm.enforce_spend_budget", lambda **kwargs: None)
     connection = init_db(tmp_path / "jobctrl-v7.db")
     monkeypatch.setattr(cover_letter_module, "get_connection", lambda: connection)
     monkeypatch.setattr(cover_letter_module, "COVER_LETTER_DIR", tmp_path / "cover-letters")
@@ -118,6 +140,17 @@ def _snapshot(tenant_id: TenantId) -> ProfileSnapshot:
                         "title": "Platform Engineer",
                         "company": "Previous Co",
                         "bullets": ["Built Python platform services."],
+                        "achievement_evidence": [
+                            {
+                                "id": "platform",
+                                "source_text": "Built Python services.",
+                                "action": "Built Python services.",
+                                "metrics": [],
+                                "outcome": "Authored synthetic outcome",
+                                "evidence_strength": "supported",
+                                "user_confirmed": True,
+                            }
+                        ],
                     }
                 ],
                 "education_entries": [],
@@ -166,6 +199,7 @@ def _seed_target(
         (str(tenant_id), str(job_id), _NOW, _NOW),
     )
     from .availability_fixture import seed_fresh_availability
+
     seed_fresh_availability(conn, str(job_id), str(tenant_id))
     conn.commit()
 
@@ -207,28 +241,32 @@ def _seed_approved_resume(
 ) -> None:
     resume_path = tmp_path / f"{tenant_id}-{job_id}-resume.txt"
     resume_path.write_text("Python platform engineer", encoding="utf-8")
-    materials = MaterialsSetFactory.initial(
-        tenant_id=tenant_id,
-        job_id=job_id,
-        created_at=_NOW,
-    ).with_resume_attempt(
-        Artifact.create(
-            type=ArtifactType.TAILORED_RESUME,
-            path=str(resume_path),
+    materials = (
+        MaterialsSetFactory.initial(
+            tenant_id=tenant_id,
+            job_id=job_id,
             created_at=_NOW,
-            render_format=RenderFormat.TEXT,
-        ),
-        validation=ValidationResult.success(),
-        verdict=JudgeVerdict.passed(),
-        updated_at=_NOW,
-    ).with_resume_pdf(
-        Artifact.create(
-            type=ArtifactType.RESUME_PDF,
-            path=str(tmp_path / f"{tenant_id}-{job_id}-resume.pdf"),
-            created_at=_NOW,
-            render_format=RenderFormat.HTML_PDF,
-        ),
-        updated_at=_NOW,
+        )
+        .with_resume_attempt(
+            Artifact.create(
+                type=ArtifactType.TAILORED_RESUME,
+                path=str(resume_path),
+                created_at=_NOW,
+                render_format=RenderFormat.TEXT,
+            ),
+            validation=ValidationResult.success(),
+            verdict=JudgeVerdict.passed(),
+            updated_at=_NOW,
+        )
+        .with_resume_pdf(
+            Artifact.create(
+                type=ArtifactType.RESUME_PDF,
+                path=str(tmp_path / f"{tenant_id}-{job_id}-resume.pdf"),
+                created_at=_NOW,
+                render_format=RenderFormat.HTML_PDF,
+            ),
+            updated_at=_NOW,
+        )
     )
     SqliteMaterialsRepository(conn).save(materials)
 
@@ -284,9 +322,7 @@ def test_cover_by_id_persists_artifacts_and_isolates_same_job_id_across_tenants(
     other = SqliteMaterialsRepository(conn).load_current_approved(_TENANT_B, _JOB_ID)
     assert primary is not None and primary.cover_letter is not None and primary.cover_letter_pdf is not None
     assert other is not None and other.cover_letter is None
-    stages = conn.execute(
-        "SELECT tenant_id, job_id, state FROM job_stage_states WHERE stage = 'cover'"
-    ).fetchall()
+    stages = conn.execute("SELECT tenant_id, job_id, state FROM job_stage_states WHERE stage = 'cover'").fetchall()
     assert [tuple(row) for row in stages] == [(str(_TENANT_A), str(_JOB_ID), "succeeded")]
     event = conn.execute(
         "SELECT tenant_id, job_id FROM job_events WHERE event_type = 'StageCompleted' AND stage = 'cover'"
@@ -332,9 +368,7 @@ def test_cover_default_runner_fences_cancellation_before_artifact_or_terminal_wr
     ).fetchone()
     assert state["state"] == "running"
     assert state["attempt_count"] == 0
-    assert json.loads(state["metadata_json"])["activityOwner"] == (
-        "workflow-run-canceled"
-    )
+    assert json.loads(state["metadata_json"])["activityOwner"] == ("workflow-run-canceled")
     terminal_events = conn.execute(
         "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND job_id = ? "
         "AND stage = 'cover' AND event_type IN ('StageCompleted', 'StageFailed')",
@@ -492,7 +526,7 @@ def test_cover_by_id_enforces_score_eligibility_before_llm_work(
     assert llm.calls == 0
 
 
-def test_cover_by_id_generates_for_historical_salary_only_block(
+def test_cover_by_id_generates_for_model_compensation_warning(
     conn: sqlite3.Connection,
     tmp_path: Path,
 ) -> None:
@@ -502,8 +536,8 @@ def test_cover_by_id_generates_for_historical_salary_only_block(
         tenant_id=_TENANT_A,
         fit_score=9,
         eligibility=EligibilityAssessment(
-            status="blocked",
-            hard_blockers=("Posted salary is below the preferred compensation range.",),
+            status="warning",
+            warnings=("Posted salary is below the preferred compensation range.",),
         ),
     )
     _seed_approved_resume(conn, tmp_path, tenant_id=_TENANT_A)

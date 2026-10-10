@@ -35,7 +35,9 @@ def owns_preparation_reservation(conn, *, tenant_id, job_id, stage, workflow_id)
 
 
 @contextmanager
-def claim_preparation_reservation(conn, *, tenant_id, job_id, stage, workflow_id, cancel_event, expected_posting_url=None):
+def claim_preparation_reservation(
+    conn, *, tenant_id, job_id, stage, workflow_id, cancel_event, expected_posting_url=None
+):
     """Fence the queued-to-running transition, releasing the lock before I/O."""
     if not workflow_id and expected_posting_url is None:
         yield
@@ -44,7 +46,10 @@ def claim_preparation_reservation(conn, *, tenant_id, job_id, stage, workflow_id
     try:
         if expected_posting_url is not None:
             from jobctrl.enrichment.availability import assert_fresh_candidate
-            assert_fresh_candidate(conn, str(job_id), expected_posting_url, tenant_id=str(tenant_id), allow_unknown=True)
+
+            assert_fresh_candidate(
+                conn, str(job_id), expected_posting_url, tenant_id=str(tenant_id), allow_unknown=True
+            )
         if cancel_event is not None and cancel_event.is_set():
             raise RuntimeError(f"{stage} activity canceled before dispatch")
         if workflow_id and not owns_preparation_reservation(
@@ -359,7 +364,7 @@ def _material_commit_exists(
     job_id,
     metadata: dict[str, Any],
 ) -> bool:
-    from jobctrl.domain.materials.value_objects import ArtifactStatus
+    from jobctrl.domain.ports.artifact_review import ArtifactStatus
     from jobctrl.infrastructure.materials import SqliteMaterialsRepository
 
     repository = SqliteMaterialsRepository(conn)

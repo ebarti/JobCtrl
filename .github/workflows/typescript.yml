@@ -12,16 +12,8 @@ on:
       - "package.json"
       - "pnpm-workspace.yaml"
       - ".github/workflows/typescript.yml"
+  # Required branch checks must exist for every PR, including docs-only changes.
   pull_request:
-    paths:
-      - "apps/**"
-      - "packages/**"
-      - "workers/**"
-      - "scripts/**"
-      - "pnpm-lock.yaml"
-      - "package.json"
-      - "pnpm-workspace.yaml"
-      - ".github/workflows/typescript.yml"
   workflow_dispatch:
 
 permissions:
@@ -52,6 +44,7 @@ jobs:
         run: corepack pnpm install --frozen-lockfile
       - name: Check shared contracts and API
         run: |
+          node scripts/sync-semantic-taxonomy.mjs --check
           corepack pnpm --filter @jobctrl/contracts check
           corepack pnpm --filter @jobctrl/api-client check
           corepack pnpm --filter @jobctrl/domain-types check
@@ -120,7 +113,7 @@ jobs:
   e2e:
     name: Web end-to-end
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -152,7 +145,20 @@ jobs:
           corepack pnpm --filter @jobctrl/web exec playwright install --with-deps chromium
           uv --project workers/automation run --locked --all-extras playwright install chromium
       - name: Test web end-to-end
+        env:
+          JOBCTRL_E2E_ISOLATED: "1"
+          JOBCTRL_E2E_PROFILE_SUGGESTIONS: "1"
         run: corepack pnpm web:e2e
+      - name: Test real API and worker RPC boundaries
+        env:
+          JOBCTRL_E2E_ISOLATED: "0"
+          JOBCTRL_E2E_PROFILE_SUGGESTIONS: "0"
+          JOBCTRL_E2E_APP_DIR: /tmp/jobctrl-real-rpc-e2e
+        run: |
+          mkdir -p "$JOBCTRL_E2E_APP_DIR"
+          corepack pnpm --filter @jobctrl/web exec playwright test --config e2e/playwright.config.ts \
+            e2e/tests/discovery-saved-views.spec.ts e2e/tests/repeat-application.spec.ts \
+            e2e/tests/dry-run-completed.spec.ts
 
   extension:
     name: Browser extension

@@ -48,7 +48,6 @@ class TailorActivityInput:
     allow_low_fit_override: bool = False
     tailor_models: tuple[str, ...] = ()
     tailor_judge_model: str | None = None
-    tailor_judge_min_score: float | None = None
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     workflow_id: str | None = None
     recovery_workflow_id: str | None = None
@@ -77,7 +76,6 @@ class TailorJobActivityInput:
     allow_low_fit_override: bool = False
     tailor_models: tuple[str, ...] = ()
     tailor_judge_model: str | None = None
-    tailor_judge_min_score: float | None = None
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     workflow_id: str | None = None
 
@@ -179,7 +177,6 @@ async def tailor_activity(payload: TailorActivityInput) -> TailorActivityOutput:
                     "retailor": payload.retailor,
                     "tailor_models": payload.tailor_models,
                     "tailor_judge_model": payload.tailor_judge_model,
-                    "tailor_judge_min_score": payload.tailor_judge_min_score,
                     "llm_model": payload.llm_model,
                     "workflow_id": payload.workflow_id,
                     "cancel_event": cancel_event,
@@ -284,7 +281,6 @@ def _run_selected_tailoring(
             allow_low_fit_override=payload.allow_low_fit_override,
             tailor_models=payload.tailor_models,
             tailor_judge_model=payload.tailor_judge_model,
-            tailor_judge_min_score=payload.tailor_judge_min_score,
             workflow_id=payload.workflow_id,
             cancel_event=cancel_event,
             **({"recovery_workflow_id": payload.recovery_workflow_id} if payload.recovery_workflow_id else {}),
@@ -367,9 +363,7 @@ async def tailor_job_activity(payload: TailorJobActivityInput) -> TailorJobActiv
         )
         status = str(result.get("status") or "error")
         if status == "exhausted":
-            raise AttemptBudgetExhaustedError(
-                str(result.get("error") or "Tailor durable attempt budget exhausted")
-            )
+            raise AttemptBudgetExhaustedError(str(result.get("error") or "Tailor durable attempt budget exhausted"))
         if status not in {"approved", "skipped", "not_eligible", "already_done"}:
             raise LlmTransientError(str(result.get("error") or f"Tailoring ended with status {status}"))
         materials = result.get("materials")
@@ -406,7 +400,6 @@ def _tailor_one_job(
         allow_low_fit_override=payload.allow_low_fit_override,
         tailor_models=payload.tailor_models,
         tailor_judge_model=payload.tailor_judge_model,
-        tailor_judge_min_score=payload.tailor_judge_min_score,
         workflow_id=payload.workflow_id,
         cancel_event=cancel_event,
     )

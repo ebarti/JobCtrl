@@ -53,7 +53,6 @@ from jobctrl.infrastructure.discovery.sqlite_run_repository import (
 from jobctrl.infrastructure.workflow_run_context import current_workflow_id
 from jobctrl.infrastructure.discovery.production_wiring import (
     enqueue_manual_action_for_sources,
-    retire_invalid_source_jobs,
     run_scheduled_ats_sources,
     seed_discovery_control_queues,
 )
@@ -83,15 +82,16 @@ INTERNAL_STAGE_ORDER = ("discover", "enrich", *MAINTENANCE_STAGE_ORDER)
 
 STAGE_META: dict[str, dict] = {
     "discover": {"desc": "Job discovery + detail enrichment"},
-    "enrich":   {"desc": "Detail enrichment (full descriptions + apply URLs)"},
-    "score":    {"desc": "LLM scoring (fit 1-10)"},
-    "tailor":   {"desc": "Resume tailoring (LLM + validation + resume PDF)"},
-    "cover":    {"desc": "Cover letter generation + cover PDF"},
+    "enrich": {"desc": "Detail enrichment (full descriptions + apply URLs)"},
+    "score": {"desc": "LLM scoring (fit 1-10)"},
+    "tailor": {"desc": "Resume tailoring (LLM + validation + resume PDF)"},
+    "cover": {"desc": "Cover letter generation + cover PDF"},
 }
 
 # ---------------------------------------------------------------------------
 # Observability helpers
 # ---------------------------------------------------------------------------
+
 
 def _pipeline_tracer():
     return trace.get_tracer("jobctrl.pipeline")
@@ -384,7 +384,11 @@ def _run_stage_observed(
         span.set_attribute("jobctrl.pipeline.duration_ms", duration_ms)
         if status not in ("ok", "partial", "skipped"):
             span.set_status(Status(StatusCode.ERROR, status))
-            error_class = str(result.get("error_class") or "stage_status_failed") if isinstance(result, dict) else "stage_status_failed"
+            error_class = (
+                str(result.get("error_class") or "stage_status_failed")
+                if isinstance(result, dict)
+                else "stage_status_failed"
+            )
             error_message = str(result.get("error_message") or status) if isinstance(result, dict) else status
             _record_pipeline_event(
                 stage,
@@ -796,7 +800,10 @@ def _record_discovery_source_progress(
 def _source_role(source: ScheduledSource) -> str:
     if source.priority == SourcePriority.LEAD_GENERATOR or source.source_kind == SourceKind.BROAD_BOARD:
         return "lead_generator"
-    if source.priority == SourcePriority.CANONICAL or source.source_kind in {SourceKind.ATS_API, SourceKind.OFFICIAL_API}:
+    if source.priority == SourcePriority.CANONICAL or source.source_kind in {
+        SourceKind.ATS_API,
+        SourceKind.OFFICIAL_API,
+    }:
         return "canonical_source"
     if source.source_kind == SourceKind.USER_MEDIATED_CAPTURE:
         return "user_mediated"
@@ -808,12 +815,8 @@ def _call_discovery_source(run: Callable[..., Any], run_id: str) -> Any:
         signature = inspect.signature(run)
     except (TypeError, ValueError):
         return run()
-    accepts_run_id = (
-        "run_id" in signature.parameters
-        or any(
-            param.kind is inspect.Parameter.VAR_KEYWORD
-            for param in signature.parameters.values()
-        )
+    accepts_run_id = "run_id" in signature.parameters or any(
+        param.kind is inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()
     )
     if accepts_run_id:
         return run(run_id=run_id)
@@ -1158,9 +1161,7 @@ def _load_source_quality_snapshots() -> tuple[SourceQualitySnapshot, ...]:
                 failed_runs=int(_row_get(row, "failed_run_count", 5) or 0),
                 consecutive_failures=int(_row_get(row, "consecutive_failures", 6) or 0),
                 active_rate=_optional_float(_row_get(row, "active_verification_rate", 7)),
-                detail_success_rate=_optional_float(
-                    _row_get(row, "full_description_success_rate", 8)
-                ),
+                detail_success_rate=_optional_float(_row_get(row, "full_description_success_rate", 8)),
                 duplicate_rate=_optional_float(_row_get(row, "duplicate_rate", 9)),
                 recommended_state=str(_row_get(row, "recommended_state", 10) or "normal"),
             )
@@ -1252,11 +1253,7 @@ def _smart_extract_sites(sources: tuple[ScheduledSource, ...]) -> list[dict]:
     for source in sources:
         if not source.should_run:
             continue
-        url = str(
-            source.adapter_config.get("url")
-            or source.adapter_config.get("seed_url")
-            or ""
-        ).strip()
+        url = str(source.adapter_config.get("url") or source.adapter_config.get("seed_url") or "").strip()
         if not url:
             continue
         sites.append(
@@ -1342,6 +1339,7 @@ def plan_discovery_source_families(
     *,
     limit: int = 0,
     source_ids: tuple[str, ...] = (),
+    discovery_execution: DiscoveryExecutionRef | None = None,
 ) -> dict[str, Any]:
     """Plan the runnable discovery source families in legacy order."""
     conn = init_db()
@@ -1360,9 +1358,7 @@ def plan_discovery_source_families(
     )
     jobspy_sources = schedule.for_prefix("jobspy")
     ats_sources = tuple(
-        source
-        for source in schedule.for_kinds(SourceKind.ATS_API)
-        if not source.source_id.startswith("workday:")
+        source for source in schedule.for_kinds(SourceKind.ATS_API) if not source.source_id.startswith("workday:")
     )
     workday_sources = schedule.for_prefix("workday")
     smart_extract_sources = _smart_extract_sources(schedule)
@@ -1381,10 +1377,7 @@ def plan_discovery_source_families(
         resolved_max_parallel_discovery_families,
     )
 
-    active_activity_slots = (
-        latest_active_max_concurrent_activities()
-        or resolve_max_concurrent_activities().value
-    )
+    active_activity_slots = latest_active_max_concurrent_activities() or resolve_max_concurrent_activities().value
 
     return {
         "families": families,
@@ -1396,38 +1389,6 @@ def plan_discovery_source_families(
         ),
         "next_run_settings": _snapshot_discovery_next_run_settings(search_cfg),
     }
-
-
-def run_discovery_hygiene(
-    label: str,
-    *,
-    activity_lease: EnrichmentExecutionLease | None = None,
-) -> int:
-    conn = get_connection()
-    search_cfg = config.load_search_config() or {}
-    if activity_lease is not None:
-        fence_enrichment_execution_lease(conn, activity_lease)
-    try:
-        hygiene = retire_invalid_source_jobs(
-            conn,
-            search_cfg=search_cfg,
-            run_id=f"discovery:hygiene:{label}",
-            # Exact-schema runtimes already own these tables. Avoid the helper's
-            # eager commit so the lease fence and every soft-delete/event remain
-            # one SQLite writer transaction.
-            ensure_tables=activity_lease is None,
-            commit=activity_lease is None,
-        )
-        if activity_lease is not None:
-            conn.commit()
-    except Exception:
-        if activity_lease is not None:
-            conn.rollback()
-        raise
-    retired = int(hygiene.get("retired_jobs") or 0)
-    if retired:
-        console.print(f"  [yellow]Discovery hygiene retired {retired} invalid source jobs[/yellow]")
-    return retired
 
 
 def run_discovery_source_family(
@@ -1463,9 +1424,7 @@ def run_discovery_source_family(
     )
     jobspy_sources = schedule.for_prefix("jobspy")
     ats_sources = tuple(
-        source
-        for source in schedule.for_kinds(SourceKind.ATS_API)
-        if not source.source_id.startswith("workday:")
+        source for source in schedule.for_kinds(SourceKind.ATS_API) if not source.source_id.startswith("workday:")
     )
     workday_sources = schedule.for_prefix("workday")
     smart_extract_sources = _smart_extract_sources(schedule)
@@ -1485,6 +1444,34 @@ def run_discovery_source_family(
             progress_total=progress_total,
         )
         return {"family": family, "status": status, "result": {}, "source_ids": [s.source_id for s in sources]}
+
+    def fetch_with_limits(fetch, sources, run_id):
+        if cancel_event.is_set() or (limit > 0 and _discover_limit_consumed(start_count, limit)):
+            return {"new": 0, "existing": 0}
+        from jobctrl.infrastructure.discovery.capture_recovery import recover_captured_postings
+
+        source_ids = tuple(item.source_id for item in sources if item.should_run)
+        if family == "jobspy" and search_cfg.get("disable_jobspy", False):
+            source_ids = ()
+        recovered = recover_captured_postings(
+            conn,
+            tenant_id=LOCAL_TENANT,
+            source_ids=source_ids,
+            source_family=family,
+            search_cfg=search_cfg,
+            run_id=run_id,
+            discovery_execution=discovery_execution,
+            limit=_discover_remaining_limit(start_count, limit),
+            cancel_event=cancel_event,
+        )
+        result = {"new": 0, "existing": 0}
+        if not cancel_event.is_set() and not (limit > 0 and _discover_limit_consumed(start_count, limit)):
+            result.update(fetch(run_id) or {})
+        for key in ("new", "existing"):
+            result[key] = int(result.get(key) or 0) + recovered[key]
+        if recovered["recovered_captures"] or recovered["recovered_capture_failures"]:
+            result.update({key: value for key, value in recovered.items() if key.startswith("recovered_")})
+        return result
 
     if family == "jobspy":
         if source_filter_active and not jobspy_sources:
@@ -1506,7 +1493,7 @@ def run_discovery_source_family(
                 return {"new": 0, "existing": 0, "errors": 0, "db_total": 0, "queries": 0}
             run_kwargs: dict[str, Any] = {
                 "cfg": jobspy_cfg,
-                "limit": _scheduled_limit(schedule, "jobspy", limit),
+                "limit": _scheduled_limit(schedule, "jobspy", _discover_remaining_limit(start_count, limit)),
             }
             if discovery_execution is not None:
                 run_kwargs["discovery_execution"] = discovery_execution
@@ -1538,7 +1525,7 @@ def run_discovery_source_family(
         result_holder: dict[str, Any] = {}
 
         def capture_jobstreaming(run_id: str | None = None) -> dict:
-            result_holder.update(run_jobspy(run_id))
+            result_holder.update(fetch_with_limits(run_jobspy, jobspy_sources, run_id))
             return result_holder
 
         status = _run_discovery_source(
@@ -1571,11 +1558,7 @@ def run_discovery_source_family(
                     ats_sources,
                     _discover_remaining_limit(start_count, limit),
                 ),
-                **(
-                    {"discovery_execution": discovery_execution}
-                    if discovery_execution is not None
-                    else {}
-                ),
+                **({"discovery_execution": discovery_execution} if discovery_execution is not None else {}),
                 **({"cancel_event": cancel_event} if provided_cancel_event is not None else {}),
             )
             return result
@@ -1583,7 +1566,7 @@ def run_discovery_source_family(
         result_holder: dict[str, Any] = {}
 
         def capture_ats(run_id: str | None = None) -> dict:
-            result_holder.update(run_ats(run_id))
+            result_holder.update(fetch_with_limits(run_ats, ats_sources, run_id))
             return result_holder
 
         status = _run_discovery_source(
@@ -1618,6 +1601,7 @@ def run_discovery_source_family(
                     _discover_remaining_limit(start_count, limit),
                 ),
                 "run_id": run_id,
+                "search_cfg": search_cfg,
             }
             if discovery_execution is not None:
                 workday_kwargs["discovery_execution"] = discovery_execution
@@ -1628,7 +1612,7 @@ def run_discovery_source_family(
         result_holder: dict[str, Any] = {}
 
         def capture_workday(run_id: str | None = None) -> dict:
-            result_holder.update(run_workday(run_id))
+            result_holder.update(fetch_with_limits(run_workday, workday_sources, run_id))
             return result_holder
 
         status = _run_discovery_source(
@@ -1663,6 +1647,7 @@ def run_discovery_source_family(
                     _discover_remaining_limit(start_count, limit),
                 ),
                 "run_id": run_id,
+                "search_cfg": search_cfg,
             }
             if discovery_execution is not None:
                 smart_kwargs["discovery_execution"] = discovery_execution
@@ -1673,7 +1658,7 @@ def run_discovery_source_family(
         result_holder: dict[str, Any] = {}
 
         def capture_smart_extract(run_id: str | None = None) -> dict:
-            result_holder.update(run_smart_extract_source(run_id))
+            result_holder.update(fetch_with_limits(run_smart_extract_source, smart_extract_sources, run_id))
             return result_holder
 
         status = _run_discovery_source(
@@ -1704,6 +1689,15 @@ def _snapshot_discovery_next_run_settings(search_cfg: dict[str, Any]) -> dict[st
         "boards": [str(board) for board in boards] if isinstance(boards, list) else [],
         "results_per_site": int(defaults.get("results_per_site") or 50),
         "hours_old": int(defaults.get("hours_old") or 72),
+        **{
+            key: search_cfg.get(key)
+            for key in (
+                "queries",
+                "locations",
+                "confirmed_targets",
+                "exact_title_exclusions",
+            )
+        },
     }
 
 
@@ -1721,6 +1715,14 @@ def _apply_discovery_next_run_settings(
     defaults["results_per_site"] = int(snapshot.get("results_per_site") or 50)
     defaults["hours_old"] = int(snapshot.get("hours_old") or 72)
     effective["defaults"] = defaults
+    for key in (
+        "queries",
+        "locations",
+        "confirmed_targets",
+        "exact_title_exclusions",
+    ):
+        if key in snapshot and snapshot[key] is not None:
+            effective[key] = snapshot[key]
     return effective
 
 
@@ -1765,9 +1767,7 @@ def run_discovery_enrichment_stage(
                     tenant_id=activity_lease.tenant_id,
                 )
     if emit_progress:
-        progress_event_kwargs = (
-            {"activity_lease": activity_lease} if activity_lease is not None else {}
-        )
+        progress_event_kwargs = {"activity_lease": activity_lease} if activity_lease is not None else {}
         _record_pipeline_event(
             "discover",
             "StageStarted",
@@ -1802,22 +1802,12 @@ def run_discovery_enrichment_stage(
     )
     final = result or {"status": "ok", "passes": 0, "pending": 0}
 
-    # Hygiene mutates canonical soft-delete state. Keep it inside the terminal
-    # owner's lease before final progress is committed; a superseded attempt
-    # must fail its fence without evaluating or hiding any job.
-    if not stream_while_discovering:
-        run_discovery_hygiene("after", activity_lease=activity_lease)
-
     if emit_progress:
         status = str(final.get("status") or "ok")
         if status in ("ok", "partial") or status.startswith("skipped"):
             site_errors = dict(final.get("site_errors") or {})
             progress_status = "partial" if status == "partial" else "running"
-            message = (
-                "Detail enrichment partially complete"
-                if status == "partial"
-                else "Detail enrichment complete"
-            )
+            message = "Detail enrichment partially complete" if status == "partial" else "Detail enrichment complete"
             payload = _discovery_progress_payload(
                 completed=progress_completed + 1,
                 total=progress_total,
@@ -1827,20 +1817,14 @@ def run_discovery_enrichment_stage(
             )
             if site_errors:
                 payload["siteErrors"] = site_errors
-                payload["errorMessage"] = (
-                    final.get("error_message") or "One or more enrichment sites failed."
-                )
+                payload["errorMessage"] = final.get("error_message") or "One or more enrichment sites failed."
             _record_pipeline_event(
                 "discover",
                 "StageCompleted",
                 "warn" if status == "partial" else "info",
                 message,
                 payload,
-                **(
-                    {"activity_lease": activity_lease}
-                    if activity_lease is not None
-                    else {}
-                ),
+                **({"activity_lease": activity_lease} if activity_lease is not None else {}),
             )
         else:
             error_class = final.get("error_class")
@@ -1867,11 +1851,7 @@ def run_discovery_enrichment_stage(
                         message="Detail enrichment failed",
                     ),
                 },
-                **(
-                    {"activity_lease": activity_lease}
-                    if activity_lease is not None
-                    else {}
-                ),
+                **({"activity_lease": activity_lease} if activity_lease is not None else {}),
             )
 
     return final
@@ -1998,19 +1978,9 @@ def _discovery_provider_progress(
     site = _optional_text(raw.get("site"))
     phase = _optional_text(raw.get("phase"))
     unit = _optional_text(raw.get("unit"))
-    completed_units = _optional_int(
-        _first_present(raw.get("completed_units"), raw.get("completedUnits"))
-    )
-    jobs_emitted = _optional_int(
-        _first_present(raw.get("jobs_emitted"), raw.get("jobsEmitted"))
-    )
-    if (
-        site is None
-        or phase is None
-        or unit is None
-        or completed_units is None
-        or jobs_emitted is None
-    ):
+    completed_units = _optional_int(_first_present(raw.get("completed_units"), raw.get("completedUnits")))
+    jobs_emitted = _optional_int(_first_present(raw.get("jobs_emitted"), raw.get("jobsEmitted")))
+    if site is None or phase is None or unit is None or completed_units is None or jobs_emitted is None:
         return None
     try:
         return DiscoveryProviderProgress(
@@ -2018,9 +1988,7 @@ def _discovery_provider_progress(
             phase=phase,
             unit=unit,
             completed_units=completed_units,
-            total_units=_optional_int(
-                _first_present(raw.get("total_units"), raw.get("totalUnits"))
-            ),
+            total_units=_optional_int(_first_present(raw.get("total_units"), raw.get("totalUnits"))),
             raw_items_seen=_optional_int(
                 _first_present(
                     raw.get("raw_items_seen"),
@@ -2028,9 +1996,7 @@ def _discovery_provider_progress(
                 )
             ),
             jobs_emitted=jobs_emitted,
-            has_more=_optional_bool(
-                _first_present(raw.get("has_more"), raw.get("hasMore"))
-            ),
+            has_more=_optional_bool(_first_present(raw.get("has_more"), raw.get("hasMore"))),
         )
     except ValueError:
         return None
@@ -2039,6 +2005,7 @@ def _discovery_provider_progress(
 # ---------------------------------------------------------------------------
 # Individual stage runners
 # ---------------------------------------------------------------------------
+
 
 def _run_enrich(
     workers: int = 1,
@@ -2057,6 +2024,7 @@ def _run_enrich(
     if cancel_event is not None and cancel_event.is_set():
         raise TransientNetworkError("enrichment canceled before start")
     from jobctrl.enrichment.detail import run_enrichment
+
     enrich_kwargs: dict[str, Any] = {
         "limit": limit,
         "workers": workers,
@@ -2101,6 +2069,7 @@ def _run_score(
     if cancel_event is not None and cancel_event.is_set():
         raise LlmTransientError("scoring canceled before start")
     from jobctrl.scoring.scorer import run_scoring
+
     result = run_scoring(
         limit=limit,
         rescore=rescore,
@@ -2125,7 +2094,6 @@ def _run_tailor(
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
-    tailor_judge_min_score: float | None = None,
     cancel_event: threading.Event | None = None,
     workflow_id: str | None = None,
     tenant_id: str = "local",
@@ -2136,6 +2104,7 @@ def _run_tailor(
     if cancel_event is not None and cancel_event.is_set():
         raise LlmTransientError("tailoring canceled before start")
     from jobctrl.scoring.tailor import run_tailoring
+
     result = run_tailoring(
         min_score=min_score,
         tenant_id=TenantId(tenant_id),
@@ -2148,7 +2117,6 @@ def _run_tailor(
         retailor=retailor,
         tailor_models=tailor_models,
         tailor_judge_model=tailor_judge_model,
-        tailor_judge_min_score=tailor_judge_min_score,
         llm_model=llm_model,
         workflow_id=workflow_id,
     )
@@ -2158,17 +2126,11 @@ def _run_tailor(
     errors = int(result.get("errors") or 0)
     exhausted = int(result.get("exhausted") or 0)
     if exhausted:
-        raise AttemptBudgetExhaustedError(
-            f"{exhausted} tailored resume(s) exhausted the durable attempt budget"
-        )
+        raise AttemptBudgetExhaustedError(f"{exhausted} tailored resume(s) exhausted the durable attempt budget")
     if errors:
-        raise LlmTransientError(
-            f"{errors} tailoring error(s), {failed} failed quality gate(s)"
-        )
+        raise LlmTransientError(f"{errors} tailoring error(s), {failed} failed quality gate(s)")
     if failed:
-        raise LlmTransientError(
-            f"{failed} tailored resume(s) failed validation or judge approval"
-        )
+        raise LlmTransientError(f"{failed} tailored resume(s) failed validation or judge approval")
     return {**result, "status": "ok"}
 
 
@@ -2309,8 +2271,8 @@ def _count_pending(stage: str, min_score: int = 7, retailor: bool = False) -> in
             f"AND ({db_module._EFFECTIVE_TAILOR_PATH} IS NOT NULL OR {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5) "
             f"AND {db_module._NOT_CLOSED_ACTIVE_STATE} "
             f"AND {db_module._ENRICHMENT_NOT_QUARANTINED}"
-            if retailor else
-            f"{db_module._EFFECTIVE_FIT_SCORE} >= ? "
+            if retailor
+            else f"{db_module._EFFECTIVE_FIT_SCORE} >= ? "
             f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
             f"AND {db_module._SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
             f"AND {db_module._SCORE_CURRENT_FOR_DOWNSTREAM} "
@@ -2511,9 +2473,7 @@ def _reconcile_execution_enrichment_stages(
         )
         if update.rowcount != 1:
             conn.rollback()
-            raise StaleEnrichmentExecutionLease(
-                "enrichment reconciliation lost its execution lease"
-            )
+            raise StaleEnrichmentExecutionLease("enrichment reconciliation lost its execution lease")
         record_job_event(
             conn,
             job_id,
@@ -2645,16 +2605,12 @@ def _run_discovery_enrichment_until_idle(
             if cancel_event is not None and cancel_event.is_set():
                 raise TransientNetworkError("discovery enrichment canceled")
             scoped_job_ids = (
-                _execution_pending_enrichment_job_ids(discovery_execution)
-                if discovery_execution is not None
-                else ()
+                _execution_pending_enrichment_job_ids(discovery_execution) if discovery_execution is not None else ()
             )
             recoverable_job_ids = (
                 tuple(
                     job_id
-                    for job_id in _execution_recoverable_enrichment_job_ids(
-                        discovery_execution
-                    )
+                    for job_id in _execution_recoverable_enrichment_job_ids(discovery_execution)
                     if job_id not in recovery_attempted_job_ids
                 )
                 if discovery_execution is not None
@@ -2662,14 +2618,8 @@ def _run_discovery_enrichment_until_idle(
             )
             if recoverable_job_ids:
                 recovery_attempted_job_ids.update(recoverable_job_ids)
-                scoped_job_ids = tuple(
-                    dict.fromkeys((*scoped_job_ids, *recoverable_job_ids))
-                )
-            pending = (
-                len(scoped_job_ids)
-                if discovery_execution is not None
-                else _count_pending("enrich")
-            )
+                scoped_job_ids = tuple(dict.fromkeys((*scoped_job_ids, *recoverable_job_ids)))
+            pending = len(scoped_job_ids) if discovery_execution is not None else _count_pending("enrich")
             if pending <= 0 and passes == 0 and discovery_execution is None:
                 # Robots-blocked is deliberately not steady-state pending: if
                 # robots still disallows the URL, counting it forever would
@@ -2696,9 +2646,7 @@ def _run_discovery_enrichment_until_idle(
                 "limit": limit,
                 "cancel_event": cancel_event,
                 "reset_linkedin_candidates": (
-                    bool(recoverable_job_ids)
-                    if discovery_execution is not None
-                    else passes == 0
+                    bool(recoverable_job_ids) if discovery_execution is not None else passes == 0
                 ),
                 "on_job_enriched": on_job_enriched,
             }
@@ -2719,14 +2667,10 @@ def _run_discovery_enrichment_until_idle(
                     tuple(
                         dict.fromkeys(
                             (
-                                *_execution_pending_enrichment_job_ids(
-                                    discovery_execution
-                                ),
+                                *_execution_pending_enrichment_job_ids(discovery_execution),
                                 *(
                                     job_id
-                                    for job_id in _execution_recoverable_enrichment_job_ids(
-                                        discovery_execution
-                                    )
+                                    for job_id in _execution_recoverable_enrichment_job_ids(discovery_execution)
                                     if job_id not in recovery_attempted_job_ids
                                 ),
                             )
@@ -2759,8 +2703,7 @@ def _run_discovery_enrichment_until_idle(
                                 "pending": after,
                                 "site_errors": dict(site_errors),
                                 "error_message": (
-                                    f"{after} pending detail jobs after {passes} passes "
-                                    "with site errors"
+                                    f"{after} pending detail jobs after {passes} passes with site errors"
                                 ),
                             }
                         )
@@ -2794,6 +2737,7 @@ def _run_discovery_enrichment_until_idle(
 
 # Single-job processing
 # ---------------------------------------------------------------------------
+
 
 def run_single_job(
     url: str,

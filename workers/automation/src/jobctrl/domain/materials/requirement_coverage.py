@@ -9,10 +9,6 @@ from collections.abc import Mapping as MappingABC
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
-from jobctrl.domain.profile.achievement_metrics import (
-    extract_achievement_metrics,
-    normalize_achievement_metric,
-)
 
 from jobctrl.domain.identifiers import canonical_job_id
 from jobctrl.domain.materials.analysis import EmployerAnalysis
@@ -52,203 +48,21 @@ REQUIREMENT_COVERAGE_SCOPES = (
     "employer_condition",
 )
 
-_RESUME_SPONSORSHIP_PATTERNS = tuple(
-    re.compile(pattern, re.IGNORECASE)
-    for pattern in (
-        r"\b(?:executive|stakeholder|leadership|senior\s+stakeholder)\s+sponsorship\b",
-        r"\bsponsorship\s+(?:from|among)\s+(?:executives?|stakeholders?|leadership)\b",
-    )
-)
 
 # Unmistakable eligibility phrasing: authorization/immigration/screening
 # condition context accompanies the keyword, so a match may override even a
 # declared `resume` scope from the ensemble.
-_ELIGIBILITY_CONDITION_PATTERNS = tuple(
-    re.compile(pattern, re.IGNORECASE)
-    for pattern in (
-        r"\b(?:work|employment)\s+authori[sz]ation\b",
-        r"\bauthori[sz]ed\s+to\s+work\b",
-        r"\bright\s+to\s+work\b",
-        r"\b(?:work|employment|immigration)\s+visa\b",
-        r"\bvisa\s+(?:sponsorship|status|holders?|permits?|requirements?)\b",
-        r"\b(?:visa|work|employment)\s+sponsorship\b",
-        r"\b(?:without|not\s+require|does\s+not\s+require|do\s+not\s+require)\s+"
-        r"(?:visa\s+|work\s+|employment\s+)?sponsorship\b",
-        r"\bsponsorship\s+(?:for|to)\s+(?:work|employment|a\s+visa)\b",
-        r"\bsecurity\s+clearance\b",
-        r"\b(?:pass|passes|passing|complete|completes|completing|completion\s+of|"
-        r"undergo|undergoes|undergoing|subject\s+to|contingent\s+(?:up)?on|"
-        r"consent\s+to|clear|clears|clearing)\b.{0,32}"
-        r"\b(?:background\s+check|drug\s+(?:test|screen(?:ing)?))\b",
-        r"\b(?:require|requires|required|requiring)\b.{0,32}"
-        r"\b(?:background\s+check|drug\s+(?:test|screen(?:ing)?))\b",
-        r"\b(?:background\s+check|drug\s+(?:test|screen(?:ing)?))s?\b.{0,24}"
-        r"\b(?:required|mandatory|will\s+be\s+conducted)\b",
-    )
-)
 # Ambiguous bare keywords: legitimate resume evidence can contain them (Visa
 # the payment network, background-check tooling, drug-screening assays), so a
 # reconciled ensemble `resume` declaration wins over these matches alone.
-_ELIGIBILITY_KEYWORD_PATTERNS = tuple(
-    re.compile(pattern, re.IGNORECASE)
-    for pattern in (
-        r"\bvisa(?:\s+sponsorship)?\b",
-        r"\bbackground\s+check\b",
-        r"\bdrug\s+(?:test|screen(?:ing)?)\b",
-    )
-)
-_ELIGIBILITY_REQUIREMENT_PATTERNS = (
-    *_ELIGIBILITY_CONDITION_PATTERNS,
-    *_ELIGIBILITY_KEYWORD_PATTERNS,
-)
 # Unmistakable logistics phrasing: work-arrangement or willingness/condition
 # context accompanies the keyword, so a match may override even a declared
 # `resume` scope from the ensemble.
-_LOGISTICS_CONDITION_PATTERNS = tuple(
-    re.compile(pattern, re.IGNORECASE)
-    for pattern in (
-        r"\b(?:hybrid|on[- ]?site|in[- ]?office|office[- ]based)\s+"
-        r"(?:work|working|role|position|schedule|setup|arrangement|model|environment)\b",
-        r"\b(?:work|working|role|position|schedule|setup|arrangement|model)\s+"
-        r"(?:is\s+|will\s+be\s+|must\s+be\s+)?"
-        r"(?:hybrid|on[- ]?site|in[- ]?office|office[- ]based|remote)\b",
-        r"\b(?:work|working)\s+remotely\b",
-        r"\b(?:requires?|required|expects?|expected|mandatory)\b.{0,40}"
-        r"\b(?:on[- ]?site|in[- ]?office|office|in[- ]?person)\s+"
-        r"(?:presence|attendance|work|schedule)\b",
-        r"\b(?:on[- ]?site|in[- ]?office|office|in[- ]?person)\s+"
-        r"(?:presence|attendance)\b",
-        r"\b(?:attend|attendance|present|presence)\b.{0,40}"
-        r"\b(?:office|on[- ]?site|in[- ]?person)\b",
-        r"\bhybrid\b[\s,:;()/-]{0,12}"
-        r"(?:one|two|three|four|five|six|seven|\d+)\s+days?\b",
-        r"\b(?:one|two|three|four|five|six|seven|\d+)\s+days?\s+"
-        r"(?:per|a|each)\s+week\b.{0,48}"
-        r"\b(?:office|on[- ]?site)\b",
-        r"\b(?:office|on[- ]?site)\b.{0,48}"
-        r"\b(?:one|two|three|four|five|six|seven|\d+)\s+days?\s+"
-        r"(?:per|a|each)\s+week\b",
-        r"\b(?:one|two|three|four|five|six|seven|\d+)\s+"
-        r"(?:office|on[- ]?site|in[- ]?office)\s+days?\b",
-        r"\b(?:office|on[- ]?site|in[- ]?office)\s+"
-        r"(?:one|two|three|four|five|six|seven|\d+)\s+days?\b",
-        r"\b(?:one|two|three|four|five|six|seven|\d+)\s+days?\s+weekly\b"
-        r".{0,48}\b(?:office|on[- ]?site|presence|attendance)\b",
-        r"\b(?:office|on[- ]?site|presence|attendance)\b.{0,48}"
-        r"\b(?:one|two|three|four|five|six|seven|\d+)\s+days?\s+weekly\b",
-        r"\b(?:must|should|able|willing|required)\s+to\s+"
-        r"(?:work\s+(?:from|in|at)\s+.{0,40}\boffice|commute|relocate|travel)\b",
-        r"\b(?:relocation|commuting|commute)\s+(?:is\s+)?"
-        r"(?:required|mandatory|expected)\b",
-        r"\b(?:participate|participates|participating|participation|join|joins|"
-        r"joining|share|shares|sharing|available|availability|willing|"
-        r"willingness)\b.{0,32}\bon[- ]call\s+rotation\b",
-        r"\bon[- ]call\s+rotation\s+(?:is\s+)?(?:required|mandatory|expected)\b",
-        r"\b(?:work|works|working|willing\s+to\s+work)\b.{0,24}"
-        r"\b(?:night|weekend)\s+shifts?\b",
-        r"\btravel\s+(?:up\s+to\s+)?\d+\s*%",
-        r"\b\d+\s*%\s+(?:of\s+)?travel\b",
-        r"^\s*remote(?:\s+(?:within|from|in)\b|\s*$)",
-        r"^\s*(?:must\s+be\s+)?(?:based|located)\s+in\b",
-        r"\b(?:candidate|applicant|you)\b.{0,24}\b(?:based|located)\s+in\b",
-    )
-)
 # Ambiguous bare keywords: legitimate resume evidence can contain them (running
 # an on-call rotation, managing relocation programs, coordinating shift
 # coverage), so a reconciled ensemble `resume` declaration wins over these
 # matches alone.
-_LOGISTICS_KEYWORD_PATTERNS = tuple(
-    re.compile(pattern, re.IGNORECASE)
-    for pattern in (
-        r"\b(?:relocation|commuting|commute)\b",
-        r"\b(?:time\s*zone|working\s+hours?|night\s+shifts?|weekend\s+shifts?|"
-        r"on[- ]call\s+rotation)\b",
-    )
-)
-_LOGISTICS_REQUIREMENT_PATTERNS = (
-    *_LOGISTICS_CONDITION_PATTERNS,
-    *_LOGISTICS_KEYWORD_PATTERNS,
-)
-_EMPLOYER_CONDITION_PATTERNS = tuple(
-    re.compile(pattern, re.IGNORECASE)
-    for pattern in (
-        r"\b(?:salary|pay|compensation)\s+(?:range|package|is|of|from|up\s+to)\b",
-        r"\b(?:benefits?|perks?)\s+(?:include|package)\b",
-        r"\b(?:stock\s+options?|equity\s+package|annual\s+bonus|paid\s+leave|"
-        r"vacation\s+allowance|probation\s+period|contract\s+duration|notice\s+period)\b",
-    )
-)
 
-
-def classify_requirement_coverage_scope(requirement_text: Any) -> str:
-    """Classify how a posting requirement may influence resume generation.
-
-    The posting remains the source of truth for every requirement. This scope
-    only decides whether absence from grounded candidate evidence is a resume
-    coverage gap. Work arrangement and employer-side conditions belong to
-    eligibility/apply review and must never force an invented resume claim.
-    """
-
-    text = " ".join(str(requirement_text or "").split())
-    if any(pattern.search(text) for pattern in _ELIGIBILITY_REQUIREMENT_PATTERNS):
-        return "eligibility"
-    if any(pattern.search(text) for pattern in _LOGISTICS_REQUIREMENT_PATTERNS):
-        return "logistics"
-    if any(pattern.search(text) for pattern in _EMPLOYER_CONDITION_PATTERNS):
-        return "employer_condition"
-    return "resume"
-
-
-def resolve_requirement_coverage_scope(
-    requirement_text: Any,
-    declared_scope: Any = None,
-) -> str:
-    """Resolve ensemble semantics with deterministic non-resume safety rules.
-
-    New employer analyses declare the scope explicitly. Existing analyses do
-    not, so deterministic classification remains the compatibility path. An
-    unmistakable non-resume pattern (keyword plus condition/arrangement
-    context) always wins over an erroneous `resume` declaration. An ambiguous
-    bare-keyword match alone (Visa the payment network, on-call rotation
-    ownership, drug-screening assays, relocation programs, background-check
-    tooling) defers to a declared `resume` scope: there the reconciled
-    ensemble declaration supplies the semantic judgment a bounded keyword
-    classifier cannot.
-    """
-
-    text = " ".join(str(requirement_text or "").split())
-    if any(pattern.search(text) for pattern in _RESUME_SPONSORSHIP_PATTERNS):
-        return "resume"
-    normalized_declared_scope = str(declared_scope or "").strip()
-    if normalized_declared_scope not in REQUIREMENT_COVERAGE_SCOPES:
-        normalized_declared_scope = ""
-    unmistakable_scope = _classify_unmistakable_non_resume_scope(text)
-    if unmistakable_scope != "resume":
-        return unmistakable_scope
-    deterministic_scope = classify_requirement_coverage_scope(text)
-    if deterministic_scope != "resume":
-        if normalized_declared_scope == "resume":
-            return "resume"
-        return deterministic_scope
-    if normalized_declared_scope:
-        return normalized_declared_scope
-    return "resume"
-
-
-def _classify_unmistakable_non_resume_scope(text: str) -> str:
-    """Classify with the high-precision condition patterns only.
-
-    These matches are strong enough to override an erroneous ensemble `resume`
-    declaration; the ambiguous bare-keyword patterns are deliberately excluded.
-    """
-
-    if any(pattern.search(text) for pattern in _ELIGIBILITY_CONDITION_PATTERNS):
-        return "eligibility"
-    if any(pattern.search(text) for pattern in _LOGISTICS_CONDITION_PATTERNS):
-        return "logistics"
-    if any(pattern.search(text) for pattern in _EMPLOYER_CONDITION_PATTERNS):
-        return "employer_condition"
-    return "resume"
 
 _POLICY_RANK = {
     "verified_only": 0,
@@ -262,6 +76,8 @@ _LABEL_REQUIRED_POLICY = {
     "adjacent_translation": "adjacent_translation",
     "draft_requires_confirmation": "draft_requires_confirmation",
 }
+
+
 @dataclass(frozen=True)
 class TargetRequirement:
     requirement_id: str
@@ -295,8 +111,7 @@ class TargetRequirement:
         coverage_scope = str(self.coverage_scope or "resume").strip()
         if coverage_scope not in REQUIREMENT_COVERAGE_SCOPES:
             raise ValueError(
-                "TargetRequirement.coverage_scope must be resume, eligibility, "
-                "logistics, or employer_condition"
+                "TargetRequirement.coverage_scope must be resume, eligibility, logistics, or employer_condition"
             )
         object.__setattr__(self, "coverage_scope", coverage_scope)
 
@@ -348,27 +163,15 @@ class TargetProfile:
 
     @property
     def resume_requirements(self) -> tuple[TargetRequirement, ...]:
-        return tuple(
-            requirement
-            for requirement in self.requirements
-            if requirement.is_resume_coverable
-        )
+        return tuple(requirement for requirement in self.requirements if requirement.is_resume_coverable)
 
     @property
     def context_only_requirements(self) -> tuple[TargetRequirement, ...]:
-        return tuple(
-            requirement
-            for requirement in self.requirements
-            if not requirement.is_resume_coverable
-        )
+        return tuple(requirement for requirement in self.requirements if not requirement.is_resume_coverable)
 
     @property
     def resume_must_have_requirements(self) -> tuple[TargetRequirement, ...]:
-        return tuple(
-            requirement
-            for requirement in self.must_have_requirements
-            if requirement.is_resume_coverable
-        )
+        return tuple(requirement for requirement in self.must_have_requirements if requirement.is_resume_coverable)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "job_id", str(self.job_id or "").strip())
@@ -414,9 +217,7 @@ class TargetProfile:
             ],
             "hard_skills": list(self.hard_skills),
             "ats_keywords": list(self.ats_keywords),
-            "profile_achievements": [
-                achievement.to_dict() for achievement in self.profile_achievements
-            ],
+            "profile_achievements": [achievement.to_dict() for achievement in self.profile_achievements],
         }
 
     def to_safe_metadata(self) -> dict[str, Any]:
@@ -424,18 +225,14 @@ class TargetProfile:
             "job_id": self.job_id,
             "target_role": self.target_role,
             "seniority": self.seniority,
-            "must_have_requirement_ids": [
-                requirement.requirement_id for requirement in self.must_have_requirements
-            ],
+            "must_have_requirement_ids": [requirement.requirement_id for requirement in self.must_have_requirements],
             "nice_to_have_requirement_ids": [
                 requirement.requirement_id for requirement in self.nice_to_have_requirements
             ],
             "hard_skills": list(self.hard_skills[:24]),
             "ats_keywords": list(self.ats_keywords[:32]),
             "requirements": [requirement.to_safe_metadata() for requirement in self.requirements],
-            "resume_requirement_ids": [
-                requirement.requirement_id for requirement in self.resume_requirements
-            ],
+            "resume_requirement_ids": [requirement.requirement_id for requirement in self.resume_requirements],
             "context_only_requirement_ids": [
                 requirement.requirement_id for requirement in self.context_only_requirements
             ],
@@ -616,6 +413,9 @@ class UnusedAchievement:
 
 @dataclass(frozen=True)
 class GeneratedClaimMapping:
+    line_id: str
+    reason: str
+    transform_type: str
     claim_id: str
     location: str
     text: str
@@ -627,7 +427,7 @@ class GeneratedClaimMapping:
     review_required: bool = False
 
     def __post_init__(self) -> None:
-        for name in ("claim_id", "location", "text"):
+        for name in ("claim_id", "line_id", "reason", "transform_type", "location", "text"):
             object.__setattr__(self, name, _required_text(getattr(self, name), name))
         object.__setattr__(
             self,
@@ -646,6 +446,9 @@ class GeneratedClaimMapping:
     def to_dict(self) -> dict[str, Any]:
         return {
             "claim_id": self.claim_id,
+            "line_id": self.line_id,
+            "reason": self.reason,
+            "transform_type": self.transform_type,
             "location": self.location,
             "text": self.text,
             "claim_label": self.claim_label,
@@ -840,15 +643,17 @@ class CoverageGraph:
             "achievement_count": len(self.achievements),
             "coverage_edge_count": len(self.coverage_edges),
             "alternative_edges": [
-                {"edge_id": edge.edge_id, "requirement_id": edge.requirement_id,
-                 "achievement_evidence_id": edge.achievement_evidence_id,
-                 "coverage_kind": edge.coverage_kind, "strength": edge.strength,
-                 "required_claim_policy": edge.required_claim_policy}
+                {
+                    "edge_id": edge.edge_id,
+                    "requirement_id": edge.requirement_id,
+                    "achievement_evidence_id": edge.achievement_evidence_id,
+                    "coverage_kind": edge.coverage_kind,
+                    "strength": edge.strength,
+                    "required_claim_policy": edge.required_claim_policy,
+                }
                 for edge in self.alternative_edges
             ],
-            "covered_requirement_ids": list(
-                dict.fromkeys(edge.requirement_id for edge in self.coverage_edges)
-            ),
+            "covered_requirement_ids": list(dict.fromkeys(edge.requirement_id for edge in self.coverage_edges)),
             "uncovered_requirements": [
                 {
                     "requirement_id": item.requirement_id,
@@ -857,9 +662,7 @@ class CoverageGraph:
                 }
                 for item in self.uncovered_requirements
             ],
-            "unused_achievement_ids": [
-                item.achievement_evidence_id for item in self.unused_achievements
-            ],
+            "unused_achievement_ids": [item.achievement_evidence_id for item in self.unused_achievements],
             "coverage_edges": [
                 {
                     "edge_id": edge.edge_id,
@@ -876,66 +679,6 @@ class CoverageGraph:
         }
 
 
-COVERAGE_PLANNER_RESPONSE_SCHEMA: dict[str, Any] = {
-    "title": "CoveragePlannerResponse",
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["coverage_edges", "uncovered_requirements", "unused_achievements"],
-    "properties": {
-        "coverage_edges": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": [
-                    "requirement_id",
-                    "achievement_evidence_id",
-                    "coverage_kind",
-                    "strength",
-                    "required_claim_policy",
-                    "target_terms",
-                    "rationale",
-                ],
-                "properties": {
-                    "requirement_id": {"type": "string"},
-                    "achievement_evidence_id": {"type": "string"},
-                    "coverage_kind": {"type": "string", "enum": list(COVERAGE_KINDS)},
-                    "strength": {"type": "string", "enum": list(COVERAGE_STRENGTHS)},
-                    "required_claim_policy": {"type": "string", "enum": list(CLAIM_POLICIES)},
-                    "target_terms": {"type": "array", "items": {"type": "string"}},
-                    "rationale": {"type": "string"},
-                },
-            },
-        },
-        "uncovered_requirements": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["requirement_id", "reason", "prohibited_claims"],
-                "properties": {
-                    "requirement_id": {"type": "string"},
-                    "reason": {"type": "string"},
-                    "prohibited_claims": {"type": "array", "items": {"type": "string"}},
-                },
-            },
-        },
-        "unused_achievements": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["achievement_evidence_id", "reason"],
-                "properties": {
-                    "achievement_evidence_id": {"type": "string"},
-                    "reason": {"type": "string"},
-                },
-            },
-        },
-    },
-}
-
-
 def build_target_profile(
     *,
     employer_analysis: EmployerAnalysis,
@@ -943,6 +686,7 @@ def build_target_profile(
     job: MappingABC[str, Any],
     evidence_items: IterableABC[Any],
     pinned_evidence_ids: IterableABC[str] = (),
+    job_interpretation,
 ) -> TargetProfile:
     assessment_by_requirement = {
         str(getattr(assessment, "requirement_id", "") or ""): assessment
@@ -983,9 +727,7 @@ def build_target_profile(
             keyword_by_requirement.get(requirement_id, ()),
             tuple(
                 _normalize_phrase(keyword)
-                for keyword in (
-                    getattr(tailoring, "target_keywords", ()) if tailoring is not None else ()
-                )
+                for keyword in (getattr(tailoring, "target_keywords", ()) if tailoring is not None else ())
             ),
         )
         requirements.append(
@@ -997,13 +739,11 @@ def build_target_profile(
                 source_span=str(getattr(requirement, "evidence_span", "")),
                 keywords=target_keywords,
                 fit_kind=str(getattr(fit, "kind", "not_assessed") or "not_assessed"),
-                prohibited_claims=tuple(
-                    getattr(tailoring, "prohibited_claims", ()) if tailoring is not None else ()
-                ),
-                coverage_scope=resolve_requirement_coverage_scope(
-                    requirement_text,
-                    getattr(requirement, "coverage_scope", None),
-                ),
+                prohibited_claims=tuple(getattr(tailoring, "prohibited_claims", ()) if tailoring is not None else ()),
+                coverage_scope={
+                    item.requirement_id: ("employer_condition" if item.protected_class else item.scope)
+                    for item in job_interpretation.requirements
+                }[requirement_id],
             )
         )
 
@@ -1019,7 +759,7 @@ def build_target_profile(
     return TargetProfile(
         job_id=str(canonical_job_id(str(job["job_id"]))),
         target_role=str(job.get("title") or job.get("role_title") or ""),
-        seniority=str(employer_analysis.canonical.inferred_seniority or ""),
+        seniority=job_interpretation.seniority.value,
         must_have_requirements=must_have,
         nice_to_have_requirements=nice_to_have,
         hard_skills=_merge_clean_strings(job_skills, all_keywords),
@@ -1047,9 +787,7 @@ def seed_coverage_graph(
         )
         for requirement in target_profile.resume_requirements
     )
-    resume_requirement_ids = {
-        requirement.requirement_id for requirement in target_profile.resume_requirements
-    }
+    resume_requirement_ids = {requirement.requirement_id for requirement in target_profile.resume_requirements}
     achievements = target_profile.profile_achievements
     edges: list[CoverageEdge] = []
     fit_by_requirement: dict[str, Any] = {}
@@ -1082,9 +820,7 @@ def seed_coverage_graph(
                     )
                 )
     canonical_ids = {item.achievement_evidence_id for item in achievements}
-    admissible_edges = tuple(
-        edge for edge in edges if edge.achievement_evidence_id in canonical_ids
-    )
+    admissible_edges = tuple(edge for edge in edges if edge.achievement_evidence_id in canonical_ids)
     edges = list(
         _select_strongest_requirement_edges(
             edges=edges,
@@ -1100,9 +836,7 @@ def seed_coverage_graph(
         assessment = fit_by_requirement.get(requirement.requirement_id)
         fit = getattr(assessment, "fit", None)
         reason = str(
-            getattr(fit, "reason", "")
-            or getattr(fit, "blocker", "")
-            or "No seeded requirement-achievement coverage."
+            getattr(fit, "reason", "") or getattr(fit, "blocker", "") or "No seeded requirement-achievement coverage."
         )
         uncovered.append(
             UncoveredRequirement(
@@ -1131,166 +865,6 @@ def seed_coverage_graph(
     )
 
 
-def build_coverage_planner_prompt(
-    *,
-    target_profile: TargetProfile,
-    seeded_graph: CoverageGraph,
-) -> str:
-    return (
-        "You are JobCtrl's requirement-achievement coverage planner.\n"
-        "Return ONLY JSON matching the provided schema. Do not include markdown.\n"
-        "Task: propose additional coverage edges between existing job requirement IDs "
-        "and existing profile achievement evidence IDs.\n\n"
-        "Hard constraints:\n"
-        "- Use only requirement_id values from must_have_requirements or "
-        "nice_to_have_requirements in TARGET_PROFILE.\n"
-        "- context_only_requirements are eligibility/apply-review background, not "
-        "coverage targets: never propose edges for them and never list them in "
-        "uncovered_requirements.\n"
-        "- Use only achievement_evidence_id values present in TARGET_PROFILE.\n"
-        "- Do not invent tools, metrics, titles, credentials, dates, employers, or direct experience.\n"
-        "- Classify direct evidence as direct, adjacent support as adjacent, and transferable experience as transferable.\n"
-        "- If a must_have or nice_to_have requirement has no safe edge, list it in "
-        "uncovered_requirements with prohibited claims.\n"
-        "- If an achievement covers no target requirement, list it in unused_achievements.\n"
-        "- Keep rationale concise and evidence-grounded.\n\n"
-        "TARGET_PROFILE:\n"
-        f"{_json_dumps(target_profile.to_prompt_dict())}\n\n"
-        "SEEDED_COVERAGE_GRAPH:\n"
-        f"{_json_dumps(seeded_graph.to_dict())}\n\n"
-        "Return the JSON now."
-    )
-
-
-def apply_coverage_planner_response(
-    *,
-    seeded_graph: CoverageGraph,
-    response: MappingABC[str, Any],
-    controls: RequirementLedTailoringControls,
-) -> tuple[CoverageGraph, tuple[str, ...]]:
-    errors: list[str] = []
-    planned_edges: list[CoverageEdge] = list(seeded_graph.coverage_edges)
-    for raw in response.get("coverage_edges", ()) if isinstance(response, MappingABC) else ():
-        if not isinstance(raw, MappingABC):
-            errors.append("Planner coverage edge entry is not an object.")
-            continue
-        try:
-            requirement_id = str(raw.get("requirement_id") or "")
-            achievement_id = str(raw.get("achievement_evidence_id") or "")
-            coverage_kind = str(raw.get("coverage_kind") or "")
-            planned_edges.append(
-                CoverageEdge(
-                    edge_id=_edge_id(requirement_id, achievement_id, coverage_kind),
-                    requirement_id=requirement_id,
-                    achievement_evidence_id=achievement_id,
-                    coverage_kind=coverage_kind,
-                    strength=str(raw.get("strength") or "moderate"),
-                    required_claim_policy=str(raw.get("required_claim_policy") or "evidence_reframing"),
-                    target_terms=_clean_string_tuple(raw.get("target_terms", ())),
-                    rationale=str(raw.get("rationale") or ""),
-                )
-            )
-        except ValueError as exc:
-            errors.append(str(exc))
-
-    uncovered = list(seeded_graph.uncovered_requirements)
-    for raw in response.get("uncovered_requirements", ()) if isinstance(response, MappingABC) else ():
-        if not isinstance(raw, MappingABC):
-            errors.append("Planner uncovered requirement entry is not an object.")
-            continue
-        try:
-            uncovered.append(
-                UncoveredRequirement(
-                    requirement_id=str(raw.get("requirement_id") or ""),
-                    reason=str(raw.get("reason") or ""),
-                    prohibited_claims=_clean_string_tuple(raw.get("prohibited_claims", ())),
-                )
-            )
-        except ValueError as exc:
-            errors.append(str(exc))
-
-    unused = list(seeded_graph.unused_achievements)
-    for raw in response.get("unused_achievements", ()) if isinstance(response, MappingABC) else ():
-        if not isinstance(raw, MappingABC):
-            errors.append("Planner unused achievement entry is not an object.")
-            continue
-        try:
-            unused.append(
-                UnusedAchievement(
-                    achievement_evidence_id=str(raw.get("achievement_evidence_id") or ""),
-                    reason=str(raw.get("reason") or ""),
-                )
-            )
-        except ValueError as exc:
-            errors.append(str(exc))
-
-    graph = CoverageGraph(
-        requirements=seeded_graph.requirements,
-        achievements=seeded_graph.achievements,
-        coverage_edges=tuple(planned_edges),
-        uncovered_requirements=tuple(_dedupe_uncovered(uncovered, planned_edges)),
-        unused_achievements=tuple(_dedupe_unused(unused, planned_edges)),
-    )
-    return graph, tuple([*errors, *validate_coverage_graph(graph, controls=controls)])
-
-
-def validate_coverage_graph(
-    graph: CoverageGraph,
-    *,
-    controls: RequirementLedTailoringControls,
-) -> tuple[str, ...]:
-    errors: list[str] = []
-    requirement_ids = graph.requirement_ids
-    achievement_ids = graph.achievement_ids
-    edge_ids: set[str] = set()
-    edge_keys: set[tuple[str, str, str]] = set()
-
-    if len(requirement_ids) != len(graph.requirements):
-        errors.append("Coverage graph contains duplicate requirement IDs.")
-    if len(achievement_ids) != len(graph.achievements):
-        errors.append("Coverage graph contains duplicate achievement evidence IDs.")
-
-    for edge in graph.coverage_edges:
-        if edge.edge_id in edge_ids:
-            errors.append(f"Coverage edge {edge.edge_id} is duplicated.")
-        edge_ids.add(edge.edge_id)
-        key = (edge.requirement_id, edge.achievement_evidence_id, edge.coverage_kind)
-        if key in edge_keys:
-            errors.append(
-                "Coverage edge duplicates requirement/evidence/kind: "
-                f"{edge.requirement_id}/{edge.achievement_evidence_id}/{edge.coverage_kind}."
-            )
-        edge_keys.add(key)
-        if edge.requirement_id not in requirement_ids:
-            errors.append(f"Coverage edge {edge.edge_id} references unknown requirement {edge.requirement_id}.")
-        if edge.achievement_evidence_id not in achievement_ids:
-            errors.append(
-                f"Coverage edge {edge.edge_id} references unknown achievement evidence "
-                f"{edge.achievement_evidence_id}."
-            )
-        if not _policy_allows(controls.claim_policy, edge.required_claim_policy):
-            errors.append(
-                f"Coverage edge {edge.edge_id} requires {edge.required_claim_policy}, "
-                f"but claim policy is {controls.claim_policy}."
-            )
-
-    covered_requirements = {edge.requirement_id for edge in graph.coverage_edges}
-    for uncovered in graph.uncovered_requirements:
-        if uncovered.requirement_id not in requirement_ids:
-            errors.append(f"Uncovered requirement {uncovered.requirement_id} is not in the graph.")
-        if uncovered.requirement_id in covered_requirements:
-            errors.append(f"Requirement {uncovered.requirement_id} is both covered and uncovered.")
-
-    covered_achievements = {edge.achievement_evidence_id for edge in graph.coverage_edges}
-    for unused in graph.unused_achievements:
-        if unused.achievement_evidence_id not in achievement_ids:
-            errors.append(f"Unused achievement {unused.achievement_evidence_id} is not in the graph.")
-        if unused.achievement_evidence_id in covered_achievements:
-            errors.append(f"Achievement {unused.achievement_evidence_id} is both covered and unused.")
-
-    return tuple(errors)
-
-
 def validate_generated_claim_mappings(
     mappings: IterableABC[GeneratedClaimMapping],
     graph: CoverageGraph,
@@ -1316,9 +890,7 @@ def validate_generated_claim_mappings(
             if edge.requirement_id not in mapping.requirement_ids:
                 errors.append(f"Generated claim {mapping.claim_id} omits requirement {edge.requirement_id}.")
             if edge.achievement_evidence_id not in mapping.evidence_ids:
-                errors.append(
-                    f"Generated claim {mapping.claim_id} omits evidence {edge.achievement_evidence_id}."
-                )
+                errors.append(f"Generated claim {mapping.claim_id} omits evidence {edge.achievement_evidence_id}.")
         for requirement_id in mapping.requirement_ids:
             if requirement_id not in requirement_ids:
                 errors.append(f"Generated claim {mapping.claim_id} references unknown requirement {requirement_id}.")
@@ -1342,24 +914,6 @@ def validate_generated_claim_mappings(
     return tuple(errors)
 
 
-def validate_metric_support(
-    generated_text: str,
-    *,
-    verified_metrics: IterableABC[str],
-) -> tuple[str, ...]:
-    allowed = {
-        normalize_achievement_metric(metric)
-        for value in verified_metrics
-        for metric in extract_achievement_metrics(str(value))
-    }
-    unsupported: list[str] = []
-    for raw_metric in extract_achievement_metrics(generated_text):
-        metric = normalize_achievement_metric(raw_metric)
-        if metric and metric not in allowed:
-            unsupported.append(metric)
-    return tuple(dict.fromkeys(unsupported))
-
-
 def _select_strongest_requirement_edges(
     *,
     edges: IterableABC[CoverageEdge],
@@ -1376,9 +930,7 @@ def _select_strongest_requirement_edges(
     """
 
     candidates = tuple(edges)
-    achievement_by_id = {
-        item.achievement_evidence_id: item for item in achievements
-    }
+    achievement_by_id = {item.achievement_evidence_id: item for item in achievements}
     selected: list[CoverageEdge] = []
     selected_evidence_ids: set[str] = set()
     kind_rank = {"direct": 3, "transferable": 2, "adjacent": 1}
@@ -1386,10 +938,7 @@ def _select_strongest_requirement_edges(
     evidence_rank = {"verified": 3, "supported": 2, "inferred": 1, "draft": 0}
 
     for requirement in requirements:
-        options = [
-            edge for edge in candidates
-            if edge.requirement_id == requirement.requirement_id
-        ]
+        options = [edge for edge in candidates if edge.requirement_id == requirement.requirement_id]
         if not options:
             continue
 
@@ -1402,9 +951,7 @@ def _select_strongest_requirement_edges(
                 -int(edge.achievement_evidence_id in selected_evidence_ids),
                 -int(bool(achievement and achievement.pinned)),
                 -int(bool(achievement and achievement.user_confirmed)),
-                -evidence_rank.get(
-                    str(achievement.evidence_strength if achievement else ""), 0
-                ),
+                -evidence_rank.get(str(achievement.evidence_strength if achievement else ""), 0),
                 -int(bool(achievement and achievement.metrics)),
                 edge.achievement_evidence_id,
             )
@@ -1416,7 +963,8 @@ def _select_strongest_requirement_edges(
 
 
 def reselect_coverage_graph(
-    graph: CoverageGraph, evidence_ids: IterableABC[str],
+    graph: CoverageGraph,
+    evidence_ids: IterableABC[str],
 ) -> CoverageGraph:
     """Reconsider canonical fit alternatives without expanding required coverage.
 
@@ -1426,7 +974,9 @@ def reselect_coverage_graph(
     """
     admissible = graph.coverage_edges + graph.alternative_edges
     selected = _select_strongest_requirement_edges(
-        edges=admissible, requirements=graph.requirements, achievements=graph.achievements,
+        edges=admissible,
+        requirements=graph.requirements,
+        achievements=graph.achievements,
         preferred_evidence_ids=frozenset(evidence_ids),
     )
     selected_ids = {edge.achievement_evidence_id for edge in selected}
@@ -1437,24 +987,13 @@ def reselect_coverage_graph(
         unused_achievements=tuple(
             UnusedAchievement(
                 achievement_evidence_id=item.achievement_evidence_id,
-                reason="No selected target requirement coverage.", pinned=item.pinned,
+                reason="No selected target requirement coverage.",
+                pinned=item.pinned,
             )
-            for item in graph.achievements if item.achievement_evidence_id not in selected_ids
+            for item in graph.achievements
+            if item.achievement_evidence_id not in selected_ids
         ),
     )
-
-
-def validate_prohibited_claims(
-    generated_text: str,
-    prohibited_claims: IterableABC[str],
-) -> tuple[str, ...]:
-    normalized_text = _normalize_claim(generated_text)
-    found: list[str] = []
-    for claim in prohibited_claims:
-        normalized = _normalize_claim(claim)
-        if normalized and normalized in normalized_text:
-            found.append(str(claim).strip())
-    return tuple(dict.fromkeys(found))
 
 
 def validate_pinned_content_preserved(
@@ -1475,10 +1014,7 @@ def validate_mandatory_covered_achievements(
     mappings: IterableABC[GeneratedClaimMapping],
 ) -> tuple[str, ...]:
     represented = {
-        evidence_id
-        for mapping in mappings
-        for evidence_id in mapping.evidence_ids
-        if mapping.coverage_edge_ids
+        evidence_id for mapping in mappings for evidence_id in mapping.evidence_ids if mapping.coverage_edge_ids
     }
     covered = {edge.achievement_evidence_id for edge in graph.coverage_edges}
     return tuple(sorted(covered - represented))
@@ -1504,34 +1040,23 @@ def score_generated_resume_against_target(
     claimed_only_set = set(grounding.claimed_only_requirement_ids)
     all_requirements = target_profile.resume_requirements
     covered = tuple(
-        requirement.requirement_id
-        for requirement in all_requirements
-        if requirement.requirement_id in covered_set
+        requirement.requirement_id for requirement in all_requirements if requirement.requirement_id in covered_set
     )
     claimed_only = tuple(
-        requirement.requirement_id
-        for requirement in all_requirements
-        if requirement.requirement_id in claimed_only_set
+        requirement.requirement_id for requirement in all_requirements if requirement.requirement_id in claimed_only_set
     )
     uncovered_requirements = tuple(
-        requirement
-        for requirement in all_requirements
-        if requirement.requirement_id not in covered_set
+        requirement for requirement in all_requirements if requirement.requirement_id not in covered_set
     )
     must_have = target_profile.resume_must_have_requirements
-    covered_must_have = [
-        requirement
-        for requirement in must_have
-        if requirement.requirement_id in covered_set
-    ]
+    covered_must_have = [requirement for requirement in must_have if requirement.requirement_id in covered_set]
     must_have_coverage = len(covered_must_have) / len(must_have) if must_have else 1.0
     total_weight = sum(requirement.weight or 0.0 for requirement in all_requirements)
     if total_weight > 0:
-        weighted_coverage = sum(
-            requirement.weight
-            for requirement in all_requirements
-            if requirement.requirement_id in covered_set
-        ) / total_weight
+        weighted_coverage = (
+            sum(requirement.weight for requirement in all_requirements if requirement.requirement_id in covered_set)
+            / total_weight
+        )
     else:
         weighted_coverage = 1.0 if not uncovered_requirements else 0.0
     score = max(1, min(10, round(weighted_coverage * 10)))
@@ -1543,17 +1068,13 @@ def score_generated_resume_against_target(
         )
     )
     review_blockers = tuple(
-        f"{mapping.claim_id}: {mapping.claim_label}"
-        for mapping in mapping_tuple
-        if mapping.review_required
+        f"{mapping.claim_id}: {mapping.claim_label}" for mapping in mapping_tuple if mapping.review_required
     )
     return PostGenerationFitScore(
         score=score,
         must_have_coverage=round(must_have_coverage, 4),
         covered_requirement_ids=covered,
-        uncovered_requirement_ids=tuple(
-            requirement.requirement_id for requirement in uncovered_requirements
-        ),
+        uncovered_requirement_ids=tuple(requirement.requirement_id for requirement in uncovered_requirements),
         claimed_only_requirement_ids=claimed_only,
         prioritized_fixes=prioritized_fixes,
         review_blockers=review_blockers,
@@ -1731,7 +1252,7 @@ def _merge_clean_strings(*groups: IterableABC[Any]) -> tuple[str, ...]:
 
 
 def _normalize_phrase(value: Any) -> str:
-    return " ".join(re.findall(r"[a-z0-9][a-z0-9+#./-]*", str(value or "").lower())).strip()
+    return str(value or "").strip()
 
 
 def _requirement_keywords(target_profile: TargetProfile, requirement_id: str) -> tuple[str, ...]:
@@ -1742,9 +1263,7 @@ def _requirement_keywords(target_profile: TargetProfile, requirement_id: str) ->
 
 
 def _edge_id(requirement_id: str, achievement_evidence_id: str, coverage_kind: str) -> str:
-    return "edge_" + "_".join(
-        _slug(part) for part in (requirement_id, achievement_evidence_id, coverage_kind)
-    )
+    return "edge_" + "_".join(_slug(part) for part in (requirement_id, achievement_evidence_id, coverage_kind))
 
 
 def _slug(value: Any) -> str:
@@ -1829,7 +1348,6 @@ __all__ = [
     "BulletLimitOverflow",
     "CoverageEdge",
     "CoverageGraph",
-    "COVERAGE_PLANNER_RESPONSE_SCHEMA",
     "GeneratedClaimMapping",
     "PostGenerationFitScore",
     "RequirementNode",
@@ -1838,20 +1356,13 @@ __all__ = [
     "TargetRequirement",
     "UncoveredRequirement",
     "UnusedAchievement",
-    "apply_coverage_planner_response",
     "append_enhancement_claim_mappings",
     "bullet_limit_overflows",
-    "build_coverage_planner_prompt",
     "build_target_profile",
-    "classify_requirement_coverage_scope",
     "decide_score_gated_revision",
     "seed_coverage_graph",
     "score_generated_resume_against_target",
-    "resolve_requirement_coverage_scope",
-    "validate_coverage_graph",
     "validate_generated_claim_mappings",
     "validate_mandatory_covered_achievements",
-    "validate_metric_support",
     "validate_pinned_content_preserved",
-    "validate_prohibited_claims",
 ]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+import threading
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -10,6 +11,34 @@ import pytest
 from jobctrl import cli
 from jobctrl.discovery import execution_reconciliation
 from jobctrl.discovery.execution_reconciliation import LegacyDiscoveryRecoveryError
+
+
+@pytest.mark.asyncio
+async def test_blocked_heartbeat_writer_does_not_block_activity_progress(monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    writer_observed_release = []
+
+    def blocked_writer(*args, **kwargs):
+        entered.set()
+        writer_observed_release.append(release.wait(timeout=2))
+        finished.set()
+
+    monkeypatch.setattr(cli, "_worker_heartbeat_iteration", blocked_writer)
+    loop = asyncio.create_task(cli._worker_heartbeat_loop("synthetic-queue", "synthetic-worker", interval_seconds=0.001))
+    try:
+        assert await asyncio.to_thread(entered.wait, 3)
+        # This coroutine represents an activity's independently scheduled
+        # heartbeat. It must run while the database writer is still blocked.
+        release.set()
+        assert await asyncio.to_thread(finished.wait, 3)
+    finally:
+        release.set()
+        loop.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await loop
+    assert writer_observed_release and all(writer_observed_release)
 
 
 def test_worker_heartbeat_loop_retries_after_iteration_failure(monkeypatch):

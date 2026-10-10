@@ -6,7 +6,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { hasRetailorableResumes, recordProfileUpdatedEvent } from "../src/profile-events.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const JOB_ID = "00000000-0000-4000-8000-000000000091";
 const NOW = "2026-07-31T13:00:00Z";
@@ -19,7 +19,7 @@ afterEach(() => {
 function exactDatabase(): Database.Database {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-profile-events-v7-"));
   const dbPath = path.join(dir, "jobs.db");
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   db.pragma("foreign_keys = ON");
   cleanups.push(() => {

@@ -47,14 +47,12 @@ from jobctrl.domain.events import (
     CanonicalJobIdentityResolvedPayload,
     DuplicateJobLinkedPayload,
     DuplicateJobLinkRejectedPayload,
-    JobDeletedPayload,
     JobDiscoveredPayload,
     JobRestoredPayload,
     JobSourceObservedPayload,
     create_canonical_job_identity_resolved,
     create_duplicate_job_link_rejected,
     create_duplicate_job_linked,
-    create_job_deleted,
     create_job_discovered,
     create_job_restored,
     create_job_source_observed,
@@ -79,6 +77,11 @@ from jobctrl.infrastructure.observability.adapter_spans import (
 )
 
 
+def matches_exact_title_exclusion(title: str | None, exclusions: Iterable[str]) -> bool:
+    """Execute only the user's literal, whole-title exclusions."""
+    return (title or "").strip().casefold() in {value.strip().casefold() for value in exclusions}
+
+
 MIN_AUTO_MERGE_CONFIDENCE: float = 0.75
 """Confidence threshold for auto-merging duplicate observations.
 
@@ -97,17 +100,6 @@ existing Job on the shared title + company + description fingerprint, the merge
 is authoritative regardless of the canonical-URL identity confidence. The 0.95
 value mirrors the JobSpy content-dedup path so cross-source collapses recorded
 by either intake share the same ``content_fingerprint_match`` audit weight.
-"""
-
-
-CONTENT_SHINGLE_MATCH_CONFIDENCE: float = 0.85
-"""Confidence recorded on a duplicate link resolved by description shingle similarity.
-
-A shingle match (``descriptions_substantially_match``) confirms the same posting
-across reworded board copies, but it is fuzzier than an exact fingerprint, so it
-carries a lower audit weight. The 0.85 value sits above ``MIN_AUTO_MERGE_CONFIDENCE``
-(the merge is still authoritative) yet below ``CONTENT_MATCH_CONFIDENCE`` so the
-audit trail never overstates a shingle match as an exact fingerprint match.
 """
 
 
@@ -151,42 +143,6 @@ class CanonicalIdentityResolver(Protocol):
     """
 
     def __call__(self, posting: ScrapedJobPosting) -> CanonicalJobIdentity: ...
-
-
-@dataclass(frozen=True)
-class PostingAcceptance:
-    """Current discovery-policy verdict for one scraped posting."""
-
-    accepted: bool
-    reason: str = ""
-    rejection_reasons: tuple[str, ...] = ()
-
-    @classmethod
-    def accept(cls) -> "PostingAcceptance":
-        return cls(accepted=True)
-
-    @classmethod
-    def reject(
-        cls,
-        *,
-        reason: str,
-        rejection_reasons: Iterable[str] = (),
-    ) -> "PostingAcceptance":
-        return cls(
-            accepted=False,
-            reason=reason,
-            rejection_reasons=tuple(str(item) for item in rejection_reasons),
-        )
-
-
-class PostingAcceptancePolicy(Protocol):
-    """Function signature for current discovery-policy acceptance."""
-
-    def __call__(self, posting: ScrapedJobPosting) -> PostingAcceptance: ...
-
-
-def accept_all_postings(_posting: ScrapedJobPosting) -> PostingAcceptance:
-    return PostingAcceptance.accept()
 
 
 @dataclass(frozen=True)
@@ -235,22 +191,24 @@ class DiscoverJobsUseCase:
         repository: JobRepository,
         publisher: EventPublisher,
         resolver: CanonicalIdentityResolver | None = None,
-        acceptance_policy: PostingAcceptancePolicy | None = None,
+        exact_title_exclusions: Iterable[str] = (),
         run_id_factory: object | None = None,
         clock: object | None = None,
         observation_id_factory: Callable[[], str] | None = None,
         job_id_factory: Callable[[], JobId] | None = None,
         republish_canonical_identity: bool = False,
+        refresh_existing_job: bool = True,
     ) -> None:
         self._repository = repository
         self._publisher = publisher
         self._resolver = resolver or default_canonical_identity
-        self._acceptance_policy = acceptance_policy or accept_all_postings
+        self._exact_title_exclusions = tuple(exact_title_exclusions)
         self._run_id_factory = run_id_factory or (lambda: f"run:{uuid.uuid4().hex}")
         self._clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
         self._observation_id_factory = observation_id_factory or (lambda: f"obs:{uuid.uuid4().hex}")
         self._job_id_factory = job_id_factory or generate_job_id
         self._republish_canonical_identity = republish_canonical_identity
+        self._refresh_existing_job = refresh_existing_job
 
     def execute(
         self,
@@ -265,7 +223,10 @@ class DiscoverJobsUseCase:
         once so the same adapter can be replayed in tests.
         """
 
-        materialised = list(postings)
+        materialised = [
+            posting for posting in postings
+            if not matches_exact_title_exclusion(posting.metadata.title, self._exact_title_exclusions)
+        ]
         run_id = run_id or self._run_id_factory()
         decisions: list[DiscoveryDecision] = [
             self._ingest_one(tenant_id=tenant_id, posting=p, run_id=run_id) for p in materialised
@@ -296,11 +257,7 @@ class DiscoverJobsUseCase:
             source_native_id=identity.source_native_id,
             canonical_url=identity.canonical_url,
         )
-        owner_id = (
-            canonical_owner_match.job_id
-            if canonical_owner_match is not None
-            else None
-        )
+        owner_id = canonical_owner_match.job_id if canonical_owner_match is not None else None
         content_match: ContentOwnerMatch | None = None
         if owner_id is None and is_genuine_employer_identity(posting.employer.name):
             content_match = self._repository.find_content_owner(
@@ -328,15 +285,6 @@ class DiscoverJobsUseCase:
             raise ValueError("observation_id_factory returned an empty identifier")
 
         if owner_id is None:
-            acceptance = self._acceptance_policy(posting)
-            if not acceptance.accepted:
-                rejected_job_id = canonical_job_id(str(self._job_id_factory()))
-                return self._policy_rejected_decision(
-                    job_id=rejected_job_id,
-                    observation_id=observation_id,
-                    confidence=identity.confidence,
-                    acceptance=acceptance,
-                )
             return self._create_new_job(
                 tenant_id=tenant_id,
                 posting=posting,
@@ -511,22 +459,11 @@ class DiscoverJobsUseCase:
                 confidence=identity.confidence,
             )
 
-        acceptance = self._acceptance_policy(posting)
-        if content_matched and not acceptance.accepted:
-            return self._reject_content_matched_duplicate(
-                tenant_id=tenant_id,
-                owner_id=owner_id,
-                observation_id=observation_id,
-                candidate_url=observed_url,
-                confidence=identity.confidence,
-                acceptance=acceptance,
-                rejected_at=observed_at,
-            )
         with dedupe_span(
             tenant_id=str(tenant_id),
             job_id=str(owner_id),
             stage="listing_ingest",
-            result="observed" if acceptance.accepted else "policy_rejected",
+            result="observed",
             confidence=identity.confidence,
         ):
             if existing is not None:
@@ -553,47 +490,10 @@ class DiscoverJobsUseCase:
                             ),
                         )
                     )
-                if not acceptance.accepted:
-                    reason = _policy_rejection_reason(acceptance)
-                    if not existing.is_deleted:
-                        self._soft_delete_policy_rejected_job(
-                            tenant_id=tenant_id,
-                            job_id=owner_id,
-                            reason=reason,
-                            deleted_at=observed_at,
-                        )
-                    self._repository.attach_source_observation(
-                        tenant_id,
-                        owner_id,
-                        JobSourceObservation(
-                            source_observation_id=observation_id,
-                            source_id=posting.source_id,
-                            source_native_id=identity.source_native_id,
-                            observed_url=observed_url,
-                            run_id=run_id,
-                            observed_at=observed_at,
-                        ),
-                    )
-                    self._publish_source_observed(
-                        tenant_id=tenant_id,
-                        job_id=owner_id,
-                        observation_id=observation_id,
-                        posting=posting,
-                        identity=identity,
-                        observed_url=observed_url,
-                        run_id=run_id,
-                        observed_at=observed_at,
-                    )
-                    return self._policy_rejected_decision(
-                        job_id=owner_id,
-                        observation_id=observation_id,
-                        confidence=identity.confidence,
-                        acceptance=acceptance,
-                    )
-                refreshed = existing.with_metadata(posting.metadata)
-                if refreshed.employer.is_unknown() and not posting.employer.is_unknown():
+                refreshed = existing.with_metadata(posting.metadata) if self._refresh_existing_job else existing
+                if self._refresh_existing_job and refreshed.employer.is_unknown() and not posting.employer.is_unknown():
                     refreshed = refreshed.with_employer(posting.employer)
-                if refreshed.is_deleted:
+                if self._refresh_existing_job and refreshed.is_deleted:
                     restored = self._repository.restore(
                         tenant_id,
                         owner_id,
@@ -651,8 +551,7 @@ class DiscoverJobsUseCase:
                     link_reason = "content_fingerprint_match"
                     link_confidence = CONTENT_MATCH_CONFIDENCE
                 else:
-                    link_reason = "content_shingle_match"
-                    link_confidence = CONTENT_SHINGLE_MATCH_CONFIDENCE
+                    raise RuntimeError("unrecorded content-identity basis")
             else:
                 if canonical_owner_match is None:
                     raise RuntimeError("canonical owner match is required for exact duplicate audit")
@@ -688,51 +587,6 @@ class DiscoverJobsUseCase:
             rejected_reason=None,
             rejected_kind=None,
             confidence=identity.confidence,
-        )
-
-    def _reject_content_matched_duplicate(
-        self,
-        *,
-        tenant_id: TenantId,
-        owner_id: JobId,
-        observation_id: str,
-        candidate_url: str,
-        confidence: float,
-        acceptance: PostingAcceptance,
-        rejected_at: str,
-    ) -> DiscoveryDecision:
-        """Decline a DISTINCT content-matched posting without touching the owner.
-
-        The incoming posting resolved to ``owner_id`` only by content identity, so
-        it is a different posting (different canonical URL, typically another
-        source and location) rather than a re-observation of the owner. A
-        current-policy rejection must therefore NOT soft-delete the accepted owner,
-        and must NOT attach the rejected posting as an owner observation: doing so
-        would let ``find_canonical_owner`` resurface it as a same-identity
-        re-observation on a later run and delete the owner then. The declined
-        duplicate is recorded as ``DuplicateJobLinkRejected`` audit attributed to
-        the owner and the owner is left untouched.
-        """
-        with dedupe_span(
-            tenant_id=str(tenant_id),
-            job_id=str(owner_id),
-            stage="content_identity",
-            result="policy_rejected",
-            confidence=confidence,
-        ):
-            pass
-        self._record_and_publish_rejected_duplicate(
-            tenant_id=tenant_id,
-            owner_id=owner_id,
-            candidate_url=candidate_url,
-            reason=f"content_match_policy_rejected: {_policy_rejection_reason(acceptance)}",
-            rejected_at=rejected_at,
-        )
-        return self._policy_rejected_decision(
-            job_id=owner_id,
-            observation_id=observation_id,
-            confidence=confidence,
-            acceptance=acceptance,
         )
 
     def _record_and_publish_rejected_duplicate(
@@ -800,68 +654,13 @@ class DiscoverJobsUseCase:
             )
         )
 
-    def _soft_delete_policy_rejected_job(
-        self,
-        *,
-        tenant_id: TenantId,
-        job_id: JobId,
-        reason: str,
-        deleted_at: str,
-    ) -> None:
-        deleted = self._repository.soft_delete(
-            tenant_id,
-            job_id,
-            reason=reason,
-            deleted_at=deleted_at,
-        )
-        if deleted is None:
-            return
-        self._publisher.publish(
-            create_job_deleted(
-                tenant_id,
-                JobDeletedPayload(
-                    job_id=str(job_id),
-                    reason=reason,
-                    deleted_at=deleted_at,
-                ),
-            )
-        )
-
-    def _policy_rejected_decision(
-        self,
-        *,
-        job_id: JobId,
-        observation_id: str,
-        confidence: float,
-        acceptance: PostingAcceptance,
-    ) -> DiscoveryDecision:
-        return DiscoveryDecision(
-            job_id=job_id,
-            is_new_job=False,
-            observation_id=observation_id,
-            duplicate_link_id=None,
-            rejected_reason=_policy_rejection_reason(acceptance),
-            rejected_kind="policy",
-            confidence=confidence,
-        )
-
-
-def _policy_rejection_reason(acceptance: PostingAcceptance) -> str:
-    if acceptance.rejection_reasons:
-        return f"{acceptance.reason}: {', '.join(acceptance.rejection_reasons)}"
-    return acceptance.reason or "policy_rejected"
-
 
 __all__ = [
     "CONTENT_MATCH_CONFIDENCE",
-    "CONTENT_SHINGLE_MATCH_CONFIDENCE",
     "CanonicalIdentityResolver",
     "DiscoverJobsUseCase",
     "DiscoveryDecision",
     "DiscoveryRunSummary",
     "MIN_AUTO_MERGE_CONFIDENCE",
-    "PostingAcceptance",
-    "PostingAcceptancePolicy",
-    "accept_all_postings",
     "default_canonical_identity",
 ]

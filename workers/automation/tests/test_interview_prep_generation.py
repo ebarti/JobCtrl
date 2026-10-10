@@ -1,315 +1,76 @@
-"""Interview prep generation stays grounded in existing materials gates."""
+"""Mechanical interview identity, events, runtime and material-read boundaries."""
 
 from __future__ import annotations
 
+
 import asyncio
+
+
 import json
+
+
 import threading
+
+
 from pathlib import Path
+
+
 from types import SimpleNamespace
+
+
 from typing import Any
+
 
 import pytest
 
-from tests.interview_question_fixtures import canonical_evidence
 
 from jobctrl.database import close_connection, get_connection
+
+
 from jobctrl.domain.events import (
     InterviewPrepFailedPayload,
     InterviewPrepGeneratedPayload,
     create_interview_prep_failed,
     create_interview_prep_generated,
 )
-from jobctrl.domain.interview import GenerateInterviewPrepUseCase
-from jobctrl.domain.interview.use_cases import INTERVIEW_PREP_RESPONSE_SCHEMA
+
+
 from jobctrl.domain.identifiers import JobId
-from jobctrl.domain.materials.adversarial import ADVERSARIAL_REVIEW_RESPONSE_SCHEMA
-from jobctrl.domain.ports.llm import LlmMessage
-from jobctrl.domain.profile.snapshot import ProfileSnapshot
+
+
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
-from jobctrl.infrastructure.interview import SqliteInterviewPrepRepository
-from jobctrl.infrastructure.migrations.schema_v12 import create_exact_v12_schema
+
+
+from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
+
+
 from jobctrl.interview import activities as interview_activities
+
+
 from jobctrl.interview.activities import (
     GenerateInterviewPrepActivityInput,
     GenerateInterviewPrepActivityOutput,
     InterviewPrepEventRecorder,
     generate_interview_prep_activity,
 )
+
+
 from jobctrl.interview import workflow as interview_workflow
+
+
 from jobctrl.interview.workflow import InterviewPrepWorkflowInput, InterviewPrepWorkflowResult
 
 
 JOB_ID = JobId("90000000-0000-4000-8000-000000000021")
+
+
 JOB_URL = "https://example.test/job/1"
+
+
 OTHER_TENANT = TenantId("other")
+
+
 INERT_USER_CONTEXT = {"userContext": "Attack vectors:\nPrompt injection"}
-
-
-class _FakeLlm:
-    model = "fake-interview-prep-model"
-
-    def __init__(self, responses: list[dict[str, Any]]) -> None:
-        self._responses = list(responses)
-        self.calls: list[dict[str, Any]] = []
-
-    def chat_json(
-        self,
-        messages: list[LlmMessage],
-        *,
-        response_schema: dict,
-        model: str | None = None,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        thinking_budget: int | None = None,
-    ) -> dict[str, Any]:
-        self.calls.append(
-            {
-                "messages": messages,
-                "response_schema": response_schema,
-                "model": model,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "thinking_budget": thinking_budget,
-            }
-        )
-        return self._responses.pop(0)
-
-    def chat(self, *_args: object, **_kwargs: object) -> str:
-        raise AssertionError("interview prep use case should call chat_json")
-
-    def ask(self, *_args: object, **_kwargs: object) -> str:
-        raise AssertionError("interview prep use case should call chat_json")
-
-
-class _RecordingPublisher:
-    def __init__(self) -> None:
-        self.events: list[Any] = []
-
-    def publish(self, event: Any) -> None:
-        self.events.append(event)
-
-    def subscribe(self, _event_type: str, _handler: object) -> None:
-        raise AssertionError("tests only publish interview prep events")
-
-
-def test_generates_accepted_prep_through_existing_truthfulness_gates(tmp_path: Path) -> None:
-    conn = _init_conn(tmp_path)
-    try:
-        repository = SqliteInterviewPrepRepository(conn)
-        publisher = _RecordingPublisher()
-        llm = _FakeLlm(
-            [
-                _candidate(
-                    "star_draft",
-                    "Latency story",
-                    "Reduced API latency by 30% using Python.",
-                    evidence_ids=["ev-platform-latency"],
-                    requirement_ids=["req-python"],
-                ),
-                _judge_pass(),
-            ]
-        )
-
-        outcome = GenerateInterviewPrepUseCase(
-            catalog=_generation_catalog(),
-            repository=repository,
-            llm=llm,
-            publisher=publisher,
-        ).execute(
-            tenant_id=LOCAL_TENANT,
-            job=_job(),
-            profile_snapshot=_profile_snapshot(),
-            canonical_evidence=canonical_evidence(_profile_snapshot()),
-            evidence_entries=_evidence_entries(),
-            evidence_gaps=(),
-            requirements=_requirements("req-python", "Python service optimization"),
-            model="fake-model",
-        )
-
-        assert outcome.status == "accepted"
-        accepted = repository.load_latest(TenantId("local"), JOB_ID)
-        assert accepted is not None
-        assert accepted.generation == 1
-        assert accepted.gate_audit.status == "passed"
-        assert accepted.items[0].evidence_ids == ("ev-platform-latency",)
-        assert [event.event_type for event in publisher.events] == ["InterviewPrepGenerated"]
-        assert [call["response_schema"] for call in llm.calls] == [
-            INTERVIEW_PREP_RESPONSE_SCHEMA,
-            ADVERSARIAL_REVIEW_RESPONSE_SCHEMA,
-        ]
-    finally:
-        close_connection(tmp_path / "jobs.db")
-
-
-def test_fabricated_metric_fails_without_superseding_last_accepted_prep(tmp_path: Path) -> None:
-    conn = _init_conn(tmp_path)
-    try:
-        repository = SqliteInterviewPrepRepository(conn)
-        publisher = _RecordingPublisher()
-        first_llm = _FakeLlm(
-            [
-                _candidate(
-                    "star_draft",
-                    "Latency story",
-                    "Reduced API latency by 30% using Python.",
-                    evidence_ids=["ev-platform-latency"],
-                    requirement_ids=["req-python"],
-                ),
-                _judge_pass(),
-            ]
-        )
-        use_case = GenerateInterviewPrepUseCase(
-            catalog=_generation_catalog(),
-            repository=repository,
-            llm=first_llm,
-            publisher=publisher,
-        )
-        use_case.execute(
-            tenant_id=LOCAL_TENANT,
-            job=_job(),
-            profile_snapshot=_profile_snapshot(),
-            canonical_evidence=canonical_evidence(_profile_snapshot()),
-            evidence_entries=_evidence_entries(),
-            evidence_gaps=(),
-            requirements=_requirements("req-python", "Python service optimization"),
-        )
-
-        second_llm = _FakeLlm(
-            [
-                _candidate(
-                    "star_draft",
-                    "Inflated latency story",
-                    "Reduced API latency by 99% using Python.",
-                    evidence_ids=["ev-platform-latency"],
-                    requirement_ids=["req-python"],
-                )
-            ]
-        )
-        outcome = GenerateInterviewPrepUseCase(
-            catalog=_generation_catalog(),
-            repository=repository,
-            llm=second_llm,
-            publisher=publisher,
-        ).execute(
-            tenant_id=LOCAL_TENANT,
-            job=_job(),
-            profile_snapshot=_profile_snapshot(),
-            canonical_evidence=canonical_evidence(_profile_snapshot()),
-            evidence_entries=_evidence_entries(),
-            evidence_gaps=(),
-            requirements=_requirements("req-python", "Python service optimization"),
-        )
-
-        assert outcome.status == "failed"
-        assert any("99%" in error for error in outcome.errors)
-        latest_accepted = repository.load_latest(TenantId("local"), JOB_ID)
-        latest_any = repository.load_latest(
-            TenantId("local"),
-            JOB_ID,
-            status=None,
-        )
-        assert latest_accepted is not None
-        assert latest_accepted.generation == 1
-        assert latest_accepted.status == "accepted"
-        assert latest_any is not None
-        assert latest_any.generation == 2
-        assert latest_any.status == "failed"
-        assert [event.event_type for event in publisher.events] == [
-            "InterviewPrepGenerated",
-            "InterviewPrepFailed",
-        ]
-        assert [call["response_schema"] for call in second_llm.calls] == [
-            INTERVIEW_PREP_RESPONSE_SCHEMA
-        ]
-    finally:
-        close_connection(tmp_path / "jobs.db")
-
-
-def test_star_draft_claim_must_ground_in_referenced_evidence_source(tmp_path: Path) -> None:
-    conn = _init_conn(tmp_path)
-    try:
-        repository = SqliteInterviewPrepRepository(conn)
-        llm = _FakeLlm(
-            [
-                _candidate(
-                    "star_draft",
-                    "Planning story",
-                    "Led cross-team planning for Python service optimization.",
-                    evidence_ids=["ev-platform-latency"],
-                    requirement_ids=["req-python"],
-                )
-            ]
-        )
-
-        outcome = GenerateInterviewPrepUseCase(
-            catalog=_generation_catalog(),
-            repository=repository,
-            llm=llm,
-            publisher=_RecordingPublisher(),
-        ).execute(
-            tenant_id=LOCAL_TENANT,
-            job=_job(),
-            profile_snapshot=_profile_snapshot(),
-            canonical_evidence=canonical_evidence(_profile_snapshot()),
-            evidence_entries=_evidence_entries(),
-            evidence_gaps=(),
-            requirements=_requirements("req-python", "Python service optimization"),
-        )
-
-        assert outcome.status == "failed"
-        assert any(
-            "not grounded in its selected canonical excerpts" in error
-            for error in outcome.errors
-        )
-        assert [call["response_schema"] for call in llm.calls] == [
-            INTERVIEW_PREP_RESPONSE_SCHEMA
-        ]
-    finally:
-        close_connection(tmp_path / "jobs.db")
-
-
-def test_gap_drill_must_name_gap_without_claiming_experience(tmp_path: Path) -> None:
-    conn = _init_conn(tmp_path)
-    try:
-        repository = SqliteInterviewPrepRepository(conn)
-        llm = _FakeLlm(
-            [
-                _candidate(
-                    "gap_drill",
-                    "Kubernetes gap practice",
-                    "I used Kubernetes in production to operate clusters.",
-                    evidence_ids=[],
-                    requirement_ids=["req-kubernetes"],
-                )
-            ]
-        )
-
-        outcome = GenerateInterviewPrepUseCase(
-            catalog=_generation_catalog(),
-            repository=repository,
-            llm=llm,
-            publisher=_RecordingPublisher(),
-        ).execute(
-            tenant_id=LOCAL_TENANT,
-            job=_job(),
-            profile_snapshot=_profile_snapshot(),
-            canonical_evidence=canonical_evidence(_profile_snapshot()),
-            evidence_entries=_evidence_entries(),
-            evidence_gaps=(
-                {
-                    "requirementId": "req-kubernetes",
-                    "demandedSkill": "Kubernetes",
-                    "jobRefs": [{"jobId": str(JOB_ID)}],
-                },
-            ),
-            requirements=_requirements("req-kubernetes", "Kubernetes administration"),
-        )
-
-        assert outcome.status == "failed"
-        assert any("asserts personal history without accepted evidence" in error for error in outcome.errors)
-    finally:
-        close_connection(tmp_path / "jobs.db")
 
 
 def test_event_recorder_writes_canonical_job_id_and_safe_payload_fields(tmp_path: Path) -> None:
@@ -384,13 +145,16 @@ def test_event_recorder_keeps_same_job_id_events_with_their_originating_tenant(
             """
         ).fetchall()
         assert [tuple(row) for row in rows] == [(OTHER_TENANT, JOB_ID, event_type)]
-        assert conn.execute(
-            """
+        assert (
+            conn.execute(
+                """
             SELECT COUNT(*) FROM job_events
             WHERE tenant_id = ? AND job_id = ? AND stage = 'interview_prep'
             """,
-            (LOCAL_TENANT, JOB_ID),
-        ).fetchone()[0] == 0
+                (LOCAL_TENANT, JOB_ID),
+            ).fetchone()[0]
+            == 0
+        )
     finally:
         close_connection(tmp_path / "jobs.db")
 
@@ -424,29 +188,6 @@ def test_event_recorder_does_not_redirect_to_local_when_only_other_tenant_has_jo
         close_connection(tmp_path / "jobs.db")
 
 
-def test_interview_prep_rejects_url_shaped_job_identity(tmp_path: Path) -> None:
-    conn = _init_conn(tmp_path)
-    try:
-        use_case = GenerateInterviewPrepUseCase(
-            catalog=_generation_catalog(),
-            repository=SqliteInterviewPrepRepository(conn),
-            llm=_FakeLlm([]),
-        )
-
-        with pytest.raises(ValueError, match="canonical UUID"):
-            use_case.execute(
-                tenant_id=LOCAL_TENANT,
-                job={**_job(), "job_id": JOB_URL},
-                profile_snapshot=_profile_snapshot(),
-                canonical_evidence=canonical_evidence(_profile_snapshot()),
-                evidence_entries=(),
-                evidence_gaps=(),
-                requirements=(),
-            )
-    finally:
-        close_connection(tmp_path / "jobs.db")
-
-
 def test_interview_workflow_and_activity_boundaries_reject_url_identity() -> None:
     with pytest.raises(ValueError, match="canonical UUID"):
         InterviewPrepWorkflowInput(tenant_id="local", job_id=JOB_URL)
@@ -461,144 +202,6 @@ def test_interview_workflow_and_activity_boundaries_reject_url_identity() -> Non
             generation=1,
             item_count=0,
         )
-
-
-def test_evidence_loader_preserves_inert_user_context(tmp_path: Path) -> None:
-    conn = _init_conn(tmp_path)
-    try:
-        conn.execute(
-            """
-            INSERT INTO evidence_usage_projections (
-                tenant_id, projection_kind, projection_id, payload_json
-            ) VALUES ('local', 'entry', 'evidence-inert-context', ?)
-            """,
-            (json.dumps(INERT_USER_CONTEXT, separators=(",", ":")),),
-        )
-        conn.commit()
-
-        entries = interview_activities._load_evidence_entries(conn, LOCAL_TENANT, JOB_ID)
-
-        assert entries == (INERT_USER_CONTEXT,)
-    finally:
-        close_connection(tmp_path / "jobs.db")
-
-
-def test_retry_with_same_origin_run_reuses_completed_generation(tmp_path: Path) -> None:
-    conn = _init_conn(tmp_path)
-    try:
-        repository = SqliteInterviewPrepRepository(conn)
-        publisher = _RecordingPublisher()
-        llm = _FakeLlm(
-            [
-                _candidate(
-                    "star_draft",
-                    "Latency story",
-                    "Reduced API latency by 30% using Python.",
-                    evidence_ids=["ev-platform-latency"],
-                    requirement_ids=["req-python"],
-                ),
-                _judge_pass(),
-            ]
-        )
-        use_case = GenerateInterviewPrepUseCase(
-            catalog=_generation_catalog(),
-            repository=repository,
-            llm=llm,
-            publisher=publisher,
-        )
-        request = {
-            "tenant_id": LOCAL_TENANT,
-            "job": _job(),
-            "profile_snapshot": _profile_snapshot(),
-            "canonical_evidence": canonical_evidence(_profile_snapshot()),
-            "evidence_entries": _evidence_entries(),
-            "evidence_gaps": (),
-            "requirements": _requirements("req-python", "Python service optimization"),
-            "model": "fake-model",
-        }
-
-        first = use_case.execute(origin_run_id="wf-run-1", **request)
-        assert first.status == "accepted"
-        assert first.prep.generation == 1
-        assert len(llm.calls) == 2  # one generation call + one judge call
-
-        # A retried activity attempt for the SAME workflow run must reuse the
-        # already-generated prep: no second LLM spend, no duplicate row. Only two
-        # canned responses exist, so a re-generation would also raise IndexError.
-        retry = use_case.execute(origin_run_id="wf-run-1", **request)
-        assert retry.status == "accepted"
-        assert retry.prep.generation == 1
-        assert len(llm.calls) == 2
-        row_count = conn.execute(
-            "SELECT COUNT(*) FROM job_interview_prep WHERE tenant_id = ? AND job_id = ?",
-            ("local", JOB_ID),
-        ).fetchone()[0]
-        assert row_count == 1
-        assert [event.event_type for event in publisher.events] == ["InterviewPrepGenerated"]
-    finally:
-        close_connection(tmp_path / "jobs.db")
-
-
-def test_new_workflow_run_generates_a_fresh_generation(tmp_path: Path) -> None:
-    conn = _init_conn(tmp_path)
-    try:
-        repository = SqliteInterviewPrepRepository(conn)
-        request = {
-            "tenant_id": LOCAL_TENANT,
-            "job": _job(),
-            "profile_snapshot": _profile_snapshot(),
-            "canonical_evidence": canonical_evidence(_profile_snapshot()),
-            "evidence_entries": _evidence_entries(),
-            "evidence_gaps": (),
-            "requirements": _requirements("req-python", "Python service optimization"),
-            "model": "fake-model",
-        }
-
-        first_llm = _FakeLlm(
-            [
-                _candidate(
-                    "star_draft",
-                    "Latency story",
-                    "Reduced API latency by 30% using Python.",
-                    evidence_ids=["ev-platform-latency"],
-                    requirement_ids=["req-python"],
-                ),
-                _judge_pass(),
-            ]
-        )
-        first = GenerateInterviewPrepUseCase(
-            catalog=_generation_catalog(),
-            repository=repository,
-            llm=first_llm,
-            publisher=_RecordingPublisher(),
-        ).execute(origin_run_id="wf-run-1", **request)
-        assert first.prep.generation == 1
-
-        # A genuinely new workflow run (new run id) is not a retry: idempotency
-        # must not suppress a legitimate re-generation.
-        second_llm = _FakeLlm(
-            [
-                _candidate(
-                    "star_draft",
-                    "Latency story",
-                    "Reduced API latency by 30% using Python.",
-                    evidence_ids=["ev-platform-latency"],
-                    requirement_ids=["req-python"],
-                ),
-                _judge_pass(),
-            ]
-        )
-        second = GenerateInterviewPrepUseCase(
-            catalog=_generation_catalog(),
-            repository=repository,
-            llm=second_llm,
-            publisher=_RecordingPublisher(),
-        ).execute(origin_run_id="wf-run-2", **request)
-        assert second.status == "accepted"
-        assert second.prep.generation == 2
-        assert len(second_llm.calls) == 2
-    finally:
-        close_connection(tmp_path / "jobs.db")
 
 
 @pytest.mark.asyncio
@@ -645,9 +248,7 @@ async def test_generate_activity_offloads_generation_and_heartbeats(
     )
 
     task = asyncio.create_task(
-        generate_interview_prep_activity(
-            GenerateInterviewPrepActivityInput(tenant_id="local", job_id=JOB_ID)
-        )
+        generate_interview_prep_activity(GenerateInterviewPrepActivityInput(tenant_id="local", job_id=JOB_ID))
     )
     # The blocking generation runs in the worker thread pool, so the event loop
     # stays responsive instead of being starved by an inline blocking call.
@@ -663,10 +264,10 @@ async def test_generate_activity_offloads_generation_and_heartbeats(
     assert forwarded["origin_run_id"] == "wf-run-heartbeat"
 
 
-
 @pytest.mark.parametrize("tenant_id", [LOCAL_TENANT, OTHER_TENANT])
 def test_prep_material_input_uses_only_current_approved_artifact(
-    tmp_path: Path, tenant_id: TenantId,
+    tmp_path: Path,
+    tenant_id: TenantId,
 ) -> None:
     conn = _init_conn(tmp_path)
     try:
@@ -691,8 +292,14 @@ def test_prep_material_input_uses_only_current_approved_artifact(
                     "INSERT INTO job_bullet_provenance (tenant_id, job_id, generation, "
                     "bullet_id, artifact_id, section, transform_type, control, generated_text, created_at) "
                     "VALUES (?, ?, ?, ?, ?, 'experience', 'paraphrase', 'never_fabricate', ?, 'now')",
-                    (tenant_id, JOB_ID, generation, f"bullet-{generation}-{suffix}", artifact_id,
-                     f"synthetic generation {generation} {suffix}"),
+                    (
+                        tenant_id,
+                        JOB_ID,
+                        generation,
+                        f"bullet-{generation}-{suffix}",
+                        artifact_id,
+                        f"synthetic generation {generation} {suffix}",
+                    ),
                 )
         conn.commit()
 
@@ -710,54 +317,31 @@ def test_prep_material_input_uses_only_current_approved_artifact(
         close_connection(tmp_path / "jobs.db")
 
 
-
-@pytest.mark.parametrize("judge_failure", [False, True])
-def test_provider_or_judge_failure_preserves_accepted_and_retry_reuses_failure(
-    tmp_path: Path, judge_failure: bool,
-) -> None:
-    conn = _init_conn(tmp_path)
-    try:
-        repository = SqliteInterviewPrepRepository(conn)
-        candidate = _candidate("star_draft", "Latency", "Reduced API latency by 30% using Python.",
-                               evidence_ids=["ev-platform-latency"], requirement_ids=["req-python"])
-        request = dict(tenant_id=LOCAL_TENANT, job=_job(), profile_snapshot=_profile_snapshot(), canonical_evidence=canonical_evidence(_profile_snapshot()),
-                       evidence_entries=_evidence_entries(), evidence_gaps=(),
-                       requirements=_requirements("req-python", "Python service optimization"))
-        accepted = GenerateInterviewPrepUseCase(catalog=_generation_catalog(), repository=repository, llm=_FakeLlm([candidate, _judge_pass()]))
-        assert accepted.execute(origin_run_id="accepted", **request).status == "accepted"
-        failing_llm = _FakeLlm([candidate] if judge_failure else [])
-        use_case = GenerateInterviewPrepUseCase(catalog=_generation_catalog(), repository=repository, llm=failing_llm)
-
-        failed = use_case.execute(origin_run_id="failed", **request)
-        retried = use_case.execute(origin_run_id="failed", **request)
-
-        assert failed.status == retried.status == "failed"
-        assert failed.prep.generation == retried.prep.generation == 2
-        assert repository.load_latest(LOCAL_TENANT, JOB_ID).generation == 1
-        assert len(failing_llm.calls) == (2 if judge_failure else 1)
-        assert any(("judge_error" if judge_failure else "generation_error") in error for error in failed.errors)
-    finally:
-        close_connection(tmp_path / "jobs.db")
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("raise_error", [False, True])
 async def test_workflow_terminal_events_do_not_include_private_failure_text(
-    monkeypatch: pytest.MonkeyPatch, raise_error: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    raise_error: bool,
 ) -> None:
     from datetime import datetime, timezone
+
     outcomes: list[dict[str, Any]] = []
+
     async def record_outcome(**kwargs: Any) -> None:
         outcomes.append(kwargs)
+
     async def started(**_kwargs: Any) -> None:
         pass
+
     async def execute(fn: Any, *_args: Any, **_kwargs: Any) -> Any:
         if fn == interview_workflow.check_spend_budget:
             return None
         if raise_error:
             raise RuntimeError("PRIVATE candidate answer and employer excerpt")
-        return GenerateInterviewPrepActivityOutput(status="failed", job_id=JOB_ID, generation=2,
-                                                   item_count=0, errors=("PRIVATE candidate answer",))
+        return GenerateInterviewPrepActivityOutput(
+            status="failed", job_id=JOB_ID, generation=2, item_count=0, errors=("PRIVATE candidate answer",)
+        )
+
     monkeypatch.setattr(interview_workflow, "emit_workflow_outcome", record_outcome)
     monkeypatch.setattr(interview_workflow, "emit_workflow_started", started)
     monkeypatch.setattr(interview_workflow.workflow, "execute_activity", execute)
@@ -772,47 +356,10 @@ async def test_workflow_terminal_events_do_not_include_private_failure_text(
     assert "PRIVATE" not in json.dumps(outcomes, default=str)
 
 
-
-@pytest.mark.parametrize("fit_profile,fit_analysis,expected", [(1, 3, "current"), (2, 3, "stale_excluded"), (1, 2, "stale_excluded")])
-def test_stale_fit_is_labeled_and_does_not_supply_evidence(
-    tmp_path: Path, fit_profile: int, fit_analysis: int, expected: str,
-) -> None:
-    import sqlite3
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    conn.executescript("""
-    CREATE TABLE job_employer_analysis (tenant_id, job_id, generation, snapshot_hash, prompt_version,
-                                       role_framing, inferred_seniority, requirements_json);
-    CREATE TABLE job_requirement_fit_reports (tenant_id, job_id, score_version, employer_analysis_generation,
-                                            profile_snapshot_version, scoring_policy_version, formula_version, created_at);
-    CREATE TABLE job_requirement_fit_items (tenant_id, job_id, score_version, requirement_id, requirement_text, fit_json, position);
-    """)
-    try:
-        for tenant in (LOCAL_TENANT, OTHER_TENANT):
-            conn.execute("INSERT INTO job_employer_analysis VALUES (?, ?, 3, 'snapshot', 'prompt', 'Platform ownership', 'staff', ?)",
-                         (tenant, JOB_ID, json.dumps([{"id": "r1", "text": "Python service optimization", "evidence_span": "Python"}])))
-            conn.execute("INSERT INTO job_requirement_fit_reports VALUES (?, ?, 4, ?, ?, 1, 'v1', 'now')",
-                         (tenant, JOB_ID, fit_analysis, fit_profile))
-            conn.execute("INSERT INTO job_requirement_fit_items VALUES (?, ?, 4, 'r1', 'Python service optimization', ?, 0)",
-                         (tenant, JOB_ID, json.dumps({"kind": "matched", "evidenceIds": [f"evidence-{tenant}"]})))
-        employer, fit, requirements = interview_activities._load_employer_and_fit_context(conn, LOCAL_TENANT, JOB_ID, 1)
-        assert employer["generation"] == 3
-        assert fit["status"] == expected
-        assert requirements[0]["evidenceIds"] == (["evidence-local"] if expected == "current" else [])
-        assert "evidence-other" not in json.dumps((employer, fit, requirements))
-        if expected == "current":
-            conn.execute("UPDATE job_requirement_fit_items SET requirement_text = 'changed source' WHERE tenant_id = 'local'")
-            _, _, requirements = interview_activities._load_employer_and_fit_context(conn, LOCAL_TENANT, JOB_ID, 1)
-            assert requirements[0]["evidenceIds"] == []
-            assert requirements[0]["fitStatus"] == "source_identity_mismatch"
-    finally:
-        conn.close()
-
-
 def _init_conn(tmp_path: Path, *, seed_local_job: bool = True):
     db_path = tmp_path / "jobs.db"
     conn = get_connection(db_path)
-    create_exact_v12_schema(conn)
+    create_exact_v14_schema(conn)
     if seed_local_job:
         _insert_job(conn, LOCAL_TENANT, JOB_ID, JOB_URL)
     conn.commit()
@@ -840,113 +387,4 @@ def _job() -> dict[str, Any]:
         "url": JOB_URL,
         "title": "Backend Engineer",
         "company": "ExampleCo",
-    }
-
-
-def _profile_snapshot() -> ProfileSnapshot:
-    profile = {
-        "experience": {"total_years": "6"},
-        "resume": {
-            "executive_profile": {"baseline_text": "Backend engineer focused on platform reliability."},
-            "experience_entries": [
-                {
-                    "id": "platform",
-                    "company": "Acme",
-                    "title": "Backend Engineer",
-                    "bullets": ["Reduced API latency by 30% using Python."],
-                    "achievement_evidence": [
-                        {
-                            "id": "ev-platform-latency",
-                            "source_text": "Reduced API latency by 30% using Python.",
-                            "scope": "API latency",
-                            "action": "Optimized Python service",
-                            "tools": ["Python"],
-                            "metrics": ["30%"],
-                            "outcome": "Latency reduction",
-                            "evidence_strength": "verified",
-                            "claim_confidence": 1.0,
-                            "user_confirmed": True,
-                            "tags": ["latency"],
-                        }
-                    ],
-                }
-            ],
-            "education_entries": [],
-            "skill_categories": [{"id": "languages", "label": "Languages", "items": ["Python"]}],
-            "tailoring_rules": {},
-        },
-        "resume_constraints": {"real_metrics": ["30%"]},
-        "skills_boundary": {"languages": ["Python"]},
-        "resume_facts": {"preserved_companies": ["Acme"], "real_metrics": ["30%"]},
-    }
-    return ProfileSnapshot(
-        tenant_id=LOCAL_TENANT,
-        profile_id="profile",
-        version=1,
-        _data=profile,
-    )
-
-
-def _evidence_entries() -> tuple[dict[str, Any], ...]:
-    return (
-        {
-            "evidenceId": "ev-platform-latency",
-            "title": "API latency reduction",
-            "resumeUsages": [{"jobId": str(JOB_ID)}],
-        },
-    )
-
-
-def _requirements(requirement_id: str, text: str) -> tuple[dict[str, Any], ...]:
-    return (
-        {
-            "requirementId": requirement_id,
-            "requirementText": text,
-            "tier": "must_have",
-            "weight": 1.0,
-        },
-    )
-
-
-def _candidate(
-    kind: str,
-    title: str,
-    generated_text: str,
-    *,
-    evidence_ids: list[str],
-    requirement_ids: list[str],
-) -> dict[str, Any]:
-    return {"items": [{"question_id": "B01", "outline": [{"heading": title,
-             "text": generated_text, "evidence_ids": evidence_ids,
-             "factual_support": "accepted_profile_fact" if evidence_ids else "needs_clarification"}],
-             "gaps": ([{"prompt": "What actual evidence could clarify the missing requirement?",
-                        "reason": "Missing supported experience."}] if kind == "gap_drill" else []),
-             "probes": []}]}
-
-
-def _generation_catalog() -> dict[str, Any]:
-    from tests.interview_question_fixtures import card
-    return {"schemaVersion": "1", "catalogRevision": "synthetic-1", "catalogDigest": "c" * 64,
-            "questions": [card("B01", "historical")], "retiredQuestions": [{"id": "C08"}]}
-
-
-def _judge_pass() -> dict[str, Any]:
-    return {
-        "verdict": "PASS",
-        "score": 0.95,
-        "score_rationale": "Grounded in profile evidence.",
-        "personas": [
-            {
-                "persona": "evidence_auditor",
-                "verdict": "PASS",
-                "score": 0.95,
-                "score_rationale": "The metric and tool are supported.",
-                "blockers": [],
-                "warnings": [],
-                "repair_instructions": [],
-            }
-        ],
-        "blockers": [],
-        "warnings": [],
-        "repair_instructions": [],
     }

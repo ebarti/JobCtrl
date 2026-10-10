@@ -129,6 +129,8 @@ export interface ResumeDraftGateState {
 }
 
 interface ResumeLineEntry {
+  readonly semanticId?: string | null | undefined;
+  readonly profileField?: string | null | undefined;
   readonly lineLabel?: string | undefined;
   readonly lineNumber?: number | undefined;
   readonly text: string;
@@ -300,6 +302,7 @@ interface ResumeAuditPin {
 }
 
 interface RiskSignals {
+  readonly lineFindings: NonNullable<ArtifactTailoringExplanation["lineFindings"]>;
   readonly hasAnyAudit: boolean;
   readonly quality: string;
   readonly judge: string;
@@ -409,49 +412,6 @@ function normalizeResumeLine(value: string): string {
     .toLowerCase();
 }
 
-function textsMatchLine(candidateText: string, lineText: string): boolean {
-  const candidate = normalizeResumeLine(candidateText);
-  const line = normalizeResumeLine(lineText);
-  if (!candidate || !line) return false;
-  return candidate === line || candidate.includes(line) || line.includes(candidate);
-}
-
-interface LineChangeMatch {
-  readonly change: AnnotatedChange;
-  readonly sourceText: readonly string[] | null;
-}
-
-function changeMatchForLine(
-  line: ResumeLineEntry,
-  annotatedChanges: readonly AnnotatedChange[],
-): LineChangeMatch | undefined {
-  for (const change of annotatedChanges) {
-    const tailoredMatch = change.tailoredText.find((text) => textsMatchLine(text, line.text));
-    if (tailoredMatch) {
-      return {
-        change,
-        sourceText: sourceTextForTailoredLine(line.text, change.sourceText),
-      };
-    }
-  }
-  return undefined;
-}
-
-function tokenSet(value: string): Set<string> {
-  return new Set(
-    normalizeResumeLine(value)
-      .replace(/[|/]/g, " ")
-      .split(/\s+/)
-      .filter((token) => token.length > 2 && !["and", "the", "for", "with", "from"].includes(token)),
-  );
-}
-
-function displayEvidenceNotes(notes: readonly string[]): string[] {
-  return notes
-    .map((note) => note.replace(/^[a-z0-9][a-z0-9_-]*:\s*/i, "").trim())
-    .filter(Boolean);
-}
-
 function displayRationale(rationale: string | null | undefined): string | null {
   if (!rationale) return null;
   return rationale
@@ -462,126 +422,16 @@ function displayRationale(rationale: string | null | undefined): string | null {
     .trim();
 }
 
-function labelMatchesContext(changeLabel: string | null | undefined, sourceHeading: string | null): boolean {
-  if (!changeLabel || !sourceHeading) return false;
-  const changeTokens = tokenSet(changeLabel);
-  const headingTokens = tokenSet(sourceHeading);
-  if (!changeTokens.size || !headingTokens.size) return false;
-  const matches = [...changeTokens].filter((token) => headingTokens.has(token)).length;
-  return matches >= Math.min(3, changeTokens.size);
+function sourceLineForBullet(entry: BulletProvenanceEntry): readonly string[] | null {
+  return entry.sourceText.length ? entry.sourceText : null;
 }
 
-function looksLikeSourceHeading(line: ResumeLineEntry, section: string | null): boolean {
-  const isDatedLine = /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\b|\b\d{4}\b/i.test(line.text);
-  if (isDatedLine) return false;
-  if (line.kind === "metadata") return true;
-  const inExperience = section ? normalizeResumeLine(section) === "experience" : false;
-  const roleLikeContactLine =
-    line.kind === "contact" && /\s\|\s/.test(line.text) && !/(@|https?:\/\/|linkedin|github|\+\d)/i.test(line.text);
-  return inExperience && roleLikeContactLine;
-}
-
-function contextualChangeForLine(
-  line: ResumeLineEntry,
-  annotatedChanges: readonly AnnotatedChange[],
-  section: string | null,
-  sourceHeading: string | null,
-): AnnotatedChange | undefined {
-  if (!section || isStructuralLine(line)) return undefined;
-  return annotatedChanges.find(
-    (change) => normalizeResumeLine(change.section) === normalizeResumeLine(section) && labelMatchesContext(change.label, sourceHeading),
-  );
-}
-
-function sourceTextForTailoredLine(lineText: string, sourceText: readonly string[]): readonly string[] | null {
-  if (!sourceText.length) return null;
-  const scored = sourceText
-    .map((source, index) => ({ index, score: tokenOverlapScore(lineText, source), source }))
-    .filter((candidate) => candidate.score > 0)
-    .sort((a, b) => b.score - a.score || a.index - b.index);
-  const best = scored[0];
-  if (!best || best.score < 16) {
-    return sourceText.slice(0, 1);
-  }
-  return [best.source];
-}
-
-function sourceLineForBullet(
-  entry: BulletProvenanceEntry,
-  annotatedChanges: readonly AnnotatedChange[],
-): readonly string[] | null {
-  const explicitSourceText = bulletSourceText(entry);
-  if (explicitSourceText.length) {
-    return sourceTextForTailoredLine(entry.generatedText, explicitSourceText);
-  }
-  const change = changeFor(entry, annotatedChanges);
-  if (!change?.sourceText.length) return null;
-  return sourceTextForTailoredLine(entry.generatedText, change.sourceText);
-}
-
-function compactComparable(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
-}
-
-function profileFieldDisplay(field: ApplyReviewProfileSourceField): string {
-  return `${field.label}: ${field.value}`;
-}
-
-function profileFieldScore(line: ResumeLineEntry, field: ApplyReviewProfileSourceField): number {
-  const lineCompact = compactComparable(line.text);
-  const valueCompact = compactComparable(field.value);
-  if (!lineCompact || valueCompact.length < 4) return 0;
-  const allowShortDirectMatch = line.kind === "name" || line.kind === "contact";
-  const directMatch =
-    valueCompact.length >= (allowShortDirectMatch ? 4 : 8) &&
-    (lineCompact.includes(valueCompact) || valueCompact.includes(lineCompact));
-  if (directMatch) return 100;
-  return tokenOverlapScore(line.text, field.value);
-}
-
-function profileSourceMatchForLine(
-  line: ResumeLineEntry,
-  fields: readonly ApplyReviewProfileSourceField[],
-): ProfileSourceMatch | null {
-  if (!fields.length || line.kind === "section") return null;
-  const scored = fields
-    .map((field, index) => ({ field, index, score: profileFieldScore(line, field) }))
-    .filter((candidate) => candidate.score >= 60)
-    .sort((left, right) => right.score - left.score || left.index - right.index);
-  const best = scored[0];
-  if (!best) return null;
-  const selected =
-    best.score === 100
-      ? scored.filter((candidate) => candidate.score === 100)
-      : scored.filter((candidate) => candidate.score >= Math.max(60, best.score - 15));
-  const fieldsForLine = selected.slice(0, 8).map((candidate) => candidate.field);
-  return {
-    fields: fieldsForLine,
-    sourceText: fieldsForLine.map(profileFieldDisplay),
-  };
-}
-
-function tokenOverlapScore(left: string, right: string): number {
-  const leftTokens = tokenSet(left);
-  const rightTokens = tokenSet(right);
-  if (!leftTokens.size || !rightTokens.size) return 0;
-  const matches = [...leftTokens].filter((token) => rightTokens.has(token)).length;
-  return Math.round((matches / Math.min(leftTokens.size, rightTokens.size)) * 100);
-}
-
-function bulletForLine(
-  line: ResumeLineEntry,
-  provenance: readonly BulletProvenanceEntry[],
-): BulletProvenanceEntry | undefined {
-  return provenance.find((entry) => textsMatchLine(entry.generatedText, line.text));
-}
-
-function isStructuralLine(line: ResumeLineEntry): boolean {
-  return line.kind === "name" || line.kind === "contact" || line.kind === "section" || /^\d+\/\d+$/.test(line.text);
+function bulletForLine(line: ResumeLineEntry, provenance: readonly BulletProvenanceEntry[]): BulletProvenanceEntry | undefined {
+  return line.semanticId ? provenance.find((entry) => entry.bulletId === line.semanticId) : undefined;
 }
 
 function linePinId(line: ResumeLineEntry): string {
-  return line.lineNumber ? `resume-line:${line.lineNumber}` : `rendered-line:${line.lineLabel ?? line.text}`;
+  return line.semanticId ?? (line.lineNumber ? `resume-line:${line.lineNumber}` : `rendered-line:${line.lineLabel ?? line.text}`);
 }
 
 function lineTitle(line: ResumeLineEntry): string {
@@ -605,7 +455,7 @@ function pinsFromExplanation(explanation: ArtifactTailoringExplanation): ResumeA
         sourcePrecision: "exact_line",
         sourceId: entry.sourceId,
         sourceLabel: change?.label ?? null,
-        sourceText: sourceLineForBullet(entry, explanation.annotatedChanges),
+        sourceText: sourceLineForBullet(entry),
         sourceSpanText: change?.sourceText.length ? change.sourceText : null,
         tailoredText: entry.generatedText ? [entry.generatedText] : [],
         transformType: entry.transformType,
@@ -620,27 +470,7 @@ function pinsFromExplanation(explanation: ArtifactTailoringExplanation): ResumeA
     });
   }
 
-  return explanation.annotatedChanges.map((change, index) => ({
-    id: `change:${change.section}:${change.sourceId ?? change.label}:${index}`,
-    title: change.label || `${formatToken(change.section)} pin ${index + 1}`,
-    section: change.section,
-    provenanceState: "recorded",
-    sourceGranularity: "change_span",
-    sourcePrecision: "section_span",
-    sourceId: change.sourceId,
-    sourceLabel: change.label,
-    sourceText: change.sourceText.length ? change.sourceText : null,
-    sourceSpanText: change.sourceText.length ? change.sourceText : null,
-    tailoredText: change.tailoredText,
-    transformType: change.changeType,
-    controls: change.controls,
-    evidenceIds: change.evidenceIds,
-    evidenceNotes: displayEvidenceNotes(change.evidenceNotes),
-    requirementIds: [],
-    matchedSignals: change.jobSignals,
-    matchedKeywords: [],
-    rationale: displayRationale(change.rationale),
-  }));
+  return [];
 }
 
 function pinFromProfileSourceLine(
@@ -680,7 +510,6 @@ function pinFromResumeLine(
   line: ResumeLineEntry,
   explanation: ArtifactTailoringExplanation | null,
   profileSourceFields: readonly ApplyReviewProfileSourceField[],
-  contextChange?: AnnotatedChange,
 ): ResumeAuditPin {
   const isResumeStructure = line.kind === "section" || /^\d+\/\d+$/.test(line.text);
   if (isResumeStructure) {
@@ -710,10 +539,8 @@ function pinFromResumeLine(
     };
   }
 
-  const profileSourceMatch = profileSourceMatchForLine(line, profileSourceFields);
-  if (profileSourceMatch && (line.kind === "name" || line.kind === "contact")) {
-    return pinFromProfileSourceLine(line, profileSourceMatch);
-  }
+  const field = line.profileField ? profileSourceFields.find((entry) => entry.path === line.profileField) : undefined;
+  if (field) return pinFromProfileSourceLine(line, {fields: [field], sourceText: [`${field.label}: ${field.value}`]});
 
   const bullet = explanation ? bulletForLine(line, explanation.bulletProvenance) : undefined;
   if (bullet) {
@@ -729,7 +556,7 @@ function pinFromResumeLine(
       sourcePrecision: "exact_line",
       sourceId: bullet.sourceId,
       sourceLabel: change?.label ?? null,
-      sourceText: sourceLineForBullet(bullet, explanation?.annotatedChanges ?? []),
+      sourceText: sourceLineForBullet(bullet),
       sourceSpanText: change?.sourceText.length ? change.sourceText : null,
       tailoredText: [line.text],
       transformType: bullet.transformType,
@@ -743,64 +570,6 @@ function pinFromResumeLine(
     };
   }
 
-  const lineChangeMatch = explanation ? changeMatchForLine(line, explanation.annotatedChanges) : undefined;
-  if (lineChangeMatch) {
-    const { change } = lineChangeMatch;
-    return {
-      id: linePinId(line),
-      title: lineTitle(line),
-      section: change.section,
-      lineNumber: line.lineNumber,
-      lineLabel: line.lineLabel,
-      provenanceState: "recorded",
-      sourceGranularity: "change_span",
-      sourcePrecision: "exact_line",
-      sourceId: change.sourceId,
-      sourceLabel: change.label,
-      sourceText: lineChangeMatch.sourceText,
-      sourceSpanText: change.sourceText.length ? change.sourceText : null,
-      tailoredText: [line.text],
-      transformType: change.changeType,
-      controls: change.controls,
-      evidenceIds: change.evidenceIds,
-      evidenceNotes: displayEvidenceNotes(change.evidenceNotes),
-      requirementIds: [],
-      matchedSignals: change.jobSignals,
-      matchedKeywords: [],
-      rationale: displayRationale(change.rationale),
-    };
-  }
-
-  if (profileSourceMatch) {
-    return pinFromProfileSourceLine(line, profileSourceMatch);
-  }
-
-  if (contextChange) {
-    return {
-      id: linePinId(line),
-      title: lineTitle(line),
-      section: contextChange.section,
-      lineNumber: line.lineNumber,
-      lineLabel: line.lineLabel,
-      provenanceState: "recorded",
-      sourceGranularity: "change_span",
-      sourcePrecision: "section_span",
-      sourceId: contextChange.sourceId,
-      sourceLabel: contextChange.label,
-      sourceText: sourceTextForTailoredLine(line.text, contextChange.sourceText),
-      sourceSpanText: contextChange.sourceText.length ? contextChange.sourceText : null,
-      tailoredText: [line.text],
-      transformType: contextChange.changeType,
-      controls: contextChange.controls,
-      evidenceIds: contextChange.evidenceIds,
-      evidenceNotes: displayEvidenceNotes(contextChange.evidenceNotes),
-      requirementIds: [],
-      matchedSignals: contextChange.jobSignals,
-      matchedKeywords: [],
-      rationale:
-        "No exact Profile source field was recorded for this selected resume line. The generator recorded this nearby Profile source section, so review the recorded source before approving the claim.",
-    };
-  }
 
   return {
     id: linePinId(line),
@@ -824,8 +593,8 @@ function pinFromResumeLine(
     matchedSignals: [],
     matchedKeywords: [],
     rationale: explanation
-      ? "This line is visible in the tailored resume, but it did not match a recorded generation-time source mapping."
-      : "This line is visible in the tailored resume, but no generation-time source or evidence mapping was recorded.",
+      ? "No recorded source: this line has no generation-time anchor."
+      : "No recorded source: this line has no generation-time anchor.",
   };
 }
 
@@ -834,26 +603,7 @@ function pinsFromResumeLines(
   explanation: ArtifactTailoringExplanation | null,
   profileSourceFields: readonly ApplyReviewProfileSourceField[],
 ): ResumeAuditPin[] {
-  let currentSection: string | null = null;
-  let currentSourceHeading: string | null = null;
-  return lines.map((line) => {
-    if (line.kind === "section") {
-      currentSection = line.text;
-      currentSourceHeading = null;
-    } else if (looksLikeSourceHeading(line, currentSection)) {
-      currentSourceHeading = line.text;
-    }
-    const exactPin = pinFromResumeLine(line, explanation, profileSourceFields);
-    if (exactPin.provenanceState !== "missing" || !explanation) {
-      return exactPin;
-    }
-    return pinFromResumeLine(
-      line,
-      explanation,
-      profileSourceFields,
-      contextualChangeForLine(line, explanation.annotatedChanges, currentSection, currentSourceHeading),
-    );
-  });
+  return lines.map((line) => pinFromResumeLine(line, explanation, profileSourceFields));
 }
 
 function lineKindForText(text: string, index: number, firstContentLine: boolean): ResumeLineEntry["kind"] {
@@ -1077,7 +827,9 @@ function resumeSemanticTextsFromPlateNode(node: Descendant): readonly string[] {
 function resumeBulletSemanticId(node: Descendant): string {
   if ("text" in node || typeof node.semanticId !== "string") return "";
   const semanticId = node.semanticId.trim();
-  return /^experience:.+:bullet:[1-9]\d*$/u.test(semanticId)
+  // Baseline previews use canonical field paths; generated artifacts use
+  // recorded anchor IDs. Both are current structural ID contracts.
+  return /^(?:experience:.+:bullet:[1-9]\d*|experience:.+#\d+)$/u.test(semanticId)
     ? semanticId
     : "";
 }
@@ -1233,8 +985,7 @@ function layoutBoxForLine(
     const byId = layoutBoxes.find((box) => box.semanticId === line.semanticId);
     if (byId) return byId;
   }
-  const normalizedText = normalizeResumeLine(line.text);
-  return layoutBoxes.find((box) => textsMatchLine(box.textExcerpt, normalizedText)) ?? null;
+  return null;
 }
 
 function resumePlateLinesFromHtml(html: string, layoutBoxes: readonly ResumeLayoutBox[]): ResumePlateLine[] {
@@ -1266,6 +1017,7 @@ function resumePlateLinesFromHtml(html: string, layoutBoxes: readonly ResumeLayo
         lineNumber,
         pageNumber,
         semanticId,
+        profileField: element.getAttribute("data-resume-profile-field"),
         tagName: plateTagForKind(kind),
         text,
       };
@@ -1307,17 +1059,10 @@ function resumeLineTargetsFromText(resumeText: string | null | undefined): PdfAu
 
 function pinForPlateLine(
   line: ResumePlateLine,
-  index: number,
+  _index: number,
   pins: readonly ResumeAuditPin[],
 ): ResumeAuditPin | null {
-  if (pins[index]?.tailoredText.some((text) => textsMatchLine(text, line.text))) {
-    return pins[index] ?? null;
-  }
-  if (line.lineNumber) {
-    const byNumber = pins.find((pin) => pin.lineNumber === line.lineNumber);
-    if (byNumber) return byNumber;
-  }
-  return pins.find((pin) => pin.tailoredText.some((text) => textsMatchLine(text, line.text))) ?? null;
+  return pins.find((pin) => pin.id === linePinId(line)) ?? null;
 }
 
 function placeResumeCommentThreads(
@@ -1525,6 +1270,7 @@ function riskSignals(explanation: ArtifactTailoringExplanation): RiskSignals {
 
   return {
     hasAnyAudit,
+    lineFindings: explanation.lineFindings ?? [],
     quality: yesNo(explanation.quality.passed ?? explanation.safety.qualityPassed),
     judge:
       explanation.judge.verdict || explanation.judge.score !== null
@@ -1587,6 +1333,7 @@ function riskItemKey(item: string): string {
 function emptyRiskSignals(): RiskSignals {
   return {
     hasAnyAudit: false,
+    lineFindings: [],
     quality: "not recorded",
     judge: "not recorded",
     adversarial: "not recorded",
@@ -1602,38 +1349,8 @@ function emptyRiskSignals(): RiskSignals {
   };
 }
 
-function riskSearchFieldsForPin(pin: ResumeAuditPin): string[] {
-  return [
-    pin.title,
-    pin.section,
-    pin.transformType,
-    ...pin.controls,
-    ...pin.evidenceIds,
-    ...pin.requirementIds,
-    ...pin.matchedSignals,
-    ...pin.matchedKeywords,
-    ...pin.tailoredText,
-  ]
-    .map(normalizeResumeLine)
-    .filter(Boolean);
-}
-
-function riskItemMatchesPin(pin: ResumeAuditPin, riskItem: string): boolean {
-  const normalizedRisk = normalizeResumeLine(riskItem);
-  if (!normalizedRisk) return false;
-  const fields = riskSearchFieldsForPin(pin);
-  if (fields.some((field) => field === normalizedRisk)) return true;
-  if (normalizedRisk.length < 24) return false;
-  return fields.some((field) => field.includes(normalizedRisk) || normalizedRisk.includes(field));
-}
-
 function pinHasClaimRisk(pin: ResumeAuditPin, risk: RiskSignals): boolean {
-  return [
-    ...risk.blockers,
-    ...risk.unsupportedClaims,
-    ...risk.fabrications,
-    ...risk.missingRequiredEvidence,
-  ].some((riskItem) => riskItemMatchesPin(pin, riskItem));
+  return risk.lineFindings.some((finding) => finding.lineId === pin.id);
 }
 
 function pinTone(pin: ResumeAuditPin, risk: RiskSignals): "ok" | "info" | "warn" {
@@ -1654,7 +1371,7 @@ function pinTone(pin: ResumeAuditPin, risk: RiskSignals): "ok" | "info" | "warn"
 
 function pinStatus(pin: ResumeAuditPin, risk: RiskSignals): string {
   if (pin.provenanceState === "missing") {
-    return "missing source";
+    return "no recorded source";
   }
   if (pinHasClaimRisk(pin, risk)) {
     return "claim risk";
@@ -3721,7 +3438,7 @@ function primarySourceTextForPin(pin: ResumeAuditPin): readonly string[] | null 
   if (!pin.sourceText?.length) return null;
   if (pin.sourceGranularity === "profile_field") return pin.sourceText;
   if (pin.sourceText.length === 1) return pin.sourceText;
-  return sourceTextForTailoredLine(pin.tailoredText.join(" "), pin.sourceText) ?? pin.sourceText.slice(0, 1);
+  return pin.sourceText;
 }
 
 function sourceLabelForJustification(pin: ResumeAuditPin): string {

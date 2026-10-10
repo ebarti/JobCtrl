@@ -16,20 +16,8 @@ on:
       - "LICENSE"
       - "NOTICE"
       - ".github/workflows/python.yml"
+  # Required branch checks must exist for every PR, including docs-only changes.
   pull_request:
-    paths:
-      - "workers/**"
-      - "scripts/**"
-      - "packages/**"
-      - "packaging/**"
-      - "apps/web/src/contexts/outreach/**"
-      - "apps/web/src/views/outreach/**"
-      - "apps/api/src/outreach.ts"
-      - "package.json"
-      - "README.md"
-      - "LICENSE"
-      - "NOTICE"
-      - ".github/workflows/python.yml"
   workflow_dispatch:
 
 permissions:
@@ -71,6 +59,8 @@ jobs:
         run: uv --project workers/automation sync --locked --all-extras
       - name: Lint
         run: uv --project workers/automation run --locked --all-extras ruff check workers/automation/src workers/automation/tests
+      - name: Check generated semantic result contracts
+        run: uv --project workers/automation run --locked --all-extras python scripts/generate-semantic-result-schemas.py --check
       - name: Enable Linux user namespaces for Bubblewrap
         if: ${{ runner.os == 'Linux' && runner.environment == 'github-hosted' }}
         shell: bash

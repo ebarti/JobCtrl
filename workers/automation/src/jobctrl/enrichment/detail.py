@@ -22,6 +22,7 @@ The public surface (``run_enrichment``, ``scrape_detail_page``,
 """
 
 from __future__ import annotations
+from jobctrl.infrastructure.enrichment.page_interpretation import build_page_interpreter, judge_description_quality
 
 import json
 import hashlib
@@ -59,7 +60,6 @@ from jobctrl.domain.enrichment import (
 from jobctrl.domain.enrichment.snapshot_services import (
     ActiveStateVerifier,
     _quarantine_for_capture,
-    judge_snapshot_confidence,
 )
 from jobctrl.domain.enrichment.services import (
     CssSelectorExtractor,
@@ -424,7 +424,9 @@ def _page_to_detail_page(page, url: str, status: int | None = None) -> DetailPag
         final_url=final_url,
         page_title=page_title,
         html=html,
-        status_html=status_html, status_evidence_complete=status_complete, raw_html_hash=raw_hash,
+        status_html=status_html,
+        status_evidence_complete=status_complete,
+        raw_html_hash=raw_hash,
         status_visibility_verified=bool(visibility),
         json_ld=tuple(json_ld),
         status=status,
@@ -447,8 +449,7 @@ def _live_result_to_detail_page(result: LiveBrowserResult, url: str) -> DetailPa
         (
             candidate
             for selector in ("main", "article", '[role="main"]', "#content", ".content")
-            if (candidate := soup.select_one(selector)) is not None
-            and len(candidate.get_text(" ", strip=True)) > 200
+            if (candidate := soup.select_one(selector)) is not None and len(candidate.get_text(" ", strip=True)) > 200
         ),
         soup.body or soup,
     )
@@ -457,7 +458,8 @@ def _live_result_to_detail_page(result: LiveBrowserResult, url: str) -> DetailPa
         final_url=result.final_url,
         page_title=result.title,
         html=_clean_content_html(str(main)),
-        status_html=html[:1_000_000], status_evidence_complete=len(html) <= 1_000_000,
+        status_html=html[:1_000_000],
+        status_evidence_complete=len(html) <= 1_000_000,
         raw_html_hash=hashlib.sha256(html.encode()).hexdigest(),
         json_ld=tuple(json_ld),
         status=result.status_code,
@@ -473,7 +475,7 @@ def _live_result_to_detail_page(result: LiveBrowserResult, url: str) -> DetailPa
 _RETRYABLE_STATUSES = {408, 429, 500, 502, 503, 504}
 
 
-def scrape_detail_page(page, url: str, *, session: PolitenessSession | None = None) -> dict:
+def scrape_detail_page(page, url: str, *, session: PolitenessSession | None = None, page_interpreter=None) -> dict:
     """Run the three-tier cascade on one Playwright page.
 
     Public API preserved for callers in ``pipeline.py``; internally
@@ -514,7 +516,7 @@ def scrape_detail_page(page, url: str, *, session: PolitenessSession | None = No
             result["error"] = decision.reason
             result["elapsed"] = time.time() - t0
             return result
-        return _scrape_detail_page_body(page, url, result, t0)
+        return _scrape_detail_page_body(page, url, result, t0, page_interpreter=page_interpreter)
 
 
 def scrape_detail_page_via_live_chrome(
@@ -522,6 +524,7 @@ def scrape_detail_page_via_live_chrome(
     url: str,
     *,
     session: PolitenessSession,
+    page_interpreter=None,
 ) -> dict:
     """Run enrichment in the user's active Chrome profile via the extension."""
 
@@ -563,10 +566,11 @@ def scrape_detail_page_via_live_chrome(
         result,
         t0,
         status_code=live_result.status_code,
+        page_interpreter=page_interpreter,
     )
 
 
-def _scrape_detail_page_body(page, url: str, result: dict, t0: float) -> dict:
+def _scrape_detail_page_body(page, url: str, result: dict, t0: float, *, page_interpreter=None) -> dict:
     """Navigate + run the three-tier cascade inside the held politeness slot."""
     route_guard = PublicHttpUrlRouteGuard(page, fetch_public_requests=True).install()
     status_code: int | None = None
@@ -624,7 +628,7 @@ def _scrape_detail_page_body(page, url: str, result: dict, t0: float) -> dict:
     finally:
         route_guard.close()
 
-    return _extract_detail_page(detail_page, result, t0, status_code=status_code)
+    return _extract_detail_page(detail_page, result, t0, status_code=status_code, page_interpreter=page_interpreter)
 
 
 def _extract_detail_page(
@@ -633,10 +637,30 @@ def _extract_detail_page(
     t0: float,
     *,
     status_code: int | None,
+    page_interpreter=None,
 ) -> dict:
     """Run the shared deterministic/LLM extraction cascade over one snapshot."""
 
-    active_state, verification_method = ActiveStateVerifier().verify(detail_page)
+    signals = []
+    if page_interpreter is None:
+        from jobctrl.database import get_connection
+
+        determination_connection = get_connection()
+        try:
+            active_state, verification_method = ActiveStateVerifier(
+                page_interpreter=build_page_interpreter(determination_connection)
+            ).verify(detail_page, signals=signals)
+            determination_connection.commit()
+        except Exception:
+            determination_connection.commit()
+            raise
+        finally:
+            determination_connection.close()
+    else:
+        active_state, verification_method = ActiveStateVerifier(page_interpreter=page_interpreter).verify(
+            detail_page, signals=signals
+        )
+    result["determination_signals"] = signals
     result["active_state"] = active_state.value
     result["verification_method"] = verification_method
     result["http_status"] = status_code
@@ -1355,9 +1379,16 @@ def _record_enrich_job_failure(
     itself raise on an odd prior state (e.g. a ``succeeded -> failed`` write when
     the row was already marked succeeded earlier in the loop).
     """
-    message = f"{type(exc).__name__}: {exc}"[:500]
-    error_code = exc.code if isinstance(exc, LiveBrowserTaskError) else "ENRICH_INTERNAL_ERROR"
-    retryable = exc.retryable if isinstance(exc, LiveBrowserTaskError) else True
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    if isinstance(exc, DeterminationFailure):
+        message = f"Semantic determination failed: {exc.code}"
+        error_code = "semantic_determination_" + exc.code
+        retryable = exc.code in {"provider_unavailable", "provider_error", "budget_denied"}
+    else:
+        message = f"{type(exc).__name__}: {exc}"[:500]
+        error_code = exc.code if isinstance(exc, LiveBrowserTaskError) else "ENRICH_INTERNAL_ERROR"
+        retryable = exc.retryable if isinstance(exc, LiveBrowserTaskError) else True
     try:
         from jobctrl.state import record_job_event, set_stage_state, utc_now
 
@@ -1538,7 +1569,7 @@ def scrape_site_batch(
         live_browser = prefer_live_browser(live_browser, cancel_event=cancel_event)
 
     try:
-        with (nullcontext(None) if live_browser is not None else sync_playwright()) as p:
+        with nullcontext(None) if live_browser is not None else sync_playwright() as p:
             browser = None
             resolver: LinkedInApplyUrlResolver | None = None
             authenticated_page = None
@@ -1549,7 +1580,10 @@ def scrape_site_batch(
             base_gateway = gateway or PolitenessGateway()
             if live_browser is not None:
                 owner_authenticated_session = _enrichment_session(
-                    base_gateway, run_budget, conn, site=site,
+                    base_gateway,
+                    run_budget,
+                    conn,
+                    site=site,
                 )
             anonymous_session = _enrichment_session(
                 base_gateway,
@@ -1742,12 +1776,18 @@ def scrape_site_batch(
                     )
 
                     if live_browser is None:
-                        scraped = scrape_detail_page(page, url, session=session)
+                        scraped = scrape_detail_page(
+                            page,
+                            url,
+                            session=session,
+                            page_interpreter=build_page_interpreter(conn, tenant_id=str(tenant_id)),
+                        )
                     else:
                         scraped = scrape_detail_page_via_live_chrome(
                             live_browser,
                             url,
                             session=session,
+                            page_interpreter=build_page_interpreter(conn, tenant_id=str(tenant_id)),
                         )
                     cascade_result = _apply_discovery_description_fallback(
                         conn,
@@ -1807,17 +1847,14 @@ def scrape_site_batch(
                     )
 
                     finished_at = utc_now()
-                    if activity_lease is not None:
-                        assert claim_version is not None
-                        _fence_enrich_job_write(
-                            conn,
-                            job_id,
-                            tenant_id=tenant_id,
-                            activity_lease=activity_lease,
-                            claim_version=claim_version,
-                        )
+                    def fence_result() -> None:
+                        if activity_lease is not None:
+                            assert claim_version is not None
+                            _fence_enrich_job_write(
+                                conn, job_id, tenant_id=tenant_id,
+                                activity_lease=activity_lease, claim_version=claim_version,
+                            )
                     if status in ("ok", "partial"):
-                        stats[status] += 1
                         fallback_source = cascade_result.get("fallback_source")
                         stage_metadata: dict[str, object] = {}
                         if fallback_source:
@@ -1860,7 +1897,6 @@ def scrape_site_batch(
                             extraction_tier=_tier_from_legacy(tier),
                             finished_at=finished_at,
                         )
-                        repo.save(succeeded, commit=activity_lease is None)
                         _record_posting_snapshot_from_cascade(
                             conn,
                             job_id=job_id,
@@ -1870,8 +1906,11 @@ def scrape_site_batch(
                             cascade_result=cascade_result,
                             captured_at=finished_at,
                             tenant_id=tenant_id,
-                            commit=activity_lease is None,
+                            commit=False,
+                            before_write=fence_result,
                         )
+                        fence_result()
+                        repo.save(succeeded, commit=False)
                         set_stage_state(
                             conn,
                             job_id,
@@ -1923,8 +1962,10 @@ def scrape_site_batch(
                             cascade_result=cascade_result,
                             captured_at=finished_at,
                             tenant_id=tenant_id,
-                            commit=activity_lease is None,
+                            commit=False,
+                            before_write=fence_result,
                         )
+                        fence_result()
                         err = EnrichmentError(
                             code="POSTING_INACTIVE",
                             message=str(cascade_result.get("error") or "posting inactive")[:500],
@@ -1974,6 +2015,7 @@ def scrape_site_batch(
                             tenant_id=tenant_id,
                         )
                     else:
+                        fence_result()
                         stats["error"] += 1
                         retryable = _detail_failure_retryable(cascade_result)
                         error_code = (
@@ -2047,6 +2089,8 @@ def scrape_site_batch(
                         )
 
                     conn.commit()
+                    if status in ("ok", "partial"):
+                        stats[status] += 1
                     # R9 Phase 2 — per-job handoff. The job is now durably
                     # ``pending_score`` (committed, ok/partial with a
                     # description), so hand it off for preparation immediately.
@@ -2072,8 +2116,7 @@ def scrape_site_batch(
                     )
                     raise
                 except Exception as exc:
-                    if activity_lease is not None:
-                        conn.rollback()
+                    conn.rollback()
                     log.exception("Enrichment job failed: %s", url)
                     stats["error"] += 1
                     _record_enrich_job_failure(
@@ -2167,6 +2210,69 @@ def _resume_tailoring_after_trustworthy_snapshot(
     return True
 
 
+def _cascade_page_verdict(conn, *, url, cascade_result, tenant_id):
+    """Join an owning saved page decision; only URL and HTTP facts stay code."""
+    from jobctrl.domain.determinations import DeterminationFailure, parse_model_result
+    from jobctrl.domain.enrichment.page_interpretation import PageInterpretation
+    from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+
+    receipt_ids = [
+        signal.get("determination_id")
+        for signal in cascade_result.get("determination_signals", [])
+        if signal.get("kind") == "page_determination"
+    ]
+    if receipt_ids:
+        if len(receipt_ids) != 1 or not receipt_ids[0]:
+            raise DeterminationFailure("page_binding_invalid")
+        envelope = SqliteDeterminationRepository(conn).find(str(tenant_id), receipt_ids[0])
+        if (
+            envelope is None
+            or envelope.kind != "page_interpretation"
+            or envelope.entity_id != url
+            or envelope.lane != "enrichment"
+            or envelope.schema_version != "1"
+            or envelope.prompt_version != "page-interpretation-v1"
+        ):
+            raise DeterminationFailure("page_binding_invalid")
+        result = parse_model_result(PageInterpretation, envelope.result)
+        return ActiveState(result.availability.value), envelope.determination_id
+    if cascade_result.get("verification_method") == "http_status" and cascade_result.get("http_status") in {404, 410}:
+        return ActiveState.REMOVED, None
+    result, envelope = build_page_interpreter(conn, tenant_id=str(tenant_id)).interpret(
+        entity_id=url,
+        text=str(cascade_result.get("full_description") or ""),
+        metadata={
+            "url": url,
+            "http_status": cascade_result.get("http_status"),
+            "extraction_tier": cascade_result.get("tier_used"),
+        },
+    )
+    return ActiveState(result.availability.value), envelope.determination_id
+
+
+def _fence_posting_snapshot_before_write(
+    conn: sqlite3.Connection,
+    *,
+    repo: SqlitePostingSnapshotSetRepository,
+    tenant_id: TenantId,
+    job_id: JobId,
+    expected: PostingSnapshotSet | None,
+    before_write: Callable[[], None] | None,
+) -> None:
+    """Reject a model result if accepted snapshot state changed during inference."""
+    if before_write is not None:
+        before_write()
+    # Reserve the writer even without an execution lease, and before reloading
+    # the accepted set. A no-op UPDATE also upgrades a caller-owned transaction;
+    # the caller still owns its commit or rollback.
+    conn.execute(
+        "UPDATE posting_snapshot_sets SET updated_at = updated_at WHERE tenant_id = ? AND job_id = ?",
+        (str(tenant_id), str(job_id)),
+    )
+    if repo.load(tenant_id, job_id) != expected:
+        raise TransientNetworkError("posting snapshot changed during description determination")
+
+
 def _record_posting_snapshot_from_cascade(
     conn: sqlite3.Connection,
     *,
@@ -2178,6 +2284,7 @@ def _record_posting_snapshot_from_cascade(
     captured_at: str,
     tenant_id: TenantId = LOCAL_TENANT,
     commit: bool = True,
+    before_write: Callable[[], None] | None = None,
 ) -> None:
     """Persist ``PostingSnapshotSet`` history from the existing enrich path."""
     description = str(cascade_result.get("full_description") or "")
@@ -2194,13 +2301,19 @@ def _record_posting_snapshot_from_cascade(
         if commit:
             ensure_discovery_control_tables(conn)
         repo = SqlitePostingSnapshotSetRepository(conn)
-        snapshot_set = repo.load(tenant_id, stable_job_id) or PostingSnapshotSet.empty(
+        accepted_snapshot_set = repo.load(tenant_id, stable_job_id)
+        snapshot_set = accepted_snapshot_set or PostingSnapshotSet.empty(
             tenant_id=tenant_id,
             job_id=stable_job_id,
             updated_at=captured_at,
         )
         previous_active = snapshot_set.latest_active_state
-        active_state = ActiveState.from_optional(cascade_result.get("active_state")) or ActiveState.ACTIVE
+        active_state, page_determination_id = _cascade_page_verdict(
+            conn,
+            url=url,
+            cascade_result=cascade_result,
+            tenant_id=tenant_id,
+        )
         verification_method = str(cascade_result.get("verification_method") or "enrichment_success")
         tier = _tier_from_legacy(cascade_result.get("tier_used"))
         apply_url = (
@@ -2208,7 +2321,9 @@ def _record_posting_snapshot_from_cascade(
             if cascade_result.get("application_url")
             else None
         )
-        confidence = judge_snapshot_confidence(
+        confidence, quality_envelope = judge_description_quality(
+            connection=conn,
+            tenant_id=str(tenant_id),
             tier=tier,
             description=FullDescription(text=description),
             apply_url_present=apply_url is not None,
@@ -2238,6 +2353,8 @@ def _record_posting_snapshot_from_cascade(
             quarantine_reason=quarantine_reason,
             captured_at=captured_at,
             evidence=(
+                f"description_quality_determination:{quality_envelope.determination_id}",
+                *((f"page_interpretation_determination:{page_determination_id}",) if page_determination_id else ()),
                 f"tier:{tier.value}",
                 f"description_length:{len(description)}",
                 f"apply_url_present:{str(apply_url is not None).lower()}",
@@ -2251,6 +2368,10 @@ def _record_posting_snapshot_from_cascade(
         # Snapshot trust, quarantine resolution, downstream release, and their
         # audit events are one durable fact. Never expose the snapshot before
         # Tailor has been released from the blocker it resolves.
+        _fence_posting_snapshot_before_write(
+            conn, repo=repo, tenant_id=tenant_id, job_id=stable_job_id,
+            expected=accepted_snapshot_set, before_write=before_write,
+        )
         repo.save(snapshot_set, commit=False)
 
         if quarantine_reason is QuarantineReason.NONE:
@@ -2351,8 +2472,7 @@ def _record_posting_snapshot_from_cascade(
         if commit:
             conn.rollback()
         log.exception("Failed to persist PostingSnapshotSet for %s", url)
-        if not commit:
-            raise
+        raise
 
 
 def _record_posting_snapshot_failure_from_cascade(
@@ -2367,10 +2487,17 @@ def _record_posting_snapshot_failure_from_cascade(
     commit: bool = True,
 ) -> None:
     """Persist verified active-state failures from the existing enrich path."""
-    active_state = ActiveState.from_optional(cascade_result.get("active_state"))
-    verification_method = str(cascade_result.get("verification_method") or "")
-    if active_state is None or verification_method == "unknown":
+    if not cascade_result.get("determination_signals") and not (
+        cascade_result.get("verification_method") == "http_status" and cascade_result.get("http_status") in {404, 410}
+    ):
         return
+    active_state, page_determination_id = _cascade_page_verdict(
+        conn,
+        url=url,
+        cascade_result=cascade_result,
+        tenant_id=tenant_id,
+    )
+    verification_method = str(cascade_result.get("verification_method") or "model_determination")
     stable_job_id = canonical_job_id(str(job_id))
     resolved_source_id = _source_id_for_enriched_job(
         conn,
@@ -2831,15 +2958,15 @@ def _refresh_selected_apply_targets(
                                 method = "unsafe_url"
                             else:
                                 target, method = _external_apply_target_from_html(
-                                    page.body_html or "", page.final_url, identity.posting_url.value,
+                                    page.body_html or "",
+                                    page.final_url,
+                                    identity.posting_url.value,
                                     page.visible_apply_controls,
                                 )
         except Exception:  # noqa: BLE001 - persist a code-owned, non-sensitive failure
             method = "navigation_error"
         if cancel_event is not None and cancel_event.is_set():
             raise TransientNetworkError("enrichment canceled")
-        if activity_lease is not None:
-            _fence_execution_enrichment_lease(conn, activity_lease)
         recovered_url = ApplicationUrl(value=target) if target is not None else None
         result = (
             recovered_url
@@ -2852,25 +2979,47 @@ def _refresh_selected_apply_targets(
             started_at=started_at,
             finished_at=utc_now(),
         )
+
+        def fence_result() -> None:
+            if activity_lease is not None:
+                _fence_execution_enrichment_lease(conn, activity_lease)
+
         try:
-            repo.save(updated, commit=False)
-            outcome = _authenticated_apply_url_outcome_metadata({
-                "authenticated_apply_url_method": method,
-                "application_url": target,
-            })
-            _merge_enrich_apply_url_outcome_metadata(
-                conn, tenant_id=tenant_id, job_id=job_id,
-                outcome_metadata=outcome, updated_at=updated.updated_at,
-            )
             if target is not None:
                 assert recovered_url is not None
                 _record_authenticated_apply_url_snapshot_recovery(
-                    conn, tenant_id=tenant_id, job_id=job_id,
-                    enrichment=updated, recovered=recovered_url, captured_at=updated.updated_at,
+                    conn,
+                    tenant_id=tenant_id,
+                    job_id=job_id,
+                    enrichment=updated,
+                    recovered=recovered_url,
+                    captured_at=updated.updated_at,
+                    before_write=fence_result,
                 )
+            fence_result()
+            repo.save(updated, commit=False)
+            outcome = _authenticated_apply_url_outcome_metadata(
+                {
+                    "authenticated_apply_url_method": method,
+                    "application_url": target,
+                }
+            )
+            _merge_enrich_apply_url_outcome_metadata(
+                conn,
+                tenant_id=tenant_id,
+                job_id=job_id,
+                outcome_metadata=outcome,
+                updated_at=updated.updated_at,
+            )
             record_job_event(
-                conn, job_id, "enrich", "StageProgress", tenant_id=tenant_id,
-                message="Application target refresh completed." if target else "Application target refresh found no verified target.",
+                conn,
+                job_id,
+                "enrich",
+                "StageProgress",
+                tenant_id=tenant_id,
+                message="Application target refresh completed."
+                if target
+                else "Application target refresh found no verified target.",
                 payload={"reason": "selected_apply_url_refresh", "applicationUrlFound": target is not None, **outcome},
             )
             conn.commit()
@@ -2891,6 +3040,7 @@ def _record_authenticated_apply_url_snapshot_recovery(
     enrichment: JobEnrichment,
     recovered: ApplicationUrl,
     captured_at: str,
+    before_write: Callable[[], None] | None = None,
 ) -> bool:
     """Append a truthful snapshot version after authenticated URL recovery."""
 
@@ -2902,13 +3052,16 @@ def _record_authenticated_apply_url_snapshot_recovery(
     snapshot_set = repo.load(tenant_id, job_id)
     if snapshot_set is None or snapshot_set.latest_snapshot is None:
         return False
+    accepted_snapshot_set = snapshot_set
     latest = snapshot_set.latest_snapshot
     try:
         tier = ExtractionTier(latest.extraction_tier)
     except ValueError:
         tier = enrichment.extraction_tier or ExtractionTier.LLM_ASSISTED
     apply_url = SnapshotApplyUrl(value=recovered.value)
-    confidence = judge_snapshot_confidence(
+    confidence, quality_envelope = judge_description_quality(
+        connection=conn,
+        tenant_id=str(tenant_id),
         tier=tier,
         description=enrichment.full_description,
         apply_url_present=True,
@@ -2930,7 +3083,15 @@ def _record_authenticated_apply_url_snapshot_recovery(
         captured_at=captured_at,
         raw_text_hash=latest.raw_text_hash,
         filter_override=latest.filter_override,
-        evidence=(*latest.evidence, "apply_url_recovered:authenticated_browser"),
+        evidence=(
+            *latest.evidence,
+            f"description_quality_determination:{quality_envelope.determination_id}",
+            "apply_url_recovered:authenticated_browser",
+        ),
+    )
+    _fence_posting_snapshot_before_write(
+        conn, repo=repo, tenant_id=tenant_id, job_id=job_id,
+        expected=accepted_snapshot_set, before_write=before_write,
     )
     repo.save(snapshot_set, commit=False)
 
@@ -2968,6 +3129,7 @@ def _record_missing_apply_url_content_trust_recovery(
     job_id: JobId,
     enrichment: JobEnrichment,
     captured_at: str,
+    before_write: Callable[[], None] | None = None,
 ) -> bool:
     """Repair legacy snapshots that coupled content trust to apply-URL readiness.
 
@@ -2992,7 +3154,9 @@ def _record_missing_apply_url_content_trust_recovery(
         tier = ExtractionTier(latest.extraction_tier)
     except ValueError:
         tier = enrichment.extraction_tier or ExtractionTier.LLM_ASSISTED
-    confidence = judge_snapshot_confidence(
+    confidence, quality_envelope = judge_description_quality(
+        connection=conn,
+        tenant_id=str(tenant_id),
         tier=tier,
         description=enrichment.full_description,
         apply_url_present=False,
@@ -3005,6 +3169,10 @@ def _record_missing_apply_url_content_trust_recovery(
     )
     if confidence is SnapshotConfidence.LOW or quarantine_reason is not QuarantineReason.NONE:
         return False
+    _fence_posting_snapshot_before_write(
+        conn, repo=repo, tenant_id=tenant_id, job_id=job_id,
+        expected=snapshot_set, before_write=before_write,
+    )
     if latest.confidence is confidence and latest.quarantine_reason is quarantine_reason:
         return _resume_tailoring_after_trustworthy_snapshot(
             conn,
@@ -3027,6 +3195,7 @@ def _record_missing_apply_url_content_trust_recovery(
         filter_override=latest.filter_override,
         evidence=(
             *latest.evidence,
+            f"description_quality_determination:{quality_envelope.determination_id}",
             "content_trust_reclassified:apply_url_independent",
         ),
     )
@@ -3107,14 +3276,14 @@ def _repair_legacy_missing_apply_url_content_trust_candidates(
             aggregate = repo.load(tenant_id, job_id)
             if aggregate is None or not aggregate.is_enriched:
                 continue
-            if activity_lease is not None:
-                _fence_execution_enrichment_lease(conn, activity_lease)
             if _record_missing_apply_url_content_trust_recovery(
                 conn,
                 tenant_id=tenant_id,
                 job_id=job_id,
                 enrichment=aggregate,
                 captured_at=utc_now(),
+                before_write=(lambda: _fence_execution_enrichment_lease(conn, activity_lease))
+                if activity_lease is not None else None,
             ):
                 repaired_count += 1
             conn.commit()
@@ -3314,8 +3483,6 @@ def _reset_authenticated_linkedin_retry_candidates(
                     # never-resolving row is bounded by attempt count exactly
                     # like the extraction cascade; the description is never
                     # touched.
-                    if activity_lease is not None:
-                        _fence_execution_enrichment_lease(conn, activity_lease)
                     recovery_error = (
                         None
                         if recovered is not None
@@ -3330,6 +3497,19 @@ def _reset_authenticated_linkedin_retry_candidates(
                         started_at=now,
                         finished_at=utc_now(),
                     )
+                    if recovered is not None:
+                        _record_authenticated_apply_url_snapshot_recovery(
+                            conn,
+                            tenant_id=tenant_id,
+                            job_id=job_id,
+                            enrichment=updated_aggregate,
+                            recovered=recovered,
+                            captured_at=updated_aggregate.updated_at,
+                            before_write=(lambda: _fence_execution_enrichment_lease(conn, activity_lease))
+                            if activity_lease is not None else None,
+                        )
+                    if activity_lease is not None:
+                        _fence_execution_enrichment_lease(conn, activity_lease)
                     repo.save(updated_aggregate, commit=False)
                     outcome_metadata = _authenticated_apply_url_outcome_metadata(resolved)
                     _merge_enrich_apply_url_outcome_metadata(
@@ -3339,15 +3519,6 @@ def _reset_authenticated_linkedin_retry_candidates(
                         outcome_metadata=outcome_metadata,
                         updated_at=updated_aggregate.updated_at,
                     )
-                    if recovered is not None:
-                        _record_authenticated_apply_url_snapshot_recovery(
-                            conn,
-                            tenant_id=tenant_id,
-                            job_id=job_id,
-                            enrichment=updated_aggregate,
-                            recovered=recovered,
-                            captured_at=updated_aggregate.updated_at,
-                        )
                     record_job_event(
                         conn,
                         job_id,
