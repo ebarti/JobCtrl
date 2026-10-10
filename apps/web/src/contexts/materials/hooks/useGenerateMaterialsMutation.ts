@@ -1,7 +1,6 @@
 import type { ActionRunResponse, GenerateMaterialsRequest, MaterialStage } from "@jobctrl/contracts";
 import type { ApiClientPort } from "../../../shared/ports/ApiClientPort.js";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect } from "react";
 import { materialsKeys } from "../queryKeys.js";
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 
@@ -76,20 +75,10 @@ export type LocaleRequest = Parameters<ApiClientPort["materialLocaleVariants"]>[
 export type LocaleVariant = LocaleHistory["variants"][number];
 export function useMaterialLocaleVariants(jobId: string) {
   const tenantId = useTenantId();
-  const { api, openInOs, eventStream } = usePorts();
+  const { api, openInOs } = usePorts();
   const queryClient = useQueryClient();
-  const key = [...materialsKeys.all(tenantId), "locales", jobId] as const;
+  const key = materialsKeys.locales(tenantId, jobId);
   const history = useQuery({ queryKey: key, queryFn: () => api.materialLocaleVariants(jobId, { operation: "history" }), refetchInterval: 15_000 });
-  useEffect(() => {
-    const subscription = eventStream.subscribe({ tenantId });
-    const unsubscribe = subscription.on(event => {
-      if (!["ResumeApproved", "CoverLetterGenerated", "TailoredArtifactsSuppressed", "ResumeTemplateRefreshCompleted"].includes(event.eventType)) return;
-      if (typeof event.payload === "object" && event.payload !== null && "jobId" in event.payload && event.payload.jobId === jobId) {
-        void queryClient.invalidateQueries({ queryKey: [...materialsKeys.all(tenantId), "locales", jobId] });
-      }
-    });
-    return () => { unsubscribe(); subscription.close(); };
-  }, [eventStream, tenantId, jobId, queryClient]);
   const mutation = useMutation({
     mutationFn: (request: LocaleRequest) => api.materialLocaleVariants(jobId, request),
     onMutate: async () => {

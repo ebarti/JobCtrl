@@ -48,7 +48,7 @@ class LocaleVerification(DeterminationModel):
     findings: list[LocaleFinding] = Field(max_length=100)
 
 
-def protected_values(profile):
+def protected_values(profile, accepted_text=""):
     """Literal authored fields, never inferred credential equivalence or prose labels."""
     values = []
     personal = profile.get("personal") or {}
@@ -60,7 +60,22 @@ def protected_values(profile):
         values.extend(str(row[key]) for key in ("title", "company", "date_range", "location") if row.get(key))
     for row in get_education_entries(profile):
         values.extend(str(row[key]) for key in ("institution", "degree", "date", "location") if row.get(key))
-    return sorted(set(values))
+    # Preserve the exact display spellings produced by the accepted source owner.
+    # This is mechanical renderer formatting, not a semantic equivalence rule.
+    from jobctrl.domain.materials.services import sanitize_text
+    from jobctrl.domain.materials.resume_document import normalize_resume_date_range
+    values.extend(sanitize_text(value) for value in tuple(values))
+    for row in get_experience_entries(profile):
+        if row.get("date_range"):
+            values.append(normalize_resume_date_range(sanitize_text(str(row["date_range"]))))
+        company = sanitize_text(str(row.get("company") or ""))
+        if company:
+            # ResumeAssembler emits `<accepted title> | <company>`. Bind that
+            # literal header too: the accepted title may have been reframed.
+            suffix = " | " + company
+            values.extend(line for line in accepted_text.splitlines()
+                          if line.endswith(suffix) and line[:-len(suffix)].strip())
+    return sorted({value for value in values if value})
 
 
 def source_lines(text):

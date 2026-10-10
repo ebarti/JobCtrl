@@ -30,12 +30,14 @@ import {
 import { interviewKeys } from "../operations/interviewKeys.js";
 import { jobsKeys } from "../operations/jobsKeys.js";
 import { patchResumeApproved, reconcileResumeApprovedPage } from "../operations/realtimePatches.js";
+import { materialsKeys } from "./queryKeys.js";
 import { profileKeys } from "../profile/queryKeys.js";
 import type { ArtifactsListInput } from "../operations/types.js";
 
 export const resumeApprovedHandler = (
   event: ResumeApproved,
 ): readonly InvalidationItem[] => [
+  invalidate(materialsKeys.locales(event.tenantId, event.payload.jobId)),
   invalidate(interviewKeys.history(event.tenantId, event.payload.jobId)),
   // Patch already-registered rows. Approval can also register PDFs and suppress
   // older artifacts, so every artifact page still needs canonical reconciliation.
@@ -66,6 +68,7 @@ export const resumeFailedHandler = (event: ResumeFailed): readonly InvalidationI
 export const coverLetterGeneratedHandler = (
   event: CoverLetterGenerated,
 ): readonly InvalidationItem[] => [
+  invalidate(materialsKeys.locales(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(artifactsKeys.lists(event.tenantId)),
@@ -136,6 +139,7 @@ export const tailorRetailorRequestedHandler = (
 export const tailoredArtifactsSuppressedHandler = (
   event: TailoredArtifactsSuppressed,
 ): readonly InvalidationItem[] => [
+  invalidate(materialsKeys.locales(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(artifactsKeys.lists(event.tenantId)),
@@ -171,6 +175,7 @@ export const jobResumeTemplateAssignedHandler = (
 export const resumeTemplateRefreshCompletedHandler = (
   event: ResumeTemplateRefreshCompleted,
 ): readonly InvalidationItem[] => [
+  invalidate(materialsKeys.locales(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(artifactsKeys.lists(event.tenantId)),

@@ -94,7 +94,7 @@ def fence(connection, snapshot, root):
     profile, facts = profile_snapshot(connection, snapshot["tenantId"])
     if (current != snapshot["source"] or profile.version != snapshot["profileVersion"]
             or [row.model_dump() for row in facts] != snapshot["facts"]
-            or protected_values(profile.as_dict()) != snapshot["protectedValues"]):
+            or protected_values(profile.as_dict(), current["text"]) != snapshot["protectedValues"]):
         raise DeterminationFailure("stale_locale_source")
 
 
@@ -111,23 +111,15 @@ def history(connection, *, tenant_id, job_id):
                 raise ValueError()
         except (ValueError, KeyError, TypeError):
             raise DeterminationFailure("locale_contract_invalid") from None
-        # Read-side authority is an ID join, never a fresh semantic judgment.
-        repository = SqliteDeterminationRepository(connection)
+        # Reconstruct the complete persisted binding without a model call.
+        # A recorded negative verdict is still inspectable authority.
         try:
-            translator = repository.find(tenant_id, value["translationId"]) if value["translationId"] else None
-            verifier = repository.find(tenant_id, value["verificationId"]) if value["verificationId"] else None
-            recorded = (translator is not None and verifier is not None
-                        and translator.entity_id == value["entityId"] and verifier.entity_id == value["entityId"]
-                        and translator.kind == "material_locale_translation" and verifier.kind == "material_locale_verification"
-                        and translator.result.get("lines") == value["lines"] and verifier.result.get("lines") == value["verification"])
-            if recorded:
-                for envelope, prompt in ((translator, "material-locale-translation-v1"), (verifier, "material-locale-verification-v1")):
-                    bound = repository.bound(tenant_id=tenant_id, entity_kind="material_locale", entity_id=value["entityId"], entity_version=value["revisionId"], determination_kind=envelope.kind)
-                    if bound is None or bound.determination_id != envelope.determination_id or envelope.schema_version != "1" or envelope.prompt_version != prompt:
-                        recorded = False
-        except DeterminationFailure:
-            # An unusable recorded envelope cannot hide the last accepted text.
-            # Acceptance/export still enforce the full authority and fail closed.
+            if value["tenantId"] != tenant_id or value["jobId"] != job_id:
+                raise DeterminationFailure("locale_authority_invalid")
+            authority(connection, value, require_pass=False)
+            recorded = True
+        except (DeterminationFailure, KeyError, TypeError, ValueError):
+            # Invalid authority cannot erase the last accepted text.
             recorded = False
         value["authorityStatus"] = "recorded" if recorded else "unavailable"
         variants.append(value)
@@ -239,7 +231,7 @@ def approved_reviews(snapshot):
                for d in ("terminology", "formatting"))
 
 
-def authority(connection, snapshot):
+def authority(connection, snapshot, *, require_pass=True):
     repository = SqliteDeterminationRepository(connection)
     entity = snapshot["entityId"]
     translation = repository.find(snapshot["tenantId"], snapshot["translationId"])
@@ -280,14 +272,14 @@ def authority(connection, snapshot):
             or snapshot["verificationVerdict"] != judged.verdict
             or snapshot["findings"] != [row.model_dump() for row in [*result.findings, *judged.findings]]):
         raise DeterminationFailure("locale_authority_invalid")
-    if judged.verdict != "pass" or judged.findings or any(row.verdict != "pass" for row in judged.lines):
-        raise DeterminationFailure("locale_verification_failed")
     if digest(snapshot["text"].encode()) != snapshot["textSha256"]:
         raise DeterminationFailure("locale_authority_invalid")
     by_id = {row.line_id: row.text for row in result.lines}
     expected_text = "\n".join(by_id.get(f"source:{index}", line) for index, line in enumerate(snapshot["source"]["text"].splitlines()))
     if snapshot["text"] != expected_text:
         raise DeterminationFailure("locale_authority_invalid")
+    if require_pass and (judged.verdict != "pass" or judged.findings or any(row.verdict != "pass" for row in judged.lines)):
+        raise DeterminationFailure("locale_verification_failed")
 
 
 def generate(connection, *, tenant_id, job_id, root, request, dependencies=None):
@@ -298,7 +290,7 @@ def generate(connection, *, tenant_id, job_id, root, request, dependencies=None)
     context = {"source": source, "profileVersion": profile.version, "sourceLocale": request["sourceLocale"], "targetLocale": request["targetLocale"]}
     entity = digest(json.dumps({**context, "jobId": job_id}, sort_keys=True, ensure_ascii=False).encode())
     snapshot = {"contract": CONTRACT, "tenantId": tenant_id, "jobId": job_id, "entityId": entity,
-                **context, "facts": [row.model_dump() for row in facts], "protectedValues": protected_values(profile.as_dict())}
+                **context, "facts": [row.model_dump() for row in facts], "protectedValues": protected_values(profile.as_dict(), source["text"])}
     if request["sourceLocale"] not in SUPPORTED_LOCALES or request["targetLocale"] not in SUPPORTED_LOCALES:
         return record_unsupported(connection, snapshot, root)
     if request["sourceLocale"] == request["targetLocale"]:
@@ -426,8 +418,9 @@ def export(connection, row_id, snapshot, root, format, pdf_renderer):
         connection.execute("BEGIN IMMEDIATE")
         fence(connection, snapshot, root)
         _, current = current_revision(connection, snapshot["tenantId"], snapshot["jobId"], snapshot["revisionId"])
-        if current["version"] != snapshot["version"]:
+        if current != snapshot:
             raise DeterminationFailure("stale_locale_revision")
+        authority(connection, current)
         ref = {"format": format, "sha256": digest(path.read_bytes()), "textSha256": snapshot["textSha256"], "createdAt": now()}
         cursor = connection.execute("INSERT INTO job_artifacts(tenant_id,job_id,stage,artifact_type,status,path,created_at,size_bytes,metadata_json) VALUES(?,?,'locale',?,'approved',?,?,?,?)",
                                     (snapshot["tenantId"], snapshot["jobId"], "locale_" + format, str(path), now(), path.stat().st_size, json.dumps(ref)))

@@ -13,7 +13,8 @@ source/target language pair, expected source generation and profile version.
 The source snapshot records its artifact ID, generation, SHA-256 and exact text;
 canonical facts are retained by recorded IDs alongside their generation-time
 text. Historical names, titles, institutions, credentials, dates and achievement
-values have literal structural protection. Prose meaning never comes from a
+values have literal structural protection, including renderer-normalized spelling
+and the historical role headings in the accepted source. Prose meaning never comes from a
 lexicon, overlap, regex classifier or a fallback translation.
 
 Two strict determinations own translation and independent verification:
@@ -26,7 +27,8 @@ code validates inventories, citations, immutable fields and literal numbers.
 Missing terminology, unsupported languages and ambiguous credentials are explicit
 findings. Unsupported capabilities have no model authority and cannot be accepted.
 
-Readers join recorded determination IDs. Absent/mismatched authority is reported
+Readers validate the complete recorded determination identity, context, verdict
+and text bindings, including when a valid determination rejected a revision. Absent/mismatched authority is reported
 as unavailable while the historical source and locale content stay inspectable.
 Acceptance and export additionally validate persisted semantic entity bindings,
 source versions, exact final text and passing authority.
@@ -41,7 +43,8 @@ under expected-version checks. Rejected whole revisions cannot subsequently be
 accepted. Accepted content cannot be edited through review mutations.
 
 SQLite writer transactions fence source bytes, source status/generation,
-canonical profile version/facts and locale revision immediately before publishing.
+canonical profile version/facts, the complete locale revision and its current
+semantic authority immediately before publishing.
 Unique, owned output files are flushed before their references commit. Failed
 publication removes only newly staged files and rolls back the locale row; it
 never truncates a source file, accepted locale revision or prior export. Semantic
@@ -69,7 +72,8 @@ The Job Detail view composes the Materials-owned panel. Its tenant-first query
 key, mutations, retained accepted content, failure rollback and targeted
 invalidation live in Materials. Browser/local artifact opening stays behind ports.
 History periodically refreshes to observe mutations from other local clients;
-source-material events invalidate the locale read cache.
+source-material events invalidate the locale read cache through the central
+event provider and Materials handlers, sharing the app's single event connection.
 
 Owning regressions are `test_locale_variants.py`,
 `test_locale_variants_integration.py`, API `locale-variants.test.ts`, colocated

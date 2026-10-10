@@ -456,3 +456,104 @@ def native_model_rpc_server():
 
 if __name__ == "__main__":
     native_model_rpc_server()
+
+
+@pytest.mark.parametrize("field,raw,placeholder", [
+    ("company", "L’Atelier", "Synthetic Employer"),
+    ("title", "Director of “Systems”", "Historical Title"),
+])
+def test_rendered_historical_fields_cannot_change_during_translation(owned, field, raw, placeholder):
+    from jobctrl.domain.materials.services import sanitize_text
+
+    # Both fields are fixed test identifiers, not user-controlled SQL fragments.
+    owned[0].execute(f"UPDATE candidate_profile_experience_entries SET {field}=?", (raw,))
+    owned[0].commit()
+    rendered = sanitize_text(raw)
+    owned[2].write_text(TEXT.replace(placeholder, rendered))
+    before = generate(owned)
+
+    def change_field(result):
+        for line in result["lines"]:
+            line["text"] = line["text"].replace(rendered, "Changed historical field")
+
+    with pytest.raises(DeterminationFailure, match="protected_field_changed"):
+        generate(owned, LocaleModel(edit=change_field), target="fr")
+    assert locale.history(owned[0], tenant_id="local", job_id=JOB)["variants"] == [before]
+    assert owned[2].read_text() == TEXT.replace(placeholder, rendered)
+
+
+def test_accepted_historical_title_is_bound_to_the_assembled_source(owned):
+    from jobctrl.domain.materials.services import ResumeAssembler
+
+    profile, _ = locale.profile_snapshot(owned[0], "local")
+    profile = profile.as_dict()
+    # The accepted artifact can predate an edit to the current profile title.
+    profile["resume"]["experience_entries"][0]["title"] = "Accepted historical title"
+    text = ResumeAssembler().assemble_resume_text({
+        "executive_profile": "",
+        "experience_updates": [{"id": "entry", "title": "Accepted historical title", "bullets": ["Delivered 25%"]}],
+    }, profile)
+    assert "Accepted historical title | Synthetic Employer" in text
+    owned[2].write_text(text)
+    before = generate(owned)
+
+    def change_title(result):
+        for line in result["lines"]:
+            line["text"] = line["text"].replace("Accepted historical title", "Changed title")
+
+    with pytest.raises(DeterminationFailure, match="protected_field_changed"):
+        generate(owned, LocaleModel(edit=change_title), target="fr")
+    assert locale.history(owned[0], tenant_id="local", job_id=JOB)["variants"] == [before]
+
+
+@pytest.mark.parametrize("field,value", [
+    ("targetLocale", "fr"),
+    ("verificationVerdict", "fail"),
+    ("provider", "different-provider"),
+    ("textSha256", "0" * 64),
+])
+def test_history_validates_complete_authority_without_hiding_accepted_text(owned, field, value):
+    snapshot = accepted(owned)
+    row_id, changed = locale.current_revision(owned[0], "local", JOB, snapshot["revisionId"])
+    changed[field] = value
+    owned[0].execute("UPDATE job_artifacts SET metadata_json=? WHERE artifact_id=?", (json.dumps(changed), row_id))
+    owned[0].commit()
+    view = locale.history(owned[0], tenant_id="local", job_id=JOB)["variants"][-1]
+    assert view["authorityStatus"] == "unavailable"
+    assert view["accepted"] and view["text"] == snapshot["text"]
+    assert view["acceptanceHistory"] == snapshot["acceptanceHistory"]
+    code = "accepted_locale_required" if field == "textSha256" else "locale_authority_invalid"
+    with pytest.raises(DeterminationFailure, match=code):
+        run(owned, dict(operation="export", revisionId=snapshot["revisionId"], expectedVersion=snapshot["version"], format="txt"))
+
+
+def test_recorded_negative_verdict_remains_inspectable_without_becoming_approved(owned):
+    snapshot = generate(owned, LocaleModel(verdict="fail"))
+    assert snapshot["authorityStatus"] == "recorded"
+    assert snapshot["verificationVerdict"] == "fail" and not snapshot["accepted"]
+    snapshot = review(owned, snapshot)
+    snapshot = review(owned, snapshot, "formatting")
+    with pytest.raises(DeterminationFailure, match="locale_verification_failed"):
+        accept(owned, snapshot)
+
+
+def test_export_rechecks_authority_after_staging_and_preserves_prior_export(owned):
+    snapshot = accepted(owned)
+    snapshot = run(owned, dict(operation="export", revisionId=snapshot["revisionId"], expectedVersion=snapshot["version"], format="txt"))["variants"][-1]
+    before_rows = [tuple(row) for row in owned[0].execute("SELECT * FROM job_artifacts ORDER BY artifact_id")]
+    directory = owned[1] / "generated" / "locale-variants"
+    before_files = {path: path.read_bytes() for path in directory.iterdir()}
+    write = locale.write_exclusive
+
+    def remove_authority_after_staging(path, data):
+        write(path, data)
+        with sqlite3.connect(owned[1] / "owned.db") as concurrent:
+            concurrent.execute("DELETE FROM semantic_entity_bindings")
+
+    with patch.object(locale, "write_exclusive", side_effect=remove_authority_after_staging):
+        with pytest.raises(DeterminationFailure, match="locale_authority_invalid"):
+            run(owned, dict(operation="export", revisionId=snapshot["revisionId"], expectedVersion=snapshot["version"], format="txt"))
+    assert [tuple(row) for row in owned[0].execute("SELECT * FROM job_artifacts ORDER BY artifact_id")] == before_rows
+    assert {path: path.read_bytes() for path in directory.iterdir()} == before_files
+    view = locale.history(owned[0], tenant_id="local", job_id=JOB)["variants"][-1]
+    assert view == {**snapshot, "authorityStatus": "unavailable"}
