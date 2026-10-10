@@ -2416,6 +2416,37 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("combines comma and repeated stages before global pagination while preserving scalar requests", async () => {
+    const app = buildApp(options);
+    try {
+      const request = async (query: string) => {
+        const response = await app.inject({ method: "GET", url: `/v1/jobs?${query}&sort=fit_score&dir=desc&pageSize=1` });
+        expect(response.statusCode, response.body).toBe(200);
+        return response.json();
+      };
+      const ids: string[] = [];
+      for (const page of [1, 2, 3]) {
+        const comma = await request(`stages=discover,apply&stage=score&page=${page}`);
+        const repeated = await request(`stages=discover&stages=apply&stages=discover&page=${page}`);
+        expect(repeated).toEqual({ ...comma, filter: { ...comma.filter, stage: "" } });
+        expect(comma.pagination).toEqual({ page, pageSize: 1, total: 3, pages: 3 });
+        expect(comma.filter.stages).toEqual(["discover", "apply"]);
+        ids.push(comma.items[0].jobKey);
+      }
+      expect(new Set(ids).size).toBe(3);
+      expect((await request("stages=discover,apply&page=999")).pagination).toEqual({ page: 3, pageSize: 1, total: 3, pages: 3 });
+      expect((await request("stages=apply&stage=discover")).pagination.total).toBe(1);
+      expect((await request("stage=apply")).pagination.total).toBe(1);
+      expect((await request("stage=apply&stages=")).pagination.total).toBe(3);
+      expect((await request("stage=apply&stages=invalid")).pagination.total).toBe(1);
+      const empty = await request("stages=score,enrich&page=999");
+      expect(empty.pagination).toEqual({ page: 1, pageSize: 1, total: 0, pages: 1 });
+      expect(empty.items).toEqual([]);
+      const searched = await request("stages=discover,apply&q=Engineer&page=999");
+      expect(searched.pagination).toMatchObject({ total: 3, page: 3 });
+    } finally { await app.close(); }
+  });
+
   it("filters, sorts, and paginates jobs globally", async () => {
     const app = buildApp(options);
     const response = await app.inject({

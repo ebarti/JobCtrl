@@ -14,6 +14,7 @@ import { SubprocessJsonRpcAdapter } from "../src/json-rpc-adapter.js";
 import { refreshProjections } from "../src/projections.js";
 import { AUTOMATION_PROJECT_DIR, createSourcePythonRuntime } from "../src/python-runtime.js";
 import { buildApp } from "../src/server.js";
+import { EXACT_V14_SCHEMA_MANIFEST } from "../src/schema-manifest.js";
 import {
   assertAscending,
   assertHash,
@@ -27,8 +28,10 @@ import {
   PROPOSED_REFERENCE_BUDGETS,
   REPOSITORY_ROOT,
   seedSyntheticDataset,
+  seedMultiStageDataset,
   SSE_POLL_INTERVAL_MS,
   syntheticJob,
+  syntheticMultiStageJob,
   withOwnedWorkspace,
   type BenchmarkWorkspace,
   type CliOptions,
@@ -164,6 +167,8 @@ interface BenchmarkReport {
   candidate: {
     gitHead: string;
     gitStatus: string[];
+    sourceSha256: Record<string, string>;
+    diffSha256: string;
     verifiedDirtyExclusion: {
       path: string;
       note: string;
@@ -175,7 +180,7 @@ interface BenchmarkReport {
       verified: true;
     } | null;
   };
-  schema: { version: 11; initializer: string };
+  schema: { version: number; initializer: string; manifestSha256: string };
   method: {
     datasetSizes: readonly number[];
     eventsPerJob: number;
@@ -195,6 +200,32 @@ interface BenchmarkReport {
   backgroundLoadAnnotation: string | null;
   backgroundLoadLimitation: string;
   datasets: DatasetResult[];
+  combinedStages: CombinedStageResult[];
+}
+
+interface CombinedStageResult {
+  jobs: number;
+  seed: string;
+  stageCounts: { discover: number; apply: number };
+  pageSize: number;
+  correctnessVerified: true;
+  scenarios: Array<{
+    name: string;
+    query: string;
+    latency: Distribution;
+    expectedTotal: number;
+    expectedPage: number;
+    expectedJobIds: string[];
+    observedJobIds: string[];
+    memory: {
+      scope: string;
+      rssPeakGrowthBytes: number;
+      heapPeakGrowthBytes: number;
+      rssEndDeltaBytes: number;
+      heapEndDeltaBytes: number;
+      samples: Array<{ before: MemorySnapshot; after: MemorySnapshot }>;
+    };
+  }>;
 }
 
 interface CpuSnapshot {
@@ -225,14 +256,22 @@ export async function runBenchmark(
     process.stderr.write(`local-scale: measuring ${jobs} jobs\n`);
     datasets.push(await withOwnedWorkspace((workspace) => runDataset(workspace, jobs)));
   }
+  // Run the extension only after every original scenario/size. Its additional
+  // allocations and synthetic stage writes cannot affect the original samples.
+  const combinedStages: CombinedStageResult[] = [];
+  for (const jobs of DATASET_SIZES) {
+    process.stderr.write(`local-scale: measuring combined stages at ${jobs} jobs\n`);
+    combinedStages.push(await withOwnedWorkspace((workspace) => runCombinedStageDataset(workspace, jobs)));
+  }
   return {
     formatVersion: 1,
     benchmark: "JobCtrl synthetic local scale baseline",
     seed: BENCHMARK_SEED,
     candidate: gitCandidate(options.dirtyExclusion),
     schema: {
-      version: 11,
+      version: EXACT_V14_SCHEMA_MANIFEST.version,
       initializer: "jobctrl.infrastructure.migrations.schema_v14.create_exact_v14_schema via uv --frozen",
+      manifestSha256: createHash("sha256").update(JSON.stringify(EXACT_V14_SCHEMA_MANIFEST)).digest("hex"),
     },
     method: {
       datasetSizes: DATASET_SIZES,
@@ -243,6 +282,7 @@ export async function runBenchmark(
       productionPaths: [
         "refreshProjections bounded foreground pass and background drain",
         "buildApp loopback HTTP /v1/jobs list/search/in-memory sort",
+        "buildApp loopback HTTP combined-stage first/adjacent/deep/clamped pages in separate owned datasets after the original scenarios",
         "registerEventStreamRoute real 250 ms timer-driven SSE connection",
         "buildApp PDF and HTML artifact preview streams",
         "SubprocessJsonRpcAdapter -> uv -> production Python jobctrl rpc dispatcher provider_models",
@@ -267,7 +307,88 @@ export async function runBenchmark(
     backgroundLoadAnnotation: options.backgroundLoadNote,
     backgroundLoadLimitation: "Concurrent host activity was not independently measured. There was no CPU pinning or isolated reference hardware. Raw samples are retained; these measurements must not be used to tighten the proposed budgets.",
     datasets,
+    combinedStages,
   };
+}
+
+export async function runCombinedStageDataset(workspace: BenchmarkWorkspace, jobs: number): Promise<CombinedStageResult> {
+  seedMultiStageDataset(workspace, jobs);
+  const db = openDatabase(workspace.dbPath);
+  try {
+    refreshProjections(db);
+    await waitForProjectionDrain(db, maxEventId(workspace.dbPath), jobs);
+  } finally { db.close(); }
+  const app = buildApp({ dbPath: workspace.dbPath, appDir: workspace.directory, configPath: workspace.configPath });
+  try {
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    const address = app.server.address();
+    if (!address || typeof address === "string") throw new Error("combined-stage API missing TCP address");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    const inputs = Array.from({ length: jobs }, (_, index) => syntheticMultiStageJob(index));
+    const pageSize = 25;
+    const deepPage = Math.max(1, Math.ceil(jobs / pageSize) - 1);
+    const cases = [
+      { name: "sql-first", stages: "discover,apply", page: 1 },
+      { name: "sql-adjacent", stages: "discover,apply", page: 2 },
+      { name: "sql-deep", stages: "discover,apply", page: deepPage },
+      { name: "sql-clamped", stages: "discover,apply", page: jobs + 1 },
+      { name: "duplicate-stages", stages: "discover,apply,discover", page: deepPage },
+      { name: "array-precedence", stages: "apply", stage: "discover", page: jobs + 1 },
+      { name: "empty-array", stages: "", stage: "apply", page: deepPage },
+      { name: "empty-membership", stages: "score,enrich", page: jobs + 1 },
+      { name: "search-first", stages: "discover,apply", q: "Needle", page: 1 },
+      { name: "search-deep", stages: "discover,apply", q: "Needle", page: Math.max(1, Math.ceil(Math.ceil(jobs / 10) / pageSize) - 1) },
+      { name: "search-clamped", stages: "discover,apply", q: "Needle", page: jobs + 1 },
+      { name: "materialized-ties-deep", stages: "discover,apply", sort: "compensation_min_eur", page: deepPage },
+    ];
+    const scenarios: CombinedStageResult["scenarios"] = [];
+    for (const scenario of cases) {
+      const selected = inputs.filter((job) =>
+        (!scenario.stages || scenario.stages.split(",").includes(job.stage))
+        && (!scenario.q || job.title.includes(scenario.q)),
+      );
+      // Independent seed-based comparator; projected compensation is absent,
+      // so that scenario deliberately orders every row by job ID.
+      selected.sort((left, right) =>
+        (scenario.sort ? 0 : left.discoveredAt.localeCompare(right.discoveredAt))
+        || left.jobId.localeCompare(right.jobId),
+      );
+      const expectedPage = Math.min(scenario.page, Math.max(1, Math.ceil(selected.length / pageSize)));
+      const expectedJobIds = selected.slice((expectedPage - 1) * pageSize, expectedPage * pageSize).map((job) => job.jobId);
+      const query = new URLSearchParams({
+        stages: scenario.stages, page: String(scenario.page), pageSize: String(pageSize),
+        sort: scenario.sort ?? "discovered_at", dir: "asc",
+        ...(scenario.stage ? { stage: scenario.stage } : {}), ...(scenario.q ? { q: scenario.q } : {}),
+      }).toString();
+      const samples: Array<{ before: MemorySnapshot; after: MemorySnapshot }> = [];
+      let observedJobIds: string[] = [];
+      const latency = await measureRequests(`${baseUrl}/v1/jobs?${query}`, (body) => {
+        const response = record(body);
+        const parsed = asPage(body, scenario.name);
+        const pagination = record(response.pagination);
+        observedJobIds = parsed.items.map((item) => String(record(item).jobKey));
+        if (parsed.total !== selected.length || pagination.page !== expectedPage
+          || pagination.pages !== Math.max(1, Math.ceil(selected.length / pageSize)) || pagination.pageSize !== pageSize
+          || JSON.stringify(observedJobIds) !== JSON.stringify(expectedJobIds)
+          || JSON.stringify(record(response.filter).stages) !== JSON.stringify([...new Set(scenario.stages ? scenario.stages.split(",") : [])])) {
+          throw new Error(`${scenario.name} combined-stage correctness oracle failed: ${JSON.stringify(body)}`);
+        }
+      }, samples);
+      const before = samples[0]!.before;
+      const after = samples.at(-1)!.after;
+      scenarios.push({ name: scenario.name, query, latency, expectedTotal: selected.length, expectedPage, expectedJobIds, observedJobIds,
+        memory: {
+          scope: "Benchmark Node PID including loopback HTTP server/client; before/after each retained request; no forced GC, sampling can miss transient peaks",
+          samples,
+          rssPeakGrowthBytes: Math.max(0, ...samples.map((sample) => sample.after.rss - before.rss)),
+          heapPeakGrowthBytes: Math.max(0, ...samples.map((sample) => sample.after.heapUsed - before.heapUsed)),
+          rssEndDeltaBytes: after.rss - before.rss, heapEndDeltaBytes: after.heapUsed - before.heapUsed,
+        } });
+    }
+    return { jobs, seed: `${BENCHMARK_SEED}:combined-stages-v1`, pageSize, correctnessVerified: true,
+      stageCounts: { discover: inputs.filter((job) => job.stage === "discover").length, apply: inputs.filter((job) => job.stage === "apply").length },
+      scenarios };
+  } finally { await app.close(); }
 }
 
 export async function runDataset(workspace: BenchmarkWorkspace, jobs: number): Promise<DatasetResult> {
@@ -436,16 +557,24 @@ async function measureHttp(baseUrl: string, jobs: number): Promise<HttpResult> {
   };
 }
 
-async function measureRequests(url: string, verify: (body: unknown) => void): Promise<Distribution> {
+async function measureRequests(
+  url: string, verify: (body: unknown) => void,
+  memorySamples?: Array<{ before: MemorySnapshot; after: MemorySnapshot }>,
+): Promise<Distribution> {
   const samples: number[] = [];
   for (let index = 0; index < WARMUPS + SAMPLES; index += 1) {
     const start = performance.now();
+    const before = memorySamples ? memorySnapshot() : undefined;
     const response = await fetch(url);
     const body = await response.json() as unknown;
     const duration = elapsed(start);
+    const after = memorySamples ? memorySnapshot() : undefined;
     if (!response.ok) throw new Error(`${url} returned ${response.status}`);
     verify(body);
-    if (index >= WARMUPS) samples.push(duration);
+    if (index >= WARMUPS) {
+      samples.push(duration);
+      if (before && after) memorySamples?.push({ before, after });
+    }
   }
   return distribution(samples);
 }
@@ -1062,6 +1191,13 @@ function gitCandidate(exclusion: VerifiedDirtyExclusionInput | null): BenchmarkR
   return {
     gitHead: gitText(["rev-parse", "HEAD"]),
     gitStatus: status,
+    sourceSha256: Object.fromEntries([
+      "pnpm-lock.yaml", "workers/automation/uv.lock", "apps/api/benchmark/local-scale.ts",
+      "apps/api/benchmark/run-local-scale.ts", "apps/api/src/read-model.ts", "apps/api/src/projections.ts",
+      "apps/api/src/server.ts", "apps/api/src/schema-manifest.ts", "packages/contracts/src/schemas.ts",
+      "packages/contracts/src/jobs-query.ts",
+    ].map((file) => [file, createHash("sha256").update(fs.readFileSync(path.join(REPOSITORY_ROOT, file))).digest("hex")])),
+    diffSha256: createHash("sha256").update(gitRaw(["diff", "HEAD", "--binary"])).digest("hex"),
     verifiedDirtyExclusion,
   };
 }

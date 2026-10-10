@@ -340,6 +340,34 @@ and `scoredSince` are both present, the jobs list matches rows where either
 timestamp is at or after its threshold. Active filters and sort remain URL state
 in the web app. The same score and applied-outcome filters are accepted by
 all-matching bulk job mutations.
+The list and all-matching bulk filters accept optional `stages` membership on
+projected `currentStage`. Allowed values are `discover`, `enrich`, `score`,
+`tailor`, `cover`, and `apply`; they do not select `currentSubstage`. Current
+projections group preparation under Discover or Apply, so other stage values
+can legitimately match no rows. The JSON body form is an array. Query strings
+accept comma serialization, repeated values, or repeated comma groups:
+`stages=discover,apply` and `stages=discover&stages=apply` are equivalent.
+Whitespace is trimmed. At most six input values are accepted before
+deduplication; duplicate values retain their first occurrence. Invalid members,
+malformed values, and arrays longer than six are ignored as a whole, matching
+the existing optional-filter fallback convention. They fall back to scalar
+`stage`, if supplied. Valid `stages` overrides scalar `stage`; `[]` (query
+`stages=`) explicitly removes any stage restriction. Omission preserves scalar
+behavior. Stage membership is ORed and then intersected with every other list
+filter before count, global sorting, and pagination. All-matching bulk selection
+uses the same membership and also accepts exact `normalizedScoreKeyword`.
+
+`pagination.total` is the globally filtered count, `pages` is
+`max(1, ceil(total / pageSize))`, and `page` is clamped to `pages`. Empty results
+return `items: []`, `total: 0`, `pages: 1`, and `page: 1`. Sort ties use ascending
+canonical job ID regardless of the requested direction. SQL-paged totals and
+the clamped page, including summary joins, share one SQLite read transaction.
+Search and projected-JSON sorts retain the existing materialized query path.
+Response `filter.stages` is the effective deduplicated stage array, or `[]` for
+unrestricted membership. The legacy `filter.stage` still echoes scalar `stage`
+(or an empty string), even when overridden by `stages`. Other filter and sort
+metadata retain their existing meanings.
+
 `GET /v1/digest` returns the local daily digest read model for the dashboard and
 CLI. It composes projection-backed counts for new matches, blocked sources,
 apply-review materials, stale scores, pending approvals, derived follow-ups due,

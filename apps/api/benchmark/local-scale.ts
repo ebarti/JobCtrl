@@ -168,7 +168,7 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
 
 export async function withOwnedWorkspace<T>(
   run: (workspace: BenchmarkWorkspace) => Promise<T> | T,
-  initialize: (workspace: BenchmarkWorkspace) => void = initializeExactV13Database,
+  initialize: (workspace: BenchmarkWorkspace) => void = initializeExactV14Database,
 ): Promise<T> {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-local-scale-"));
   const artifactDirectory = path.join(directory, "artifacts");
@@ -188,7 +188,7 @@ export async function withOwnedWorkspace<T>(
   }
 }
 
-export function initializeExactV13Database(workspace: BenchmarkWorkspace): void {
+export function initializeExactV14Database(workspace: BenchmarkWorkspace): void {
   if (fs.existsSync(workspace.dbPath)) {
     throw new Error("benchmark database path must not exist before exact-v14 initialization");
   }
@@ -224,6 +224,8 @@ export function seedSyntheticDataset(workspace: BenchmarkWorkspace, jobs: number
   const db = new Database(workspace.dbPath, { fileMustExist: true });
   db.pragma("foreign_keys = ON");
   db.pragma("journal_mode = WAL");
+  // Exact-v14 creation already seeds the canonical built-in resume template
+  // through schema_v11. Keep that prerequisite and its version unchanged.
   const insertJob = db.prepare(
     `INSERT INTO jobs (
        tenant_id, job_id, url, title, company, salary, description, location,
@@ -395,6 +397,37 @@ export function syntheticJob(index: number) {
     discoveredAt: new Date(Date.UTC(2026, 0, 1) + index * 1_000).toISOString(),
     fitScore: index % 11,
   };
+}
+
+/** Separate extension seed: preserves every original seed/scenario byte. */
+export function syntheticMultiStageJob(index: number) {
+  return {
+    ...syntheticJob(index),
+    stage: index % 3 === 0 ? "apply" as const : "discover" as const,
+    // Deliberate cross-stage ties exercise the job ID tie breaker.
+    discoveredAt: syntheticJob(Math.floor(index / 4)).discoveredAt,
+  };
+}
+
+export function seedMultiStageDataset(workspace: BenchmarkWorkspace, jobs: number): SeedSummary {
+  const summary = seedSyntheticDataset(workspace, jobs);
+  const db = new Database(workspace.dbPath);
+  try {
+    db.transaction(() => {
+      for (let index = 0; index < jobs; index += 1) {
+        const job = syntheticMultiStageJob(index);
+        db.prepare("UPDATE jobs SET discovered_at = ? WHERE tenant_id = 'local' AND job_id = ?")
+          .run(job.discoveredAt, job.jobId);
+        if (job.stage === "apply") {
+          for (const stage of ["discover", "enrich", "score", "tailor", "cover"]) {
+            db.prepare(`INSERT INTO job_stage_states (tenant_id, job_id, stage, state, updated_at, version)
+              VALUES ('local', ?, ?, 'succeeded', ?, 1)`).run(job.jobId, stage, job.discoveredAt);
+          }
+        }
+      }
+    })();
+  } finally { db.close(); }
+  return summary;
 }
 
 function uuidFrom(value: string): string {
