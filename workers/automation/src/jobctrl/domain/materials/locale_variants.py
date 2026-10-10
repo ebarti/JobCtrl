@@ -68,13 +68,25 @@ def protected_values(profile, accepted_text=""):
     for row in get_experience_entries(profile):
         if row.get("date_range"):
             values.append(normalize_resume_date_range(sanitize_text(str(row["date_range"]))))
-        company = sanitize_text(str(row.get("company") or ""))
-        if company:
-            # ResumeAssembler emits `<accepted title> | <company>`. Bind that
-            # literal header too: the accepted title may have been reframed.
-            suffix = " | " + company
-            values.extend(line for line in accepted_text.splitlines()
-                          if line.endswith(suffix) and line[:-len(suffix)].strip())
+    # ResumeAssembler frames experience entries with blank lines between its
+    # literal EXPERIENCE and EDUCATION markers. Current profile fields may have
+    # changed since this artifact was accepted, so bind the recorded headers.
+    lines = accepted_text.splitlines()
+    try:
+        start = lines.index("EXPERIENCE") + 1
+        end = lines.index("EDUCATION", start)
+    except ValueError:
+        pass
+    else:
+        entry_start = True
+        for line in lines[start:end]:
+            if not line.strip():
+                entry_start = True
+            elif entry_start:
+                title, separator, company = line.partition(" | ")
+                if separator:
+                    values.extend((line, title, company))
+                entry_start = False
     return sorted({value for value in values if value})
 
 

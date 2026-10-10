@@ -557,3 +557,30 @@ def test_export_rechecks_authority_after_staging_and_preserves_prior_export(owne
     assert {path: path.read_bytes() for path in directory.iterdir()} == before_files
     view = locale.history(owned[0], tenant_id="local", job_id=JOB)["variants"][-1]
     assert view == {**snapshot, "authorityStatus": "unavailable"}
+
+
+def test_accepted_employer_survives_current_profile_company_replacement(owned):
+    from jobctrl.domain.materials.services import ResumeAssembler
+
+    profile, _ = locale.profile_snapshot(owned[0], "local")
+    text = ResumeAssembler().assemble_resume_text({
+        "executive_profile": "",
+        "experience_updates": [{"id": "entry", "title": "Historical Title", "bullets": ["Delivered 25%"]}],
+    }, profile.as_dict())
+    owned[2].write_text(text)
+    before = accepted(owned)
+    owned[0].execute("UPDATE candidate_profile_experience_entries SET company='Current Employer'")
+    owned[0].execute("UPDATE candidate_profiles SET version=2")
+    owned[0].commit()
+
+    def change_company(result):
+        for line in result["lines"]:
+            line["text"] = line["text"].replace("Synthetic Employer", "Changed Historical Employer")
+
+    model = LocaleModel(edit=change_company)
+    with pytest.raises(DeterminationFailure, match="protected_field_changed"):
+        run(owned, dict(operation="generate", sourceArtifactId="tailored_resume",
+                        sourceLocale="en", targetLocale="fr", expectedGeneration=1,
+                        expectedProfileVersion=2), model)
+    assert locale.history(owned[0], tenant_id="local", job_id=JOB)["variants"] == [before]
+    assert owned[2].read_text() == text
