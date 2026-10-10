@@ -436,6 +436,13 @@ only the observation clock. No availability path writes hide/delete tombstones,
 application outcomes, approvals, scores or materials. A location-policy finding
 keeps its separate gate when external availability becomes active.
 
+Reviewed locale variants use `job_artifacts` with a separately versioned
+`material-locale-v1` metadata contract, plus the existing semantic determination
+and entity-binding tables. Original Materials rows and legacy registry metadata
+remain unchanged. Locale revision text and four export formats use unique owned
+files under `generated/locale-variants`; failed publication removes only newly
+staged files. See [Material Locale Variants](material-locale-variants.md).
+
 ## Screening Answer Ledger
 
 Exact-v14 screening answer revisions use existing indexed `job_events` entries with `screening_question`, `screening_library`, `screening_failure` and `screening_notification` entity kinds. Private snapshots and supporting facts are exposed only by the screening owner; general activity/SSE retain references. The [owning contract](reviewed-screening-answers.md) defines atomic revision comparisons and source/version fences. No schema migration is introduced.

@@ -2278,6 +2278,43 @@ accepted content, materials, decisions and outcomes remain intact.
 The [Enrichment guide](../user/enrichment-and-extraction.md#saved-posting-availability)
 owns the complete acquisition, cohort and retry policy.
 
+## Material Locale Variants
+
+`POST /v1/jobs/:jobId/material-locales` uses a canonical UUID Job ID and a strict
+operation union. Extra fields, unknown operations and malformed revisions fail
+before worker dispatch. The runtime-bound synchronous RPC is
+`material_locale_variants`; params contain `tenantId`, `jobId`, `expectedAppDir`,
+`expectedDbPath` and `request`.
+
+| Operation | Required request fields besides `operation` |
+| --- | --- |
+| `history` | None |
+| `generate` | `sourceArtifactId`, `sourceLocale`, `targetLocale`, positive `expectedGeneration`, positive `expectedProfileVersion` |
+| `review` | UUID `revisionId`, positive `expectedVersion`, `dimension` (`terminology` or `formatting`), `decision` (`accepted` or `rejected`), `note` (at most 2,000 characters) |
+| `accept` / `reject` | UUID `revisionId`, positive `expectedVersion` |
+| `export` | UUID `revisionId`, positive `expectedVersion`, `format` (`txt`, `html`, `pdf`, `docx`) |
+
+Success returns `{ supportedLocales, profileVersion, sources, variants }`.
+`sources` lists approved resume/cover-letter artifact IDs, kinds and generations.
+Each variant records the versioned contract, revision/version, tenant/job,
+source artifact/generation/hash/text, source/target locales, canonical facts and
+profile version, translation/verification IDs, provider/model, prompt/schema,
+ordered line mappings, verifier reasons, findings, independent reviews,
+acceptance history, exact localized text/hash and registered export references.
+`authorityStatus` is `recorded` or `unavailable`, derived by joining persisted IDs.
+It does not recompute semantic judgments. Unsupported-language revisions have
+null determination IDs and explicit findings, never fabricated equivalence.
+
+Successful review/accept/reject/export operations increment `version`. A stale
+source or revision returns 409, an absent job 404, invalid requests or failed
+acceptance gates 400, and unavailable transport/invalid worker results 503.
+Errors use `{ ok: false, error }`; source/model prose is not an error code.
+Accepted source files, prior accepted locale revisions and existing export bytes
+survive every failed operation. Application approval is separate.
+
+For language capabilities, review flow and CLI examples, see
+[Reviewed Locale Variants](../user/locale-variants.md).
+
 ## Screening Answer Contract
 
 GET/POST `/v1/jobs/:jobId/screening-answers` use `ScreeningReadResponseSchema`, `ScreeningCommandSchema` and `ScreeningWriteResponseSchema` from shared contracts. Read responses retain `questions`, `history`, `library`, `facts`, nullable `sourceBinding`/`sourceFailure` persisted `determinations` and safe `failures`. Commands reject unknown fields, bound text to 16,000 characters and require expected revisions/idempotency keys; capture questions/context are each limited to 4,000 characters. The [owning route reference](jobs-and-materials.md#screening-answers) and [action fields](../user/screening-answers.md#cli-and-local-api) define behavior. Runtime identity comes from the API, never the request body. Transport failures return 503, invalid worker parameters 409, and malformed/foreign completions 502 with safe errors; body-schema failures return 400.

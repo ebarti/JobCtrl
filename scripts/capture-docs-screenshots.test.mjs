@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -52,6 +53,18 @@ test("ordinary runs create unique children and preserve the supplied parent sent
   removeOwnedE2eWorkspace(first);
   assertOwnedE2eWorkspace(second);
   assert.equal(fs.readFileSync(sentinel, "utf8"), "preserved");
+});
+
+test("a recognized temporary root nested inside another root cannot be adopted", (t) => {
+  const parent = parentFixture(t);
+  const original = os.tmpdir;
+  os.tmpdir = () => parent;
+  t.after(() => { os.tmpdir = original; });
+  assert.throws(() => createOwnedE2eWorkspace(parent), /strict descendant/);
+  const workspace = createOwnedE2eWorkspace();
+  assert.equal(path.dirname(workspace.appDir), parent);
+  removeOwnedE2eWorkspace(workspace);
+  assert.equal(fs.existsSync(parent), true);
 });
 
 test("caller DB/config/state overrides cannot select foreign data", (t) => {

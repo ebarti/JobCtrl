@@ -6957,6 +6957,46 @@ export const ScheduleFollowUpRequestSchema = z
   .strict();
 export type ScheduleFollowUpRequest = z.infer<typeof ScheduleFollowUpRequestSchema>;
 
+// Locale variants are a separately versioned Materials contract on schema 14.
+const LocaleCitationSchema = z.object({ source_id: z.string(), quote: z.string(), exact_values: z.array(z.string()) }).strict();
+export const LocaleFindingSchema = z.object({
+  kind: z.enum(["missing_term", "unsupported_language", "ambiguous_credential"]),
+  line_id: z.string(), source: LocaleCitationSchema, detail: z.string(),
+}).strict();
+const LocaleLineSchema = z.object({ line_id: z.string(), text: z.string(), source: LocaleCitationSchema, fact_ids: z.array(z.string()) }).strict();
+const LocaleReviewSchema = z.object({ dimension: z.enum(["terminology", "formatting"]), decision: z.enum(["accepted", "rejected"]), revisionId: z.string(), textSha256: z.string(), recordedAt: z.string(), note: z.string() }).strict();
+export const MaterialLocaleVariantSchema = z.object({
+  authorityStatus: z.enum(["recorded", "unavailable"]),
+  contract: z.literal("material-locale-v1"), tenantId: z.string(), jobId: z.string(), entityId: z.string(),
+  source: z.object({ artifactId: z.string(), generation: z.number().int().positive(), kind: z.enum(["tailored_resume", "cover_letter"]), sha256: z.string(), text: z.string() }).strict(),
+  sourceLocale: z.string(), targetLocale: z.string(), profileVersion: z.number().int().positive(),
+  facts: z.array(z.object({ source_id: z.string(), text: z.string() }).strict()), protectedValues: z.array(z.string()),
+  revisionId: z.string().uuid(), version: z.number().int().positive(), createdAt: z.string(), accepted: z.boolean(),
+  reviews: z.array(LocaleReviewSchema),
+  acceptanceHistory: z.array(z.object({ decision: z.enum(["accepted", "rejected"]), recordedAt: z.string(), revisionId: z.string(), textSha256: z.string() }).strict()),
+  exports: z.array(z.object({ format: z.enum(["txt", "html", "pdf", "docx"]), sha256: z.string(), textSha256: z.string(), createdAt: z.string(), artifactId: z.string() }).strict()),
+  translationId: z.string().nullable(), verificationId: z.string().nullable(),
+  provider: z.string(), model: z.string(), promptVersion: z.string(), schemaVersion: z.string(),
+  lines: z.array(LocaleLineSchema), findings: z.array(LocaleFindingSchema), verificationVerdict: z.enum(["pass", "fail"]),
+  text: z.string(), textSha256: z.string(),
+  verification: z.array(z.object({ line_id: z.string(), verdict: z.enum(["pass", "fail"]), original: LocaleCitationSchema, translated: LocaleCitationSchema, reason: z.string() }).strict()),
+}).strict();
+export type MaterialLocaleVariant = z.infer<typeof MaterialLocaleVariantSchema>;
+export const MaterialLocaleHistorySchema = z.object({
+  supportedLocales: z.array(z.string()), variants: z.array(MaterialLocaleVariantSchema), profileVersion: z.number().int().positive().nullable(),
+  sources: z.array(z.object({ artifactId: z.string(), generation: z.number().int().positive(), kind: z.enum(["tailored_resume", "cover_letter"]) }).strict()),
+}).strict();
+export type MaterialLocaleHistory = z.infer<typeof MaterialLocaleHistorySchema>;
+const localeRevisionFields = { revisionId: z.string().uuid(), expectedVersion: z.number().int().positive() };
+export const MaterialLocaleRequestSchema = z.discriminatedUnion("operation", [
+  z.object({ operation: z.literal("history") }).strict(),
+  z.object({ operation: z.literal("generate"), sourceArtifactId: z.string().min(1).max(240), sourceLocale: z.string().min(2).max(35), targetLocale: z.string().min(2).max(35), expectedGeneration: z.number().int().positive(), expectedProfileVersion: z.number().int().positive() }).strict(),
+  z.object({ operation: z.literal("review"), ...localeRevisionFields, dimension: z.enum(["terminology", "formatting"]), decision: z.enum(["accepted", "rejected"]), note: z.string().max(2000) }).strict(),
+  z.object({ operation: z.literal("accept"), ...localeRevisionFields }).strict(),
+  z.object({ operation: z.literal("reject"), ...localeRevisionFields }).strict(),
+  z.object({ operation: z.literal("export"), ...localeRevisionFields, format: z.enum(["txt", "html", "pdf", "docx"]) }).strict(),
+]);
+export type MaterialLocaleRequest = z.infer<typeof MaterialLocaleRequestSchema>;
 // Private screening answers: generated endpoint clients share these exact shapes.
 const ScreeningIdSchema = z.string().min(1).max(160);
 export const ScreeningFactSchema = z.object({ id: z.string().min(1).max(240), text: z.string().max(64000), sensitive: z.boolean() }).strict();

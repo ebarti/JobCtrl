@@ -537,7 +537,8 @@ test("Job detail: keyboard activation opens requirement fit, stages, and artifac
   await sectionsButton.focus();
   await sectionsButton.press("Enter");
   const sectionsMenu = page.getByRole("navigation", { name: "Job detail sections" });
-  await expect(sectionsMenu.getByRole("button")).toHaveCount(12);
+  await expect(sectionsMenu.getByRole("button")).toHaveCount(13);
+  await expect(sectionsMenu.getByRole("button", { name: "Locale variants", exact: true })).toBeVisible();
   await expect(sectionsMenu.getByRole("button", { name: "Screening answers", exact: true })).toBeVisible();
   await sectionsButton.press("Escape");
   await expect(sectionsButton).toBeFocused();

@@ -49,6 +49,14 @@ jobs:
           corepack pnpm --filter @jobctrl/api-client check
           corepack pnpm --filter @jobctrl/domain-types check
           corepack pnpm api:check
+      - name: Set up pinned uv for real worker RPC tests
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: 0.11.7
+          enable-cache: true
+          cache-dependency-glob: workers/automation/uv.lock
+      - name: Prepare locked worker project
+        run: uv --project workers/automation sync --locked --all-extras
       - name: Test shared domain types
         run: corepack pnpm --filter @jobctrl/domain-types test
       - name: Test API

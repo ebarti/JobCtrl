@@ -3691,6 +3691,9 @@ function rowToArtifactSummary(row: ArtifactProjectionRow, db?: SqliteDatabase): 
     size: formatSize(sizeBytes),
     resumeTemplate: db
       && jobId
+      // Locale snapshots have their own revision-bound formatting review.
+      // Reading them must not resolve or refresh the original resume template.
+      && !row.artifact_type?.startsWith("locale_")
       ? resumeTemplateStateForArtifact(db, jobId, row.metadata_json)
       : null,
   };

@@ -23,7 +23,13 @@ test("DryRunCompleted alone refreshes apply history without submitting the job",
     const pathname = new URL(request.url()).pathname;
     if (pathname === "/v1/dashboard/summary") dashboardReads += 1;
     if (pathname === "/v1/events/stream") streamConnections += 1;
+    // This RPC-style endpoint uses POST for read-only history as well.
+    const isLocaleHistoryRead =
+      pathname === `/v1/jobs/${QA_PLATFORM_JOB_ID}/material-locales` &&
+      request.method() === "POST" &&
+      request.postDataJSON()?.operation === "history";
     if (
+      !isLocaleHistoryRead &&
       pathname.startsWith("/v1/") &&
       !["GET", "HEAD", "OPTIONS"].includes(request.method())
     ) {

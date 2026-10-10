@@ -165,3 +165,11 @@ adapters are evolution seams documented under the
 [cloud evolution](../architecture/domain-model/cloud.md). They are not a second
 production tree today. This map describes the current local and bundled source
 owners only.
+
+Reviewed material translations are owned by
+`domain/materials/locale_variants.py` and
+`infrastructure/materials/locale_variants.py`, with the runtime-bound handler in
+`infrastructure/rpc/handlers.py`, HTTP adapter `apps/api/src/locale-variants.ts`,
+Contracts operation/snapshot schemas, and Materials' `MaterialLocaleVariants`
+component in Job Detail. [The locale architecture](../architecture/material-locale-variants.md)
+owns the registry, semantic bindings, review fences and export contract.

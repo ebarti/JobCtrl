@@ -19,6 +19,7 @@ import { outcomesKeys } from "./outcomesKeys.js";
 import { workflowRunsKeys } from "./workflowRunsKeys.js";
 import { discoveryKeys } from "../discovery/queryKeys.js";
 import { pipelineKeys } from "../pipeline/queryKeys.js";
+import { materialsKeys } from "../materials/queryKeys.js";
 import { profileKeys } from "../profile/queryKeys.js";
 import { outreachKeys } from "../outreach/queryKeys.js";
 
@@ -185,6 +186,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   ResumeApproved: [
+    materialsKeys.locales(LOCAL_TENANT, JOB_ID),
     interviewKeys.history(LOCAL_TENANT, JOB_ID),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),
@@ -196,6 +198,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   CoverLetterGenerated: [
+    materialsKeys.locales(LOCAL_TENANT, JOB_ID),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),
     artifactsKeys.lists(LOCAL_TENANT),
@@ -244,6 +247,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   TailoredArtifactsSuppressed: [
+    materialsKeys.locales(LOCAL_TENANT, JOB_ID),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),
     artifactsKeys.lists(LOCAL_TENANT),
@@ -267,6 +271,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     applyReviewKeys.all(LOCAL_TENANT),
   ],
   ResumeTemplateRefreshCompleted: [
+    materialsKeys.locales(LOCAL_TENANT, JOB_ID),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),
     artifactsKeys.lists(LOCAL_TENANT),

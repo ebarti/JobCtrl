@@ -421,6 +421,16 @@ Every generated artifact has a claim-verification determination and recorded lin
 
 See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
 
+## Reviewed Translations
+
+Job Detail's **Locale variants** section translates selected accepted resume or
+cover-letter descriptions into an explicitly selected language. Original names,
+titles, credentials, dates and achievements stay unchanged. Independent semantic
+verification and separate terminology/formatting reviews precede locale acceptance;
+unresolved terms, unsupported languages and ambiguous credentials stay explicit.
+Text, HTML, PDF and DOCX share one accepted snapshot. Failed refreshes preserve
+original and prior accepted material. See [Reviewed Locale Variants](locale-variants.md).
+
 ## Screening Answer Library
 
 Materials also owns source-bound [screening-answer drafts and reusable reviewed revisions](screening-answers.md). Application-specific question versions, review and manual-use history remain owned by Apply. Failed refreshes retain accepted answers and material bytes.

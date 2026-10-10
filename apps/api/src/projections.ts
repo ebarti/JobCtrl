@@ -787,6 +787,14 @@ function runRefreshPassInTransaction(db: SqliteDatabase, tenantId: string): bool
   for (const jobId of staleApplicationUrlProjectionJobs(db, tenantId)) {
     dirtyJobs.add(jobId);
   }
+  // Locale exports use the native registry, independently of material generations.
+  // Reconcile their identities even when no pipeline event advances its cursor.
+  for (const row of allRows<{ job_id: string }>(db,
+    `SELECT DISTINCT a.job_id FROM job_artifacts a LEFT JOIN artifact_list_projections p
+     ON p.tenant_id=a.tenant_id AND p.artifact_id=CAST(a.artifact_id AS TEXT)
+     WHERE a.tenant_id=? AND a.stage='locale' AND (p.artifact_id IS NULL OR p.status<>a.status)`, [tenantId])) {
+    dirtyJobs.add(row.job_id);
+  }
   for (const jobId of staleDeletedProjectionJobs(db, tenantId)) {
     dirtyJobs.add(jobId);
   }
