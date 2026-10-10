@@ -1,7 +1,7 @@
 name: Docs Site
 
-# The negated directories match docs/.vitepress/config.ts `srcExclude`: nothing
-# under them can enter the built site, so building for them is pure cost.
+# Push filters exclude documents outside the built site. Pull requests always
+# run the build because branch protection requires its exact-head result.
 on:
   push:
     branches: ["main"]
@@ -19,21 +19,8 @@ on:
       - "scripts/check-docs-site-runtime.mjs"
       - "scripts/get"
       - ".github/workflows/docs-site.yml"
+  # Required branch checks must exist for every PR, including docs-only changes.
   pull_request:
-    paths:
-      - "docs/**"
-      - "apps/web/src/styles/tokens.css"
-      - "!docs/plans/**"
-      - "!docs/incidents/**"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "scripts/check-install-asset.mjs"
-      - "scripts/check-docs-site-links.mjs"
-      - "scripts/check-docs-site-redirects.mjs"
-      - "scripts/check-docs-site-runtime.mjs"
-      - "scripts/get"
-      - ".github/workflows/docs-site.yml"
   workflow_dispatch:
     inputs:
       deploy:
