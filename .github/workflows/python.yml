@@ -16,20 +16,8 @@ on:
       - "LICENSE"
       - "NOTICE"
       - ".github/workflows/python.yml"
+  # Required branch checks must exist for every PR, including docs-only changes.
   pull_request:
-    paths:
-      - "workers/**"
-      - "scripts/**"
-      - "packages/**"
-      - "packaging/**"
-      - "apps/web/src/contexts/outreach/**"
-      - "apps/web/src/views/outreach/**"
-      - "apps/api/src/outreach.ts"
-      - "package.json"
-      - "README.md"
-      - "LICENSE"
-      - "NOTICE"
-      - ".github/workflows/python.yml"
   workflow_dispatch:
 
 permissions:
