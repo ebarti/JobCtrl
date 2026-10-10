@@ -1,6 +1,2833 @@
 {
   "schemaVersion": 1,
   "endpoints": {
+    "screeningAnswers": {
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "jobId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "questions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "questionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "jobId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "applicationId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "revision": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "question": {
+                  "type": "string"
+                },
+                "context": {
+                  "type": "string"
+                },
+                "captureBinding": {
+                  "type": "object",
+                  "properties": {
+                    "profileVersion": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "profileHash": {
+                      "type": "string",
+                      "minLength": 64,
+                      "maxLength": 64
+                    },
+                    "postingHash": {
+                      "type": "string",
+                      "minLength": 64,
+                      "maxLength": 64
+                    },
+                    "destination": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "posting": {
+                      "type": "string"
+                    },
+                    "materials": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {}
+                      }
+                    },
+                    "facts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 240
+                          },
+                          "text": {
+                            "type": "string",
+                            "maxLength": 64000
+                          },
+                          "sensitive": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "text",
+                          "sensitive"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "sensitiveFactIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "question": {
+                      "type": "string"
+                    },
+                    "context": {
+                      "type": "string"
+                    },
+                    "applicationId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    }
+                  },
+                  "required": [
+                    "profileVersion",
+                    "profileHash",
+                    "postingHash",
+                    "destination",
+                    "posting",
+                    "materials",
+                    "facts",
+                    "sensitiveFactIds"
+                  ],
+                  "additionalProperties": false
+                },
+                "draft": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "answerId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 160
+                        },
+                        "text": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 16000
+                        },
+                        "uncertainty": {
+                          "type": "string",
+                          "maxLength": 1500
+                        },
+                        "binding": {
+                          "type": "object",
+                          "properties": {
+                            "profileVersion": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "profileHash": {
+                              "type": "string",
+                              "minLength": 64,
+                              "maxLength": 64
+                            },
+                            "postingHash": {
+                              "type": "string",
+                              "minLength": 64,
+                              "maxLength": 64
+                            },
+                            "destination": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "posting": {
+                              "type": "string"
+                            },
+                            "materials": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            },
+                            "facts": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 240
+                                  },
+                                  "text": {
+                                    "type": "string",
+                                    "maxLength": 64000
+                                  },
+                                  "sensitive": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "text",
+                                  "sensitive"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "sensitiveFactIds": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "question": {
+                              "type": "string"
+                            },
+                            "context": {
+                              "type": "string"
+                            },
+                            "applicationId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 160
+                            }
+                          },
+                          "required": [
+                            "profileVersion",
+                            "profileHash",
+                            "postingHash",
+                            "destination",
+                            "posting",
+                            "materials",
+                            "facts",
+                            "sensitiveFactIds"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "question": {
+                          "type": "string"
+                        },
+                        "context": {
+                          "type": "string"
+                        },
+                        "determinationIds": {
+                          "minItems": 3,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 64,
+                            "maxLength": 64
+                          }
+                        },
+                        "libraryId": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 160
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reviewId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 160
+                        },
+                        "staleReason": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "answerId",
+                        "text",
+                        "uncertainty",
+                        "binding",
+                        "question",
+                        "context",
+                        "determinationIds",
+                        "libraryId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "accepted": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "answerId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 160
+                        },
+                        "text": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 16000
+                        },
+                        "uncertainty": {
+                          "type": "string",
+                          "maxLength": 1500
+                        },
+                        "binding": {
+                          "type": "object",
+                          "properties": {
+                            "profileVersion": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "profileHash": {
+                              "type": "string",
+                              "minLength": 64,
+                              "maxLength": 64
+                            },
+                            "postingHash": {
+                              "type": "string",
+                              "minLength": 64,
+                              "maxLength": 64
+                            },
+                            "destination": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "posting": {
+                              "type": "string"
+                            },
+                            "materials": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            },
+                            "facts": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 240
+                                  },
+                                  "text": {
+                                    "type": "string",
+                                    "maxLength": 64000
+                                  },
+                                  "sensitive": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "text",
+                                  "sensitive"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "sensitiveFactIds": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "question": {
+                              "type": "string"
+                            },
+                            "context": {
+                              "type": "string"
+                            },
+                            "applicationId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 160
+                            }
+                          },
+                          "required": [
+                            "profileVersion",
+                            "profileHash",
+                            "postingHash",
+                            "destination",
+                            "posting",
+                            "materials",
+                            "facts",
+                            "sensitiveFactIds"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "question": {
+                          "type": "string"
+                        },
+                        "context": {
+                          "type": "string"
+                        },
+                        "determinationIds": {
+                          "minItems": 3,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 64,
+                            "maxLength": 64
+                          }
+                        },
+                        "libraryId": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 160
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reviewId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 160
+                        },
+                        "staleReason": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "answerId",
+                        "text",
+                        "uncertainty",
+                        "binding",
+                        "question",
+                        "context",
+                        "determinationIds",
+                        "libraryId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "action": {
+                  "type": "string",
+                  "enum": [
+                    "capture",
+                    "draft",
+                    "edit",
+                    "review",
+                    "reuse",
+                    "use"
+                  ]
+                },
+                "snapshotId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "recordedAt": {
+                  "type": "string"
+                },
+                "decision": {
+                  "type": "string",
+                  "enum": [
+                    "approved",
+                    "rejected"
+                  ]
+                },
+                "selection": {
+                  "type": "object",
+                  "properties": {
+                    "factIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "sensitiveFactIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "factIds",
+                    "sensitiveFactIds"
+                  ],
+                  "additionalProperties": false
+                },
+                "manualUse": {
+                  "type": "object",
+                  "properties": {
+                    "useId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    },
+                    "reviewId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    },
+                    "answerId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    },
+                    "text": {
+                      "type": "string",
+                      "maxLength": 16000
+                    },
+                    "attested": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "changed": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "useId",
+                    "reviewId",
+                    "answerId",
+                    "text",
+                    "attested",
+                    "changed"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "questionId",
+                "jobId",
+                "applicationId",
+                "revision",
+                "question",
+                "context",
+                "captureBinding",
+                "draft",
+                "accepted",
+                "action",
+                "snapshotId",
+                "recordedAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "history": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "questionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "jobId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "applicationId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "revision": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "question": {
+                  "type": "string"
+                },
+                "context": {
+                  "type": "string"
+                },
+                "captureBinding": {
+                  "type": "object",
+                  "properties": {
+                    "profileVersion": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "profileHash": {
+                      "type": "string",
+                      "minLength": 64,
+                      "maxLength": 64
+                    },
+                    "postingHash": {
+                      "type": "string",
+                      "minLength": 64,
+                      "maxLength": 64
+                    },
+                    "destination": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "posting": {
+                      "type": "string"
+                    },
+                    "materials": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {}
+                      }
+                    },
+                    "facts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 240
+                          },
+                          "text": {
+                            "type": "string",
+                            "maxLength": 64000
+                          },
+                          "sensitive": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "text",
+                          "sensitive"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "sensitiveFactIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "question": {
+                      "type": "string"
+                    },
+                    "context": {
+                      "type": "string"
+                    },
+                    "applicationId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    }
+                  },
+                  "required": [
+                    "profileVersion",
+                    "profileHash",
+                    "postingHash",
+                    "destination",
+                    "posting",
+                    "materials",
+                    "facts",
+                    "sensitiveFactIds"
+                  ],
+                  "additionalProperties": false
+                },
+                "draft": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "answerId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 160
+                        },
+                        "text": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 16000
+                        },
+                        "uncertainty": {
+                          "type": "string",
+                          "maxLength": 1500
+                        },
+                        "binding": {
+                          "type": "object",
+                          "properties": {
+                            "profileVersion": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "profileHash": {
+                              "type": "string",
+                              "minLength": 64,
+                              "maxLength": 64
+                            },
+                            "postingHash": {
+                              "type": "string",
+                              "minLength": 64,
+                              "maxLength": 64
+                            },
+                            "destination": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "posting": {
+                              "type": "string"
+                            },
+                            "materials": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            },
+                            "facts": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 240
+                                  },
+                                  "text": {
+                                    "type": "string",
+                                    "maxLength": 64000
+                                  },
+                                  "sensitive": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "text",
+                                  "sensitive"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "sensitiveFactIds": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "question": {
+                              "type": "string"
+                            },
+                            "context": {
+                              "type": "string"
+                            },
+                            "applicationId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 160
+                            }
+                          },
+                          "required": [
+                            "profileVersion",
+                            "profileHash",
+                            "postingHash",
+                            "destination",
+                            "posting",
+                            "materials",
+                            "facts",
+                            "sensitiveFactIds"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "question": {
+                          "type": "string"
+                        },
+                        "context": {
+                          "type": "string"
+                        },
+                        "determinationIds": {
+                          "minItems": 3,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 64,
+                            "maxLength": 64
+                          }
+                        },
+                        "libraryId": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 160
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reviewId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 160
+                        },
+                        "staleReason": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "answerId",
+                        "text",
+                        "uncertainty",
+                        "binding",
+                        "question",
+                        "context",
+                        "determinationIds",
+                        "libraryId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "accepted": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "answerId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 160
+                        },
+                        "text": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 16000
+                        },
+                        "uncertainty": {
+                          "type": "string",
+                          "maxLength": 1500
+                        },
+                        "binding": {
+                          "type": "object",
+                          "properties": {
+                            "profileVersion": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "profileHash": {
+                              "type": "string",
+                              "minLength": 64,
+                              "maxLength": 64
+                            },
+                            "postingHash": {
+                              "type": "string",
+                              "minLength": 64,
+                              "maxLength": 64
+                            },
+                            "destination": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "posting": {
+                              "type": "string"
+                            },
+                            "materials": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            },
+                            "facts": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 240
+                                  },
+                                  "text": {
+                                    "type": "string",
+                                    "maxLength": 64000
+                                  },
+                                  "sensitive": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "text",
+                                  "sensitive"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "sensitiveFactIds": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "question": {
+                              "type": "string"
+                            },
+                            "context": {
+                              "type": "string"
+                            },
+                            "applicationId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 160
+                            }
+                          },
+                          "required": [
+                            "profileVersion",
+                            "profileHash",
+                            "postingHash",
+                            "destination",
+                            "posting",
+                            "materials",
+                            "facts",
+                            "sensitiveFactIds"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "question": {
+                          "type": "string"
+                        },
+                        "context": {
+                          "type": "string"
+                        },
+                        "determinationIds": {
+                          "minItems": 3,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 64,
+                            "maxLength": 64
+                          }
+                        },
+                        "libraryId": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 160
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reviewId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 160
+                        },
+                        "staleReason": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "answerId",
+                        "text",
+                        "uncertainty",
+                        "binding",
+                        "question",
+                        "context",
+                        "determinationIds",
+                        "libraryId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "action": {
+                  "type": "string",
+                  "enum": [
+                    "capture",
+                    "draft",
+                    "edit",
+                    "review",
+                    "reuse",
+                    "use"
+                  ]
+                },
+                "snapshotId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "recordedAt": {
+                  "type": "string"
+                },
+                "decision": {
+                  "type": "string",
+                  "enum": [
+                    "approved",
+                    "rejected"
+                  ]
+                },
+                "selection": {
+                  "type": "object",
+                  "properties": {
+                    "factIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "sensitiveFactIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "factIds",
+                    "sensitiveFactIds"
+                  ],
+                  "additionalProperties": false
+                },
+                "manualUse": {
+                  "type": "object",
+                  "properties": {
+                    "useId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    },
+                    "reviewId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    },
+                    "answerId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    },
+                    "text": {
+                      "type": "string",
+                      "maxLength": 16000
+                    },
+                    "attested": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "changed": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "useId",
+                    "reviewId",
+                    "answerId",
+                    "text",
+                    "attested",
+                    "changed"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "questionId",
+                "jobId",
+                "applicationId",
+                "revision",
+                "question",
+                "context",
+                "captureBinding",
+                "draft",
+                "accepted",
+                "action",
+                "snapshotId",
+                "recordedAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "library": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "libraryId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "questionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "jobId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "applicationId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "snapshotId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "recordedAt": {
+                  "type": "string"
+                },
+                "answer": {
+                  "type": "object",
+                  "properties": {
+                    "answerId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    },
+                    "text": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 16000
+                    },
+                    "uncertainty": {
+                      "type": "string",
+                      "maxLength": 1500
+                    },
+                    "binding": {
+                      "type": "object",
+                      "properties": {
+                        "profileVersion": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "profileHash": {
+                          "type": "string",
+                          "minLength": 64,
+                          "maxLength": 64
+                        },
+                        "postingHash": {
+                          "type": "string",
+                          "minLength": 64,
+                          "maxLength": 64
+                        },
+                        "destination": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "posting": {
+                          "type": "string"
+                        },
+                        "materials": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {}
+                          }
+                        },
+                        "facts": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 240
+                              },
+                              "text": {
+                                "type": "string",
+                                "maxLength": 64000
+                              },
+                              "sensitive": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "text",
+                              "sensitive"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "sensitiveFactIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "question": {
+                          "type": "string"
+                        },
+                        "context": {
+                          "type": "string"
+                        },
+                        "applicationId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 160
+                        }
+                      },
+                      "required": [
+                        "profileVersion",
+                        "profileHash",
+                        "postingHash",
+                        "destination",
+                        "posting",
+                        "materials",
+                        "facts",
+                        "sensitiveFactIds"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "question": {
+                      "type": "string"
+                    },
+                    "context": {
+                      "type": "string"
+                    },
+                    "determinationIds": {
+                      "minItems": 3,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 64,
+                        "maxLength": 64
+                      }
+                    },
+                    "libraryId": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 160
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reviewId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    },
+                    "staleReason": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "answerId",
+                    "text",
+                    "uncertainty",
+                    "binding",
+                    "question",
+                    "context",
+                    "determinationIds",
+                    "libraryId"
+                  ],
+                  "additionalProperties": false
+                },
+                "originSnapshot": {
+                  "type": "object",
+                  "properties": {
+                    "questionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    },
+                    "jobId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    },
+                    "applicationId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "question": {
+                      "type": "string"
+                    },
+                    "context": {
+                      "type": "string"
+                    },
+                    "captureBinding": {
+                      "type": "object",
+                      "properties": {
+                        "profileVersion": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "profileHash": {
+                          "type": "string",
+                          "minLength": 64,
+                          "maxLength": 64
+                        },
+                        "postingHash": {
+                          "type": "string",
+                          "minLength": 64,
+                          "maxLength": 64
+                        },
+                        "destination": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "posting": {
+                          "type": "string"
+                        },
+                        "materials": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {}
+                          }
+                        },
+                        "facts": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 240
+                              },
+                              "text": {
+                                "type": "string",
+                                "maxLength": 64000
+                              },
+                              "sensitive": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "text",
+                              "sensitive"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "sensitiveFactIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "question": {
+                          "type": "string"
+                        },
+                        "context": {
+                          "type": "string"
+                        },
+                        "applicationId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 160
+                        }
+                      },
+                      "required": [
+                        "profileVersion",
+                        "profileHash",
+                        "postingHash",
+                        "destination",
+                        "posting",
+                        "materials",
+                        "facts",
+                        "sensitiveFactIds"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "draft": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "answerId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 160
+                            },
+                            "text": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 16000
+                            },
+                            "uncertainty": {
+                              "type": "string",
+                              "maxLength": 1500
+                            },
+                            "binding": {
+                              "type": "object",
+                              "properties": {
+                                "profileVersion": {
+                                  "type": "integer",
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "profileHash": {
+                                  "type": "string",
+                                  "minLength": 64,
+                                  "maxLength": 64
+                                },
+                                "postingHash": {
+                                  "type": "string",
+                                  "minLength": 64,
+                                  "maxLength": 64
+                                },
+                                "destination": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "posting": {
+                                  "type": "string"
+                                },
+                                "materials": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string"
+                                    },
+                                    "additionalProperties": {}
+                                  }
+                                },
+                                "facts": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "id": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 240
+                                      },
+                                      "text": {
+                                        "type": "string",
+                                        "maxLength": 64000
+                                      },
+                                      "sensitive": {
+                                        "type": "boolean"
+                                      }
+                                    },
+                                    "required": [
+                                      "id",
+                                      "text",
+                                      "sensitive"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "sensitiveFactIds": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "question": {
+                                  "type": "string"
+                                },
+                                "context": {
+                                  "type": "string"
+                                },
+                                "applicationId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 160
+                                }
+                              },
+                              "required": [
+                                "profileVersion",
+                                "profileHash",
+                                "postingHash",
+                                "destination",
+                                "posting",
+                                "materials",
+                                "facts",
+                                "sensitiveFactIds"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "question": {
+                              "type": "string"
+                            },
+                            "context": {
+                              "type": "string"
+                            },
+                            "determinationIds": {
+                              "minItems": 3,
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "minLength": 64,
+                                "maxLength": 64
+                              }
+                            },
+                            "libraryId": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 160
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "reviewId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 160
+                            },
+                            "staleReason": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "answerId",
+                            "text",
+                            "uncertainty",
+                            "binding",
+                            "question",
+                            "context",
+                            "determinationIds",
+                            "libraryId"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "accepted": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "answerId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 160
+                            },
+                            "text": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 16000
+                            },
+                            "uncertainty": {
+                              "type": "string",
+                              "maxLength": 1500
+                            },
+                            "binding": {
+                              "type": "object",
+                              "properties": {
+                                "profileVersion": {
+                                  "type": "integer",
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "profileHash": {
+                                  "type": "string",
+                                  "minLength": 64,
+                                  "maxLength": 64
+                                },
+                                "postingHash": {
+                                  "type": "string",
+                                  "minLength": 64,
+                                  "maxLength": 64
+                                },
+                                "destination": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "posting": {
+                                  "type": "string"
+                                },
+                                "materials": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string"
+                                    },
+                                    "additionalProperties": {}
+                                  }
+                                },
+                                "facts": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "id": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 240
+                                      },
+                                      "text": {
+                                        "type": "string",
+                                        "maxLength": 64000
+                                      },
+                                      "sensitive": {
+                                        "type": "boolean"
+                                      }
+                                    },
+                                    "required": [
+                                      "id",
+                                      "text",
+                                      "sensitive"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "sensitiveFactIds": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "question": {
+                                  "type": "string"
+                                },
+                                "context": {
+                                  "type": "string"
+                                },
+                                "applicationId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 160
+                                }
+                              },
+                              "required": [
+                                "profileVersion",
+                                "profileHash",
+                                "postingHash",
+                                "destination",
+                                "posting",
+                                "materials",
+                                "facts",
+                                "sensitiveFactIds"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "question": {
+                              "type": "string"
+                            },
+                            "context": {
+                              "type": "string"
+                            },
+                            "determinationIds": {
+                              "minItems": 3,
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "minLength": 64,
+                                "maxLength": 64
+                              }
+                            },
+                            "libraryId": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 160
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "reviewId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 160
+                            },
+                            "staleReason": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "answerId",
+                            "text",
+                            "uncertainty",
+                            "binding",
+                            "question",
+                            "context",
+                            "determinationIds",
+                            "libraryId"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "action": {
+                      "type": "string",
+                      "enum": [
+                        "capture",
+                        "draft",
+                        "edit",
+                        "review",
+                        "reuse",
+                        "use"
+                      ]
+                    },
+                    "snapshotId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    },
+                    "recordedAt": {
+                      "type": "string"
+                    },
+                    "decision": {
+                      "type": "string",
+                      "enum": [
+                        "approved",
+                        "rejected"
+                      ]
+                    },
+                    "selection": {
+                      "type": "object",
+                      "properties": {
+                        "factIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "sensitiveFactIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "factIds",
+                        "sensitiveFactIds"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "manualUse": {
+                      "type": "object",
+                      "properties": {
+                        "useId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 160
+                        },
+                        "reviewId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 160
+                        },
+                        "answerId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 160
+                        },
+                        "text": {
+                          "type": "string",
+                          "maxLength": 16000
+                        },
+                        "attested": {
+                          "type": "boolean",
+                          "const": true
+                        },
+                        "changed": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "useId",
+                        "reviewId",
+                        "answerId",
+                        "text",
+                        "attested",
+                        "changed"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "questionId",
+                    "jobId",
+                    "applicationId",
+                    "revision",
+                    "question",
+                    "context",
+                    "captureBinding",
+                    "draft",
+                    "accepted",
+                    "action",
+                    "snapshotId",
+                    "recordedAt"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "libraryId",
+                "questionId",
+                "jobId",
+                "applicationId",
+                "snapshotId",
+                "recordedAt",
+                "answer",
+                "originSnapshot"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "facts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "text": {
+                  "type": "string",
+                  "maxLength": 64000
+                },
+                "sensitive": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "text",
+                "sensitive"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "sourceBinding": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "profileVersion": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "profileHash": {
+                    "type": "string",
+                    "minLength": 64,
+                    "maxLength": 64
+                  },
+                  "postingHash": {
+                    "type": "string",
+                    "minLength": 64,
+                    "maxLength": 64
+                  },
+                  "destination": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "posting": {
+                    "type": "string"
+                  },
+                  "materials": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  },
+                  "facts": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 240
+                        },
+                        "text": {
+                          "type": "string",
+                          "maxLength": 64000
+                        },
+                        "sensitive": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "text",
+                        "sensitive"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "sensitiveFactIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "question": {
+                    "type": "string"
+                  },
+                  "context": {
+                    "type": "string"
+                  },
+                  "applicationId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  }
+                },
+                "required": [
+                  "profileVersion",
+                  "profileHash",
+                  "postingHash",
+                  "destination",
+                  "posting",
+                  "materials",
+                  "facts",
+                  "sensitiveFactIds"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceFailure": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "determinations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            }
+          },
+          "failures": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "jobId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "questionId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "action": {
+                  "type": "string"
+                },
+                "expectedRevision": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "code": {
+                  "type": "string"
+                },
+                "requestHash": {
+                  "type": "string",
+                  "minLength": 64,
+                  "maxLength": 64
+                },
+                "recordedAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "jobId",
+                "questionId",
+                "action",
+                "expectedRevision",
+                "code",
+                "requestHash",
+                "recordedAt"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "ok",
+          "jobId",
+          "questions",
+          "history",
+          "library",
+          "facts",
+          "sourceBinding",
+          "sourceFailure",
+          "determinations",
+          "failures"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "writeScreeningAnswer": {
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "capture",
+              "draft",
+              "edit",
+              "review",
+              "reuse",
+              "use"
+            ]
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "questionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "applicationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "question": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "context": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "selectedFactIds": {
+            "default": [],
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          },
+          "sensitiveFactIds": {
+            "default": [],
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16000
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "approved",
+              "rejected"
+            ]
+          },
+          "libraryId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "attested": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "action",
+          "idempotencyKey",
+          "expectedRevision"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "jobId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "state": {
+            "type": "object",
+            "properties": {
+              "questionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "jobId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "applicationId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "revision": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "question": {
+                "type": "string"
+              },
+              "context": {
+                "type": "string"
+              },
+              "captureBinding": {
+                "type": "object",
+                "properties": {
+                  "profileVersion": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "profileHash": {
+                    "type": "string",
+                    "minLength": 64,
+                    "maxLength": 64
+                  },
+                  "postingHash": {
+                    "type": "string",
+                    "minLength": 64,
+                    "maxLength": 64
+                  },
+                  "destination": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "posting": {
+                    "type": "string"
+                  },
+                  "materials": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  },
+                  "facts": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 240
+                        },
+                        "text": {
+                          "type": "string",
+                          "maxLength": 64000
+                        },
+                        "sensitive": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "text",
+                        "sensitive"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "sensitiveFactIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "question": {
+                    "type": "string"
+                  },
+                  "context": {
+                    "type": "string"
+                  },
+                  "applicationId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  }
+                },
+                "required": [
+                  "profileVersion",
+                  "profileHash",
+                  "postingHash",
+                  "destination",
+                  "posting",
+                  "materials",
+                  "facts",
+                  "sensitiveFactIds"
+                ],
+                "additionalProperties": false
+              },
+              "draft": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "answerId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 160
+                      },
+                      "text": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 16000
+                      },
+                      "uncertainty": {
+                        "type": "string",
+                        "maxLength": 1500
+                      },
+                      "binding": {
+                        "type": "object",
+                        "properties": {
+                          "profileVersion": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "profileHash": {
+                            "type": "string",
+                            "minLength": 64,
+                            "maxLength": 64
+                          },
+                          "postingHash": {
+                            "type": "string",
+                            "minLength": 64,
+                            "maxLength": 64
+                          },
+                          "destination": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "posting": {
+                            "type": "string"
+                          },
+                          "materials": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {}
+                            }
+                          },
+                          "facts": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 240
+                                },
+                                "text": {
+                                  "type": "string",
+                                  "maxLength": 64000
+                                },
+                                "sensitive": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "text",
+                                "sensitive"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "sensitiveFactIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "question": {
+                            "type": "string"
+                          },
+                          "context": {
+                            "type": "string"
+                          },
+                          "applicationId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 160
+                          }
+                        },
+                        "required": [
+                          "profileVersion",
+                          "profileHash",
+                          "postingHash",
+                          "destination",
+                          "posting",
+                          "materials",
+                          "facts",
+                          "sensitiveFactIds"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "question": {
+                        "type": "string"
+                      },
+                      "context": {
+                        "type": "string"
+                      },
+                      "determinationIds": {
+                        "minItems": 3,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 64,
+                          "maxLength": 64
+                        }
+                      },
+                      "libraryId": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 160
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "reviewId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 160
+                      },
+                      "staleReason": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "answerId",
+                      "text",
+                      "uncertainty",
+                      "binding",
+                      "question",
+                      "context",
+                      "determinationIds",
+                      "libraryId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "accepted": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "answerId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 160
+                      },
+                      "text": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 16000
+                      },
+                      "uncertainty": {
+                        "type": "string",
+                        "maxLength": 1500
+                      },
+                      "binding": {
+                        "type": "object",
+                        "properties": {
+                          "profileVersion": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "profileHash": {
+                            "type": "string",
+                            "minLength": 64,
+                            "maxLength": 64
+                          },
+                          "postingHash": {
+                            "type": "string",
+                            "minLength": 64,
+                            "maxLength": 64
+                          },
+                          "destination": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "posting": {
+                            "type": "string"
+                          },
+                          "materials": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {}
+                            }
+                          },
+                          "facts": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 240
+                                },
+                                "text": {
+                                  "type": "string",
+                                  "maxLength": 64000
+                                },
+                                "sensitive": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "text",
+                                "sensitive"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "sensitiveFactIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "question": {
+                            "type": "string"
+                          },
+                          "context": {
+                            "type": "string"
+                          },
+                          "applicationId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 160
+                          }
+                        },
+                        "required": [
+                          "profileVersion",
+                          "profileHash",
+                          "postingHash",
+                          "destination",
+                          "posting",
+                          "materials",
+                          "facts",
+                          "sensitiveFactIds"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "question": {
+                        "type": "string"
+                      },
+                      "context": {
+                        "type": "string"
+                      },
+                      "determinationIds": {
+                        "minItems": 3,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 64,
+                          "maxLength": 64
+                        }
+                      },
+                      "libraryId": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 160
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "reviewId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 160
+                      },
+                      "staleReason": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "answerId",
+                      "text",
+                      "uncertainty",
+                      "binding",
+                      "question",
+                      "context",
+                      "determinationIds",
+                      "libraryId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "action": {
+                "type": "string",
+                "enum": [
+                  "capture",
+                  "draft",
+                  "edit",
+                  "review",
+                  "reuse",
+                  "use"
+                ]
+              },
+              "snapshotId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "recordedAt": {
+                "type": "string"
+              },
+              "decision": {
+                "type": "string",
+                "enum": [
+                  "approved",
+                  "rejected"
+                ]
+              },
+              "selection": {
+                "type": "object",
+                "properties": {
+                  "factIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "sensitiveFactIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "factIds",
+                  "sensitiveFactIds"
+                ],
+                "additionalProperties": false
+              },
+              "manualUse": {
+                "type": "object",
+                "properties": {
+                  "useId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "reviewId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "answerId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "text": {
+                    "type": "string",
+                    "maxLength": 16000
+                  },
+                  "attested": {
+                    "type": "boolean",
+                    "const": true
+                  },
+                  "changed": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "useId",
+                  "reviewId",
+                  "answerId",
+                  "text",
+                  "attested",
+                  "changed"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "questionId",
+              "jobId",
+              "applicationId",
+              "revision",
+              "question",
+              "context",
+              "captureBinding",
+              "draft",
+              "accepted",
+              "action",
+              "snapshotId",
+              "recordedAt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "ok",
+          "jobId",
+          "state"
+        ],
+        "additionalProperties": false
+      }
+    },
     "checkPostingAvailability": {
       "request": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",

@@ -42,9 +42,9 @@ test("screening drafts, explicit review and manual-use history in Apply Review",
   await panel.getByLabel("I manually used the exact text above for this application attempt").check();
   await panel.getByRole("button", { name: "Record manual use" }).click();
   await panel.getByText("Application-bound history", { exact: true }).click();
-  await expect(panel.getByText("Changed manually used text", { exact: true })).toBeVisible();
+  await expect(panel.locator("details").filter({ has: page.getByText("Application-bound history", { exact: true }) }).locator("pre").filter({ hasText: /^Changed manually used text$/ })).toBeVisible();
   await page.reload();
   await panel.getByRole("button", { name: "Open screening answers" }).click();
   await panel.getByText("Application-bound history", { exact: true }).click();
-  await expect(panel.getByText("Changed manually used text", { exact: true })).toBeVisible();
+  await expect(panel.locator("details").filter({ has: page.getByText("Application-bound history", { exact: true }) }).locator("pre").filter({ hasText: /^Changed manually used text$/ })).toBeVisible();
 });
