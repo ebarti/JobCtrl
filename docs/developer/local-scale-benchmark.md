@@ -58,6 +58,19 @@ samples. Percentiles use nearest rank, so p95 selects the maximum when only
 seven samples are retained. These are exploratory, tail-sample-limited local
 observations rather than stable population estimates.
 
+Browser compatibility is a separate correctness check. The API pagination
+suite exercises the existing browser list adapter against independent synthetic
+expectations, including stages with more than 200 matches, ties, adjacent and
+deep pages, and clamping. For browser acceptance, confirm the pagination test
+appears in Playwright discovery and in the executed report; a command containing
+a missing filename can still succeed when another selected file matches.
+Retain the test source, synthetic inputs, request/response observations, source
+and lock hashes, and page images from successful populated, adjacent, deep,
+clamped and empty states. Inspect the images as well as the assertions.
+Distinguish the ordinary scalar/all-stage route from an explicit stage-array
+client request or a controlled experiment forwarding real combined responses
+to the current UI.
+
 The `combinedStages` report extension runs only after all original scenarios at
 all three sizes. Each extension dataset gets another owned exact-v14 workspace.
 The original seed, scenarios, two warmups, seven retained samples, and report
