@@ -397,6 +397,7 @@ class TestCodexAdapter:
         run_kwargs = fake.thread.runs[0]
         assert run_kwargs["effort"] == "high"
         assert run_kwargs["output_schema"]["type"] == "object"
+        assert fake.thread_start_calls[0]["ephemeral"] is True
         assert fake.thread_start_calls[0]["config"] == {"model_reasoning_effort": "high"}
         assert fake.thread_start_calls[0]["approval_mode"].value == "deny_all"
         assert "sandbox" not in fake.thread_start_calls[0]
