@@ -2447,6 +2447,63 @@ describe("local TypeScript API", () => {
     } finally { await app.close(); }
   });
 
+  it.each(["discoveredSince", "scoredSince"] as const)(
+    "preserves %s instant boundaries through HTTP pages and all-matching hide/unhide",
+    async (field) => {
+      const timestamps = ["2027-01-01T00:00:00Z", "2027-01-01T00:00:00.000Z",
+        "2027-01-01T00:00:00.600000+00:00", "2027-01-01T00:00:00.600Z",
+        "2027-01-01T01:00:00.600+01:00", "2026-12-31T23:00:00.600-01:00"];
+      const ids = timestamps.map((_, index) => `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`);
+      const db = new Database(options.dbPath);
+      try {
+        for (const [index, id] of ids.entries()) {
+          db.prepare(`INSERT INTO jobs (tenant_id, job_id, url, title, discovered_at)
+            VALUES ('local', ?, ?, 'Needle', ?)`)
+            .run(id, `https://synthetic.invalid/${id}`, timestamps[index]);
+          db.prepare(`INSERT INTO job_scores (tenant_id, job_id, version, fit_score, breakdown_json, keywords_json, scored_at)
+            VALUES ('local', ?, 1, 7, '{}', '[]', ?)`).run(id, timestamps[index]);
+          const stages = ["discover", "enrich", "score", "tailor", "cover", "apply"];
+          for (const stage of stages) {
+            db.prepare(`INSERT INTO job_stage_states (tenant_id, job_id, stage, state, updated_at, version)
+              VALUES ('local', ?, ?, ?, '2027-01-01', 1)`)
+              .run(id, stage, index % 2 && stage !== "apply" ? "succeeded" : "pending");
+          }
+        }
+      } finally { db.close(); }
+      const app = buildApp(options);
+      try {
+        for (const cutoff of [".500Z", ".600Z", ".601Z"]) {
+          const expected = cutoff === ".601Z" ? [] : ids.slice(2);
+          for (const q of ["", "Needle"]) {
+            const filter = { stages: ["discover", "apply"], [field]: `2027-01-01T00:00:00${cutoff}`, q };
+            for (const sort of ["discovered_at", "title", "fit_score"]) {
+              const collected: string[] = [];
+              for (const page of [...expected.map((_, index) => index + 1), 999]) {
+                const params = new URLSearchParams({ ...filter, stages: filter.stages.join(","),
+                  sort, dir: "asc", pageSize: "1", page: String(page) });
+                const response = await app.inject({ method: "GET", url: `/v1/jobs?${params}` });
+                expect(response.statusCode, response.body).toBe(200);
+                const pages = Math.max(1, expected.length), safePage = Math.min(page, pages);
+                expect(response.json().pagination).toEqual({ page: safePage, pageSize: 1, total: expected.length, pages });
+                const keys = response.json().items.map((job: { jobKey: string }) => job.jobKey);
+                if (page !== 999) collected.push(...keys);
+                else expect(keys).toEqual(collected.slice(-1));
+              }
+              expect(collected.sort()).toEqual(expected);
+            }
+            const hide = await app.inject({ method: "POST", url: "/v1/jobs/bulk-hide", payload: { allMatching: true, filter } });
+            expect(hide.statusCode, hide.body).toBe(200);
+            expect(hide.json().jobKeys.sort()).toEqual(expected);
+            const unhide = await app.inject({ method: "POST", url: "/v1/jobs/bulk-unhide",
+              payload: { allMatching: true, filter: { ...filter, deleted: "hidden" } } });
+            expect(unhide.statusCode, unhide.body).toBe(200);
+            expect(unhide.json().jobKeys.sort()).toEqual(expected);
+          }
+        }
+      } finally { await app.close(); }
+    },
+  );
+
   it("keeps HTTP page order and literal bulk membership stable when an all-matching search is added", async () => {
     const labels = ["Needle A", "Needle a", "Needle Z", "Needle é", "Needle E", "Needle É"];
     const sources = ["Board-a", "Board%a", "Board_a", "Board\\a", "Équipe", "éQUIPE"];

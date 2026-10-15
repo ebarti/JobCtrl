@@ -1016,7 +1016,8 @@ export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResp
   const filter = jobSqlFilter(query);
   const projectionSelect = jobProjectionSelect();
 
-  if (!query.q && !query.source && !query.company && !IN_MEMORY_JOB_SORT_FIELDS.has(query.sort)) {
+  if (!query.q && !query.source && !query.company && !query.discoveredSince && !query.scoredSince
+    && !IN_MEMORY_JOB_SORT_FIELDS.has(query.sort)) {
     // Count and page (including canonical summary joins) must see one WAL
     // snapshot even if the worker commits between these SELECTs.
     return db.transaction(() => {
@@ -1035,8 +1036,8 @@ export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResp
     })();
   }
 
-  // Text filters and locale/JSON sorts use rendered summaries, just like bulk
-  // selection and the browser merger. Keep canonical joins in the same snapshot.
+  // Text/timestamp filters and locale/JSON sorts use rendered summaries, just
+  // like bulk selection and the browser merger. Keep joins in the same snapshot.
   return db.transaction(() => {
     const allMatching = allRows<JobListProjectionRow>(
       db,
@@ -4446,18 +4447,10 @@ function jobSqlFilter(query: JobListQuery): { where: string; params: SqliteValue
     clauses.push("COALESCE(job_list_projections.fit_score, 999) <= ?");
     params.push(query.maxFitScore);
   }
-  if (query.discoveredSince && query.scoredSince) {
-    clauses.push(
-      "((job_list_projections.discovered_at IS NOT NULL AND job_list_projections.discovered_at >= ?) OR (job_list_projections.scored_at IS NOT NULL AND job_list_projections.scored_at >= ?))",
-    );
-    params.push(query.discoveredSince, query.scoredSince);
-  } else if (query.discoveredSince) {
-    clauses.push("job_list_projections.discovered_at IS NOT NULL AND job_list_projections.discovered_at >= ?");
-    params.push(query.discoveredSince);
-  } else if (query.scoredSince) {
-    clauses.push("job_list_projections.scored_at IS NOT NULL AND job_list_projections.scored_at >= ?");
-    params.push(query.scoredSince);
-  }
+  // Stored timestamps have mixed precision/offsets. Text comparisons can both
+  // admit older instants and discard equal instants before filterJob sees them.
+  // Use its shared millisecond comparison (including the two-cutoff OR rule)
+  // before list totals/pagination and all-matching mutation selection.
   return { where: ` WHERE ${clauses.join(" AND ")}`, params };
 }
 

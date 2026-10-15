@@ -340,6 +340,11 @@ and `scoredSince` are both present, the jobs list matches rows where either
 timestamp is at or after its threshold. Active filters and sort remain URL state
 in the web app. The same score and applied-outcome filters are accepted by
 all-matching bulk job mutations.
+Timestamp comparisons use JavaScript millisecond precision and normalize
+timezone offsets and fractional notation. Missing or invalid stored timestamps
+do not match their threshold. Lists and all-matching bulk mutations share this
+comparison before counting and pagination; timestamp-filtered lists materialize
+summaries within the read transaction.
 The list and all-matching bulk filters accept optional `stages` membership on
 projected `currentStage`. Allowed values are `discover`, `enrich`, `score`,
 `tailor`, `cover`, and `apply`; they do not select `currentSubstage`. Current

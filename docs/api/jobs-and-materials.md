@@ -85,6 +85,11 @@ membership uses that public stage rather than `currentSubstage`.
 Stage membership and all other filters apply before the global total, sort,
 and page slice. Pages clamp to the last page; an empty result has page one and
 one page. SQL-paged requests read the total and page from one SQLite snapshot.
+`discoveredSince` and `scoredSince` compare instants inclusively at JavaScript
+millisecond precision, so equivalent offsets and fractional notation match.
+Missing or invalid stored timestamps do not match their cutoff. When both
+cutoffs are supplied, either may match. Timestamp filters use the shared
+summary filter before totals, pagination, and all-matching bulk selection.
 Response `filter.stages` records the effective deduplicated membership (an empty
 array means unrestricted); `filter.stage` retains the requested legacy scalar
 for compatibility. Clients can request combined pages through the existing

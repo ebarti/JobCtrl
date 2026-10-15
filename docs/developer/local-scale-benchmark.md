@@ -64,12 +64,20 @@ expectations, including stages with more than 200 matches, ties, adjacent and
 deep pages, and clamping. Its independent boundary cases also cover mixed-case
 and accented text ordering, presented failed/exhausted sort keys, and literal
 percent/underscore/backslash and Unicode source/company filters across search
-and bulk selection. Locale text sorts and source/company filters materialize
-summaries before pagination; ordinary discovery-time and fit-score pages retain
-SQL pagination. The original benchmark scenarios and report fields are unchanged.
-For browser acceptance, confirm the pagination test
-appears in Playwright discovery and in the executed report; a command containing
-a missing filename can still succeed when another selected file matches.
+and bulk selection. Timestamp boundaries cover mixed fractional precision,
+equivalent timezone offsets, absent/invalid values, and the OR of two cutoffs.
+Locale text sorts and source/company/timestamp filters materialize summaries
+before pagination; discovery-time and fit-score sorts retain SQL pagination
+when no materialized filter is present. The original benchmark scenarios and
+report fields are unchanged.
+The API contract is complete independently of UI pagination changes. For
+API-only delivery, current-browser compatibility includes the existing hook,
+demo and query-key regression suites, plus navigation, filters and bulk
+operations through `jobs-bulk.spec.ts` at the controller's browser QA stage.
+A pagination UI change owns its dedicated Playwright pagination scenario and
+the visual evidence below. Confirm that scenario appears in Playwright
+discovery and in the executed report; a command containing a missing filename
+can still succeed when another selected file matches.
 Retain the test source, synthetic inputs, request/response observations, source
 and lock hashes, and page images from successful populated, adjacent, deep,
 clamped and empty states. Inspect the images as well as the assertions.

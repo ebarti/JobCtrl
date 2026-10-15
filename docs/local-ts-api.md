@@ -97,6 +97,9 @@ and the [complete contract](api/complete-contract.md).
 Text sorts use lowercase locale comparison consistent with the browser merger.
 Source/company filters match literal Unicode-lowercased substrings on rendered
 summaries; those filters and locale text sorts use the materialized read path.
+Timestamp cutoffs also use that path, comparing instants inclusively at
+JavaScript millisecond precision before totals and pagination. The same shared
+filter handles all-matching bulk selection, including the OR of two cutoffs.
 Both query paths keep their summary joins within a SQLite read transaction.
 
 Jobs list/detail include Enrichment's persisted `availability` observation:

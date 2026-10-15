@@ -143,6 +143,80 @@ function ordered(rows: FixtureRow[], field: JobSortField, dir: "asc" | "desc"): 
 }
 
 describe("combined-stage list pagination", () => {
+  it.each(["discoveredSince", "scoredSince"] as const)(
+    "compares %s instants before totals, adjacent/clamped pages and bulk selection",
+    (field) => {
+      const { db, rows } = seed(13);
+      const timestamps = [
+        "2026-01-01T00:00:00Z", "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.499999Z",
+        "2026-01-01T00:00:00.500000+00:00", "2026-01-01T00:00:00.600000+00:00",
+        "2026-01-01T00:00:00.600Z", "2026-01-01T01:00:00.600+01:00",
+        "2025-12-31T23:00:00.600-01:00", "2026-01-01T00:00:00.599999Z",
+        "2026-01-01T00:00:00.600999Z", "2026-01-01T00:00:00.601Z", null, "invalid",
+      ];
+      for (const [index, row] of rows.entries()) {
+        db.prepare("UPDATE jobs SET title = 'Needle', discovered_at = ? WHERE tenant_id = 'local' AND job_id = ?")
+          .run(timestamps[index], row.id);
+        db.prepare("UPDATE job_scores SET fit_score = 7, scored_at = ? WHERE tenant_id = 'local' AND job_id = ?")
+          .run(timestamps[index] ?? "", row.id);
+      }
+      // Explicit expected membership at millisecond precision, independent of
+      // production timestamp parsing. Extra fractional digits truncate, not round.
+      const cases: Array<[string, number[]]> = [
+        ["2026-01-01T00:00:00.500Z", [3, 4, 5, 6, 7, 8, 9, 10]],
+        ["2026-01-01T00:00:00.600Z", [4, 5, 6, 7, 9, 10]],
+        ["2026-01-01T00:00:00.601Z", [10]],
+        ["2026-01-01T00:00:00.602Z", []],
+      ];
+      for (const [since, selected] of cases) {
+        for (const stages of [{ stages: ["discover", "apply", "discover"] }, { stage: "apply" }]) {
+          const expected = selected.filter((index) => !stages.stage || rows[index]!.stage === stages.stage)
+            .map((index) => rows[index]!.id);
+          for (const q of ["", "Needle"]) {
+            const input = { ...stages, deleted: "all", [field]: since, q };
+            expect(matchingJobKeys(db, BulkJobMutationFilterSchema.parse(input)).sort()).toEqual(expected);
+            // fit_score exercises the formerly SQL-paged route; title exercises
+            // the materialized route. Equal values keep ascending-ID ties.
+            for (const sort of ["fit_score", "title"] as const) {
+              for (const dir of ["asc", "desc"] as const) {
+                for (const page of [...expected.map((_, index) => index + 1), 999]) {
+                  const query = JobListQuerySchema.parse({ ...input, sort, dir, page, pageSize: 1 });
+                  const result = listJobs(db, query);
+                  const pages = Math.max(1, expected.length), safePage = Math.min(page, pages);
+                  expect(result.pagination, JSON.stringify(query)).toEqual({ page: safePage, pageSize: 1, total: expected.length, pages });
+                  expect(result.items.map((job) => job.jobKey)).toEqual(expected.slice(safePage - 1, safePage));
+                  expect(result.filter[field]).toBe(since);
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+  );
+
+  it("preserves timestamp OR membership when either timestamp is absent or older", () => {
+    const { db, rows } = seed(6);
+    const older = "2026-01-01T00:00:00Z", equal = "2026-01-01T00:00:00.600000+00:00";
+    const discovered = [equal, older, equal, null, "invalid", older];
+    const scored = [older, equal, null, equal, "invalid", older];
+    for (const [index, row] of rows.entries()) {
+      db.prepare("UPDATE jobs SET title = 'Needle', discovered_at = ? WHERE tenant_id = 'local' AND job_id = ?")
+        .run(discovered[index], row.id);
+      db.prepare("UPDATE job_scores SET fit_score = 7, scored_at = ? WHERE tenant_id = 'local' AND job_id = ?")
+        .run(scored[index] ?? "", row.id);
+    }
+    for (const q of ["", "Needle"]) {
+      const input = { stages: ["discover", "apply"], deleted: "all", q,
+        discoveredSince: "2026-01-01T00:00:00.600Z", scoredSince: "2026-01-01T00:00:00.600Z" };
+      const expected = rows.slice(0, 4).map((row) => row.id);
+      expect(matchingJobKeys(db, BulkJobMutationFilterSchema.parse(input)).sort()).toEqual(expected);
+      const result = listJobs(db, JobListQuerySchema.parse({ ...input, sort: "fit_score", pageSize: 2, page: 999 }));
+      expect(result.pagination).toEqual({ page: 2, pageSize: 2, total: 4, pages: 2 });
+      expect(result.items.map((job) => job.jobKey)).toEqual(expected.slice(2));
+    }
+  });
+
   it.each(["title", "company", "location"] as const)(
     "keeps mixed-case and Unicode %s pages identical with search and the browser merger",
     async (sort) => {
