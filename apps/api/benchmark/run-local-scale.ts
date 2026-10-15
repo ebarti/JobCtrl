@@ -327,6 +327,8 @@ export async function runCombinedStageDataset(workspace: BenchmarkWorkspace, job
     const inputs = Array.from({ length: jobs }, (_, index) => syntheticMultiStageJob(index));
     const pageSize = 25;
     const deepPage = Math.max(1, Math.ceil(jobs / pageSize) - 1);
+    // Keep historical scenario names and requests comparable. The sql-* labels
+    // predate discovery sorting through the browser-compatible materialized path.
     const cases = [
       { name: "sql-first", stages: "discover,apply", page: 1 },
       { name: "sql-adjacent", stages: "discover,apply", page: 2 },

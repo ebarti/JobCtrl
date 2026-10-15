@@ -143,6 +143,53 @@ function ordered(rows: FixtureRow[], field: JobSortField, dir: "asc" | "desc"): 
 }
 
 describe("combined-stage list pagination", () => {
+  it.each(["asc", "desc"] as const)(
+    "keeps mixed-notation discovery %s pages identical with search and the browser merger",
+    async (dir) => {
+      const { db, rows } = seed(8);
+      const timestamps = [
+        "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00.600Z",
+        "2026-01-01T00:00:00.600000+00:00", "2026-01-02T00:00:00+00:00",
+        "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00.600000+00:00",
+        null, "invalid",
+      ];
+      for (const [index, row] of rows.entries()) {
+        db.prepare("UPDATE jobs SET title = 'Needle', discovered_at = ? WHERE tenant_id = 'local' AND job_id = ?")
+          .run(timestamps[index], row.id);
+      }
+      const adapterUrl = new URL("../../web/src/contexts/operations/jobsListQuery.ts", import.meta.url).href;
+      const { fetchJobsList } = await import(adapterUrl) as {
+        fetchJobsList(api: Pick<JobCtrlApiClient, "jobs">, input: Partial<JobListQuery>): Promise<PaginatedResponse<JobSummary>>;
+      };
+      const api = { jobs: async (input: Partial<JobListQuery>) => listJobs(db, JobListQuerySchema.parse(input)) };
+      // Preserve the browser's raw-string locale order, not instant order or
+      // SQLite binary order. Missing values sort first; ties keep ascending IDs.
+      const order = dir === "asc" ? [6, 2, 5, 1, 0, 4, 3, 7] : [7, 3, 0, 4, 1, 2, 5, 6];
+      const selections: Partial<JobListQuery>[] = [
+        { stages: ["discover", "apply", "discover"] }, { stage: "discover" },
+        { stage: "apply" }, { stages: [] }, {},
+      ];
+      for (const selection of selections) {
+        const stages = selection.stages ?? (selection.stage ? [selection.stage] : []);
+        const selected = order.filter((index) => !stages.length || stages.includes(rows[index]!.stage));
+        for (const q of ["", "Needle"]) {
+          for (const pageSize of [1, 3]) {
+            const pages = Math.ceil(selected.length / pageSize);
+            for (const page of [...Array.from({ length: pages }, (_, index) => index + 1), 999]) {
+              const query = JobListQuerySchema.parse({ ...selection, deleted: "all", sort: "discovered_at", dir, q, page, pageSize });
+              const safePage = Math.min(page, pages);
+              const expected = selected.slice((safePage - 1) * pageSize, safePage * pageSize).map((index) => rows[index]!.id);
+              for (const result of [listJobs(db, query), await fetchJobsList(api, query)]) {
+                expect(result.pagination).toEqual({ page: safePage, pageSize, total: selected.length, pages });
+                expect(result.items.map((job) => job.jobKey), JSON.stringify(query)).toEqual(expected);
+              }
+            }
+          }
+        }
+      }
+    },
+  );
+
   it.each(["discoveredSince", "scoredSince"] as const)(
     "compares %s instants before totals, adjacent/clamped pages and bulk selection",
     (field) => {
@@ -576,7 +623,7 @@ describe("combined-stage list pagination", () => {
     }
   });
 
-  it.each(["discovered_at", "title"] as const)("releases a failed %s read transaction and recovers the same page", (sort) => {
+  it.each(["fit_score", "discovered_at", "title"] as const)("releases a failed %s read transaction and recovers the same page", (sort) => {
     const { db } = seed();
     const query = JobListQuerySchema.parse({ stages: ["discover", "apply"], sort, page: 999, pageSize: 5 });
     const accepted = listJobs(db, query);
@@ -596,7 +643,7 @@ describe("combined-stage list pagination", () => {
     expect(listJobs(db, query)).toEqual(accepted);
   });
 
-  it.each(["discovered_at", "title"] as const)("reads a clamped %s page in one snapshot across a concurrent WAL commit", (sort) => {
+  it.each(["fit_score", "discovered_at", "title"] as const)("reads a clamped %s page in one snapshot across a concurrent WAL commit", (sort) => {
     const { db, dbPath, rows } = seed();
     const query = JobListQuerySchema.parse({ stages: ["discover", "apply"], deleted: "all", sort, dir: "asc", page: 999, pageSize: 5 });
     const writer = new Database(dbPath);
@@ -618,7 +665,7 @@ describe("combined-stage list pagination", () => {
           commit();
           return result;
         });
-      } else if (sort === "title" && sql.startsWith("SELECT ") && sql.includes(" FROM job_list_projections WHERE")) {
+      } else if (sort !== "fit_score" && sql.startsWith("SELECT ") && sql.includes(" FROM job_list_projections WHERE")) {
         const all = statement.all.bind(statement);
         vi.spyOn(statement, "all").mockImplementation((...args: unknown[]) => {
           const result = all(...args);

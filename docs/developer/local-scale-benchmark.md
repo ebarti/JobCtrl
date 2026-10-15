@@ -66,10 +66,15 @@ and accented text ordering, presented failed/exhausted sort keys, and literal
 percent/underscore/backslash and Unicode source/company filters across search
 and bulk selection. Timestamp boundaries cover mixed fractional precision,
 equivalent timezone offsets, absent/invalid values, and the OR of two cutoffs.
-Locale text sorts and source/company/timestamp filters materialize summaries
-before pagination; discovery-time and fit-score sorts retain SQL pagination
-when no materialized filter is present. The original benchmark scenarios and
-report fields are unchanged.
+Discovery sorting preserves the browser's locale comparison of raw timestamp
+strings, including mixed fractional/offset notation, rather than instant order.
+Discovery and locale text sorts and source/company/timestamp filters materialize
+summaries before pagination. Fit-score, current-stage and current-state sorts
+retain SQL pagination when no materialized filter is present. Materializing
+discovery sorts adds work proportional to all matches even for shallow pages;
+compare its latency and sampled memory against the retained earlier baselines.
+The original benchmark seed, scenarios, warmups, samples and report fields are
+unchanged; the request paths exercise the current implementation.
 The API contract is complete independently of UI pagination changes. For
 API-only delivery, current-browser compatibility includes the existing hook,
 demo and query-key regression suites, plus navigation, filters and bulk
@@ -96,13 +101,16 @@ descriptions, scores, and preview bytes retain their original seed definitions.
 The extension uses seed `jobctrl-local-scale-v1:combined-stages-v1`, with every
 third job in Apply and the rest in Discover. Groups of four share discovery
 timestamps across stages to exercise ascending job-ID ties. It measures combined
-SQL first, adjacent, deep, and clamped pages; duplicate-stage input; scalar/array
+discovery first, adjacent, deep, and clamped pages; duplicate-stage input; scalar/array
 precedence; explicit empty arrays; empty membership; search first, deep, and
 clamped pages; and a materialized compensation sort with absent-value ties.
 Pages contain 25 jobs. Deep pages request the penultimate page of the matching
 set (or page one when the set is small). Expected totals, clamped pages, complete
 page IDs, and filter membership come from deterministic synthetic inputs;
 each HTTP sample must agree before a report is emitted.
+The retained `sql-first`, `sql-adjacent`, `sql-deep`, and `sql-clamped` scenario
+names are historical comparison labels: their unchanged discovery-sort requests
+now use the materialized comparator. They do not identify a SQL pagination path.
 
 Each extended scenario retains the same latency distribution plus seven raw
 before/after Node RSS and heap observations. Peak growth and signed end deltas

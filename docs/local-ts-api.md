@@ -95,8 +95,10 @@ values, including an empty array as `stages=`. Membership, precedence, metadata,
 and bulk-selection semantics are owned by [Jobs & Materials](api/jobs-and-materials.md)
 and the [complete contract](api/complete-contract.md).
 Text sorts use lowercase locale comparison consistent with the browser merger.
+Discovery sorts preserve the browser's locale comparison of raw timestamp
+strings, including mixed fractional/offset notation, rather than instant order.
 Source/company filters match literal Unicode-lowercased substrings on rendered
-summaries; those filters and locale text sorts use the materialized read path.
+summaries; those filters, discovery sorts and locale text sorts use the materialized read path.
 Timestamp cutoffs also use that path, comparing instants inclusively at
 JavaScript millisecond precision before totals and pagination. The same shared
 filter handles all-matching bulk selection, including the OR of two cutoffs.

@@ -103,7 +103,11 @@ exhaustion. Both are presented as `currentState: "failed"`, with
 State sorting uses that presented state, so exhausted and other failed jobs
 share the failed sort key. Text sorts lowercase their values and use locale
 comparison, matching the existing browser merger; equal keys keep ascending job
-IDs in both directions. Source and company filters are literal substrings after
+IDs in both directions. Discovery sorting compares the original timestamp
+strings with locale comparison, preserving browser behavior across fractional
+and offset notation; it does not normalize them to instants. Missing values
+sort first ascending and last descending. Discovery and text sorts materialize
+matching summaries before pagination. Source and company filters are literal substrings after
 Unicode lowercasing: `%`, `_`, and backslash have no wildcard or escape meaning.
 Source checks the displayed source, discovery source, posting source, and posting
 URL. These rules also apply to searched lists and all-matching bulk selection.

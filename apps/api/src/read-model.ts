@@ -351,29 +351,15 @@ interface OperationalRollup {
   lastRunId: string | null;
 }
 
+// Only sort keys whose SQL ordering matches the shared/browser comparator may
+// page in SQL. Raw discovery timestamps need locale comparison even when every
+// value is valid: mixed fractional/offset notation differs from binary order.
 const SQL_JOB_SORT_COLUMNS: Partial<Record<string, string>> = {
-  discovered_at: "discovered_at",
   fit_score: "COALESCE(fit_score, -1)",
   current_stage: "LOWER(current_stage)",
   // Exhaustion is presented as failed; ordering must use that same public key.
   current_state: `(${sqlRankCase("CASE WHEN current_state = 'exhausted' THEN 'failed' ELSE current_state END", STATE_RANK, 999)} || ':' || LOWER(COALESCE(current_substage, current_stage)))`,
 };
-
-const IN_MEMORY_JOB_SORT_FIELDS = new Set([
-  // SQLite LOWER/binary order cannot reproduce the browser's Unicode locale
-  // comparison. Sort the rendered values through the shared comparator.
-  "title",
-  "company",
-  "location",
-  "source",
-  "compensation_min_eur",
-  "compensation_max_eur",
-  "compensation_posted",
-  "compensation_market",
-  "compensation_confidence",
-  "compensation_warnings",
-  "apply_status",
-]);
 
 const SQL_ACTIVITY_SORT_COLUMNS: Partial<Record<string, string>> = {
   occurred_at: "e.occurred_at",
@@ -1012,12 +998,12 @@ function policyVersionFromJson(value: string | null, fields: readonly string[]):
 
 export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResponse<JobSummary> {
   refreshProjections(db, DEFAULT_TENANT);
-  const sortColumn = SQL_JOB_SORT_COLUMNS[query.sort] ?? "discovered_at";
+  const sortColumn = SQL_JOB_SORT_COLUMNS[query.sort];
   const filter = jobSqlFilter(query);
   const projectionSelect = jobProjectionSelect();
 
   if (!query.q && !query.source && !query.company && !query.discoveredSince && !query.scoredSince
-    && !IN_MEMORY_JOB_SORT_FIELDS.has(query.sort)) {
+    && sortColumn) {
     // Count and page (including canonical summary joins) must see one WAL
     // snapshot even if the worker commits between these SELECTs.
     return db.transaction(() => {
