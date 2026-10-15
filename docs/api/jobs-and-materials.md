@@ -95,6 +95,13 @@ and all-matching bulk actions. `state=failed` includes stored `failed` and
 `exhausted` rows; the legacy `state=exhausted` selector includes only stored
 exhaustion. Both are presented as `currentState: "failed"`, with
 `failureReason: "attempt_budget_exhausted"` identifying exhaustion.
+State sorting uses that presented state, so exhausted and other failed jobs
+share the failed sort key. Text sorts lowercase their values and use locale
+comparison, matching the existing browser merger; equal keys keep ascending job
+IDs in both directions. Source and company filters are literal substrings after
+Unicode lowercasing: `%`, `_`, and backslash have no wildcard or escape meaning.
+Source checks the displayed source, discovery source, posting source, and posting
+URL. These rules also apply to searched lists and all-matching bulk selection.
 
 ## Saved Posting Availability
 

@@ -7,10 +7,9 @@
  * hand-copied twins of these functions, with agreement asserted only by
  * hand-re-encoded test expectations; a filter or sort fix now lands once.
  *
- * The demo emulates two SQL-side effects the API gets from SQLite itself:
- * the `deleted` facet (applied in SQL WHERE by the read model) stays in the
- * demo's wrapper, and `normalizeSqlText` reproduces the read model's
- * case-insensitive ORDER BY collation for text sort fields.
+ * The `deleted` facet (applied in SQL WHERE by the read model) stays in the
+ * demo's wrapper. Text ordering uses the browser merger's lowercase locale
+ * comparison on every path, including searched lists.
  */
 
 import type { JobCompensationSummary, JobListQuery, JobSummary, PaginatedResponse, Stage, StageState } from "./schemas.js";
@@ -188,10 +187,8 @@ export function compensationRangeAmountEur(
 
 export interface CompareJobsOptions {
   /**
-   * Reproduce the read model's SQL collation for text sort fields: lowercase
-   * title/company/location/current_stage, and rank current_state by the
-   * lowercased substage-or-stage. The read model itself sorts already-loaded
-   * rows and passes false; the demo's in-memory adapter passes true.
+   * @deprecated Text normalization now applies on every query path. Retained
+   * for callers compiled against the earlier adapter contract.
    */
   normalizeSqlText?: boolean;
 }
@@ -201,13 +198,12 @@ export function compareJobs(
   right: JobSummary,
   field: string,
   direction: "asc" | "desc",
-  options: CompareJobsOptions = {},
+  _options: CompareJobsOptions = {},
 ): number {
   const multiplier = direction === "asc" ? 1 : -1;
-  const normalizeSqlText = options.normalizeSqlText ?? false;
-  const text = (value: string): string => (normalizeSqlText ? value.toLowerCase() : value);
+  const text = (value: string): string => value.toLowerCase();
   const stateSubstage = (job: JobSummary): string =>
-    normalizeSqlText ? text(job.currentSubstage || job.currentStage) : job.currentSubstage;
+    text(job.currentSubstage || job.currentStage);
   const values: Record<string, [unknown, unknown]> = {
     discovered_at: [left.discoveredAt, right.discoveredAt],
     title: [text(left.title), text(right.title)],

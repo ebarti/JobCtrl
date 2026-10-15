@@ -363,7 +363,15 @@ uses the same membership and also accepts exact `normalizedScoreKeyword`.
 return `items: []`, `total: 0`, `pages: 1`, and `page: 1`. Sort ties use ascending
 canonical job ID regardless of the requested direction. SQL-paged totals and
 the clamped page, including summary joins, share one SQLite read transaction.
-Search and projected-JSON sorts retain the existing materialized query path.
+Search, source/company filters, locale text sorts, and projected-JSON sorts use
+the materialized query path, with canonical summary joins in one read transaction.
+Text sorting lowercases values before locale comparison, including searched
+lists; equal values retain ascending job IDs in either direction. State sorting
+uses the public `currentState`, so stored exhaustion shares the failed rank.
+Source/company filters use literal substring matching after Unicode lowercasing;
+percent, underscore, and backslash are ordinary characters. Source matches the
+rendered source, discovery source, posting source, or posting URL. Lists and
+all-matching bulk selection apply these same rules before counting or slicing.
 Response `filter.stages` is the effective deduplicated stage array, or `[]` for
 unrestricted membership. The legacy `filter.stage` still echoes scalar `stage`
 (or an empty string), even when overridden by `stages`. Other filter and sort

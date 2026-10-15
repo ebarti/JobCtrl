@@ -94,6 +94,10 @@ scalar `stage`. The shared API client serializes arrays as comma-separated query
 values, including an empty array as `stages=`. Membership, precedence, metadata,
 and bulk-selection semantics are owned by [Jobs & Materials](api/jobs-and-materials.md)
 and the [complete contract](api/complete-contract.md).
+Text sorts use lowercase locale comparison consistent with the browser merger.
+Source/company filters match literal Unicode-lowercased substrings on rendered
+summaries; those filters and locale text sorts use the materialized read path.
+Both query paths keep their summary joins within a SQLite read transaction.
 
 Jobs list/detail include Enrichment's persisted `availability` observation:
 latest attempt/verdict, last successful verification, next due, acquisition

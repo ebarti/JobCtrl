@@ -61,7 +61,13 @@ observations rather than stable population estimates.
 Browser compatibility is a separate correctness check. The API pagination
 suite exercises the existing browser list adapter against independent synthetic
 expectations, including stages with more than 200 matches, ties, adjacent and
-deep pages, and clamping. For browser acceptance, confirm the pagination test
+deep pages, and clamping. Its independent boundary cases also cover mixed-case
+and accented text ordering, presented failed/exhausted sort keys, and literal
+percent/underscore/backslash and Unicode source/company filters across search
+and bulk selection. Locale text sorts and source/company filters materialize
+summaries before pagination; ordinary discovery-time and fit-score pages retain
+SQL pagination. The original benchmark scenarios and report fields are unchanged.
+For browser acceptance, confirm the pagination test
 appears in Playwright discovery and in the executed report; a command containing
 a missing filename can still succeed when another selected file matches.
 Retain the test source, synthetic inputs, request/response observations, source

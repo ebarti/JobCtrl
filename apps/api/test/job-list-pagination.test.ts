@@ -143,6 +143,103 @@ function ordered(rows: FixtureRow[], field: JobSortField, dir: "asc" | "desc"): 
 }
 
 describe("combined-stage list pagination", () => {
+  it.each(["title", "company", "location"] as const)(
+    "keeps mixed-case and Unicode %s pages identical with search and the browser merger",
+    async (sort) => {
+      const { db, rows } = seed(6);
+      const labels = ["Needle A", "Needle a", "Needle Z", "Needle é", "Needle E", "Needle É"];
+      for (const [index, row] of rows.entries()) {
+        db.prepare("UPDATE jobs SET title = ?, company = ?, location = ? WHERE tenant_id = 'local' AND job_id = ?")
+          .run(labels[index], labels[index], labels[index], row.id);
+      }
+      const adapterUrl = new URL("../../web/src/contexts/operations/jobsListQuery.ts", import.meta.url).href;
+      const { fetchJobsList } = await import(adapterUrl) as {
+        fetchJobsList(api: Pick<JobCtrlApiClient, "jobs">, input: Partial<JobListQuery>): Promise<PaginatedResponse<JobSummary>>;
+      };
+      const api = { jobs: async (input: Partial<JobListQuery>) => listJobs(db, JobListQuerySchema.parse(input)) };
+      // Lowercase ties retain ascending IDs even in descending order. Accented
+      // e sorts beside e, before z; these orders are independent seed facts.
+      for (const dir of ["asc", "desc"] as const) {
+        const order = dir === "asc" ? [0, 1, 4, 3, 5, 2] : [2, 3, 5, 4, 0, 1];
+        for (const q of ["", "Needle"]) {
+          for (const pageSize of [1, 2, 3]) {
+            const pages = 6 / pageSize;
+            for (const page of [...Array.from({ length: pages }, (_, index) => index + 1), 999]) {
+              const query = JobListQuerySchema.parse({ stages: ["discover", "apply"], deleted: "all", sort, dir, q, page, pageSize });
+              const safePage = Math.min(page, pages);
+              const expected = order.slice((safePage - 1) * pageSize, safePage * pageSize).map((index) => rows[index]!.id);
+              for (const result of [listJobs(db, query), await fetchJobsList(api, query)]) {
+                expect(result.pagination).toEqual({ page: safePage, pageSize, total: 6, pages });
+                expect(result.items.map((job) => job.jobKey), JSON.stringify(query)).toEqual(expected);
+              }
+            }
+          }
+        }
+      }
+    },
+  );
+
+  it("orders mixed failed/exhausted states by their presented state before pagination", () => {
+    const { db, rows } = seed(6);
+    const states = ["exhausted", "failed", "failed", "pending", "exhausted", "pending"];
+    for (const [index, row] of rows.entries()) {
+      db.prepare("UPDATE jobs SET title = 'Needle' WHERE tenant_id = 'local' AND job_id = ?").run(row.id);
+      for (const stage of STAGES) {
+        const state = stage === row.stage ? states[index]
+          : STAGES.indexOf(stage) < STAGES.indexOf(row.stage) ? "succeeded" : "pending";
+        db.prepare("UPDATE job_stage_states SET state = ? WHERE tenant_id = 'local' AND job_id = ? AND stage = ?")
+          .run(state, row.id, stage);
+      }
+    }
+    for (const state of [undefined, "failed", "exhausted"] as const) {
+      for (const dir of ["asc", "desc"] as const) {
+        const order = state === "exhausted" ? [0, 4] : state === "failed"
+          ? dir === "asc" ? [1, 0, 2, 4] : [0, 2, 4, 1]
+          : dir === "asc" ? [1, 0, 2, 4, 3, 5] : [3, 5, 0, 2, 4, 1];
+        for (const q of ["", "Needle"]) {
+          for (const page of [...order.map((_, index) => index + 1), 999]) {
+            const query = JobListQuerySchema.parse({ stages: ["discover", "apply"], deleted: "all", state,
+              sort: "current_state", dir, q, page, pageSize: 1 });
+            const result = listJobs(db, query);
+            const safePage = Math.min(page, order.length);
+            expect(result.pagination).toEqual({ page: safePage, pageSize: 1, total: order.length, pages: order.length });
+            expect(result.items.map((job) => job.jobKey), JSON.stringify(query)).toEqual([rows[order[safePage - 1]!]!.id]);
+          }
+        }
+      }
+    }
+  });
+
+  it.each(["source", "company"] as const)("uses literal Unicode-aware %s filters for pages and all-matching selection", (field) => {
+    const { db, rows } = seed(6);
+    const values = ["Board-a", "Board%a", "Board_a", "Board\\a", "Équipe", "éQUIPE"];
+    for (const [index, row] of rows.entries()) {
+      db.prepare("UPDATE jobs SET title = 'Needle', company = ?, site = ? WHERE tenant_id = 'local' AND job_id = ?")
+        .run(values[index], values[index], row.id);
+    }
+    const cases: Array<[string, number[]]> = [["Board%", [1]], ["Board_", [2]], ["Board\\", [3]],
+      ["board", [0, 1, 2, 3]], ["équipe", [4, 5]], ["Absent%", []]];
+    for (const [value, order] of cases) {
+      for (const q of ["", "Needle"]) {
+        const input = { stages: ["discover", "apply"], deleted: "all", [field]: value, q };
+        const filter = BulkJobMutationFilterSchema.parse(input);
+        expect(matchingJobKeys(db, filter).sort(), JSON.stringify(filter)).toEqual(order.map((index) => rows[index]!.id).sort());
+        for (const sort of ["title", "discovered_at"] as const) {
+          // Equal discovered timestamps and titles leave the ascending ID tie.
+          const expected = order;
+          for (const page of [1, 2, 999]) {
+            const query = JobListQuerySchema.parse({ ...input, sort, dir: "asc", page, pageSize: 1 });
+            const result = listJobs(db, query);
+            const pages = Math.max(1, expected.length), safePage = Math.min(page, pages);
+            expect(result.pagination).toEqual({ page: safePage, pageSize: 1, total: expected.length, pages });
+            expect(result.items.map((job) => job.jobKey), JSON.stringify(query))
+              .toEqual(expected.slice(safePage - 1, safePage).map((index) => rows[index]!.id));
+          }
+        }
+      }
+    }
+  });
+
   it.each(["exhausted", "failed", "pending"] as const)(
     "keeps %s membership consistent across scalar/combined lists, search, every sort, and bulk selection",
     (state) => {
@@ -405,30 +502,60 @@ describe("combined-stage list pagination", () => {
     }
   });
 
-  it("counts and reads a clamped SQL page in one snapshot across a concurrent WAL commit", () => {
+  it.each(["discovered_at", "title"] as const)("releases a failed %s read transaction and recovers the same page", (sort) => {
+    const { db } = seed();
+    const query = JobListQuerySchema.parse({ stages: ["discover", "apply"], sort, page: 999, pageSize: 5 });
+    const accepted = listJobs(db, query);
+    const original = db.prepare.bind(db);
+    let inject = true;
+    vi.spyOn(db, "prepare").mockImplementation(((sql: string) => {
+      if (inject && sql.startsWith("SELECT ") && sql.includes(" FROM job_list_projections WHERE")) {
+        expect(db.inTransaction).toBe(true);
+        inject = false;
+        throw new Error("synthetic list read failure");
+      }
+      return original(sql);
+    }) as typeof db.prepare);
+    expect(() => listJobs(db, query)).toThrow("synthetic list read failure");
+    expect(inject).toBe(false);
+    expect(db.inTransaction).toBe(false);
+    expect(listJobs(db, query)).toEqual(accepted);
+  });
+
+  it.each(["discovered_at", "title"] as const)("reads a clamped %s page in one snapshot across a concurrent WAL commit", (sort) => {
     const { db, dbPath, rows } = seed();
-    const query = JobListQuerySchema.parse({ stages: ["discover", "apply"], deleted: "all", sort: "title", dir: "asc", page: 999, pageSize: 5 });
+    const query = JobListQuerySchema.parse({ stages: ["discover", "apply"], deleted: "all", sort, dir: "asc", page: 999, pageSize: 5 });
     const writer = new Database(dbPath);
     cleanups.push(() => writer.close());
     const original = db.prepare.bind(db);
     let injected = false;
+    const commit = () => {
+      if (injected) return;
+      injected = true;
+      expect(db.inTransaction).toBe(true);
+      writer.prepare("DELETE FROM job_list_projections WHERE tenant_id = 'local' AND job_id = ?").run(rows[47]!.id);
+    };
     vi.spyOn(db, "prepare").mockImplementation(((sql: string) => {
       const statement = original(sql);
       if (sql.startsWith("SELECT COUNT(*) AS count FROM job_list_projections")) {
         const get = statement.get.bind(statement);
         vi.spyOn(statement, "get").mockImplementation((...args: unknown[]) => {
           const result = get(...args);
-          if (!injected) {
-            injected = true;
-            writer.prepare("DELETE FROM job_list_projections WHERE tenant_id = 'local' AND job_id = ?").run(rows[47]!.id);
-          }
+          commit();
+          return result;
+        });
+      } else if (sort === "title" && sql.startsWith("SELECT ") && sql.includes(" FROM job_list_projections WHERE")) {
+        const all = statement.all.bind(statement);
+        vi.spyOn(statement, "all").mockImplementation((...args: unknown[]) => {
+          const result = all(...args);
+          commit();
           return result;
         });
       }
       return statement;
     }) as typeof db.prepare);
     const result = listJobs(db, query);
-    const expected = ordered(rows, "title", "asc");
+    const expected = ordered(rows, sort, "asc");
     expect(injected).toBe(true);
     expect(result.pagination).toEqual({ page: 10, pageSize: 5, total: 48, pages: 10 });
     expect(result.items.map((job) => job.jobKey)).toEqual(expected.slice(45).map((row) => row.id));

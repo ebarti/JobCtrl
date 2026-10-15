@@ -353,15 +353,18 @@ interface OperationalRollup {
 
 const SQL_JOB_SORT_COLUMNS: Partial<Record<string, string>> = {
   discovered_at: "discovered_at",
-  title: "LOWER(title)",
-  company: "LOWER(employer)",
-  location: "LOWER(location)",
   fit_score: "COALESCE(fit_score, -1)",
   current_stage: "LOWER(current_stage)",
-  current_state: `(${sqlRankCase("current_state", STATE_RANK, 999)} || ':' || LOWER(COALESCE(current_substage, current_stage)))`,
+  // Exhaustion is presented as failed; ordering must use that same public key.
+  current_state: `(${sqlRankCase("CASE WHEN current_state = 'exhausted' THEN 'failed' ELSE current_state END", STATE_RANK, 999)} || ':' || LOWER(COALESCE(current_substage, current_stage)))`,
 };
 
 const IN_MEMORY_JOB_SORT_FIELDS = new Set([
+  // SQLite LOWER/binary order cannot reproduce the browser's Unicode locale
+  // comparison. Sort the rendered values through the shared comparator.
+  "title",
+  "company",
+  "location",
   "source",
   "compensation_min_eur",
   "compensation_max_eur",
@@ -1013,7 +1016,7 @@ export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResp
   const filter = jobSqlFilter(query);
   const projectionSelect = jobProjectionSelect();
 
-  if (!query.q && !IN_MEMORY_JOB_SORT_FIELDS.has(query.sort)) {
+  if (!query.q && !query.source && !query.company && !IN_MEMORY_JOB_SORT_FIELDS.has(query.sort)) {
     // Count and page (including canonical summary joins) must see one WAL
     // snapshot even if the worker commits between these SELECTs.
     return db.transaction(() => {
@@ -1032,20 +1035,21 @@ export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResp
     })();
   }
 
-  // Free-text search and projected-JSON sort fields use the in-memory path.
-  // The projection table is already denormalised, and this keeps compensation
-  // sorting tied to the typed projected summary instead of SQLite JSON quirks.
-  const allMatching = allRows<JobListProjectionRow>(
-    db,
-    `SELECT ${projectionSelect} FROM job_list_projections${filter.where}`,
-    filter.params,
-  );
-  const normalizedQuery = query.q.toLowerCase();
-  const filtered = allMatching
-    .map((row) => rowToJobSummary(row, db))
-    .filter((job) => !query.q || filterJob(job, query, normalizedQuery));
-  filtered.sort((left, right) => compareJobs(left, right, query.sort, query.dir));
-  return paginate(filtered, query.page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
+  // Text filters and locale/JSON sorts use rendered summaries, just like bulk
+  // selection and the browser merger. Keep canonical joins in the same snapshot.
+  return db.transaction(() => {
+    const allMatching = allRows<JobListProjectionRow>(
+      db,
+      `SELECT ${projectionSelect} FROM job_list_projections${filter.where}`,
+      filter.params,
+    );
+    const normalizedQuery = query.q.toLowerCase();
+    const filtered = allMatching
+      .map((row) => rowToJobSummary(row, db))
+      .filter((job) => filterJob(job, query, normalizedQuery));
+    filtered.sort((left, right) => compareJobs(left, right, query.sort, query.dir));
+    return paginate(filtered, query.page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
+  })();
 }
 
 /**
@@ -4418,35 +4422,9 @@ function jobSqlFilter(query: JobListQuery): { where: string; params: SqliteValue
   if (query.applyStatus === "applied") {
     clauses.push("(job_list_projections.applied_at IS NOT NULL OR LOWER(COALESCE(job_list_projections.apply_status, '')) = 'applied')");
   }
-  if (query.source) {
-    const postingSourceUrlSql = postingSourceUrlSqlExpression();
-    const postingSourceAtsKindSql = postingSourceAtsKindSqlExpression();
-    clauses.push(
-      `(LOWER(job_list_projections.source) LIKE ?
-        OR LOWER(${discoverySourceSqlExpression()}) LIKE ?
-        OR LOWER(COALESCE(${postingSourceUrlSql}, '')) LIKE ?
-        OR LOWER(COALESCE(${postingSourceAtsKindSql}, '')) LIKE ?
-        OR (
-          LOWER(COALESCE(${postingSourceAtsKindSql}, '')) LIKE ?
-          AND LOWER(COALESCE(${postingSourceUrlSql}, '')) LIKE ?
-        ))`,
-    );
-    const normalizedSource = query.source.toLowerCase();
-    const [postingSourceKind, ...postingSourceOwnerParts] = normalizedSource.split(":");
-    const postingSourceOwner = postingSourceOwnerParts.join(":") || normalizedSource;
-    params.push(
-      `%${normalizedSource}%`,
-      `%${normalizedSource}%`,
-      `%${normalizedSource}%`,
-      `%${normalizedSource}%`,
-      `%${postingSourceKind}%`,
-      `%${postingSourceOwner}%`,
-    );
-  }
-  if (query.company) {
-    clauses.push("LOWER(job_list_projections.employer) LIKE ?");
-    params.push(`%${query.company.toLowerCase()}%`);
-  }
+  // Source/company are literal, Unicode-lowercased substring filters over the
+  // rendered summary. Apply filterJob before counting/paging, never SQL LIKE
+  // (wildcards, ASCII-only LOWER, and ATS kind/owner approximations differ).
   if (query.normalizedScoreKeyword) {
     // This is the exact canonical key returned by listScoringKeywords. Do not
     // re-normalize it in TypeScript: persistence owns Unicode casefolding.
