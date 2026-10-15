@@ -60,7 +60,12 @@ export function timestampBefore(value: string | null | undefined, before: string
 export function filterJob(job: JobSummary, query: JobListQuery, normalizedQuery: string): boolean {
   const stages = effectiveJobStages(query);
   if (stages.length && !stages.includes(job.currentStage)) return false;
-  if (query.state && job.currentState !== query.state) return false;
+  // API summaries present persisted exhaustion as a retryable failed state.
+  // Keep the legacy exhausted selector distinct, while failed includes both
+  // kinds of failure just as the SQL filter does.
+  const state = job.currentState === "failed" && job.failureReason === "attempt_budget_exhausted"
+    ? "exhausted" : job.currentState;
+  if (query.state && state !== query.state && !(query.state === "failed" && state === "exhausted")) return false;
   if (
     query.applyStatus === "applied"
     && !job.appliedAt

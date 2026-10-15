@@ -4,6 +4,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { JobCtrlApiClient } from "@jobctrl/api-client";
+import { filterJob } from "@jobctrl/contracts";
 import {
   BulkJobMutationFilterSchema, JOB_SORT_FIELDS, JobListQuerySchema, JobStagesFilterSchema, STAGES,
   type JobCompensationSummary, type JobListQuery, type JobSortField, type JobSummary, type PaginatedResponse, type Stage,
@@ -142,6 +143,76 @@ function ordered(rows: FixtureRow[], field: JobSortField, dir: "asc" | "desc"): 
 }
 
 describe("combined-stage list pagination", () => {
+  it.each(["exhausted", "failed", "pending"] as const)(
+    "keeps %s membership consistent across scalar/combined lists, search, every sort, and bulk selection",
+    (state) => {
+      const { db } = seed(0);
+      const inputs = (["exhausted", "failed", "pending"] as const).flatMap((storedState, stateIndex) =>
+        (["discover", "apply"] as const).map((stage, stageIndex) => ({
+          id: fixtureRow(stateIndex * 2 + stageIndex).id, stage, storedState,
+        })),
+      );
+      db.transaction(() => {
+        for (const input of inputs) {
+          db.prepare(`INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at)
+            VALUES ('local', ?, ?, 'Needle', 'Synthetic', 'board-a', '2026-01-01')`)
+            .run(input.id, `https://synthetic.invalid/${input.id}`);
+          for (const stage of STAGES) {
+            const value = stage === input.stage ? input.storedState
+              : STAGES.indexOf(stage) < STAGES.indexOf(input.stage) ? "succeeded" : "pending";
+            db.prepare(`INSERT INTO job_stage_states (tenant_id, job_id, stage, state, updated_at, version)
+              VALUES ('local', ?, ?, ?, '2026-01-01', 1)`).run(input.id, stage, value);
+          }
+        }
+      })();
+      const summaries = listJobs(db, JobListQuerySchema.parse({ pageSize: 200 })).items;
+      const rawSummaries = summaries.map((job) => ({
+        ...job, currentState: inputs.find((input) => input.id === job.jobKey)!.storedState, failureReason: null,
+      }));
+      for (const selection of [{ stages: ["discover", "apply", "discover"] }, { stage: "discover" }, { stage: "apply" }]) {
+        const stages = selection.stages ?? [selection.stage];
+        const eligibleIds = inputs.filter((input) => stages.includes(input.stage)
+          && (input.storedState === state || state === "failed" && input.storedState === "exhausted"))
+          .map((input) => input.id).sort();
+        for (const q of ["", "Needle", "Absent"]) {
+          const expectedIds = q === "Absent" ? [] : eligibleIds;
+          const filter = BulkJobMutationFilterSchema.parse({ ...selection, state, q });
+          expect(matchingJobKeys(db, filter).sort(), JSON.stringify(filter)).toEqual(expectedIds);
+          // The shared demo filter can receive the raw legacy state; the API
+          // supplies the public failed state with an exhaustion failure reason.
+          const sharedQuery = JobListQuerySchema.parse(filter);
+          for (const jobs of [summaries, rawSummaries]) {
+            expect(jobs.filter((job) => filterJob(job, sharedQuery, q.toLowerCase()))
+              .map((job) => job.jobKey).sort()).toEqual(expectedIds);
+          }
+          for (const sort of JOB_SORT_FIELDS) {
+            for (const dir of ["asc", "desc"] as const) {
+              const query = JobListQuerySchema.parse({ ...selection, state, q, sort, dir, pageSize: 1 });
+              const complete = listJobs(db, { ...query, pageSize: 200 });
+              expect(complete.pagination.total, JSON.stringify(query)).toBe(expectedIds.length);
+              expect(complete.items.map((job) => job.jobKey).sort()).toEqual(expectedIds);
+              for (const job of complete.items) {
+                const input = inputs.find((input) => input.id === job.jobKey)!;
+                expect(job.currentState).toBe(input.storedState === "pending" ? "pending" : "failed");
+                expect(job.failureReason).toBe(input.storedState === "exhausted" ? "attempt_budget_exhausted" : null);
+              }
+              const traversal: string[] = [];
+              for (let page = 1; page <= Math.max(1, expectedIds.length); page += 1) {
+                const result = listJobs(db, { ...query, page });
+                expect(result.pagination).toEqual({ page, pageSize: 1, total: expectedIds.length, pages: Math.max(1, expectedIds.length) });
+                traversal.push(...result.items.map((job) => job.jobKey));
+              }
+              expect(traversal).toEqual(complete.items.map((job) => job.jobKey));
+              const last = listJobs(db, { ...query, page: 999 });
+              expect(last.pagination.page).toBe(Math.max(1, expectedIds.length));
+              expect(last.items.map((job) => job.jobKey)).toEqual(traversal.slice(-1));
+            }
+          }
+        }
+      }
+    }, 30_000,
+  );
+
   it("keeps the existing browser adapter compatible across multiple stage-local pages", async () => {
     // Load this runtime fixture through its URL so the API compiler keeps its
     // rootDir boundary; the adapter's public input/output use shared contracts.

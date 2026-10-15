@@ -434,6 +434,11 @@ to `pending`; non-failed selected jobs are ignored. A persisted legacy
 `exhausted` row is exposed as `state: "failed"` with
 `failureReason: "attempt_budget_exhausted"`, remains retryable, and has its
 attempt count reset atomically by this action.
+List and all-matching bulk `state=failed` filters include both persisted
+`failed` and `exhausted` rows. The legacy `state=exhausted` selector restricts
+membership to persisted exhaustion, including when combined with `q` or
+`stages`. Public summaries keep the failed-state presentation and failure
+reason above.
 
 `POST /v1/jobs/import-url` accepts the strict body `{ url: string }`. The URL
 must be public HTTP(S); credential-bearing, private, loopback, unresolved, and unsafe redirect

@@ -90,6 +90,12 @@ array means unrestricted); `filter.stage` retains the requested legacy scalar
 for compatibility. Clients can request combined pages through the existing
 API client without assembling stage-local pages.
 
+Stage-state selection uses the same membership for SQL pages, searched lists,
+and all-matching bulk actions. `state=failed` includes stored `failed` and
+`exhausted` rows; the legacy `state=exhausted` selector includes only stored
+exhaustion. Both are presented as `currentState: "failed"`, with
+`failureReason: "attempt_budget_exhausted"` identifying exhaustion.
+
 ## Saved Posting Availability
 
 `POST /v1/jobs/:jobId/actions/check-availability` accepts `{}` with no additional

@@ -2447,6 +2447,66 @@ describe("local TypeScript API", () => {
     } finally { await app.close(); }
   });
 
+  it.each(["exhausted", "failed"] as const)("preserves %s selection through HTTP search and all-matching hide/unhide", async (state) => {
+    const db = new Database(options.dbPath);
+    const inputs = (["exhausted", "failed", "pending"] as const).flatMap((storedState) =>
+      (["discover", "apply"] as const).map((stage) => ({
+        jobKey: jobIdFor(`https://synthetic.invalid/${stage}-${storedState}`), stage, storedState,
+      })),
+    );
+    try {
+      for (const input of inputs) {
+        db.prepare(`INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at)
+          VALUES ('local', ?, ?, 'Needle', 'Synthetic', 'board-a', '2026-01-01')`)
+          .run(input.jobKey, `https://synthetic.invalid/${input.jobKey}`);
+        const stages = ["discover", "enrich", "score", "tailor", "cover", "apply"];
+        for (const stage of stages) {
+          const value = stage === input.stage ? input.storedState
+            : stages.indexOf(stage) < stages.indexOf(input.stage) ? "succeeded" : "pending";
+          db.prepare(`INSERT INTO job_stage_states (tenant_id, job_id, stage, state, updated_at, version)
+            VALUES ('local', ?, ?, ?, '2026-01-01', 1)`).run(input.jobKey, stage, value);
+        }
+      }
+    } finally { db.close(); }
+    const selectedIds = inputs.filter((input) => input.storedState === "exhausted" || state === "failed" && input.storedState === "failed")
+      .map((input) => input.jobKey).sort();
+    const app = buildApp(options);
+    try {
+      for (const stages of ["stages=discover,apply", "stages=discover&stages=apply&stages=discover"]) {
+        const response = await app.inject({ method: "GET",
+          url: `/v1/jobs?${stages}&state=${state}&q=Needle&sort=title&dir=asc&pageSize=1&page=999` });
+        expect(response.statusCode, response.body).toBe(200);
+        expect(response.json().pagination).toEqual({ page: selectedIds.length, pageSize: 1, total: selectedIds.length, pages: selectedIds.length });
+        expect(response.json().items[0].jobKey).toBe(selectedIds.at(-1));
+        expect(response.json().items[0].currentState).toBe("failed");
+      }
+      const scalar = await app.inject({ method: "GET", url: `/v1/jobs?stage=discover&state=${state}&q=Needle` });
+      expect(scalar.statusCode, scalar.body).toBe(200);
+      expect(scalar.json().pagination.total).toBe(selectedIds.length / 2);
+      const filter = { stages: ["discover", "apply"], state, q: "Needle" };
+      const hide = await app.inject({ method: "POST", url: "/v1/jobs/bulk-hide",
+        payload: { allMatching: true, filter } });
+      expect(hide.statusCode, hide.body).toBe(200);
+      expect(hide.json().count).toBe(selectedIds.length);
+      expect(hide.json().jobKeys.sort()).toEqual(selectedIds);
+      const hidden = await app.inject({ method: "GET", url: "/v1/jobs?deleted=hidden&q=Needle" });
+      expect(hidden.statusCode, hidden.body).toBe(200);
+      expect(hidden.json().items.map((job: { jobKey: string }) => job.jobKey).sort()).toEqual(selectedIds);
+      const remaining = await app.inject({ method: "GET", url: "/v1/jobs?q=Needle" });
+      expect(remaining.statusCode, remaining.body).toBe(200);
+      expect(remaining.json().items.map((job: { jobKey: string }) => job.jobKey).sort())
+        .toEqual(inputs.filter((input) => !selectedIds.includes(input.jobKey)).map((input) => input.jobKey).sort());
+      const unhide = await app.inject({ method: "POST", url: "/v1/jobs/bulk-unhide",
+        payload: { allMatching: true, filter: { ...filter, deleted: "hidden" } } });
+      expect(unhide.statusCode, unhide.body).toBe(200);
+      expect(unhide.json().count).toBe(selectedIds.length);
+      const restored = await app.inject({ method: "GET",
+        url: `/v1/jobs?stages=discover,apply&state=${state}&q=Needle` });
+      expect(restored.statusCode, restored.body).toBe(200);
+      expect(restored.json().items.map((job: { jobKey: string }) => job.jobKey).sort()).toEqual(selectedIds);
+    } finally { await app.close(); }
+  });
+
   it("filters, sorts, and paginates jobs globally", async () => {
     const app = buildApp(options);
     const response = await app.inject({
