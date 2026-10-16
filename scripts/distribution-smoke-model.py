@@ -53,8 +53,7 @@ def install_smoke_model(model=None):
     def dependencies(connection, **kwargs):
         return original(connection, **kwargs, adapter=selected)
 
-    infrastructure.determination_dependencies = dependencies
-    # Also handle the page module if another worker import already loaded it.
+    # Limit the fixture to page judgments; other model factories stay untouched.
     page = importlib.import_module("jobctrl.infrastructure.enrichment.page_interpretation")
     page.determination_dependencies = dependencies
 

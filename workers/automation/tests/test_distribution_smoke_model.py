@@ -18,7 +18,6 @@ from jobctrl.domain.determinations import DeterminationFailure
 @pytest.fixture
 def smoke_model(monkeypatch, tmp_path):
     import jobctrl.database as database
-    import jobctrl.infrastructure.determinations as infrastructure
     import jobctrl.infrastructure.enrichment.page_interpretation as page
 
     db_path = tmp_path / "jobctrl.db"
@@ -26,8 +25,7 @@ def smoke_model(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "DB_PATH", db_path)
     monkeypatch.setattr(database, "DB_PATH", db_path)
     monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(tmp_path / "config.json"))
-    # Register restoration for the release bootstrap's two module bindings.
-    monkeypatch.setattr(infrastructure, "determination_dependencies", infrastructure.determination_dependencies)
+    # Register restoration for the release bootstrap's page-only binding.
     monkeypatch.setattr(page, "determination_dependencies", page.determination_dependencies)
     script = Path(__file__).resolve().parents[3] / "scripts" / "distribution-smoke-model.py"
     spec = importlib.util.spec_from_file_location("distribution_smoke_model", script)
@@ -57,9 +55,13 @@ def smoke_model(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("availability", ["active", "closed"])
 def test_release_model_drives_persisted_capture_and_replay(smoke_model, availability):
+    import jobctrl.infrastructure.determinations as infrastructure
+
     module, conn, payload = smoke_model
     model = module.DistributionSmokePageModel(availability=availability)
+    original = infrastructure.determination_dependencies
     module.install_smoke_model(model)
+    assert infrastructure.determination_dependencies is original
     first = execute_manual_capture_import(payload, conn=conn)
     assert first.status == "succeeded"
     records = conn.execute(
