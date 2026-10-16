@@ -8,10 +8,12 @@ import { fileURLToPath } from "node:url";
 
 import Database from "better-sqlite3";
 
-import { ProviderModelCatalogResultSchema, ProviderStatusResultSchema, RpcMethods } from "../src/contracts.js";
+import { JobListQuerySchema, ProviderModelCatalogResultSchema, ProviderStatusResultSchema, RpcMethods } from "../src/contracts.js";
 import { openDatabase } from "../src/db.js";
 import { SubprocessJsonRpcAdapter } from "../src/json-rpc-adapter.js";
 import { refreshProjections } from "../src/projections.js";
+import { jobQueryMetrics } from "../src/job-list-query.js";
+import { listJobs } from "../src/read-model.js";
 import { AUTOMATION_PROJECT_DIR, createSourcePythonRuntime } from "../src/python-runtime.js";
 import { buildApp } from "../src/server.js";
 import { EXACT_V14_SCHEMA_MANIFEST } from "../src/schema-manifest.js";
@@ -209,6 +211,7 @@ interface CombinedStageResult {
   stageCounts: { discover: number; apply: number };
   pageSize: number;
   correctnessVerified: true;
+  queryIndex: ReturnType<typeof measureJobQueryIndex>;
   scenarios: Array<{
     name: string;
     query: string;
@@ -281,14 +284,14 @@ export async function runBenchmark(
       isolation: "Each dataset uses a new benchmark-owned mkdtemp app/config/DB/artifact workspace and is removed after the run.",
       productionPaths: [
         "refreshProjections bounded foreground pass and background drain",
-        "buildApp loopback HTTP /v1/jobs list/search/in-memory sort",
+        "buildApp loopback HTTP /v1/jobs SQLite list/search/sort selection",
         "buildApp loopback HTTP combined-stage first/adjacent/deep/clamped pages in separate owned datasets after the original scenarios",
         "registerEventStreamRoute real 250 ms timer-driven SSE connection",
         "buildApp PDF and HTML artifact preview streams",
         "SubprocessJsonRpcAdapter -> uv -> production Python jobctrl rpc dispatcher provider_models",
       ],
       providerNetworkPolicy: "The RPC subprocess receives a minimal allowlisted environment, isolated HOME/Codex/Claude/AWS/Google/Azure config paths, disabled AWS metadata and Langfuse export, and unreachable loopback proxies. A production provider_status preflight must prove every provider non-ready before provider_models is allowed; the sanitized catalog schema must then contain no ready provider or models.",
-      sustainedWorkload: "At least 1.5 seconds and seven iterations, capped at 100 iterations; each iteration writes 10 synthetic events, directly refreshes a seeded heartbeat, performs a search plus in-memory sort read, and reads seeded pipeline operations while one SSE subscriber remains connected. No Temporal worker runs.",
+      sustainedWorkload: "At least 1.5 seconds and seven iterations, capped at 100 iterations; each iteration writes 10 synthetic events, directly refreshes a seeded heartbeat, performs a search plus sorted list read, and reads seeded pipeline operations while one SSE subscriber remains connected. No Temporal worker runs.",
       tailEstimateLimitation: "Seven retained warm samples use nearest-rank percentiles, so p95 equals the maximum. Results are exploratory, tail-sample-limited local observations rather than stable population estimates.",
       sseValidationBoundary: "Validates production server transport, timer, event ID ordering, and counts with benchmark-only event types; it does not validate frontend event-registry or decoded-envelope acceptance.",
       resourceSamplingLimitation: "Node peaks are sampled between sustained iterations and can miss short-lived spikes.",
@@ -327,8 +330,7 @@ export async function runCombinedStageDataset(workspace: BenchmarkWorkspace, job
     const inputs = Array.from({ length: jobs }, (_, index) => syntheticMultiStageJob(index));
     const pageSize = 25;
     const deepPage = Math.max(1, Math.ceil(jobs / pageSize) - 1);
-    // Keep historical scenario names and requests comparable. The sql-* labels
-    // predate discovery sorting through the browser-compatible materialized path.
+    // Keep historical scenario names and requests comparable across adapters.
     const cases = [
       { name: "sql-first", stages: "discover,apply", page: 1 },
       { name: "sql-adjacent", stages: "discover,apply", page: 2 },
@@ -388,9 +390,33 @@ export async function runCombinedStageDataset(workspace: BenchmarkWorkspace, job
         } });
     }
     return { jobs, seed: `${BENCHMARK_SEED}:combined-stages-v1`, pageSize, correctnessVerified: true,
+      queryIndex: measureJobQueryIndex(workspace),
       stageCounts: { discover: inputs.filter((job) => job.stage === "discover").length, apply: inputs.filter((job) => job.stage === "apply").length },
       scenarios };
   } finally { await app.close(); }
+}
+
+/** Separate direct-reader observation; historical HTTP samples stay comparable. */
+function measureJobQueryIndex(workspace: BenchmarkWorkspace) {
+  const openedAt = performance.now();
+  const db = openDatabase(workspace.dbPath);
+  const connectionOpenMs = performance.now() - openedAt;
+  try {
+    const query = JobListQuerySchema.parse({ stages: ["discover", "apply"], q: "Needle", sort: "title", pageSize: 25 });
+    const coldStart = performance.now();
+    listJobs(db, query);
+    const coldRequestMs = performance.now() - coldStart;
+    const cold = jobQueryMetrics(db);
+    const warmStart = performance.now();
+    listJobs(db, query);
+    const warmRequestMs = performance.now() - warmStart;
+    const warm = jobQueryMetrics(db);
+    if (cold.refreshes !== 1 || warm.refreshes !== 1 || warm.selectedRows > query.pageSize) {
+      throw new Error("query-index refresh/page bound oracle failed");
+    }
+    return { scope: "Separate retained direct SQLite connection after HTTP scenarios; index cost excludes connection admission and DTO hydration",
+      connectionOpenMs, coldRequestMs, warmRequestMs, cold, warm };
+  } finally { db.close(); }
 }
 
 export async function runDataset(workspace: BenchmarkWorkspace, jobs: number): Promise<DatasetResult> {
@@ -1197,7 +1223,7 @@ function gitCandidate(exclusion: VerifiedDirtyExclusionInput | null): BenchmarkR
       "pnpm-lock.yaml", "workers/automation/uv.lock", "apps/api/benchmark/local-scale.ts",
       "apps/api/benchmark/run-local-scale.ts", "apps/api/src/read-model.ts", "apps/api/src/projections.ts",
       "apps/api/src/server.ts", "apps/api/src/schema-manifest.ts", "packages/contracts/src/schemas.ts",
-      "packages/contracts/src/jobs-query.ts",
+      "packages/contracts/src/jobs-query.ts", "apps/api/src/job-list-query.ts", "apps/api/src/db.ts",
     ].map((file) => [file, createHash("sha256").update(fs.readFileSync(path.join(REPOSITORY_ROOT, file))).digest("hex")])),
     diffSha256: createHash("sha256").update(gitRaw(["diff", "HEAD", "--binary"])).digest("hex"),
     verifiedDirtyExclusion,

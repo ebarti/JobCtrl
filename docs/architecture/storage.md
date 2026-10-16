@@ -36,6 +36,15 @@ command, schedule, or implicit TTL deletion.
 
 ## Schema At A Glance
 
+The API's job-list query index is app-owned SQLite TEMP state on its retained
+list connection. It adds no table, index, schema-version stamp or migration to
+the canonical exact-v14 database. Python and TypeScript projection ownership
+and exact-manifest admission remain unchanged. TEMP rows and freshness markers
+are disposable and rebuilt after connection close, app restart or database
+replacement; they are not a backup or a new source authority. See
+[job-list selection](read-model.md#job-list-sqlite-selection) for snapshot,
+failure and hydration boundaries.
+
 The database is easier to understand as a set of ownership families. The
 diagram shows the main relationships; the table below names the exact tables.
 

@@ -520,6 +520,7 @@ describe("combined-stage list pagination", () => {
       const { db, rows } = seed();
       const filters = [
         {}, { q: "Needle" }, { state: "failed" }, { source: "board-a" }, { company: "acme" },
+        ...["discover", "apply"].flatMap((stage) => ["", "Needle"].map((q) => ({ stages: [stage], q }))),
         { minFitScore: 4 }, { maxFitScore: 7 }, { minFitScore: 4, maxFitScore: 7 },
         { normalizedScoreKeyword: "react" }, { applyStatus: "applied" },
         { discoveredSince: "2026-01-07T00:00:00.000Z" }, { scoredSince: "2026-02-07T00:00:00.000Z" },
@@ -658,17 +659,10 @@ describe("combined-stage list pagination", () => {
     };
     vi.spyOn(db, "prepare").mockImplementation(((sql: string) => {
       const statement = original(sql);
-      if (sql.startsWith("SELECT COUNT(*) AS count FROM job_list_projections")) {
+      if (sql.startsWith("SELECT COUNT(*) AS count FROM ") && sql.includes("temp.job_query_rows qi")) {
         const get = statement.get.bind(statement);
         vi.spyOn(statement, "get").mockImplementation((...args: unknown[]) => {
           const result = get(...args);
-          commit();
-          return result;
-        });
-      } else if (sort !== "fit_score" && sql.startsWith("SELECT ") && sql.includes(" FROM job_list_projections WHERE")) {
-        const all = statement.all.bind(statement);
-        vi.spyOn(statement, "all").mockImplementation((...args: unknown[]) => {
-          const result = all(...args);
           commit();
           return result;
         });

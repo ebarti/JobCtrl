@@ -185,7 +185,7 @@ import {
   DISCOVERY_BROWSER_EXTENSION_UNAVAILABLE,
   commandForResolvedBlockCondition,
 } from "./blocked-condition-recovery.js";
-import { databaseExists, openDatabase, openReadOnlyDatabase } from "./db.js";
+import { createRetainedDatabase, databaseExists, openDatabase, openReadOnlyDatabase } from "./db.js";
 import { ConfigFileInputError } from "./config-file.js";
 import { getMarketCompensationEstimate } from "./market-compensation-estimates.js";
 import { getPostedCompensationFact } from "./posted-compensation-facts.js";
@@ -472,6 +472,8 @@ export interface BuildAppOptions {
 export function buildApp(options: BuildAppOptions): FastifyInstance {
   normalizeExistingDatabase(options.dbPath);
   const app = Fastify({ logger: options.logger ?? false, routerOptions: { maxParamLength: 4096 } });
+  const jobListDatabase = createRetainedDatabase(options.dbPath);
+  app.addHook("onClose", async () => { jobListDatabase.close(); });
   installVitestInjectMutationDefaults(app);
   const appDir = options.appDir ?? path.dirname(options.dbPath);
   const readInterviewCatalog = createInterviewCatalogReader(options.interviewCatalogAssetLoader
@@ -1459,7 +1461,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   });
 
   app.get("/v1/jobs", async (request, reply) =>
-    withDb(reply, options.dbPath, (db) => listJobs(db, JobListQuerySchema.parse(request.query))),
+    withDb(reply, options.dbPath, (db) => listJobs(db, JobListQuerySchema.parse(request.query)), jobListDatabase),
   );
 
   app.post("/v1/jobs/import-url", async (request, reply) => {
@@ -5014,8 +5016,10 @@ function withDb<T>(
   reply: { code: (statusCode: number) => unknown },
   dbPath: string,
   read: (db: ReturnType<typeof openDatabase>) => T,
+  retained?: ReturnType<typeof createRetainedDatabase>,
 ): T | { ok: false; error: string; message: string } {
   if (!databaseExists(dbPath)) {
+    retained?.close();
     void reply.code(503);
     return { ok: false, error: "db_not_found", message: `No JobCtrl database found at ${dbPath}` };
   }
@@ -5028,7 +5032,7 @@ function withDb<T>(
   // stay current with new ``job_events`` rows from the worker.
   let db: ReturnType<typeof openDatabase> | null = null;
   try {
-    db = openDatabase(dbPath);
+    db = retained ? retained.open() : openDatabase(dbPath);
     return read(db);
   } catch (error) {
     if (error instanceof ProfileInputError) {
@@ -5059,7 +5063,7 @@ function withDb<T>(
       message: error instanceof Error ? error.message : "Unable to read the JobCtrl database.",
     };
   } finally {
-    db?.close();
+    if (!retained) db?.close();
   }
 }
 

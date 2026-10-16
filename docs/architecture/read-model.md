@@ -173,6 +173,54 @@ for history, pagination, and conflict responses.
 | `due_follow_up_projections` | Scheduled follow-up references and due time; `isDue` is derived at read time. |
 | `operational_attempt_metrics` | Append-only attempt outcomes, failure class, retryability, counts, and duration. |
 
+## Job-list SQLite selection
+
+`job-list-query.ts` owns connection-local SQLite TEMP query tables, independent
+of the canonical projection owners. `/v1/jobs` retains its connection for the
+app lifetime and closes it with the app. A replaced database file gets a new
+exact-v14 admission and a fresh index; a missing file closes the retained handle.
+Changes to the retained file's schema/version headers also require readmission.
+Restart discards all query state. Other read endpoints retain their existing
+connection lifecycle.
+
+After the normal projection refresh, index refresh, SQL count/order/page
+selection and selected-row hydration share one SQLite read transaction. Index
+inputs are tenant/JobId and the scalar portion of the summary mapping: title
+and company defaults, trimmed location, canonical posting/source-observation
+overlays, public failure presentation, timestamps and projected compensation.
+Orphaned projections without a canonical Job are excluded. Index construction
+does not build DTOs or read availability or resume templates. Those reads occur
+only for selected IDs, at most `pageSize` jobs.
+
+Search uses JavaScript Unicode lowercase values, literal SQLite `instr`, and
+an indexed three-code-point substring candidate set for queries of at least
+three code points. Shorter queries scan scalar values. Fields stay separate,
+so substrings cannot bridge fields; percent, underscore and backslash are
+literal characters. Source filters include the same four provenance fields as
+summaries, while company filters use only the displayed company. Timestamp
+filters use precomputed `Date.parse` milliseconds with the existing two-cutoff
+OR rule. Discovery sorting still compares raw timestamp strings.
+
+During refresh, the shared scalar comparator computes directional ordinal keys
+for every supported sort, including ICU locale ordering, public state keys,
+compensation fallbacks and ascending JobId ties in either direction. Requests
+use SQLite ordinal indexes rather than sorting DTOs. Canonical tenant/stage
+and score-keyword filters remain on their existing indexed owners. Totals and
+deep offsets can still visit many scalar rows; page hydration alone is bounded
+by page size.
+
+Freshness combines `PRAGMA data_version` for external commits with
+`total_changes()` for writes on the retained connection, including rolled-back
+writes. The freshness marker lives in TEMP SQLite alongside its rows, so a
+failed build or enclosing transaction rollback restores both. A failed refresh
+fails the request and cannot serve the old index as fresh. Caller-owned older
+snapshots never publish a marker reusable after that transaction. Refresh
+rebuilds the tenant's index from its source snapshot; it does not infer freshness
+from event cursors or timestamps. `jobQueryMetrics` reports TEMP schema/index
+initialization time, rebuild count, indexed rows, rebuild time, selection time
+and selected rows separately. These are work observations, including builds
+that a later caller rollback may discard.
+
 ## Cross-Runtime Consistency
 
 Python's `ProjectionBuilder` and TypeScript's `refreshProjections` consume their
