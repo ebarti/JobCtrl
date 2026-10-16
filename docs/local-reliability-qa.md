@@ -65,6 +65,7 @@ guidance.
 | Native launcher / migrations | `JOBCTRL_MIGRATION_TEST_PYTHON="$PWD/workers/automation/.venv/bin/python" JOBCTRL_MIGRATION_TEST_NODE="$(command -v node)" corepack pnpm launcher:test`; bind the locked Python and installed Node runtimes so the cross-runtime migration checks run |
 | Dense resume pagination (#907) | Locked Ruff for `workers/automation/tests/test_pdf_renderer_ports.py`; explicit `JOBCTRL_RUN_DENSE_HTML_PAGINATION_TESTS=1` locked pytest for that module (focused selector `-k dense_resume_pagination_trial`); eight required real-browser cases, 48 measured PDFs, JUnit and every-page visual QA per the [owning protocol](developer/qa/regression-catalog.md#dense-html-resume-pagination-907) |
 | Scripts | `node --test scripts/<name>.test.mjs` |
+| Bundled capture smoke | Script suite; locked pytest for `workers/automation/tests/test_distribution_smoke_model.py`; then the real bundled-payload build through [Local Development](local-development.md#build-the-bundled-payload). Keep actual API/RPC/Temporal/worker/persistence and restart checks; only the model port uses explicit synthetic choices, recorded in smoke evidence. This does not prove semantic accuracy or provider authentication |
 | Docs | `corepack pnpm docs:build`, diff check |
 | Cross-stack | `corepack pnpm check`, `corepack pnpm test`, affected separate web suites |
 

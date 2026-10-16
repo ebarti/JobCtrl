@@ -563,6 +563,16 @@ corepack pnpm distribution:build:fixture
 corepack pnpm distribution:provider-lock:check
 ```
 
+The extracted-payload smoke runs the real API, JSON-RPC, Temporal workflow,
+worker activities and SQLite persistence without provider credentials. Its
+private worker bootstrap supplies explicit page-interpretation and description
+quality model choices through `LlmPort`; normal spend preflight, source/citation
+validation and determination persistence still execute. The bootstrap is passed
+as test code outside the immutable payload and is never installed or selected
+by product configuration. The resulting `semanticModel` evidence identifies
+the synthetic boundary. This proves capture plumbing and restart preservation,
+not model accuracy or live-provider readiness.
+
 Provider SDKs and their proprietary companion runtimes are not copied into the
 core archive. Their complete transitive wheel closures are generated from the
 Python lock and acquired later as isolated, hash-verified official-channel

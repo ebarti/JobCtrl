@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream, readFileSync } from "node:fs";
 import {
   chmod,
   copyFile,
@@ -1944,7 +1944,10 @@ export function createExtractedRuntimeStackPlan({ payloadRoot, stateRoot, tempor
         "--disable-config-env",
       ],
     },
-    worker: { command: pythonExecutable, args: ["-I", "-B", "-m", "jobctrl", "worker"] },
+    worker: {
+      command: pythonExecutable,
+      args: ["-I", "-B", "-c", readFileSync(path.join(REPO_ROOT, "scripts", "distribution-smoke-model.py"), "utf8")],
+    },
     api: { command: nodeExecutable, args: [path.join(payloadRoot, "api", "server.mjs")] },
     apiOrigin: `http://127.0.0.1:${apiPort}`,
   };
@@ -2803,6 +2806,7 @@ with sync_playwright() as playwright:
     dbBackedRoute: "/v1/jobs",
     browserRevision: 1208,
     offlineManualCaptureJob: offlineFixtureUrl,
+    semanticModel: { provider: "distribution-smoke", model: "explicit-page-fixture", boundary: "model-port-test-double" },
     manualCaptureWorkflow: {
       itemId: captureEvidence.itemId,
       workflowId: workflowEvidence.workflowId,
