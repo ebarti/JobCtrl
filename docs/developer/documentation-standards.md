@@ -20,6 +20,7 @@ only enough context to orient the reader, then link to the owner.
 | CLI command reference | [Daily Workflow](../user/normal-flows.md#command-reference) |
 | Contributor entry and reading path | [Contributor Start](README.md) |
 | Repository layout and source ownership | [Repository & Ownership Map](repository-and-ownership-map.md) |
+| Release preparation, publication, and public-channel verification | [Releasing JobCtrl](releasing.md) |
 | Documentation governance and style | This page |
 | Runtime processes and their responsibilities | [Runtime & Processes](../architecture/runtime.md) |
 | Shared domain types, REST DTOs, JSON-RPC, and API layering | [Contracts, Types & API Boundaries](../architecture/contracts-types-and-api-boundaries.md) |

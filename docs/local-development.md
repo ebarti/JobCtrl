@@ -509,6 +509,12 @@ port fails instead of reusing an unidentified listener. The API startup wrapper
 seeds the owned database before API construction, and global setup verifies that
 seed receipt. See [isolated browser setup](developer/qa/browser-smoke.md#isolated-browser-mode).
 
+## Publish a release
+
+Use [Releasing JobCtrl](developer/releasing.md) for version preparation, curated
+notes, exact-candidate checks, protected signing, publication, and independent
+verification of every public channel.
+
 ## Build the bundled payload
 
 The production-payload builder currently targets Apple-silicon macOS. It is a

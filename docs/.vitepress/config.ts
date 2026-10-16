@@ -196,6 +196,7 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
       { text: "Contributor Start", link: "/developer/" },
       { text: "Repository & Ownership Map", link: "/developer/repository-and-ownership-map" },
       { text: "Local Development", link: "/local-development" },
+      { text: "Releasing JobCtrl", link: "/developer/releasing" },
       { text: "Documentation Standards", link: "/developer/documentation-standards" },
       {
         text: "Reliability & QA",
