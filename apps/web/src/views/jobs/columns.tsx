@@ -856,6 +856,7 @@ export function jobColumns(
       sortable: true,
       getFilterValue: (row) => row.currentStage,
       filterValues: JOB_TABLE_STAGE_FILTERS,
+      filterText: false,
       render: (row) => (
         <span data-typography="label">
           <UserFacingStageBadge stage={row.currentStage} />

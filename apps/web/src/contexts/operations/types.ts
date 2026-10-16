@@ -214,7 +214,7 @@ export { JOB_STATES, JobStatesFilterSchema, SavedTableViewGridFiltersSchema };
 
 export type JobId = string;
 
-export type JobsListInput = Partial<Omit<JobListQuery, "stage">> & {
+export type JobsListInput = Partial<Omit<JobListQuery, "stage" | "stages">> & {
   readonly stage?: Stage;
   readonly stages?: readonly Stage[];
 };

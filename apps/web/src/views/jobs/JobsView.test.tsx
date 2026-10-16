@@ -149,8 +149,8 @@ function createColumnDragTransfer() {
   };
 }
 
-describe("<JobsRoute> loader reliability", () => {
-  it("renders the jobs surface instead of the route error boundary when prefetch fails", async () => {
+describe("<JobsRoute> query reliability", () => {
+  it("renders the jobs surface instead of the route error boundary when the list query fails", async () => {
     const ports = buildTestPorts({
       api: {
         jobs: vi.fn(async () => {
@@ -2075,3 +2075,148 @@ describe("<JobsView> bulk delete integration", () => {
 });
 
 void vi;
+
+describe("<JobsView> combined stage pages", () => {
+  it("hydrates a saved two-stage selection on a deep page and pages once without reconstruction", async () => {
+    const user = userEvent.setup();
+    const rows = Array.from({ length: 50 }, (_, i) =>
+      jobWithStage(`combined-${i}`, `Combined page ${i}`, i % 2 ? "apply" : "discover"));
+    useSavedTableViewsStore.getState().createView(JOBS_TABLE_ID, "Both stages", {
+      columns: { order: [...JOBS_TABLE_COLUMN_IDS], hidden: [], widths: {} },
+      density: null, grouping: null, colorRules: [],
+      sort: { columnId: "discovered_at", direction: "desc" },
+      urlFilters: { q: "", stage: "all", state: "all", applyStatus: "all", deleted: "active", pageSize: 50 },
+      gridFilters: { current_stage: { operator: "contains", text: "", selectedValues: ["discover", "apply"] } },
+    });
+    const jobs = vi.fn(async (query?: Partial<JobListQuery>) => ({
+      ...makeJobsPage(query?.page === 101 ? [rows[0]!] : rows),
+      pagination: { page: query?.page ?? 1, pageSize: 50, total: 5001, pages: 101 },
+    }));
+    const harness = buildProviderHarness({ ports: buildTestPorts({ api: { jobs } }) });
+    const { router, Wrapper } = buildRouter(harness, SEARCH.replace("page=1&", "page=100&"));
+    const rendered = render(<RouterProvider router={router} />, { wrapper: Wrapper });
+    expect(await screen.findByText("Combined page 49")).toBeInTheDocument();
+    expect(jobs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ stages: ["discover", "apply"], page: 100, pageSize: 50 }));
+    expect(screen.getByText("Page 100 of 101 · 5001 rows")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Select all matching" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(jobs).toHaveBeenCalledTimes(2));
+    expect(jobs.mock.lastCall?.[0]).toMatchObject({ stages: ["discover", "apply"], page: 101, pageSize: 50 });
+    await waitFor(() => expect(screen.queryByText("Combined page 49")).not.toBeInTheDocument());
+    rendered.unmount();
+    const remount = buildRouter(harness, SEARCH.replace("page=1&", "page=100&"));
+    render(<RouterProvider router={remount.router} />, { wrapper: Wrapper });
+    expect(await screen.findByText("Combined page 49")).toBeInTheDocument();
+    expect(jobs).toHaveBeenCalledTimes(2); // the saved combined cache key is reused
+  });
+
+  it("retains both grid values in a saved view, resets paging, and scopes all-matching bulk to them", async () => {
+    const user = userEvent.setup();
+    const rows = [jobWithStage("grid-discover", "Grid Discover", "discover"), jobWithStage("grid-apply", "Grid Apply", "apply")];
+    const jobs = vi.fn(async (_query?: Partial<JobListQuery>) => makeJobsPage(rows));
+    const deleteJobs = vi.fn(async (_request: BulkJobMutationRequest) => ({ ok: true as const, count: 2, jobKeys: rows.map((row) => row.jobKey) }));
+    const harness = buildProviderHarness({ ports: buildTestPorts({ api: { jobs, deleteJobs } }) });
+    const { router, Wrapper } = buildRouter(harness, SEARCH.replace("page=1&", "page=3&"));
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+    await screen.findByText("Grid Discover");
+    await user.click(screen.getByRole("button", { name: /filter stage column/i }));
+    await user.click(screen.getByRole("checkbox", { name: "discover" }));
+    await waitFor(() => expect(router.state.location.search.page).toBe(1));
+    await user.click(screen.getByRole("checkbox", { name: "apply" }));
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(jobs.mock.lastCall?.[0]).toMatchObject({ stages: ["discover", "apply"], page: 1 }));
+    expect(jobs.mock.lastCall?.[0]).not.toHaveProperty("stage");
+    await user.click(screen.getByRole("button", { name: "Save as view" }));
+    const saveDialog = screen.getByRole("dialog", { name: "Save view" });
+    await user.type(within(saveDialog).getByLabelText("Name"), "Combined");
+    await user.click(within(saveDialog).getByRole("button", { name: "Save" }));
+    expect(useSavedTableViewsStore.getState().views.find((view) => view.name === "Combined")?.gridFilters.current_stage?.selectedValues)
+      .toEqual(["discover", "apply"]);
+    const viewSelect = screen.getByRole("combobox", { name: "Saved table view" });
+    await user.click(viewSelect);
+    await user.click(await screen.findByRole("option", { name: "Default" }));
+    await waitFor(() => expect(jobs.mock.lastCall?.[0]).not.toHaveProperty("stages"));
+    await user.click(viewSelect);
+    await user.click(await screen.findByRole("option", { name: "Combined" }));
+    await waitFor(() => expect(jobs.mock.lastCall?.[0]).toMatchObject({ stages: ["discover", "apply"] }));
+    await user.click(screen.getByRole("button", { name: "Select all matching" }));
+    await user.click(screen.getByRole("button", { name: "Delete matching active" }));
+    await waitFor(() => expect(deleteJobs).toHaveBeenCalledTimes(1));
+    expect(deleteJobs.mock.calls[0]?.[0]).toMatchObject({ allMatching: true, jobKeys: [], filter: { stages: ["discover", "apply"] } });
+    expect(deleteJobs.mock.calls[0]?.[0].filter).not.toHaveProperty("stage");
+    await user.click(screen.getByRole("button", { name: /filter stage column/i }));
+    await user.click(screen.getByRole("checkbox", { name: "apply" }));
+    await waitFor(() => expect(jobs.mock.lastCall?.[0]).toMatchObject({ stage: "discover", page: 1 }));
+    await user.click(screen.getByRole("checkbox", { name: "discover" }));
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => {
+      expect(jobs.mock.lastCall?.[0]).not.toHaveProperty("stage");
+      expect(jobs.mock.lastCall?.[0]).not.toHaveProperty("stages");
+    });
+  }, 15_000);
+});
+
+it("requests one combined page on the actual Jobs route, then preserves paging and scalar navigation", async () => {
+  const user = userEvent.setup();
+  useSavedTableViewsStore.getState().createView(JOBS_TABLE_ID, "Combined route", {
+    columns: { order: [...JOBS_TABLE_COLUMN_IDS], hidden: [], widths: {} },
+    density: null, grouping: null, colorRules: [],
+    sort: { columnId: "discovered_at", direction: "desc" },
+    urlFilters: { q: "", stage: "all", state: "all", applyStatus: "all", deleted: "active", pageSize: 50 },
+    gridFilters: { current_stage: { operator: "contains", text: "", selectedValues: ["discover", "apply"] } },
+  });
+  const calls: Array<Partial<JobListQuery> | undefined> = [];
+  const ports = buildTestPorts({ api: { jobs: async (input) => {
+    calls.push(input);
+    const page = input?.page ?? 1;
+    const rows = input?.stage === "apply"
+      ? [jobWithStage("scalar-route", "Scalar route job", "apply")]
+      : Array.from({ length: page === 100 ? 50 : 1 }, (_, index) => {
+        const ordinal = (page - 1) * 50 + index;
+        return jobWithStage(`route-${ordinal}`, `Actual combined route ${ordinal}`, index % 2 ? "apply" : "discover");
+      });
+    return { ...makeJobsPage(rows), pagination: input?.stage === "apply"
+      ? { page: 1, pageSize: 50, total: 1, pages: 1 }
+      : { page, pageSize: 50, total: 5001, pages: 101 } };
+  } } });
+  const harness = buildProviderHarness({ ports, withEventStream: true });
+  const router = createRouter({ routeTree,
+    history: createMemoryHistory({ initialEntries: [`/jobs${SEARCH.replace("page=1&", "page=100&")}`] }),
+    context: { ports, queryClient: harness.queryClient, tenantId: LOCAL_TENANT },
+  });
+  render(<RouterProvider router={router} />, { wrapper: harness.Wrapper });
+  expect(await screen.findByText("Actual combined route 4950")).toBeInTheDocument();
+  expect(screen.getByText("Page 100 of 101 · 5001 rows")).toBeInTheDocument();
+  expect(calls).toEqual([expect.objectContaining({ stages: ["discover", "apply"], page: 100, pageSize: 50 })]);
+  await user.click(screen.getByRole("button", { name: "Next" }));
+  expect(await screen.findByText("Actual combined route 5000")).toBeInTheDocument();
+  expect(calls).toEqual([
+    expect.objectContaining({ stages: ["discover", "apply"], page: 100, pageSize: 50 }),
+    expect.objectContaining({ stages: ["discover", "apply"], page: 101, pageSize: 50 }),
+  ]);
+  await act(async () => {
+    await router.navigate({ to: "/jobs", search: { ...router.state.location.search, stage: "apply", page: 1 } });
+  });
+  expect(await screen.findByText("Scalar route job")).toBeInTheDocument();
+  expect(calls).toHaveLength(3);
+  expect(calls[2]).toMatchObject({ stage: "apply", page: 1, pageSize: 50 });
+  expect(calls[2]).not.toHaveProperty("stages");
+});
+
+describe("<JobsView> server page boundaries", () => {
+  it.each([
+    { requested: 999, page: 101, total: 5001, pages: 101, items: [sampleJob] },
+    { requested: 100, page: 1, total: 0, pages: 1, items: [] },
+  ])("displays the returned page $page after requesting $requested", async ({ requested, page, total, pages, items }) => {
+    const jobs = vi.fn(async () => ({ ...makeJobsPage(items), pagination: { page, pageSize: 50, total, pages } }));
+    const harness = buildProviderHarness({ ports: buildTestPorts({ api: { jobs } }) });
+    const { router, Wrapper } = buildRouter(harness, SEARCH.replace("page=1&", `page=${requested}&`));
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+    expect(await screen.findByText(`Page ${page} of ${pages} · ${total} rows`)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    if (!items.length) {
+      expect(await screen.findByText("No jobs match.")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Select all matching" })).toBeDisabled();
+    }
+  });
+});

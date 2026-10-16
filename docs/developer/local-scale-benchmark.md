@@ -163,6 +163,46 @@ or CI gates:
 | Cold Python RPC startup | 10 s | Include `uv`, Python imports, and dispatcher startup |
 | Sustained Node RSS / heap peak growth | 128 MiB / 64 MiB | Diagnostic bounds for this bounded workload, not long-horizon guarantees |
 
+## Bounded job-page contract and supplied comparisons
+
+The web Operations list helper sends one `api.jobs` request for the requested
+page and page size. Explicit stage arrays override scalar stages, deduplicate
+values, and use an empty array to clear the restriction. The helper returns the
+server response directly; it does not download preceding pages, merge jobs,
+deduplicate rows, sort them, or reconstruct pagination metadata.
+
+The Jobs grid keeps multi-stage selections in its grid/saved-view state, resets
+paging when selection changes, and passes the same stages to list and
+all-matching bulk filters. The view owns the effective list query; the route
+does not prefetch a separate URL-only page. Single-stage navigation remains
+URL-backed. The demo
+uses the shared filter/comparator and paginates the combined set once, including
+its effective stages in response metadata.
+
+The repository artifact `docs/benchmarks/bounded-job-queries.json` retains
+sanitized measurements supplied by the controller for historical api1
+(`a2ff583849b522e7a1a0528c999aa1d67b3827a5`) and sql1
+(`7baf8d9b024581dfc9b7148ed499d3d7f3905a48`) candidates. Each series records its
+original capture time, candidate/source/lock hashes, schema, raw latency and
+memory samples, and the SHA-256 of its retained source log. These are HTTP
+measurements of those candidates, not measurements of the browser change.
+
+| Jobs | Ordinary p95, api1 → sql1 | Search p95, api1 → sql1 | Sustained read p95, api1 → sql1 |
+| ---: | ---: | ---: | ---: |
+| 100 | 12.905 → 11.645 ms | 10.661 → 2.402 ms | 12.949 → 23.342 ms |
+| 1,000 | 80.426 → 10.958 ms | 74.757 → 11.567 ms | 98.525 → 229.726 ms |
+| 10,000 | 874.927 → 85.990 ms | 769.126 → 85.534 ms | 981.006 → 2,112.098 ms |
+
+Use the artifact's exact series when comparing: separate runs on the same
+candidate need not have identical timings. Seven retained warm samples make
+nearest-rank p95 equal to max. Memory is sampled in the shared Node server/client
+process, without forced GC; request-boundary samples can miss transient peaks.
+Both series use exact-v14 canonical schema. SQLite TEMP query-index construction
+and refresh costs are separate from canonical schema/storage growth. The
+sustained workload writes synthetic events and heartbeats without a live worker;
+its increased read latency remains a visible observation. Diagnostic budgets
+are not adopted acceptance thresholds.
+
 ## Measured baseline
 
 The archived results below and the linked JSON retain their original v10 schema
