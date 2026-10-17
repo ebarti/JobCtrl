@@ -101,12 +101,15 @@ response metadata. Its input contract accepts readonly stage arrays.
 Text sorts use lowercase locale comparison consistent with the browser merger.
 Discovery sorts preserve the browser's locale comparison of raw timestamp
 strings, including mixed fractional/offset notation, rather than instant order.
-Source/company filters match literal Unicode-lowercased substrings on rendered
-summaries; those filters, discovery sorts and locale text sorts use the materialized read path.
-Timestamp cutoffs also use that path, comparing instants inclusively at
-JavaScript millisecond precision before totals and pagination. The same shared
-filter handles all-matching bulk selection, including the OR of two cutoffs.
-Both query paths keep their summary joins within a SQLite read transaction.
+Source/company filters match literal Unicode-lowercased substrings on
+summary-equivalent scalar values. All searches and sorts use SQLite selection
+over the app-owned, rebuildable
+[query index](architecture/read-model.md#job-list-sqlite-selection).
+Timestamp cutoffs compare precomputed instants inclusively at JavaScript
+millisecond precision, including the OR of two cutoffs. Lists and all-matching
+bulk selection share those predicates. Index refresh, totals, page selection
+and selected-summary joins stay within one SQLite transaction; only the
+returned page receives DTO hydration, availability and template reads.
 
 Jobs list/detail include Enrichment's persisted `availability` observation:
 latest attempt/verdict, last successful verification, next due, acquisition

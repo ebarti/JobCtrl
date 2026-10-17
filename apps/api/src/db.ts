@@ -79,6 +79,41 @@ export function databaseExists(dbPath: string): boolean {
   return fs.existsSync(dbPath);
 }
 
+/** App-owned connection: TEMP query state never enters the exact-v14 manifest. */
+export function createRetainedDatabase(dbPath: string): { open: () => SqliteDatabase; close: () => void } {
+  let db: SqliteDatabase | undefined;
+  let identity = "";
+  let schemaStamp = "";
+  const stamp = (connection: SqliteDatabase): string =>
+    `${connection.pragma("schema_version", { simple: true })}:${connection.pragma("user_version", { simple: true })}`;
+  const close = (): void => {
+    db?.close();
+    db = undefined;
+    identity = "";
+    schemaStamp = "";
+  };
+  return {
+    close,
+    open() {
+      try {
+        const stat = fs.statSync(dbPath);
+        const current = `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
+        if (db && identity !== current) close();
+        if (db && schemaStamp !== stamp(db)) close();
+        if (!db) {
+          db = openDatabase(dbPath);
+          identity = current;
+          schemaStamp = stamp(db);
+        }
+        return db;
+      } catch (error) {
+        close();
+        throw error;
+      }
+    },
+  };
+}
+
 export function tableExists(db: SqliteDatabase, tableName: string): boolean {
   const row = db
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")

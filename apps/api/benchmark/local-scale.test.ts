@@ -90,6 +90,15 @@ describe("local scale benchmark support", () => {
       const result = await runCombinedStageDataset(workspace, DATASET_SIZES[0]);
       expect(result).toMatchObject({ jobs: 100, stageCounts: { discover: 66, apply: 34 }, correctnessVerified: true });
       expect(result.scenarios).toHaveLength(16);
+      expect(result.queryIndex.cold).toMatchObject({ refreshes: 1, indexedRows: 100, selectedRows: 10 });
+      expect(result.queryIndex.warm.refreshes).toBe(1);
+      expect(result.queryIndex.warm.refreshMs).toBe(result.queryIndex.cold.refreshMs);
+      expect(result.queryIndex.cold.sourceChecks).toBe(1);
+      expect(result.queryIndex.warm.sourceChecks).toBe(1);
+      expect(result.queryIndex.warm.sourceCheckMs).toBe(result.queryIndex.cold.sourceCheckMs);
+      expect(result.queryIndex.cold.initializationMs).toBeGreaterThan(0);
+      expect(result.queryIndex.warm.initializationMs).toBe(result.queryIndex.cold.initializationMs);
+      console.info("query index measurements", JSON.stringify(result.queryIndex));
       for (const scenario of result.scenarios) {
         expect(scenario.latency.samples).toHaveLength(7);
         expect(scenario.memory.samples).toHaveLength(7);

@@ -84,12 +84,13 @@ membership uses that public stage rather than `currentSubstage`.
 
 Stage membership and all other filters apply before the global total, sort,
 and page slice. Pages clamp to the last page; an empty result has page one and
-one page. SQL-paged requests read the total and page from one SQLite snapshot.
+one page. All requests read the total and page from one SQLite snapshot.
 `discoveredSince` and `scoredSince` compare instants inclusively at JavaScript
 millisecond precision, so equivalent offsets and fractional notation match.
 Missing or invalid stored timestamps do not match their cutoff. When both
-cutoffs are supplied, either may match. Timestamp filters use the shared
-summary filter before totals, pagination, and all-matching bulk selection.
+cutoffs are supplied, either may match. Timestamp filters use precomputed
+milliseconds in the query index before totals, pagination, and all-matching bulk
+selection.
 Response `filter.stages` records the effective deduplicated membership (an empty
 array means unrestricted); `filter.stage` retains the requested legacy scalar
 for compatibility. Clients can request combined pages through the existing
@@ -106,8 +107,11 @@ comparison, matching the existing browser merger; equal keys keep ascending job
 IDs in both directions. Discovery sorting compares the original timestamp
 strings with locale comparison, preserving browser behavior across fractional
 and offset notation; it does not normalize them to instants. Missing values
-sort first ascending and last descending. Discovery and text sorts materialize
-matching summaries before pagination. Source and company filters are literal substrings after
+sort first ascending and last descending. All searches and sorts select IDs in
+SQLite before hydrating only the returned page. The app-owned, rebuildable
+[query index](../architecture/read-model.md#job-list-sqlite-selection) stores
+compatible search values and locale sort ordinals without changing exact v14.
+Source and company filters are literal substrings after
 Unicode lowercasing: `%`, `_`, and backslash have no wildcard or escape meaning.
 Source checks the displayed source, discovery source, posting source, and posting
 URL. These rules also apply to searched lists and all-matching bulk selection.
