@@ -39,7 +39,7 @@ import {
   KeychainCredentialStore,
 } from "../src/credentials.js";
 import type { NativeCredentialCommandRunner } from "../src/native-credential-store.js";
-import type { JsonRpcDispatcher } from "../src/json-rpc-adapter.js";
+import { SubprocessJsonRpcAdapter, type JsonRpcDispatcher } from "../src/json-rpc-adapter.js";
 import {
   PROFILE_PREVIEW_SCRIPT,
   defaultActionDispatcher,
@@ -58,6 +58,7 @@ import { initializeExactDatabase } from "./exact-schema.js";
 
 let tempDir = "";
 let options: BuildAppOptions;
+let enrichmentRetryRpc: SubprocessJsonRpcAdapter;
 let strayProfileExportPath = "";
 let strayStyleExportPath = "";
 let strayTemplateExportPath = "";
@@ -145,11 +146,16 @@ async function waitForExpectation(assertion: () => void, timeoutMs = 500): Promi
 
 beforeEach(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-"));
+  enrichmentRetryRpc = new SubprocessJsonRpcAdapter({
+    appDir: tempDir,
+    pythonRuntime: createSourcePythonRuntime({ environment: { ...process.env, LANGFUSE_DISABLE: "1" } }),
+  });
   options = {
     dbPath: path.join(tempDir, "jobctrl.db"),
     configPath: path.join(tempDir, "config.json"),
     providerDispatcher: {
-      call: vi.fn(async (method) => {
+      call: vi.fn(async (method, params) => {
+        if (method === RpcMethods.ResetEnrichment) return enrichmentRetryRpc.call(method, params);
         if (method !== "browser_capabilities_list") throw new Error(`Unexpected provider RPC in API fixture: ${method}`);
         return { jsonrpc: "2.0" as const, id: 1, result: { capabilities: [], detectedBrowsers: [] } };
       }),
@@ -189,7 +195,8 @@ beforeEach(() => {
   );
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await enrichmentRetryRpc.close();
   vi.unstubAllEnvs();
   fs.rmSync(tempDir, { force: true, recursive: true });
 });
@@ -8474,10 +8481,10 @@ describe("local TypeScript API", () => {
     db.close();
 
     expect(enrichment.current_status).toBe("pending");
-    expect(enrichment.full_description).toBeNull();
-    expect(enrichment.application_url).toBeNull();
-    expect(enrichment.enriched_at).toBeNull();
-    expect(enrichment.extraction_tier).toBeNull();
+    expect(enrichment.full_description).toBe("The full job description.");
+    expect(enrichment.application_url).toBe("https://example.com/apply");
+    expect(enrichment.enriched_at).toBe("2026-04-29T10:01:00+00:00");
+    expect(enrichment.extraction_tier).toBe("json_ld");
     expect(stage).toEqual({ state: "pending", metadata_json: null });
     expect(legacyJob.detail_scraped_at).toBe("2026-04-29T10:01:00+00:00");
     expect(legacyJob.detail_error).toBeNull();
@@ -8490,7 +8497,7 @@ describe("local TypeScript API", () => {
     seedDb.prepare("DELETE FROM job_enrichments WHERE tenant_id = 'local' AND job_id = ?")
       .run(jobIdFor("https://example.com/jobs/blocked-tailor"));
     seedDb.close();
-    // Confirm ``resetEnrichmentAggregate`` doesn't crash when the
+    // Confirm the canonical reset service does not crash when the
     // aggregate row was never written. Exact-v7 reset is a 0-row aggregate
     // update and never falls back to retired wide job columns.
     const app = buildApp(options);

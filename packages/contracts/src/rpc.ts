@@ -73,6 +73,7 @@ export type JsonRpcResponse = z.infer<typeof JsonRpcResponseSchema>;
 /* ------------------------------------------------------------------ methods */
 
 export const RpcMethods = {
+  ResetEnrichment: "reset_enrichment",
   MaterialLocaleVariants: "material_locale_variants",
   ScreeningAnswers: "screening_answers",
   RunStage: "run_stage",
@@ -119,6 +120,23 @@ const CanonicalJobIdParam = z
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     "jobId must be a canonical lowercase UUID",
   );
+
+/** Enrichment reset plus companion stages in the same atomic bulk retry. */
+export const ResetEnrichmentParamsSchema = z.object({
+  tenantId: TenantParam,
+  expectedAppDir: z.string().trim().min(1),
+  expectedDbPath: z.string().trim().min(1),
+  targets: z.array(z.object({ jobId: CanonicalJobIdParam, stage: z.enum(STAGES) }).strict()).min(1),
+  resetAttempts: z.boolean().default(false),
+  onlyFailed: z.boolean().default(false),
+}).strict().refine((value) => value.targets.some((target) => target.stage === "enrich"), {
+  message: "An enrichment target is required.",
+});
+export const ResetEnrichmentResultSchema = z.object({
+  resets: z.array(z.object({
+    jobId: CanonicalJobIdParam, jobUrl: z.string().min(1), stage: z.enum(STAGES),
+  }).strict()).min(1),
+}).strict();
 
 export const ProfileTargetRoleSuggestionsParamsSchema = z
   .object({

@@ -173,7 +173,7 @@ function resetResolvedJobStage(
   // when the gate is opt-in, this entry-point bypasses §8.5 — the user is
   // explicitly forcing the stage back to pending.
   if (stage === "enrich") {
-    resetEnrichmentAggregate(db, LOCAL_TENANT, job.jobId);
+    throw new InputError("Enrichment resets require the canonical Python retry service.");
   }
   const current = getRow<{ state: string }>(
     db,
@@ -782,38 +782,6 @@ export function writeSettingsConfig(
     if (!wrote) throw new InputError("At least one settings field is required.");
   });
   return readSettingsConfig(paths);
-}
-
-/**
- * Phase 7 (S-26 round-1 review B2): reset the ``job_enrichments`` row
- * for one job back to the ``pending`` lifecycle state.
- *
- * Mirror of Python's ``state.py::_reset_enrichment_aggregate`` — both
- * paths (CLI ``jobctrl retry enrich URL`` and API
- * ``POST /v1/jobs/{key}/retry?stage=enrich``) MUST clear the
- * aggregate's terminal-state fields, otherwise the worker's
- * ``_ENRICHMENT_PENDING`` predicate excludes the row and retry is a
- * silent no-op.
- *
- * The reset preserves the attempt history (audit trail intact) and
- * only clears the success-side fields plus rolls ``current_status``
- * back to ``pending``. Idempotent — safe to call when no row exists.
- */
-function resetEnrichmentAggregate(db: SqliteDatabase, tenantId: string, jobId: string): void {
-  if (!tableExists(db, "job_enrichments")) {
-    return;
-  }
-  const now = new Date().toISOString();
-  db.prepare(
-    `UPDATE job_enrichments
-       SET current_status = 'pending',
-           full_description = NULL,
-           application_url = NULL,
-           enriched_at = NULL,
-           extraction_tier = NULL,
-           updated_at = ?
-     WHERE tenant_id = ? AND job_id = ?`,
-  ).run(now, tenantId, jobId);
 }
 
 function mutableResolvedJobs(db: SqliteDatabase, request: BulkJobMutationRequest): ResolvedJobIdentity[] {
@@ -1673,7 +1641,7 @@ function upsertStageStateById(
   ).run(...insertEntries.map(([, value]) => value));
 }
 
-function getStageStateById(db: SqliteDatabase, tenantId: string, jobId: string, stage: Stage): StageSummary {
+export function getStageStateById(db: SqliteDatabase, tenantId: string, jobId: string, stage: Stage): StageSummary {
   const row = getRow<Record<string, unknown>>(
     db,
     "SELECT * FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = ? LIMIT 1",

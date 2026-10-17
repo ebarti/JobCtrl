@@ -1734,7 +1734,15 @@ Current-version preparation maintenance actions are separate endpoints:
   `503 { ok: false, error: "worker_runtime_unavailable", worker }`; the prior
   stage row, attempt/error metadata, and event history remain unchanged and no
   dispatcher call occurs. With `runAfter: false`, the route is an intentional
-  local-only reset and does not require a worker.
+  local-only reset and does not require a Temporal activity worker. Enrichment
+  resets require the local Python RPC runtime and return `200` only after the
+  reset commits. They preserve accepted enrichment content and attempt history,
+  clear terminal stage fields and execution ownership, and retain the stage
+  attempt count unless `resetAttempts` is true or the stage was exhausted.
+  An RPC or persistence failure returns an error rather than a successful reset;
+  a rejected persistence transaction leaves the previous state and events intact.
+  Mixed bulk cohorts containing Enrich commit through the same service; if a
+  selected row is no longer failed/exhausted, the complete cohort is rejected.
   For an already enriched LinkedIn job with no application URL, send
   `{ "stage": "enrich", "runAfter": true, "refreshApplyUrl": true }` to
   inspect only that posting through the live extension. This bounded action
