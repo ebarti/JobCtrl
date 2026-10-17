@@ -49,10 +49,7 @@ import {
 import { JobBulkActions } from "./JobBulkActions.js";
 import { ImportJobUrlDialog } from "./ImportJobUrlDialog.js";
 import { JobsTable } from "./JobsTable.js";
-import {
-  JOB_STATE_FILTER_VALUES,
-  jobStateValue,
-} from "./columns.js";
+import { JOB_STATE_FILTER_VALUES, jobStateValue } from "./columns.js";
 import {
   allJobStates,
   bulkJobFilters,
@@ -154,8 +151,7 @@ const JOB_STATE_VALUE_BY_LABEL: ReadonlyMap<string, JobState> = new Map(
 
 function sameJobStates(left: readonly JobState[], right: readonly JobState[]) {
   return (
-    left.length === right.length &&
-    left.every((state) => right.includes(state))
+    left.length === right.length && left.every((state) => right.includes(state))
   );
 }
 
@@ -200,7 +196,10 @@ function searchFilters(search: JobsSearch): DataGridFilterState {
 function localFiltersOnly(filters: DataGridFilterState): DataGridFilterState {
   return Object.fromEntries(
     Object.entries(filters).filter(
-      ([columnId]) => !SEARCH_FILTER_COLUMNS.has(columnId),
+      ([columnId, filter]) =>
+        !SEARCH_FILTER_COLUMNS.has(columnId) ||
+        (columnId === "current_stage" &&
+          (filter?.selectedValues.length ?? 0) > 1),
     ),
   );
 }
@@ -327,7 +326,6 @@ export function JobsView() {
   const search = useSearch({ from: "/jobs" });
   const navigate = useNavigate({ from: "/jobs" });
 
-  const { data, isFetching, error } = useJobsListQuery(jobsListInput(search));
   const deleteJobs = useDeleteJobsBulkMutation();
   const hideJobs = useHideJobsBulkMutation();
   const permanentlyDeleteJobs = usePermanentlyDeleteJobsBulkMutation();
@@ -348,12 +346,17 @@ export function JobsView() {
   const setSavedPresentation = useSavedTableViewsStore(
     (state) => state.setTablePresentation,
   );
-  const message = error instanceof Error ? error.message : null;
 
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [allMatchingSelected, setAllMatchingSelected] = useState(false);
   const [localTableFilters, setLocalTableFilters] =
-    useState<DataGridFilterState>({});
+    useState<DataGridFilterState>(
+      () =>
+        (savedTableViews.find(
+          (view) =>
+            view.tableId === JOBS_TABLE_ID && view.id === activeSavedViewId,
+        )?.gridFilters ?? {}) as DataGridFilterState,
+    );
   const [visiblePageKeys, setVisiblePageKeys] = useState<string[]>([]);
   const activeSavedView = useMemo(
     () =>
@@ -377,6 +380,17 @@ export function JobsView() {
       search.state,
     ],
   );
+  const selectedStages =
+    search.stage === "all"
+      ? JOB_TABLE_STAGE_FILTERS.filter((stage) =>
+          localTableFilters.current_stage?.selectedValues.includes(stage),
+        )
+      : undefined;
+  const stages = selectedStages?.length ? selectedStages : undefined;
+  const { data, isFetching, error } = useJobsListQuery(
+    jobsListInput(search, stages),
+  );
+  const message = error instanceof Error ? error.message : null;
 
   useEffect(() => {
     setLocalTableFilters(
@@ -384,7 +398,14 @@ export function JobsView() {
     );
   }, [activeSavedView?.gridFilters]);
 
-  const hasLocalFilters = hasActiveDataGridFilters(localTableFilters);
+  const hasLocalFilters = hasActiveDataGridFilters(
+    Object.fromEntries(
+      Object.entries(localTableFilters).filter(
+        ([key, filter]) =>
+          key !== "current_stage" || Boolean(filter?.text.trim()),
+      ),
+    ),
+  );
   const savedViewSnapshot = useMemo<SavedTableViewSnapshot>(
     () => ({
       ...savedPresentation,
@@ -493,8 +514,10 @@ export function JobsView() {
   const handleTableFiltersChange = useCallback(
     (next: DataGridFilterState) => {
       setLocalTableFilters(localFiltersOnly(next));
-      const nextStage =
-        firstAllowedValue(next.current_stage, JOB_TABLE_STAGE_FILTERS) ?? "all";
+      const nextStages = JOB_TABLE_STAGE_FILTERS.filter((stage) =>
+        next.current_stage?.selectedValues.includes(stage),
+      );
+      const nextStage = nextStages.length === 1 ? nextStages[0]! : "all";
       const nextState =
         firstAllowedValue(next.current_state, USER_FACING_STAGE_STATES) ??
         "all";
@@ -513,6 +536,12 @@ export function JobsView() {
         : allJobStates();
       if (
         nextStage !== search.stage ||
+        !sameKeys(
+          nextStages,
+          search.stage === "all"
+            ? (localTableFilters.current_stage?.selectedValues ?? [])
+            : [search.stage],
+        ) ||
         nextState !== search.state ||
         nextApplyStatus !== search.applyStatus ||
         !sameJobStates(nextJobStates, effectiveJobStates(search))
@@ -532,6 +561,7 @@ export function JobsView() {
       search.jobStates,
       search.stage,
       search.state,
+      localTableFilters,
       setSearch,
     ],
   );
@@ -594,9 +624,7 @@ export function JobsView() {
     if (allMatchingSelected) return [];
     const selected = new Set(selectedKeys);
     return (data?.items ?? [])
-      .filter(
-        (job) => selected.has(job.jobKey) && isWorkflowEligibleJob(job),
-      )
+      .filter((job) => selected.has(job.jobKey) && isWorkflowEligibleJob(job))
       .map((job) => job.jobKey);
   }, [allMatchingSelected, data?.items, selectedKeys]);
   const hasActiveMatches =
@@ -675,8 +703,8 @@ export function JobsView() {
     );
     if (!eligibleMatchingStates.length) return [];
     const filters = search.jobStates
-      ? bulkJobFilters(search, { jobStates: eligibleMatchingStates })
-      : bulkJobFilters(search);
+      ? bulkJobFilters(search, { jobStates: eligibleMatchingStates }, stages)
+      : bulkJobFilters(search, {}, stages);
     return filters.map((filter) => ({
       allMatching: true,
       filter,
@@ -700,11 +728,15 @@ export function JobsView() {
   };
 
   const pendingPreparationPayloads = (): BulkRunPendingPreparationRequest[] =>
-    bulkJobFilters(search, {
-      deleted: "active",
-      ...(search.jobStates ? { jobStates: ["active"] as const } : {}),
-      state: "pending",
-    }).map((filter) => ({
+    bulkJobFilters(
+      search,
+      {
+        deleted: "active",
+        ...(search.jobStates ? { jobStates: ["active"] as const } : {}),
+        state: "pending",
+      },
+      stages,
+    ).map((filter) => ({
       allMatching: true,
       filter,
       jobKeys: [],
@@ -791,8 +823,7 @@ export function JobsView() {
   const restoreSelected = () =>
     mutateSelected(restoreJobs, "Restore", ["deleted"]);
 
-  const unhideSelected = () =>
-    mutateSelected(unhideJobs, "Unhide", ["hidden"]);
+  const unhideSelected = () => mutateSelected(unhideJobs, "Unhide", ["hidden"]);
 
   const hideSelected = () => {
     mutateSelected(hideJobs, "Hide", ["active"]);
@@ -822,18 +853,20 @@ export function JobsView() {
     }
     mutateRetryPayloads(
       retryFailedJobs,
-      bulkJobFilters(search, {
-        deleted: "active",
-        ...(search.jobStates ? { jobStates: ["active"] as const } : {}),
-        state: "failed",
-      }).map(
-        (filter) => ({
-          allMatching: true,
-          filter,
-          jobKeys: [],
-          ...retryRunOptions(stageTriggerConfigs),
-        }),
-      ),
+      bulkJobFilters(
+        search,
+        {
+          deleted: "active",
+          ...(search.jobStates ? { jobStates: ["active"] as const } : {}),
+          state: "failed",
+        },
+        stages,
+      ).map((filter) => ({
+        allMatching: true,
+        filter,
+        jobKeys: [],
+        ...retryRunOptions(stageTriggerConfigs),
+      })),
     );
   };
 
@@ -891,9 +924,7 @@ export function JobsView() {
           selectedJobStates={selectedJobStates}
           allMatchingSelected={allMatchingSelected}
           hasActiveMatches={hasActiveMatches}
-          selectedJobKeys={
-            selectedWorkflowEligibleKeys
-          }
+          selectedJobKeys={selectedWorkflowEligibleKeys}
           staleCount={staleKeysOnPage.length}
           selectedStaleKeys={selectedStaleKeys}
           hasItems={visiblePageKeys.length > 0}
@@ -924,7 +955,7 @@ export function JobsView() {
           rowSelection={rowSelection}
           onRowSelectionChange={handleRowSelectionChange}
           allMatchingSelected={allMatchingSelected}
-          page={search.page}
+          page={data?.pagination.page ?? search.page}
           pageSize={search.pageSize}
           onPageChange={(page) => setSearch({ page })}
           onPageSizeChange={(pageSize) => setSearch({ pageSize, page: 1 })}

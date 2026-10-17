@@ -380,6 +380,31 @@ describe("DemoApiClientAdapter", () => {
     expect((await repository.snapshot()).state.receipts).toHaveLength(before + 1);
   });
 
+  it("bounds combined deep pages, honors stage precedence and returns global metadata", async () => {
+    const { adapter, repository } = await createAdapter();
+    const base = repository.snapshotNow().state.readModel.jobs.list.items[0]!;
+    const rows = Array.from({ length: 5001 }, (_, index): JobSummary => ({
+      ...base, jobKey: `synthetic-${String(index).padStart(5, "0")}`,
+      title: "Synthetic page tie", currentStage: index % 2 ? "apply" : "discover",
+      discoveredAt: "2026-01-01T00:00:00Z", deletedAt: null, hiddenAt: null,
+      activeState: "active",
+    }));
+    await replaceJobs(repository, [...rows].reverse());
+    const page = await adapter.jobs({ stage: "score", stages: ["discover", "apply", "discover"], page: 100, pageSize: 50 });
+    expect(page.items.map((job) => job.jobKey)).toEqual(rows.slice(4950, 5000).map((job) => job.jobKey));
+    expect(page.pagination).toEqual({ page: 100, pageSize: 50, total: 5001, pages: 101 });
+    expect(page.filter).toMatchObject({ stages: ["discover", "apply"] });
+    for (const selection of [{}, { stage: "score" as const, stages: [] }, { stages: ["apply" as const] }]) {
+      const result = await adapter.jobs({ ...selection, page: 999, pageSize: 50 });
+      expect(result.pagination.total).toBe(selection.stages?.length ? 2500 : 5001);
+      expect(result.items.length).toBeLessThanOrEqual(50);
+      expect(result.pagination.page).toBe(result.pagination.pages);
+    }
+    const empty = await adapter.jobs({ stages: ["discover", "apply"], q: "no synthetic match", page: 100 });
+    expect(empty.items).toEqual([]);
+    expect(empty.pagination).toEqual({ page: 1, pageSize: 50, total: 0, pages: 1 });
+  }, 15_000);
+
   it("matches production job filters, sorting, pagination, and filter metadata", async () => {
     const { adapter } = await createAdapter();
     const filtered = await adapter.jobs({
@@ -592,29 +617,59 @@ describe("DemoApiClientAdapter", () => {
     await replaceJobs(repository, [high, low]);
 
     for (const sort of JOB_SORT_FIELDS) {
-      const result = await adapter.jobs({
-        sort,
-        dir: "asc",
-        deleted: "all",
-      });
-      expect(
-        result.items.map((job) => job.jobKey),
-        sort,
-      ).toEqual(["sort-low", "sort-high"]);
+      for (const dir of ["asc", "desc"] as const) {
+        const result = await adapter.jobs({
+          stages: ["apply", "tailor", "apply"],
+          sort,
+          dir,
+          deleted: "all",
+        });
+        expect(
+          result.items.map((job) => job.jobKey),
+          `${sort} ${dir}`,
+        ).toEqual(dir === "asc" ? ["sort-low", "sort-high"] : ["sort-high", "sort-low"]);
+        expect(result.pagination.total).toBe(2);
+        expect(result.sort).toEqual({ field: sort, dir });
+      }
     }
 
     const tiedHighKey = { ...structuredClone(low), jobKey: "z-key" };
     const tiedLowKey = { ...structuredClone(low), jobKey: "a-key" };
     await replaceJobs(repository, [tiedHighKey, tiedLowKey]);
-    expect(
-      (
-        await adapter.jobs({
-          sort: "title",
-          dir: "desc",
-          deleted: "all",
-        })
-      ).items.map((job) => job.jobKey),
-    ).toEqual(["a-key", "z-key"]);
+    for (const sort of JOB_SORT_FIELDS) {
+      for (const dir of ["asc", "desc"] as const) {
+        const result = await adapter.jobs({
+          stages: ["apply", "tailor"], sort, dir, deleted: "all",
+          pageSize: 1, page: 2,
+        });
+        expect(result.items.map((job) => job.jobKey), `tied ${sort} ${dir}`)
+          .toEqual(["z-key"]);
+        expect(result.pagination).toEqual({ page: 2, pageSize: 1, total: 2, pages: 2 });
+      }
+    }
+  });
+
+  it("keeps Unicode substring search and locale ordering on combined pages", async () => {
+    const { adapter, repository } = await createAdapter();
+    const base = repository.snapshotNow().state.readModel.jobs.list.items[0]!;
+    const rows: JobSummary[] = [
+      { ...base, jobKey: "unicode-z", title: "Zebra ÄBC engineer", currentStage: "discover" },
+      { ...base, jobKey: "unicode-a", title: "Äpple äbc engineer", currentStage: "apply" },
+      { ...base, jobKey: "unicode-other", title: "Ordinary engineer", currentStage: "score" },
+    ];
+    await replaceJobs(repository, rows);
+    for (const q of ["", "äbc"]) {
+      for (const dir of ["asc", "desc"] as const) {
+        const result = await adapter.jobs({
+          stages: ["discover", "apply"], q, sort: "title", dir,
+          deleted: "all", pageSize: 1, page: 1,
+        });
+        expect(result.items.map((job) => job.jobKey)).toEqual([
+          dir === "asc" ? "unicode-a" : "unicode-z",
+        ]);
+        expect(result.pagination.total).toBe(2);
+      }
+    }
   });
 
   it("matches production compensation state and confidence-band ordering", async () => {

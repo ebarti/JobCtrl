@@ -8,6 +8,32 @@ import {
 } from "./jobStageFilters.js";
 
 describe("jobsListInput", () => {
+  it("keeps combined stage membership aligned with all-matching bulk operations", () => {
+    const search = jobsSearchSchema.parse({ page: 100, pageSize: 50 });
+    const stages = ["discover", "apply", "discover"] as const;
+    expect(jobsListInput(search, stages)).toMatchObject({
+      stages: ["discover", "apply"],
+      page: 100,
+      pageSize: 50,
+    });
+    expect(bulkJobFilters(search, { state: "failed" }, stages)).toEqual([
+      expect.objectContaining({
+        stages: ["discover", "apply"],
+        state: "failed",
+      }),
+    ]);
+    expect(jobsListInput(search, [])).toHaveProperty("stages", []);
+    expect(bulkJobFilters(search, {}, ["apply"])[0]).toHaveProperty("stages", [
+      "apply",
+    ]);
+    const scalar = jobsSearchSchema.parse({ stage: "tailor" });
+    expect(jobsListInput(scalar, stages)).toHaveProperty("stage", "tailor");
+    expect(jobsListInput(scalar, stages)).not.toHaveProperty("stages");
+    expect(bulkJobFilters(scalar, {}, stages)[0]).toHaveProperty(
+      "stage",
+      "tailor",
+    );
+  });
   it("preserves digest timestamp filters from URL search state", () => {
     const search = jobsSearchSchema.parse({
       discoveredSince: "2026-07-01T00:00:00.000Z",

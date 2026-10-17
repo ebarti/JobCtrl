@@ -52,17 +52,6 @@ import type { DemoWorkspaceRepository } from "./workspace/DemoWorkspaceRepositor
 
 type CacheKey = number | string | undefined;
 
-const IN_MEMORY_JOB_SORT_FIELDS = new Set([
-  "source",
-  "compensation_min_eur",
-  "compensation_max_eur",
-  "compensation_posted",
-  "compensation_market",
-  "compensation_confidence",
-  "compensation_warnings",
-  "apply_status",
-]);
-
 export class DemoResourceNotFoundError extends JobCtrlApiError {
   readonly code: string;
   readonly resourceId: string;
@@ -293,10 +282,7 @@ export class DemoApiClientAdapter implements ApiClientPort {
     const q = normalized.q.toLowerCase();
     const items = source.filter((job) => filterDemoJob(job, normalized, q));
     items.sort((left, right) =>
-      compareJobs(left, right, normalized.sort, normalized.dir, {
-        normalizeSqlText:
-          !normalized.q && !IN_MEMORY_JOB_SORT_FIELDS.has(normalized.sort),
-      }),
+      compareJobs(left, right, normalized.sort, normalized.dir),
     );
     return paginate(
       items,

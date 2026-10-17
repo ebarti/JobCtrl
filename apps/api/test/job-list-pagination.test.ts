@@ -144,7 +144,7 @@ function ordered(rows: FixtureRow[], field: JobSortField, dir: "asc" | "desc"): 
 
 describe("combined-stage list pagination", () => {
   it.each(["asc", "desc"] as const)(
-    "keeps mixed-notation discovery %s pages identical with search and the browser merger",
+    "keeps mixed-notation discovery %s pages identical with search and the browser adapter",
     async (dir) => {
       const { db, rows } = seed(8);
       const timestamps = [
@@ -265,7 +265,7 @@ describe("combined-stage list pagination", () => {
   });
 
   it.each(["title", "company", "location"] as const)(
-    "keeps mixed-case and Unicode %s pages identical with search and the browser merger",
+    "keeps mixed-case and Unicode %s pages identical with search and the browser adapter",
     async (sort) => {
       const { db, rows } = seed(6);
       const labels = ["Needle A", "Needle a", "Needle Z", "Needle é", "Needle E", "Needle É"];
@@ -431,7 +431,7 @@ describe("combined-stage list pagination", () => {
     }, 30_000,
   );
 
-  it("keeps the existing browser adapter compatible across multiple stage-local pages", async () => {
+  it("requests one bounded server page through the browser adapter across large combined stages", async () => {
     // Load this runtime fixture through its URL so the API compiler keeps its
     // rootDir boundary; the adapter's public input/output use shared contracts.
     const adapterUrl = new URL("../../web/src/contexts/operations/jobsListQuery.ts", import.meta.url).href;
@@ -439,6 +439,13 @@ describe("combined-stage list pagination", () => {
       fetchJobsList(api: Pick<JobCtrlApiClient, "jobs">, input: Partial<JobListQuery>): Promise<PaginatedResponse<JobSummary>>;
     };
     const { db, rows } = seed(640);
+    // Keep the dataset large enough to catch the old reconstruction algorithm:
+    // each selected stage has more than one maximum-sized server page.
+    const activeQuery = JobListQuerySchema.parse({});
+    for (const stage of ["discover", "apply"] as const) {
+      expect(rows.filter((row) => row.stage === stage && eligible(row, activeQuery)).length)
+        .toBeGreaterThan(200);
+    }
     const api = {
       jobs: vi.fn(async (input: Partial<JobListQuery>) => listJobs(db, JobListQuerySchema.parse(input))),
     };
@@ -452,18 +459,21 @@ describe("combined-stage list pagination", () => {
           const safePage = Math.min(requestedPage, pages);
           const ids = expected.slice((safePage - 1) * query.pageSize, safePage * query.pageSize).map((row) => row.id);
           const combined = listJobs(db, query);
+          api.jobs.mockClear();
           const browser = await fetchJobsList(api, input);
+          expect(api.jobs).toHaveBeenCalledExactlyOnceWith({
+            ...input,
+            stages: ["discover", "apply"],
+          });
+          expect(browser).toBe(await api.jobs.mock.results[0]!.value);
+          expect(browser).toEqual(combined);
+          expect(browser.items.length).toBeLessThanOrEqual(query.pageSize);
           for (const result of [combined, browser]) {
             expect(result.pagination).toEqual({ page: safePage, pageSize: query.pageSize, total: expected.length, pages });
             expect(result.items.map((job) => job.jobKey)).toEqual(ids);
           }
         }
       }
-    }
-    // Both public stages exceed the adapter's 200-row fetch limit. A deep
-    // page must actually exercise its later stage-local fetches.
-    for (const stage of ["discover", "apply"] as const) {
-      expect(api.jobs.mock.calls.some(([input]) => input.stage === stage && input.page === 2)).toBe(true);
     }
   }, 30_000);
 
