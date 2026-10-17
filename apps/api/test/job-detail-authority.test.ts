@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { initializeExactDatabase } from "./exact-schema.js";
 import { buildApp } from "../src/server.js";
+import { EMPLOYER_ANALYSIS_PROMPT_VERSION } from "../src/contracts.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import {
   ensureJobDetailProjection, jobDetailWatermarkName, REFRESH_EVENT_BATCH_LIMIT,
@@ -155,6 +156,69 @@ describe("TypeScript job-detail family authority", () => {
     expect(() => repairJobDetailProjections(db)).toThrow("failed repair");
     expect(canonical()).toEqual(before);
     expect(fs.readFileSync(artifactPath, "utf8")).toBe("Owned synthetic accepted material");
+  });
+
+  it.each(["backlogged", "missing"])("serves current Apply Review evidence when detail is %s", async (state) => {
+    const { db, dbPath, dir, configPath } = fixture();
+    job(db); job(db, PEER);
+    db.prepare(`INSERT INTO job_stage_states (tenant_id,job_id,stage,state,updated_at)
+      VALUES ('local',?,'apply','pending','2026-10-17T10:00:00Z')`).run(JOB);
+    db.prepare(`INSERT INTO job_employer_analysis
+      (tenant_id,job_id,generation,snapshot_hash,prompt_version,sdk_set_version,cache_key,
+       requirements_json,legs_attempted,legs_succeeded,created_at)
+      VALUES ('local',?,1,'fixture',?,'fixture','fixture',?,1,1,'2026-10-17')`)
+      .run(JOB, EMPLOYER_ANALYSIS_PROMPT_VERSION, JSON.stringify([
+        { id: "r1", text: "Own platform reliability", tier: "must_have", weight: 0.9,
+          evidence_span: "Own platform reliability" },
+      ]));
+    const score = (version: number) => {
+      db.prepare(`INSERT INTO job_scores
+        (tenant_id,job_id,version,fit_score,breakdown_json,keywords_json,scored_at)
+        VALUES ('local',?,?,?,'{}','[]','2026-10-17')`).run(JOB, version, version === 1 ? 9 : 3);
+      db.prepare(`INSERT INTO job_requirement_fit_reports
+        (tenant_id,job_id,score_version,employer_analysis_generation,profile_snapshot_version,
+         scoring_policy_version,formula_version,resolved_fit_score,fit_band,confidence,summary_json,created_at)
+        VALUES ('local',?,?,1,1,1,'requirement-fit-v1',?,'strong','high',?,'2026-10-17')`)
+        .run(JOB, version, version === 1 ? 9 : 3, JSON.stringify({
+          weighted_fit: 0.5, must_have_coverage: 0.5, blocker_count: 0, missing_high_weight_count: 0,
+        }));
+      db.prepare(`INSERT INTO job_requirement_fit_items
+        (tenant_id,job_id,score_version,requirement_id,requirement_text,tier,weight,
+         job_evidence_span,fit_json,contribution_json,tailoring_json,position)
+        VALUES ('local',?,?,'r1','Own platform reliability','must_have',0.9,
+          'Own platform reliability',?,?,?,0)`)
+        .run(JOB, version, JSON.stringify(version === 1
+          ? { kind: "matched", evidence_ids: ["ev-1"], strength: "direct" }
+          : { kind: "missing", evidence_ids: [], reason: "no_evidence" }),
+        JSON.stringify({ max_points: 1, awarded_points: version === 1 ? 1 : 0,
+          weighted_impact: version === 1 ? 1 : 0, rationale: "Synthetic score" }),
+        JSON.stringify({ action: "double_down", priority: 0.9, allowed_evidence_ids: ["ev-1"],
+          target_keywords: [], prohibited_claims: [], instruction: "Synthetic" }));
+    };
+    score(1);
+    const app = buildApp({ dbPath, configPath, appDir: dir });
+    try {
+      const baseline = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+      expect(baseline.statusCode, baseline.body).toBe(200);
+      expect(baseline.json().items[0].position.idealRequirements[0].fit.kind).toBe("matched");
+      score(2);
+      // Python can publish the shared list before the independent detail owner.
+      db.prepare("UPDATE job_list_projections SET score_version=2,fit_score=3 WHERE job_id=?").run(JOB);
+      if (state === "missing") {
+        db.prepare("DELETE FROM job_detail_projections WHERE job_id=?").run(JOB);
+      } else {
+        db.transaction(() => {
+          for (let i = 0; i < 5 * REFRESH_EVENT_BATCH_LIMIT; i++) event(db, PEER);
+          event(db);
+        })();
+        expect(detail(db)).toMatchObject({ score_version: 1 });
+      }
+      const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+      expect(response.statusCode, response.body).toBe(200);
+      const item = response.json().items.find((row: { jobKey: string }) => row.jobKey === JOB);
+      expect(item).toMatchObject({ scoreVersion: 2, fitScore: 3 });
+      expect(item.position.idealRequirements[0].fit.kind).toBe("missing");
+    } finally { await app.close(); }
   });
 
   it("repairs an eventless canonical update on API restart and serves real Job Detail", async () => {

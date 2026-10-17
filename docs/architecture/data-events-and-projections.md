@@ -194,7 +194,8 @@ passes without requiring another request. Other, uncut families still retain
 their existing broad reconciliation paths; this is not a claim that every API
 GET is free of SQLite writes.
 
-API Job Detail also checks its requested JobId. A pending event beyond the
+API Job Detail checks its requested JobId; Apply Review checks each returned
+job before reading requirement evidence. A pending event beyond the
 current batch, a missing/obsolete detail row or newer canonical stage state
 causes a single-job refresh without advancing the family cursor. This preserves
 read-after-write even behind an unrelated backlog. Python CLI/workflow commands
