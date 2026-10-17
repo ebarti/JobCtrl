@@ -79,7 +79,7 @@ export async function collectNotaryDiagnostics({ env = process.env, fetchImpl = 
         requestId: redact(response.headers.get("x-apple-request-uuid") ?? response.headers.get("x-apple-jingle-correlation-key") ?? response.headers.get("x-request-id")),
       };
       if (response.ok) {
-        await response.body?.cancel();
+        if (response.body) await response.body.cancel().catch(() => {});
         return probe;
       }
       let body;

@@ -87,6 +87,17 @@ test("oversized or non-JSON Apple failures are not echoed", async () => {
   assert.equal(JSON.stringify(report).includes("untrusted-error"), false);
 });
 
+test("successful authorization remains recorded when discarding the private response body fails", async () => {
+  const { env } = credentials();
+  const report = await collectNotaryDiagnostics({ env, fetchImpl: async () => ({
+    status: 200,
+    ok: true,
+    headers: new Headers(),
+    body: { cancel: async () => { throw new Error("discard failed"); } },
+  }) });
+  assert.deepEqual(report.probes.map((probe) => probe.httpStatus), [200, 200]);
+});
+
 test("the protected signing job preserves the validator's failure after diagnostics", async () => {
   const workflow = await readFile(new URL("../.github/workflows/release-distribution.yml", import.meta.url), "utf8");
   const block = workflow.match(/if xcrun notarytool store-credentials[^\n]+--validate; then[\s\S]*?\n\s+fi/)?.[0];
