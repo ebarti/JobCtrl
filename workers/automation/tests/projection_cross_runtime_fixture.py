@@ -158,8 +158,8 @@ def run_scenario(*, typescript_first: bool, legacy_cursor: bool) -> None:
 def run_detail_parity() -> None:
     """The existing parity corpus crosses the actual surviving writer boundary."""
     import json
-    from tests.test_audit_projection_parity import (
-        FIXTURE_PATH, _seed_rows, _job_id, _normalize_row, _with_exact_v7_projection_contract,
+    from test_audit_projection_parity import (
+        FIXTURE_PATH, _seed_job, _seed_rows, _job_id, _normalize_row, _with_exact_v7_projection_contract,
     )
 
     fixture = json.loads(FIXTURE_PATH.read_text())
@@ -167,6 +167,7 @@ def run_detail_parity() -> None:
         db_path = Path(directory) / "jobctrl.db"
         conn = init_db(db_path)
         try:
+            _seed_job(conn, fixture)
             _seed_rows(conn, fixture)
             ProjectionBuilder(conn_factory=lambda: conn).refresh()
             assert conn.execute("SELECT COUNT(*) FROM job_detail_projections").fetchone()[0] == 0

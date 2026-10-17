@@ -164,10 +164,11 @@ change does not claim exclusive ownership of the remaining shared families.
 | Family | Current materializers | Designated owner |
 | --- | --- | --- |
 | `job_detail_projections` | TypeScript only | TypeScript (cut over) |
-| `job_list_projections`, `artifact_list_projections`, `dashboard_projections`, `evidence_usage_projections` | Python and TypeScript | Python, each behind its own future consumer/freshness proof |
+| `job_list_projections`, `evidence_usage_projections` | Python and TypeScript | Python (CLI digest and interview consumers), pending separate cutovers |
+| `artifact_list_projections`, `dashboard_projections` | Python and TypeScript | TypeScript (API consumers), pending separate cutovers |
 | `apply_run_projections`, `workflow_run_projections` | Python only | Python (preserved) |
 | `pipeline_step_projections`, `source_quality_stats` | Python and TypeScript | Python, pending a separate cutover |
-| `contact_projections`, `contact_research_task_projections`, `outreach_thread_projections`, `due_follow_up_projections` | Python and TypeScript | Python, pending a separate cutover |
+| `contact_projections`, `contact_research_task_projections`, `outreach_thread_projections`, `due_follow_up_projections` | Python and TypeScript | TypeScript (API consumers), pending separate cutovers |
 
 Python refreshes its families at bootstrap, through its event subscription and
 explicit workflow/activity finalization. TypeScript refreshes its families

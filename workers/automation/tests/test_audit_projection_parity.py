@@ -116,6 +116,12 @@ def fixture() -> dict[str, Any]:
 def conn(fixture: dict[str, Any], tmp_path: Path) -> Iterator[sqlite3.Connection]:
     db_path = tmp_path / "jobs.db"
     connection = init_db(db_path)
+    _seed_job(connection, fixture)
+    yield connection
+    close_connection(db_path)
+
+
+def _seed_job(connection: sqlite3.Connection, fixture: dict[str, Any]) -> None:
     job = fixture["job"]
     job_id = _job_id(job["url"])
     connection.execute(
@@ -154,8 +160,6 @@ def conn(fixture: dict[str, Any], tmp_path: Path) -> Iterator[sqlite3.Connection
         ),
     )
     connection.commit()
-    yield connection
-    close_connection(db_path)
 
 
 def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
