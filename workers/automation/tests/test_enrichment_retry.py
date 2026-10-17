@@ -4,6 +4,8 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
 import sqlite3
+import subprocess
+import sys
 import threading
 import time
 
@@ -138,8 +140,31 @@ def test_stale_bulk_selection_rolls_back_other_targets(conn):
     assert not conn.in_transaction
 
 
-def test_writer_contention_failure_then_reads_latest_committed_content(conn):
-    path = conn.execute('PRAGMA database_list').fetchone()[2]
+@pytest.mark.parametrize('override', [
+    {'unexpected': True}, {'resetAttempts': 'yes'}, {'onlyFailed': 1},
+    {'targets': []}, {'targets': [{'jobId': JOB, 'stage': 'apply'}]},
+    {'targets': [{'jobId': 'https://example.test/retry', 'stage': 'enrich'}]},
+    {'targets': [{'jobId': JOB, 'stage': 'enrich', 'extra': True}]},
+    {'tenantId': 'other'}, {'expectedDbPath': '/wrong/database'},
+])
+def test_registered_rpc_refuses_invalid_or_foreign_targets_without_writes(conn, monkeypatch, override):
+    from jobctrl import config
+    from jobctrl.domain.rpc.messages import JsonRpcRequest
+
+    monkeypatch.setattr(enrichment_retry, 'get_connection', lambda: conn)
+    before = snapshot(conn)
+    response = build_server().dispatch(JsonRpcRequest(method='reset_enrichment', id=1, params={
+        'tenantId': 'local', 'expectedAppDir': str(config.APP_DIR), 'expectedDbPath': str(config.DB_PATH),
+        'targets': [{'jobId': JOB, 'stage': 'enrich'}], **override,
+    }))
+    assert response.error is not None
+    assert snapshot(conn) == before
+    assert not conn.in_transaction
+
+
+def _writer_probe(path):
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
     peer = sqlite3.connect(path)
     conn.execute('PRAGMA busy_timeout=40')
     try:
@@ -155,10 +180,10 @@ def test_writer_contention_failure_then_reads_latest_committed_content(conn):
         assert rows(conn, 'job_enrichments')[0]['full_description'] == 'New accepted content'
     finally:
         peer.close()
+        conn.close()
 
 
-def test_concurrent_bulk_retries_have_one_winner(conn):
-    path = conn.execute('PRAGMA database_list').fetchone()[2]
+def _concurrent_probe(path):
     barrier = threading.Barrier(2)
 
     def retry():
@@ -174,7 +199,48 @@ def test_concurrent_bulk_retries_have_one_winner(conn):
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: retry(), range(2)))
     assert sorted(results) == ['reset', 'stale']
+
+
+@pytest.mark.parametrize('probe', ['_writer_probe', '_concurrent_probe'])
+def test_bounded_concurrent_writers_and_recovery(conn, probe):
+    path = conn.execute('PRAGMA database_list').fetchone()[2]
+    result = subprocess.run(
+        [sys.executable, '-c',
+         f'from tests.test_enrichment_retry import {probe}; import sys; {probe}(sys.argv[1])', path],
+        capture_output=True, text=True, timeout=8, cwd=Path(__file__).resolve().parents[1],
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
     assert len(rows(conn, 'job_events')) == 1
+
+
+def test_events_publish_only_after_commit_and_failed_refresh_keeps_accepted_artifacts(conn, monkeypatch):
+    from jobctrl.domain.enrichment import EnrichmentError, ExtractionTier
+    from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
+    from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
+
+    bus = InProcessEventBus()
+    observations = []
+    def observe(event):
+        path = conn.execute('PRAGMA database_list').fetchone()[2]
+        with sqlite3.connect(path) as peer:
+            observations.append((event.event_type, peer.execute('SELECT COUNT(*) FROM job_events').fetchone()[0]))
+    bus.subscribe('StageReset', observe)
+    monkeypatch.setattr('jobctrl.pipeline.retry.get_default_publisher', lambda: bus)
+    before = snapshot(conn)
+    reset_retry_stages(conn, [(JOB, 'enrich')])
+    assert observations == [('StageReset', 1)]
+    repo = SqliteEnrichmentRepository(conn)
+    aggregate = repo.load(LOCAL_TENANT, canonical_job_id(JOB))
+    failed = aggregate.start_attempt(extraction_tier=ExtractionTier.JSON_LD, started_at='2026-01-02T00:00:00Z').fail_attempt(
+        error=EnrichmentError(code='SYNTHETIC_FAILURE', message='Synthetic unavailable posting', retryable=True),
+        finished_at='2026-01-02T00:01:00Z',
+    )
+    repo.save(failed)
+    after = snapshot(conn)
+    assert after['job_enrichments'][0]['full_description'] == before['job_enrichments'][0]['full_description']
+    assert after['job_enrichments'][0]['application_url'] == before['job_enrichments'][0]['application_url']
+    for table in ('job_materials', 'job_materials_artifacts', 'job_scores', 'application_review_decisions'):
+        assert after[table] == before[table]
 
 
 def test_reset_fences_old_worker_then_new_worker_claims(conn):

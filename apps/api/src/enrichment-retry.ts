@@ -13,12 +13,14 @@ import {
   InputError,
   resetJobStage,
   resolveJobId,
+  resolveJobUrl,
   retryFailedJobs,
   retryFailedJobTargets,
   type RetryFailedJobsResult,
 } from "./write-model.js";
 
 async function resetEnrichment(
+  db: SqliteDatabase,
   rpc: JsonRpcDispatcher,
   context: ActionDispatchContext,
   targets: { jobId: string; stage: Stage }[],
@@ -33,7 +35,8 @@ async function resetEnrichment(
   if (response.error) throw new Error(response.error.message);
   const result = ResetEnrichmentResultSchema.parse(response.result);
   if (result.resets.length !== targets.length || result.resets.some((reset, index) =>
-    reset.jobId !== targets[index]?.jobId || reset.stage !== targets[index]?.stage)) {
+    reset.jobId !== targets[index]?.jobId || reset.stage !== targets[index]?.stage
+      || reset.jobUrl !== resolveJobUrl(db, reset.jobId))) {
     throw new Error("Enrichment reset returned a different target cohort.");
   }
   return result.resets;
@@ -46,7 +49,7 @@ export async function resetJobStageWithEnrichmentOwner(
   if (stage !== "enrich") return resetJobStage(db, locator, stage, options);
   const jobId = resolveJobId(db, "local", locator);
   if (!jobId) throw new InputError("Job not found.");
-  const [reset] = await resetEnrichment(rpc, context, [{ jobId, stage }], options.resetAttempts, false);
+  const [reset] = await resetEnrichment(db, rpc, context, [{ jobId, stage }], options.resetAttempts, false);
   return { jobUrl: reset!.jobUrl, stage: getStageStateById(db, "local", jobId, stage) };
 }
 
@@ -58,11 +61,13 @@ export async function retryFailedJobsWithEnrichmentOwner(
   if (!targets.some((target) => target.stage === "enrich")) return retryFailedJobs(db, request);
   // One RPC owns the whole cohort: splitting Enrich from the other stages
   // would turn the existing atomic bulk mutation into partial commits.
-  const resets = await resetEnrichment(rpc, context, targets.map((target) => {
+  const canonicalTargets = new Map<string, { jobId: string; stage: Stage }>();
+  for (const target of targets) {
     const jobId = resolveJobId(db, "local", target.jobUrl);
     if (!jobId) throw new InputError("Job not found.");
-    return { jobId, stage: target.stage };
-  }), false, true);
+    canonicalTargets.set(`${jobId}:${target.stage}`, { jobId, stage: target.stage });
+  }
+  const resets = await resetEnrichment(db, rpc, context, [...canonicalTargets.values()], false, true);
   const stageCounts: Partial<Record<Stage, number>> = {};
   for (const reset of resets) stageCounts[reset.stage] = (stageCounts[reset.stage] ?? 0) + 1;
   return {

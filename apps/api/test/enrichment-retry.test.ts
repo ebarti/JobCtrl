@@ -102,7 +102,7 @@ describe("canonical enrichment retry through HTTP, Python RPC and CLI", () => {
   it("resets a mixed failed cohort atomically before dispatching its existing continuation", async () => {
     const f = fixture();
     const response = await f.app.inject({ method: "POST", url: "/v1/jobs/bulk-retry-failed",
-      payload: { allMatching: false, jobKeys: [JOB, PEER], runAfter: true } });
+      payload: { allMatching: false, jobKeys: [JOB, "https://example.test/retry", PEER], runAfter: true } });
     expect(response.statusCode, response.body).toBe(202);
     expect(response.json()).toMatchObject({ count: 2, stageCounts: { enrich: 1, score: 1 }, status: "queued" });
     expect(f.db.prepare("SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'StageReset'").get()).toEqual({ count: 2 });
@@ -127,5 +127,25 @@ describe("canonical enrichment retry through HTTP, Python RPC and CLI", () => {
     expect(failed.statusCode).toBe(500);
     expect(normalized(f.db)).toEqual(before);
     expect(f.actionDispatcher).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { resets: [] },
+    { resets: [{ jobId: JOB, jobUrl: "https://example.test/peer", stage: "enrich" }] },
+    { resets: [{ jobId: PEER, jobUrl: "https://example.test/peer", stage: "enrich" }] },
+    { resets: [{ jobId: JOB, jobUrl: "https://example.test/retry", stage: "enrich", extra: true }] },
+  ])("rejects an invalid RPC acknowledgement before run-after dispatch: %j", async (result) => {
+    const f = fixture();
+    const before = normalized(f.db);
+    const app = buildApp({ dbPath: f.dbPath, appDir: f.directory, configPath: path.join(f.directory, "config.json"),
+      providerDispatcher: { call: async () => ({ jsonrpc: "2.0", id: 1, result }), close: async () => {} },
+      actionDispatcher: f.actionDispatcher, requireHealthyWorkerForActions: false });
+    try {
+      const response = await app.inject({ method: "POST", url: `/v1/jobs/${JOB}/actions/retry-stage`,
+        payload: { stage: "enrich", runAfter: true } });
+      expect(response.statusCode).toBe(500);
+      expect(f.actionDispatcher).not.toHaveBeenCalled();
+      expect(normalized(f.db)).toEqual(before);
+    } finally { await app.close(); }
   });
 });
