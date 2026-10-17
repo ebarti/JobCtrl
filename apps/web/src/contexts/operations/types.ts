@@ -268,3 +268,5 @@ export type CheckAvailabilityResponse =
 export { SEMANTIC_TAXONOMY } from "@jobctrl/contracts";
 
 export type { DeterminationEnvelope } from "@jobctrl/contracts";
+
+export type { CompanyBriefingView, CompanyBriefingSummary } from "@jobctrl/contracts";

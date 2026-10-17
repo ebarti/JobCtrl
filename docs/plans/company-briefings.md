@@ -23,7 +23,7 @@ scheduler, search engine, automatic job matching or application action.
   use distinct canonical URL paths.
 - At most three explicitly selected public pages supply the briefing. One
   explicit refresh opts into anonymous public fetching, bounded requests,
-  response bytes, text, redirects, timeouts and existing robots/pacing policy.
+  response bytes, text, redirects, timeouts and existing pacing/request-budget policy.
   No search queries, profile, mail, resume or authenticated browser data are
   inputs. Source URLs reject credentials, queries and fragments.
 - A source-bound model determination separates company facts, reported events

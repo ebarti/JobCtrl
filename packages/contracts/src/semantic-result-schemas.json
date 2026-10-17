@@ -1330,6 +1330,146 @@
     },
     "schemaVersion": "2"
   },
+  "company_briefing": {
+    "promptVersion": "company-briefing-v1",
+    "schema": {
+      "$defs": {
+        "BriefingClaim": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 3,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "event_date": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Date"
+            },
+            "kind": {
+              "enum": [
+                "company_fact",
+                "reported_event",
+                "hypothesis"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "text": {
+              "maxLength": 1500,
+              "minLength": 1,
+              "title": "Text",
+              "type": "string"
+            },
+            "uncertainty": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Uncertainty",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text",
+            "uncertainty",
+            "event_date",
+            "citations"
+          ],
+          "title": "BriefingClaim",
+          "type": "object"
+        },
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "claims": {
+          "items": {
+            "$ref": "#/$defs/BriefingClaim"
+          },
+          "maxItems": 12,
+          "title": "Claims",
+          "type": "array"
+        },
+        "identity": {
+          "enum": [
+            "confirmed",
+            "needs_review"
+          ],
+          "title": "Identity",
+          "type": "string"
+        },
+        "identity_citations": {
+          "items": {
+            "$ref": "#/$defs/Citation"
+          },
+          "maxItems": 3,
+          "minItems": 1,
+          "title": "Identity Citations",
+          "type": "array"
+        },
+        "identity_reason": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Identity Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "identity",
+        "identity_reason",
+        "identity_citations",
+        "claims"
+      ],
+      "title": "CompanyBriefingDetermination",
+      "type": "object"
+    },
+    "schemaVersion": "1"
+  },
   "description_quality": {
     "promptVersion": "description-quality-v1",
     "schema": {

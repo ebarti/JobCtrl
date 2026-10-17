@@ -282,3 +282,7 @@ invalidation; the latter invalidates detail/lists only for job-scoped command
 feedback and ignores workspace/host reservation churn. Internal lease,
 request and sweep facts do not become user application outcomes. Source closure
 never calls Discovery's policy-deletion routine and cannot emit `JobDeleted`.
+
+## Company briefing reads
+
+The optional briefing ledger is read directly by Operations through exact tenant/company/job identities and its persisted determination ID. It adds no projection family. Accepted snapshots and failed attempts remain separate immutable records. Source bodies stay out of SSE; reference-only `JobUpdated` notifications invalidate each linked Job Detail and the existing digest. The [storage owner](storage.md#company-briefing-ledger) defines physical retention.
