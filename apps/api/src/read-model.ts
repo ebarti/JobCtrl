@@ -1106,16 +1106,24 @@ export function listEvidenceMap(db: SqliteDatabase): EvidenceMapResponse {
 
 export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | null {
   refreshProjections(db, DEFAULT_TENANT);
-  const listRow = findJobListRow(db, jobKey);
-  if (!listRow) return null;
-  const jobId = canonicalJobId(listRow.job_id);
-  if (!jobId) return null;
-  ensureJobDetailProjection(db, DEFAULT_TENANT, jobId);
-  const detailRow = getRow<JobDetailProjectionRow>(
-    db,
-    "SELECT * FROM job_detail_projections WHERE tenant_id = ? AND job_id = ?",
-    [DEFAULT_TENANT, jobId],
-  );
+  const snapshot = db.transaction(() => {
+    let listRow = findJobListRow(db, jobKey);
+    if (!listRow) return null;
+    const jobId = canonicalJobId(listRow.job_id);
+    if (!jobId) return null;
+    if (ensureJobDetailProjection(db, DEFAULT_TENANT, jobId)) {
+      listRow = findJobListRow(db, jobId);
+      if (!listRow) return null;
+    }
+    const detailRow = getRow<JobDetailProjectionRow>(
+      db,
+      "SELECT * FROM job_detail_projections WHERE tenant_id = ? AND job_id = ?",
+      [DEFAULT_TENANT, jobId],
+    );
+    return { listRow, detailRow, jobId };
+  }).immediate();
+  if (!snapshot) return null;
+  const { listRow, detailRow, jobId } = snapshot;
   const stages = reconcileStageRetryability(db, jobId, parseStages(detailRow?.stages_json));
   const artifacts = artifactsForJob(db, jobId);
   const auditHistory = buildJobAuditHistory(db, jobId);

@@ -117,6 +117,7 @@ interface ReviewQueueRow extends Record<string, unknown> {
   employer_analysis_generation: number | null;
   employer_ideal_candidate_narrative: string | null;
   employer_requirements_json: string | null;
+  requirement_fit_report_json: string | null;
 }
 
 interface OutcomeRow extends Record<string, unknown> {
@@ -184,7 +185,7 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
          latest_employer_analysis.generation AS employer_analysis_generation,
          latest_employer_analysis.ideal_candidate_narrative AS employer_ideal_candidate_narrative,
          latest_employer_analysis.requirements_json AS employer_requirements_json`;
-  const rows = allRows<ReviewQueueRow>(
+  const loadRows = () => allRows<ReviewQueueRow>(
     db,
     `
     WITH latest_decision AS (
@@ -251,10 +252,12 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
            latest_decision.email_attachment_artifact_id,
            latest_apply_run.run_id, latest_apply_run.status AS apply_run_status,
            latest_apply_run.result, latest_apply_run.dry_run,
-           latest_apply_run.started_at, latest_apply_run.finished_at
+           latest_apply_run.started_at, latest_apply_run.finished_at,
+           jdp.requirement_fit_report_json
            ${employerAnalysisSelect}
     FROM job_list_projections jlp
     INNER JOIN jobs ON jobs.tenant_id = jlp.tenant_id AND jobs.job_id = jlp.job_id
+    LEFT JOIN job_detail_projections jdp ON jdp.tenant_id = jlp.tenant_id AND jdp.job_id = jlp.job_id
     LEFT JOIN latest_decision
       ON latest_decision.tenant_id = jlp.tenant_id
      AND latest_decision.job_id = jlp.job_id
@@ -296,6 +299,17 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
       ...CLOSED_ACTIVE_STATES,
     ],
   );
+
+  // Keep selected list metadata and detail evidence in one SQLite snapshot,
+  // including when both consumers are behind a missed Python notification.
+  const rows = db.transaction(() => {
+    const selected = loadRows();
+    let repaired = false;
+    for (const row of selected) {
+      if (ensureJobDetailProjection(db, DEFAULT_TENANT, row.job_id)) repaired = true;
+    }
+    return repaired ? loadRows() : selected;
+  }).immediate();
 
   const profileSourceFields = profileSourceFieldsForApplyReview(db);
   const missingProfileData = missingApplicationAttestationFields(db);
@@ -774,14 +788,8 @@ function reviewQueueItemFromRow(
     IDEAL_CANDIDATE_TEXT_LIMIT,
   );
   const sourceRequirements = requirementIdentities(row.employer_requirements_json);
-  // Python may publish the shared list while the independent detail cursor is
-  // behind. Refresh only this eligible job before exposing its review evidence.
-  ensureJobDetailProjection(db, DEFAULT_TENANT, jobId);
-  const detail = getRow<{ requirement_fit_report_json: string | null }>(db,
-    "SELECT requirement_fit_report_json FROM job_detail_projections WHERE tenant_id = ? AND job_id = ?",
-    [DEFAULT_TENANT, jobId]);
   const requirementFitReport = bindRequirementFitReport(
-    parseRequirementFitReport(detail?.requirement_fit_report_json ?? null), row.employer_analysis_generation, sourceRequirements,
+    parseRequirementFitReport(row.requirement_fit_report_json), row.employer_analysis_generation, sourceRequirements,
   );
   const rawIdealRequirements = parseIdealRequirementsJson(row.employer_requirements_json);
   const idealRequirements = requirementsWithTailoredResumeCoverage(

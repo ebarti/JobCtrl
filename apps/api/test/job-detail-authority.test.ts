@@ -9,7 +9,7 @@ import { EMPLOYER_ANALYSIS_PROMPT_VERSION } from "../src/contracts.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import {
   ensureJobDetailProjection, jobDetailWatermarkName, REFRESH_EVENT_BATCH_LIMIT,
-  refreshJobDetailProjections, repairJobDetailProjections,
+  refreshJobDetailProjections, refreshProjections, repairJobDetailProjections,
 } from "../src/projections.js";
 
 const JOB = "00000000-0000-4000-8000-000000000101";
@@ -85,7 +85,7 @@ describe("TypeScript job-detail family authority", () => {
   });
 
   it("does no detail writes or repair scans on a settled pass, even with another writer holding SQLite", () => {
-    const { db, dbPath } = fixture(); job(db); repairJobDetailProjections(db);
+    const { db, dbPath } = fixture(); job(db); refreshProjections(db);
     const before = detail(db);
     const observer = new Database(dbPath);
     try {
@@ -98,12 +98,16 @@ describe("TypeScript job-detail family authority", () => {
   });
 
   it("rolls back the complete publication and cursor on failure, then recovers a missed notification", () => {
-    const { db } = fixture(); job(db); repairJobDetailProjections(db);
+    const { db } = fixture(); job(db); refreshProjections(db);
     const before = detail(db); const oldCursor = cursor(db);
+    const beforeList = db.prepare("SELECT * FROM job_list_projections WHERE job_id=?").get(JOB);
     db.prepare("UPDATE jobs SET description='Committed without a bus notification' WHERE job_id=?").run(JOB);
     event(db);
     db.exec(`CREATE TEMP TRIGGER fail_detail BEFORE UPDATE ON job_detail_projections
       BEGIN SELECT RAISE(ABORT, 'injected detail failure'); END`);
+    expect(() => ensureJobDetailProjection(db, "local", JOB)).toThrow("injected detail failure");
+    expect(db.prepare("SELECT * FROM job_list_projections WHERE job_id=?").get(JOB)).toEqual(beforeList);
+    expect(detail(db)).toEqual(before);
     expect(() => refreshJobDetailProjections(db)).toThrow("injected detail failure");
     expect(detail(db)).toEqual(before); expect(cursor(db)).toEqual(oldCursor);
     db.exec("DROP TRIGGER fail_detail");
@@ -158,15 +162,22 @@ describe("TypeScript job-detail family authority", () => {
     expect(fs.readFileSync(artifactPath, "utf8")).toBe("Owned synthetic accepted material");
   });
 
-  it.each(["backlogged", "missing"])("serves current Apply Review evidence when detail is %s", async (state) => {
+  it.each([
+    { surface: "Apply Review", state: "backlogged" },
+    { surface: "Apply Review", state: "missing" },
+    { surface: "Apply Review", state: "missed notification" },
+    { surface: "Job Detail", state: "backlogged" },
+    { surface: "Job Detail", state: "missing" },
+    { surface: "Job Detail", state: "missed notification" },
+  ])("serves coherent score and evidence through $surface with $state", async ({ surface, state }) => {
     const { db, dbPath, dir, configPath } = fixture();
     job(db); job(db, PEER);
     db.prepare(`INSERT INTO job_stage_states (tenant_id,job_id,stage,state,updated_at)
       VALUES ('local',?,'apply','pending','2026-10-17T10:00:00Z')`).run(JOB);
     db.prepare(`INSERT INTO job_employer_analysis
-      (tenant_id,job_id,generation,snapshot_hash,prompt_version,sdk_set_version,cache_key,
+      (tenant_id,job_id,generation,snapshot_hash,prompt_version,sdk_set_version,cache_key,inferred_seniority,
        requirements_json,legs_attempted,legs_succeeded,created_at)
-      VALUES ('local',?,1,'fixture',?,'fixture','fixture',?,1,1,'2026-10-17')`)
+      VALUES ('local',?,1,'fixture',?,'fixture','fixture','senior',?,1,1,'2026-10-17')`)
       .run(JOB, EMPLOYER_ANALYSIS_PROMPT_VERSION, JSON.stringify([
         { id: "r1", text: "Own platform reliability", tier: "must_have", weight: 0.9,
           evidence_span: "Own platform reliability" },
@@ -203,7 +214,9 @@ describe("TypeScript job-detail family authority", () => {
       expect(baseline.json().items[0].position.idealRequirements[0].fit.kind).toBe("matched");
       score(2);
       // Python can publish the shared list before the independent detail owner.
-      db.prepare("UPDATE job_list_projections SET score_version=2,fit_score=3 WHERE job_id=?").run(JOB);
+      if (state !== "missed notification") {
+        db.prepare("UPDATE job_list_projections SET score_version=2,fit_score=3 WHERE job_id=?").run(JOB);
+      }
       if (state === "missing") {
         db.prepare("DELETE FROM job_detail_projections WHERE job_id=?").run(JOB);
       } else {
@@ -213,11 +226,19 @@ describe("TypeScript job-detail family authority", () => {
         })();
         expect(detail(db)).toMatchObject({ score_version: 1 });
       }
-      const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+      const response = await app.inject({ method: "GET",
+        url: surface === "Apply Review" ? "/v1/apply/review-queue" : `/v1/jobs/${JOB}` });
       expect(response.statusCode, response.body).toBe(200);
-      const item = response.json().items.find((row: { jobKey: string }) => row.jobKey === JOB);
-      expect(item).toMatchObject({ scoreVersion: 2, fitScore: 3 });
-      expect(item.position.idealRequirements[0].fit.kind).toBe("missing");
+      if (surface === "Apply Review") {
+        const item = response.json().items.find((row: { jobKey: string }) => row.jobKey === JOB);
+        expect(item).toMatchObject({ scoreVersion: 2, fitScore: 3 });
+        expect(item.position.idealRequirements[0].fit.kind).toBe("missing");
+      } else {
+        const body = response.json();
+        expect(body.job).toMatchObject({ scoreVersion: 2, fitScore: 3 });
+        expect(body.requirementFitReport).toMatchObject({ scoreVersion: 2 });
+        expect(body.requirementFitReport.assessments[0].fit.kind).toBe("missing");
+      }
     } finally { await app.close(); }
   });
 

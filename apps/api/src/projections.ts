@@ -2663,10 +2663,12 @@ export function refreshJobDetailProjections(db: SqliteDatabase, tenantId = "loca
 
 /**
  * Read-after-write for a requested job even when unrelated events fill a batch.
- * Also repairs a missing/obsolete row without scanning the tenant or consuming
- * other jobs' events. It never advances the family cursor past unprocessed work.
+ * Repairs list and detail together so score metadata and requirement evidence
+ * describe the same canonical decision even if Python missed its notification.
+ * Work is keyed to one job; neither consumer cursor advances past other events.
+ * Returns whether the caller must reread its previously selected list row.
  */
-export function ensureJobDetailProjection(db: SqliteDatabase, tenantId: string, jobId: string): void {
+export function ensureJobDetailProjection(db: SqliteDatabase, tenantId: string, jobId: string): boolean {
   const row = getRow<{ last_updated_at: string; score_version: number | null;
     employer_analysis_json: string | null; compensation_summary_json: string | null;
     compensation_audit_json: string | null }>(db,
@@ -2677,16 +2679,25 @@ export function ensureJobDetailProjection(db: SqliteDatabase, tenantId: string, 
     parseProjectionJsonRecord(row.compensation_summary_json)?.projectionVersion !== COMPENSATION_PROJECTION_VERSION ||
     parseProjectionJsonRecord(row.compensation_audit_json)?.projectionVersion !== COMPENSATION_PROJECTION_VERSION
   );
+  const list = getRow<{ score_version: number | null }>(db,
+    "SELECT score_version FROM job_list_projections WHERE tenant_id = ? AND job_id = ?", [tenantId, jobId]);
+  const oldestCursor = Math.min(readWatermark(db, jobDetailWatermarkName(tenantId)),
+    readWatermark(db, `typescript:${PROJECTION_WATERMARK_NAME}:${tenantId}`));
   const pending = getRow(db,
     "SELECT 1 FROM job_events WHERE tenant_id = ? AND job_id = ? AND event_id > ? LIMIT 1",
-    [tenantId, jobId, readWatermark(db, jobDetailWatermarkName(tenantId))]);
+    [tenantId, jobId, oldestCursor]);
   const changedStage = row && getRow(db,
     `SELECT 1 FROM job_stage_states WHERE tenant_id = ? AND job_id = ?
        AND julianday(updated_at) > COALESCE(julianday(?), -1) LIMIT 1`,
     [tenantId, jobId, row.last_updated_at]);
-  if (!row || obsolete || pending || changedStage) {
-    db.transaction(() => rebuildJobDetailProjection(db, tenantId, jobId)).immediate();
+  if (!row || !list || row.score_version !== list.score_version || obsolete || pending || changedStage) {
+    db.transaction(() => {
+      rebuildJobProjections(db, tenantId, jobId);
+      rebuildJobDetailProjection(db, tenantId, jobId);
+    }).immediate();
+    return true;
   }
+  return false;
 }
 
 function rebuildJobDetailProjection(db: SqliteDatabase, tenantId: string, jobId: string): void {
