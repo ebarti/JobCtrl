@@ -311,8 +311,9 @@ or apply dispatch behavior.
 Operations projections materialize compensation read data from those canonical
 tables into `job_list_projections.compensation_summary_json`,
 `job_detail_projections.compensation_summary_json`, and
-`job_detail_projections.compensation_audit_json`. Both Python and TypeScript
-projection builders own the same JSON shape. The list/detail API deserializes
+`job_detail_projections.compensation_audit_json`. TypeScript exclusively writes
+the detail family; list summaries remain shared pending their own cutover.
+See the [writer inventory and recovery contract](data-events-and-projections.md#projection-ownership-and-consistency). The list/detail API deserializes
 those projection columns only; it does not parse raw salary text on read.
 `JobSummary.salary` remains the compatibility raw string.
 

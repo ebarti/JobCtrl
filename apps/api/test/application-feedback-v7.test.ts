@@ -6,7 +6,10 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../src/projections.js", () => ({ refreshProjections: vi.fn() }));
+vi.mock("../src/projections.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/projections.js")>(),
+  refreshProjections: vi.fn(),
+}));
 vi.mock("../src/repeat-application.js", () => ({
   evaluateRepeatApplication: vi.fn(() => ({ blocked: false, matches: [] })),
 }));

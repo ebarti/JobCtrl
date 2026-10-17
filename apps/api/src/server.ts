@@ -309,7 +309,7 @@ import {
   listLearningRecommendations,
 } from "./learning-recommendations.js";
 import { listTailoringPolicyRevisions } from "./tailoring-policy-revisions.js";
-import { loadInterviewPrepReadModel, refreshProjections } from "./projections.js";
+import { loadInterviewPrepReadModel, refreshProjections, repairJobDetailProjections } from "./projections.js";
 import { InterviewEvidenceSelectionError, validateInterviewEvidenceSelection } from "./interview-evidence-selection.js";
 import { interviewPrepStaleReasons, listInterviewPrepHistory, loadLatestAcceptedInterviewPrep } from "./interview-prep-history.js";
 import { createResumeHtmlPdfRenderer, ResumeRenderError, type ResumeHtmlPdfRenderer } from "./resume-pdf-render.js";
@@ -4147,7 +4147,11 @@ function normalizeExistingDatabase(dbPath: string): void {
   if (!databaseExists(dbPath)) return;
   try {
     const db = openDatabase(dbPath);
-    db.close();
+    try {
+      repairJobDetailProjections(db);
+    } finally {
+      db.close();
+    }
   } catch (error) {
     if (error instanceof Error && /file is not a database|database disk image is malformed/i.test(error.message)) {
       return;
