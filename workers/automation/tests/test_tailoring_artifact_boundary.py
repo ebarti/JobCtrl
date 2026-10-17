@@ -159,15 +159,18 @@ def test_failed_local_refresh_preserves_accepted_bytes_provenance_and_approval(l
         model.mutate = lambda payload: payload["experience_updates"][0].update(id="foreign")
     case = build(model, pdf_renderer=Renderer(fail=failure == "pdf"))
     if failure == "write":
-        def fail_write(*_):
-            raise OSError("synthetic candidate write failure")
-        monkeypatch.setattr(LocalArtifactTextWriter, "write_text", fail_write)
+        # Exercise a real local filesystem refusal at the replacement path.
+        accepted_path = Path(accepted.tailored_resume.path)
+        accepted_path.with_name(accepted_path.stem.removesuffix("_g1") + "_g2.txt").mkdir()
     if failure == "provenance":
         def fail_provenance(*_):
             raise RuntimeError("synthetic provenance failure")
         monkeypatch.setattr(SqliteBulletProvenanceRepository, "save", fail_provenance)
-    if failure in {"write", "provenance"}:
-        with pytest.raises((OSError, RuntimeError), match="synthetic"):
+    if failure == "write":
+        with pytest.raises(IsADirectoryError):
+            run(case, retailor=True)
+    elif failure == "provenance":
+        with pytest.raises(RuntimeError, match="synthetic provenance failure"):
             run(case, retailor=True)
     else:
         failed = run(case, retailor=True)

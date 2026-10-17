@@ -466,6 +466,7 @@ __all__ = [
     "AnalysisDraftPort",
     "AnalysisSynthesizerPort",
     "ArtifactStatus",
+    "ArtifactTextWriter",
     "ArtifactType",
     "BulletProvenanceRepository",
     "EmployerAnalysisRepository",
