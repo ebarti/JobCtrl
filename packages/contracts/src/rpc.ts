@@ -1,4 +1,4 @@
-import { DeterminationCitationSchema, DeterminationEnvelopeSchema } from "./semantic-determinations.js";
+import { DeterminationCitationSchema, DeterminationEnvelopeSchema, FormSnapshotSchema, FormMappingResponseSchema, ResumeEditReviewSchema, ResumeEditIntentReviewSchema } from "./semantic-determinations.js";
 /**
  * JSON-RPC 2.0 wire envelope + JobCtrl method schemas.
  *
@@ -11,6 +11,8 @@ import { MaterialLocaleRequestSchema } from "./schemas.js";
 import { GenerateInterviewPrepRequestSchema, refineInterviewEvidenceSelection } from "./interview.js";
 
 import {
+  ProviderStatusResultSchema, ProviderModelCatalogResultSchema, CodexVerifyResultSchema,
+  BrowserCapabilitiesResultSchema, BrowserCapabilityEnableRequestSchema, BrowserProfileCopyRequestSchema, BrowserCapabilityIds,
   ScreeningCommandSchema, ScreeningReadResponseSchema, ScreeningWriteResponseSchema,
   DEFAULT_PIPELINE_LLM_MODEL,
   JobUrlImportUrlSchema,
@@ -833,12 +835,12 @@ export type LocalActionResult = z.infer<typeof LocalActionResultSchema>;
 
 /* ----------------------------------------------------------------- helpers */
 
-export function buildJsonRpcRequest<P extends Record<string, unknown>>(
-  method: RpcMethod,
-  params: P,
+export function buildJsonRpcRequest<M extends ContractRpcMethod>(
+  method: M,
+  params: RpcParams<NoInfer<M>>,
   id: JsonRpcId = 1,
 ): JsonRpcRequest {
-  return { jsonrpc: "2.0", method, params, id } satisfies JsonRpcRequest;
+  return { jsonrpc: "2.0", method, params: parseRpcParams(method, params), id } satisfies JsonRpcRequest;
 }
 
 export const MaterialLocaleParamsSchema = z.object({
@@ -909,13 +911,33 @@ export const RefreshCompensationResultSchema = z.union([
   ApplyResultSchema,
 ]);
 
+const RuntimeBindingSchema = z.object({
+  tenantId: TenantParam, expectedAppDir: z.string().trim().min(1), expectedDbPath: z.string().trim().min(1),
+}).strict();
+const EmptyRpcParamsSchema = z.object({}).strict();
+export const MapExtensionFormParamsSchema = RuntimeBindingSchema.extend({
+  ...FormSnapshotSchema.shape, expectedProfileVersion: z.number().int().positive(),
+});
+export const ReviewResumeEditParamsSchema = RuntimeBindingSchema.extend({
+  draftId: z.string().min(1), revisionId: z.string().min(1), operation: z.enum(["artifact", "intent"]).optional(),
+});
+
 /** Parameter/result relationships for the methods with schemas owned here.
  * This describes dispatch responses, not the synchronous activity payloads of
- * workflow-start methods. Runtime dispatch enforcement is a separate boundary.
- * Other method families keep their existing owners; this is not a registration
- * inventory (the Python default handler registration owns that inventory).
+ * workflow-start methods. The API enforces these contracts before sending and
+ * consuming a response. Python default handler registration owns the inventory.
  */
 export const RpcContracts = {
+  [RpcMethods.ProviderStatus]: { params: z.object({ provider: z.enum(["codex", "claude", "google"]).optional() }).strict(), result: ProviderStatusResultSchema },
+  [RpcMethods.ProviderModels]: { params: EmptyRpcParamsSchema, result: ProviderModelCatalogResultSchema },
+  [RpcMethods.ProviderVerify]: { params: z.object({ provider: z.literal("codex").optional() }).strict(), result: CodexVerifyResultSchema },
+  [RpcMethods.BrowserCapabilitiesList]: { params: EmptyRpcParamsSchema, result: BrowserCapabilitiesResultSchema },
+  [RpcMethods.BrowserCapabilityEnable]: { params: z.union(BrowserCapabilityEnableRequestSchema.options.map(schema => schema.extend({ capabilityId: z.enum(BrowserCapabilityIds) }))), result: BrowserCapabilitiesResultSchema },
+  [RpcMethods.BrowserCapabilityDisable]: { params: z.object({ capabilityId: z.enum(BrowserCapabilityIds) }).strict(), result: BrowserCapabilitiesResultSchema },
+  [RpcMethods.BrowserProfileCopy]: { params: BrowserProfileCopyRequestSchema, result: BrowserCapabilitiesResultSchema },
+  [RpcMethods.MapExtensionForm]: { params: MapExtensionFormParamsSchema, result: FormMappingResponseSchema },
+  [RpcMethods.ReviewResumeEdit]: { params: ReviewResumeEditParamsSchema, result: z.union([ResumeEditReviewSchema, ResumeEditIntentReviewSchema]) },
+  [RpcMethods.PrepareRepeatApplicationDeterminations]: { params: RuntimeBindingSchema.extend({ jobId: CanonicalJobIdParam }), result: z.object({ ok: z.literal(true), assessment: z.object({ status: z.enum(["clear", "blocked", "confirmation_required", "override_ready", "override_consumed"]), summary: z.string(), evidenceFingerprint: z.string().nullable(), evaluatedAt: z.string(), matches: z.array(z.record(z.string(), z.unknown())), override: z.record(z.string(), z.unknown()).nullable(), auditTrail: z.array(z.record(z.string(), z.unknown())) }).strict() }).strict() },
   [RpcMethods.RunStage]: { params: RunStageParamsSchema, result: RunStageResultSchema },
   [RpcMethods.RescoreJob]: { params: RescoreJobParamsSchema, result: ApplyResultSchema },
   [RpcMethods.RescoreJobsNotOnCurrentScoringPolicy]: { params: RescoreJobsNotOnCurrentScoringPolicyParamsSchema, result: ApplyResultSchema },
@@ -942,8 +964,48 @@ export const RpcContracts = {
   [RpcMethods.ProfileTargetRoleSuggestions]: { params: ProfileTargetRoleSuggestionsParamsSchema, result: TargetRoleSuggestionResultSchema },
   [RpcMethods.MaterialLocaleVariants]: { params: MaterialLocaleParamsSchema, result: MaterialLocaleHistorySchema },
   [RpcMethods.ScreeningAnswers]: { params: ScreeningAnswersParamsSchema, result: ScreeningAnswersResultSchema },
-} as const satisfies Partial<Record<RpcMethod, { params: z.ZodType; result: z.ZodType }>>;
+} as const satisfies Record<RpcMethod, { params: z.ZodType; result: z.ZodType }>;
 
 export type ContractRpcMethod = keyof typeof RpcContracts;
-export type RpcParams<M extends ContractRpcMethod> = z.input<(typeof RpcContracts)[M]["params"]>;
+export type RpcParams<M extends ContractRpcMethod> = M extends ContractRpcMethod
+  ? keyof z.input<(typeof RpcContracts)[M]["params"]> extends never
+    ? Record<string, never> : z.input<(typeof RpcContracts)[M]["params"]>
+  : never;
 export type RpcResult<M extends ContractRpcMethod> = z.output<(typeof RpcContracts)[M]["result"]>;
+
+/** A contract failure is distinct from a failed transport or worker error envelope. */
+export class RpcContractError extends Error {
+  constructor(readonly method: ContractRpcMethod, readonly phase: "params" | "result") {
+    super(`Invalid JSON-RPC ${phase} for '${method}'.`);
+    this.name = "RpcContractError";
+  }
+}
+
+export function parseRpcParams<M extends ContractRpcMethod>(method: M, params: unknown): RpcParams<M> {
+  const schema = RpcContracts[method]?.params;
+  if (!schema) throw new RpcContractError(method, "params");
+  const parsed = schema.safeParse(params);
+  if (!parsed.success) throw new RpcContractError(method, "params");
+  return parsed.data as RpcParams<M>;
+}
+
+export type RpcResponse<M extends ContractRpcMethod> = Omit<JsonRpcResponse, "result"> & { result?: RpcResult<M> };
+
+export function parseRpcResponse<M extends ContractRpcMethod>(method: M, params: RpcParams<M>, response: unknown): RpcResponse<M> {
+  const envelope = JsonRpcResponseSchema.safeParse(response);
+  if (!envelope.success) throw new RpcContractError(method, "result");
+  if (envelope.data.error) return envelope.data as RpcResponse<M>;
+  const parsed = RpcContracts[method].result.safeParse(envelope.data.result);
+  if (!parsed.success) throw new RpcContractError(method, "result");
+  if ((method === "run_stage" || method === "profile_import") && "awaitResult" in params && params.awaitResult === true) {
+    const stages = "stages" in params ? params.stages : undefined;
+    const discover = stages?.length ? stages.length === 1 && stages[0] === "discover" : "stage" in params && params.stage === "discover";
+    const awaited = method === "run_stage" ? ApplyResultSchema.extend({ result: discover ? DiscoverWorkflowResultSchema : JobPipelineWorkflowResultSchema }) : ApplyResultSchema.extend({ result: ProfileImportWorkflowResultSchema });
+    if (!awaited.safeParse(parsed.data).success) throw new RpcContractError(method, "result");
+  }
+  if (method === "review_resume_edit") {
+    const schema = "operation" in params && params.operation === "intent" ? ResumeEditIntentReviewSchema : ResumeEditReviewSchema;
+    if (!schema.safeParse(parsed.data).success) throw new RpcContractError(method, "result");
+  }
+  return { ...envelope.data, result: parsed.data } as RpcResponse<M>;
+}

@@ -178,10 +178,13 @@ canonical `jobId`, and `limit: 1`. Profile import also accepts boolean
 nullable `reason` metadata with its 160/80/500 character bounds.
 
 `RpcContracts` in `rpc.ts` associates the parameter and dispatch-result schemas
-owned there and derives `RpcParams` inputs and `RpcResult` outputs. It covers
-every registered workflow method; other method families retain their existing
-schema owners. It is not a second registration inventory or automatic runtime
-enforcement. Workflow starts use acknowledgments, even when their activity has
+owned there and derives method-specific `RpcParams` inputs and `RpcResult`
+outputs for every current TypeScript caller. `JsonRpcDispatcher.call` has no
+record-based public overload. `callRpc` applies the shared parameter and result
+parsers to injected dispatchers as well as the subprocess adapter; the adapter
+validates parameters before resolving or spawning a command. Endpoint dispatch
+specifications bind the method to those same schemas. Python registration
+remains the runtime inventory. Workflow starts use acknowledgments, even when their activity has
 a synchronous result schema. Compensation refresh also retains its supported
 synchronous result branch, and stage runs retain `LocalActionResult` for old
 sync adapters. Generic acknowledgments preserve additional identity metadata
@@ -192,7 +195,25 @@ Awaited stage results mirror the actual serialized workflow dataclasses:
 and `error_code`, without `status`; Discover has its own family, enrichment,
 and compensation fields. Awaited profile import retains `status`, `draft`,
 `error`, and `error_code`. URL and manual-capture imports require their nested
-workflow result because their current callers always await it.
+workflow result because their current callers always await it. An awaited
+`run_stage` or `profile_import` call requires completion, rather than accepting
+a start-only acknowledgment. Stage completion must match Discover or pipeline
+input. Invalid output raises `RpcContractError` separately from transport
+failures, allowing each feature to preserve its HTTP error mapping. Worker
+error envelopes, request IDs, progress notifications, timeouts and close
+behavior remain transport concerns.
+
+Profile continuation keeps its `profile_updated:<eventId>` reason through the
+registered handler and deterministic workflow identity. The enforcing action
+dispatcher awaits completion before the server records a handled marker;
+structural, start, wait or transport failure leaves the durable intent available
+for startup reattachment. A failed pipeline completion also leaves it pending.
+The route integration tests in `apps/api/test/server.test.ts` use exact-schema
+owned workspaces and the registered Python handlers through the real adapter.
+Their synthetic WorkflowStarter and completion handle expose workflow input and
+ordering, returning the production result dataclasses. Held completion also
+checks marker ordering during startup reattachment. These fixtures do not
+exercise live acquisition, Temporal persistence or model quality.
 
 The shared suite also covers parameter and parse errors, unknown-method
 mapping, workflow acknowledgments, and a negative registration/schema mutation.

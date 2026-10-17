@@ -1078,3 +1078,31 @@ describe("preparation RPC contracts", () => {
     ).toThrow();
   });
 });
+
+// Compile-only negative calls are included by checks.api-types. Never execute.
+function typedRpcNegativeCalls(dispatcher: import("../src/json-rpc-adapter.js").JsonRpcDispatcher) {
+  // @ts-expect-error missing required stage
+  void dispatcher.call("run_stage", { workers: 1 });
+  // @ts-expect-error method-specific params cannot be exchanged
+  void dispatcher.call("render_resume_pdf", { stage: "score" });
+  // @ts-expect-error unknown params are not a public fallback
+  void dispatcher.call("run_stage", { stage: "score", arbitraryField: true });
+  // @ts-expect-error even parameterless methods reject fields
+  void dispatcher.call("provider_models", { arbitraryField: true });
+  // @ts-expect-error unknown methods are not a public fallback
+  void dispatcher.call("unregistered", {});
+  // @ts-expect-error browser enable requires one of the supported selectors
+  void dispatcher.call("browser_capability_enable", { capabilityId: "auto-apply-browser" });
+  // @ts-expect-error semantic review requires its runtime binding
+  void dispatcher.call("review_resume_edit", { draftId: "draft", revisionId: "revision" });
+}
+void typedRpcNegativeCalls;
+
+async function typedRpcResult(dispatcher: import("../src/json-rpc-adapter.js").JsonRpcDispatcher) {
+  const { callRpc } = await import("../src/json-rpc-adapter.js");
+  const response = await callRpc(dispatcher, "render_resume_pdf", { htmlPath: "/synthetic/in.html", pdfPath: "/synthetic/out.pdf" });
+  expectTypeOf(response.result).toEqualTypeOf<RpcResult<"render_resume_pdf"> | undefined>();
+  // @ts-expect-error consumed results retain the selected method's type
+  void response.result?.runId;
+}
+void typedRpcResult;

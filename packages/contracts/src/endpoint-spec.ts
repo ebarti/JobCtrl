@@ -40,6 +40,10 @@ import {
   RollbackTailoringPolicyParamsSchema,
   RollbackTailoringPolicyResultSchema,
   RpcMethods,
+  RpcContracts,
+  type ContractRpcMethod,
+  type RpcParams,
+  type RpcResult,
   type JsonRpcError,
   type RpcMethod,
 } from "./rpc.js";
@@ -106,23 +110,22 @@ type AnyEndpointPath = string | EndpointPath<any, string>;
 export interface RpcEndpointDispatch<
   TRequestSchema extends AnySchema,
   TPathParam,
-  TRpcParamsSchema extends AnySchema,
-  TRpcResultSchema extends AnySchema,
+  TMethod extends ContractRpcMethod,
 > {
-  readonly rpcMethod: RpcMethod;
+  readonly rpcMethod: TMethod;
   readonly params: (
     input: {
       readonly request: z.output<TRequestSchema>;
       readonly pathParam: TPathParam;
     },
     context: EndpointDispatchContext,
-  ) => z.input<TRpcParamsSchema>;
-  readonly paramsSchema: TRpcParamsSchema;
-  readonly result: TRpcResultSchema;
+  ) => RpcParams<TMethod>;
+  readonly paramsSchema: (typeof RpcContracts)[TMethod]["params"];
+  readonly result: (typeof RpcContracts)[TMethod]["result"];
   readonly response: (input: {
     readonly request: z.output<TRequestSchema>;
     readonly pathParam: TPathParam;
-    readonly result: z.output<TRpcResultSchema>;
+    readonly result: RpcResult<TMethod>;
   }) => unknown | null;
   readonly error: (failure: EndpointDispatchFailure) => EndpointFailureResponse;
 }
@@ -596,7 +599,7 @@ export const ENDPOINTS = {
       paramsSchema: ScreeningAnswersParamsSchema, result: ScreeningAnswersResultSchema,
       response: ({ pathParam, result }) => "questions" in result && result.jobId === pathParam && result.questions.every((question) => question.jobId === pathParam) && result.history.every((question) => question.jobId === pathParam) ? result : null,
       error: screeningFailure,
-    } satisfies RpcEndpointDispatch<typeof ScreeningReadRequestSchema, string, typeof ScreeningAnswersParamsSchema, typeof ScreeningAnswersResultSchema>,
+    } satisfies RpcEndpointDispatch<typeof ScreeningReadRequestSchema, string, "screening_answers">,
     demo: { class: "unavailable", reason: "Private reviewed screening answers require the local worker and saved sources." },
   }),
   writeScreeningAnswer: defineEndpoint({
@@ -608,7 +611,7 @@ export const ENDPOINTS = {
       paramsSchema: ScreeningAnswersParamsSchema, result: ScreeningAnswersResultSchema,
       response: ({ request, pathParam, result }) => "state" in result && result.jobId === pathParam && result.state.jobId === pathParam && result.state.action === request.action && result.state.revision === request.expectedRevision + 1 && (!request.questionId || result.state.questionId === request.questionId) ? result : null,
       error: screeningFailure,
-    } satisfies RpcEndpointDispatch<typeof ScreeningCommandSchema, string, typeof ScreeningAnswersParamsSchema, typeof ScreeningAnswersResultSchema>,
+    } satisfies RpcEndpointDispatch<typeof ScreeningCommandSchema, string, "screening_answers">,
     demo: { class: "unavailable", reason: "Drafting, review and manual-use attestations require local persisted authority." },
   }),
 
@@ -708,8 +711,7 @@ export const ENDPOINTS = {
     } satisfies RpcEndpointDispatch<
       typeof LearningRecommendationReviewRequestSchema,
       string,
-      typeof ReviewLearningRecommendationParamsSchema,
-      typeof ReviewLearningRecommendationResultSchema
+      "review_learning_recommendation"
     >,
     demo: {
       class: "unavailable",
@@ -752,8 +754,7 @@ export const ENDPOINTS = {
     } satisfies RpcEndpointDispatch<
       typeof TailoringPolicyRollbackRequestSchema,
       undefined,
-      typeof RollbackTailoringPolicyParamsSchema,
-      typeof RollbackTailoringPolicyResultSchema
+      "rollback_tailoring_policy"
     >,
     demo: {
       class: "unavailable",
