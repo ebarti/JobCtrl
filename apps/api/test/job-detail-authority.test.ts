@@ -84,8 +84,15 @@ describe("TypeScript job-detail family authority", () => {
     expect(cursor(db)?.last_event_id).toBe(REFRESH_EVENT_BATCH_LIMIT + 1);
   });
 
-  it("does no detail writes or repair scans on a settled pass, even with another writer holding SQLite", () => {
+  it.each([false, true])("does no detail writes on a settled pass with a writer holding SQLite (different JSON formatting: %s)", (differentFormatting) => {
     const { db, dbPath } = fixture(); job(db); refreshProjections(db);
+    if (differentFormatting) {
+      const list = db.prepare("SELECT compensation_summary_json FROM job_list_projections WHERE job_id=?")
+        .get(JOB) as { compensation_summary_json: string };
+      const reordered = Object.fromEntries(Object.entries(JSON.parse(list.compensation_summary_json)).reverse());
+      db.prepare("UPDATE job_list_projections SET compensation_summary_json=? WHERE job_id=?")
+        .run(JSON.stringify(reordered, null, 2), JOB);
+    }
     const before = detail(db);
     const observer = new Database(dbPath);
     try {

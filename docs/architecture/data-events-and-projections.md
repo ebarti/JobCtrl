@@ -196,9 +196,9 @@ GET is free of SQLite writes.
 
 API Job Detail checks its requested JobId; Apply Review checks each returned
 job before reading requirement evidence. A pending event beyond the
-current batch, a missing/obsolete row, mismatched score versions or newer canonical
-stage state causes a single-job repair through the existing list and detail
-materializers without advancing either cursor. The selected list metadata and
+current batch, a missing/obsolete row, mismatched score versions or compensation
+summaries, or newer canonical stage state causes a single-job repair through
+the existing list and detail materializers without advancing either cursor. The selected list metadata and
 detail evidence are read in one SQLite transaction, so a missed Python
 notification cannot mix score versions. This preserves read-after-write even
 behind an unrelated backlog. Python CLI/workflow commands

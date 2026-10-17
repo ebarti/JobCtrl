@@ -19,6 +19,7 @@
  * refresher reads the projection table directly and no longer
  * materialises it.
  */
+import { isDeepStrictEqual } from "node:util";
 import { APPLY_URL_OUTCOME_CODES, EMPLOYER_ANALYSIS_PROMPT_VERSION, PROJECTION_WATERMARK_NAME, STAGES } from "./contracts.js";
 import type {
   ApplyUrlOutcomeCode,
@@ -2679,8 +2680,15 @@ export function ensureJobDetailProjection(db: SqliteDatabase, tenantId: string, 
     parseProjectionJsonRecord(row.compensation_summary_json)?.projectionVersion !== COMPENSATION_PROJECTION_VERSION ||
     parseProjectionJsonRecord(row.compensation_audit_json)?.projectionVersion !== COMPENSATION_PROJECTION_VERSION
   );
-  const list = getRow<{ score_version: number | null }>(db,
-    "SELECT score_version FROM job_list_projections WHERE tenant_id = ? AND job_id = ?", [tenantId, jobId]);
+  const list = getRow<{ score_version: number | null; compensation_summary_json: string | null }>(db,
+    "SELECT score_version, compensation_summary_json FROM job_list_projections WHERE tenant_id = ? AND job_id = ?",
+    [tenantId, jobId]);
+  // Shared list reconciliation can refresh compensation without a new event.
+  // Compare values because Python and TypeScript serialize JSON differently.
+  const changedCompensation = row && list && !isDeepStrictEqual(
+    parseProjectionJsonRecord(row.compensation_summary_json),
+    parseProjectionJsonRecord(list.compensation_summary_json),
+  );
   const oldestCursor = Math.min(readWatermark(db, jobDetailWatermarkName(tenantId)),
     readWatermark(db, `typescript:${PROJECTION_WATERMARK_NAME}:${tenantId}`));
   const pending = getRow(db,
@@ -2690,7 +2698,7 @@ export function ensureJobDetailProjection(db: SqliteDatabase, tenantId: string, 
     `SELECT 1 FROM job_stage_states WHERE tenant_id = ? AND job_id = ?
        AND julianday(updated_at) > COALESCE(julianday(?), -1) LIMIT 1`,
     [tenantId, jobId, row.last_updated_at]);
-  if (!row || !list || row.score_version !== list.score_version || obsolete || pending || changedStage) {
+  if (!row || !list || row.score_version !== list.score_version || obsolete || pending || changedStage || changedCompensation) {
     db.transaction(() => {
       rebuildJobProjections(db, tenantId, jobId);
       rebuildJobDetailProjection(db, tenantId, jobId);
