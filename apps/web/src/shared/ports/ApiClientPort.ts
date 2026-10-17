@@ -363,6 +363,7 @@ export interface ApiClientPort extends EndpointClientMethods {
 
   artifacts(query?: Partial<ArtifactListQuery>): Promise<PaginatedResponse<ArtifactSummary>>;
   artifact(artifactId: string): Promise<ArtifactDetail>;
+  downloadMaterialDocx(artifactId: string): Promise<Blob>;
   artifactPreviewPdfUrl(artifactId: string, cacheKey?: number | string): string;
   artifactPreviewHtmlUrl(artifactId: string, cacheKey?: number | string): string;
   openArtifact(artifactId: string): Promise<ArtifactOpenResponse>;

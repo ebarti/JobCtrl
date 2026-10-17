@@ -1206,6 +1206,7 @@ def rollback_tailoring_policy(params: dict[str, Any]) -> dict[str, Any]:
 def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCanceler) -> None:
     """Wire the default JobCtrl method set onto *server*."""
     server.register("material_locale_variants", material_locale_variants, mode="sync")
+    server.register("accepted_material_exports", accepted_material_exports, mode="sync")
 
     server.register("screening_answers", screening_answers, mode="sync")
     server.register("map_extension_form", map_extension_form, mode="sync")
@@ -1264,6 +1265,26 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     server.register("apply", apply_action, mode="workflow")
     # Cooperative cancellation of in-flight workflows.
     server.register("cancel_run", make_cancel_run(canceler), mode="sync")
+
+
+def accepted_material_exports(params):
+    """Runtime-bound export/read operation; never changes Materials or Apply approval."""
+    if (set(params) != {"tenantId", "expectedAppDir", "expectedDbPath", "jobId", "request"}
+            or any(not isinstance(params[key], str) or not params[key]
+                   for key in ("tenantId", "expectedAppDir", "expectedDbPath", "jobId"))):
+        raise invalid_params("invalid_export_request")
+    assert_expected_runtime(expected_app_dir=params["expectedAppDir"], expected_db_path=params["expectedDbPath"])
+    from jobctrl.database import init_db
+    from jobctrl.domain.materials.editable_export import ExportFailure
+    from jobctrl.infrastructure.materials.accepted_export_api import operation
+    connection = init_db()
+    try:
+        return operation(connection, tenant_id=params["tenantId"], job_id=params["jobId"],
+                         root=params["expectedAppDir"], request=params["request"])
+    except ExportFailure as error:
+        raise invalid_params(error.code) from None
+    finally:
+        connection.close()
 
 
 def material_locale_variants(params):

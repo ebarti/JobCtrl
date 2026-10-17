@@ -263,13 +263,29 @@ not embed private prompt/verification payloads or local paths. The append-only
 stores output SHA-256, creation time and formatting warnings. Original evidence
 and determination IDs stay at the accepted source, bound by its metadata hash.
 
-The CLI `material-export` invokes this owner synchronously. Publication stages
+The CLI `material-export` and the runtime-bound `accepted_material_exports` RPC
+invoke this owner synchronously. `accepted_export_api.py` lists canonical
+approved, unsuperseded text sources and retained export receipts, excluding
+private source metadata and file paths. The UI binds its request to the selected
+source/generation plus source-byte and metadata hashes. Changes since that
+selection fail before rendering; the CLI retains its original ID/generation
+contract. Publication stages
 an exclusive mode-0600 file under `generated/material-exports`, fences the full
 source row and bytes before and after staging inside a SQLite writer transaction,
 and commits only its new registry reference. Failure rolls back that reference
 and removes only its newly created file. It neither saves the Materials aggregate
 nor changes approval/application state. Export does not add an Apply input type,
-HTTP endpoint, schema migration or a tailoring-policy dependency.
+schema migration or a tailoring-policy dependency.
+
+The [API contract](../api/complete-contract.md#accepted-material-docx-exports)
+owns history/export HTTP requests and registered DOCX downloads. The API checks
+worker response bindings and allowlists safe errors. Downloads require a local
+approved export receipt, an owned nonsymlink file under
+`generated/material-exports`, and matching output SHA-256. They remain available
+after the source is later superseded. The Materials hook retains accepted
+history across failures, invalidates related job/artifact queries on settlement,
+and refreshes on material events and a bounded 15-second poll. Browser downloads
+go through `ArtifactDownloadPort`; no feature component accesses browser APIs.
 
 ## Reviewed Locale Variants
 

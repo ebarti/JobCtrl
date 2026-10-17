@@ -130,6 +130,7 @@ class StoryFeatureFlagPort implements FeatureFlagPort {
 export function buildStoryPorts(): Ports {
   return {
     api: new JobCtrlApiClient(),
+    artifactDownload: { downloadDocx: async () => {} },
     eventStream: new StoryEventStreamPort(),
     storage: new InMemoryStoragePort(),
     session: new StorySessionPort(),

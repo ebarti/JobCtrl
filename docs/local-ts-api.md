@@ -441,3 +441,11 @@ Semantic read envelopes and citations are shared in Contracts. Discovery execute
 See [the decision](decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
 
 Private screening-answer reads and commands use the generated endpoint clients and registered `screening_answers` Python RPC. See [Jobs and Materials](api/jobs-and-materials.md#screening-answers).
+
+## Accepted DOCX Export
+
+Job Detail exports original accepted resume and cover-letter text through the
+strict `material-exports` endpoint and runtime-bound Python RPC. Registered DOCX
+downloads verify owned paths and output hashes. See [Jobs & Materials](api/jobs-and-materials.md#artifacts-and-resume-templates)
+and the [complete contract](api/complete-contract.md#accepted-material-docx-exports)
+for request fields, source fences and errors.

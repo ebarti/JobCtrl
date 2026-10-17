@@ -423,8 +423,21 @@ See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determ
 
 ## Editable DOCX Export
 
-Export an accepted resume or cover letter from its saved artifact ID and
-generation:
+In **Job Detail → Artifacts → Editable DOCX**, choose **A4** or **Letter**, then
+select **Export resume DOCX** or **Export cover letter DOCX** for the accepted
+generation you want. The browser downloads the new document. **Retained DOCX
+exports** keeps each successful export available with its paper size, source
+generation, language, creation time and formatting warnings. **Download DOCX**
+retries a download without creating another export.
+
+The source must still match the version displayed when you click Export.
+If it changes or loses acceptance, refresh the export list before trying again.
+Missing source files are shown as unavailable. If a download fails, the retained
+export stays in the list. Downloads verify the registered file's content hash;
+restore a missing file or generate a new export if its retained bytes changed.
+The public demo explains that this capability requires a local workspace.
+
+You can also export from the CLI using the saved artifact ID and generation:
 
 ```sh
 jobctrl material-export JOB_ID --source-artifact-id SOURCE_ID --generation 1

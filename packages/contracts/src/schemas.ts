@@ -6979,6 +6979,38 @@ export const ScheduleFollowUpRequestSchema = z
   .strict();
 export type ScheduleFollowUpRequest = z.infer<typeof ScheduleFollowUpRequestSchema>;
 
+// Original accepted-material exports keep source selection and receipts explicit.
+const MaterialExportDigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
+export const AcceptedMaterialExportSourceSchema = z.object({
+  artifactId: z.string().min(1).max(240), generation: z.number().int().positive(),
+  kind: z.enum(["tailored_resume", "cover_letter"]), locale: z.string().nullable(),
+  sha256: MaterialExportDigestSchema.nullable(), metadataSha256: MaterialExportDigestSchema.nullable(),
+  unavailableReason: z.string().nullable(),
+}).strict();
+export const AcceptedMaterialExportReceiptSchema = z.object({
+  contract: z.literal("accepted-material-docx-v1"), tenantId: z.string().min(1), jobId: z.string().uuid(),
+  artifactId: z.string().regex(/^[1-9][0-9]*$/), sourceArtifactId: z.string().min(1).max(240),
+  generation: z.number().int().positive(), kind: z.enum(["tailored_resume", "cover_letter"]),
+  sourceSha256: MaterialExportDigestSchema, sourceMetadataSha256: MaterialExportDigestSchema,
+  settings: z.object({ format: z.literal("docx"), layout: z.literal("semantic-v1"), paper: z.enum(["A4", "Letter"]), locale: z.string().min(1) }).strict(),
+  settingsSha256: MaterialExportDigestSchema, sha256: MaterialExportDigestSchema,
+  createdAt: z.string().min(1), warnings: z.array(z.string()),
+}).strict();
+export const AcceptedMaterialExportsSchema = z.object({
+  tenantId: z.string().min(1), jobId: z.string().uuid(), sources: z.array(AcceptedMaterialExportSourceSchema),
+  exports: z.array(AcceptedMaterialExportReceiptSchema), exportedArtifactId: z.string().nullable(),
+}).strict();
+export const AcceptedMaterialExportRequestSchema = z.discriminatedUnion("operation", [
+  z.object({ operation: z.literal("history") }).strict(),
+  z.object({ operation: z.literal("export"), sourceArtifactId: z.string().min(1).max(240),
+    expectedGeneration: z.number().int().positive(), expectedSourceSha256: MaterialExportDigestSchema,
+    expectedMetadataSha256: MaterialExportDigestSchema, paper: z.enum(["A4", "Letter"]),
+  }).strict(),
+]);
+export type AcceptedMaterialExports = z.infer<typeof AcceptedMaterialExportsSchema>;
+export type AcceptedMaterialExportReceipt = z.infer<typeof AcceptedMaterialExportReceiptSchema>;
+export type AcceptedMaterialExportRequest = z.infer<typeof AcceptedMaterialExportRequestSchema>;
+
 // Locale variants are a separately versioned Materials contract on schema 14.
 const LocaleCitationSchema = z.object({ source_id: z.string(), quote: z.string(), exact_values: z.array(z.string()) }).strict();
 export const LocaleFindingSchema = z.object({

@@ -15,6 +15,7 @@ const endpointCapabilities = Object.fromEntries(
  * `satisfies` makes a newly added ApiClientPort member a compile-time failure.
  */
 export const DEMO_CAPABILITY_MANIFEST = {
+  downloadMaterialDocx: unavailable("DOCX downloads require retained exports in a local workspace."),
   health: local("Shows synthetic browser-local service health."),
   dashboardSummary: local("Reads the synthetic dashboard projection."),
   pipelineOperations: unavailable("Pipeline operations telemetry is unavailable in the public demo."),

@@ -463,8 +463,9 @@ trial artifacts and processes; retain no generated candidate material in Git.
 
 ## Accepted DOCX Export
 
-Run locked Ruff on the editable export domain model, both infrastructure export
-modules, CLI and `test_accepted_docx_export.py`, then run the locked pytest module.
+Run locked Ruff on the editable export domain model, infrastructure export
+modules, RPC handler, CLI and export tests, then run locked pytest for
+`test_accepted_docx_export.py`, `test_accepted_export_api.py` and the RPC boundary.
 Use only owned synthetic native-schema workspaces. The suite exercises the real
 CLI subprocess plus source ownership/generation/status fences, source drift,
 exclusive publication, corrupt output and persistence failure. Verify preserved
@@ -476,8 +477,30 @@ Unicode, contacts, dates and bullet markers, then edit/save/reopen it. Check
 heading styles, A4/Letter, locale, source identity and settings hashes. Inspect
 rendered synthetic resume and cover-letter pages for clipping or missing glyphs;
 exact PDF layout fidelity is outside the editable-export contract. No model
-evaluation set or replay fixture is involved. This CLI owner is synchronous and
+evaluation set or replay fixture is involved. This owner is synchronous and
 does not dispatch a Temporal worker or contact a provider.
+
+Run `apps/api/test/accepted-material-exports.test.ts` against the prepared locked
+Python interpreter, plus RPC parity. Exercise history, export and binary download
+through the production HTTP routes and registered Python RPC. Reject foreign
+tenant/job bindings, unknown worker diagnostics, changed source bytes/metadata,
+missing files, symlinks and corrupted retained bytes. Read downloaded files with
+`python-docx` and prove approval/application/source preservation.
+
+Run the colocated accepted-export component/a11y tests, download-adapter tests,
+event invalidation parity, web lint/check/build and affected Storybook stories.
+Verify pending controls, A4/Letter selection, unavailable sources, demo refusal,
+and retained history across export/refresh/download failures. A retry of Download
+must not create another export.
+
+`e2e/tests/accepted-material-exports.spec.ts` runs in the production API/RPC
+browser gate (`JOBCTRL_E2E_ISOLATED=0`); the isolated no-subprocess gate deliberately
+defers it to that separate CI step. Use an owned synthetic workspace and isolated
+ports. Export both material kinds on both paper sizes, inspect each downloaded
+document, exercise an edit after selection and a missing-file download/retry,
+then prove unchanged approvals and no extra export rows. Inspect desktop/mobile
+screenshots, page identity, console health, overflow and critical/serious axe
+results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 

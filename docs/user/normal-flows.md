@@ -456,6 +456,11 @@ below those details. Raw artifact, job, path, evidence, and requirement keys are
 diagnostic facts under **Technical details**, not the primary labels shown to
 the reviewer.
 
+In **Job Detail → Artifacts → Editable DOCX**, choose A4 or Letter and export an
+accepted resume or cover letter. Retained exports can be downloaded again without
+regeneration; failed exports preserve the accepted materials. See
+[Editable DOCX Export](materials-and-tailoring.md#editable-docx-export) for limits.
+
 [Materials & Tailoring](materials-and-tailoring.md) explains provenance,
 validation, accepted-artifact history, and the boundary between generation and
 human approval.

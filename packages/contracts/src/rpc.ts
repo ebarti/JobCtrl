@@ -7,7 +7,7 @@ import { DeterminationCitationSchema, DeterminationEnvelopeSchema } from "./sema
  * worker over the local subprocess transport (target §6.5).
  */
 import { z } from "zod";
-import { MaterialLocaleRequestSchema } from "./schemas.js";
+import { AcceptedMaterialExportRequestSchema, MaterialLocaleRequestSchema } from "./schemas.js";
 import { GenerateInterviewPrepRequestSchema, refineInterviewEvidenceSelection } from "./interview.js";
 
 import {
@@ -74,6 +74,7 @@ export type JsonRpcResponse = z.infer<typeof JsonRpcResponseSchema>;
 
 export const RpcMethods = {
   MaterialLocaleVariants: "material_locale_variants",
+  AcceptedMaterialExports: "accepted_material_exports",
   ScreeningAnswers: "screening_answers",
   RunStage: "run_stage",
   RescoreJob: "rescore_job",
@@ -818,6 +819,10 @@ export function buildJsonRpcRequest<P extends Record<string, unknown>>(
 export const MaterialLocaleParamsSchema = z.object({
   tenantId: z.string().min(1), expectedAppDir: z.string().min(1), expectedDbPath: z.string().min(1),
   jobId: z.string().uuid(), request: MaterialLocaleRequestSchema,
+}).strict();
+export const AcceptedMaterialExportParamsSchema = z.object({
+  tenantId: z.string().min(1), expectedAppDir: z.string().min(1), expectedDbPath: z.string().min(1),
+  jobId: z.string().uuid(), request: AcceptedMaterialExportRequestSchema,
 }).strict();
 export const ScreeningAnswersParamsSchema = z.object({
   tenantId: z.string().min(1), expectedAppDir: z.string().min(1), expectedDbPath: z.string().min(1),

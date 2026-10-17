@@ -160,6 +160,8 @@ they cross the browser boundary.
 | Artifact list/detail | Read registered resume, cover-letter, PDF, and audit metadata. |
 | Artifact preview routes | Serve HTML, PDF, or a rendered PDF page. |
 | `POST /v1/artifacts/:artifactId/open` | Open a registered local artifact through the OS adapter. |
+| `POST /v1/jobs/:jobId/material-exports` | List original accepted text sources/retained exports or synchronously create a source-bound DOCX. |
+| `GET /v1/artifacts/:artifactId/download.docx` | Download an owned, hash-verified retained DOCX export as an attachment. |
 | `/v1/resume-templates` | Create, inspect, and select versioned resume templates. |
 
 The API serves registered artifacts, never an arbitrary filesystem path. The
@@ -168,6 +170,13 @@ and layout evidence. Artifact summaries include a nullable canonical
 `generation` when one was recorded; lifecycle `status` remains unchanged.
 An older generation can still be approved, so clients must not treat age alone
 as a superseded status.
+
+Original accepted-material exports reuse the CLI's deterministic DOCX service
+through runtime-bound Python RPC. The request binds the displayed source ID,
+generation, source hash and metadata hash; an intervening edit or acceptance
+change refuses export. History and export failures preserve accepted materials,
+review decisions and earlier exports. Download failures preserve the receipt and
+can be retried independently. See the [field-level DOCX contract](complete-contract.md#accepted-material-docx-exports).
 
 ## Interviews: Catalog, Preparation, And Notes
 

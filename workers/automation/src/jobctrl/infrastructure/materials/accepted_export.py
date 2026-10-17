@@ -109,6 +109,7 @@ def _write_exclusive(path: Path, data: bytes) -> None:
 def export_accepted_material(
     connection: sqlite3.Connection, *, tenant_id: str, job_id: str,
     artifact_id: str, generation: int, root: Path, settings: dict | None = None,
+    expected_source_sha256: str | None = None, expected_metadata_sha256: str | None = None,
 ) -> dict:
     options = parse_settings(settings or {})
     if connection.in_transaction:
@@ -122,6 +123,10 @@ def export_accepted_material(
     source_args = dict(tenant_id=tenant_id, job_id=job_id, artifact_id=artifact_id,
                        generation=generation, root=Path(root))
     source = _load_source(connection, **source_args)
+    if ((expected_source_sha256 is not None and source.sha256 != expected_source_sha256)
+            or (expected_metadata_sha256 is not None
+                and _digest((source.row[6] or "{}").encode()) != expected_metadata_sha256)):
+        raise ExportFailure("stale_export_source")
     recorded_locale = source.metadata.get("locale")
     if recorded_locale is not None:
         if not isinstance(recorded_locale, str) or not recorded_locale:
