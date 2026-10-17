@@ -20,6 +20,41 @@ individual regression to exact test files.
 | Provider/browser setup | Environment ownership and passive detection cannot silently become credential or browser adoption. Extension pairing-token presence remains distinct from one explicitly selected installation's fresh live heartbeat; another Chrome profile with the token cannot lease. Integrated Discovery and Enrich prefer the selected connected extension or choose guarded public HTTP/anonymous Playwright before acquisition. Offline status must not block eligible dispatch. Neither mode reads a copied profile; acquisition errors and cancellation never trigger a second transport. Anonymous provider initial/redirect/recreated/detail requests retain public URL/DNS/socket checks and reject proxy routing. Connected worker tasks must not carry browser-owned cookie/user-agent headers. Hanging/canceled tasks close their tabs, active leases remain live past 45 seconds, four-way admission uses backpressure, cross-origin redirects are blocked before dispatch, and UTF-8 byte bounds stop streaming early. | Worker/API bridge tests, two-installation contention and lease-liveness tests, extension persistent-context timeout/redirect E2E, Settings/Pipelines components, and a bounded live Discovery smoke. |
 | Retry preflight | Starting a retry cannot erase failure evidence before worker readiness is known. | API state-before/state-after regression plus route smoke. |
 
+## Bounded Combined Jobs Pages (#1003)
+
+The Operations helper must make one combined list request and return its server
+page unchanged. Exercise absent, empty, single, duplicate and multiple stages;
+explicit arrays override scalar stages. Forward all other filters, sort fields,
+directions, page and page size. Failed reads must surface their error without
+partial results or a scalar fallback. Keep tenant-first list keys, targeted
+invalidation and event patches compatible with combined deep pages.
+
+Use `jobsListQuery.test.ts`, `hooks/useJobsListQuery.test.ts`,
+`DemoApiClientAdapter.test.ts`, `jobStageFilters.test.ts` and
+`JobsView.test.tsx` for helper, query, demo and view regressions. The actual-router
+case must exercise production navigation, saved multi-stage hydration and the
+view query, so an extra ordinary-page prefetch cannot pass unnoticed. Exercise scalar
+links, selection changes resetting page, saved selection/remount, page-local
+filter bulk guards, all-matching stage membership, and server-clamped paging.
+
+At the browser gate run both `jobs-bulk.spec.ts` and
+`job-list-pagination.spec.ts` in the existing guarded isolation fixture. The
+pagination spec uses `loadE2eDbPath`, seeds 5,001 owned canonical synthetic jobs
+across Discover and Apply, then exercises the rendered grid and saved view.
+Require page 100/pageSize 50, exact ordered IDs, global totals and no more than
+50 jobs; record one combined list request with no preceding-page downloads.
+Also inspect ordinary, adjacent, clamped and empty states, page selection and
+all-matching selection. Cleanup may delete only the fixture's owned job rows
+and their dependent rows, preserving the pre-existing synthetic jobs.
+
+Retain JUnit, complete request/response observations, synthetic inputs,
+source/lock hashes, traces and page screenshots. Inspect the screenshots as
+well as assertions. Final API regressions, 100/1,000/10,000-job scale evidence,
+independent review/QA and publication/resume checks bind to their controller
+candidate; historical observations never certify a later stack tip. The
+[benchmark owner](../local-scale-benchmark.md#bounded-job-page-contract-and-supplied-comparisons)
+defines sampling and comparison limits.
+
 ## Ashby Listing And Location Admission
 
 The Ashby public posting adapter excludes only explicit boolean

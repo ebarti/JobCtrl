@@ -47,17 +47,17 @@ describe("event-specific list reconciliation", () => {
   it("patches eligible job pages without changing filters, pagination, row order or unrelated references", () => {
     const client = new QueryClient();
     const input: JobsListInput = {
-      page: 3,
-      pageSize: 20,
+      page: 100,
+      pageSize: 50,
       sort: "fit_score",
       dir: "asc",
       source: "lever",
       normalizedScoreKeyword: "platform",
-      stages: ["score", "tailor"],
+      stages: ["discover", "apply"],
     };
     const key = jobsKeys.list(LOCAL_TENANT, input);
     const page = makeJobsPage([sampleSecondaryJob, sampleJob]);
-    page.pagination = { page: 3, pageSize: 20, total: 70, pages: 4 };
+    page.pagination = { page: 100, pageSize: 50, total: 5001, pages: 101 };
     const otherKey = jobsKeys.list(OTHER, input);
     client.setQueryData(key, page);
     client.setQueryData(otherKey, page);

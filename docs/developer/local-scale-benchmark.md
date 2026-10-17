@@ -178,6 +178,51 @@ or CI gates:
 | Cold Python RPC startup | 10 s | Include `uv`, Python imports, and dispatcher startup |
 | Sustained Node RSS / heap peak growth | 128 MiB / 64 MiB | Diagnostic bounds for this bounded workload, not long-horizon guarantees |
 
+## Bounded job-page contract and supplied comparisons
+
+The web Operations list helper sends one `api.jobs` request for the requested
+page and page size. Explicit stage arrays override scalar stages, deduplicate
+valid values, and use an empty array to clear the restriction. Malformed or
+oversized arrays retain the shared parser’s scalar fallback. The helper returns the
+server response directly; it does not download preceding pages, merge jobs,
+deduplicate rows, sort them, or reconstruct pagination metadata.
+
+The Jobs grid keeps multi-stage selections in its grid/saved-view state, resets
+paging when selection changes, and passes the same stages to list and
+all-matching bulk filters. The view owns the effective list query; the route
+does not prefetch a separate URL-only page. Single-stage navigation remains
+URL-backed. The demo
+uses the shared filter/comparator and paginates the combined set once, including
+its effective stages in response metadata.
+
+The repository artifact `docs/benchmarks/bounded-job-queries.json` retains
+sanitized measurements supplied by the controller for historical api1
+(`bc924ebd91e810cabcb8a7704104b7106a647c48`) and sql1
+(`e5b03057267dd2c967ccf4e6f284ad4ad54d315d`) candidates. The series come from each dependency’s retained local-check scale log, captured
+on 2026-10-17. Each series records its original capture time, candidate/source/lock hashes, schema, raw latency and
+memory samples, and the SHA-256 of its retained source log. These are HTTP
+measurements of those candidates, not measurements of the browser change.
+
+| Jobs | Ordinary p95, api1 → sql1 | Search p95, api1 → sql1 | Sustained read p95, api1 → sql1 |
+| ---: | ---: | ---: | ---: |
+| 100 | 13.143 → 9.250 ms | 10.801 → 2.701 ms | 13.735 → 7.067 ms |
+| 1,000 | 78.699 → 10.037 ms | 76.723 → 11.821 ms | 96.222 → 26.369 ms |
+| 10,000 | 831.948 → 80.568 ms | 762.726 → 78.652 ms | 969.177 → 405.464 ms |
+
+Use the artifact's exact series when comparing: separate runs on the same
+candidate need not have identical timings. Seven retained warm samples make
+nearest-rank p95 equal to max. Memory is sampled in the shared Node server/client
+process, without forced GC; request-boundary samples can miss transient peaks.
+Both series use exact-v14 canonical schema. SQLite TEMP query-index construction
+and refresh costs are separate from canonical schema/storage growth. In sql1’s
+10,000-job direct-connection diagnostic, cold index refresh took 1,519 ms; the
+1,644 ms cold request and 103 ms warm request exclude connection admission.
+Sampled sustained heap peak growth was 240 MiB versus api1’s 196 MiB; these
+shared-process samples do not isolate SQLite’s native allocations. The
+sustained workload writes synthetic events and heartbeats without a live worker;
+its read latency remains a separate observation. Diagnostic budgets
+are not adopted acceptance thresholds.
+
 ## Measured baseline
 
 The archived results below and the linked JSON retain their original v10 schema
