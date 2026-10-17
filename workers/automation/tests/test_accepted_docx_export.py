@@ -12,6 +12,7 @@ import sys
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
+from xml.dom.minidom import parseString
 from xml.etree import ElementTree as ET
 
 import pytest
@@ -107,6 +108,10 @@ def test_native_export_round_trips_every_line_and_is_editable(owned, kind, paper
     assert receipt["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
     assert path.stat().st_mode & 0o777 == 0o600
     with zipfile.ZipFile(path) as archive:
+        # LibreOffice's package detector refused these OPC roots when prefixed;
+        # independent text readers alone did not expose that interoperability bug.
+        for part in ("[Content_Types].xml", "_rels/.rels", "word/_rels/document.xml.rels"):
+            assert parseString(archive.read(part)).documentElement.prefix is None
         custom = ET.fromstring(archive.read("docProps/custom.xml"))
         binding = json.loads(custom.find(f"{{{CP}}}property/{{{VT}}}lpwstr").text)
         assert binding["sourceArtifactId"] == kind and binding["generation"] == 1
@@ -262,6 +267,32 @@ def test_caller_transaction_is_never_committed_or_rolled_back(owned):
     assert owned[0].in_transaction
     assert owned[0].execute("SELECT title FROM jobs").fetchone()[0] == "Caller-owned change"
     owned[0].rollback()
+
+
+def test_source_file_change_after_staging_removes_only_new_export(owned):
+    prior = run(owned)
+    prior_bytes = Path(prior["path"]).read_bytes()
+    write = export._write_exclusive
+    def change(path, data):
+        write(path, data)
+        (owned[1] / "tailored_resume.txt").write_text("Concurrent source owner")
+    with patch.object(export, "_write_exclusive", side_effect=change), pytest.raises(ExportFailure, match="stale_export_source"):
+        run(owned)
+    assert list(owned[1].rglob("*.docx")) == [Path(prior["path"])]
+    assert Path(prior["path"]).read_bytes() == prior_bytes
+    assert (owned[1] / "tailored_resume.txt").read_text() == "Concurrent source owner"
+    assert owned[0].execute("SELECT count(*) FROM job_artifacts").fetchone()[0] == 1
+
+
+def test_exclusive_collision_never_removes_a_preexisting_file(owned):
+    prior = run(owned)
+    prior_bytes = Path(prior["path"]).read_bytes()
+    with patch.object(export.uuid, "uuid4") as identifier:
+        identifier.return_value.hex = Path(prior["path"]).stem
+        with pytest.raises(FileExistsError):
+            run(owned)
+    assert Path(prior["path"]).read_bytes() == prior_bytes
+    assert owned[0].execute("SELECT count(*) FROM job_artifacts").fetchone()[0] == 1
 
 
 def test_actual_cli_subprocess_exports_and_reports_unsupported_format(owned):

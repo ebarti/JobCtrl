@@ -25,9 +25,12 @@ def _xml(node):
 
 
 def _relationships(items):
-    root = ET.Element(f"{{{R}}}Relationships")
+    # Some office importers reject prefixed OPC metadata, even though a generic
+    # namespace-aware XML reader accepts it. Use conventional default namespaces
+    # without changing ElementTree's process-global namespace registry.
+    root = ET.Element("Relationships", xmlns=R)
     for index, (kind, target) in enumerate(items, 1):
-        ET.SubElement(root, f"{{{R}}}Relationship", Id=f"rId{index}", Type=kind, Target=target)
+        ET.SubElement(root, "Relationship", Id=f"rId{index}", Type=kind, Target=target)
     return _xml(root)
 
 
@@ -91,8 +94,8 @@ def render_docx(document: EditableDocument, settings: ExportSettings, binding: d
     ET.SubElement(prop, f"{{{VT}}}lpwstr").text = json.dumps(binding, ensure_ascii=False, sort_keys=True)
 
     types_ns = "http://schemas.openxmlformats.org/package/2006/content-types"
-    content_types = ET.Element(f"{{{types_ns}}}Types")
-    ET.SubElement(content_types, f"{{{types_ns}}}Default", Extension="rels",
+    content_types = ET.Element("Types", xmlns=types_ns)
+    ET.SubElement(content_types, "Default", Extension="rels",
                   ContentType="application/vnd.openxmlformats-package.relationships+xml")
     for path, content_type in (
         ("word/document.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"),
@@ -100,7 +103,7 @@ def render_docx(document: EditableDocument, settings: ExportSettings, binding: d
         ("docProps/core.xml", "application/vnd.openxmlformats-package.core-properties+xml"),
         ("docProps/custom.xml", "application/vnd.openxmlformats-officedocument.custom-properties+xml"),
     ):
-        ET.SubElement(content_types, f"{{{types_ns}}}Override", PartName="/" + path, ContentType=content_type)
+        ET.SubElement(content_types, "Override", PartName="/" + path, ContentType=content_type)
     parts = {
         "[Content_Types].xml": _xml(content_types),
         "_rels/.rels": _relationships([
