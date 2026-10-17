@@ -343,8 +343,8 @@ all-matching bulk job mutations.
 Timestamp comparisons use JavaScript millisecond precision and normalize
 timezone offsets and fractional notation. Missing or invalid stored timestamps
 do not match their threshold. Lists and all-matching bulk mutations share this
-comparison before counting and pagination; timestamp-filtered lists materialize
-summaries within the read transaction.
+comparison before counting and pagination, using precomputed millisecond values
+in the rebuildable query index.
 The list and all-matching bulk filters accept optional `stages` membership on
 projected `currentStage`. Allowed values are `discover`, `enrich`, `score`,
 `tailor`, `cover`, and `apply`; they do not select `currentSubstage`. Current
@@ -366,10 +366,16 @@ uses the same membership and also accepts exact `normalizedScoreKeyword`.
 `pagination.total` is the globally filtered count, `pages` is
 `max(1, ceil(total / pageSize))`, and `page` is clamped to `pages`. Empty results
 return `items: []`, `total: 0`, `pages: 1`, and `page: 1`. Sort ties use ascending
-canonical job ID regardless of the requested direction. SQL-paged totals and
-the clamped page, including summary joins, share one SQLite read transaction.
-Search, source/company filters, discovery and locale text sorts, and projected-JSON sorts use
-the materialized query path, with canonical summary joins in one read transaction.
+canonical job ID regardless of the requested direction. All searches and sorts
+use SQLite count/order/page selection over summary-equivalent scalar values.
+Index refresh, totals and the clamped page, including selected-summary joins,
+share one SQLite transaction. Only the returned IDs receive DTO hydration,
+availability and template reads. The app-owned TEMP query index stores Unicode
+search values and compatible sort ordinals, preserves exact-v14 admission, and
+rebuilds after connection close or database replacement. A failed refresh fails
+the request without publishing a fresh index marker. The
+[architecture reference](../architecture/read-model.md#job-list-sqlite-selection)
+owns lifecycle and source-snapshot details.
 Text sorting lowercases values before locale comparison, including searched
 lists; equal values retain ascending job IDs in either direction. State sorting
 uses the public `currentState`, so stored exhaustion shares the failed rank.

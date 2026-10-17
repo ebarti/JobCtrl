@@ -68,13 +68,27 @@ and bulk selection. Timestamp boundaries cover mixed fractional precision,
 equivalent timezone offsets, absent/invalid values, and the OR of two cutoffs.
 Discovery sorting preserves the browser's locale comparison of raw timestamp
 strings, including mixed fractional/offset notation, rather than instant order.
-Discovery and locale text sorts and source/company/timestamp filters materialize
-summaries before pagination. Fit-score, current-stage and current-state sorts
-retain SQL pagination when no materialized filter is present. Materializing
-discovery sorts adds work proportional to all matches even for shallow pages;
-compare its latency and sampled memory against the retained earlier baselines.
+All list sorts and filters use SQLite selection over the rebuildable query
+index. Only selected IDs receive summary hydration, availability and template
+reads. Index refresh reads scalar source values and precomputes Unicode search
+fields, substring candidates, timestamp instants and directional locale sort
+ordinals. Construction is proportional to the indexed tenant and must be
+distinguished from settled selection; count and deep-offset work can still
+grow with scalar candidates. The API retains its list connection until app
+close and rebuilds query state after restart or database replacement.
 The original benchmark seed, scenarios, warmups, samples and report fields are
 unchanged; the request paths exercise the current implementation.
+The combined-stage extension adds `queryIndex`: a separate direct retained
+connection observation after its HTTP scenarios, recording connection admission,
+cold and warm request times and `jobQueryMetrics` snapshots. TEMP schema/index
+initialization is separate from scalar rebuild time, which excludes DTO
+hydration; selection time includes count and ID paging. This
+extension preserves the original HTTP sample series and historical scenario
+names, including `materialized-ties-deep`. Source hashes include the query
+implementation, shared comparator and connection owner. Memory samples still
+cover the Node server/client process and can miss short-lived spikes; SQLite
+TEMP storage and ordinal/trigram index construction are not canonical schema
+growth or an independently sampled memory peak.
 The API contract is complete independently of UI pagination changes. For
 API-only delivery, current-browser compatibility includes the existing hook,
 demo and query-key regression suites, plus navigation, filters and bulk
@@ -107,16 +121,17 @@ do not supply current list scores on exact-v14, and the original scenarios do no
 prove numeric score ordering. The extension measures combined
 discovery first, adjacent, deep, and clamped pages; duplicate-stage input; scalar/array
 precedence; explicit empty arrays; empty membership; search first, deep, and
-clamped pages; and a materialized compensation sort with absent-value ties.
+clamped pages; and a compensation sort with absent-value ties.
 Pages contain 25 jobs. Deep pages request the penultimate page of the matching
 set (or page one when the set is small). Expected totals, clamped pages, complete
 page IDs, and filter membership come from deterministic synthetic inputs;
 each HTTP sample must agree before a report is emitted.
 The retained `sql-first`, `sql-adjacent`, `sql-deep`, and `sql-clamped` scenario
 names are historical comparison labels: their unchanged discovery-sort requests
-now use the materialized comparator. They do not identify a SQL pagination path.
+now use SQLite ordinal selection. The labels alone do not establish the query
+strategy used by a historical measurement; inspect its recorded source hashes.
 Separate `fit-score-first`, `fit-score-adjacent`, `fit-score-deep`, and
-`fit-score-clamped` scenarios measure the active SQL pagination path, including
+`fit-score-clamped` scenarios measure numeric score ordering, including
 repeated scores across stages and ascending job-ID ties.
 
 Each extended scenario retains the same latency distribution plus seven raw
@@ -136,7 +151,7 @@ measurements for a later candidate.
 
 The sustained scenario runs for at least 1.5 seconds and seven iterations, with
 a 100-iteration cap. Each iteration directly writes 10 synthetic events,
-updates a seeded heartbeat, requests a free-text plus in-memory-sort job page,
+updates a seeded heartbeat, requests a free-text plus sorted job page,
 and reads seeded pipeline-operation records while a production SSE connection
 is open. It is not a live Temporal worker, provider workload, or endurance
 benchmark. Raw samples and all correctness fields are in the sanitized
@@ -147,7 +162,7 @@ or CI gates:
 
 | Scenario | Proposed target | Rationale |
 | --- | ---: | --- |
-| Warm list, search, in-memory sort, preview, or reused RPC p95 | 250 ms | Conservative local interactive response target |
+| Warm list, search, sort, preview, or reused RPC p95 | 250 ms | Conservative local interactive response target |
 | Settled projection no-op | 50 ms | Keep a watermark check small relative to an interactive request |
 | Fixed 50-event foreground projection pass | 100 ms | Bound work before the background drain |
 | One 1,000-event SSE batch visible | 600 ms | Two production 250 ms polls plus 100 ms delivery allowance |
@@ -205,7 +220,7 @@ ascending production source sort key for the in-memory path.
 | 10,000 | In-memory source sort | 693.720 ms | **707.482 ms** | 707.482 ms |
 
 The 10,000-job search and in-memory sort exceed the proposed warm p95 target,
-as expected for the current materialize/filter/sort implementation. No
+as expected for that baseline's materialize/filter/sort implementation. No
 optimization is included in this baseline.
 
 The real SSE route used its production 250 ms timer and 1,000-event tenant

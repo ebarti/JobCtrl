@@ -81,11 +81,8 @@ import {
   ProfileSchema,
   STAGES,
   WORKFLOW_RUN_STATUSES,
-  STATE_RANK,
-  compareJobs,
   effectiveJobStages,
   compareValues,
-  filterJob,
   paginate,
   timestampAtOrAfter,
   timestampBefore,
@@ -100,6 +97,8 @@ import { canonicalSourceDisplayName, sourceDisplayNames } from "./source-display
 import type { SourcePolitenessOutcomes } from "@jobctrl/contracts";
 import { normalizeJobLocation } from "./location-normalization.js";
 import { refreshProjections } from "./projections.js";
+import { jobQuerySelection, querySourceVersion, refreshJobQueryIndex, selectJobPage } from "./job-list-query.js";
+import type { JobQueryScalars } from "./contracts.js";
 import {
   resumeTemplateStateForArtifact,
   resumeTemplateStateForJob,
@@ -350,16 +349,6 @@ interface OperationalRollup {
   lastErrorClass: string | null;
   lastRunId: string | null;
 }
-
-// Only sort keys whose SQL ordering matches the shared/browser comparator may
-// page in SQL. Raw discovery timestamps need locale comparison even when every
-// value is valid: mixed fractional/offset notation differs from binary order.
-const SQL_JOB_SORT_COLUMNS: Partial<Record<string, string>> = {
-  fit_score: "COALESCE(fit_score, -1)",
-  current_stage: "LOWER(current_stage)",
-  // Exhaustion is presented as failed; ordering must use that same public key.
-  current_state: `(${sqlRankCase("CASE WHEN current_state = 'exhausted' THEN 'failed' ELSE current_state END", STATE_RANK, 999)} || ':' || LOWER(COALESCE(current_substage, current_stage)))`,
-};
 
 const SQL_ACTIVITY_SORT_COLUMNS: Partial<Record<string, string>> = {
   occurred_at: "e.occurred_at",
@@ -996,47 +985,41 @@ function policyVersionFromJson(value: string | null, fields: readonly string[]):
   return null;
 }
 
-export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResponse<JobSummary> {
+/** Index construction, selection and page hydration share a refreshed snapshot. */
+function withJobQuerySnapshot<T>(db: SqliteDatabase, read: () => T): T {
+  const callerTransaction = db.inTransaction;
   refreshProjections(db, DEFAULT_TENANT);
-  const sortColumn = SQL_JOB_SORT_COLUMNS[query.sort];
-  const filter = jobSqlFilter(query);
-  const projectionSelect = jobProjectionSelect();
-
-  if (!query.q && !query.source && !query.company && !query.discoveredSince && !query.scoredSince
-    && sortColumn) {
-    // Count and page (including canonical summary joins) must see one WAL
-    // snapshot even if the worker commits between these SELECTs.
-    return db.transaction(() => {
-      const total = countJobProjections(db, filter);
-      const pages = Math.max(1, Math.ceil(total / query.pageSize));
-      const page = Math.min(query.page, pages);
-      const offset = (page - 1) * query.pageSize;
-      const direction = query.dir === "asc" ? "ASC" : "DESC";
-      const rows = allRows<JobListProjectionRow>(
-        db,
-        `SELECT ${projectionSelect} FROM job_list_projections${filter.where} ORDER BY ${sortColumn} ${direction}, job_id ASC LIMIT ? OFFSET ?`,
-        [...filter.params, query.pageSize, offset],
-      );
-      const summaries = rows.map((row) => rowToJobSummary(row, db));
-      return paginateWithTotal(summaries, total, page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
-    })();
-  }
-
-  // Text/timestamp filters and locale/JSON sorts use rendered summaries, just
-  // like bulk selection and the browser merger. Keep joins in the same snapshot.
   return db.transaction(() => {
-    const allMatching = allRows<JobListProjectionRow>(
-      db,
-      `SELECT ${projectionSelect} FROM job_list_projections${filter.where}`,
-      filter.params,
-    );
-    const normalizedQuery = query.q.toLowerCase();
-    const filtered = allMatching
-      .map((row) => rowToJobSummary(row, db))
-      .filter((job) => filterJob(job, query, normalizedQuery));
-    filtered.sort((left, right) => compareJobs(left, right, query.sort, query.dir));
-    return paginate(filtered, query.page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
+    // A caller may already hold an older WAL snapshot. Never reuse or publish
+    // a reusable freshness token for caller-owned transactions.
+    const version = callerTransaction ? -1 : querySourceVersion(db);
+    refreshJobQueryIndex(db, DEFAULT_TENANT, version, () => allRows<JobListProjectionRow>(db,
+      `SELECT job_list_projections.tenant_id, job_list_projections.job_id,
+        title, employer, source, strategy, location, salary, compensation_summary_json,
+        discovered_at, scored_at, fit_score, current_stage, current_substage, current_state,
+        current_error_code, current_error_message, current_next_action, apply_status, applied_at,
+        (SELECT j.url FROM jobs j WHERE j.tenant_id = job_list_projections.tenant_id
+          AND j.job_id = job_list_projections.job_id) AS url,
+        ${discoverySourceSqlExpression()} AS discovery_source,
+        ${postingSourceUrlSqlExpression()} AS posting_source_url,
+        ${postingSourceAtsKindSqlExpression()} AS posting_source_ats_kind
+       FROM job_list_projections WHERE tenant_id = ? AND EXISTS (
+         SELECT 1 FROM jobs j WHERE j.tenant_id = job_list_projections.tenant_id
+           AND j.job_id = job_list_projections.job_id)`, [DEFAULT_TENANT],
+    ).map(rowToJobQueryScalars));
+    return read();
   })();
+}
+
+export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResponse<JobSummary> {
+  return withJobQuerySnapshot(db, () => {
+    const { ids, total, page } = selectJobPage(db, query, jobSqlFilter(query));
+    // Hydrate only selected IDs, in selection order. Auxiliary availability and
+    // template reads are deliberately absent from index construction.
+    const statement = db.prepare(`SELECT ${jobProjectionSelect()} FROM job_list_projections WHERE tenant_id = ? AND job_id = ?`);
+    const summaries = ids.map((id) => rowToJobSummary(statement.get(DEFAULT_TENANT, id) as JobListProjectionRow, db));
+    return paginateWithTotal(summaries, total, page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
+  });
 }
 
 /**
@@ -1080,18 +1063,11 @@ export function listScoringKeywords(db: SqliteDatabase): ScoringKeywordAggregati
 
 export function matchingJobKeys(db: SqliteDatabase, filter: Partial<BulkJobMutationFilter> = {}): string[] {
   const query = normalizeMutationFilter(filter);
-  refreshProjections(db, DEFAULT_TENANT);
-  const sqlFilter = jobSqlFilter(query);
-  const rows = allRows<JobListProjectionRow>(
-    db,
-    `SELECT ${jobProjectionSelect()} FROM job_list_projections${sqlFilter.where}`,
-    sqlFilter.params,
-  );
-  const normalizedQuery = query.q.toLowerCase();
-  return rows
-    .map((row) => rowToJobSummary(row, db))
-    .filter((job) => filterJob(job, query, normalizedQuery))
-    .map((job) => job.jobKey);
+  return withJobQuerySnapshot(db, () => {
+    const selection = jobQuerySelection(query, jobSqlFilter(query));
+    return allRows<{ job_id: string }>(db,
+      `SELECT qi.job_id FROM ${selection.from}${selection.where}`, selection.params).map((row) => row.job_id);
+  });
 }
 
 export function listEvidenceMap(db: SqliteDatabase): EvidenceMapResponse {
@@ -2619,7 +2595,7 @@ export function postingAvailability(db: SqliteDatabase, jobId: string, now = Dat
   };
 }
 
-function rowToJobSummary(row: JobListProjectionRow, db?: SqliteDatabase): JobSummary {
+function rowToJobQueryScalars(row: JobListProjectionRow): JobQueryScalars {
   const jobKey = requireCanonicalJobId(row.job_id);
   const currentStagePresentation = publicStagePresentation(
     row.current_state,
@@ -2642,8 +2618,28 @@ function rowToJobSummary(row: JobListProjectionRow, db?: SqliteDatabase): JobSum
     salary: row.salary ?? "",
     compensationSummary: parseCompensationSummary(row.compensation_summary_json),
     discoveredAt: row.discovered_at,
-    applicationUrl: row.application_url,
     fitScore: row.fit_score === null || row.fit_score === undefined ? null : Number(row.fit_score),
+    scoredAt: nullableString(row.scored_at),
+    currentStage: (isStage(row.current_stage) ? row.current_stage : "discover") as Stage,
+    currentSubstage: (isStage(row.current_substage) ? row.current_substage : row.current_stage) as Stage,
+    currentState: currentStagePresentation.state,
+    failureReason: currentStagePresentation.failureReason,
+    applyStatus: row.apply_status,
+    appliedAt: row.applied_at,
+  };
+}
+
+function rowToJobSummary(row: JobListProjectionRow, db?: SqliteDatabase): JobSummary {
+  const scalars = rowToJobQueryScalars(row);
+  const presentation = publicStagePresentation(row.current_state, row.current_error_code,
+    row.current_error_message, row.current_next_action, true);
+  const jobKey = scalars.jobKey;
+  return {
+    ...scalars,
+    applicationUrl: row.application_url,
+    errorCode: presentation.errorCode,
+    errorMessage: presentation.errorMessage,
+    nextAction: presentation.nextAction,
     scoreBreakdown: parseScoreBreakdown(row.score_breakdown_json),
     scoreKeywords: parseScoreKeywords(row.score_keywords_json),
     scoreReasoning: row.score_reasoning ?? "",
@@ -2654,13 +2650,6 @@ function rowToJobSummary(row: JobListProjectionRow, db?: SqliteDatabase): JobSum
     scoreCorrection: parseScoreCorrection(row.score_correction_json),
     scoreStaleness: parseScoreStaleness(row),
     scoreAnalysisFreshness: parseScoreAnalysisFreshness(row),
-    currentStage: (isStage(row.current_stage) ? row.current_stage : "discover") as Stage,
-    currentSubstage: (isStage(row.current_substage) ? row.current_substage : row.current_stage) as Stage,
-    currentState: currentStagePresentation.state,
-    errorCode: currentStagePresentation.errorCode,
-    errorMessage: currentStagePresentation.errorMessage,
-    failureReason: currentStagePresentation.failureReason,
-    nextAction: currentStagePresentation.nextAction,
     artifactCount: Number(row.artifact_count ?? 0),
     applyStatus: row.apply_status,
     appliedAt: row.applied_at,
@@ -4407,10 +4396,10 @@ function jobSqlFilter(query: JobListQuery): { where: string; params: SqliteValue
     }
   }
   if (query.applyStatus === "applied") {
-    clauses.push("(job_list_projections.applied_at IS NOT NULL OR LOWER(COALESCE(job_list_projections.apply_status, '')) = 'applied')");
+    clauses.push("(COALESCE(job_list_projections.applied_at, '') != '' OR LOWER(COALESCE(job_list_projections.apply_status, '')) = 'applied')");
   }
   // Source/company are literal, Unicode-lowercased substring filters over the
-  // rendered summary. Apply filterJob before counting/paging, never SQL LIKE
+  // rendered scalar summary. The derived query index handles these, never SQL LIKE
   // (wildcards, ASCII-only LOWER, and ATS kind/owner approximations differ).
   if (query.normalizedScoreKeyword) {
     // This is the exact canonical key returned by listScoringKeywords. Do not
@@ -4435,8 +4424,8 @@ function jobSqlFilter(query: JobListQuery): { where: string; params: SqliteValue
   }
   // Stored timestamps have mixed precision/offsets. Text comparisons can both
   // admit older instants and discard equal instants before filterJob sees them.
-  // Use its shared millisecond comparison (including the two-cutoff OR rule)
-  // before list totals/pagination and all-matching mutation selection.
+  // The derived query index records Date.parse millisecond values (including
+  // the two-cutoff OR rule) before totals and all-matching mutation selection.
   return { where: ` WHERE ${clauses.join(" AND ")}`, params };
 }
 
@@ -4605,14 +4594,6 @@ function jobFilterPayload(query: JobListQuery): Record<string, unknown> {
     deleted: query.deleted,
     jobStates: query.jobStates ?? null,
   };
-}
-
-function countJobProjections(
-  db: SqliteDatabase,
-  filter: { where: string; params: SqliteValue[] },
-): number {
-  const row = getRow<{ count: number }>(db, `SELECT COUNT(*) AS count FROM job_list_projections${filter.where}`, filter.params);
-  return Number(row?.count ?? 0);
 }
 
 function countRows(db: SqliteDatabase, sql: string, params: SqliteValue[]): number {
