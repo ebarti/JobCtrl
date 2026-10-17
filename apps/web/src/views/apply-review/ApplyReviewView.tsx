@@ -4,9 +4,6 @@ import type {
   ApplyAuditSource,
   ApplyReviewRequirementLedAudit,
   ApplyReviewQueueItem,
-  ResumeCommentThread,
-  ResumeReviewDraft,
-  ResumeReviewDraftRenderResponse,
 } from "@jobctrl/contracts";
 import {
   IconAlertTriangle,
@@ -15,25 +12,19 @@ import {
   IconLock,
   IconShieldCheck,
 } from "@tabler/icons-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ACTIVE_APPLY_RUN_STATUSES, CancelApplyButton } from "../../contexts/apply/components/CancelApplyButton.js";
 import { ApplyReviewDecisionControls } from "../../contexts/apply/components/ApplyReviewDecisionControls.js";
 import {
-  useCreateResumeReviewDraftMutation,
-  useRenderResumeReviewDraftMutation,
   useRepeatApplicationOverrideMutation,
   useRepeatApplicationCheckMutation,
-  useReplyToResumeReviewCommentMutation,
-  useSaveResumeReviewDraftRevisionMutation,
-  useSeedResumeReviewCommentThreadsMutation,
 } from "../../contexts/apply/hooks/useApplyReviewMutations.js";
 import { CompensationSummaryStrip } from "../../contexts/enrichment/components/CompensationEvidence.js";
 import { ArtifactComparison } from "../../contexts/materials/components/ArtifactComparison.js";
 import {
   ArtifactGroundingRiskPanel,
   ResumePlateEditor,
-  type ResumeDraftGateState,
 } from "../../contexts/materials/components/ResumeAuditPins.js";
 import { JobResumeTemplateSelect } from "../../contexts/materials/components/JobResumeTemplateSelect.js";
 import {
@@ -41,11 +32,10 @@ import {
   useSetJobResumeTemplateMutation,
 } from "../../contexts/materials/hooks/useResumeTemplateMaterialMutations.js";
 import { useApplyReviewQueueQuery } from "../../contexts/operations/hooks/useApplyReviewQueueQuery.js";
-import { useResumeReviewDraftQuery } from "../../contexts/operations/hooks/useResumeReviewDraftQuery.js";
+import { useApplyReviewSession, type ApplyReviewSession } from "../../contexts/apply/index.js";
 import { useResumeTemplatesQuery } from "../../contexts/profile/hooks/useResumeTemplatesQuery.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
-import { useTenantId } from "../../shared/providers/TenantProvider.js";
 import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert.js";
 import { Button, buttonVariants } from "../../shared/ui/button.js";
 import {
@@ -95,11 +85,6 @@ type ApplyRun = NonNullable<ApplyReviewQueueItem["latestApplyRun"]>;
 type ApplyReviewRequirement = ApplyReviewQueueItem["position"]["idealRequirements"][number];
 type ApplyReviewShippedFit = NonNullable<ApplyReviewRequirementLedAudit["shippedFit"]>;
 type ScoreDimensionKey = "technicalFit" | "experienceFit" | "roleFit";
-type ArtifactComparisonDraftTarget = {
-  readonly acceptedArtifactId: string | null;
-  readonly artifactId: string;
-  readonly riskLabels: readonly string[];
-};
 
 const SCORE_DIMENSIONS: ReadonlyArray<[ScoreDimensionKey, string]> = [
   ["technicalFit", "Technical fit"],
@@ -1055,93 +1040,16 @@ function resumeLineTargets(resumeText: string | null | undefined): PdfAuditLineT
     .filter((line) => line.text.trim().length > 0);
 }
 
-function ResumeLineReview({
-  item,
-  onComparisonTargetChange,
-  onDraftGateChange,
-  selectedLine,
-  onSelectLine,
-}: {
+function ResumeLineReview({ item, session, selectedLine, onSelectLine }: {
   readonly item: ApplyReviewQueueItem;
-  readonly onComparisonTargetChange?: (target: ArtifactComparisonDraftTarget | null) => void;
-  readonly onDraftGateChange: (state: ResumeDraftGateState) => void;
+  readonly session: ApplyReviewSession;
   readonly selectedLine: PdfAuditLineSelection | null;
   readonly onSelectLine: (line: PdfAuditLineSelection | null) => void;
 }) {
   const { api } = usePorts();
-  const tenantId = useTenantId();
-  const createDraft = useCreateResumeReviewDraftMutation();
-  const saveDraftRevision = useSaveResumeReviewDraftRevisionMutation();
-  const seedCommentThreads = useSeedResumeReviewCommentThreadsMutation();
-  const replyToComment = useReplyToResumeReviewCommentMutation();
-  const renderDraft = useRenderResumeReviewDraftMutation();
-  const requestedDraftKey = useRef<string | null>(null);
-  const renderBaseline = useRef<{ tenantId: typeof tenantId; jobKey: string; artifactId: string | null } | null>(null);
-  const renderBaselineArtifactId = renderBaseline.current?.tenantId === tenantId
-    && renderBaseline.current.jobKey === item.jobKey ? renderBaseline.current.artifactId : null;
   const pdfArtifactId = item.materialsPreview.resumePdfArtifactId;
   const auditArtifactId = item.materialsPreview.resumeTextArtifactId ?? pdfArtifactId;
   const lineTargets = useMemo(() => resumeLineTargets(item.materialsPreview.resumeText), [item.materialsPreview.resumeText]);
-  const draftSeedKey = pdfArtifactId && auditArtifactId ? `${tenantId}:${item.jobKey}:${auditArtifactId}:${pdfArtifactId}` : null;
-  const draftQuery = useResumeReviewDraftQuery(item.jobKey, false);
-  const draft = draftQuery.data?.draft.jobKey === item.jobKey ? draftQuery.data.draft : null;
-  const renderedDraftResult = renderDraft.context?.tenantId === tenantId
-    && renderDraft.data?.draft.jobKey === item.jobKey ? renderDraft.data : null;
-  const currentDraftRenderResult = renderedDraftResult?.draft.draftId === draft?.draftId
-    ? renderedDraftResult : null;
-  const draftError = createDraft.error instanceof Error ? createDraft.error.message : null;
-  const savedIntentStatus = saveDraftRevision.data?.editIntent;
-  const saveError = saveDraftRevision.error instanceof Error ? saveDraftRevision.error.message
-    : savedIntentStatus?.status === "unavailable" ? `Your edit is saved. Edit interpretation is unavailable (${savedIntentStatus.failureCode}); retry review before rendering.` : null;
-  const seedError = seedCommentThreads.error instanceof Error ? seedCommentThreads.error.message : null;
-  const replyError = replyToComment.error instanceof Error ? replyToComment.error.message : null;
-  const renderError = renderDraft.error instanceof Error ? renderDraft.error.message : null;
-  const draftLoading = createDraft.isPending && !draft;
-  const renderDraftAsync = renderDraft.mutateAsync;
-  const handleRenderDraft = useCallback(async () => {
-    if (!draft?.currentRevisionId) return false;
-    renderBaseline.current = { tenantId, jobKey: item.jobKey,
-      artifactId: comparisonDraftTarget(renderedDraftResult, draft, renderBaselineArtifactId, auditArtifactId, pdfArtifactId)?.acceptedArtifactId
-        ?? draftBaseArtifactId(draft) ?? auditArtifactId };
-    const result = await renderDraftAsync({
-      draftId: draft.draftId,
-      jobId: item.jobKey,
-      body: {
-        draftRevisionId: draft.currentRevisionId,
-      },
-    });
-    return result.ok;
-  }, [auditArtifactId, draft, item.jobKey, pdfArtifactId, renderBaselineArtifactId, renderDraftAsync, renderedDraftResult, tenantId]);
-  const comparisonTarget = useMemo(
-    () =>
-      comparisonDraftTarget(
-        renderedDraftResult,
-        draft,
-        renderBaselineArtifactId ?? draftBaseArtifactId(draft) ?? auditArtifactId,
-        auditArtifactId,
-        pdfArtifactId,
-      ),
-    [auditArtifactId, draft, pdfArtifactId, renderBaselineArtifactId, renderedDraftResult],
-  );
-
-  useEffect(() => {
-    onComparisonTargetChange?.(comparisonTarget);
-  }, [comparisonTarget, onComparisonTargetChange]);
-
-  useEffect(() => {
-    if (!draftSeedKey || !pdfArtifactId || !auditArtifactId) return;
-    if (requestedDraftKey.current === draftSeedKey) return;
-    requestedDraftKey.current = draftSeedKey;
-    createDraft.mutate({
-      jobId: item.jobKey,
-      body: {
-        rendererFormat: "html_css",
-        resumePdfArtifactId: pdfArtifactId,
-        resumeTextArtifactId: item.materialsPreview.resumeTextArtifactId ?? undefined,
-      },
-    });
-  }, [auditArtifactId, createDraft, draftSeedKey, item.jobKey, item.materialsPreview.resumeTextArtifactId, pdfArtifactId]);
-
   if (!pdfArtifactId || !auditArtifactId) {
     return (
       <TextPreview
@@ -1155,131 +1063,58 @@ function ResumeLineReview({
     <section className="apply-review-preview-block apply-review-html-line-review" aria-label="Resume line review">
       <h3 className="sr-only">Resume line review</h3>
       <ResumePlateEditor
+        key={session.identity}
         artifactId={auditArtifactId}
-        draft={draft}
-        draftError={draftError}
-        draftLoading={draftLoading}
+        draft={session.draft}
+        documentState={{ value: session.document, version: session.documentVersion,
+          dirty: session.dirty, status: session.status, canSave: session.canSave, canRender: session.canRender, onChange: session.edit,
+          onInitialize: session.initializeDocument, onRetryLoad: session.retryLoad,
+          onRetryComments: session.retrySeed }}
+        draftError={session.errors.load ?? null}
         finalUrl={api.artifactPreviewPdfUrl(pdfArtifactId, `${pdfArtifactId}:${item.jobKey}`)}
         htmlUrl={api.artifactPreviewHtmlUrl(pdfArtifactId, `${pdfArtifactId}:${item.jobKey}`)}
         layoutBoxes={item.materialsPreview.resumePdfLayoutBoxes}
         lineTargets={lineTargets}
         pdfFilename="tailored-resume-preview.pdf"
         profileSourceFields={item.materialsPreview.profileSourceFields}
-        renderError={renderError}
-        renderPending={renderDraft.isPending}
-        renderResult={currentDraftRenderResult}
+        renderError={session.errors.render ?? null}
+        renderResult={session.renderResult}
         resumeText={item.materialsPreview.resumeText}
-        saveError={saveError ?? seedError}
-        savePending={saveDraftRevision.isPending}
-        replyError={replyError}
-        replyPending={replyToComment.isPending}
+        saveError={session.errors.save ?? null}
+        seedError={session.errors.seed ?? null}
+        replyError={session.errors.reply ?? null}
+        replyPending={session.replying}
         selectedLine={selectedLine}
         title="Tailored resume preview"
-        onDraftGateChange={onDraftGateChange}
-        onPrepareApproval={handleRenderDraft}
-        onRenderDraft={() => {
-          void handleRenderDraft();
-        }}
-        onReplyToThread={(thread, input) => {
-          replyToComment.mutate({
-            jobId: item.jobKey,
-            threadId: thread.threadId,
-            body: {
-              author: "user",
-              body: input.body,
-              decision: input.decision,
-              draftRevisionId: draft?.currentRevisionId ?? undefined,
-            },
-          });
-        }}
-        onSaveDraft={({ editedText, plateDocument }) => {
-          if (!draft) return;
-          saveDraftRevision.mutate({
-            draftId: draft.draftId,
-            jobId: item.jobKey,
-            body: {
-              editedText,
-              editDeltas: [],
-              plateDocument,
-            },
-          });
-        }}
+        onRenderDraft={() => { void session.render(); }}
+        onReplyToThread={session.reply}
+        onSaveDraft={() => { void session.save(); }}
         onSelectLine={onSelectLine}
-        onSeedCommentThreads={(threads) => {
-          if (!draft || threads.length === 0) return;
-          seedCommentThreads.mutate({
-            draftId: draft.draftId,
-            jobId: item.jobKey,
-            body: { threads: [...threads] },
-          });
-        }}
+        onSeedCommentThreads={session.seed}
       />
     </section>
   );
 }
 
-function comparisonDraftTarget(
-  renderResult: ResumeReviewDraftRenderResponse | null,
-  draft: ResumeReviewDraft | null,
-  acceptedArtifactId: string | null,
-  currentTextArtifactId: string | null,
-  currentPdfArtifactId: string | null,
-): ArtifactComparisonDraftTarget | null {
-  if (!renderResult?.ok) return null;
-  const source = renderResult.draft;
-  // Promotion creates the next editable draft. The completed render still
-  // owns its comparison until this job moves to unrelated artifact identities.
-  const isSource = currentTextArtifactId === draftBaseArtifactId(source)
-    && currentPdfArtifactId === source.baseResumePdfArtifactId;
-  const isRendered = currentTextArtifactId === renderResult.artifacts.resumeText.artifactId
-    && currentPdfArtifactId === renderResult.artifacts.resumePdf.artifactId;
-  if (!isSource && !isRendered) return null;
-  const renderedDraft = draft?.draftId === source.draftId ? draft : source;
-  return {
-    acceptedArtifactId: acceptedArtifactId ?? draftBaseArtifactId(source),
-    artifactId: renderResult.artifacts.resumeText.artifactId,
-    riskLabels: uniqueRiskLabels(renderedDraft.commentThreads),
-  };
-}
-
-function draftBaseArtifactId(draft: ResumeReviewDraft | null): string | null {
-  return draft?.baseResumeTextArtifactId ?? draft?.baseResumePdfArtifactId ?? null;
-}
-
-function uniqueRiskLabels(commentThreads: readonly ResumeCommentThread[]): string[] {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const thread of commentThreads) {
-    const label = thread.riskLabel?.trim();
-    if (!label || seen.has(label)) continue;
-    seen.add(label);
-    result.push(label);
-  }
-  return result;
-}
-
 function ResumeReviewSurface({
   item,
-  onComparisonTargetChange,
-  onDraftGateChange,
+  session,
 }: {
   readonly item: ApplyReviewQueueItem;
-  readonly onComparisonTargetChange: (target: ArtifactComparisonDraftTarget | null) => void;
-  readonly onDraftGateChange: (state: ResumeDraftGateState) => void;
+  readonly session: ApplyReviewSession;
 }) {
   const [selectedLine, setSelectedLine] = useState<PdfAuditLineSelection | null>(null);
 
   useEffect(() => {
     setSelectedLine(null);
-  }, [item.jobKey]);
+  }, [session.identity]);
 
   return (
     <section className="apply-review-preview-block apply-review-resume-review" aria-label="Resume audit">
       <div className="apply-review-resume-main">
         <ResumeLineReview
           item={item}
-          onComparisonTargetChange={onComparisonTargetChange}
-          onDraftGateChange={onDraftGateChange}
+          session={session}
           selectedLine={selectedLine}
           onSelectLine={setSelectedLine}
         />
@@ -1547,56 +1382,10 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
   const templatesQuery = useResumeTemplatesQuery();
   const setJobTemplate = useSetJobResumeTemplateMutation();
   const ensureCurrentMaterials = useEnsureCurrentResumeMaterialsMutation();
-  const prepareApprovalRef = useRef<(() => Promise<boolean>) | null>(null);
+  const session = useApplyReviewSession(item);
+  const comparisonDraft = session.comparison;
   const [positionOpen, setPositionOpen] = useState(true);
-  const [comparisonDraft, setComparisonDraft] = useState<ArtifactComparisonDraftTarget | null>(null);
-  const [draftGate, setDraftGate] = useState<ResumeDraftGateState>({
-    draftId: null,
-    dirty: false,
-    hasSavedRevision: false,
-    notice: null,
-    preparing: false,
-    rendered: false,
-    reason: null,
-  });
-  const handleDraftGateChange = useCallback((next: ResumeDraftGateState) => {
-    prepareApprovalRef.current = next.prepareApproval ?? null;
-    setDraftGate((previous) =>
-      previous.draftId === next.draftId &&
-      previous.dirty === next.dirty &&
-      previous.hasSavedRevision === next.hasSavedRevision &&
-      previous.notice === next.notice &&
-      previous.preparing === next.preparing &&
-      previous.rendered === next.rendered &&
-      previous.reason === next.reason
-        ? previous
-        : next,
-    );
-  }, []);
-  const handleComparisonTargetChange = useCallback((next: ArtifactComparisonDraftTarget | null) => {
-    setComparisonDraft((previous) =>
-      previous?.acceptedArtifactId === next?.acceptedArtifactId &&
-      previous?.artifactId === next?.artifactId &&
-      (previous?.riskLabels ?? []).join("\u0000") === (next?.riskLabels ?? []).join("\u0000")
-        ? previous
-        : next,
-    );
-  }, []);
-  useEffect(() => {
-    setPositionOpen(true);
-    setComparisonDraft(null);
-    setDraftGate({
-      draftId: null,
-      dirty: false,
-      hasSavedRevision: false,
-      notice: null,
-      preparing: false,
-      rendered: false,
-      reason: null,
-    });
-    prepareApprovalRef.current = null;
-  }, [item.jobKey]);
-  const handlePrepareApproval = useCallback(() => prepareApprovalRef.current?.() ?? Promise.resolve(false), []);
+  useEffect(() => { setPositionOpen(true); }, [item.jobKey]);
   const templateMutationError =
     setJobTemplate.error instanceof Error
       ? setJobTemplate.error.message
@@ -1671,11 +1460,13 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
         <CardFooter className="apply-review-selected-actions border-b">
           <ApplyReviewDecisionControls
             item={item}
-            approvalDisabledReason={draftGate.reason}
+            approvalDisabledReason={session.reason}
             liveSubmitDisabledReason={repeatApplicationLiveBlock(item)}
-            approvalNotice={draftGate.notice}
-            approvalPreparing={draftGate.preparing}
-            onPrepareApproval={draftGate.notice ? handlePrepareApproval : null}
+            approvalNotice={session.notice}
+            approvalPreparing={session.preparing}
+            approvalRendering={session.rendering}
+            onDecision={session.decide}
+            decisionError={session.errors.decision ?? null}
           />
         </CardFooter>
         <CardContent className="apply-review-selected-facts">
@@ -1792,8 +1583,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
             </div>
             <ResumeReviewSurface
               item={item}
-              onComparisonTargetChange={handleComparisonTargetChange}
-              onDraftGateChange={handleDraftGateChange}
+              session={session}
             />
             {resumeAuditArtifactId ? <ArtifactGroundingRiskPanel artifactId={resumeAuditArtifactId} /> : null}
             <ArtifactComparison

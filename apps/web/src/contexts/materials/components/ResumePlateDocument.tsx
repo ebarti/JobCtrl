@@ -161,12 +161,17 @@ function ResumeCommentReplyForm({
     useState<ResumeCommentReplyDecision>("clarified");
   if (!onReply) return null;
   const formId = `resume-comment-reply-${thread.threadId}`;
-  const submit = () => {
+  const submit = async () => {
     const trimmed = body.trim();
     if (!trimmed) return;
-    onReply(thread, { body: trimmed, decision });
-    setBody("");
-    setDecision("clarified");
+    try {
+      const saved = await onReply(thread, { body: trimmed, decision });
+      if (saved === false) return;
+      setBody((current) => current === body ? "" : current);
+      setDecision((current) => current === decision ? "clarified" : current);
+    } catch {
+      // The owning session exposes the failure; retain the submitted reply.
+    }
   };
   return (
     <span
@@ -217,7 +222,7 @@ function ResumeCommentReplyForm({
           size="sm"
           type="button"
           disabled={disabled || !body.trim()}
-          onClick={submit}
+          onClick={() => { void submit(); }}
         >
           Reply
         </Button>

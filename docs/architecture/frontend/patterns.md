@@ -292,8 +292,32 @@ View composition (Dashboard, Jobs, Artifacts) is treated separately in §4.5.
 | Queries | None directly — apply-run reads are owned by Operations (`useApplyRunsListQuery`, derived from the dashboard summary; there is no `useApplyRunQuery`). Apply Review reads (`useApplyReviewQueueQuery`, `useResumeReviewDraftQuery`, `useApplicationOutcomesQuery`) are also Operations hooks. |
 | Mutations | `useApplyJobMutation({ jobId })` (returns `runId`, 202), `useDryRunApplyMutation({ jobId })`, `useCancelApplyMutation({ jobId, runId })`, plus Apply Review mutations for `useCreateResumeReviewDraftMutation`, `useSaveResumeReviewDraftRevisionMutation`, `useSeedResumeReviewCommentThreadsMutation`, `useReplyToResumeReviewCommentMutation`, and `useRenderResumeReviewDraftMutation`. Draft save/reply/render mutations invalidate the Apply Review queue, draft, feedback, job detail, and outcome surfaces; render promotion also allows the queue to refresh to the replacement artifacts. |
 | SSE keys consumed | `ApplyRunStarted`, `ApplySubmitIntended`, `ApplyRunEventRecorded`, `ApplicationEmailFeedbackIngested`, `ApplicationSubmitted`, `ApplicationFailed`. |
-| Components | `<ApplyButton jobId={...} />`, `<DryRunButton jobId={...} />`, `<CancelApplyButton jobId={...} runId={...} />`, `<ApplyRunBadge result={...} />`, `<RunStatusBadge />`, `<ApplyRunTimeline runId={...} />`, `<ApplyHistory jobId={...} />`, `<ApplyReviewDecisionControls>`, and the `<ApplicationOutcomes>` family (`<JobOutcomePanel>`, `<ManualOutcomeForm>`, `<OutcomeTimeline>`, `<OutcomeSuggestionsPanel>`). Apply Review decision controls compose with the Materials-owned `<ResumePlateEditor>` for the live resume draft surface. Its direct PDF export includes unsaved editor state but does not save the draft or affect replacement-artifact and approval gates. Approval buttons are disabled when the selected draft is dirty, invalid, or not rendered into replacement artifacts; defer/decline/reset remain available. |
+| Components | `<ApplyButton jobId={...} />`, `<DryRunButton jobId={...} />`, `<CancelApplyButton jobId={...} runId={...} />`, `<ApplyRunBadge result={...} />`, `<RunStatusBadge />`, `<ApplyRunTimeline runId={...} />`, `<ApplyHistory jobId={...} />`, `<ApplyReviewDecisionControls>`, and the `<ApplicationOutcomes>` family (`<JobOutcomePanel>`, `<ManualOutcomeForm>`, `<OutcomeTimeline>`, `<OutcomeSuggestionsPanel>`). Apply Review decision controls compose with the Materials-owned `<ResumePlateEditor>` for the live resume draft surface. Its direct PDF export includes unsaved editor state but does not save the draft or affect replacement-artifact and approval gates. Dirty, saving, invalid or failed draft state blocks approval; a clean saved revision can render during approval preparation. Defer/decline/reset remain available. |
 | Notes | There is no `useApplyRunQuery`; the timeline reads from the derived apply-runs list, and the invalidation router (§7.5) calls `setQueryData` on `applyRunsKeys.detail(tenantId, runId)` for each `ApplyRunEventRecorded` rather than `invalidateQueries`, because event volume during a run is high (one event every few seconds for several minutes). |
+
+`useApplyReviewSession` coordinates the review lifecycle through the public Apply
+contract. The view composes its state with Materials' controlled document and
+comparison components. Document saves and renders are ordered; comments reconcile
+independently by recorded IDs. Each acknowledgement belongs to its initiating
+tenant/job, draft/base generation, revision and submitted document. Failed loads,
+saves and renders expose retry actions while retaining the accepted artifact and
+evidence snapshot. Rejected render attempts are separate from the last successful
+comparison.
+
+Initial loading also preserves edits made against the generated HTML before an
+existing saved revision arrives. Promotion of this session's rendered output
+does not reopen it as a replacement draft or discard edits made during rendering.
+Decision controls delegate actions to the session; they do not prepare approvals
+or write decisions themselves. Pending button presentation belongs to the
+initiating tenant/job and cannot settle another session's action.
+
+Approval preparation waits for pending document writes, renders the saved revision
+when required, and reads canonical queue bindings after rendering. It reconciles
+the current draft cache again before recording the decision. Edits, replacement
+drafts, session switches, validation failures and changed profile, URL or email
+bindings prevent authorization; live approval also rechecks repeat protection and
+the selected dry-run evidence. Decisions record authorization only and never
+dispatch automation. Defer, decline and reset do not require rendering.
 
 ### 4.4.8 Pipeline Orchestration
 

@@ -11,7 +11,7 @@ import type {
 } from "@jobctrl/contracts";
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -2181,6 +2181,7 @@ describe("<ApplyReviewView>", () => {
     const shadow = await findResumeShadowRoot();
     expect(shadowText(shadow)).toContain("Restored human rewrite for incident response.");
     expect(screen.queryByText("loading draft")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Authorize dry run for/ })).toBeDisabled();
     expect(createResumeReviewDraft).toHaveBeenCalled();
   });
 
@@ -2214,11 +2215,12 @@ describe("<ApplyReviewView>", () => {
       },
       layoutBoxCount: 3,
     } satisfies Extract<ResumeReviewDraftRenderResponse, { ok: true }>;
+    let renderCompleted = false;
     let resolveRender: ((response: typeof renderResponse) => void) | null = null;
     const renderResumeReviewDraft = vi.fn(
       () =>
         new Promise<typeof renderResponse>((resolve) => {
-          resolveRender = resolve;
+          resolveRender = (response) => { renderCompleted = true; resolve(response); };
         }),
     );
     const decideApplyReview = vi.fn(
@@ -2238,7 +2240,13 @@ describe("<ApplyReviewView>", () => {
     renderWithProviders(<ApplyReviewView />, {
       ports: buildTestPorts({
         api: {
-          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+          applyReviewQueue: vi.fn(async () => renderCompleted ? ({ ...sampleApplyReviewQueue,
+            items: sampleApplyReviewQueue.items.map((item, index) => index ? item : {
+              ...item, approvalGate: { ...item.approvalGate, materialsGeneration: 3 },
+              materialsPreview: { ...item.materialsPreview, resumeTextArtifactId: renderResponse.artifacts.resumeText.artifactId,
+                resumePdfArtifactId: renderResponse.artifacts.resumePdf.artifactId },
+            }),
+          }) : sampleApplyReviewQueue),
           createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft })),
           decideApplyReview,
           renderResumeReviewDraft,
@@ -2417,6 +2425,16 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getByRole("region", { name: "Tailored resume preview" })).toBeInTheDocument();
 
     if (loadNewActiveDraft) {
+      // Promotion belongs to the mounted session. A replacement may still
+      // arrive independently through the canonical draft read surface.
+      act(() => queryClient.setQueryData(applyReviewKeys.draft(LOCAL_TENANT, jobKey), {
+        ok: true, draft: {
+          ...draft, draftId: "draft-after-promotion", baseGeneration: 3,
+          baseResumeTextArtifactId: draftArtifact.artifactId, baseResumePdfArtifactId: "resume-review-pdf",
+          state: "active", currentRevisionId: null, latestRevisionNumber: 0,
+          latestRevision: null, commentThreads: [],
+        },
+      }));
       expect(await screen.findByText("draft ready")).toBeInTheDocument();
       expect(renderButton).toBeDisabled();
       expect(screen.queryByText("replacement rendered")).not.toBeInTheDocument();
@@ -2541,7 +2559,7 @@ describe("<ApplyReviewView>", () => {
     expect(artifact).not.toHaveBeenCalledWith(draftArtifact.artifactId);
   });
 
-  it("lets the user reply to a persisted JobCtrl comment inside its matched resume line", async () => {
+  it("retains a failed reply and retries it inside its matched resume line", async () => {
     htmlPreviewResumeText =
       "Principal Platform Engineer\nExperience\nRestored human rewrite for incident response.";
     const existingReply = {
@@ -2597,6 +2615,8 @@ describe("<ApplyReviewView>", () => {
       },
     }));
 
+    replyToResumeReviewComment.mockRejectedValueOnce(new Error("Synthetic reply transport failed. Try again."));
+
     renderWithProviders(<ApplyReviewView />, {
       ports: buildTestPorts({
         api: {
@@ -2642,6 +2662,10 @@ describe("<ApplyReviewView>", () => {
     await userEvent.type(replyBox, "This number is supported by the incident response profile bullet.");
     await userEvent.click(inlineThreadContent.getByRole("button", { name: "Reply" }));
 
+    await screen.findByText("Synthetic reply transport failed. Try again.");
+    expect(replyBox).toHaveValue("This number is supported by the incident response profile bullet.");
+    await userEvent.click(inlineThreadContent.getByRole("button", { name: "Reply" }));
+    await waitFor(() => expect(replyToResumeReviewComment).toHaveBeenCalledTimes(2));
     await waitFor(() =>
       expect(replyToResumeReviewComment).toHaveBeenCalledWith("thread-claim-risk", {
         author: "user",
