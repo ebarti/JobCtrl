@@ -268,3 +268,14 @@ export type CheckAvailabilityResponse =
 export { SEMANTIC_TAXONOMY } from "@jobctrl/contracts";
 
 export type { DeterminationEnvelope } from "@jobctrl/contracts";
+
+export type {
+  ApplyReviewProfileSourceField,
+  ArtifactTailoringExplanation,
+  BulletProvenanceEntry,
+  ResumeCommentReplyDecision,
+  ResumeReviewDraftRenderResponse,
+  ResumeReviewCommentThreadSeedInput,
+  ResumeLayoutBox,
+  ResumeTemplateTheme,
+} from "@jobctrl/contracts";
