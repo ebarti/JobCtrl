@@ -204,7 +204,11 @@ the stable, separate `$JOBCTRL_DIR/codex_home`. Codex-backed work requires
 an authenticated Codex CLI first. If its `auth.json` is absent,
 setup or generation may copy valid authentication once from the effective
 normal Codex CLI home. JobCtrl never overwrites existing isolated auth or
-changes the normal home. The auth file remains outside
+changes the normal home. Only `auth.json` is copied; personal Codex settings,
+instructions, skills, chats and logs are not imported. JobCtrl does not save
+Codex generation chats, and each provider client removes its temporary
+databases and logs when it closes. Existing provider files from earlier
+versions are preserved. The auth file remains outside
 `codex_home/workspace/`, the only JobCtrl Codex subtree available to
 prompt-driven reads.
 Anthropic and Gemini API keys use the native OS credential store; cloud

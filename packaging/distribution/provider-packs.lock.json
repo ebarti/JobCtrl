@@ -163,7 +163,7 @@
     },
     {
       "id": "codex-provider-runtime",
-      "version": "0.144.4",
+      "version": "0.162.1",
       "owner": "OpenAI",
       "source": "https://pypi.org/project/openai-codex-cli-bin/",
       "license": "Apache-2.0",
@@ -176,17 +176,17 @@
       "wheels": [
         {
           "package": "openai-codex",
-          "version": "0.144.4",
-          "url": "https://files.pythonhosted.org/packages/17/35/5d2a13e38d91278019f18757ac10426d2649b7ec6f031818c792f64559e9/openai_codex-0.144.4-py3-none-any.whl",
-          "sha256": "de1513a6e94b9a8d7728a3b74298bc1469428ade10ba0ef2d5db47dd1cb606f5",
-          "sizeBytes": 76244
+          "version": "0.162.1",
+          "url": "https://files.pythonhosted.org/packages/a4/32/b28f2d390ce7fef24fb43e51a44764293119e2879d2adda9627187f5af94/openai_codex-0.162.1-py3-none-any.whl",
+          "sha256": "ebb2254a7ae97432eda6c2fe9b48b5b7f2c59c6e1ea25686a45ceca11ddec4b2",
+          "sizeBytes": 98390
         },
         {
           "package": "openai-codex-cli-bin",
-          "version": "0.144.4",
-          "url": "https://files.pythonhosted.org/packages/65/eb/64c180514a2cc3e2500e486813f5a8d7f7e349342e9bebd78d99ddd9791a/openai_codex_cli_bin-0.144.4-py3-none-macosx_11_0_arm64.whl",
-          "sha256": "05db505a9c7f020f58b70837a94e00d32a50086986c267bcc44ea97b573d4a05",
-          "sizeBytes": 116474758
+          "version": "0.162.1",
+          "url": "https://files.pythonhosted.org/packages/56/33/9242e625cf916ba6db9fbc11986174bdb732d189634c706bc472f3cb7d49/openai_codex_cli_bin-0.162.1-py3-none-macosx_11_0_arm64.whl",
+          "sha256": "490d395201c322e5bafc9c02075e36878a0c3b48d6d70ca0f0787629cb7c1c4c",
+          "sizeBytes": 123964056
         }
       ]
     },
