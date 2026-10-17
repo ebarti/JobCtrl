@@ -146,6 +146,18 @@ Confirm the account action, recheck the candidate and current channel, then
 resume the existing run when its source is unchanged. Do not rotate credentials
 or bypass notarization to work around an agreement requirement.
 
+An agreement error does not prove that acceptance is missing. If the owner has
+an accepted record or confirmation email, inspect the current Developer team,
+membership, active App Store Connect team key and agreement status. On validation
+failure, the protected signing job reports SHA-256 fingerprints of the configured
+issuer and key ID, then makes read-only Notary and App Store Connect API probes.
+Compare those fingerprints with the known account metadata locally; keep private
+keys and bearer tokens out of logs and support messages. The report retains only
+HTTP status, redacted Apple errors and request IDs, and the original validation
+failure still stops signing. Contradictory accepted and rejected account state
+needs that evidence; repeated version changes, credential rotation, or browser
+session refreshes do not establish a repair.
+
 ## Verify what users receive
 
 Wait for the complete workflow, including PyPI, to succeed. Independently read back:

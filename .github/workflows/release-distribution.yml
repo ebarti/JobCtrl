@@ -443,7 +443,13 @@ jobs:
           security find-identity -v -p codesigning "$keychain" | grep -F "$JOBCTRL_APPLE_SIGNING_IDENTITY"
           notary_key="$RUNNER_TEMP/jobctrl-notary-key.p8"
           printf %s "$JOBCTRL_APPLE_NOTARY_API_KEY" > "$notary_key"
-          xcrun notarytool store-credentials "$JOBCTRL_APPLE_NOTARY_PROFILE" --key "$notary_key" --key-id "$JOBCTRL_APPLE_NOTARY_KEY_ID" --issuer "$JOBCTRL_APPLE_NOTARY_ISSUER" --validate
+          if xcrun notarytool store-credentials "$JOBCTRL_APPLE_NOTARY_PROFILE" --key "$notary_key" --key-id "$JOBCTRL_APPLE_NOTARY_KEY_ID" --issuer "$JOBCTRL_APPLE_NOTARY_ISSUER" --validate; then
+            : # Credential validation remains required before signing.
+          else
+            validation_status=$?
+            node scripts/distribution-notary-diagnostics.mjs || echo "Secret-free notary diagnostics could not complete."
+            exit "$validation_status"
+          fi
           rm -f "$certificate" "$notary_key"
 
       - name: Sign inside-out, notarize, staple apps, and create final assets
