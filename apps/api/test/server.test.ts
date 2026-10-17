@@ -1,3 +1,4 @@
+import { providerStatusResult, providerModelsResult, providerVerifyResult } from "./provider-fixture.js";
 import { workflowRpcFixture } from "./rpc-workflow-fixture.js";
 import { createActionDispatcher } from "../src/local-actions.js";
 import { recordArtifactAuthority, recordCompensationAuthority, recordRoleFeedback } from "./semantic-fixtures.js";
@@ -14135,4 +14136,110 @@ it("preserves invalid-result HTTP mappings after shared boundary enforcement", a
       expect(response.statusCode, `${request.url}: ${response.body}`).toBe(502);
     }
   } finally { await app.close(); }
+});
+
+// Exercise the actual generated client, HTTP shell and typed worker boundary.
+describe("registered provider endpoint family", () => {
+  afterEach(() => vi.restoreAllMocks());
+  // Node fetch has no browser Origin; supply the first-party browser metadata.
+  function browserClient(baseUrl: string) {
+    const networkFetch = globalThis.fetch;
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => networkFetch(input, {
+      ...init, headers: { ...init?.headers, origin: "http://127.0.0.1:5173" },
+    }));
+    return createJobCtrlApiClient(baseUrl);
+  }
+  const cases = [
+    ["providerStatus", "GET", "/v1/providers/status", "provider_status", {}, { ok: true, ...providerStatusResult }, "provider_status_failed"],
+    ["providerModels", "GET", "/v1/providers/models", "provider_models", {}, { ok: true, ...providerModelsResult }, "provider_models_failed"],
+    ["verifyCodexProvider", "POST", "/v1/providers/codex/verify", "provider_verify", { provider: "codex" }, { ok: true, verification: providerVerifyResult }, "provider_verification_failed"],
+  ] as const;
+
+  it.each(cases)("%s preserves success, readiness and ignored legacy input", async (name, method, route, rpc, params, expected) => {
+    const result = rpc === "provider_status" ? providerStatusResult : rpc === "provider_models" ? providerModelsResult : providerVerifyResult;
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({ jsonrpc: "2.0", id: 1, result }));
+    const app = buildApp({ ...options, providerDispatcher: { call, close: async () => {} }, requireHealthyWorkerForActions: true });
+    try {
+      await app.listen({ host: "127.0.0.1", port: 0 });
+      const address = app.server.address();
+      if (!address || typeof address === "string") throw new Error("Expected loopback listener");
+      const client = browserClient(`http://127.0.0.1:${address.port}`);
+      await expect(client[name]()).resolves.toEqual(expected);
+      const legacy = await app.inject({ method, url: route + "?ignored=legacy", ...(method === "POST" ? { payload: { ignored: "legacy" } } : {}) });
+      expect(legacy.statusCode, legacy.body).toBe(200);
+      expect(legacy.json()).toEqual(expected);
+      expect(call).toHaveBeenCalledTimes(2);
+      for (const args of call.mock.calls) expect(args).toEqual([rpc, params]);
+    } finally { await app.close(); }
+  });
+
+  for (const failure of ["rpc", "invalid", "private", "transport"] as const) {
+    it.each(cases)(`%s sanitizes ${failure} failures through the client`, async (name, _method, _route, rpc, _params, _expected, errorCode) => {
+      const marker = "synthetic-private-failure-marker";
+      const call = vi.fn<JsonRpcDispatcher["call"]>(async () => {
+        if (failure === "transport") throw new Error(marker);
+        if (failure === "rpc") return { jsonrpc: "2.0", id: 1, error: { code: -32603, message: marker, data: { token: marker } } };
+        const valid = rpc === "provider_status" ? providerStatusResult : rpc === "provider_models" ? providerModelsResult : providerVerifyResult;
+        return { jsonrpc: "2.0", id: 1, result: failure === "private" ? { ...valid, token: marker } : {} };
+      });
+      const app = buildApp({ ...options, providerDispatcher: { call, close: async () => {} } });
+      try {
+        await app.listen({ host: "127.0.0.1", port: 0 });
+        const address = app.server.address();
+        if (!address || typeof address === "string") throw new Error("Expected loopback listener");
+        const client = browserClient(`http://127.0.0.1:${address.port}`);
+        const status = name === "providerModels" || failure === "transport" ? 503 : 502;
+        const message = name === "providerModels" ? "Provider models are temporarily unavailable."
+          : name === "providerStatus" ? (failure === "invalid" || failure === "private"
+            ? "Provider status returned an invalid response." : "Provider status is temporarily unavailable.")
+          : failure === "rpc" ? "Codex verification could not be completed."
+          : failure === "transport" ? "Codex verification is temporarily unavailable."
+          : "Codex verification returned an invalid response.";
+        const request = client[name]();
+        await expect(request).rejects.toMatchObject({ status, responseBody: { ok: false, error: errorCode, message } });
+        await request.catch(error => expect(JSON.stringify(error)).not.toContain(marker));
+      } finally { await app.close(); }
+    });
+  }
+
+  it.each(cases)("%s rejects unsafe Host and remote peers before dispatch", async (_name, method, route) => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>();
+    const app = buildApp({ ...options, providerDispatcher: { call, close: async () => {} } });
+    try {
+      for (const input of [{ headers: { host: "example.test" } }, { remoteAddress: "192.0.2.1" }]) {
+        const response = await app.inject({ method, url: route, ...input });
+        expect(response.statusCode, response.body).toBe(403);
+      }
+      expect(call).not.toHaveBeenCalled();
+    } finally { await app.close(); }
+  });
+
+  it("rejects cross-site verification before dispatch and keeps read CORS restrictions", async () => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({ jsonrpc: "2.0", id: 1, result: providerStatusResult }));
+    const app = buildApp({ ...options, providerDispatcher: { call, close: async () => {} } });
+    try {
+      const rejected = await app.inject({ method: "POST", url: "/v1/providers/codex/verify", headers: { origin: "https://example.test" }, payload: {} });
+      expect(rejected.statusCode, rejected.body).toBe(403);
+      expect(rejected.json().error).toBe("cross_site_request");
+      expect(call).not.toHaveBeenCalled();
+      const read = await app.inject({ method: "GET", url: "/v1/providers/status", headers: { origin: "https://example.test" } });
+      expect(read.statusCode).toBe(200);
+      expect(read.headers["access-control-allow-origin"]).toBeUndefined();
+    } finally { await app.close(); }
+  });
+
+  it.each(["not_configured", "failed"] as const)("returns an unsuccessful %s verification as a checked 200 response", async status => {
+    const verification = { ...providerVerifyResult, ok: false, status };
+    const app = buildApp({ ...options, providerDispatcher: { call: async () => ({ jsonrpc: "2.0", id: 1, result: verification }), close: async () => {} } });
+    try {
+      await app.listen({ host: "127.0.0.1", port: 0 });
+      const address = app.server.address();
+      if (!address || typeof address === "string") throw new Error("Expected loopback listener");
+      await expect(browserClient(`http://127.0.0.1:${address.port}`).verifyCodexProvider())
+        .resolves.toEqual({ ok: true, verification });
+      const response = await app.inject({ method: "POST", url: "/v1/providers/codex/verify", headers: { "content-type": "text/plain", origin: "http://127.0.0.1:5173" }, payload: "legacy ignored text" });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json()).toEqual({ ok: true, verification });
+    } finally { await app.close(); }
+  });
 });

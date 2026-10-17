@@ -441,3 +441,12 @@ Semantic read envelopes and citations are shared in Contracts. Discovery execute
 See [the decision](decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
 
 Private screening-answer reads and commands use the generated endpoint clients and registered `screening_answers` Python RPC. See [Jobs and Materials](api/jobs-and-materials.md#screening-answers).
+
+## Provider Endpoint Registration
+
+`GET /v1/providers/status`, `GET /v1/providers/models`, and
+`POST /v1/providers/codex/verify` share the existing endpoint specification,
+registered feature handlers and generated checked clients. Legacy query/body
+values remain ignored. The [provider contract](api/profile-and-settings.md#provider-endpoint-compatibility)
+defines status/error compatibility; the [migration recipe](architecture/contracts-types-and-api-boundaries.md#incremental-endpoint-migration)
+shows how to adopt later families without changing the #954 envelope boundary.
