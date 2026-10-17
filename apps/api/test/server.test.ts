@@ -8390,13 +8390,8 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  // Phase 7 (S-26 round-1 review B2 + round-2 L4): API-driven retry-enrich
-  // MUST clear the ``job_enrichments`` aggregate's terminal-state fields,
-  // otherwise the worker's ``_ENRICHMENT_PENDING`` queue predicate
-  // permanently excludes the row and the retry is a silent no-op. Mirror
-  // of the Python ``test_reset_job_stage_enrich_clears_job_enrichments_aggregate``
-  // — exercises ``resetEnrichmentAggregate`` in
-  // ``apps/api/src/write-model.ts`` end-to-end through the HTTP route.
+  // HTTP reaches the same Python owner as CLI: reopen the lifecycle for
+  // worker pickup while retaining accepted content during a refresh.
   it("retry-enrich resets the job_enrichments aggregate to pending", async () => {
     // Seed an enriched aggregate row directly — independent of the rest
     // of the fixture so the test is self-contained.
