@@ -54,7 +54,11 @@ export function allKinds(value) {
 export function createTracer(
   checker,
   source,
-  { seed = () => undefined, member = () => undefined } = {},
+  {
+    seed = () => undefined,
+    member = () => undefined,
+    forwardArguments = false,
+  } = {},
 ) {
   const symbolOf = (node) =>
     ts.isIdentifier(node) && ts.isShorthandPropertyAssignment(node.parent)
@@ -69,6 +73,46 @@ export function createTracer(
       unknownKeys: true,
       fields: new Map((keys ?? [undefined]).map((key) => [key, value])),
     };
+  const literal = (key) => ({
+    kinds: new Set(),
+    keys: new Set([String(key)]),
+    unknownKeys: false,
+    fields: new Map(),
+  });
+  const indexOf = (key) =>
+    typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key)
+      ? Number(key)
+      : undefined;
+  function arrayLength(value) {
+    const length = value?.fields.get("length");
+    if (!length || length.unknownKeys || length.keys.size !== 1)
+      return undefined;
+    const count = indexOf([...length.keys][0]);
+    if (count === undefined || value.fields.has(undefined)) return undefined;
+    return value.fields.size === count + 1 ? count : undefined;
+  }
+  function arrayRest(node, base, start) {
+    let value;
+    for (const [key, item] of base?.fields ?? []) {
+      const index = indexOf(key);
+      if (index !== undefined && index >= start)
+        value = join(value, field([String(index - start)], item));
+      if (key === undefined) value = join(value, field(undefined, item));
+    }
+    const length = arrayLength(base);
+    if (length !== undefined)
+      value = join(
+        value,
+        field(["length"], literal(Math.max(0, length - start))),
+      );
+    // Unknown iterable contents retain possible authority at every position.
+    const unknown = join(
+      ...[...(base?.kinds ?? [])].map(origin),
+      member(node, base, undefined),
+    );
+    if (unknown) value = join(value, field(undefined, unknown));
+    return value;
+  }
   function select(node, base, keys) {
     const selected = keys
       ? keys.map((key) => base?.fields.get(key))
@@ -113,7 +157,9 @@ export function createTracer(
     const base = bindingSource(element.parent, new Set(seen), writes);
     return join(
       element.dotDotDotToken
-        ? base
+        ? ts.isArrayBindingPattern(element.parent)
+          ? arrayRest(element, base, element.parent.elements.indexOf(element))
+          : base
         : select(element, base, bindingKeys(element, seen, writes)),
       trace(element.initializer, new Set(seen), writes),
     );
@@ -150,6 +196,9 @@ export function createTracer(
           if (refs.length) return refs;
         }
         if (ts.isBindingElement(decl)) {
+          // Rest creates a new container; writes target that container rather
+          // than the original iterable's unshifted member path.
+          if (decl.dotDotDotToken) return [{ root: symbol, path: [] }];
           const owner = decl.parent.parent;
           const sourceNode = ts.isBindingElement(owner)
             ? owner.name
@@ -229,7 +278,9 @@ export function createTracer(
           right,
           [
             ...projections,
-            { keys: ts.isSpreadElement(element) ? undefined : [String(index)] },
+            ts.isSpreadElement(element)
+              ? { rest: index }
+              : { keys: [String(index)] },
           ],
         );
       }
@@ -275,6 +326,8 @@ export function createTracer(
           continue;
         let value = trace(write.value, new Set(seen));
         for (const projection of write.projections) {
+          if ("rest" in projection)
+            value = arrayRest(node, value, projection.rest);
           if (projection.keyNode || "keys" in projection)
             value = select(
               node,
@@ -298,13 +351,16 @@ export function createTracer(
     seen.add(node);
     let value;
     if (ts.isStringLiteralLike(node) || ts.isNumericLiteral(node))
-      return {
-        kinds: new Set(),
-        keys: new Set([node.text]),
-        unknownKeys: false,
-        fields: new Map(),
-      };
-    if (ts.isConditionalExpression(node))
+      return literal(node.text);
+    if (ts.isAwaitExpression(node) || ts.isSpreadElement(node))
+      value = trace(node.expression, new Set(seen), writes);
+    else if (forwardArguments && ts.isCallExpression(node))
+      value = join(
+        ...node.arguments.map((argument) =>
+          trace(argument, new Set(seen), writes),
+        ),
+      );
+    else if (ts.isConditionalExpression(node))
       value = join(
         trace(node.whenTrue, new Set(seen), writes),
         trace(node.whenFalse, new Set(seen), writes),
@@ -361,11 +417,47 @@ export function createTracer(
           value = join(value, trace(prop.expression, new Set(seen), writes));
       }
     } else if (ts.isArrayLiteralExpression(node)) {
-      for (const [index, element] of node.elements.entries())
-        value = join(
-          value,
-          field([String(index)], trace(element, new Set(seen), writes)),
-        );
+      let offset = 0;
+      for (const element of node.elements) {
+        if (ts.isSpreadElement(element)) {
+          const spread = trace(element.expression, new Set(seen), writes);
+          const length = arrayLength(spread);
+          if (offset !== undefined && length !== undefined) {
+            for (let index = 0; index < length; index++)
+              value = join(
+                value,
+                field(
+                  [String(offset + index)],
+                  spread.fields.get(String(index)),
+                ),
+              );
+            offset += length;
+          } else {
+            value = join(
+              value,
+              field(
+                undefined,
+                join(
+                  select(element, spread, undefined),
+                  ...[...(spread?.kinds ?? [])].map(origin),
+                ),
+              ),
+            );
+            offset = undefined;
+          }
+        } else {
+          value = join(
+            value,
+            field(
+              offset === undefined ? undefined : [String(offset)],
+              trace(element, new Set(seen), writes),
+            ),
+          );
+          if (offset !== undefined) offset++;
+        }
+      }
+      if (offset !== undefined)
+        value = join(value, field(["length"], literal(offset)));
     }
     return (
       join(

@@ -333,8 +333,12 @@ provenance to check dependency and capability boundaries:
   Type-only imports remain valid; API error values and URL-only preview helpers
   have scoped exceptions.
 - Loader context, API and QueryClient origins remain protected through aliases,
-  casts, fallback/conditional expressions, destructuring defaults and member
-  assignments even with `any` or unresolved context declarations. The shared
+  casts, fallback/conditional expressions, destructuring defaults, array
+  spread/rest positions, `await` and member assignments even with `any` or
+  unresolved context declarations. API/cache capabilities and their containers
+  cannot escape through arbitrary calls or route/view return values; passing
+  them to a helper requires a resolved context-owned implementation (including
+  immutable aliases). The shared
   syntax tracer follows computed keys through containers and bindings; an
   unresolved key on a known capability container cannot grant access. Local
   shadowing, known non-capability keys and context helper calls remain valid.

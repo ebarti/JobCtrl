@@ -137,6 +137,9 @@ export function lintProgram(
     seen.add(identity);
     const origins = [];
     const runtimeTrace = createTracer(checker, target, {
+      // Exporting a forwarded runtime capability does not change its owner.
+      // Composer calls use handoff diagnostics instead, preserving helper DTOs.
+      forwardArguments: true,
       seed(node) {
         const symbol =
           ts.isIdentifier(node) && ts.isShorthandPropertyAssignment(node.parent)
@@ -744,8 +747,82 @@ export function lintProgram(
             " into a context-owned read helper or hook; weak/generated types, computed keys and aliases do not grant authority.",
         );
     }
+    function contextHelper(node, seen = new Set()) {
+      node = unwrap(node);
+      if (!node || seen.has(node)) return false;
+      seen.add(node);
+      // Permission requires every alternative to have a known owner.
+      if (ts.isConditionalExpression(node))
+        return (
+          contextHelper(node.whenTrue, new Set(seen)) &&
+          contextHelper(node.whenFalse, new Set(seen))
+        );
+      let symbol = checker.getSymbolAtLocation(node);
+      if (symbol?.flags & ts.SymbolFlags.Alias)
+        symbol = checker.getAliasedSymbol(symbol);
+      const declarations = symbol?.declarations ?? [];
+      return (
+        declarations.length > 0 &&
+        declarations.every((decl) => {
+          const file = localPath(decl.getSourceFile().fileName);
+          if (
+            context(file) &&
+            !isSupport(file) &&
+            (ts.isFunctionDeclaration(decl) ||
+              (ts.isVariableDeclaration(decl) &&
+                decl.initializer &&
+                (ts.isArrowFunction(unwrap(decl.initializer)) ||
+                  ts.isFunctionExpression(unwrap(decl.initializer)))))
+          )
+            return true;
+          return (
+            ts.isIdentifier(node) &&
+            ts.isVariableDeclaration(decl) &&
+            ts.isVariableDeclarationList(decl.parent) &&
+            Boolean(decl.parent.flags & ts.NodeFlags.Const) &&
+            contextHelper(decl.initializer, new Set(seen))
+          );
+        })
+      );
+    }
+    function inspectHandoff(argument) {
+      const kinds = allKinds(capability(argument));
+      if (
+        kinds.some((kind) =>
+          ["api", "ports", "context", "loader"].includes(kind),
+        )
+      )
+        report(
+          argument,
+          "view-api",
+          "API capabilities and their containers may only be handed to a context-owned helper; local or unresolved forwarding calls cannot acquire API authority.",
+        );
+      if (kinds.some((kind) => ["query", "context", "loader"].includes(kind)))
+        report(
+          argument,
+          "view-state",
+          "QueryClient capabilities and their containers may only be handed to a context-owned helper; local or unresolved forwarding calls cannot acquire cache authority.",
+        );
+    }
     function inspect(node) {
       inspectCapability(node);
+      // An arbitrary forwarding call must not erase API authority when its
+      // return type is any. Only context-owned implementations may receive it.
+      // Inspect the argument handoff, including containers and spread args,
+      // without pretending that every function returns its arguments.
+      if (
+        composer &&
+        (ts.isCallExpression(node) || ts.isNewExpression(node)) &&
+        !contextHelper(node.expression)
+      ) {
+        for (const argument of node.arguments ?? []) {
+          inspectHandoff(argument);
+        }
+      }
+      if (composer && ts.isReturnStatement(node) && node.expression)
+        inspectHandoff(node.expression);
+      if (composer && ts.isArrowFunction(node) && !ts.isBlock(node.body))
+        inspectHandoff(node.body);
       let symbol;
       if (ts.isIdentifier(node)) symbol = checker.getSymbolAtLocation(node);
       else if (

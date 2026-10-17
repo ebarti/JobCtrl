@@ -811,6 +811,18 @@ test("review findings: container and destructured barrel exports retain runtime 
         [`export const { ${imported}: load } = space;`, "tools.load"],
         ["export const { absent: load = Original } = {} as any;", "tools.load"],
         ["export const [load] = [Original];", "tools.load"],
+        ["export const [load] = [...[Original]];", "tools.load"],
+        ["export const load = await Original;", "tools.load"],
+        [
+          "const forward = (value: any) => value; export const load = forward(Original);",
+          "tools.load",
+        ],
+        ["export const [, ...loads] = [null, Original];", "tools.loads[0]"],
+        ["export const loads = [null, ...[Original]];", "tools.loads[1]"],
+        [
+          "const prefix: any[] = []; export const loads = [...prefix, Original];",
+          "tools.loads[0]",
+        ],
         [
           "export const runtime: any = {}; runtime.member = Original;",
           "tools.runtime.member",
@@ -899,6 +911,153 @@ test("provenance keeps selected helpers, error values, local shadowing and safe 
     ),
   };
   const results = check(files, {}, true);
+  assert.deepEqual(
+    results.compilerDiagnostics.map((d) =>
+      ts.flattenDiagnosticMessageText(d.messageText, "\n"),
+    ),
+    [],
+  );
+  assert.deepEqual([...results], []);
+});
+
+test("spread/rest and asynchronous or forwarding handoffs cannot escape capability ownership", () => {
+  const controls = [
+    ["const [api] = [...[context.ports.api]]; api.health();", "view-api"],
+    [
+      "const [, ...clients] = [null, context.ports.api]; clients[0].health();",
+      "view-api",
+    ],
+    [
+      "const [, ...clients] = [null, context.queryClient]; clients[0].clear();",
+      "view-state",
+    ],
+    [
+      "const prefix: any[] = []; const clients = [...prefix, context.ports.api]; clients[0].health();",
+      "view-api",
+    ],
+    [
+      "const [, ...[api]] = [null, context.ports.api]; api.health();",
+      "view-api",
+    ],
+    [
+      "let clients: any; [, ...clients] = [null, context.ports.api]; clients[0].health();",
+      "view-api",
+    ],
+    [
+      "const [key] = [...['queryClient']]; context[key!].clear();",
+      "view-state",
+    ],
+    [
+      "const [, ...keys] = [null, 'api']; context.ports[keys[0]!].health();",
+      "view-api",
+    ],
+    ["const api = await context.ports.api; api.health();", "view-api"],
+    [
+      "const identity = (value: any) => value; const api = identity(context.ports.api); api.health();",
+      "view-api",
+    ],
+    [
+      "const forward = (value: any) => value; const api = await forward({ nested: [context.ports.api] }); api.nested[0].health();",
+      "view-api",
+    ],
+    [
+      "const forward = (...values: any[]) => values[0]; const api = forward(...[context.ports.api]); api.health();",
+      "view-api",
+    ],
+    [
+      "const identity = (value: any) => value; const client = identity(context.queryClient); client.clear();",
+      "view-state",
+    ],
+    [
+      "const forward = (value: any) => value.api; const api = forward(context.ports); api.health();",
+      "view-api",
+    ],
+    [
+      "const forward = (value: any) => value.ports.api; const api = forward(context); api.health();",
+      "view-api",
+    ],
+    [
+      "const forward: any = Math.random() ? prefetchDashboard : (value: any) => value; const api = forward(context.ports.api); api.health();",
+      "view-api",
+    ],
+    [
+      "let forward: any = prefetchDashboard; forward = (value: any) => value; const api = forward(context.ports.api); api.health();",
+      "view-api",
+    ],
+    [
+      "const forward = () => context.ports.api; const api = forward(); api.health();",
+      "view-api",
+    ],
+    [
+      "function forward() { return context.ports.api; } const api = forward(); api.health();",
+      "view-api",
+    ],
+    ["const [api] = [...context.ports.api]; api.health();", "view-api"],
+  ];
+  const route = "routes/dashboard.tsx",
+    view = "views/lint-handoffs/Page.ts";
+  const body = controls.map(([code]) => `    { ${code} }`).join("\n");
+  const routeText = readFileSync(
+    resolve(webRoot, "src", route),
+    "utf8",
+  ).replace(
+    /  loader:.*\n/,
+    `  loader: async ({ context }: any) => {\n${body}\n  },\n`,
+  );
+  const viewHeader = `import { useRouteContext } from '@tanstack/react-router';\nimport { prefetchDashboard } from '../../contexts/operations/readQueries.js';\nasync function probe() { const context: any = useRouteContext({ strict: false });\n`;
+  const inputs = { [route]: routeText, [view]: viewHeader + body + "\n}" };
+  const results = check(inputs, {}, true);
+  console.log(
+    JSON.stringify({
+      control: "spread-await-forward",
+      inputs,
+      boundary: results,
+      compiler: results.compilerDiagnostics.map((d) =>
+        ts.flattenDiagnosticMessageText(d.messageText, "\n"),
+      ),
+    }),
+  );
+  assert.equal(results.compilerDiagnostics.length, 0);
+  const missing = [
+    [route, routeText.slice(0, routeText.indexOf(body)).split("\n").length],
+    [view, viewHeader.split("\n").length],
+  ].flatMap(([file, first]) =>
+    controls.filter(
+      ([, rule], i) =>
+        !results.some(
+          (d) =>
+            d.file === file &&
+            d.line === first + i &&
+            d.column > 0 &&
+            d.rule === rule,
+        ),
+    ),
+  );
+  assert.deepEqual(missing, []);
+});
+
+test("spread/rest preserve harmless positions and context-owned capability handoffs", () => {
+  const inputs = {
+    "contexts/lint-handoffs/read.ts": `export function read(api: any) { return { health() {} }; }`,
+    "routes/dashboard.tsx": readFileSync(
+      resolve(webRoot, "src/routes/dashboard.tsx"),
+      "utf8",
+    ).replace(
+      /  loader:.*\n/,
+      `  loader: async ({ context }) => {\n        const [tenant] = [...[context.tenantId]];\n        const [, ...ids] = [null, tenant];\n        const deps = { ...context, tenantId: ids[0] as typeof tenant };\n        return prefetchDashboard(deps);\n      },\n`,
+    ),
+    "views/lint-handoffs/Page.ts": `import { useRouteContext } from '@tanstack/react-router';
+      import { read } from '../../contexts/lint-handoffs/read.js';
+      const readAlias = read;
+      async function probe() { const context: any = useRouteContext({ strict: false });
+        const [safe] = [...[{ health() {} }], context.ports.api]; safe!.health();
+        const [, ...safeTail] = [context.ports.api, { health() {} }]; safeTail[0].health();
+        const dto = readAlias(context.ports.api); dto.health();
+        const identity = (value: any) => value;
+        const api = await identity({ health() {} }); api.health();
+      }`,
+  };
+  const results = check(inputs, {}, true);
   assert.deepEqual(
     results.compilerDiagnostics.map((d) =>
       ts.flattenDiagnosticMessageText(d.messageText, "\n"),
