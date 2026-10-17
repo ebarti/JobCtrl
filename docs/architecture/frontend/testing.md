@@ -61,6 +61,9 @@ negative controls retain API-client, Query/Zustand, browser-port, dependency,
 barrel and stale-exemption enforcement. It inspects the actual tsconfig/generated
 route program, with direct loader-access controls for any/unresolved context,
 casts, aliases, nested destructuring, bracket access and unresolved barrels.
+Expression fallbacks, destructuring defaults, member assignments, computed
+capability slots and container/destructured runtime exports have independent
+controls for routes and views, with resolved and missing package declarations.
 These require boundary diagnostics at actionable source locations independently
 of compiler diagnostics; compiler-clean `any` cannot authorize a capability.
 Generated-route composition tests exercise loader-to-API/cache handoff, tenant

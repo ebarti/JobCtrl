@@ -333,10 +333,14 @@ provenance to check dependency and capability boundaries:
   Type-only imports remain valid; API error values and URL-only preview helpers
   have scoped exceptions.
 - Loader context, API and QueryClient origins remain protected through aliases,
-  casts, nested destructuring and bracket access even with `any` or unresolved
-  context declarations. Local shadowing and context helper calls remain valid.
-  Runtime re-exports cannot hide Query/API imports behind a barrel with missing
-  package declarations. `web:lint:test` overlays negative controls on the real
+  casts, fallback/conditional expressions, destructuring defaults and member
+  assignments even with `any` or unresolved context declarations. The shared
+  syntax tracer follows computed keys through containers and bindings; an
+  unresolved key on a known capability container cannot grant access. Local
+  shadowing, known non-capability keys and context helper calls remain valid.
+  Runtime re-exports cannot hide Query/API imports in exported containers or
+  destructured aliases, including when package declarations are missing.
+  `web:lint:test` overlays negative controls on the real
   tsconfig/generated route program and requires source-located boundary
   diagnostics independently of compiler errors.
 - Production code cannot import test scaffolding. Tests, stories, and generated

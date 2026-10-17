@@ -448,6 +448,27 @@ test("real generated loaders reject direct capabilities independently of any/unr
     ],
     ["const [api] = [context.ports.api]; api!.health();", "view-api"],
     ["const clients = [context.ports.api]; clients[0]!.health();", "view-api"],
+    ["const api = context.ports.api ?? {}; api.health();", "view-api"],
+    [
+      "const api: any = Math.random() ? {} : context.ports.api; api.health();",
+      "view-api",
+    ],
+    [
+      "const { client: api = context.ports.api } = {} as any; api.health();",
+      "view-api",
+    ],
+    [
+      "const box: any = {}; box.client = context.ports.api; box.client.health();",
+      "view-api",
+    ],
+    [
+      "const key: string = ['queryClient'][0]!; (context as any)[key].clear();",
+      "view-state",
+    ],
+    [
+      "const key: string = ['api'][0]!; context.ports[key as 'api'].health();",
+      "view-api",
+    ],
   ];
   // Overlay the real route at its generated-tree identity. Both weak and missing
   // declarations must still diagnose every source line, not merely fail tsc.
@@ -638,4 +659,251 @@ test("API provenance survives repeated container aliases and array destructuring
       code,
     );
   }
+});
+
+const reviewControls = [
+  [
+    "let api: any; ({ client: api = context.ports.api } = {} as any); api.health();",
+    "view-api",
+  ],
+  [
+    "let api: any; [api = context.ports.api] = [] as any; api.health();",
+    "view-api",
+  ],
+  [
+    "const box: any = {}; ({ client: box.api } = { client: context.ports.api }); box.api.health();",
+    "view-api",
+  ],
+  [
+    "let key: string; ({ value: key } = { value: ['queryClient'][0]! }); context[key].clear();",
+    "view-state",
+  ],
+  ["const api = context.ports.api ?? {}; api.health();", "view-api"],
+  [
+    "const api: any = Math.random() ? context.ports.api : {}; api.health();",
+    "view-api",
+  ],
+  [
+    "const api: any = Math.random() ? {} : context.ports.api; api.health();",
+    "view-api",
+  ],
+  [
+    "const { client: api = context.ports.api } = {} as any; api.health();",
+    "view-api",
+  ],
+  [
+    "const { optional: { api } = context.ports } = {} as any; api.health();",
+    "view-api",
+  ],
+  [
+    "const box: any = {}; box.client = context.ports.api; box.client.health();",
+    "view-api",
+  ],
+  [
+    "const box: any = {}; const alias = box; alias.client = context.ports.api; box.client.health();",
+    "view-api",
+  ],
+  [
+    "const key: string = ['queryClient'][0]!; context[key].clear();",
+    "view-state",
+  ],
+  ["const key: string = ['ports'][0]!; context[key].api.health();", "view-api"],
+  ["const key: string = ['api'][0]!; context.ports[key].health();", "view-api"],
+  [
+    "const key: string = ['queryClient'][Math.floor(Math.random())]!; context[key].clear();",
+    "view-state",
+  ],
+  [
+    "const key: string = ['api'][Math.floor(Math.random())]!; context.ports[key].health();",
+    "view-api",
+  ],
+  ["const api = context.ports.api || {}; api.health();", "view-api"],
+  [
+    "const api = context.ports.api && context.ports.api; api.health();",
+    "view-api",
+  ],
+  [
+    "const box: any = { nest: {} }; const alias = box.nest; alias.client ??= context.ports.api; box.nest.client.health();",
+    "view-api",
+  ],
+  [
+    "const box: any = {}; const key = ['client'][0]!; box[key] = context.ports.api; box.client.health();",
+    "view-api",
+  ],
+  [
+    "const api: any = Math.random() ? context.ports.api : context.queryClient; api.health();",
+    "view-api",
+  ],
+  [
+    "const query: any = Math.random() ? context.ports.api : context.queryClient; query.clear();",
+    "view-state",
+  ],
+  [
+    "const key: string = Math.random() ? 'tenantId' : String(Math.random()); context[key].clear();",
+    "view-state",
+  ],
+  [
+    "const key: string = Math.random() ? 'clipboard' : String(Math.random()); context.ports[key].health();",
+    "view-api",
+  ],
+];
+
+test("review findings: real generated loader expression and computed-key aliases retain authority", () => {
+  const file = "routes/dashboard.tsx";
+  const original = readFileSync(resolve(webRoot, "src", file), "utf8");
+  const body = reviewControls.map(([code]) => `    { ${code} }`).join("\n");
+  const text = original.replace(
+    /  loader:.*\n/,
+    `  loader: async ({ context }: any) => {\n${body}\n  },\n`,
+  );
+  const view = "views/lint-review/Page.ts";
+  const viewHeader = `import { useRouteContext } from '@tanstack/react-router';\nconst context: any = useRouteContext({ strict: false });\n`;
+  const results = check({ [file]: text, [view]: viewHeader + body }, {}, true);
+  console.log(
+    JSON.stringify({
+      control: "review-loader",
+      inputs: reviewControls,
+      boundary: results,
+      compiler: results.compilerDiagnostics.map((d) =>
+        ts.flattenDiagnosticMessageText(d.messageText, "\n"),
+      ),
+    }),
+  );
+  assert.equal(results.compilerDiagnostics.length, 0);
+  const line = text.slice(0, text.indexOf(body)).split("\n").length;
+  const missing = [
+    [file, line],
+    [view, viewHeader.split("\n").length],
+  ].flatMap(([path, first]) =>
+    reviewControls.filter(
+      ([, rule], i) =>
+        !results.some(
+          (d) =>
+            d.file === path &&
+            d.line === first + i &&
+            d.column > 0 &&
+            d.rule === rule,
+        ),
+    ),
+  );
+  assert.deepEqual(missing, []);
+});
+
+test("review findings: container and destructured barrel exports retain runtime authority", () => {
+  for (const suffix of ["", "/missing-declaration"]) {
+    const files = {};
+    const expected = [];
+    for (const [module, imported, rule] of [
+      ["@tanstack/react-query", "useQuery", "view-state"],
+      ["@jobctrl/api-client", "JobCtrlApiClient", "api-adapter"],
+    ]) {
+      const cases = [
+        ["export { Original as load };", "tools.load"],
+        [
+          "export const runtime = { nested: { member: Original } };",
+          "tools.runtime.nested.member",
+        ],
+        [
+          "const { member: load } = { member: Original }; export { load };",
+          "tools.load",
+        ],
+        ["export const { member: load } = { member: Original };", "tools.load"],
+        [`export const { ${imported}: load } = space;`, "tools.load"],
+        ["export const { absent: load = Original } = {} as any;", "tools.load"],
+        ["export const [load] = [Original];", "tools.load"],
+        [
+          "export const runtime: any = {}; runtime.member = Original;",
+          "tools.runtime.member",
+        ],
+        [
+          "const runtime = { member: Original }; export const load = runtime.member;",
+          "tools.load",
+        ],
+        [
+          "export const load = Math.random() ? Original : () => undefined;",
+          "tools.load",
+        ],
+        [
+          "export const load = (Original as any) ?? (() => undefined);",
+          "tools.load",
+        ],
+      ];
+      for (const [declaration, use] of cases) {
+        const id = expected.length;
+        const file = `views/lint-review-${id}/Page.ts`;
+        files[`shared/lint-review-${id}.ts`] =
+          `import { ${imported} as Original } from '${module}${suffix}';
+          import * as space from '${module}${suffix}'; ${declaration}`;
+        files[file] =
+          `import * as tools from '../../shared/lint-review-${id}.js'; (${use} as any)({});`;
+        expected.push({ file, rule, declaration });
+      }
+    }
+    const results = check(files, {}, true);
+    console.log(
+      JSON.stringify({
+        control: "review-barrel",
+        suffix,
+        inputs: files,
+        boundary: results,
+        compiler: results.compilerDiagnostics.map((d) =>
+          ts.flattenDiagnosticMessageText(d.messageText, "\n"),
+        ),
+      }),
+    );
+    if (!suffix) assert.equal(results.compilerDiagnostics.length, 0);
+    else
+      assert.ok(
+        results.compilerDiagnostics.some((d) =>
+          ts
+            .flattenDiagnosticMessageText(d.messageText, " ")
+            .includes("missing-declaration"),
+        ),
+      );
+    assert.deepEqual(
+      expected.filter(
+        ({ file, rule }) =>
+          !results.some(
+            (d) =>
+              d.file === file &&
+              d.rule === rule &&
+              d.line === 1 &&
+              d.column > 0,
+          ),
+      ),
+      [],
+    );
+  }
+});
+
+test("provenance keeps selected helpers, error values, local shadowing and safe computed keys legal", () => {
+  const files = {
+    "contexts/lint-one/hooks/useOwned.ts": `import { useQuery } from '@tanstack/react-query';
+      export const runtime = { useQuery }; export function useOwned() { return useQuery({ queryKey: ['owned'] }); }`,
+    "shared/lint-safe-error.ts": `import * as wire from '@jobctrl/api-client'; export const { JobCtrlApiError: ErrorValue } = wire;`,
+    "views/lint-example/Page.ts": `import { useOwned } from '../../contexts/lint-one/hooks/useOwned.js';
+      import { ErrorValue } from '../../shared/lint-safe-error.js';
+      import type { QueryClient } from '@tanstack/react-query';
+      useOwned(); const ErrorAlias = ErrorValue;
+      const context = { ports: { api: { health() {} } }, queryClient: { clear() {} } };
+      const api = context.ports.api ?? {}; api.health();
+      const box = { client: { health() {} } }; box.client = api; box.client.health();
+      function shadow() { const box = { client: { health() {} } }; box.client.health(); }
+      const key: string = ['queryClient'][0]!; context[key as 'queryClient'].clear();`,
+    "routes/dashboard.tsx": readFileSync(
+      resolve(webRoot, "src/routes/dashboard.tsx"),
+      "utf8",
+    ).replace(
+      /  loader:.*\n/,
+      `  loader: ({ context }) => { const key = ['tenantId'][0] as 'tenantId'; return context[key]; },\n`,
+    ),
+  };
+  const results = check(files, {}, true);
+  assert.deepEqual(
+    results.compilerDiagnostics.map((d) =>
+      ts.flattenDiagnosticMessageText(d.messageText, "\n"),
+    ),
+    [],
+  );
+  assert.deepEqual([...results], []);
 });
