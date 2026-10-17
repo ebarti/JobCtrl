@@ -1,4 +1,4 @@
-"""Exercise real TypeScript/Python fold ordering on a disposable exact-v9 DB.
+"""Exercise real TypeScript/Python fold ordering on a disposable exact-v14 DB.
 
 Run explicitly with both repository toolchains installed:
 uv --project workers/automation run --no-sync --locked python \
@@ -139,6 +139,7 @@ def run_scenario(*, typescript_first: bool, legacy_cursor: bool) -> None:
                 ("operations_projections:python:local", 10_000),
                 ("operations_projections:typescript:local", 20_000),
                 ("python:operations_projections:local", 4),
+                ("typescript:job_detail_projections:v1:local", 4),
                 ("typescript:operations_projections:local", 4),
             ]
             for legacy_row in legacy_rows:
@@ -154,8 +155,46 @@ def run_scenario(*, typescript_first: bool, legacy_cursor: bool) -> None:
             close_connection(db_path)
 
 
+def run_detail_parity() -> None:
+    """The existing parity corpus crosses the actual surviving writer boundary."""
+    import json
+    from tests.test_audit_projection_parity import (
+        FIXTURE_PATH, _seed_rows, _job_id, _normalize_row, _with_exact_v7_projection_contract,
+    )
+
+    fixture = json.loads(FIXTURE_PATH.read_text())
+    with tempfile.TemporaryDirectory(prefix="jobctrl-detail-parity-") as directory:
+        db_path = Path(directory) / "jobctrl.db"
+        conn = init_db(db_path)
+        try:
+            _seed_rows(conn, fixture)
+            ProjectionBuilder(conn_factory=lambda: conn).refresh()
+            assert conn.execute("SELECT COUNT(*) FROM job_detail_projections").fetchone()[0] == 0
+            _typescript_refresh(db_path)
+            row = conn.execute("SELECT * FROM job_detail_projections WHERE job_id=?",
+                               (str(_job_id(fixture["job"]["url"])),)).fetchone()
+            expected = _with_exact_v7_projection_contract(fixture["expectedProjections"])["jobDetail"]
+            parity = fixture["projectionParity"]
+            assert _normalize_row(row, parity["jsonColumns"]["jobDetail"],
+                                  parity["nonDeterministicColumns"]["jobDetail"]) == expected
+            before = tuple(row)
+            # Enforce ownership while a real Python event subscriber runs.
+            for operation in ("INSERT", "UPDATE", "DELETE"):
+                conn.execute(f"CREATE TEMP TRIGGER deny_detail_{operation} BEFORE {operation} "
+                             "ON job_detail_projections BEGIN SELECT RAISE(ABORT, 'foreign detail writer'); END")
+            record_job_event(conn, _job_id(fixture["job"]["url"]), "enrich", "JobEnriched", payload={})
+            conn.commit()
+            ProjectionBuilder(conn_factory=lambda: conn).refresh()
+            assert tuple(conn.execute("SELECT * FROM job_detail_projections WHERE job_id=?",
+                                      (str(_job_id(fixture["job"]["url"])),)).fetchone()) == before
+            _typescript_refresh(db_path)
+        finally:
+            close_connection(db_path)
+
+
 if __name__ == "__main__":
+    run_detail_parity()
     for legacy_cursor in (True, False):
         for typescript_first in (True, False):
             run_scenario(typescript_first=typescript_first, legacy_cursor=legacy_cursor)
-    print("PASS: opaque legacy-tenant cursor isolation, terminal replay, both runtime orders, repeated refreshes")
+    print("PASS: single detail writer, cross-runtime canonical parity, opaque tenant cursor isolation, terminal replay, both runtime orders, repeated refreshes")

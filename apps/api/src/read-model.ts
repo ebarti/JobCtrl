@@ -96,7 +96,7 @@ import { emptyPolitenessOutcomes, politenessOutcomesBySource } from "./source-po
 import { canonicalSourceDisplayName, sourceDisplayNames } from "./source-display-names.js";
 import type { SourcePolitenessOutcomes } from "@jobctrl/contracts";
 import { normalizeJobLocation } from "./location-normalization.js";
-import { refreshProjections } from "./projections.js";
+import { ensureJobDetailProjection, refreshProjections } from "./projections.js";
 import { jobQuerySelection, querySourceVersion, refreshJobQueryIndex, selectJobPage } from "./job-list-query.js";
 import type { JobQueryScalars } from "./contracts.js";
 import {
@@ -1110,6 +1110,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
   if (!listRow) return null;
   const jobId = canonicalJobId(listRow.job_id);
   if (!jobId) return null;
+  ensureJobDetailProjection(db, DEFAULT_TENANT, jobId);
   const detailRow = getRow<JobDetailProjectionRow>(
     db,
     "SELECT * FROM job_detail_projections WHERE tenant_id = ? AND job_id = ?",

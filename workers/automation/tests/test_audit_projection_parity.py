@@ -6,22 +6,10 @@ fixture (``packages/domain-types/test/fixtures/audit_projection_parity.json``),
 seed the SAME canonical rows, run their OWN projection builder, and assert the
 resulting projection columns equal the fixture.
 
-Two layers of assertion:
-
-* ``test_python_builder_projects_audit_rows_matching_shared_fixture`` — the
-  Phase 4 audit read shapes (``job_detail_projections.employer_analysis_json``
-  and ``artifact_list_projections.{bullet_provenance_json,coverage_audit_json,
-  voice_pass_json}``) match the fixture's ``expected`` block.
-
-* ``test_python_builder_projects_full_projection_columns_matching_shared_fixture``
-  — the FULL dual-written column set for ``job_list_projections``,
-  ``job_detail_projections`` and ``dashboard_projections`` matches the fixture's
-  ``expectedProjections`` block, key-for-key, PLUS a column-set guard: the set of
-  columns the builder emits must equal the fixture's expected keys plus the
-  wall-clock ``nonDeterministicColumns``. That guard fails if EITHER runtime's
-  writer/schema grows a column the other lacks — the exact drift class that let
-  the Python-omits-score-audit-columns bug ship, because the earlier parity test
-  asserted only 4 audit JSON columns and had no column-set guard.
+Python verifies artifact provenance/coverage/voice and all columns of the
+remaining shared list/dashboard families. TypeScript verifies the same fixture,
+including the exclusively owned job-detail family. The disposable mixed-runtime
+fixture also seeds these Python canonical rows and validates TypeScript detail.
 """
 
 from __future__ import annotations
@@ -622,24 +610,10 @@ def test_python_builder_projects_audit_rows_matching_shared_fixture(
     _seed_rows(conn, fixture)
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
-    job_id = _job_id(fixture["job"]["url"])
     expected = _with_exact_v7_job_ids(copy.deepcopy(fixture["expected"]))
 
-    detail = conn.execute(
-        """
-        SELECT employer_analysis_json, interview_prep_json
-        FROM job_detail_projections
-        WHERE job_id = ?
-        """,
-        (job_id,),
-    ).fetchone()
-    assert detail is not None
-    assert json.loads(detail["employer_analysis_json"]) == expected["employerAnalysisJson"]
-    prep = json.loads(detail["interview_prep_json"])
-    assert prep == expected["interviewPrepJson"]
-    assert "promptText" not in json.dumps(prep)
-    assert "rawPrompt" not in json.dumps(prep)
-    assert "full_description" not in json.dumps(prep)
+    # Detail parity remains in the TypeScript suite after its authority cutover.
+    assert conn.execute("SELECT COUNT(*) FROM job_detail_projections").fetchone()[0] == 0
 
     # The text resume row carries the per-bullet provenance + coverage + voice.
     text_row = conn.execute(
@@ -811,9 +785,6 @@ def test_python_builder_projects_full_projection_columns_matching_shared_fixture
     actual_rows = {
         "jobList": conn.execute(
             "SELECT * FROM job_list_projections WHERE job_id = ?", (job_id,)
-        ).fetchone(),
-        "jobDetail": conn.execute(
-            "SELECT * FROM job_detail_projections WHERE job_id = ?", (job_id,)
         ).fetchone(),
         "dashboard": conn.execute(
             "SELECT * FROM dashboard_projections WHERE tenant_id = 'local'"

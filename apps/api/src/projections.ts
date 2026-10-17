@@ -6,8 +6,8 @@
  * ``*_projections`` tables in SQLite so the read-model endpoints can
  * SELECT from a single denormalised source — no LEFT JOIN soup.
  *
- * Both the Python ProjectionBuilder and this TS refresher write to the
- * same tables with independent consumer-and-tenant watermarks in
+ * TypeScript exclusively owns job_detail_projections. Other shared families
+ * still have independent Python/TypeScript consumer-and-tenant watermarks in
  * ``event_watermarks``. Shared families derive from the canonical
  * aggregate tables (jobs, job_stage_states,
  * job_scores, job_materials, job_enrichments,
@@ -682,12 +682,19 @@ function scheduleBackgroundDrain(dbPath: string, tenantId: string): void {
 
 /** One bounded fold pass; returns true when it stopped at the batch cap. */
 function runRefreshPass(db: SqliteDatabase, tenantId: string): boolean {
-  return db.transaction(() => runRefreshPassInTransaction(db, tenantId)).immediate();
+  return db.transaction(() => {
+    const sharedCapped = runRefreshPassInTransaction(db, tenantId);
+    const detailCapped = refreshJobDetailProjections(db, tenantId);
+    return sharedCapped || detailCapped;
+  }).immediate();
 }
 
 function runRefreshPassInTransaction(db: SqliteDatabase, tenantId: string): boolean {
   const repairedDependencyJobs = reconcileDependencyBlockers(db, tenantId);
   const repairedCoverConflictJobs = reconcileObsoleteCoverGenerationConflicts(db, tenantId);
+  for (const jobId of new Set([...repairedDependencyJobs, ...repairedCoverConflictJobs])) {
+    rebuildJobDetailProjection(db, tenantId, jobId);
+  }
 
   // A runtime must never acknowledge events only the other runtime folds.
   // Runtime-first names cannot collide with legacy operations_projections
@@ -808,9 +815,6 @@ function runRefreshPassInTransaction(db: SqliteDatabase, tenantId: string): bool
     dirtyJobs.add(jobId);
   }
   for (const jobId of staleCompensationProjectionJobs(db, tenantId)) {
-    dirtyJobs.add(jobId);
-  }
-  for (const jobId of staleAnalysisProjectionJobs(db, tenantId)) {
     dirtyJobs.add(jobId);
   }
 
@@ -2410,53 +2414,15 @@ function staleStageProjectionJobs(db: SqliteDatabase, tenantId: string): string[
   return rows.map((row) => row.job_id).filter(Boolean);
 }
 
-function staleAnalysisProjectionJobs(db: SqliteDatabase, tenantId: string): string[] {
-  const rows = allRows<{ job_id: string }>(
-    db,
-    `SELECT job_id FROM job_detail_projections
-     WHERE tenant_id = ? AND employer_analysis_json IS NOT NULL
-       AND (CASE WHEN json_valid(employer_analysis_json)
-            THEN json_extract(employer_analysis_json, '$.prompt_version')
-            END) IS NOT ?`,
-    [tenantId, EMPLOYER_ANALYSIS_PROMPT_VERSION],
-  );
-  return rows.map((row) => row.job_id).filter(Boolean);
-}
-
 function staleCompensationProjectionJobs(db: SqliteDatabase, tenantId: string): string[] {
-  const rows = allRows<{ job_id: string }>(
-    db,
-    `SELECT p.job_id
-       FROM job_list_projections p
-       LEFT JOIN job_detail_projections d
-         ON d.tenant_id = p.tenant_id
-        AND d.job_id = p.job_id
-      WHERE p.tenant_id = ?
-        AND (
-          (
-            CASE WHEN json_valid(p.compensation_summary_json)
-                 THEN CAST(json_extract(p.compensation_summary_json, '$.projectionVersion') AS INTEGER)
-            END
-          ) BETWEEN 1 AND ? - 1
-          OR (
-            CASE WHEN json_valid(d.compensation_summary_json)
-                 THEN CAST(json_extract(d.compensation_summary_json, '$.projectionVersion') AS INTEGER)
-            END
-          ) BETWEEN 1 AND ? - 1
-          OR (
-            CASE WHEN json_valid(d.compensation_audit_json)
-                 THEN CAST(json_extract(d.compensation_audit_json, '$.projectionVersion') AS INTEGER)
-            END
-          ) BETWEEN 1 AND ? - 1
-        )`,
-    [
-      tenantId,
-      COMPENSATION_PROJECTION_VERSION,
-      COMPENSATION_PROJECTION_VERSION,
-      COMPENSATION_PROJECTION_VERSION,
-    ],
-  );
-  return rows.map((row) => row.job_id).filter(Boolean);
+  return allRows<{ job_id: string }>(db, `
+    SELECT job_id FROM job_list_projections
+    WHERE tenant_id = ? AND (
+      CASE WHEN json_valid(compensation_summary_json)
+        THEN CAST(json_extract(compensation_summary_json, '$.projectionVersion') AS INTEGER)
+      END
+    ) BETWEEN 1 AND ? - 1
+  `, [tenantId, COMPENSATION_PROJECTION_VERSION]).map((row) => row.job_id);
 }
 
 interface StageRow extends Record<string, unknown> {
@@ -2641,6 +2607,158 @@ function jobListStage(stage: string | null | undefined, hasResume = false): "dis
   return stage === "apply" || (stage === "cover" && hasResume) ? "apply" : "discover";
 }
 
+/** First cutover family: only TypeScript materializes job detail. */
+export function jobDetailWatermarkName(tenantId: string): string {
+  return `typescript:job_detail_projections:v1:${tenantId}`;
+}
+
+/**
+ * Explicit startup/migration/operator repair. Canonical rows are the authority,
+ * including jobs predating events and updates whose event was never persisted.
+ * Publication, orphan cleanup and the independent family cursor are atomic.
+ * This scan is deliberately separate from the bounded incremental consumer.
+ */
+export function repairJobDetailProjections(db: SqliteDatabase, tenantId = "local"): void {
+  db.transaction(() => {
+    const jobs = allRows<{ job_id: string }>(db,
+      "SELECT job_id FROM jobs WHERE tenant_id = ?", [tenantId]);
+    for (const { job_id: jobId } of jobs) rebuildJobDetailProjection(db, tenantId, jobId);
+    db.prepare(`DELETE FROM job_detail_projections
+      WHERE tenant_id = ? AND NOT EXISTS (
+        SELECT 1 FROM jobs j WHERE j.tenant_id = job_detail_projections.tenant_id
+          AND j.job_id = job_detail_projections.job_id
+      )`).run(tenantId);
+    const latest = getRow<{ id: number }>(db,
+      "SELECT COALESCE(MAX(event_id), 0) AS id FROM job_events WHERE tenant_id = ?", [tenantId]);
+    setWatermark(db, jobDetailWatermarkName(tenantId), latest?.id ?? 0);
+  }).immediate();
+}
+
+/** One tenant-filtered event batch; a settled family takes no writer lock. */
+export function refreshJobDetailProjections(db: SqliteDatabase, tenantId = "local"): boolean {
+  const name = jobDetailWatermarkName(tenantId);
+  const cursor = getRow<{ last_event_id: number }>(db,
+    "SELECT last_event_id FROM event_watermarks WHERE projection_name = ?", [name]);
+  if (!cursor) {
+    // Existing v14 installations need one canonical snapshot before incremental
+    // consumption. Do not inherit either runtime's operations cursor.
+    repairJobDetailProjections(db, tenantId);
+    return false;
+  }
+  if (!getRow(db, "SELECT 1 FROM job_events WHERE tenant_id = ? AND event_id > ? LIMIT 1",
+    [tenantId, cursor.last_event_id])) return false;
+  return db.transaction(() => {
+    const watermark = readWatermark(db, name);
+    const events = allRows<{ event_id: number; job_id: string | null }>(db,
+      `SELECT event_id, job_id FROM job_events WHERE tenant_id = ? AND event_id > ?
+       ORDER BY event_id LIMIT ?`, [tenantId, watermark, REFRESH_EVENT_BATCH_LIMIT]);
+    for (const jobId of new Set(events.flatMap((event) => event.job_id ? [event.job_id] : []))) {
+      rebuildJobDetailProjection(db, tenantId, jobId);
+    }
+    const last = events.at(-1);
+    if (last) setWatermark(db, name, last.event_id);
+    return events.length === REFRESH_EVENT_BATCH_LIMIT;
+  }).immediate();
+}
+
+/**
+ * Read-after-write for a requested job even when unrelated events fill a batch.
+ * Also repairs a missing/obsolete row without scanning the tenant or consuming
+ * other jobs' events. It never advances the family cursor past unprocessed work.
+ */
+export function ensureJobDetailProjection(db: SqliteDatabase, tenantId: string, jobId: string): void {
+  const row = getRow<{ last_updated_at: string; score_version: number | null;
+    employer_analysis_json: string | null; compensation_summary_json: string | null;
+    compensation_audit_json: string | null }>(db,
+    "SELECT * FROM job_detail_projections WHERE tenant_id = ? AND job_id = ?", [tenantId, jobId]);
+  const obsolete = row && (
+    (row.employer_analysis_json !== null &&
+      parseProjectionJsonRecord(row.employer_analysis_json)?.prompt_version !== EMPLOYER_ANALYSIS_PROMPT_VERSION) ||
+    parseProjectionJsonRecord(row.compensation_summary_json)?.projectionVersion !== COMPENSATION_PROJECTION_VERSION ||
+    parseProjectionJsonRecord(row.compensation_audit_json)?.projectionVersion !== COMPENSATION_PROJECTION_VERSION
+  );
+  const pending = getRow(db,
+    "SELECT 1 FROM job_events WHERE tenant_id = ? AND job_id = ? AND event_id > ? LIMIT 1",
+    [tenantId, jobId, readWatermark(db, jobDetailWatermarkName(tenantId))]);
+  const changedStage = row && getRow(db,
+    `SELECT 1 FROM job_stage_states WHERE tenant_id = ? AND job_id = ?
+       AND julianday(updated_at) > COALESCE(julianday(?), -1) LIMIT 1`,
+    [tenantId, jobId, row.last_updated_at]);
+  if (!row || obsolete || pending || changedStage) {
+    db.transaction(() => rebuildJobDetailProjection(db, tenantId, jobId)).immediate();
+  }
+}
+
+function rebuildJobDetailProjection(db: SqliteDatabase, tenantId: string, jobId: string): void {
+  const job = getRow<Record<string, unknown>>(db,
+    "SELECT * FROM jobs WHERE tenant_id = ? AND job_id = ?", [tenantId, jobId]);
+  if (!job) {
+    db.prepare("DELETE FROM job_detail_projections WHERE tenant_id = ? AND job_id = ?").run(tenantId, jobId);
+    return;
+  }
+  const score = loadLatestScore(db, tenantId, jobId);
+  const employerAnalysisJson = loadEmployerAnalysisJson(db, tenantId, jobId);
+  const requirementFitReportJson = loadRequirementFitReportJson(db, tenantId, jobId);
+  const interviewPrepJson = loadInterviewPrepJson(db, tenantId, jobId);
+  const enrichment = loadEnrichment(db, tenantId, jobId);
+  const stages = loadStages(db, tenantId, jobId);
+  const description = stringField(job.description);
+  const fullDescription = enrichment.fullDescription ?? stringField(job.full_description);
+  const scoreReasoning = score.reasoning;
+  const scoreBreakdownJson = score.breakdown ? JSON.stringify(score.breakdown) : null;
+  const scoreKeywordsJson = JSON.stringify(score.keywords);
+  const compensationProjection = buildCompensationProjection(db, tenantId, jobId);
+  const lastUpdatedAt = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO job_detail_projections (
+       tenant_id, job_id, description_preview, compensation_summary_json,
+       compensation_audit_json, score_breakdown_json, score_keywords_json,
+       score_reasoning, score_version, scored_at,
+       score_criteria_json, score_trace_json, score_correction_json,
+       stages_json, employer_analysis_json, requirement_fit_report_json,
+       interview_prep_json,
+       last_updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(tenant_id, job_id) DO UPDATE SET
+       description_preview    = excluded.description_preview,
+       compensation_summary_json = excluded.compensation_summary_json,
+       compensation_audit_json = excluded.compensation_audit_json,
+       score_breakdown_json   = excluded.score_breakdown_json,
+       score_keywords_json    = excluded.score_keywords_json,
+       score_reasoning        = excluded.score_reasoning,
+       score_version          = excluded.score_version,
+       scored_at              = excluded.scored_at,
+       score_criteria_json    = excluded.score_criteria_json,
+       score_trace_json       = excluded.score_trace_json,
+       score_correction_json  = excluded.score_correction_json,
+       stages_json            = excluded.stages_json,
+       employer_analysis_json = excluded.employer_analysis_json,
+       requirement_fit_report_json = excluded.requirement_fit_report_json,
+       interview_prep_json    = excluded.interview_prep_json,
+       last_updated_at        = excluded.last_updated_at`,
+  ).run(
+    tenantId,
+    jobId,
+    previewText(fullDescription || description, 6000),
+    compensationProjection.summaryJson,
+    compensationProjection.auditJson,
+    scoreBreakdownJson,
+    scoreKeywordsJson,
+    scoreReasoning,
+    score.version,
+    score.scoredAt,
+    score.criteriaJson,
+    score.traceJson,
+    score.correctionJson,
+    JSON.stringify(stages),
+    employerAnalysisJson,
+    requirementFitReportJson,
+    interviewPrepJson,
+    lastUpdatedAt,
+  );
+
+}
+
 function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobId: string): void {
   const job = getRow<Record<string, unknown>>(
     db,
@@ -2649,10 +2767,6 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobId: stri
   );
   if (!job) {
     db.prepare("DELETE FROM job_list_projections WHERE tenant_id = ? AND job_id = ?").run(
-      tenantId,
-      jobId,
-    );
-    db.prepare("DELETE FROM job_detail_projections WHERE tenant_id = ? AND job_id = ?").run(
       tenantId,
       jobId,
     );
@@ -2666,10 +2780,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobId: stri
   const score = loadLatestScore(db, tenantId, jobId);
   const materials = loadLatestMaterials(db, tenantId, jobId);
   const materialAnalytics = loadMaterialAnalytics(db, tenantId, jobId);
-  const employerAnalysisJson = loadEmployerAnalysisJson(db, tenantId, jobId);
-  const requirementFitReportJson = loadRequirementFitReportJson(db, tenantId, jobId);
   const requirementFitBand = fitBand(loadLatestRequirementFitBand(db, tenantId, jobId));
-  const interviewPrepJson = loadInterviewPrepJson(db, tenantId, jobId);
   const enrichment = loadEnrichment(db, tenantId, jobId);
   const apply = loadLatestApplyRun(db, tenantId, jobId);
   const deletedAt = loadDeletedAt(db, tenantId, jobId);
@@ -2823,54 +2934,6 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobId: stri
     materialAnalytics.tailoringPolicyVersion,
     activeArtifacts.length,
     deletedAt,
-    lastUpdatedAt,
-  );
-
-  db.prepare(
-    `INSERT INTO job_detail_projections (
-       tenant_id, job_id, description_preview, compensation_summary_json,
-       compensation_audit_json, score_breakdown_json, score_keywords_json,
-       score_reasoning, score_version, scored_at,
-       score_criteria_json, score_trace_json, score_correction_json,
-       stages_json, employer_analysis_json, requirement_fit_report_json,
-       interview_prep_json,
-       last_updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(tenant_id, job_id) DO UPDATE SET
-       description_preview    = excluded.description_preview,
-       compensation_summary_json = excluded.compensation_summary_json,
-       compensation_audit_json = excluded.compensation_audit_json,
-       score_breakdown_json   = excluded.score_breakdown_json,
-       score_keywords_json    = excluded.score_keywords_json,
-       score_reasoning        = excluded.score_reasoning,
-       score_version          = excluded.score_version,
-       scored_at              = excluded.scored_at,
-       score_criteria_json    = excluded.score_criteria_json,
-       score_trace_json       = excluded.score_trace_json,
-       score_correction_json  = excluded.score_correction_json,
-       stages_json            = excluded.stages_json,
-       employer_analysis_json = excluded.employer_analysis_json,
-       requirement_fit_report_json = excluded.requirement_fit_report_json,
-       interview_prep_json    = excluded.interview_prep_json,
-       last_updated_at        = excluded.last_updated_at`,
-  ).run(
-    tenantId,
-    jobId,
-    previewText(fullDescription || description, 6000),
-    compensationProjection.summaryJson,
-    compensationProjection.auditJson,
-    scoreBreakdownJson,
-    scoreKeywordsJson,
-    scoreReasoning,
-    score.version,
-    score.scoredAt,
-    score.criteriaJson,
-    score.traceJson,
-    score.correctionJson,
-    JSON.stringify(stages),
-    employerAnalysisJson,
-    requirementFitReportJson,
-    interviewPrepJson,
     lastUpdatedAt,
   );
 
@@ -3698,7 +3761,7 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
   );
   const dryRuns = Number(dryRunsRow?.c ?? 0);
 
-  // Funnel — read per-job stage rows from job_detail_projections.
+  // Funnel uses canonical stages, independently of the detail-family cursor.
   const funnelCounts: Record<
     string,
     { stage: string; total: number; succeeded: number; running: number; pending: number; blocked: number; failed: number }
@@ -3715,18 +3778,7 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
     };
   }
   for (const row of active) {
-    const detail = getRow<{ stages_json: string }>(
-      db,
-      "SELECT stages_json FROM job_detail_projections WHERE tenant_id = ? AND job_id = ?",
-      [tenantId, row.job_id],
-    );
-    if (!detail || !detail.stages_json) continue;
-    let stages: Array<{ stage: string; state: string }> = [];
-    try {
-      stages = JSON.parse(detail.stages_json) as Array<{ stage: string; state: string }>;
-    } catch {
-      continue;
-    }
+    const stages = loadStages(db, tenantId, row.job_id);
     for (const stage of stages) {
       const counts = funnelCounts[stage.stage];
       if (!counts) continue;
