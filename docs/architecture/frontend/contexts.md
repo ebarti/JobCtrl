@@ -421,10 +421,9 @@ the SSE subscription that fans events out to invalidate query keys.
   endpoint, so `useApplyRunsListQuery` derives runs from the dashboard
   summary via `select`, and per-run live events are patched onto
   `applyRunsKeys.detail(...)` by the invalidation router (§7.5).
-- Re-export projection and API response types (sourced from
-  `@jobctrl/domain-types` via `@jobctrl/contracts`) through
-  `contexts/operations/types.ts` so feature contexts and views can import
-  them from one place. (This is the frontend Anti-Corruption Layer — §6.5.)
+- Own frontend list-input refinements in `contexts/operations/types.ts`
+  (§6.5). Consumers import unchanged DTOs, schemas and constants directly from
+  `@jobctrl/contracts`, and domain vocabulary from `@jobctrl/domain-types`.
 - Expose catalog/card and job prep-history/note reads through the public
   Operations kernel and tenant-first query keys. Global catalog reads must not
   require a job detail query; optional job preparation is composed in a child

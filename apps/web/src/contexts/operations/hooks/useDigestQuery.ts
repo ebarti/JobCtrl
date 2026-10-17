@@ -3,7 +3,11 @@ import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tan
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { digestKeys } from "../digestKeys.js";
-import type { DailyDigest, DigestAcknowledgeRequest, DigestAcknowledgeResponse } from "../types.js";
+import type {
+  DailyDigest,
+  DigestAcknowledgeRequest,
+  DigestAcknowledgeResponse,
+} from "@jobctrl/contracts";
 
 export function useDigestQuery(): UseQueryResult<DailyDigest> {
   const tenantId = useTenantId();

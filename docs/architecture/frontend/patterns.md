@@ -228,7 +228,7 @@ View composition (Dashboard, Jobs, Artifacts) is treated separately in §4.5.
 | Mutations | None — Operations is read-only. |
 | SSE keys consumed | All — Operations *owns* the invalidation router. |
 | Components | None directly. Owns the `<EventStreamProvider />` and the configured `QueryClient`. |
-| Provides | The `queryKeys` registry; the `invalidationRouter`; projection types via the ACL re-export (§6.5). |
+| Provides | The `queryKeys` registry; the `invalidationRouter`; frontend input refinements (§6.5); canonical DTOs are imported from their owning packages. |
 
 ### 4.4.2 Job Discovery
 

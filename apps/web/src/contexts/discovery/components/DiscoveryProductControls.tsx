@@ -8,7 +8,7 @@ import type {
   SourceLocatorListResponse,
   SourceRegistryEntrySummary,
 } from "@jobctrl/contracts";
-import type { SavedTableView } from "../../operations/types.js";
+import type { SavedTableView } from "@jobctrl/contracts";
 import {
   IconAlertTriangle,
   IconBan,

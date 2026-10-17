@@ -1,4 +1,8 @@
-import { SaveInterviewQuestionNoteRequestSchema, type InterviewNoteBindings, type InterviewQuestionNote } from "../../operations/types.js";
+import {
+  SaveInterviewQuestionNoteRequestSchema,
+  type InterviewNoteBindings,
+  type InterviewQuestionNote,
+} from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
 import { useEffect, useId, useState } from "react";
 

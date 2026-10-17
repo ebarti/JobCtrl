@@ -1,5 +1,5 @@
-import type { SavedTableViewGridFilters } from "../contexts/operations/types.js";
-import { SavedTableViewGridFiltersSchema } from "../contexts/operations/types.js";
+import type { SavedTableViewGridFilters } from "@jobctrl/contracts";
+import { SavedTableViewGridFiltersSchema } from "@jobctrl/contracts";
 import { z } from "zod";
 
 import { DISCOVERY_SOURCE_SORT_COLUMN_IDS } from "../shared/stores/saved-table-views.js";

@@ -10,6 +10,10 @@ Non-negotiable implementation rules:
   Operations read hooks, but never call the API client or query client directly.
   Aggregate contexts may consume the Operations read kernel; they do not import
   another aggregate context's hooks or stores.
+- Import unchanged DTOs, schemas and constants from `@jobctrl/contracts`, and
+  domain vocabulary/events from `@jobctrl/domain-types`. Keep genuine frontend
+  input refinements in Operations; do not add transparent DTO routing facades.
+  Preserve existing string identifier compatibility.
 - Keep tenant-first hierarchical query keys, context-owned mutations with
   targeted invalidation, real optimistic patch/rollback behavior, and exhaustive
   SSE invalidation handlers.

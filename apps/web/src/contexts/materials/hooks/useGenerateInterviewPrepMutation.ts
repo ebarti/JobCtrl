@@ -1,5 +1,5 @@
 import type { ActionRunResponse } from "@jobctrl/contracts";
-import type { GenerateInterviewPrepRequest } from "../../operations/types.js";
+import type { GenerateInterviewPrepRequest } from "@jobctrl/contracts";
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";

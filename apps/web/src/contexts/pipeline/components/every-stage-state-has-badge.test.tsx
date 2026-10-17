@@ -7,7 +7,7 @@ import {
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import type { StageState } from "../../operations/types.js";
+import type { StageState } from "@jobctrl/contracts";
 import { StageBadge } from "./StageBadge.js";
 
 const TONE_PATTERN = /^(ok|warn|danger|muted|info)$/;

@@ -1,4 +1,4 @@
-import type { ArtifactSummary, JobSummary, Stage } from "../../../contexts/operations/types.js";
+import type { ArtifactSummary, JobSummary, Stage } from "@jobctrl/contracts";
 
 export interface JobFunnelSummary {
   readonly stage: Stage;

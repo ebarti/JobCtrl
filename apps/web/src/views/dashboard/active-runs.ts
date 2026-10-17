@@ -1,7 +1,5 @@
-import type {
-  WorkflowRunsListInput,
-  WorkflowRunSummary,
-} from "../../contexts/operations/types.js";
+import type { WorkflowRunsListInput } from "../../contexts/operations/types.js";
+import type { WorkflowRunSummary } from "@jobctrl/contracts";
 
 export const STARTING_RUNS_INPUT = {
   page: 1,

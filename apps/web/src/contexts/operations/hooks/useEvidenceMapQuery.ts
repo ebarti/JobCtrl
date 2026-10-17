@@ -3,7 +3,7 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { evidenceMapKeys } from "../evidenceMapKeys.js";
-import type { EvidenceMapEntry, EvidenceMapResponse } from "../types.js";
+import type { EvidenceMapEntry, EvidenceMapResponse } from "@jobctrl/contracts";
 
 export function useEvidenceMapQuery(): UseQueryResult<EvidenceMapResponse> {
   const tenantId = useTenantId();
