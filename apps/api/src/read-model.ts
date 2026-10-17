@@ -1005,7 +1005,8 @@ function withJobQuerySnapshot<T>(db: SqliteDatabase, read: () => T): T {
         ${postingSourceAtsKindSqlExpression()} AS posting_source_ats_kind
        FROM job_list_projections WHERE tenant_id = ? AND EXISTS (
          SELECT 1 FROM jobs j WHERE j.tenant_id = job_list_projections.tenant_id
-           AND j.job_id = job_list_projections.job_id)`, [DEFAULT_TENANT],
+           AND j.job_id = job_list_projections.job_id)
+       ORDER BY job_list_projections.job_id`, [DEFAULT_TENANT],
     ).map(rowToJobQueryScalars));
     return read();
   })();

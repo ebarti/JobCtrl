@@ -93,6 +93,9 @@ describe("local scale benchmark support", () => {
       expect(result.queryIndex.cold).toMatchObject({ refreshes: 1, indexedRows: 100, selectedRows: 10 });
       expect(result.queryIndex.warm.refreshes).toBe(1);
       expect(result.queryIndex.warm.refreshMs).toBe(result.queryIndex.cold.refreshMs);
+      expect(result.queryIndex.cold.sourceChecks).toBe(1);
+      expect(result.queryIndex.warm.sourceChecks).toBe(1);
+      expect(result.queryIndex.warm.sourceCheckMs).toBe(result.queryIndex.cold.sourceCheckMs);
       expect(result.queryIndex.cold.initializationMs).toBeGreaterThan(0);
       expect(result.queryIndex.warm.initializationMs).toBe(result.queryIndex.cold.initializationMs);
       console.info("query index measurements", JSON.stringify(result.queryIndex));

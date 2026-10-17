@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { performance } from "node:perf_hooks";
+import { serialize } from "node:v8";
 import { JOB_SORT_FIELDS, compareValues, effectiveJobStages, jobSortValue, type JobListQuery, type JobQueryScalars } from "./contracts.js";
 import type { SqliteDatabase, SqliteValue } from "./db.js";
 
@@ -7,17 +9,19 @@ export interface JobQueryMetrics {
   refreshes: number;
   indexedRows: number;
   refreshMs: number;
+  sourceChecks: number;
+  sourceCheckMs: number;
   selectionMs: number;
   selectedRows: number;
 }
 const metrics = new WeakMap<SqliteDatabase, JobQueryMetrics>();
 export function jobQueryMetrics(db: SqliteDatabase): Readonly<JobQueryMetrics> {
-  return { ...(metrics.get(db) ?? { initializationMs: 0, refreshes: 0, indexedRows: 0, refreshMs: 0, selectionMs: 0, selectedRows: 0 }) };
+  return { ...(metrics.get(db) ?? { initializationMs: 0, refreshes: 0, indexedRows: 0, refreshMs: 0, sourceChecks: 0, sourceCheckMs: 0, selectionMs: 0, selectedRows: 0 }) };
 }
 function observations(db: SqliteDatabase): JobQueryMetrics {
   let value = metrics.get(db);
   if (!value) {
-    value = { initializationMs: 0, refreshes: 0, indexedRows: 0, refreshMs: 0, selectionMs: 0, selectedRows: 0 };
+    value = { initializationMs: 0, refreshes: 0, indexedRows: 0, refreshMs: 0, sourceChecks: 0, sourceCheckMs: 0, selectionMs: 0, selectedRows: 0 };
     metrics.set(db, value);
   }
   return value;
@@ -37,7 +41,8 @@ function initialize(db: SqliteDatabase): number {
   const start = performance.now();
   if (db.prepare("SELECT name FROM sqlite_temp_master WHERE name = 'job_query_meta'").get()) return 0;
   db.exec(`CREATE TEMP TABLE IF NOT EXISTS job_query_meta (
-    tenant_id TEXT PRIMARY KEY, source_version INTEGER NOT NULL, connection_changes INTEGER NOT NULL);
+    tenant_id TEXT PRIMARY KEY, source_version INTEGER NOT NULL, connection_changes INTEGER NOT NULL,
+    source_fingerprint TEXT NOT NULL);
     CREATE TEMP TABLE IF NOT EXISTS job_query_rows (
       tenant_id TEXT NOT NULL, job_id TEXT NOT NULL,
       ${searchFields.map((_, i) => `s${i} TEXT NOT NULL`).join(",")},
@@ -56,7 +61,10 @@ function initialize(db: SqliteDatabase): number {
 
 /** Called inside the source transaction. The marker and index roll back together.
  * data_version detects other connections; total_changes detects this connection,
- * including rolled-back writes. Neither timestamps nor event cursors prove freshness.
+ * including rolled-back writes. Changed tokens require a source comparison,
+ * not necessarily a rebuild: heartbeats and other tenants are not query inputs.
+ * load returns scalar rows in canonical JobId order. Neither timestamps nor
+ * event cursors prove freshness.
  */
 export function refreshJobQueryIndex(
   db: SqliteDatabase, tenant: string, sourceVersion: number, load: () => JobQueryScalars[],
@@ -64,10 +72,29 @@ export function refreshJobQueryIndex(
   if (!db.inTransaction) throw new Error("Job query index refresh requires a source transaction");
   observations(db).initializationMs += initialize(db);
   const previous = db.prepare("SELECT * FROM temp.job_query_meta WHERE tenant_id = ?").get(tenant) as
-    { source_version: number; connection_changes: number } | undefined;
+    { source_version: number; connection_changes: number; source_fingerprint: string } | undefined;
   if (sourceVersion >= 0 && previous?.source_version === sourceVersion && previous.connection_changes === changes(db)) return;
-  const start = performance.now();
+  const checkStart = performance.now();
   const rows = load();
+  const hash = createHash("sha256");
+  // Per-row serialization avoids one tenant-sized JSON string and preserves
+  // scalar types (including nonfinite numeric fallbacks). TEMP state cannot
+  // outlive this process/runtime's serialization format.
+  for (const row of rows) hash.update(serialize(row));
+  const fingerprint = hash.digest("hex");
+  const observation = observations(db);
+  observation.sourceChecks++;
+  observation.sourceCheckMs += performance.now() - checkStart;
+  const markFresh = (): void => {
+    // Include the marker write itself in total_changes. SQLite owns the marker
+    // so failed refreshes and enclosing rollbacks restore source binding too.
+    db.prepare("INSERT OR REPLACE INTO temp.job_query_meta VALUES (?, ?, ?, ?)")
+      .run(tenant, sourceVersion, changes(db) + 1, fingerprint);
+  };
+  if (previous?.source_fingerprint === fingerprint) {
+    markFresh();
+    return;
+  }
   const ordinals = rows.map(() => [] as number[]);
   // ICU comparisons happen only during refresh. Preserve separate directional
   // orders, including the legacy null/empty compareValues boundary. JobId ties
@@ -98,14 +125,10 @@ export function refreshJobQueryIndex(
     }
     for (const gram of grams) gramInsert.run(tenant, gram, row.jobKey);
   }
-  // Include this marker write in the expected total_changes value. Keep it in
-  // SQLite so caller savepoint/transaction rollback cannot publish a fresh token.
-  db.prepare("INSERT OR REPLACE INTO temp.job_query_meta VALUES (?, ?, ?)")
-    .run(tenant, sourceVersion, changes(db) + 1);
-  const observation = observations(db);
+  markFresh();
   observation.refreshes++;
   observation.indexedRows = rows.length;
-  observation.refreshMs += performance.now() - start;
+  observation.refreshMs += performance.now() - checkStart;
 }
 
 export function jobQuerySelection(
@@ -113,15 +136,17 @@ export function jobQuerySelection(
 ): { from: string; pageFrom: string; where: string; params: SqliteValue[]; order: string } {
   const clauses: string[] = [];
   const params = [...base.params];
+  const postings: string[] = [];
   const substring = (indices: number[], value: string): void => {
-    clauses.push(`(${indices.map((i) => `instr(qi.s${i}, ?) > 0`).join(" OR ")})`);
-    params.push(...indices.map(() => value.toLowerCase()));
     const points = Array.from(value.toLowerCase());
     if (points.length >= 3) {
-      clauses.push(`EXISTS (SELECT 1 FROM temp.job_query_grams g
-        WHERE g.tenant_id = qi.tenant_id AND g.gram = ? AND g.job_id = qi.job_id)`);
+      const alias = `g${postings.length}`;
+      postings.push(alias);
+      clauses.push(`${alias}.gram = ?`);
       params.push(points.slice(0, 3).join(""));
     }
+    clauses.push(`(${indices.map((i) => `instr(qi.s${i}, ?) > 0`).join(" OR ")})`);
+    params.push(...indices.map(() => value.toLowerCase()));
   };
   if (query.q) substring(searchFields.map((_, i) => i), query.q);
   if (query.source) substring(sourceFields, query.source);
@@ -134,15 +159,24 @@ export function jobQuerySelection(
   const field = JOB_SORT_FIELDS.includes(query.sort) ? query.sort : "discovered_at";
   const direction = query.dir === "asc" ? "ASC" : "DESC";
   const join = "job_list_projections ON job_list_projections.tenant_id = qi.tenant_id AND job_list_projections.job_id = qi.job_id";
+  // CROSS JOIN fixes the candidate loop before reading any literal fields.
+  // Intersect postings for all long filters, then recheck field membership.
+  // Page sorting uses precomputed integer ordinals on this candidate subset;
+  // unrestricted/short-query pages can walk the ordinal index directly.
+  const candidateFrom = postings.length
+    ? postings.map((alias, index) => `temp.job_query_grams ${alias}${index
+      ? ` ON ${alias}.tenant_id = g0.tenant_id AND ${alias}.job_id = g0.job_id` : ""}`).join(" CROSS JOIN ")
+      + ` CROSS JOIN temp.job_query_rows qi ON qi.tenant_id = g0.tenant_id AND qi.job_id = g0.job_id CROSS JOIN ${join}`
+    : null;
   return {
     // Counting/bulk membership may start from the canonical tenant/stage index
     // and look up the query row by its primary key. Paging walks the ordinal
     // index first, avoiding a temporary sort of the entire matching set.
-    from: effectiveJobStages(query).length || query.state
+    from: candidateFrom ?? (effectiveJobStages(query).length || query.state
       ? `job_list_projections INDEXED BY idx_job_list_projections_stage_state
           CROSS JOIN temp.job_query_rows qi ON job_list_projections.tenant_id = qi.tenant_id AND job_list_projections.job_id = qi.job_id`
-      : `temp.job_query_rows qi JOIN ${join}`,
-    pageFrom: `temp.job_query_rows qi INDEXED BY job_query_${field}_${direction} CROSS JOIN ${join}`,
+      : `temp.job_query_rows qi JOIN ${join}`),
+    pageFrom: candidateFrom ?? `temp.job_query_rows qi INDEXED BY job_query_${field}_${direction} CROSS JOIN ${join}`,
     where: base.where + (clauses.length ? ` AND ${clauses.join(" AND ")}` : ""),
     params,
     order: `qi.${sortColumn(field, direction)} ASC, qi.job_id ASC`,

@@ -72,7 +72,12 @@ All list sorts and filters use SQLite selection over the rebuildable query
 index. Only selected IDs receive summary hydration, availability and template
 reads. Index refresh reads scalar source values and precomputes Unicode search
 fields, substring candidates, timestamp instants and directional locale sort
-ordinals. Construction is proportional to the indexed tenant and must be
+ordinals. When connection change tokens advance, a source fingerprint comparison
+avoids sorting and trigram replacement if the tenant's scalar inputs are
+unchanged. Comparison still reads that tenant's source rows. Long literal
+filters start from indexed trigram postings and intersect candidates before
+field rechecks; only that candidate subset needs SQL ordinal ordering.
+Construction is proportional to the indexed tenant and must be
 distinguished from settled selection; count and deep-offset work can still
 grow with scalar candidates. The API retains its list connection until app
 close and rebuilds query state after restart or database replacement.
@@ -82,7 +87,10 @@ The combined-stage extension adds `queryIndex`: a separate direct retained
 connection observation after its HTTP scenarios, recording connection admission,
 cold and warm request times and `jobQueryMetrics` snapshots. TEMP schema/index
 initialization is separate from scalar rebuild time, which excludes DTO
-hydration; selection time includes count and ID paging. This
+hydration. `sourceChecks` and `sourceCheckMs` also record source comparisons
+that avoid rebuilding after unrelated commits. A rebuild's duration includes
+its source check, so these overlapping durations must not be added; selection
+time includes count and ID paging. This
 extension preserves the original HTTP sample series and historical scenario
 names, including `materialized-ties-deep`. Source hashes include the query
 implementation, shared comparator and connection owner. Memory samples still

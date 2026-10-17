@@ -194,7 +194,10 @@ only for selected IDs, at most `pageSize` jobs.
 
 Search uses JavaScript Unicode lowercase values, literal SQLite `instr`, and
 an indexed three-code-point substring candidate set for queries of at least
-three code points. Shorter queries scan scalar values. Fields stay separate,
+three code points. Long filters start from tenant/gram postings and intersect
+their candidate IDs before reading scalar fields for the literal recheck.
+Zero candidate IDs require no literal field checks. Shorter queries scan scalar
+values. Fields stay separate,
 so substrings cannot bridge fields; percent, underscore and backslash are
 literal characters. Source filters include the same four provenance fields as
 summaries, while company filters use only the displayed company. Timestamp
@@ -204,21 +207,30 @@ OR rule. Discovery sorting still compares raw timestamp strings.
 During refresh, the shared scalar comparator computes directional ordinal keys
 for every supported sort, including ICU locale ordering, public state keys,
 compensation fallbacks and ascending JobId ties in either direction. Requests
-use SQLite ordinal indexes rather than sorting DTOs. Canonical tenant/stage
+walk SQLite ordinal indexes for unrestricted and short-query pages; long-query
+pages order only the posting candidates by their precomputed integer ordinals
+inside SQLite. No request sorts DTOs. Canonical tenant/stage
 and score-keyword filters remain on their existing indexed owners. Totals and
 deep offsets can still visit many scalar rows; page hydration alone is bounded
 by page size.
 
 Freshness combines `PRAGMA data_version` for external commits with
 `total_changes()` for writes on the retained connection, including rolled-back
-writes. The freshness marker lives in TEMP SQLite alongside its rows, so a
+writes. A changed connection token first compares a SHA-256 fingerprint of the
+tenant's ordered scalar source rows within the read snapshot. Unchanged source
+values renew only the marker, avoiding ordinal sorting and trigram replacement
+for heartbeat or other-tenant commits. Source comparison still reads that
+tenant's scalar inputs; changed values rebuild its index. The freshness marker
+and fingerprint live in TEMP SQLite alongside its rows, so a
 failed build or enclosing transaction rollback restores both. A failed refresh
 fails the request and cannot serve the old index as fresh. Caller-owned older
 snapshots never publish a marker reusable after that transaction. Refresh
-rebuilds the tenant's index from its source snapshot; it does not infer freshness
+checks the tenant's source snapshot; it does not infer freshness
 from event cursors or timestamps. `jobQueryMetrics` reports TEMP schema/index
-initialization time, rebuild count, indexed rows, rebuild time, selection time
-and selected rows separately. These are work observations, including builds
+initialization time, source-check count/time, rebuild count, indexed rows,
+rebuild time, selection time and selected rows separately. Rebuild time includes
+its source check; the cumulative source-check time also includes checks that
+avoid rebuilding, so the two durations must not be summed. These are work observations, including builds
 that a later caller rollback may discard.
 
 ## Cross-Runtime Consistency

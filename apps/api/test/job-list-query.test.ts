@@ -41,6 +41,107 @@ function seed(count = 12) {
 const query = (input: Record<string, unknown> = {}) => JobListQuerySchema.parse({ deleted: "all", pageSize: 3, ...input });
 
 describe("SQLite job query index", () => {
+  it("reuses index contents after unrelated commits through either connection", () => {
+    const { db, dbPath } = seed(1_000);
+    db.prepare(`INSERT INTO worker_runtime_heartbeats
+      (worker_id, component, pid, hostname, app_dir, db_path, task_queue, started_at, last_seen_at)
+      VALUES ('synthetic', 'activities', 0, 'synthetic', '/synthetic', '/synthetic/jobs.db', 'synthetic', '2026-01-01', '2026-01-01')`).run();
+    const input = query({ q: "No matching posting" });
+    const accepted = listJobs(db, input);
+    const index = db.prepare("SELECT * FROM temp.job_query_rows ORDER BY tenant_id, job_id").all();
+    const grams = db.prepare("SELECT * FROM temp.job_query_grams ORDER BY tenant_id, gram, job_id").all();
+    const writer = new Database(dbPath);
+    cleanups.push(() => { writer.close(); });
+    const observations: unknown[] = [];
+    for (const connection of [db, writer]) {
+      for (const sql of [
+        "UPDATE worker_runtime_heartbeats SET active_activity_count = active_activity_count + 1 WHERE worker_id='synthetic'",
+        "UPDATE jobs SET title=title || ' changed' WHERE tenant_id='other'",
+      ]) {
+        connection.prepare(sql).run();
+        expect(listJobs(db, input)).toEqual(accepted);
+        observations.push(jobQueryMetrics(db));
+      }
+    }
+    console.info("unrelated commit observations", JSON.stringify(observations));
+    expect(jobQueryMetrics(db).refreshes).toBe(1);
+    expect(jobQueryMetrics(db).sourceChecks).toBe(5);
+    expect(db.prepare("SELECT * FROM temp.job_query_rows ORDER BY tenant_id, job_id").all()).toEqual(index);
+    expect(db.prepare("SELECT * FROM temp.job_query_grams ORDER BY tenant_id, gram, job_id").all()).toEqual(grams);
+
+    // A changed source in the same tenant still rebuilds and becomes searchable.
+    writer.prepare("UPDATE job_list_projections SET title='Actual source change' WHERE tenant_id='local' AND job_id=?").run(id(0));
+    expect(listJobs(db, query({ q: "Actual source change" })).items.map((job) => job.jobKey)).toEqual([id(0)]);
+    expect(jobQueryMetrics(db).refreshes).toBe(2);
+    expect(hasExactV14SchemaManifest(db)).toBe(true);
+  });
+
+  it("uses postings before literal checks for selective and zero-candidate searches", () => {
+    const { db } = seed(1_000);
+    listJobs(db, query());
+    db.prepare("UPDATE job_list_projections SET title='Zqx selective', employer='Jvk company', source='Pzb board' WHERE tenant_id='local' AND job_id=?").run(id(0));
+    listJobs(db, query());
+    let checks = 0;
+    db.function("instr", (value: string, substring: string) => { checks++; return value.indexOf(substring) + 1; });
+    const observations: Array<{ filter: Record<string, string>; checks: number }> = [];
+    for (const filter of [
+      { q: "No matching posting" }, { source: "No matching posting" }, { company: "No matching posting" },
+      { q: "N", company: "No matching posting" }, { q: "Needle", source: "No matching posting" },
+    ]) {
+      checks = 0;
+      expect(listJobs(db, query(filter)).pagination.total).toBe(0);
+      expect(matchingJobKeys(db, { ...filter, deleted: "all" })).toEqual([]);
+      observations.push({ filter, checks });
+    }
+    console.info("zero-candidate literal checks", JSON.stringify(observations));
+    expect(observations.map((entry) => entry.checks)).toEqual([0, 0, 0, 0, 0]);
+    for (const filter of [{ q: "Zqx" }, { source: "Pzb" }, { company: "Jvk" }, { q: "selective", source: "Pzb", company: "Jvk" }]) {
+      checks = 0;
+      expect(listJobs(db, query(filter)).items.map((job) => job.jobKey)).toEqual([id(0)]);
+      expect(matchingJobKeys(db, { ...filter, deleted: "all" })).toEqual([id(0)]);
+      // Count, page and bulk each recheck at most one candidate's 12 fields.
+      expect(checks).toBeGreaterThan(0);
+      expect(checks).toBeLessThanOrEqual(36);
+    }
+    checks = 0;
+    expect(listJobs(db, query({ q: "É", pageSize: 1 })).pagination.total).toBe(999);
+    expect(checks).toBeGreaterThanOrEqual(1_000); // Short-query scalar fallback.
+  });
+
+  it("rolls back an unchanged-source marker renewal and retries without rebuilding", () => {
+    const { db } = seed();
+    const input = query({ q: "Needle" });
+    const accepted = listJobs(db, input);
+    const marker = db.prepare("SELECT * FROM temp.job_query_meta").get();
+    const rows = db.prepare("SELECT * FROM temp.job_query_rows ORDER BY job_id").all();
+    db.prepare("UPDATE jobs SET title='Unrelated tenant update' WHERE tenant_id='other'").run();
+    const prepare = db.prepare.bind(db);
+    const fail = vi.spyOn(db, "prepare").mockImplementation(((sql: string) => {
+      if (sql.startsWith("INSERT OR REPLACE INTO temp.job_query_meta")) throw new Error("synthetic marker renewal failure");
+      return prepare(sql);
+    }) as typeof db.prepare);
+    expect(() => listJobs(db, input)).toThrow("synthetic marker renewal failure");
+    expect(db.inTransaction).toBe(false);
+    expect(prepare("SELECT * FROM temp.job_query_meta").get()).toEqual(marker);
+    expect(prepare("SELECT * FROM temp.job_query_rows ORDER BY job_id").all()).toEqual(rows);
+    fail.mockRestore();
+    expect(listJobs(db, input)).toEqual(accepted);
+    expect(jobQueryMetrics(db).refreshes).toBe(1);
+    const renewed = prepare("SELECT * FROM temp.job_query_meta").get();
+    expect(() => db.transaction(() => {
+      db.prepare("UPDATE jobs SET title='Unrelated rollback' WHERE tenant_id='other'").run();
+      expect(listJobs(db, input)).toEqual(accepted);
+      throw new Error("caller rollback");
+    })()).toThrow("caller rollback");
+    expect(prepare("SELECT * FROM temp.job_query_meta").get()).toEqual(renewed);
+    expect(listJobs(db, input)).toEqual(accepted);
+    expect(jobQueryMetrics(db).refreshes).toBe(1);
+    // Snapshot rollback cannot suppress a subsequent real source change.
+    db.prepare("UPDATE job_list_projections SET title='Later source change' WHERE tenant_id='local' AND job_id=?").run(id(0));
+    expect(listJobs(db, query({ q: "Later source change" })).items.map((job) => job.jobKey)).toEqual([id(0)]);
+    expect(jobQueryMetrics(db).refreshes).toBe(2);
+  });
+
   it("hydrates only the selected page and bounds availability/template reads on every arm", () => {
     const { db } = seed(60);
     const original = db.prepare.bind(db);
@@ -77,18 +178,27 @@ describe("SQLite job query index", () => {
   it("uses indexed locale ordinals, canonical tenant joins and trigram membership in SQL", () => {
     const { db } = seed();
     listJobs(db, query());
-    const selection = jobQuerySelection(query({ q: "Needle", sort: "company", stage: "discover" }), { where: " WHERE job_list_projections.tenant_id = ?", params: ["local"] });
+    const base = { where: " WHERE job_list_projections.tenant_id = ?", params: ["local"] };
+    const selection = jobQuerySelection(query({ sort: "company", stage: "discover" }), base);
     const plan = db.prepare(`EXPLAIN QUERY PLAN SELECT qi.job_id FROM ${selection.pageFrom}${selection.where} ORDER BY ${selection.order} LIMIT 3`)
       .all(...selection.params) as { detail: string }[];
     const details = plan.map((row) => row.detail).join("\n");
     expect(details).toContain("job_query_company_DESC");
-    expect(details).toContain("PRIMARY KEY (tenant_id=? AND gram=? AND job_id=?)");
     expect(details).not.toContain("USE TEMP B-TREE FOR ORDER BY");
     console.info("job query EXPLAIN", JSON.stringify(plan));
     const countPlan = db.prepare(`EXPLAIN QUERY PLAN SELECT COUNT(*) FROM ${selection.from}${selection.where} AND job_list_projections.current_stage = ?`)
       .all(...selection.params, "discover") as { detail: string }[];
     expect(countPlan.map((row) => row.detail).join("\n")).toContain("idx_job_list_projections_stage_state");
     console.info("job query count EXPLAIN", JSON.stringify(countPlan));
+    const searched = jobQuerySelection(query({ q: "Needle", source: "board", sort: "company" }), base);
+    for (const from of [searched.from, searched.pageFrom]) {
+      const candidatePlan = db.prepare(`EXPLAIN QUERY PLAN SELECT qi.job_id FROM ${from}${searched.where} ORDER BY ${searched.order} LIMIT 3`)
+        .all(...searched.params) as { detail: string }[];
+      expect(candidatePlan[0]!.detail).toContain("SEARCH g0 USING PRIMARY KEY (tenant_id=? AND gram=?)");
+      expect(candidatePlan[1]!.detail).toContain("SEARCH g1 USING PRIMARY KEY (tenant_id=? AND gram=? AND job_id=?)");
+      expect(candidatePlan.map((row) => row.detail).join("\n")).toContain("SEARCH qi USING PRIMARY KEY (tenant_id=? AND job_id=?)");
+      console.info("job query candidate EXPLAIN", JSON.stringify(candidatePlan));
+    }
     expect(listJobs(db, query({ q: "Other tenant" })).pagination.total).toBe(0);
   });
 
