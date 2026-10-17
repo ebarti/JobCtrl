@@ -2665,3 +2665,7 @@ Validation uses fake-model authority tests, strict failure/binding tests, one-of
 ## Screening Answer Revisions on the Existing Ledger
 
 Materials owns source-bound screening drafting and reusable reviewed revisions; Apply owns application-bound questions, reviews and manual-use snapshots. Persist these in scoped existing exact-v14 ledger entries with tenant idempotency, expected-revision comparisons and atomic accepted replacements. Use persisted source-bound determinations plus independent claim/quality owners and human review, without lexical equivalence/fallback. Screening history confers no browser or submission authority. See [Reviewed Screening Answers](architecture/reviewed-screening-answers.md).
+
+## Optional company context uses explicit identity and existing owners
+
+Materials owns source-cited company briefings; Operations composes their read-only presentation in jobs, interviews and the existing digest. This bounded capability uses explicit CLI company-link confirmation and opt-in public-page refresh. It has no automatic company-name resolution, scheduler, private research input or separate digest. Company facts, reported events and hypotheses are model determinations with verbatim source references and uncertainty; job-specific implications retain their existing owners. Accepted artifacts remain immutable across failures. Existing indexed exact-v14 ledger records provide atomic revision fences without a migration. See [the owning guide](user/company-briefings.md) and [Materials](architecture/materials.md#optional-company-briefings).

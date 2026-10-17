@@ -441,3 +441,5 @@ Semantic read envelopes and citations are shared in Contracts. Discovery execute
 See [the decision](decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
 
 Private screening-answer reads and commands use the generated endpoint clients and registered `screening_answers` Python RPC. See [Jobs and Materials](api/jobs-and-materials.md#screening-answers).
+
+The existing Job Detail and daily digest reads also expose optional saved [company briefings](user/company-briefings.md). They perform no fetch/model work; configuration and refresh are explicit local CLI commands. See [the wire contract](api/complete-contract.md#company-briefings).

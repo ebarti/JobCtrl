@@ -1,3 +1,4 @@
+import type { CompanyBriefingView, CompanyBriefingSummary } from "./company-briefings.js";
 import type { InterviewPrep, InterviewSelectionInput } from "@jobctrl/domain-types";
 import { z } from "zod";
 import { type DeterminationEnvelope, type DeterminationCitation, DeterminationCitationSchema, DeterminationEnvelopeSchema, TrackCodeSchema, SeniorityCodeSchema, WorkModelCodeSchema } from "./semantic-determinations.js";
@@ -4002,6 +4003,7 @@ export interface DailyDigestBudget {
 }
 
 export interface DailyDigest {
+  companyBriefings?: CompanyBriefingSummary[];
   ok: true;
   generatedAt: string;
   since: string | null;
@@ -4157,6 +4159,7 @@ export interface EmployerAnalysis {
 }
 
 export interface JobDetail {
+  companyBriefing?: CompanyBriefingView | null;
   ok: true;
   job: JobSummary & {
     descriptionPreview: string;

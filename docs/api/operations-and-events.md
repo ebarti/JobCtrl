@@ -314,3 +314,5 @@ because a generation event arrived.
 | HTTP, operations snapshot, JSON-RPC, and SSE transport | `apps/api` |
 | Durable workflows and activities | `workers/automation` |
 | Browser cache and invalidation | `apps/web/src/contexts/operations` |
+
+The existing digest returns optional `companyBriefings` summaries (at most five), linking saved company context to canonical JobIds. It does not change acknowledgement semantics or initiate refresh. Internal `CompanyBriefingRecorded` events are withheld from SSE; reference-only `JobUpdated` events notify linked job/digest readers. See [Company Briefings](complete-contract.md#company-briefings).
