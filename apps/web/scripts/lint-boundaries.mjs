@@ -101,6 +101,137 @@ export function lintProgram(
   const localPath = (path) => normalize(relative(src, path));
   const context = (path) => /^contexts\/([^/]+)\//.exec(path)?.[1];
   const view = (path) => /^views\/([^/]+)\//.exec(path)?.[1];
+  const resolveSource = (specifier, source) => {
+    const resolved = ts.resolveModuleName(specifier, source.fileName, options, {
+      fileExists: (file) =>
+        Boolean(program.getSourceFile(file)) || ts.sys.fileExists(file),
+      readFile: (file) =>
+        program.getSourceFile(file)?.text ?? ts.sys.readFile(file),
+    }).resolvedModule;
+    return resolved && program.getSourceFile(resolved.resolvedFileName);
+  };
+  // Re-export provenance must survive missing package declarations too. Inspect
+  // only the selected runtime exports, so a barrel's internal/type-only imports
+  // cannot poison a legitimate public helper.
+  function runtimeOrigins(specifier, names, source, seen = new Set()) {
+    if (
+      /^(@tanstack\/(react-query|query-core)|zustand)(?:\/|$)/.test(specifier)
+    )
+      return ["view-state"];
+    if (/^@jobctrl\/api-client(?:\/|$)/.test(specifier))
+      return names.every((name) => name === "JobCtrlApiError")
+        ? []
+        : ["api-adapter"];
+    const target = resolveSource(specifier, source);
+    if (!target) return [];
+    const identity = `${target.fileName}:${names.join(",")}`;
+    if (seen.has(identity)) return [];
+    seen.add(identity);
+    const origins = [];
+    function localOrigins(
+      node,
+      visited = new Set(),
+      symbol = node && checker.getSymbolAtLocation(node),
+    ) {
+      if (!node || visited.has(node)) return [];
+      visited.add(node);
+      if (
+        ts.isParenthesizedExpression(node) ||
+        ts.isAsExpression(node) ||
+        ts.isTypeAssertionExpression(node) ||
+        ts.isSatisfiesExpression(node)
+      )
+        return localOrigins(node.expression, visited);
+      return (symbol?.declarations ?? []).flatMap((decl) => {
+        if (ts.isImportSpecifier(decl)) {
+          const statement = decl.parent.parent.parent;
+          if (decl.isTypeOnly || statement.importClause?.isTypeOnly) return [];
+          return runtimeOrigins(
+            statement.moduleSpecifier.text,
+            [(decl.propertyName ?? decl.name).text],
+            target,
+            seen,
+          );
+        }
+        if (ts.isNamespaceImport(decl) || ts.isImportClause(decl)) {
+          const clause = ts.isNamespaceImport(decl) ? decl.parent : decl;
+          if (clause.isTypeOnly) return [];
+          return runtimeOrigins(
+            clause.parent.moduleSpecifier.text,
+            ts.isNamespaceImport(decl) ? ["*"] : ["default"],
+            target,
+            seen,
+          );
+        }
+        if (ts.isVariableDeclaration(decl))
+          return localOrigins(decl.initializer, visited);
+        return [];
+      });
+    }
+    for (const statement of target.statements) {
+      if (
+        ts.isExportAssignment(statement) &&
+        (names.includes("*") || names.includes("default"))
+      )
+        origins.push(...localOrigins(statement.expression));
+      if (
+        ts.isVariableStatement(statement) &&
+        statement.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
+      )
+        for (const decl of statement.declarationList.declarations)
+          if (
+            ts.isIdentifier(decl.name) &&
+            (names.includes("*") || names.includes(decl.name.text))
+          )
+            origins.push(...localOrigins(decl.initializer));
+      if (
+        ts.isExportDeclaration(statement) &&
+        !statement.isTypeOnly &&
+        !statement.moduleSpecifier &&
+        statement.exportClause &&
+        ts.isNamedExports(statement.exportClause)
+      ) {
+        for (const item of statement.exportClause.elements)
+          if (
+            !item.isTypeOnly &&
+            (names.includes("*") || names.includes(item.name.text))
+          )
+            origins.push(
+              ...localOrigins(
+                item.propertyName ?? item.name,
+                new Set(),
+                checker.getExportSpecifierLocalTargetSymbol(item),
+              ),
+            );
+      }
+      if (
+        !ts.isExportDeclaration(statement) ||
+        statement.isTypeOnly ||
+        !statement.moduleSpecifier ||
+        !ts.isStringLiteralLike(statement.moduleSpecifier)
+      )
+        continue;
+      let selected = ["*"];
+      if (statement.exportClause && ts.isNamedExports(statement.exportClause))
+        selected = statement.exportClause.elements
+          .filter(
+            (item) =>
+              !item.isTypeOnly &&
+              (names.includes("*") || names.includes(item.name.text)),
+          )
+          .map((item) => (item.propertyName ?? item.name).text);
+      if (selected.length)
+        origins.push(
+          ...runtimeOrigins(
+            statement.moduleSpecifier.text,
+            selected,
+            target,
+            seen,
+          ),
+        );
+    }
+    return origins;
+  }
   function exempt(group, path, name) {
     const entry = exemptions[group]?.[path];
     if (!entry?.reason?.trim() || !entry.symbols.includes(name)) return false;
@@ -172,6 +303,24 @@ export function lintProgram(
             "Use a literal module specifier so frontend ownership can be checked.",
           );
         continue;
+      }
+      if (composer && !dep.typeOnly) {
+        const bindings = ts.isImportDeclaration(dep.node)
+          ? dep.node.importClause?.namedBindings
+          : undefined;
+        const names =
+          bindings && ts.isNamedImports(bindings)
+            ? bindings.elements
+                .filter((item) => !item.isTypeOnly)
+                .map((item) => (item.propertyName ?? item.name).text)
+            : dep.names;
+        if (names.length)
+          for (const rule of runtimeOrigins(dep.specifier, names, source))
+            report(
+              dep.node,
+              rule,
+              "Runtime capabilities cannot be imported through a barrel, including when declarations are missing; use context-owned helpers and ports.",
+            );
       }
       const resolved = ts.resolveModuleName(
         dep.specifier,
@@ -309,7 +458,364 @@ export function lintProgram(
         );
     }
     if (!feature) continue;
+    // Generated router declarations can resolve to `any` (or be absent). Follow
+    // capability origins through syntax as well as types; a cast cannot erase
+    // authority, and an unrelated local with the same spelling is not a port.
+    const unwrap = (node) => {
+      while (
+        node &&
+        (ts.isParenthesizedExpression(node) ||
+          ts.isAsExpression(node) ||
+          ts.isTypeAssertionExpression(node) ||
+          ts.isNonNullExpression(node) ||
+          ts.isSatisfiesExpression(node))
+      )
+        node = node.expression;
+      return node;
+    };
+    function keyText(node) {
+      if (!node) return undefined;
+      if (ts.isIdentifier(node) || ts.isStringLiteralLike(node))
+        return node.text;
+      if (ts.isComputedPropertyName(node)) return literalKey(node.expression);
+    }
+    function literalKey(node, seen = new Set()) {
+      node = unwrap(node);
+      if (ts.isStringLiteralLike(node) || ts.isNumericLiteral(node))
+        return node.text;
+      const symbol = checker.getSymbolAtLocation(node);
+      if (!symbol || seen.has(symbol)) return undefined;
+      seen.add(symbol);
+      for (const decl of symbol.declarations ?? [])
+        if (ts.isVariableDeclaration(decl) && decl.initializer)
+          return literalKey(decl.initializer, seen);
+    }
+    function member(base, key) {
+      if (base && typeof base === "object") return base[key];
+      if (base === "loader" && key === "context") return "context";
+      if (base === "context" && key === "ports") return "ports";
+      if (base === "context" && key === "queryClient") return "query";
+      if (base === "ports" && key === "api") return "api";
+    }
+    function weakMember(node, key) {
+      // No declaration is permission: reserved capability slots on weak/error
+      // types fail closed. Explicitly resolved local objects can still shadow
+      // those names without acquiring application authority.
+      if (!node) return undefined;
+      const type = checker.getTypeAtLocation(node);
+      if (!(type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)))
+        return undefined;
+      return {
+        context: "context",
+        ports: "ports",
+        api: "api",
+        queryClient: "query",
+      }[key];
+    }
+    const assignments = new Map();
+    function collectAssignments(node) {
+      if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isIdentifier(node.left)
+      ) {
+        const symbol = checker.getSymbolAtLocation(node.left);
+        assignments.set(symbol, [
+          ...(assignments.get(symbol) ?? []),
+          node.right,
+        ]);
+      }
+      ts.forEachChild(node, collectAssignments);
+    }
+    collectAssignments(source);
+    function loaderParameter(decl) {
+      const fn = decl.parent;
+      if (loaderFunctions.has(fn)) return true;
+      const owner = ts.isMethodDeclaration(fn) ? fn : fn?.parent;
+      return (
+        owner &&
+        (ts.isPropertyAssignment(owner) || ts.isMethodDeclaration(owner)) &&
+        keyText(owner.name) === "loader" &&
+        ts.isObjectLiteralExpression(owner.parent) &&
+        ts.isCallExpression(owner.parent.parent) &&
+        routerOrigin(owner.parent.parent.expression)
+      );
+    }
+    function routerOrigin(node, seen = new Set()) {
+      node = unwrap(node);
+      if (!node || seen.has(node)) return false;
+      seen.add(node);
+      if (ts.isCallExpression(node)) return routerOrigin(node.expression, seen);
+      const symbol = checker.getSymbolAtLocation(node);
+      for (const decl of symbol?.declarations ?? []) {
+        if (ts.isImportSpecifier(decl)) {
+          const statement = decl.parent.parent.parent;
+          if (
+            ts.isImportDeclaration(statement) &&
+            ts.isStringLiteralLike(statement.moduleSpecifier) &&
+            statement.moduleSpecifier.text === "@tanstack/react-router" &&
+            [
+              "createFileRoute",
+              "createRoute",
+              "createRootRouteWithContext",
+            ].includes((decl.propertyName ?? decl.name).text)
+          )
+            return true;
+        }
+        if (
+          ts.isVariableDeclaration(decl) &&
+          decl.initializer &&
+          routerOrigin(decl.initializer, seen)
+        )
+          return true;
+      }
+      return false;
+    }
+    const loaderFunctions = new Set();
+    function registerLoader(node, seen = new Set()) {
+      node = unwrap(node);
+      if (!node || seen.has(node)) return;
+      seen.add(node);
+      if (
+        ts.isArrowFunction(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isFunctionDeclaration(node) ||
+        ts.isMethodDeclaration(node)
+      )
+        loaderFunctions.add(node);
+      else {
+        for (const decl of checker.getSymbolAtLocation(node)?.declarations ??
+          []) {
+          if (ts.isVariableDeclaration(decl))
+            registerLoader(decl.initializer, seen);
+          if (ts.isFunctionDeclaration(decl)) loaderFunctions.add(decl);
+        }
+      }
+    }
+    function collectLoaders(node) {
+      if (
+        ts.isObjectLiteralExpression(node) &&
+        ts.isCallExpression(node.parent) &&
+        routerOrigin(node.parent.expression)
+      )
+        for (const prop of node.properties)
+          if (keyText(prop.name) === "loader")
+            registerLoader(
+              ts.isPropertyAssignment(prop)
+                ? prop.initializer
+                : ts.isShorthandPropertyAssignment(prop)
+                  ? prop.name
+                  : prop,
+            );
+      ts.forEachChild(node, collectLoaders);
+    }
+    collectLoaders(source);
+    function bindingKey(element) {
+      return ts.isArrayBindingPattern(element.parent)
+        ? String(element.parent.elements.indexOf(element))
+        : keyText(element.propertyName ?? element.name);
+    }
+    function bindingOrigin(pattern, seen) {
+      const owner = pattern.parent;
+      if (ts.isVariableDeclaration(owner))
+        return capability(owner.initializer, seen);
+      if (ts.isParameter(owner))
+        return loaderParameter(owner) ? "loader" : undefined;
+      if (ts.isBindingElement(owner))
+        return (
+          member(bindingOrigin(owner.parent, seen), bindingKey(owner)) ??
+          weakMember(owner.parent, bindingKey(owner))
+        );
+    }
+    function capability(node, seen = new Set()) {
+      node = unwrap(node);
+      if (!node || seen.has(node)) return undefined;
+      seen.add(node);
+      if (
+        ts.isPropertyAccessExpression(node) ||
+        ts.isElementAccessExpression(node)
+      )
+        return (
+          member(
+            capability(node.expression, seen),
+            ts.isPropertyAccessExpression(node)
+              ? node.name.text
+              : literalKey(node.argumentExpression),
+          ) ??
+          weakMember(
+            node.expression,
+            ts.isPropertyAccessExpression(node)
+              ? node.name.text
+              : literalKey(node.argumentExpression),
+          )
+        );
+      if (ts.isIdentifier(node)) {
+        const symbol = ts.isShorthandPropertyAssignment(node.parent)
+          ? checker.getShorthandAssignmentValueSymbol(node.parent)
+          : checker.getSymbolAtLocation(node);
+        let original = symbol;
+        if (original?.flags & ts.SymbolFlags.Alias)
+          original = checker.getAliasedSymbol(original);
+        if (
+          original?.name === "usePorts" &&
+          original.declarations?.some(
+            (decl) =>
+              localPath(decl.getSourceFile().fileName) ===
+              "shared/providers/PortsProvider.tsx",
+          )
+        )
+          return "ports-factory";
+        if (
+          original?.name === "useRouteContext" &&
+          original.declarations?.some((decl) =>
+            normalize(decl.getSourceFile().fileName).includes("/@tanstack/"),
+          )
+        )
+          return "context-factory";
+        for (const decl of symbol?.declarations ?? []) {
+          if (ts.isVariableDeclaration(decl) && decl.initializer) {
+            const origin = capability(decl.initializer, seen);
+            if (origin) return origin;
+          }
+          if (ts.isBindingElement(decl)) {
+            if (decl.dotDotDotToken) return bindingOrigin(decl.parent, seen);
+            const origin =
+              member(bindingOrigin(decl.parent, seen), bindingKey(decl)) ??
+              weakMember(decl.parent, bindingKey(decl));
+            if (origin) return origin;
+          }
+          if (ts.isParameter(decl) && loaderParameter(decl)) return "loader";
+        }
+        for (const value of assignments.get(symbol) ?? []) {
+          const origin = capability(value, seen);
+          if (origin) return origin;
+        }
+      }
+      if (ts.isObjectLiteralExpression(node)) {
+        const shape = {};
+        for (const prop of node.properties) {
+          if (
+            ts.isPropertyAssignment(prop) ||
+            ts.isShorthandPropertyAssignment(prop)
+          )
+            shape[keyText(prop.name)] = capability(
+              ts.isPropertyAssignment(prop) ? prop.initializer : prop.name,
+              new Set(seen),
+            );
+          if (ts.isSpreadAssignment(prop)) {
+            const origin = capability(prop.expression, new Set(seen));
+            if (origin && typeof origin === "object")
+              Object.assign(shape, origin);
+          }
+        }
+        return shape;
+      }
+      if (ts.isArrayLiteralExpression(node))
+        return Object.fromEntries(
+          node.elements.map((element, index) => [
+            String(index),
+            capability(element, new Set(seen)),
+          ]),
+        );
+      if (ts.isCallExpression(node)) {
+        const callee = unwrap(node.expression);
+        const factory = capability(callee, seen);
+        if (factory === "ports-factory") return "ports";
+        if (factory === "context-factory") return "context";
+        let symbol = checker.getSymbolAtLocation(callee);
+        if (symbol?.flags & ts.SymbolFlags.Alias)
+          symbol = checker.getAliasedSymbol(symbol);
+        if (
+          symbol?.name === "usePorts" &&
+          symbol.declarations?.some(
+            (decl) =>
+              localPath(decl.getSourceFile().fileName) ===
+              "shared/providers/PortsProvider.tsx",
+          )
+        )
+          return "ports";
+        // Router hooks are capability entry points even with missing generated types.
+        if (
+          ts.isPropertyAccessExpression(callee) &&
+          callee.name.text === "useRouteContext" &&
+          routerOrigin(callee.expression)
+        )
+          return "context";
+        if (
+          symbol?.name === "useRouteContext" &&
+          symbol.declarations?.some((decl) =>
+            normalize(decl.getSourceFile().fileName).includes("/@tanstack/"),
+          )
+        )
+          return "context";
+      }
+      const type = checker.getTypeAtLocation(node);
+      for (const symbol of [type.aliasSymbol, type.getSymbol()]) {
+        for (const decl of symbol?.declarations ?? []) {
+          const origin = localPath(decl.getSourceFile().fileName);
+          if (
+            origin === "shared/ports/ApiClientPort.ts" &&
+            symbol.name === "ApiClientPort"
+          )
+            return "api";
+          if (
+            origin === "shared/providers/PortsProvider.tsx" &&
+            symbol.name === "Ports"
+          )
+            return "ports";
+          if (origin === "router.ts" && symbol.name === "RouterContext")
+            return "context";
+          if (
+            symbol.name === "QueryClient" &&
+            normalize(decl.getSourceFile().fileName).includes(
+              "/@tanstack/query-core/",
+            )
+          )
+            return "query";
+        }
+      }
+    }
+    function inspectCapability(node) {
+      let base, key;
+      if (
+        ts.isPropertyAccessExpression(node) ||
+        ts.isElementAccessExpression(node)
+      ) {
+        base = capability(node.expression);
+        key = ts.isPropertyAccessExpression(node)
+          ? node.name.text
+          : literalKey(node.argumentExpression);
+      } else if (
+        ts.isBindingElement(node) &&
+        ts.isObjectBindingPattern(node.parent)
+      ) {
+        base = bindingOrigin(node.parent, new Set());
+        key = keyText(node.propertyName ?? node.name);
+      }
+      if (
+        composer &&
+        (base === "query" ||
+          (base === "context" && key === "queryClient") ||
+          (key === "queryClient" &&
+            weakMember(
+              ts.isBindingElement(node) ? node.parent : node.expression,
+              key,
+            )))
+      )
+        report(
+          node,
+          "view-state",
+          "QueryClient access belongs in a context-owned read helper or hook; weak/generated types and casts do not grant authority.",
+        );
+      if (composer && base === "api" && !exempt("capabilities", path, key))
+        report(
+          node,
+          "view-api",
+          `Move API access ${key ?? "[computed]"} into a context-owned read helper or hook; weak/generated types and casts do not grant authority.`,
+        );
+    }
     function inspect(node) {
+      inspectCapability(node);
       let symbol;
       if (ts.isIdentifier(node)) symbol = checker.getSymbolAtLocation(node);
       else if (
@@ -418,7 +924,7 @@ export function lint(root = webRoot) {
     );
   const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, root);
   const program = ts.createProgram(
-    sourceFiles(resolve(root, "src")),
+    [...new Set([...parsed.fileNames, ...sourceFiles(resolve(root, "src"))])],
     parsed.options,
   );
   const exemptions = JSON.parse(

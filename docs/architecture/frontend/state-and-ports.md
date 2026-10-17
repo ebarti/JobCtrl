@@ -59,18 +59,28 @@ is the canonical decision matrix.
 Search params drive query keys. The pattern is:
 
 ```ts
-// routes/jobs.tsx (loader)
-loader: async ({ deps: { search }, context: { queryClient, tenantId } }) =>
-  queryClient.ensureQueryData({
-    queryKey: jobsKeys.list(tenantId, search),
-    queryFn: () => apiClient.jobs(search),
-  }),
+// routes/artifacts.tsx: validate/map URL input, then delegate to its read owner.
+loader: ({ deps, context }) =>
+  prefetchArtifactsList(context, artifactsListInput(deps.search)),
 ```
 
-The route's loader prefetches based on the typed search params. The
-component reads via `useJobsListQuery(useSearch(...))`, which builds the
-same query key. The cache hit rate is maximal because the URL is the
-single key derivation source.
+Operations, Profile and Outreach expose read helpers in their own
+`readQueries.ts` modules. Helpers accept structural tenant, API-port and query
+client dependencies independent of the router/generated tree. Routes validate
+search and orchestrate these helpers; they never operate on API or QueryClient
+capabilities. Contexts never import views. Shared key/read factories are reused
+by the observers; hook-specific `enabled`, `select`, freshness and refetch
+policies stay on the hooks.
+
+The existing prefetches await best-effort `prefetchQuery` reads using the query
+client's freshness defaults. Activity detail instead awaits `ensureQueryData`,
+unwrapping the event and propagating errors (including 404). Its observer's
+404-to-null policy is separate. An accepted Activity cache entry is reused even
+when stale; no automatic background revalidation is requested by that helper.
+
+Jobs has no loader: its view owns the effective-query handoff after saved-view
+and URL state are resolved. `useJobsListQuery` consumes that effective input;
+adding an independent route prefetch would risk a competing cache key.
 
 **Pagination + sort changes** mutate the URL (via `navigate({ search: { ...,
 page: 2 } })`); the URL change triggers a re-render with new search
@@ -311,17 +321,24 @@ authorize those capabilities in other feature modules.
 
 ### Automated Boundary Checks
 
-`corepack pnpm web:lint` uses the TypeScript syntax tree to check dependency and
-capability boundaries:
+`corepack pnpm web:lint` uses TypeScript syntax, resolved symbols and capability
+provenance to check dependency and capability boundaries:
 
 - Contexts cannot import views, and views cannot add another view's modules.
   The existing Analytics-to-Dashboard KPI composition has an exact-edge
   relocation exception.
 - Aggregate contexts cannot import another aggregate's hooks or stores;
   Operations read hooks remain the shared read-side exception.
-- Views cannot use runtime Query or Zustand APIs or call the API client.
+- Views and routes cannot use runtime Query or Zustand APIs or call the API client.
   Type-only imports remain valid; API error values and URL-only preview helpers
   have scoped exceptions.
+- Loader context, API and QueryClient origins remain protected through aliases,
+  casts, nested destructuring and bracket access even with `any` or unresolved
+  context declarations. Local shadowing and context helper calls remain valid.
+  Runtime re-exports cannot hide Query/API imports behind a barrel with missing
+  package declarations. `web:lint:test` overlays negative controls on the real
+  tsconfig/generated route program and requires source-located boundary
+  diagnostics independently of compiler errors.
 - Production code cannot import test scaffolding. Tests, stories, and generated
   source are excluded from feature checks.
 
