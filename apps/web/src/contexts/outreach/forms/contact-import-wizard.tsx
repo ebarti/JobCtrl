@@ -2,7 +2,10 @@ import { ContactImportRequestSchema } from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
 import { useId, useState } from "react";
 
-import type { ContactImportFormat, ContactImportResponse } from "../../operations/types.js";
+import type {
+  ContactImportFormat,
+  ContactImportResponse,
+} from "@jobctrl/contracts";
 
 import { Button } from "../../../shared/ui/button.js";
 import { Empty } from "../../../shared/ui/empty.js";

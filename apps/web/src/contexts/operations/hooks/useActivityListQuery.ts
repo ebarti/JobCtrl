@@ -5,9 +5,9 @@ import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { activityKeys } from "../activityKeys.js";
 import type {
   ActivityEventSummary,
-  ActivityListInput,
   PaginatedResponse,
-} from "../types.js";
+} from "@jobctrl/contracts";
+import type { ActivityListInput } from "../types.js";
 
 export function useActivityListQuery(
   input: ActivityListInput,

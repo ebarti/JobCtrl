@@ -3,7 +3,7 @@ import { userEvent } from "@testing-library/user-event";
 import type { SortingState } from "@tanstack/react-table";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { ActivityEventSummary } from "../../contexts/operations/types.js";
+import type { ActivityEventSummary } from "@jobctrl/contracts";
 import { makeActivityPage } from "../../test/fixtures/projections.js";
 import { renderWithProviders } from "../../test/render.js";
 import { DebugActivityTable } from "./DebugActivityTable.js";

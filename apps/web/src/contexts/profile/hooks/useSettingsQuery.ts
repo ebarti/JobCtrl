@@ -2,7 +2,7 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
-import type { SettingsResponse } from "../../operations/types.js";
+import type { SettingsResponse } from "@jobctrl/contracts";
 import { profileKeys } from "../queryKeys.js";
 
 export function useSettingsQuery(): UseQueryResult<SettingsResponse> {

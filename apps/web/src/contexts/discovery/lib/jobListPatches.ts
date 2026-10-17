@@ -1,4 +1,4 @@
-import type { JobSummary, PaginatedResponse } from "../../operations/types.js";
+import type { JobSummary, PaginatedResponse } from "@jobctrl/contracts";
 
 function isJobsPage(value: unknown): value is PaginatedResponse<JobSummary> {
   return (

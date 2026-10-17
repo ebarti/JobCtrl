@@ -1,5 +1,5 @@
 import { assertNever } from "../../../shared/lib/exhaustive.js";
-import type { Stage } from "../../operations/types.js";
+import type { Stage } from "@jobctrl/contracts";
 
 export type StageTone = "neutral" | "info" | "ok";
 

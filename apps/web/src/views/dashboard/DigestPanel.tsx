@@ -9,8 +9,8 @@ import {
 import {
   useAcknowledgeDigestMutation,
   useDigestQuery,
-  type DailyDigest,
 } from "../../contexts/operations/index.js";
+import { type DailyDigest } from "@jobctrl/contracts";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert.js";
 import { CardHeader } from "../../shared/ui/card-header.js";

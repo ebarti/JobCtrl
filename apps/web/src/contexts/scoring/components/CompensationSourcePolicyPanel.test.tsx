@@ -3,7 +3,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import type { CompensationSourceRegistryResponse } from "../../operations/types.js";
+import type { CompensationSourceRegistryResponse } from "@jobctrl/contracts";
 import { renderWithProviders } from "../../../test/render.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
 import { CompensationSourcePolicyPanel } from "./CompensationSourcePolicyPanel.js";

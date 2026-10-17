@@ -5,7 +5,7 @@ import {
 } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 
-import type { SavedTableView } from "../contexts/operations/types.js";
+import type { SavedTableView } from "@jobctrl/contracts";
 import { profileKeys } from "../contexts/profile/queryKeys.js";
 import type { DiscoverySourceTableControls } from "../contexts/discovery/components/DiscoveryProductControls.js";
 import {

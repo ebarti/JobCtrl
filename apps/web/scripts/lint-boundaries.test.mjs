@@ -48,7 +48,7 @@ function check(files, exemptions = {}) {
 const rules = (results) =>
   [...new Set(results.map((result) => result.rule))].sort();
 
-// These are deliberate negative controls: invalid source must yield diagnostics.
+// Dependency parsing supports both positive canonical imports and negative controls.
 test("all static module syntaxes preserve actual dependency and original symbol names", () => {
   const source = ts.createSourceFile(
     "example.ts",
@@ -77,85 +77,103 @@ test("all static module syntaxes preserve actual dependency and original symbol 
     ],
   );
 });
-test("rejects direct contracts with location and a useful ACL diagnostic", () => {
-  const result = check({
-    "views/lint-example/Page.ts":
-      "import type { JobSummary as Row } from '@jobctrl/contracts';",
-  });
-  assert.deepEqual(rules(result), ["operations-acl"]);
-  assert.equal(result[0].line, 1);
-  assert.equal(result[0].column, 1);
-  assert.match(result[0].message, /JobSummary.*contexts\/operations\/types.ts/);
+test("canonical DTOs, schemas, constants and domain vocabulary need no routing exemption", () => {
+  for (const file of [
+    "views/lint-example/Page.ts",
+    "contexts/lint-one/file.ts",
+    "routes/lint-page.ts",
+  ]) {
+    assert.deepEqual(
+      check({
+        [file]: `import type { JobSummary as Row } from '@jobctrl/contracts';
+        import { JobListQuerySchema, JOB_STATES } from '@jobctrl/contracts';
+        import type { DomainEventUnion, TenantId } from '@jobctrl/domain-types';
+        type Detail = import('@jobctrl/contracts').JobDetail;`,
+      }),
+      [],
+    );
+  }
 });
-test("exact file and symbol exemptions allow reviewed access but not additional imports", () => {
+test("canonical imports do not grant API-client or Query capabilities", () => {
+  assert.deepEqual(
+    rules(
+      check({
+        "views/lint-example/Page.ts":
+          "import { JobListQuerySchema } from '@jobctrl/contracts'; import { JobCtrlApiClient } from '@jobctrl/api-client'; import { useQuery } from '@tanstack/react-query'; fetch('/resource');",
+      }),
+    ),
+    ["api-adapter", "browser-port", "view-state"],
+  );
+});
+test("exact capability exemptions allow reviewed access but not additional symbols or files", () => {
   const exemptions = {
-    contracts: {
-      "views/lint-example/Page.ts": {
-        symbols: ["JobSummary"],
-        reason: "Reviewed migration debt",
+    capabilities: {
+      "contexts/lint-one/file.ts": {
+        symbols: ["fetch"],
+        reason: "Owned abortable preview load",
       },
     },
   };
   assert.deepEqual(
-    check(
-      {
-        "views/lint-example/Page.ts":
-          "import type { JobSummary as Row } from '@jobctrl/contracts';",
-      },
-      exemptions,
-    ),
+    check({ "contexts/lint-one/file.ts": "fetch('/preview');" }, exemptions),
     [],
   );
   assert.deepEqual(
     rules(
       check(
         {
-          "views/lint-example/Page.ts":
-            "import type { JobSummary, JobDetail } from '@jobctrl/contracts';",
+          "contexts/lint-one/file.ts":
+            "fetch('/preview'); localStorage.getItem('key');",
         },
         exemptions,
       ),
     ),
-    ["operations-acl"],
+    ["browser-port"],
   );
   assert.deepEqual(
     rules(
-      check(
-        {
-          "views/elsewhere/Page.ts":
-            "import type { JobSummary } from '@jobctrl/contracts';",
-        },
-        exemptions,
-      ),
+      check({ "contexts/lint-two/file.ts": "fetch('/preview');" }, exemptions),
     ),
-    ["operations-acl", "stale-exemption"],
+    ["browser-port", "stale-exemption"],
   );
 });
-test("removes stale or unreasoned exemptions", () => {
+test("removes stale or unreasoned capability and dependency exemptions", () => {
+  for (const group of ["capabilities", "dependencies"]) {
+    for (const reason of ["Old access", ""]) {
+      assert.deepEqual(
+        rules(
+          check(
+            { "views/lint-example/Page.ts": "export {};" },
+            {
+              [group]: {
+                "views/lint-example/Page.ts": { symbols: ["unused"], reason },
+              },
+            },
+          ),
+        ),
+        ["stale-exemption"],
+      );
+    }
+  }
   assert.deepEqual(
     rules(
       check(
-        { "views/lint-example/Page.ts": "export {};" },
+        { "contexts/lint-one/file.ts": "fetch('/preview');" },
         {
-          contracts: {
-            "views/lint-example/Page.ts": {
-              symbols: ["JobSummary"],
-              reason: "Old access",
-            },
+          capabilities: {
+            "contexts/lint-one/file.ts": { symbols: ["fetch"], reason: "" },
           },
         },
       ),
     ),
-    ["stale-exemption"],
+    ["browser-port", "stale-exemption"],
   );
 });
-test("ACL owner, domain vocabulary and ordinary React hooks remain legal", () => {
+test("ordinary React hooks remain legal with canonical DTO imports", () => {
   assert.deepEqual(
     check({
-      "contexts/operations/types.ts":
-        "export type { JobSummary } from '@jobctrl/contracts';",
       "views/lint-example/Page.ts":
-        "import { useState, useEffect, useRef } from 'react'; import type { TenantId } from '@jobctrl/domain-types'; import type { JobSummary } from '../../contexts/operations/types.js';",
+        "import { useState, useEffect, useRef } from 'react'; import type { TenantId } from '@jobctrl/domain-types'; import type { JobSummary } from '@jobctrl/contracts';",
     }),
     [],
   );

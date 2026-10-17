@@ -10,7 +10,7 @@ import type {
   RoleMatchFeedbackListResponse,
   SourceLocatorListResponse,
   SourceRegistryListResponse,
-} from "../types.js";
+} from "@jobctrl/contracts";
 
 export function useSourceRegistryQuery(
   options: { readonly enabled?: boolean } = {},

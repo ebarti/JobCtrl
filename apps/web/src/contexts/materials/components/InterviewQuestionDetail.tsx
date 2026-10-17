@@ -1,4 +1,7 @@
-import type { InterviewCatalog, InterviewQuestionCard } from "../../operations/types.js";
+import type {
+  InterviewCatalog,
+  InterviewQuestionCard,
+} from "@jobctrl/contracts";
 
 import { MarkdownDocument } from "../../../shared/ui/MarkdownDocument.js";
 import { StatusBadge } from "../../../shared/ui/status-badge.js";

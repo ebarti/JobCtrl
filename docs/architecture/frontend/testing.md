@@ -55,6 +55,13 @@ graph TB
   `DomainEvent` union is plain TypeScript, not Zod, so it is not among
   these (§7.2).
 
+The boundary runner (`corepack pnpm web:lint:test`) permits canonical DTO,
+schema, constant and domain imports without routing exemptions. Its independent
+negative controls retain API-client, Query/Zustand, browser-port, dependency,
+barrel and stale-exemption enforcement. Type-level read-hook tests compare
+inferred results to canonical DTOs; readonly Jobs stage input remains a frontend
+refinement rather than a duplicate schema.
+
 These tests do not mount React components.
 
 ## 10.3 Component & Hook Tests (Vitest + React Testing Library + MSW)

@@ -4,7 +4,7 @@ import { axe } from "jest-axe";
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-import type { PostingAvailability as Availability } from "../../operations/types.js";
+import type { PostingAvailability as Availability } from "@jobctrl/contracts";
 import { jobsKeys } from "../../operations/jobsKeys.js";
 import { makeJobDetail, sampleJob } from "../../../test/fixtures/projections.js";
 import { renderWithProviders } from "../../../test/render.js";
