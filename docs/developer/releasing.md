@@ -29,8 +29,11 @@ stable Python package. A source version or pushed tag alone is not a release.
    git log --oneline PREVIOUS_TAG..origin/main
    ```
 
-   Replace uppercase placeholders below with the recorded values. Never reuse a
-   version/tag for different source bytes or overwrite published immutable assets.
+   Replace uppercase placeholders below with the recorded values. A failed
+   preparation, build, signing, or publication attempt does not by itself justify
+   advancing the application version. Keep the owner's approved version unless
+   the owner approves changing it. Published versions and immutable assets must
+   never be replaced.
 
 ## Prepare one release PR
 
@@ -122,8 +125,26 @@ gh api repos/ebarti/JobCtrl/actions/runs/RUN_ID/pending_deployments
 If a job fails, diagnose that exact job and the public state first. Immutable
 publication, Homebrew, channel promotion, GitHub publication, and PyPI can be at
 different stages. Reuse the existing run where safe; do not start a competing
-release, reset security counters, change note bytes, or delete published assets.
+release, reset security counters, change an active run's note bytes, or delete
+published assets.
 The channel promotion uses a compare-and-swap against the prior pointer.
+
+If a source repair is required before anything has been published, retain the
+approved version. Verify that no GitHub Release, immutable candidate, channel
+promotion, Homebrew publication, or PyPI distribution exists for that version.
+With the owner's explicit authorization, record and preserve the old tag object
+and commit, merge the repaired candidate through normal checks, and replace only
+that unpublished tag using an exact expected-ref lease. Start a new run on the
+corrected tag; the failed run remains evidence for its original source. Remove
+an abandoned unpublished version tag only with the owner's authorization. A
+published or partially published candidate requires reconciling its existing
+immutable state rather than this unpublished-tag correction procedure.
+
+For Apple HTTP 403 reporting a missing or expired agreement, stop retries until
+the Apple Developer Account Holder reviews and accepts the required agreement.
+Confirm the account action, recheck the candidate and current channel, then
+resume the existing run when its source is unchanged. Do not rotate credentials
+or bypass notarization to work around an agreement requirement.
 
 ## Verify what users receive
 
