@@ -184,8 +184,10 @@ record-based public overload. `callRpc` applies the shared parameter and result
 parsers to injected dispatchers as well as the subprocess adapter; the adapter
 validates parameters before resolving or spawning a command. Endpoint dispatch
 specifications bind the method to those same schemas. Python registration
-remains the runtime inventory. Workflow starts use acknowledgments, even when their activity has
-a synchronous result schema. Compensation refresh also retains its supported
+remains the runtime inventory. Verification requires the explicit supported
+`provider: "codex"` parameter, matching the registered worker handler.
+Workflow starts use acknowledgments, even when their activity has a synchronous
+result schema. Compensation refresh also retains its supported
 synchronous result branch, and stage runs retain `LocalActionResult` for old
 sync adapters. Generic acknowledgments preserve additional identity metadata
 and nested payloads.
@@ -198,7 +200,9 @@ and compensation fields. Awaited profile import retains `status`, `draft`,
 workflow result because their current callers always await it. An awaited
 `run_stage` or `profile_import` call requires completion, rather than accepting
 a start-only acknowledgment. Stage completion must match Discover or pipeline
-input. Invalid output raises `RpcContractError` separately from transport
+input, using the worker's deduplicated effective stages; an explicit `stages`
+list takes precedence over `stage`. Transmitted stage values remain unchanged.
+Invalid output raises `RpcContractError` separately from transport
 failures, allowing each feature to preserve its HTTP error mapping. Worker
 error envelopes, request IDs, progress notifications, timeouts and close
 behavior remain transport concerns.

@@ -1237,6 +1237,23 @@ describe("SubprocessJsonRpcAdapter per-request timeout", () => {
 });
 
 describe("shared enforcing RPC boundary", () => {
+  it("requires the verification provider before injected transport", async () => {
+    const { callRpc } = await import("../src/json-rpc-adapter.js");
+    const fake = new FakeDispatcher();
+    await expect(callRpc(fake, "provider_verify", {} as never)).rejects.toMatchObject({ phase: "params" });
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("requires the verification provider before worker resolution", async () => {
+    const { SubprocessJsonRpcAdapter } = await import("../src/json-rpc-adapter.js");
+    const resolve = vi.fn(() => { throw new Error("must not resolve a command"); });
+    const adapter = new SubprocessJsonRpcAdapter({ pythonRuntime: { id: "unused", resolve } });
+    try {
+      await expect(adapter.call("provider_verify", {} as never)).rejects.toMatchObject({ phase: "params" });
+      expect(resolve).not.toHaveBeenCalled();
+    } finally { await adapter.close(); }
+  });
+
   it.each([
     { stage: "score", workers: 0 },
     { stage: "score", minScore: 11 },

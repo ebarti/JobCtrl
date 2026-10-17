@@ -14004,18 +14004,44 @@ describe("enforcing route to registered worker handoffs", () => {
     } finally { fixture.retain("discover", observations); await app.close(); await fixture.adapter.close(); }
   });
 
-  it("requires the Discover completion dataclass for an awaited Discover call", async () => {
+  it.each([
+    { name: "single", stage: "discover" as const },
+    { name: "duplicate", stage: "discover" as const, stages: ["discover", "discover"] as const },
+    { name: "override", stage: "score" as const, stages: ["discover", "discover"] as const },
+  ])("requires the Discover completion dataclass for an awaited Discover call ($name)", async ({ name, stage, ...selection }) => {
     const fixture = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
     const observations: unknown[] = [];
     try {
-      const params = { stage: "discover" as const, awaitResult: true, sourceIds: ["jobspy:indeed"], expectedAppDir: tempDir, expectedDbPath: options.dbPath };
+      const params = { stage, ...("stages" in selection ? { stages: [...selection.stages] } : {}), awaitResult: true, sourceIds: ["jobspy:indeed"], expectedAppDir: tempDir, expectedDbPath: options.dbPath };
       const completed = await callRpc(fixture.adapter, "run_stage", params);
       expect(completed.result).toMatchObject({ result: { families_completed: ["synthetic-source"], failure: null } });
       observations.push({ params, completed });
+      expect(fixture.rows().find(row => row.kind === "request")).toMatchObject({ request: { params } });
+      expect(fixture.rows().find(row => row.kind === "start")).toMatchObject({ input: { source_ids: params.sourceIds } });
       fixture.mode("wrong_result_family");
       await expect(callRpc(fixture.adapter, "run_stage", params)).rejects.toMatchObject({ name: "RpcContractError", phase: "result" });
       observations.push({ rejectedPipelineResult: true });
-    } finally { fixture.retain("discover-awaited", observations); await fixture.adapter.close(); }
+    } finally { fixture.retain("discover-awaited-" + name, observations); await fixture.adapter.close(); }
+  });
+
+  it.each([
+    { name: "duplicate", stage: "score" as const, stages: ["score", "score"] as const, effective: ["score"] },
+    { name: "mixed", stage: "discover" as const, stages: ["score", "discover", "score"] as const, effective: ["discover", "score"] },
+    { name: "override", stage: "discover" as const, stages: ["score"] as const, effective: ["score"] },
+  ])("requires pipeline completion for effective pipeline stages ($name)", async ({ name, stage, stages, effective }) => {
+    const fixture = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
+    const observations: unknown[] = [];
+    try {
+      const params = { stage, stages: [...stages], awaitResult: true, expectedAppDir: tempDir, expectedDbPath: options.dbPath };
+      const completed = await callRpc(fixture.adapter, "run_stage", params);
+      expect(completed.result).toMatchObject({ result: { stages_completed: ["score", "tailor", "cover"], failure: null } });
+      expect(fixture.rows().find(row => row.kind === "request")).toMatchObject({ request: { params } });
+      expect(fixture.rows().find(row => row.kind === "start")).toMatchObject({ input: { stages: effective } });
+      observations.push({ params, completed, effective });
+      fixture.mode("wrong_result_family");
+      await expect(callRpc(fixture.adapter, "run_stage", params)).rejects.toMatchObject({ name: "RpcContractError", phase: "result" });
+      observations.push({ rejectedDiscoverResult: true });
+    } finally { fixture.retain("pipeline-awaited-" + name, observations); await fixture.adapter.close(); }
   });
 
   it("serializes PATCH continuations until awaited completion and writes markers afterward", async () => {

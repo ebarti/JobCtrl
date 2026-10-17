@@ -930,7 +930,7 @@ export const ReviewResumeEditParamsSchema = RuntimeBindingSchema.extend({
 export const RpcContracts = {
   [RpcMethods.ProviderStatus]: { params: z.object({ provider: z.enum(["codex", "claude", "google"]).optional() }).strict(), result: ProviderStatusResultSchema },
   [RpcMethods.ProviderModels]: { params: EmptyRpcParamsSchema, result: ProviderModelCatalogResultSchema },
-  [RpcMethods.ProviderVerify]: { params: z.object({ provider: z.literal("codex").optional() }).strict(), result: CodexVerifyResultSchema },
+  [RpcMethods.ProviderVerify]: { params: z.object({ provider: z.literal("codex") }).strict(), result: CodexVerifyResultSchema },
   [RpcMethods.BrowserCapabilitiesList]: { params: EmptyRpcParamsSchema, result: BrowserCapabilitiesResultSchema },
   [RpcMethods.BrowserCapabilityEnable]: { params: z.union(BrowserCapabilityEnableRequestSchema.options.map(schema => schema.extend({ capabilityId: z.enum(BrowserCapabilityIds) }))), result: BrowserCapabilitiesResultSchema },
   [RpcMethods.BrowserCapabilityDisable]: { params: z.object({ capabilityId: z.enum(BrowserCapabilityIds) }).strict(), result: BrowserCapabilitiesResultSchema },
@@ -999,7 +999,9 @@ export function parseRpcResponse<M extends ContractRpcMethod>(method: M, params:
   if (!parsed.success) throw new RpcContractError(method, "result");
   if ((method === "run_stage" || method === "profile_import") && "awaitResult" in params && params.awaitResult === true) {
     const stages = "stages" in params ? params.stages : undefined;
-    const discover = stages?.length ? stages.length === 1 && stages[0] === "discover" : "stage" in params && params.stage === "discover";
+    // workflow_specs._stage_list deduplicates explicit stages and gives them
+    // precedence over stage. Select the result family without rewriting input.
+    const discover = stages?.length ? stages.every(stage => stage === "discover") : "stage" in params && params.stage === "discover";
     const awaited = method === "run_stage" ? ApplyResultSchema.extend({ result: discover ? DiscoverWorkflowResultSchema : JobPipelineWorkflowResultSchema }) : ApplyResultSchema.extend({ result: ProfileImportWorkflowResultSchema });
     if (!awaited.safeParse(parsed.data).success) throw new RpcContractError(method, "result");
   }

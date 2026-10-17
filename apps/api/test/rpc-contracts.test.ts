@@ -58,6 +58,13 @@ const ENDPOINT_DISPATCH_CONTEXT = {
 describe("current RPC caller controls and dispatch results", () => {
   const ack = { runId: "workflow-1", workflowId: "workflow-1", firstExecutionRunId: "execution-1" };
 
+  it("requires the supported provider for verification", () => {
+    expect(RpcContracts.provider_verify.params.parse({ provider: "codex" })).toEqual({ provider: "codex" });
+    for (const params of [{}, { provider: "claude" }, { provider: null }, { provider: "codex", unexpected: true }]) {
+      expect(RpcContracts.provider_verify.params.safeParse(params).success).toBe(false);
+    }
+  });
+
   it("infers caller inputs before defaults and method-specific dispatch outputs", () => {
     const request: RpcParams<typeof RpcMethods.RunStage> = {
       stage: "discover", sourceIds: ["source-1"], awaitResult: true,
@@ -1080,7 +1087,7 @@ describe("preparation RPC contracts", () => {
 });
 
 // Compile-only negative calls are included by checks.api-types. Never execute.
-function typedRpcNegativeCalls(dispatcher: import("../src/json-rpc-adapter.js").JsonRpcDispatcher) {
+function typedRpcNegativeCalls(dispatcher: import("../src/json-rpc-adapter.js").JsonRpcDispatcher, adapter: import("../src/json-rpc-adapter.js").SubprocessJsonRpcAdapter) {
   // @ts-expect-error missing required stage
   void dispatcher.call("run_stage", { workers: 1 });
   // @ts-expect-error method-specific params cannot be exchanged
@@ -1089,6 +1096,10 @@ function typedRpcNegativeCalls(dispatcher: import("../src/json-rpc-adapter.js").
   void dispatcher.call("run_stage", { stage: "score", arbitraryField: true });
   // @ts-expect-error even parameterless methods reject fields
   void dispatcher.call("provider_models", { arbitraryField: true });
+  // @ts-expect-error verification requires an explicit provider
+  void dispatcher.call("provider_verify", {});
+  // @ts-expect-error concrete adapter requires the same verification provider
+  void adapter.call("provider_verify", {});
   // @ts-expect-error unknown methods are not a public fallback
   void dispatcher.call("unregistered", {});
   // @ts-expect-error browser enable requires one of the supported selectors
@@ -1100,6 +1111,8 @@ void typedRpcNegativeCalls;
 
 async function typedRpcResult(dispatcher: import("../src/json-rpc-adapter.js").JsonRpcDispatcher) {
   const { callRpc } = await import("../src/json-rpc-adapter.js");
+  // @ts-expect-error shared calls also require the verification provider
+  void callRpc(dispatcher, "provider_verify", {});
   const response = await callRpc(dispatcher, "render_resume_pdf", { htmlPath: "/synthetic/in.html", pdfPath: "/synthetic/out.pdf" });
   expectTypeOf(response.result).toEqualTypeOf<RpcResult<"render_resume_pdf"> | undefined>();
   // @ts-expect-error consumed results retain the selected method's type
