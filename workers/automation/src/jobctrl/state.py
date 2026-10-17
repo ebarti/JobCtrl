@@ -1372,42 +1372,6 @@ def get_job_stage_states(
     return states
 
 
-def _reset_enrichment_aggregate(
-    conn,
-    *,
-    tenant_id: TenantId,
-    job_id: JobId,
-) -> None:
-    """Reset the JobEnrichment aggregate for a job back to ``pending``.
-
-    Phase 7 (S-26 round-1 review B1). The mirror of
-    :func:`_reset_materials_artifacts` for the enrichment context. After
-    a stage reset for "enrich":
-
-      * the legacy ``jobs.detail_scraped_at`` / ``jobs.detail_error``
-        columns are nulled by ``reset_job_stage``'s standard UPDATE so
-        un-migrated rows reading the legacy fallback also reset;
-      * AND the ``job_enrichments`` row's ``current_status`` is set
-        back to ``pending`` and the terminal-state fields cleared,
-        otherwise the new ``_ENRICHMENT_PENDING`` predicate would
-        permanently exclude the row and retry would silently no-op.
-
-    The repository is loaded inline so we don't hit a circular import
-    (the enrichment package imports ``state``).
-    """
-    from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
-
-    repo = SqliteEnrichmentRepository(conn)
-    aggregate = repo.load(tenant_id, job_id)
-    if aggregate is None:
-        # Nothing to reset — the next pipeline run will create the row
-        # in the empty state when start_attempt fires.
-        return
-    if aggregate.is_pending and aggregate.full_description is None:
-        return
-    repo.save(aggregate.reset(reset_at=utc_now()))
-
-
 def _resettable_material_generation(
     conn,
     *,
@@ -1556,6 +1520,14 @@ def reset_job_stage(
     if stage not in (*STAGE_ORDER, "apply"):
         raise ValueError(f"unknown stage: {stage}")
 
+    if stage == "enrich":
+        from jobctrl.pipeline.retry import reset_retry_stages
+
+        return reset_retry_stages(
+            conn, [(job_url_or_application_url, stage)],
+            tenant_id=tenant_id, reset_attempts=reset_attempts,
+        )[0]["jobUrl"]
+
     from jobctrl.infrastructure.job_locators import resolve_job_locator
 
     identity = resolve_job_locator(conn, str(tenant_id), job_url_or_application_url)
@@ -1571,16 +1543,6 @@ def reset_job_stage(
             tenant_id=tenant_id,
             job_id=stable_job_id,
             stage=stage,
-        )
-    # Enrichment-side reset (Phase 7, round-1 B1). Mirror of the
-    # materials reset for the enrichment aggregate. Without this the
-    # ``_ENRICHMENT_PENDING`` queue predicate excludes the row and the
-    # retry-enrich is a silent no-op.
-    if stage == "enrich":
-        _reset_enrichment_aggregate(
-            conn,
-            tenant_id=tenant_id,
-            job_id=stable_job_id,
         )
     set_stage_state(
         conn,

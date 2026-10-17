@@ -125,6 +125,20 @@ use explicit model test doubles; additionally verify one configured provider cal
 with synthetic facts in an owned QA workspace before claiming live model proof.
 Require observed review/QA results and final checks before publication.
 
+## Enrichment Retry Ownership
+
+Run `enrichment-retry-worker` and `enrichment-retry-api` from
+`scripts/checks.toml`, plus `discovery-transactions` for transaction changes.
+The shared synthetic SQL input must reach actual HTTP/RPC and CLI entry points.
+Verify accepted content, scores, materials and approval bindings survive reset
+and a failed refresh; terminal stage fields and old worker ownership must clear.
+Check exhausted versus retained attempt budgets, mixed-cohort rollback, caller
+transaction ownership, post-commit events, competing writers and worker pickup.
+Reject malformed/foreign RPC targets and acknowledgements; canonicalize duplicate
+job aliases before bulk reset. Measure cold and warm HTTP acknowledgement latency
+when changing the transport boundary. Existing retry UI and event-invalidation
+tests cover immediate optimistic feedback and rollback on failure.
+
 ## Discovery Transaction Recovery
 
 Run the `discovery-transactions` recipe for preparation or enrichment transaction

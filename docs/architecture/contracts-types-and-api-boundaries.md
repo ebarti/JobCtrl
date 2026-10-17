@@ -12,6 +12,40 @@ Gmail feedback scan summaries and `ApplicationEmailFeedbackIngested` payloads
 use canonical `jobId` across Python, REST contracts, domain events, and web
 invalidation. Posting and application URLs are search hints, never identity.
 
+## Enrichment Retry Ownership
+
+`pipeline/retry.py::reset_retry_stages` owns explicit enrichment resets. The
+CLI reaches it through `state.reset_job_stage`; HTTP uses the synchronous
+`reset_enrichment` RPC. The TypeScript adapter validates both the request and
+the returned target cohort. Other single-stage commands retain their owners.
+When bulk retry contains Enrich, companion stage-row resets join that same
+Python transaction to preserve the existing all-or-nothing cohort; their
+aggregate-specific commands are not migrated.
+
+The service acquires SQLite's writer before resolving identities and loading
+the aggregate. It retains accepted descriptions, application URLs, extraction
+history, saved scores, approved materials and approval bindings. It resets the
+aggregate lifecycle to `pending`, clears stage timing/errors/blockers and old
+execution metadata, advances the stage version fence, and writes `StageReset`
+in the same transaction. Existing attempt counts and limits survive unless
+reset was explicitly requested or the stage was exhausted. A missing stage
+uses the Python stage defaults. Bulk targets are rechecked under the writer;
+a target that is no longer failed/exhausted aborts the complete reset cohort.
+
+Owned transactions commit before event publication and HTTP acknowledgement.
+An inherited transaction uses a savepoint and remains under its caller's
+control; its durable events become visible after that caller commits. Failed
+persistence rolls back the entire reset. The existing durable event stream
+refreshes job and pipeline views, while canonical `pending` enrichment blocks
+downstream preparation until enrichment succeeds again. A reset does not
+delete downstream accepted artifacts or dispatch Apply.
+
+Later invariant-heavy commands should move one bounded decision and its
+transaction into an application service before adding transport adapters.
+Keep the existing RPC registry, error envelopes and HTTP response contracts;
+do not duplicate lifecycle policy in a caller or split atomic cohorts across
+writers.
+
 ## Dependency Direction
 
 The important direction is domain vocabulary → wire contract → transport. The
