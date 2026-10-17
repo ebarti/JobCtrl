@@ -103,6 +103,7 @@ import type {
 import {
   JOB_STATES,
   JobStatesFilterSchema,
+  JobListQuerySchema,
   SavedTableViewGridFiltersSchema,
 } from "@jobctrl/contracts";
 import type { DomainEventUnion } from "@jobctrl/domain-types";
@@ -210,13 +211,13 @@ export type {
   WorkflowRunsListQuery,
 };
 
-export { JOB_STATES, JobStatesFilterSchema, SavedTableViewGridFiltersSchema };
+export { JOB_STATES, JobStatesFilterSchema, JobListQuerySchema, SavedTableViewGridFiltersSchema };
 
 export type JobId = string;
 
-export type JobsListInput = Partial<Omit<JobListQuery, "stage">> & {
+export type JobsListInput = Partial<Omit<JobListQuery, "stage" | "stages">> & {
   readonly stage?: Stage;
-  readonly stages?: readonly Stage[];
+  readonly stages?: readonly Stage[] | undefined;
 };
 export type ArtifactsListInput = Partial<ArtifactListQuery>;
 export type WorkflowRunsListInput = Partial<WorkflowRunsListQuery>;

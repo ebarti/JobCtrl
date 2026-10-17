@@ -467,6 +467,44 @@ describe("combined-stage list pagination", () => {
     }
   }, 30_000);
 
+  it("preserves stage-array boundaries through the current browser adapter and real list reader", async () => {
+    const adapterUrl = new URL("../../web/src/contexts/operations/jobsListQuery.ts", import.meta.url).href;
+    const { fetchJobsList } = await import(adapterUrl) as {
+      fetchJobsList(api: Pick<JobCtrlApiClient, "jobs">, input: Partial<JobListQuery>): Promise<PaginatedResponse<JobSummary>>;
+    };
+    const { db, rows } = seed(12);
+    const api = { jobs: async (input: Partial<JobListQuery>) => listJobs(db, JobListQuerySchema.parse(input)) };
+    const selections: Array<{ input: Record<string, unknown>; stages: Stage[] }> = [
+      { input: { stage: "apply" }, stages: ["apply"] },
+      { input: { stage: "apply", stages: undefined }, stages: ["apply"] },
+      { input: { stage: "apply", stages: [] }, stages: [] },
+      { input: { stage: "discover", stages: ["apply"] }, stages: ["apply"] },
+      { input: { stage: "discover", stages: Array(6).fill("apply") }, stages: ["apply"] },
+      { input: { stage: "discover", stages: Array(7).fill("apply") }, stages: ["discover"] },
+      { input: { stages: Array(7).fill("apply") }, stages: [] },
+      { input: { stage: "score", stages: ["discover", "apply", "discover"] }, stages: ["discover", "apply"] },
+      { input: { stage: "discover", stages: ["invalid"] }, stages: ["discover"] },
+      { input: { stages: ["apply,discover", "apply"] }, stages: ["apply", "discover"] },
+      { input: { stage: "invalid", stages: ["apply", "discover"] }, stages: ["apply", "discover"] },
+      { input: { stages: ["score", "cover"] }, stages: ["score", "cover"] },
+    ];
+    for (const { input, stages } of selections) {
+      for (const sort of JOB_SORT_FIELDS) for (const dir of ["asc", "desc"] as const) {
+        const expected = ordered(rows.filter((row) => !stages.length || stages.includes(row.stage)), sort, dir);
+        const pages = Math.max(1, Math.ceil(expected.length / 3));
+        for (const page of [1, 2, 999]) {
+          const raw = { ...input, deleted: "all", sort, dir, page, pageSize: 3 };
+          const combined = listJobs(db, JobListQuerySchema.parse(raw));
+          const browser = await fetchJobsList(api, raw as Partial<JobListQuery>);
+          const safePage = Math.min(page, pages);
+          expect(browser.pagination, JSON.stringify(raw)).toEqual({ page: safePage, pageSize: 3, total: expected.length, pages });
+          expect(browser.items.map((job) => job.jobKey)).toEqual(expected.slice((safePage - 1) * 3, safePage * 3).map((row) => row.id));
+          expect(browser).toEqual(combined);
+        }
+      }
+    }
+  }, 30_000);
+
   it.each([undefined, "apply"] as const)("treats explicit undefined stages as omission with scalar %s", (stage) => {
     const { db, rows } = seed();
     const expectedIds = rows.filter((row) => row.visibility === "active" && (!stage || row.stage === stage))
