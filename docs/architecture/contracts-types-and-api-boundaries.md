@@ -224,10 +224,8 @@ not the production pipeline result shape. Contract tests separately cover
 the production shapes and malformed controls. The original Python observations
 and envelope compatibility assertions remain unchanged.
 
-The API still needs to validate its constructed params and method results at
-dispatch. A separate wire-policy decision should resolve version, falsy
-params, extra keys, and ID
-semantics before aligning `JsonRpcRequest.from_dict` and the TypeScript envelope
+A separate wire-policy decision should resolve version, falsy params, extra
+keys, and ID semantics before aligning `JsonRpcRequest.from_dict` and the TypeScript envelope
 schema with compatibility tests. In particular, decide both fractional and
 explicit-null ID behavior before tightening either side. The default API
 adapter currently generates integer IDs; the explicit-null case is outside
