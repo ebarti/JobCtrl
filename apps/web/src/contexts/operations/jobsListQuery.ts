@@ -8,7 +8,7 @@ import type {
 } from "@jobctrl/contracts";
 
 import type { ApiClientPort } from "../../shared/ports/ApiClientPort.js";
-import type { JobsListInput } from "./types.js";
+import { JobListQuerySchema, type JobsListInput } from "./types.js";
 
 const MAX_JOB_LIST_PAGE_SIZE = 200;
 const DEFAULT_JOB_LIST_PAGE_SIZE = 50;
@@ -36,18 +36,21 @@ export async function fetchJobsList(
   api: Pick<ApiClientPort, "jobs">,
   input: JobsListInput,
 ): Promise<PaginatedResponse<JobSummary>> {
-  const stages = uniqueStages(input.stages ?? []);
-  if (!stages.length) {
+  // Validate the raw array before deduplication, just like the API. An invalid
+  // or omitted array falls back to scalar stage; an empty array clears it.
+  const { stages, stage } = JobListQuerySchema.parse({ stage: input.stage, stages: input.stages });
+  if (stages === undefined) {
     return api.jobs(concreteJobsListInput(input));
   }
-  if (stages.length === 1) {
-    return api.jobs({ ...concreteJobsListInput(input), stage: stages[0] });
+  if (!stages.length) {
+    return api.jobs({ ...concreteJobsListInput(input), stages: [] });
   }
-  return fetchMultiStageJobsList(api, input, stages);
-}
-
-function uniqueStages(stages: readonly Stage[]): Stage[] {
-  return Array.from(new Set(stages));
+  const response = stages.length === 1
+    ? await api.jobs({ ...concreteJobsListInput(input), stage: stages[0] })
+    : await fetchMultiStageJobsList(api, input, stages);
+  // Stage-local requests override stage for transport. Metadata still records
+  // the caller's legacy scalar alongside the effective array, as the API does.
+  return { ...response, filter: { ...response.filter, stage: stage ?? "", stages } };
 }
 
 function concreteJobsListInput(input: JobsListInput): ConcreteJobsListInput {

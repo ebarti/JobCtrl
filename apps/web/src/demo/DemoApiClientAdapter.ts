@@ -14,6 +14,7 @@ import {
   WorkflowRunsListQuerySchema,
   compareJobs,
   compareValues,
+  effectiveJobStages,
   paginate,
   timestampAtOrAfter,
   timestampBefore,
@@ -306,6 +307,7 @@ export class DemoApiClientAdapter implements ApiClientPort {
       {
         q: normalized.q,
         stage: normalized.stage ?? "",
+        stages: effectiveJobStages(normalized),
         state: normalized.state ?? "",
         source: normalized.source,
         company: normalized.company,

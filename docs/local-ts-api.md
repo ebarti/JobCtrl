@@ -89,6 +89,25 @@ field.
 
 ## Jobs Read Model And Lifecycle
 
+The jobs list supports globally paginated `stages` membership alongside legacy
+scalar `stage`. The shared API client serializes arrays as comma-separated query
+values, including an empty array as `stages=`. Membership, precedence, metadata,
+and bulk-selection semantics are owned by [Jobs & Materials](api/jobs-and-materials.md)
+and the [complete contract](api/complete-contract.md).
+The Operations browser adapter validates the raw stage array with the shared
+schema before merging stage-local pages. It preserves explicit empty arrays,
+scalar fallback for invalid or oversized arrays, and the requested scalar in
+response metadata. Its input contract accepts readonly stage arrays.
+Text sorts use lowercase locale comparison consistent with the browser merger.
+Discovery sorts preserve the browser's locale comparison of raw timestamp
+strings, including mixed fractional/offset notation, rather than instant order.
+Source/company filters match literal Unicode-lowercased substrings on rendered
+summaries; those filters, discovery sorts and locale text sorts use the materialized read path.
+Timestamp cutoffs also use that path, comparing instants inclusively at
+JavaScript millisecond precision before totals and pagination. The same shared
+filter handles all-matching bulk selection, including the OR of two cutoffs.
+Both query paths keep their summary joins within a SQLite read transaction.
+
 Jobs list/detail include Enrichment's persisted `availability` observation:
 latest attempt/verdict, last successful verification, next due, acquisition
 evidence and computed overdue/in-progress state. These GETs never fetch an

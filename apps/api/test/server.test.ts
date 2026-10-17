@@ -2416,6 +2416,224 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("combines comma and repeated stages before global pagination while preserving scalar requests", async () => {
+    const app = buildApp(options);
+    try {
+      const request = async (query: string) => {
+        const response = await app.inject({ method: "GET", url: `/v1/jobs?${query}&sort=fit_score&dir=desc&pageSize=1` });
+        expect(response.statusCode, response.body).toBe(200);
+        return response.json();
+      };
+      const ids: string[] = [];
+      for (const page of [1, 2, 3]) {
+        const comma = await request(`stages=discover,apply&stage=score&page=${page}`);
+        const repeated = await request(`stages=discover&stages=apply&stages=discover&page=${page}`);
+        expect(repeated).toEqual({ ...comma, filter: { ...comma.filter, stage: "" } });
+        expect(comma.pagination).toEqual({ page, pageSize: 1, total: 3, pages: 3 });
+        expect(comma.filter.stages).toEqual(["discover", "apply"]);
+        ids.push(comma.items[0].jobKey);
+      }
+      expect(new Set(ids).size).toBe(3);
+      expect((await request("stages=discover,apply&page=999")).pagination).toEqual({ page: 3, pageSize: 1, total: 3, pages: 3 });
+      expect((await request("stages=apply&stage=discover")).pagination.total).toBe(1);
+      expect((await request("stage=apply")).pagination.total).toBe(1);
+      expect((await request("stage=apply&stages=")).pagination.total).toBe(3);
+      expect((await request("stage=apply&stages=invalid")).pagination.total).toBe(1);
+      const empty = await request("stages=score,enrich&page=999");
+      expect(empty.pagination).toEqual({ page: 1, pageSize: 1, total: 0, pages: 1 });
+      expect(empty.items).toEqual([]);
+      const searched = await request("stages=discover,apply&q=Engineer&page=999");
+      expect(searched.pagination).toMatchObject({ total: 3, page: 3 });
+    } finally { await app.close(); }
+  });
+
+  it.each(["discoveredSince", "scoredSince"] as const)(
+    "preserves %s instant boundaries through HTTP pages and all-matching hide/unhide",
+    async (field) => {
+      const timestamps = ["2027-01-01T00:00:00Z", "2027-01-01T00:00:00.000Z",
+        "2027-01-01T00:00:00.600000+00:00", "2027-01-01T00:00:00.600Z",
+        "2027-01-01T01:00:00.600+01:00", "2026-12-31T23:00:00.600-01:00"];
+      const ids = timestamps.map((_, index) => `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`);
+      const db = new Database(options.dbPath);
+      try {
+        for (const [index, id] of ids.entries()) {
+          db.prepare(`INSERT INTO jobs (tenant_id, job_id, url, title, discovered_at)
+            VALUES ('local', ?, ?, 'Needle', ?)`)
+            .run(id, `https://synthetic.invalid/${id}`, timestamps[index]);
+          db.prepare(`INSERT INTO job_scores (tenant_id, job_id, version, fit_score, breakdown_json, keywords_json, scored_at)
+            VALUES ('local', ?, 1, 7, '{}', '[]', ?)`).run(id, timestamps[index]);
+          const stages = ["discover", "enrich", "score", "tailor", "cover", "apply"];
+          for (const stage of stages) {
+            db.prepare(`INSERT INTO job_stage_states (tenant_id, job_id, stage, state, updated_at, version)
+              VALUES ('local', ?, ?, ?, '2027-01-01', 1)`)
+              .run(id, stage, index % 2 && stage !== "apply" ? "succeeded" : "pending");
+          }
+        }
+      } finally { db.close(); }
+      const app = buildApp(options);
+      try {
+        for (const cutoff of [".500Z", ".600Z", ".601Z"]) {
+          const expected = cutoff === ".601Z" ? [] : ids.slice(2);
+          for (const q of ["", "Needle"]) {
+            const filter = { stages: ["discover", "apply"], [field]: `2027-01-01T00:00:00${cutoff}`, q };
+            for (const sort of ["discovered_at", "title", "fit_score"]) {
+              const collected: string[] = [];
+              for (const page of [...expected.map((_, index) => index + 1), 999]) {
+                const params = new URLSearchParams({ ...filter, stages: filter.stages.join(","),
+                  sort, dir: "asc", pageSize: "1", page: String(page) });
+                const response = await app.inject({ method: "GET", url: `/v1/jobs?${params}` });
+                expect(response.statusCode, response.body).toBe(200);
+                const pages = Math.max(1, expected.length), safePage = Math.min(page, pages);
+                expect(response.json().pagination).toEqual({ page: safePage, pageSize: 1, total: expected.length, pages });
+                const keys = response.json().items.map((job: { jobKey: string }) => job.jobKey);
+                if (page !== 999) collected.push(...keys);
+                else expect(keys).toEqual(collected.slice(-1));
+              }
+              expect(collected.sort()).toEqual(expected);
+            }
+            const hide = await app.inject({ method: "POST", url: "/v1/jobs/bulk-hide", payload: { allMatching: true, filter } });
+            expect(hide.statusCode, hide.body).toBe(200);
+            expect(hide.json().jobKeys.sort()).toEqual(expected);
+            const unhide = await app.inject({ method: "POST", url: "/v1/jobs/bulk-unhide",
+              payload: { allMatching: true, filter: { ...filter, deleted: "hidden" } } });
+            expect(unhide.statusCode, unhide.body).toBe(200);
+            expect(unhide.json().jobKeys.sort()).toEqual(expected);
+          }
+        }
+      } finally { await app.close(); }
+    },
+  );
+
+  it("keeps HTTP page order and literal bulk membership stable when an all-matching search is added", async () => {
+    const labels = ["Needle A", "Needle a", "Needle Z", "Needle é", "Needle E", "Needle É"];
+    const sources = ["Board-a", "Board%a", "Board_a", "Board\\a", "Équipe", "éQUIPE"];
+    const states = ["exhausted", "failed", "failed", "pending", "exhausted", "pending"];
+    const ids = labels.map((_, index) => `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`);
+    const db = new Database(options.dbPath);
+    try {
+      for (const [index, id] of ids.entries()) {
+        db.prepare(`INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at)
+          VALUES ('local', ?, ?, ?, ?, ?, '2026-10-15')`)
+          .run(id, `https://synthetic.invalid/${id}`, labels[index], sources[index], sources[index]);
+        const stages = ["discover", "enrich", "score", "tailor", "cover", "apply"];
+        const current = index % 2 ? "apply" : "discover";
+        for (const stage of stages) {
+          const value = stage === current ? states[index] : stages.indexOf(stage) < stages.indexOf(current) ? "succeeded" : "pending";
+          db.prepare(`INSERT INTO job_stage_states (tenant_id, job_id, stage, state, updated_at, version)
+            VALUES ('local', ?, ?, ?, '2026-10-15', 1)`).run(id, stage, value);
+        }
+      }
+    } finally { db.close(); }
+    const app = buildApp(options);
+    const base = { stages: ["discover", "apply"], discoveredSince: "2026-10-01T00:00:00Z" };
+    try {
+      for (const sort of ["title", "current_state"] as const) {
+        for (const dir of ["asc", "desc"] as const) {
+          const order = sort === "title" ? dir === "asc" ? [0, 1, 4, 3, 5, 2] : [2, 3, 5, 4, 0, 1]
+            : dir === "asc" ? [1, 0, 2, 4, 3, 5] : [3, 5, 0, 2, 4, 1];
+          for (const state of sort === "current_state" ? ["", "failed"] : [""]) {
+            const expectedOrder = state ? order.filter((index) => states[index] !== "pending") : order;
+            for (const q of ["", "Needle"]) {
+              for (const page of [...expectedOrder.map((_, index) => index + 1), 999]) {
+                const params = new URLSearchParams({ stages: base.stages.join(","), discoveredSince: base.discoveredSince,
+                  sort, dir, state, q, page: String(page), pageSize: "1" });
+                const response = await app.inject({ method: "GET", url: `/v1/jobs?${params}` });
+                expect(response.statusCode, response.body).toBe(200);
+                const safePage = Math.min(page, expectedOrder.length);
+                expect(response.json().pagination).toEqual({ page: safePage, pageSize: 1, total: expectedOrder.length, pages: expectedOrder.length });
+                expect(response.json().items.map((job: { jobKey: string }) => job.jobKey)).toEqual([ids[expectedOrder[safePage - 1]!]]);
+              }
+            }
+          }
+        }
+      }
+      const cases: Array<[string, number[]]> = [["Board%", [1]], ["Board_", [2]], ["Board\\", [3]], ["équipe", [4, 5]], ["Absent%", []]];
+      for (const field of ["source", "company"]) {
+        for (const [value, selected] of cases) {
+          for (const q of ["", "Needle"]) {
+            const filter = { ...base, [field]: value, q };
+            const params = new URLSearchParams({ stages: base.stages.join(","), discoveredSince: base.discoveredSince,
+              [field]: value, q, sort: "title", dir: "asc", pageSize: "1", page: "999" });
+            const list = await app.inject({ method: "GET", url: `/v1/jobs?${params}` });
+            expect(list.statusCode, list.body).toBe(200);
+            expect(list.json().pagination).toEqual({ page: Math.max(1, selected.length), pageSize: 1, total: selected.length, pages: Math.max(1, selected.length) });
+            expect(list.json().items.map((job: { jobKey: string }) => job.jobKey)).toEqual(selected.slice(-1).map((index) => ids[index]));
+            const hide = await app.inject({ method: "POST", url: "/v1/jobs/bulk-hide", payload: { allMatching: true, filter } });
+            expect(hide.statusCode, hide.body).toBe(200);
+            expect(hide.json().jobKeys.sort()).toEqual(selected.map((index) => ids[index]));
+            const unhide = await app.inject({ method: "POST", url: "/v1/jobs/bulk-unhide",
+              payload: { allMatching: true, filter: { ...filter, deleted: "hidden" } } });
+            expect(unhide.statusCode, unhide.body).toBe(200);
+            expect(unhide.json().jobKeys.sort()).toEqual(selected.map((index) => ids[index]));
+          }
+        }
+      }
+      const restored = await app.inject({ method: "GET", url: `/v1/jobs?discoveredSince=${base.discoveredSince}&q=Needle` });
+      expect(restored.statusCode, restored.body).toBe(200);
+      expect(restored.json().items.map((job: { jobKey: string }) => job.jobKey).sort()).toEqual(ids);
+    } finally { await app.close(); }
+  });
+
+  it.each(["exhausted", "failed"] as const)("preserves %s selection through HTTP search and all-matching hide/unhide", async (state) => {
+    const db = new Database(options.dbPath);
+    const inputs = (["exhausted", "failed", "pending"] as const).flatMap((storedState) =>
+      (["discover", "apply"] as const).map((stage) => ({
+        jobKey: jobIdFor(`https://synthetic.invalid/${stage}-${storedState}`), stage, storedState,
+      })),
+    );
+    try {
+      for (const input of inputs) {
+        db.prepare(`INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at)
+          VALUES ('local', ?, ?, 'Needle', 'Synthetic', 'board-a', '2026-01-01')`)
+          .run(input.jobKey, `https://synthetic.invalid/${input.jobKey}`);
+        const stages = ["discover", "enrich", "score", "tailor", "cover", "apply"];
+        for (const stage of stages) {
+          const value = stage === input.stage ? input.storedState
+            : stages.indexOf(stage) < stages.indexOf(input.stage) ? "succeeded" : "pending";
+          db.prepare(`INSERT INTO job_stage_states (tenant_id, job_id, stage, state, updated_at, version)
+            VALUES ('local', ?, ?, ?, '2026-01-01', 1)`).run(input.jobKey, stage, value);
+        }
+      }
+    } finally { db.close(); }
+    const selectedIds = inputs.filter((input) => input.storedState === "exhausted" || state === "failed" && input.storedState === "failed")
+      .map((input) => input.jobKey).sort();
+    const app = buildApp(options);
+    try {
+      for (const stages of ["stages=discover,apply", "stages=discover&stages=apply&stages=discover"]) {
+        const response = await app.inject({ method: "GET",
+          url: `/v1/jobs?${stages}&state=${state}&q=Needle&sort=title&dir=asc&pageSize=1&page=999` });
+        expect(response.statusCode, response.body).toBe(200);
+        expect(response.json().pagination).toEqual({ page: selectedIds.length, pageSize: 1, total: selectedIds.length, pages: selectedIds.length });
+        expect(response.json().items[0].jobKey).toBe(selectedIds.at(-1));
+        expect(response.json().items[0].currentState).toBe("failed");
+      }
+      const scalar = await app.inject({ method: "GET", url: `/v1/jobs?stage=discover&state=${state}&q=Needle` });
+      expect(scalar.statusCode, scalar.body).toBe(200);
+      expect(scalar.json().pagination.total).toBe(selectedIds.length / 2);
+      const filter = { stages: ["discover", "apply"], state, q: "Needle" };
+      const hide = await app.inject({ method: "POST", url: "/v1/jobs/bulk-hide",
+        payload: { allMatching: true, filter } });
+      expect(hide.statusCode, hide.body).toBe(200);
+      expect(hide.json().count).toBe(selectedIds.length);
+      expect(hide.json().jobKeys.sort()).toEqual(selectedIds);
+      const hidden = await app.inject({ method: "GET", url: "/v1/jobs?deleted=hidden&q=Needle" });
+      expect(hidden.statusCode, hidden.body).toBe(200);
+      expect(hidden.json().items.map((job: { jobKey: string }) => job.jobKey).sort()).toEqual(selectedIds);
+      const remaining = await app.inject({ method: "GET", url: "/v1/jobs?q=Needle" });
+      expect(remaining.statusCode, remaining.body).toBe(200);
+      expect(remaining.json().items.map((job: { jobKey: string }) => job.jobKey).sort())
+        .toEqual(inputs.filter((input) => !selectedIds.includes(input.jobKey)).map((input) => input.jobKey).sort());
+      const unhide = await app.inject({ method: "POST", url: "/v1/jobs/bulk-unhide",
+        payload: { allMatching: true, filter: { ...filter, deleted: "hidden" } } });
+      expect(unhide.statusCode, unhide.body).toBe(200);
+      expect(unhide.json().count).toBe(selectedIds.length);
+      const restored = await app.inject({ method: "GET",
+        url: `/v1/jobs?stages=discover,apply&state=${state}&q=Needle` });
+      expect(restored.statusCode, restored.body).toBe(200);
+      expect(restored.json().items.map((job: { jobKey: string }) => job.jobKey).sort()).toEqual(selectedIds);
+    } finally { await app.close(); }
+  });
+
   it("filters, sorts, and paginates jobs globally", async () => {
     const app = buildApp(options);
     const response = await app.inject({
