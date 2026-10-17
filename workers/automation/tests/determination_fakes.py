@@ -152,9 +152,13 @@ def draft_anchor_fields(payload):
 
 
 def tailor_dependencies(llm, *, verdict="pass"):
+    from jobctrl.domain.materials.use_cases import TailoringLlmPolicy
+    from jobctrl.infrastructure.materials.artifact_writer import LocalArtifactTextWriter
+
     verifier, quality = review_ports(quality_source=llm, verdict=verdict)
     return dict(
-        claim_verifier=verifier, quality_judge=quality, job_interpreter=JobInterpreter(), preflight=lambda: None
+        claim_verifier=verifier, quality_judge=quality, job_interpreter=JobInterpreter(), preflight=lambda: None,
+        llm_policy=TailoringLlmPolicy(), artifact_writer=LocalArtifactTextWriter(),
     )
 
 

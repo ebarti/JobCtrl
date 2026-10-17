@@ -1,6 +1,7 @@
 """Driven ports for the Materials Generation context.
 
-See ddd-target.md §5.5. Two ports here:
+The local tailoring application uses these capabilities alongside the analysis,
+policy, provenance and transaction ports below:
 
   ``MaterialsRepository`` — persistence for the :class:`MaterialsSet`
                              aggregate root (one aggregate per ``(tenant,
@@ -8,13 +9,13 @@ See ddd-target.md §5.5. Two ports here:
   ``PdfRendererPort``      — render text artifacts to PDF; the resume HTML
                              adapter and cover-letter adapter wrap Playwright
                              headless Chromium.
-
-Both protocols are tenant-scoped: local adapters accept ``tenant_id`` and
-ignore it (single-tenant); hosted adapters use it for row isolation.
+  ``ArtifactTextWriter``   — write exact candidate and inspection text to the
+                             local generation paths chosen by the use case.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Protocol
 
 from jobctrl.domain.identifiers import JobId
@@ -36,6 +37,18 @@ from jobctrl.domain.operations.learning import (
 )
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.tenant import TenantId
+
+
+class ArtifactTextWriter(Protocol):
+    """Write exact UTF-8 text to a caller-selected local generation path.
+
+    Creates missing parent directories and returns the on-disk byte count when
+    available. Write failures propagate; this capability neither registers nor
+    accepts artifacts. The application use case owns those transitions through
+    ``MaterialsRepository`` and ``UnitOfWork``.
+    """
+
+    def write_text(self, path: Path, text: str) -> int | None: ...
 
 
 # ---------------------------------------------------------------------------

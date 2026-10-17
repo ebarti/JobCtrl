@@ -622,7 +622,12 @@ def _use_case(
     from tests.determination_fakes import JobInterpreter
 
     verifier, quality = review_ports(quality_source=llm, verdict=verdict)
+    from jobctrl.domain.materials.use_cases import TailoringLlmPolicy
+    from jobctrl.infrastructure.materials.artifact_writer import LocalArtifactTextWriter
+
     return TailorResumeUseCase(
+        llm_policy=TailoringLlmPolicy(),
+        artifact_writer=LocalArtifactTextWriter(),
         claim_verifier=verifier,
         quality_judge=quality,
         job_interpreter=JobInterpreter(),
@@ -1427,7 +1432,12 @@ def test_retailor_pdf_render_failure_preserves_previous_approved_generation(
         from tests.determination_fakes import JobInterpreter
 
         verifier, quality = review_ports(quality_source=llm)
+        from jobctrl.domain.materials.use_cases import TailoringLlmPolicy
+        from jobctrl.infrastructure.materials.artifact_writer import LocalArtifactTextWriter
+
         return TailorResumeUseCase(
+            llm_policy=TailoringLlmPolicy(),
+            artifact_writer=LocalArtifactTextWriter(),
             claim_verifier=verifier,
             quality_judge=quality,
             job_interpreter=JobInterpreter(),

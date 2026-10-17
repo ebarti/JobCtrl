@@ -452,7 +452,10 @@ def _use_case(materials_repo, provenance_repo, llm, publisher, voice, *, verdict
     from tests.determination_fakes import review_ports, JobInterpreter
 
     verifier, quality = review_ports(quality_source=llm, verdict=verdict)
+    from jobctrl.infrastructure.materials.artifact_writer import LocalArtifactTextWriter
+
     return TailorResumeUseCase(
+        artifact_writer=LocalArtifactTextWriter(),
         claim_verifier=verifier,
         quality_judge=quality,
         job_interpreter=JobInterpreter(),
