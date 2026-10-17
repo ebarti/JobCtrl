@@ -421,6 +421,43 @@ Every generated artifact has a claim-verification determination and recorded lin
 
 See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
 
+## Editable DOCX Export
+
+Export an accepted resume or cover letter from its saved artifact ID and
+generation:
+
+```sh
+jobctrl material-export JOB_ID --source-artifact-id SOURCE_ID --generation 1
+```
+
+This creates a new editable Word document in the local workspace and prints a
+JSON receipt containing its path, registered artifact ID and formatting limits.
+Use the canonical Job ID and accepted source artifact ID shown in Job Detail or
+Artifact Detail. Export requires an approved text artifact; drafts, rejected or
+superseded materials and PDF/HTML inputs are refused.
+
+The document preserves the accepted text, dates, contacts, Unicode, line order,
+blank lines and bullet markers. Standard JobCtrl resume section headings become
+Word headings. Other resume layouts remain literal paragraphs, with an explicit
+warning. Cover letters retain their paragraphs and line breaks. The export uses
+a simple single-column layout: it does not reproduce PDF pagination, HTML/CSS
+styling, images, columns, automatic hyperlinks or custom fonts. Bullet markers
+remain editable text with hanging indentation, not automatic Word numbering.
+
+The default page size is A4; use `--paper Letter` for US Letter. A recorded source
+locale is preserved. When the source has no locale, the document uses `und`
+(undetermined); `--locale fr-FR`, for example, labels that existing language.
+It never translates or reformats dates. A conflicting recorded locale or an
+unsupported format/setting fails explicitly. Reviewed translations continue to
+use the separate [locale-variant export](locale-variants.md).
+
+The receipt and document metadata bind the source ID, generation, source text
+hash, source metadata hash and export settings. The receipt also records the
+generated file hash. Export never rebuilds content from the current profile,
+replaces accepted files, changes a review or approves an application. A failed
+export retains prior exports and accepted material. Editing the DOCX in Word
+does not update JobCtrl or make those edits accepted for Apply.
+
 ## Reviewed Translations
 
 Job Detail's **Locale variants** section translates selected accepted resume or

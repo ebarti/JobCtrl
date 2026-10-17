@@ -461,6 +461,24 @@ reconciliation, independent review/QA, mandatory checks and publication at an
 unmerged verified head. After it records the summary, remove only the owned
 trial artifacts and processes; retain no generated candidate material in Git.
 
+## Accepted DOCX Export
+
+Run locked Ruff on the editable export domain model, both infrastructure export
+modules, CLI and `test_accepted_docx_export.py`, then run the locked pytest module.
+Use only owned synthetic native-schema workspaces. The suite exercises the real
+CLI subprocess plus source ownership/generation/status fences, source drift,
+exclusive publication, corrupt output and persistence failure. Verify preserved
+accepted bytes, registered prior exports, review decisions and application state.
+
+The standard-library writer must round-trip through the independent `python-docx`
+development dependency: compare every paragraph, including blank lines, tabs,
+Unicode, contacts, dates and bullet markers, then edit/save/reopen it. Check
+heading styles, A4/Letter, locale, source identity and settings hashes. Inspect
+rendered synthetic resume and cover-letter pages for clipping or missing glyphs;
+exact PDF layout fidelity is outside the editable-export contract. No model
+evaluation set or replay fixture is involved. This CLI owner is synchronous and
+does not dispatch a Temporal worker or contact a provider.
+
 ## Auditability Checks
 
 Every displayed semantic judgment must trace to a persisted determination:

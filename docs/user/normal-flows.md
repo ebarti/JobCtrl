@@ -815,6 +815,7 @@ exist only in the installed launcher.
 | `credentials migrate` | Move allowlisted provider secrets from legacy `.env` files into the native credential store. |
 | `gmail-auth` | Connect Gmail for verification codes, outcome lookup, and approved email applications. |
 | `migrate-resume-html` | Convert or refresh approved resume PDFs onto the HTML/CSS renderer. |
+| `material-export JOB_ID --source-artifact-id ID --generation N` | Create an editable DOCX from an accepted resume or cover-letter text artifact; see [Editable DOCX Export](materials-and-tailoring.md#editable-docx-export) for formatting and locale limits. |
 | `backup` | Source checkout only: write a `VACUUM INTO` copy of `jobctrl.db` (`--output`). |
 | `worker` | Run the long-lived Temporal worker. |
 | `rpc` | JSON-RPC server started by the TypeScript API (internal). |
