@@ -432,7 +432,7 @@ Rationale:
   discipline the backend has, with `safeParse` handling at every form
   boundary.
 - Cohesion: all four primitives share idioms (router + query coordination
-  via route loaders is an officially supported pattern), and the SSR /
+  via route loaders delegating to context-owned read helpers), and the SSR /
   RSC evolution path is **TanStack Start** — the same router and query
   layer with a different bootstrap.
 

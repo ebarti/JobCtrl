@@ -305,7 +305,8 @@ a production dependency.
 1. **`routes/` mirrors the URL.** File-based routing makes the URL
    structure greppable from the file tree. Routes do little — they mount
    views, declare typed search-param schemas, and (sometimes) declare
-   loaders.
+   loaders that delegate to context-owned read helpers. API/QueryClient
+   operations remain in contexts, including when generated types are weak.
 2. **`contexts/` mirrors the backend bounded contexts 1:1.** Nine
    folders, no inventions, no omissions. Even contexts with thin or zero
    UI (Discovery, Enrichment) have folders so their hooks and event

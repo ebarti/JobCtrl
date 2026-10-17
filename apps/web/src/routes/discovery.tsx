@@ -1,3 +1,4 @@
+import { prefetchProfile } from "../contexts/profile/readQueries.js";
 import {
   createFileRoute,
   useNavigate,
@@ -6,7 +7,6 @@ import {
 import { useCallback, useMemo } from "react";
 
 import type { SavedTableView } from "@jobctrl/contracts";
-import { profileKeys } from "../contexts/profile/queryKeys.js";
 import type { DiscoverySourceTableControls } from "../contexts/discovery/components/DiscoveryProductControls.js";
 import {
   DISCOVERY_SOURCE_COLUMN_IDS,
@@ -120,10 +120,6 @@ function DiscoveryRouteView() {
 
 export const Route = createFileRoute("/discovery")({
   validateSearch: (search) => discoverySearchSchema.parse(search),
-  loader: ({ context }) =>
-    context.queryClient.prefetchQuery({
-      queryKey: profileKeys.profile(context.tenantId),
-      queryFn: () => context.ports.api.profile(),
-    }),
+  loader: ({ context }) => prefetchProfile(context),
   component: DiscoveryRouteView,
 });

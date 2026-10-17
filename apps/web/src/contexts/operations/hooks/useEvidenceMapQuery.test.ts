@@ -1,10 +1,17 @@
+import { LOCAL_TENANT } from "@jobctrl/domain-types";
+import { createTestQueryClient } from "../../../test/render.js";
+import { prefetchEvidenceMap } from "../readQueries.js";
+import { evidenceMapKeys } from "../evidenceMapKeys.js";
 import { waitFor } from "@testing-library/react";
 import type { EvidenceMapResponse } from "@jobctrl/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import { buildTestPorts } from "../../../test/testPorts.js";
 import { renderHookWithProviders } from "../../../test/render.js";
-import { useEvidenceMapEntryQuery, useEvidenceMapQuery } from "./useEvidenceMapQuery.js";
+import {
+  useEvidenceMapEntryQuery,
+  useEvidenceMapQuery,
+} from "./useEvidenceMapQuery.js";
 
 const evidenceMapFixture: EvidenceMapResponse = {
   ok: true,
@@ -58,7 +65,31 @@ describe("useEvidenceMapQuery", () => {
       { ports: buildTestPorts({ api: { evidenceMap } }) },
     );
 
-    await waitFor(() => expect(result.current.data?.entryId).toBe("ev-platform"));
+    await waitFor(() =>
+      expect(result.current.data?.entryId).toBe("ev-platform"),
+    );
     expect(evidenceMap).toHaveBeenCalledTimes(1);
   });
+});
+
+it("selects from the loader's accepted response without replacing its list cache", async () => {
+  const evidenceMap = vi.fn(async () => evidenceMapFixture);
+  const ports = buildTestPorts({ api: { evidenceMap } });
+  const queryClient = createTestQueryClient();
+  await prefetchEvidenceMap({ ports, queryClient, tenantId: LOCAL_TENANT });
+  const { result, rerender } = renderHookWithProviders(
+    ({ id }: { id: string | null }) => useEvidenceMapEntryQuery(id),
+    {
+      ports,
+      queryClient,
+      initialProps: { id: "ev-platform" as string | null },
+    },
+  );
+  await waitFor(() => expect(result.current.data?.entryId).toBe("ev-platform"));
+  rerender({ id: null });
+  await waitFor(() => expect(result.current.data).toBeNull());
+  expect(queryClient.getQueryData(evidenceMapKeys.list(LOCAL_TENANT))).toEqual(
+    evidenceMapFixture,
+  );
+  expect(evidenceMap).toHaveBeenCalledTimes(1);
 });

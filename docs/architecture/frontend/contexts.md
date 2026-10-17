@@ -406,6 +406,13 @@ the SSE subscription that fans events out to invalidate query keys.
 - Implement the **invalidation router** that consumes events and calls
   `queryClient.invalidateQueries({ queryKey })` (or `setQueryData(...)`
   for high-frequency events).
+- Expose loader prefetch/ensure helpers beside the read hooks in
+  `readQueries.ts`, accepting narrow structural dependencies. Operations owns
+  dashboard, activity, review queue, analytics, artifact, evidence-map and run
+  reads; Profile owns profile/settings reads; Outreach owns contact reads.
+  Routes pass validated/mapped inputs and await these helpers. Contexts do not
+  import routes, generated route trees or views. The Jobs effective-query
+  handoff remains view-owned with no loader.
 - Own _all_ projection-typed read hooks. The core set:
   `useDashboardSummaryQuery`, `useJobsListQuery`, `useJobDetailQuery`,
   `useArtifactsListQuery`, `useArtifactDetailQuery`, `useApplyRunsListQuery`,

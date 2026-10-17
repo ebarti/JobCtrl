@@ -1,25 +1,39 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { resolve } from "node:path";
+import { readFileSync } from "node:fs";
 import ts from "typescript";
-import { dependencies, lintProgram, webRoot } from "./lint-boundaries.mjs";
+import {
+  dependencies,
+  lint,
+  lintProgram,
+  webRoot,
+} from "./lint-boundaries.mjs";
 
-function check(files, exemptions = {}) {
+function check(files, exemptions = {}, realProgram = false) {
   const sources = new Map(
     Object.entries(files).map(([path, source]) => [
       resolve(webRoot, "src", path),
       source,
     ]),
   );
-  const options = {
-    target: ts.ScriptTarget.ESNext,
-    module: ts.ModuleKind.ESNext,
-    moduleResolution: ts.ModuleResolutionKind.Bundler,
-    jsx: ts.JsxEmit.ReactJSX,
-    baseUrl: webRoot,
-    paths: { "@/*": ["src/*"] },
-    skipLibCheck: true,
-  };
+  const parsed = ts.parseJsonConfigFileContent(
+    ts.readConfigFile(resolve(webRoot, "tsconfig.json"), ts.sys.readFile)
+      .config,
+    ts.sys,
+    webRoot,
+  );
+  const options = realProgram
+    ? parsed.options
+    : {
+        target: ts.ScriptTarget.ESNext,
+        module: ts.ModuleKind.ESNext,
+        moduleResolution: ts.ModuleResolutionKind.Bundler,
+        jsx: ts.JsxEmit.ReactJSX,
+        baseUrl: webRoot,
+        paths: { "@/*": ["src/*"] },
+        skipLibCheck: true,
+      };
   const host = ts.createCompilerHost(options);
   const getSourceFile = host.getSourceFile.bind(host);
   const fileExists = host.fileExists.bind(host);
@@ -34,7 +48,13 @@ function check(files, exemptions = {}) {
     sources.has(path)
       ? ts.createSourceFile(path, sources.get(path), languageVersion, true)
       : getSourceFile(path, languageVersion, onError);
-  const program = ts.createProgram([...sources.keys()], options, host);
+  const program = ts.createProgram(
+    realProgram
+      ? [...new Set([...parsed.fileNames, ...sources.keys()])]
+      : [...sources.keys()],
+    options,
+    host,
+  );
   // Ignore unrelated real imported production files; the fixture owns its source set.
   const scoped = {
     getTypeChecker: () => program.getTypeChecker(),
@@ -43,7 +63,11 @@ function check(files, exemptions = {}) {
     getSourceFiles: () =>
       program.getSourceFiles().filter((source) => sources.has(source.fileName)),
   };
-  return lintProgram(scoped, webRoot, exemptions);
+  const results = lintProgram(scoped, webRoot, exemptions);
+  // Compiler diagnostics are evidence only, never a substitute for boundary diagnostics.
+  if (realProgram)
+    results.compilerDiagnostics = program.getSemanticDiagnostics();
+  return results;
 }
 const rules = (results) =>
   [...new Set(results.map((result) => result.rule))].sort();
@@ -385,4 +409,233 @@ test("views cannot operate on a QueryClient obtained through typed context", () 
     ),
     ["view-state"],
   );
+});
+
+test("the actual tsconfig and generated routes delegate reads without exemptions", () => {
+  const generated = readFileSync(
+    resolve(webRoot, "src/routeTree.gen.ts"),
+    "utf8",
+  );
+  assert.match(generated, /dashboard/);
+  assert.match(generated, /activity/);
+  assert.deepEqual(lint(), []);
+});
+
+test("real generated loaders reject direct capabilities independently of any/unresolved types", () => {
+  const filename = "routes/dashboard.tsx";
+  const original = readFileSync(resolve(webRoot, "src", filename), "utf8");
+  const controls = [
+    ["context.ports.api.health();", "view-api"],
+    ["context.queryClient.clear();", "view-state"],
+    ["(context as any).ports.api.health();", "view-api"],
+    ["(context as unknown as { ports: any }).ports.api.health();", "view-api"],
+    ["const c = context; const a = c.ports.api; a.health();", "view-api"],
+    ["const { ports: { api: a } } = context; a.health();", "view-api"],
+    ["const { health: read } = context.ports.api; read();", "view-api"],
+    ["context['ports']['api']['health']();", "view-api"],
+    ["const key = 'health'; context.ports.api[key]();", "view-api"],
+    ["const { queryClient: q } = context; q['clear']();", "view-state"],
+    ["const { clear: reset } = context.queryClient; reset();", "view-state"],
+    ["const c: any = context; c.queryClient.prefetchQuery({});", "view-state"],
+    [
+      "const { context: { ports: { api } } } = { context }; api.health();",
+      "view-api",
+    ],
+    ["let a: any; a = context.ports.api; a.health();", "view-api"],
+    [
+      "const api = context.ports.api; const box = { first: api, second: api }; box.second.health();",
+      "view-api",
+    ],
+    ["const [api] = [context.ports.api]; api!.health();", "view-api"],
+    ["const clients = [context.ports.api]; clients[0]!.health();", "view-api"],
+  ];
+  // Overlay the real route at its generated-tree identity. Both weak and missing
+  // declarations must still diagnose every source line, not merely fail tsc.
+  for (const annotation of [
+    undefined,
+    '{ context: import("../router.js").RouterContext }',
+    "any",
+    "MissingLoaderArguments",
+  ]) {
+    const body = controls.map(([code]) => `    { ${code} }`).join("\n");
+    const parameter = annotation ? `: ${annotation}` : "";
+    const replacement = `  loader: async ({ context }${parameter}) => {\n${body}\n  },`;
+    const text = original.replace(/  loader:.*\n/, replacement + "\n");
+    const results = check({ [filename]: text }, {}, true);
+    if (annotation === "MissingLoaderArguments")
+      assert.ok(
+        results.compilerDiagnostics.some((d) =>
+          ts
+            .flattenDiagnosticMessageText(d.messageText, " ")
+            .includes(annotation),
+        ),
+        "unresolved compiler control executed",
+      );
+    else
+      assert.equal(
+        results.compilerDiagnostics.length,
+        0,
+        `${annotation ?? "generated inference"} control is compiler-clean and must still fail the boundary`,
+      );
+    const firstLine = text.slice(0, text.indexOf(body)).split("\n").length;
+    controls.forEach(([code, rule], index) => {
+      assert.ok(
+        results.some(
+          (d) =>
+            d.file === filename &&
+            d.line === firstLine + index &&
+            d.column > 0 &&
+            d.rule === rule,
+        ),
+        `${annotation}: ${code}\n${JSON.stringify(results)}`,
+      );
+    });
+  }
+});
+
+test("capability provenance survives view casts, hook aliases and nested destructuring", () => {
+  const result = check({
+    "views/lint-example/Page.ts": `
+      import { usePorts as obtain } from '../../shared/providers/PortsProvider.js';
+      const p: any = obtain(); const { api: client } = p;
+      (client as any)['health']();
+      const { health: read } = client; read();
+    `,
+  });
+  assert.deepEqual(rules(result), ["view-api"]);
+  assert.ok(result.some((d) => d.message.includes("health")));
+  assert.deepEqual(
+    check({
+      "views/lint-example/Page.ts": `
+      const context = { ports: { api: { health() {} } }, queryClient: { clear() {} } };
+      const usePorts = () => context.ports;
+      context.ports.api.health(); context.queryClient.clear(); usePorts().api.health();
+      const Route = { useRouteContext: () => context }; Route.useRouteContext().ports.api.health();
+      type LocalContext = typeof context;
+      const local = { loader: ({ context }: { context: LocalContext }) => context.ports.api.health() };
+    `,
+    }),
+    [],
+  );
+});
+
+test("unresolved runtime re-exports cannot launder Query or concrete API authority", () => {
+  const files = {
+    "shared/lint-weak-barrel.ts": `
+      export { useQuery as fetcher } from '@tanstack/react-query/missing-declaration';
+      export { JobCtrlApiClient as Client } from '@jobctrl/api-client/missing-declaration';
+      export type { QueryClient as QueryType } from '@tanstack/react-query';
+    `,
+    "shared/lint-outer.ts":
+      "export { fetcher as load, Client } from './lint-weak-barrel.js'; export type { QueryType } from './lint-weak-barrel.js';",
+    "views/lint-example/Page.ts":
+      "import { load, Client } from '../../shared/lint-outer.js';",
+  };
+  assert.deepEqual(rules(check(files)), ["api-adapter", "view-state"]);
+  assert.deepEqual(
+    check({
+      ...files,
+      "views/lint-example/Page.ts":
+        "import type { QueryType } from '../../shared/lint-outer.js';",
+    }),
+    [],
+  );
+});
+
+test("loader callback aliases preserve capability ownership with weak parameter types", () => {
+  const result = check({
+    "routes/lint-loader.ts": `
+      import { createFileRoute as route } from '@tanstack/react-router';
+      const load = ({ context: c }: any) => c.ports.api.health();
+      const alias = load;
+      export const Route = route('/dashboard')({ loader: alias });
+    `,
+  });
+  assert.deepEqual(rules(result), ["view-api"]);
+  assert.ok(
+    result.some(
+      (d) => d.file === "routes/lint-loader.ts" && d.line === 3 && d.column > 0,
+    ),
+  );
+});
+
+test("any and unresolved capability slots fail closed without granting permission from a missing origin", () => {
+  for (const type of ["any", "MissingContext"]) {
+    const result = check({
+      "views/lint-example/Page.ts": `
+        declare const context: ${type};
+        context.ports.api.health();
+        context.queryClient.clear();
+        const { ports: { api: client } } = context; client.health();
+        const { queryClient: query } = context; query.clear();
+      `,
+    });
+    assert.deepEqual(rules(result), ["view-api", "view-state"]);
+    for (const [line, rule] of [
+      [3, "view-api"],
+      [4, "view-state"],
+      [5, "view-api"],
+      [6, "view-state"],
+    ])
+      assert.ok(
+        result.some((d) => d.line === line && d.rule === rule),
+        `${type}: ${line}`,
+      );
+  }
+});
+
+test("local import/export aliases cannot hide unresolved runtime capabilities", () => {
+  for (const [module, imported, rule] of [
+    ["@tanstack/react-query/missing-declaration", "useQuery", "view-state"],
+    [
+      "@jobctrl/api-client/missing-declaration",
+      "JobCtrlApiClient",
+      "api-adapter",
+    ],
+  ]) {
+    for (const declaration of [
+      "export { original as load };",
+      "const alias = original; export { alias as load };",
+      "export const load = original;",
+    ])
+      assert.deepEqual(
+        rules(
+          check({
+            "shared/lint-import-export.ts": `import { ${imported} as original } from '${module}'; ${declaration}`,
+            "views/lint-example/Page.ts":
+              "import { load } from '../../shared/lint-import-export.js';",
+          }),
+        ),
+        [rule],
+        declaration,
+      );
+  }
+  assert.deepEqual(
+    check({
+      "contexts/lint-one/hooks/useOwned.ts":
+        "import { useQuery } from '@tanstack/react-query/missing-declaration'; export function useOwned() { return useQuery({}); }",
+      "views/lint-example/Page.ts":
+        "import { useOwned } from '../../contexts/lint-one/hooks/useOwned.js'; useOwned();",
+    }),
+    [],
+  );
+});
+
+test("API provenance survives repeated container aliases and array destructuring", () => {
+  for (const code of [
+    "const api = context.ports.api; const box = { first: api, second: api }; box.second.health();",
+    "const [api] = [context.ports.api]; api.health();",
+    "const clients = [context.ports.api]; clients[0]!.health();",
+  ]) {
+    const result = check({
+      "routes/lint-loader.ts": `import { createFileRoute } from '@tanstack/react-router';
+      export const Route = createFileRoute('/dashboard')({ loader: ({ context }: any) => {
+        ${code}
+      } });`,
+    });
+    assert.ok(
+      result.some((d) => d.rule === "view-api" && d.line === 3),
+      code,
+    );
+  }
 });
