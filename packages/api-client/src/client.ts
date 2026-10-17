@@ -654,6 +654,8 @@ export class JobCtrlApiClient {
   jobs(
     query: Partial<JobListQuery> = {},
   ): Promise<PaginatedResponse<JobSummary>> {
+    // Arrays use the request serializer's comma form, including stages=[]
+    // as stages= so callers can explicitly clear a legacy scalar stage.
     return this.get("/v1/jobs", query);
   }
 

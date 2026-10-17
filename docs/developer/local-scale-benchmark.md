@@ -3,7 +3,7 @@
 The local scale benchmark is a reproducible, synthetic baseline for JobCtrl's
 production read paths. It creates a new owned temporary app directory, config,
 SQLite database, and artifact directory for each dataset, initializes the
-database with the exact schema-v11 constructor, and removes the workspace after
+database with the exact schema-v14 constructor, and removes the workspace after
 the dataset finishes. It has no flag for an existing app directory or database.
 
 Run it from the repository root with a new output path:
@@ -28,7 +28,7 @@ must pass the production schema with no ready provider and no models. Any
 failure stops the run before provider model discovery can execute.
 
 The focused harness checks statistics, unsafe arguments, cleanup after failure,
-exact-v11 seed totals, deliberately perturbed correctness oracles, an ambient
+exact-v14 seed totals, deliberately perturbed correctness oracles, an ambient
 Bedrock/AWS/provider-credential counterfactual, and a
 smallest-dataset integration through the real HTTP, timer SSE, preview,
 projection, and `SubprocessJsonRpcAdapter` paths:
@@ -37,9 +37,12 @@ projection, and `SubprocessJsonRpcAdapter` paths:
 corepack pnpm --filter @jobctrl/api benchmark:local-scale:test
 ```
 
-The exact-v11 and production-path integration cases require `uv`. They are
+The exact-v14 and production-path integration cases require `uv`. They are
 skipped when `uv` is unavailable so ordinary TypeScript CI can still test the
-runtime-independent harness contracts.
+runtime-independent harness contracts. Accepted delivery verification requires
+`uv` and execution of every integration case; skipped cases do not establish
+correctness. Prepare the locked worker environment before running the offline
+harness: its provider isolation deliberately blocks dependency downloads too.
 
 ## Method and proposed budgets
 
@@ -54,6 +57,82 @@ Warm HTTP, preview, and RPC results use two warmups followed by seven retained
 samples. Percentiles use nearest rank, so p95 selects the maximum when only
 seven samples are retained. These are exploratory, tail-sample-limited local
 observations rather than stable population estimates.
+
+Browser compatibility is a separate correctness check. The API pagination
+suite exercises the existing browser list adapter against independent synthetic
+expectations, including stages with more than 200 matches, ties, adjacent and
+deep pages, and clamping. Its independent boundary cases also cover mixed-case
+and accented text ordering, presented failed/exhausted sort keys, and literal
+percent/underscore/backslash and Unicode source/company filters across search
+and bulk selection. Timestamp boundaries cover mixed fractional precision,
+equivalent timezone offsets, absent/invalid values, and the OR of two cutoffs.
+Discovery sorting preserves the browser's locale comparison of raw timestamp
+strings, including mixed fractional/offset notation, rather than instant order.
+Discovery and locale text sorts and source/company/timestamp filters materialize
+summaries before pagination. Fit-score, current-stage and current-state sorts
+retain SQL pagination when no materialized filter is present. Materializing
+discovery sorts adds work proportional to all matches even for shallow pages;
+compare its latency and sampled memory against the retained earlier baselines.
+The original benchmark seed, scenarios, warmups, samples and report fields are
+unchanged; the request paths exercise the current implementation.
+The API contract is complete independently of UI pagination changes. For
+API-only delivery, current-browser compatibility includes the existing hook,
+demo and query-key regression suites, plus navigation, filters and bulk
+operations through `jobs-bulk.spec.ts` at the controller's browser QA stage.
+A pagination UI change owns its dedicated Playwright pagination scenario and
+the visual evidence below. Confirm that scenario appears in Playwright
+discovery and in the executed report; a command containing a missing filename
+can still succeed when another selected file matches.
+Retain the test source, synthetic inputs, request/response observations, source
+and lock hashes, and page images from successful populated, adjacent, deep,
+clamped and empty states. Inspect the images as well as the assertions.
+Distinguish the ordinary scalar/all-stage route from an explicit stage-array
+client request or a controlled experiment forwarding real combined responses
+to the current UI.
+
+The `combinedStages` report extension runs only after all original scenarios at
+all three sizes. Each extension dataset gets another owned exact-v14 workspace.
+The original seed, scenarios, two warmups, seven retained samples, and report
+fields remain available in `datasets`; their measurements precede the extension's
+allocations and writes. The exact schema constructor supplies the canonical
+built-in resume template required by current list summaries. Job and event totals,
+descriptions, scores, and preview bytes retain their original seed definitions.
+
+The extension uses seed `jobctrl-local-scale-v1:combined-stages-v1`, with every
+third job in Apply and the rest in Discover. Groups of four share discovery
+timestamps across stages to exercise ascending job-ID ties. It also seeds
+canonical `job_scores` versions with deterministic 1–10 scores. The original
+datasets preserve their legacy `jobs.fit_score` cells for comparison; those cells
+do not supply current list scores on exact-v14, and the original scenarios do not
+prove numeric score ordering. The extension measures combined
+discovery first, adjacent, deep, and clamped pages; duplicate-stage input; scalar/array
+precedence; explicit empty arrays; empty membership; search first, deep, and
+clamped pages; and a materialized compensation sort with absent-value ties.
+Pages contain 25 jobs. Deep pages request the penultimate page of the matching
+set (or page one when the set is small). Expected totals, clamped pages, complete
+page IDs, and filter membership come from deterministic synthetic inputs;
+each HTTP sample must agree before a report is emitted.
+The retained `sql-first`, `sql-adjacent`, `sql-deep`, and `sql-clamped` scenario
+names are historical comparison labels: their unchanged discovery-sort requests
+now use the materialized comparator. They do not identify a SQL pagination path.
+Separate `fit-score-first`, `fit-score-adjacent`, `fit-score-deep`, and
+`fit-score-clamped` scenarios measure the active SQL pagination path, including
+repeated scores across stages and ascending job-ID ties.
+
+Each extended scenario retains the same latency distribution plus seven raw
+before/after Node RSS and heap observations. Peak growth and signed end deltas
+use the first retained request's baseline, without forced garbage collection.
+The scope includes the benchmark's loopback server and client in the same Node
+PID. Boundary sampling can miss transient allocation peaks; values are local
+observations, not allocation counts or leak proof. The report includes actual
+schema version and manifest hash, source/lock hashes, Git status, and worktree
+diff hash so pre-optimization observations can be tied to their candidate.
+
+For a new optimization, retain the expanded JSON, command, full stdout/stderr,
+UTC timestamps, and candidate/source/lock hashes in the controller's allocated
+evidence location before changing query strategy. The historical repository
+baseline below remains its original measurement; it does not supply expanded
+measurements for a later candidate.
 
 The sustained scenario runs for at least 1.5 seconds and seven iterations, with
 a 100-iteration cap. Each iteration directly writes 10 synthetic events,
@@ -79,7 +158,7 @@ or CI gates:
 ## Measured baseline
 
 The archived results below and the linked JSON retain their original v10 schema
-and measurements. Current runs use v11; compare schema identities explicitly
+and measurements. Current runs use v14; compare schema identities explicitly
 before drawing performance conclusions across revisions.
 
 This baseline measured commit `8c80b31b584c7ef92b80f92ea9e496c968a8269a`

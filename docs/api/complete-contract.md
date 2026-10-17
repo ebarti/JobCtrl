@@ -340,6 +340,52 @@ and `scoredSince` are both present, the jobs list matches rows where either
 timestamp is at or after its threshold. Active filters and sort remain URL state
 in the web app. The same score and applied-outcome filters are accepted by
 all-matching bulk job mutations.
+Timestamp comparisons use JavaScript millisecond precision and normalize
+timezone offsets and fractional notation. Missing or invalid stored timestamps
+do not match their threshold. Lists and all-matching bulk mutations share this
+comparison before counting and pagination; timestamp-filtered lists materialize
+summaries within the read transaction.
+The list and all-matching bulk filters accept optional `stages` membership on
+projected `currentStage`. Allowed values are `discover`, `enrich`, `score`,
+`tailor`, `cover`, and `apply`; they do not select `currentSubstage`. Current
+projections group preparation under Discover or Apply, so other stage values
+can legitimately match no rows. The JSON body form is an array. Query strings
+accept comma serialization, repeated values, or repeated comma groups:
+`stages=discover,apply` and `stages=discover&stages=apply` are equivalent.
+Whitespace is trimmed. At most six input values are accepted before
+deduplication; duplicate values retain their first occurrence. Invalid members,
+malformed values, and arrays longer than six are ignored as a whole, matching
+the existing optional-filter fallback convention. They fall back to scalar
+`stage`, if supplied. Valid `stages` overrides scalar `stage`; `[]` (query
+`stages=`) explicitly removes any stage restriction. Omission or explicit
+TypeScript `stages: undefined` preserves scalar behavior. Stage membership is
+ORed and then intersected with every other list filter before count, global
+sorting, and pagination. All-matching bulk selection
+uses the same membership and also accepts exact `normalizedScoreKeyword`.
+
+`pagination.total` is the globally filtered count, `pages` is
+`max(1, ceil(total / pageSize))`, and `page` is clamped to `pages`. Empty results
+return `items: []`, `total: 0`, `pages: 1`, and `page: 1`. Sort ties use ascending
+canonical job ID regardless of the requested direction. SQL-paged totals and
+the clamped page, including summary joins, share one SQLite read transaction.
+Search, source/company filters, discovery and locale text sorts, and projected-JSON sorts use
+the materialized query path, with canonical summary joins in one read transaction.
+Text sorting lowercases values before locale comparison, including searched
+lists; equal values retain ascending job IDs in either direction. State sorting
+uses the public `currentState`, so stored exhaustion shares the failed rank.
+Discovery sorting uses locale comparison of the original timestamp strings,
+matching the browser merger even with mixed fractional or offset notation;
+it does not compare normalized instants. Missing values sort first ascending
+and last descending, with ascending job-ID ties in either direction.
+Source/company filters use literal substring matching after Unicode lowercasing;
+percent, underscore, and backslash are ordinary characters. Source matches the
+rendered source, discovery source, posting source, or posting URL. Lists and
+all-matching bulk selection apply these same rules before counting or slicing.
+Response `filter.stages` is the effective deduplicated stage array, or `[]` for
+unrestricted membership. The legacy `filter.stage` still echoes scalar `stage`
+(or an empty string), even when overridden by `stages`. Other filter and sort
+metadata retain their existing meanings.
+
 `GET /v1/digest` returns the local daily digest read model for the dashboard and
 CLI. It composes projection-backed counts for new matches, blocked sources,
 apply-review materials, stale scores, pending approvals, derived follow-ups due,
@@ -405,6 +451,11 @@ to `pending`; non-failed selected jobs are ignored. A persisted legacy
 `exhausted` row is exposed as `state: "failed"` with
 `failureReason: "attempt_budget_exhausted"`, remains retryable, and has its
 attempt count reset atomically by this action.
+List and all-matching bulk `state=failed` filters include both persisted
+`failed` and `exhausted` rows. The legacy `state=exhausted` selector restricts
+membership to persisted exhaustion, including when combined with `q` or
+`stages`. Public summaries keep the failed-state presentation and failure
+reason above.
 
 `POST /v1/jobs/import-url` accepts the strict body `{ url: string }`. The URL
 must be public HTTP(S); credential-bearing, private, loopback, unresolved, and unsafe redirect

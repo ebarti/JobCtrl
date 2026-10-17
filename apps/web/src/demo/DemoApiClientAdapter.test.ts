@@ -433,6 +433,29 @@ describe("DemoApiClientAdapter", () => {
     });
   });
 
+  it("returns effective stage metadata with globally combined demo pages", async () => {
+    const { adapter, repository } = await createAdapter();
+    const base = repository.snapshotNow().state.readModel.jobs.list.items[0]!;
+    await replaceJobs(repository, [
+      { ...structuredClone(base), jobKey: "combined-a", currentStage: "discover", currentSubstage: "discover", fitScore: 5 },
+      { ...structuredClone(base), jobKey: "combined-b", currentStage: "apply", currentSubstage: "apply", fitScore: 5 },
+      { ...structuredClone(base), jobKey: "combined-c", currentStage: "score", currentSubstage: "score", fitScore: 3 },
+    ]);
+    const combined = await adapter.jobs({ stages: ["discover", "apply", "discover"], stage: "score",
+      sort: "fit_score", dir: "desc", page: 999, pageSize: 1 });
+    expect(combined.items.map((job) => job.jobKey)).toEqual(["combined-b"]);
+    expect(combined.pagination).toEqual({ page: 2, pageSize: 1, total: 2, pages: 2 });
+    expect(combined.filter).toMatchObject({ stage: "score", stages: ["discover", "apply"] });
+    const cleared = await adapter.jobs({ stages: [], stage: "apply" });
+    expect(cleared.pagination.total).toBe(3);
+    expect(cleared.filter).toMatchObject({ stage: "apply", stages: [] });
+    for (const query of [{ stage: "apply" as const }, { stage: "apply" as const, stages: undefined }]) {
+      const scalar = await adapter.jobs(query);
+      expect(scalar.items.map((job) => job.jobKey)).toEqual(["combined-b"]);
+      expect(scalar.filter).toMatchObject({ stage: "apply", stages: ["apply"] });
+    }
+  });
+
   it("matches production job-state precedence, OR filtering, and pagination", async () => {
     const { adapter, repository } = await createAdapter();
     const base = repository.snapshotNow().state.readModel.jobs.list.items[0]!;
