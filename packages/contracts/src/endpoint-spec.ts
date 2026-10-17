@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { MaterialLocaleRequestSchema, MaterialLocaleHistorySchema } from "./schemas.js";
+import { AcceptedMaterialExportRequestSchema, AcceptedMaterialExportsSchema, MaterialLocaleRequestSchema, MaterialLocaleHistorySchema } from "./schemas.js";
 import {
   InterviewCatalogQuerySchema,
   InterviewCatalogResponseSchema,
@@ -578,6 +578,13 @@ const screeningFailure = (failure: EndpointDispatchFailure): EndpointFailureResp
 });
 
 export const ENDPOINTS = {
+  acceptedMaterialExports: defineEndpoint({
+    name: "acceptedMaterialExports", method: "POST",
+    path: defineEndpointPath({ route: "/v1/jobs/:jobId/material-exports", paramName: "jobId", paramSchema: z.string().uuid(), invalid: { status: 400, error: "invalid_job_id" }, build: (jobId: string) => `/v1/jobs/${encodeURIComponent(jobId)}/material-exports` }),
+    request: AcceptedMaterialExportRequestSchema, response: AcceptedMaterialExportsSchema,
+    rpcDependencies: [RpcMethods.AcceptedMaterialExports],
+    demo: { class: "unavailable", reason: "DOCX export requires accepted materials saved in your local workspace." },
+  }),
   materialLocaleVariants: defineEndpoint({
     name: "materialLocaleVariants",
     method: "POST",

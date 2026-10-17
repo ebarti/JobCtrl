@@ -152,6 +152,7 @@ hitting the network and gives a clear seam for cloud evolution.
 | `EventStreamPort` | Subscribe to a stream of `DomainEvent`s | `SseEventStreamAdapter` (`new EventSource(...)`) | `WebSocketEventStreamAdapter` (if SSE proves limiting at scale) or same SSE adapter behind CDN with edge buffering |
 | `StoragePort` | Persist client preferences and wizard drafts | `LocalStorageAdapter` (browser `localStorage`) | `IndexedDbAdapter` (when client-side cache exceeds 5 MB) |
 | `SessionPort` | Resolve `TenantId` and `UserId` for the current request | `LocalSessionAdapter` (returns `LOCAL_TENANT` + a stub user) | `JwtSessionAdapter` (Auth0 / Cognito; reads JWT, exposes `useSession()`) |
+| `ArtifactDownloadPort` | Download retained, verified DOCX bytes | `BrowserArtifactDownloadAdapter` calls the API client, creates a temporary object URL and starts a browser download | No hosted implementation; public demo reports unavailable |
 | `ClipboardPort` | Copy CLI commands to clipboard | `NavigatorClipboardAdapter` (`navigator.clipboard.writeText`) | Same adapter |
 | `OpenInOsPort` | Open an artifact in the OS default app (local-only feature) | `OpenArtifactAdapter` (POSTs to `/v1/artifacts/:id/open`) | **Disabled** in hosted mode — port returns `Unsupported`; the UI surfaces a "download" affordance instead. (Cloud users get presigned S3 URLs.) |
 | `TelemetryPort` | Emit frontend telemetry (errors, route timings, mutation latencies) | `ConsoleTelemetryAdapter` (no-op + dev-tools logs) | `OpenTelemetryWebAdapter` → OTLP collector → backend tracing pipeline |
@@ -176,6 +177,7 @@ const PortsContext = createContext<{
   session: SessionPort;
   clipboard: ClipboardPort;
   openInOs: OpenInOsPort;
+  artifactDownload: ArtifactDownloadPort;
   telemetry: TelemetryPort;
   featureFlags: FeatureFlagPort;
 } | null>(null);

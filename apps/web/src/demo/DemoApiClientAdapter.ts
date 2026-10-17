@@ -482,6 +482,10 @@ export class DemoApiClientAdapter implements ApiClientPort {
     return artifactPreviewUrl(this.workspace, artifactId, "pdf", cacheKey);
   }
 
+  async downloadMaterialDocx(_artifactId: string): Promise<Blob> {
+    throw new DemoCapabilityError("acceptedMaterialExports");
+  }
+
   artifactPreviewHtmlUrl(artifactId: string, cacheKey?: CacheKey): string {
     return artifactPreviewUrl(this.workspace, artifactId, "html", cacheKey);
   }

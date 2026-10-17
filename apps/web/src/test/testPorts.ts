@@ -192,6 +192,7 @@ export class FakeFeatureFlagPort implements FeatureFlagPort {
 }
 
 export interface BuildTestPortsOptions {
+  readonly artifactDownload?: Ports["artifactDownload"];
   readonly api?: Partial<Ports["api"]>;
   readonly eventStream?: EventStreamPort;
   readonly openInOs?: OpenInOsPort;
@@ -351,6 +352,7 @@ export function buildTestPorts(overrides: BuildTestPortsOptions = {}): Ports {
     session: new FakeSessionPort(),
     clipboard: new FakeClipboardPort(),
     openInOs: overrides.openInOs ?? new FakeOpenInOsPort(),
+    artifactDownload: overrides.artifactDownload ?? { downloadDocx: vi.fn(async () => {}) },
     pdfExport: overrides.pdfExport ?? new FakePdfExportPort(),
     telemetry: new FakeTelemetryPort(),
     featureFlags: new FakeFeatureFlagPort(),
