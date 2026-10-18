@@ -2343,6 +2343,57 @@ accepted content, materials, decisions and outcomes remain intact.
 The [Enrichment guide](../user/enrichment-and-extraction.md#saved-posting-availability)
 owns the complete acquisition, cohort and retry policy.
 
+## Accepted Material DOCX Exports
+
+`POST /v1/jobs/:jobId/material-exports` requires a canonical UUID job owned by
+the local tenant. It accepts a strict operation union; extra fields are refused:
+
+| Operation | Request fields |
+| --- | --- |
+| `history` | `operation: "history"` |
+| `export` | `operation: "export"`, `sourceArtifactId` (1–240 characters), positive integer `expectedGeneration`, lowercase 64-character `expectedSourceSha256` and `expectedMetadataSha256`, and `paper: "A4" \| "Letter"` |
+
+Both return `200` with `tenantId`, `jobId`, `sources`, `exports` and
+`exportedArtifactId` (null for history, the new ID for export). Sources contain
+`artifactId`, `generation`, `kind` (`tailored_resume` or `cover_letter`), nullable
+`locale`, source `sha256`, `metadataSha256` and `unavailableReason`. Missing or
+invalid source files remain listed with an unavailable reason and null hashes;
+only approved, unsuperseded text sources are offered.
+
+Each export receipt has `contract: "accepted-material-docx-v1"`, `artifactId`,
+`tenantId`, `jobId`, `sourceArtifactId`, `generation`, `kind`, `sourceSha256`,
+`sourceMetadataSha256`, `settings`, `settingsSha256`, output `sha256`, `createdAt`
+and `warnings`. Settings contain `format: "docx"`, `layout: "semantic-v1"`,
+`paper` and the resolved source `locale` (`und` if unrecorded). No file paths,
+source prose or private source metadata cross this boundary. The UI does not
+request translation or override locale.
+
+Synchronous RPC `accepted_material_exports` takes exactly `tenantId`, `jobId`,
+`expectedAppDir`, `expectedDbPath` and `request`. Runtime identity is checked
+before opening the database. The API validates response tenant/job binding and,
+for export, the returned receipt's selected source, generation, hashes and paper.
+No provider, model or Temporal workflow is involved.
+
+Invalid requests return `400`; missing jobs return `404`; stale generation,
+source edits, lost acceptance and missing source bytes return `409`; unsupported
+source content/settings return `400` or `422`; forbidden paths return `403`.
+Transport, malformed results or unknown worker errors return safe `503` codes.
+Unknown exceptions never pass private worker diagnostics to the browser.
+
+`GET /v1/artifacts/:artifactId/download.docx` accepts a registered numeric export
+ID. It reads the local tenant's approved `material_docx` receipt from
+`job_artifacts`, checks tenant/job binding, refuses symlink/foreign paths, and
+verifies the file's SHA-256 before returning any bytes. It returns the DOCX media
+type, `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, and attachment
+filename `resume-gN-PAPER.docx` or `cover-letter-gN-PAPER.docx`. Missing IDs/files
+return `404`, forbidden paths `403`, and malformed receipts or changed bytes
+`409`. An export remains downloadable after its source is superseded. This read
+never changes an approval or registers another artifact.
+
+The endpoint and browser download are unavailable in the public demo. See
+[Editable DOCX Export](../user/materials-and-tailoring.md#editable-docx-export)
+for content preservation and layout limits.
+
 ## Material Locale Variants
 
 `POST /v1/jobs/:jobId/material-locales` uses a canonical UUID Job ID and a strict

@@ -969,6 +969,20 @@ export class JobCtrlApiClient {
     return this.get(`/v1/artifacts/${encodeURIComponent(artifactId)}`);
   }
 
+  async downloadMaterialDocx(artifactId: string): Promise<Blob> {
+    const response = await fetch(`${this.baseUrl}/v1/artifacts/${encodeURIComponent(artifactId)}/download.docx`, {
+      signal: AbortSignal.timeout(this.requestTimeoutMs), cache: "no-store",
+    });
+    if (!response.ok) {
+      const body: unknown = await response.json().catch(() => undefined);
+      throw new JobCtrlApiError(response.status, response.statusText, undefined, body);
+    }
+    if (response.headers.get("content-type") !== "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+      throw new Error("The export download did not return a DOCX file.");
+    }
+    return response.blob();
+  }
+
   artifactPreviewPdfUrl(artifactId: string, cacheKey?: QueryValue): string {
     const path = `/v1/artifacts/${encodeURIComponent(artifactId)}/preview.pdf`;
     const url = new URL(

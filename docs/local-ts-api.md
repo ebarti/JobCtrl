@@ -455,3 +455,11 @@ registered feature handlers and generated checked clients. Legacy query/body
 values remain ignored. The [provider contract](api/profile-and-settings.md#provider-endpoint-compatibility)
 defines status/error compatibility; the [migration recipe](architecture/contracts-types-and-api-boundaries.md#incremental-endpoint-migration)
 shows how to adopt later families without changing the #954 envelope boundary.
+
+## Accepted DOCX Export
+
+Job Detail exports original accepted resume and cover-letter text through the
+strict `material-exports` endpoint and runtime-bound Python RPC. Registered DOCX
+downloads verify owned paths and output hashes. See [Jobs & Materials](api/jobs-and-materials.md#artifacts-and-resume-templates)
+and the [complete contract](api/complete-contract.md#accepted-material-docx-exports)
+for request fields, source fences and errors.

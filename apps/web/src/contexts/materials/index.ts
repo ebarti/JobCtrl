@@ -1,5 +1,6 @@
 export { materialsKeys } from "./queryKeys.js";
 export { MaterialLocaleVariants } from "./components/MaterialLocaleVariants.js";
+export { AcceptedMaterialExports } from "./components/AcceptedMaterialExports.js";
 
 export { useGenerateMaterialsMutation } from "./hooks/useGenerateMaterialsMutation.js";
 export { useGenerateInterviewPrepMutation } from "./hooks/useGenerateInterviewPrepMutation.js";

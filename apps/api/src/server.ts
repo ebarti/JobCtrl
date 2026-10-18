@@ -273,6 +273,7 @@ import {
 } from "./local-actions.js";
 import type { JsonRpcDispatcher } from "./json-rpc-adapter.js";
 import { materialLocaleVariants, LocaleVariantError } from "./locale-variants.js";
+import { acceptedMaterialExports, readAcceptedDocx, MaterialExportError, DOCX_CONTENT_TYPE } from "./accepted-material-exports.js";
 import {
   createWorkerManualCaptureImporter,
   ManualCaptureImportError,
@@ -974,6 +975,16 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       dbPath: options.dbPath,
     },
     handlers: {
+      acceptedMaterialExports: async ({ request, pathParam: jobId }, reply) => {
+        const exists = withReadOnlyDb(reply, options.dbPath, (db) => resolveExistingJobId(reply, db, jobId));
+        if (typeof exists !== "string") return exists ?? { ok: false, error: "job_not_found" };
+        try {
+          return await acceptedMaterialExports(providerDispatcher, { tenantId: "local", expectedAppDir: appDir, expectedDbPath: options.dbPath, jobId }, request);
+        } catch (error) {
+          if (error instanceof MaterialExportError) { void reply.code(error.status); return { ok: false, error: error.code }; }
+          throw error;
+        }
+      },
       ...createProviderHandlers(providerDispatcher),
       materialLocaleVariants: async ({ request, pathParam: jobId }, reply) => {
         const exists = withReadOnlyDb(reply, options.dbPath, (db) => resolveExistingJobId(reply, db, jobId));
@@ -2776,6 +2787,28 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       return detail;
     }),
   );
+
+  app.get<{ Params: { artifactId: string } }>("/v1/artifacts/:artifactId/download.docx", async (request, reply) => {
+    try {
+      const file = withReadOnlyDb(reply, options.dbPath, (db) => {
+        try { return readAcceptedDocx(db, appDir, request.params.artifactId); }
+        catch (error) {
+          if (error instanceof MaterialExportError) {
+            void reply.code(error.status);
+            return { ok: false as const, error: error.code };
+          }
+          throw error;
+        }
+      });
+      if (!file || "ok" in file) return file;
+      return reply.type(DOCX_CONTENT_TYPE).header("cache-control", "no-store")
+        .header("x-content-type-options", "nosniff")
+        .header("content-disposition", `attachment; filename="${file.filename}"`).send(file.data);
+    } catch (error) {
+      if (error instanceof MaterialExportError) { void reply.code(error.status); return { ok: false, error: error.code }; }
+      throw error;
+    }
+  });
 
   app.get<{ Params: { artifactId: string } }>("/v1/artifacts/:artifactId/preview.pdf", async (request, reply) => {
     const detail = withDb(reply, options.dbPath, (db) => getArtifactDetail(db, decodeRouteParam(request.params.artifactId)));

@@ -267,6 +267,12 @@ function makeStoryArtifactDetail(artifactId: string) {
 }
 
 export const handlers = [
+  http.post("*/v1/jobs/:jobId/material-exports", async ({ params, request }) => {
+    const body = await request.json() as { operation: string };
+    return body.operation === "history"
+      ? HttpResponse.json({ tenantId: "local", jobId: params["jobId"], sources: [], exports: [], exportedArtifactId: null })
+      : HttpResponse.json({ ok: false, error: "accepted_source_unavailable" }, { status: 409 });
+  }),
   ...interviewHandlers,
   http.get("*/v1/health", () => HttpResponse.json(sampleHealthResponse)),
   http.get("*/v1/dashboard/summary", () => HttpResponse.json(sampleDashboardSummary)),

@@ -1,6 +1,5 @@
 import { z } from "zod";
-import { ProviderStatusResponseSchema, ProviderModelCatalogResponseSchema, CodexVerifyResponseSchema } from "./schemas.js";
-import { MaterialLocaleRequestSchema, MaterialLocaleHistorySchema } from "./schemas.js";
+import { AcceptedMaterialExportRequestSchema, AcceptedMaterialExportsSchema, ProviderStatusResponseSchema, ProviderModelCatalogResponseSchema, CodexVerifyResponseSchema, MaterialLocaleRequestSchema, MaterialLocaleHistorySchema } from "./schemas.js";
 import {
   InterviewCatalogQuerySchema,
   InterviewCatalogResponseSchema,
@@ -585,6 +584,13 @@ const screeningFailure = (failure: EndpointDispatchFailure): EndpointFailureResp
 const ProviderOperationRequestSchema = z.unknown().optional();
 
 export const ENDPOINTS = {
+  acceptedMaterialExports: defineEndpoint({
+    name: "acceptedMaterialExports", method: "POST",
+    path: defineEndpointPath({ route: "/v1/jobs/:jobId/material-exports", paramName: "jobId", paramSchema: z.string().uuid(), invalid: { status: 400, error: "invalid_job_id" }, build: (jobId: string) => `/v1/jobs/${encodeURIComponent(jobId)}/material-exports` }),
+    request: AcceptedMaterialExportRequestSchema, response: AcceptedMaterialExportsSchema,
+    rpcDependencies: [RpcMethods.AcceptedMaterialExports],
+    demo: { class: "unavailable", reason: "DOCX export requires accepted materials saved in your local workspace." },
+  }),
   providerStatus: defineEndpoint({
     name: "providerStatus", method: "GET", path: "/v1/providers/status",
     request: ProviderOperationRequestSchema, response: ProviderStatusResponseSchema,

@@ -3780,6 +3780,40 @@ def gmail_auth(
     console.print(f"[green]Gmail token saved:[/green] {token_path}")
 
 
+@app.command("material-export")
+def material_export(
+    job_id: str,
+    source_artifact_id: str = typer.Option(..., "--source-artifact-id", help="Accepted material artifact ID."),
+    generation: int = typer.Option(..., "--generation", help="Expected accepted generation."),
+    format_name: str = typer.Option("docx", "--format"),
+    paper: str = typer.Option("A4", "--paper"),
+    locale: str | None = typer.Option(None, "--locale", help="Label unrecorded source language; never translate."),
+    tenant: str = typer.Option("local", "--tenant"),
+) -> None:
+    """Export accepted resume/cover-letter text as an editable DOCX."""
+    from jobctrl.config import APP_DIR
+    from jobctrl.database import init_db
+    from jobctrl.domain.materials.editable_export import ExportFailure
+    from jobctrl.infrastructure.materials.accepted_export import export_accepted_material
+
+    connection = init_db()
+    try:
+        result = export_accepted_material(
+            connection, tenant_id=tenant, job_id=job_id, artifact_id=source_artifact_id,
+            generation=generation, root=APP_DIR,
+            settings={"format": format_name, "paper": paper, "locale": locale},
+        )
+        typer.echo(json.dumps(result, ensure_ascii=False))
+    except ExportFailure as error:
+        typer.echo(error.code, err=True)
+        raise typer.Exit(1) from None
+    except (OSError, sqlite3.Error):
+        typer.echo("material_export_failed: accepted materials and approvals are preserved", err=True)
+        raise typer.Exit(1) from None
+    finally:
+        connection.close()
+
+
 @app.command("material-locale")
 def material_locale(
     job_id: str,

@@ -187,6 +187,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
   ],
   ResumeApproved: [
     materialsKeys.locales(LOCAL_TENANT, JOB_ID),
+    materialsKeys.exports(LOCAL_TENANT, JOB_ID),
     interviewKeys.history(LOCAL_TENANT, JOB_ID),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),
@@ -199,6 +200,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
   ],
   CoverLetterGenerated: [
     materialsKeys.locales(LOCAL_TENANT, JOB_ID),
+    materialsKeys.exports(LOCAL_TENANT, JOB_ID),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),
     artifactsKeys.lists(LOCAL_TENANT),
@@ -248,6 +250,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
   ],
   TailoredArtifactsSuppressed: [
     materialsKeys.locales(LOCAL_TENANT, JOB_ID),
+    materialsKeys.exports(LOCAL_TENANT, JOB_ID),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),
     artifactsKeys.lists(LOCAL_TENANT),
@@ -272,6 +275,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
   ],
   ResumeTemplateRefreshCompleted: [
     materialsKeys.locales(LOCAL_TENANT, JOB_ID),
+    materialsKeys.exports(LOCAL_TENANT, JOB_ID),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),
     artifactsKeys.lists(LOCAL_TENANT),

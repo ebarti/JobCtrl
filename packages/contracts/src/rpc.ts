@@ -7,7 +7,7 @@ import { DeterminationCitationSchema, DeterminationEnvelopeSchema, FormSnapshotS
  * worker over the local subprocess transport (target §6.5).
  */
 import { z } from "zod";
-import { MaterialLocaleRequestSchema } from "./schemas.js";
+import { AcceptedMaterialExportRequestSchema, AcceptedMaterialExportsSchema, MaterialLocaleRequestSchema } from "./schemas.js";
 import { GenerateInterviewPrepRequestSchema, refineInterviewEvidenceSelection } from "./interview.js";
 
 import {
@@ -79,6 +79,7 @@ export type JsonRpcResponse = z.infer<typeof JsonRpcResponseSchema>;
 export const RpcMethods = {
   ResetEnrichment: "reset_enrichment",
   MaterialLocaleVariants: "material_locale_variants",
+  AcceptedMaterialExports: "accepted_material_exports",
   ScreeningAnswers: "screening_answers",
   RunStage: "run_stage",
   RescoreJob: "rescore_job",
@@ -865,6 +866,10 @@ export const MaterialLocaleParamsSchema = z.object({
   tenantId: z.string().min(1), expectedAppDir: z.string().min(1), expectedDbPath: z.string().min(1),
   jobId: z.string().uuid(), request: MaterialLocaleRequestSchema,
 }).strict();
+export const AcceptedMaterialExportParamsSchema = z.object({
+  tenantId: z.string().min(1), expectedAppDir: z.string().min(1), expectedDbPath: z.string().min(1),
+  jobId: z.string().uuid(), request: AcceptedMaterialExportRequestSchema,
+}).strict();
 export const ScreeningAnswersParamsSchema = z.object({
   tenantId: z.string().min(1), expectedAppDir: z.string().min(1), expectedDbPath: z.string().min(1),
   jobId: z.string().min(1).max(160), command: ScreeningCommandSchema.optional(),
@@ -946,6 +951,7 @@ export const ReviewResumeEditParamsSchema = RuntimeBindingSchema.extend({
  * consuming a response. Python default handler registration owns the inventory.
  */
 export const RpcContracts = {
+  [RpcMethods.AcceptedMaterialExports]: { params: AcceptedMaterialExportParamsSchema, result: AcceptedMaterialExportsSchema },
   [RpcMethods.ResetEnrichment]: { params: ResetEnrichmentParamsSchema, result: ResetEnrichmentResultSchema },
   [RpcMethods.ProviderStatus]: { params: z.object({ provider: z.enum(["codex", "claude", "google"]).optional() }).strict(), result: ProviderStatusResultSchema },
   [RpcMethods.ProviderModels]: { params: EmptyRpcParamsSchema, result: ProviderModelCatalogResultSchema },

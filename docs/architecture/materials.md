@@ -237,6 +237,56 @@ Shared Python/TypeScript parity fixtures seed scores, stages, analysis,
 provenance, and artifacts, then compare every dual-written projection column and
 JSON shape. That is the drift guard for what the inspector displays.
 
+## Accepted Editable Export
+
+`domain/materials/editable_export.py` owns the `accepted-material-docx-v1`
+projection contract. `infrastructure/materials/accepted_export.py` reads one
+approved `job_materials_artifacts` text artifact selected by tenant, canonical
+Job ID, artifact ID and expected generation. The accepted UTF-8 file and stored
+metadata are the source snapshot. Export never reconstructs an older accepted
+document from the current profile or reruns tailoring/semantic determinations.
+
+The independent `docx_export.py` adapter writes deterministic WordprocessingML
+using the standard library. Each source line becomes an editable paragraph;
+tabs, blank lines, Unicode and bullet markers survive. CRLF/CR line separators
+normalize to paragraph boundaries. Only the complete ordered heading inventory
+emitted by `ResumeAssembler` receives section styles. Unrecognized edited or
+legacy structure remains literal text with an explicit warning; no prose
+classification or lexical semantic fallback is involved. Missing locale becomes
+`und`, or an explicit user language label; a recorded locale cannot be overridden.
+Single-column layout and A4/Letter are supported, independently of PDF layout.
+
+The document's custom property records source identity, generation, source byte
+and metadata SHA-256 hashes, contract version and resolved settings/hash. It does
+not embed private prompt/verification payloads or local paths. The append-only
+`job_artifacts` receipt (`stage=export`, `artifact_type=material_docx`) additionally
+stores output SHA-256, creation time and formatting warnings. Original evidence
+and determination IDs stay at the accepted source, bound by its metadata hash.
+
+The CLI `material-export` and the runtime-bound `accepted_material_exports` RPC
+invoke this owner synchronously. `accepted_export_api.py` lists canonical
+approved, unsuperseded text sources and retained export receipts, excluding
+private source metadata and file paths. The UI binds its request to the selected
+source/generation plus source-byte and metadata hashes. Changes since that
+selection fail before rendering; the CLI retains its original ID/generation
+contract. Publication stages
+an exclusive mode-0600 file under `generated/material-exports`, fences the full
+source row and bytes before and after staging inside a SQLite writer transaction,
+and commits only its new registry reference. Failure rolls back that reference
+and removes only its newly created file. It neither saves the Materials aggregate
+nor changes approval/application state. Export does not add an Apply input type,
+schema migration or a tailoring-policy dependency.
+
+The [API contract](../api/complete-contract.md#accepted-material-docx-exports)
+owns history/export HTTP requests and registered DOCX downloads. The API checks
+worker response bindings and allowlists safe errors. Downloads require a local
+approved export receipt, an owned nonsymlink file under
+`generated/material-exports`, and matching output SHA-256. They remain available
+after the source is later superseded. The Materials hook retains accepted
+history across failures, invalidates related job/artifact queries on settlement,
+and refreshes on material events and a bounded 15-second poll. Browser downloads
+go through `ArtifactDownloadPort`; no feature component accesses browser APIs.
+
 ## Reviewed Locale Variants
 
 Materials also owns source-linked translations of accepted resumes and cover

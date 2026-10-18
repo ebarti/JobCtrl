@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { MaterialLocaleHistorySchema } from "@jobctrl/contracts";
+import { AcceptedMaterialExportsSchema, MaterialLocaleHistorySchema } from "@jobctrl/contracts";
 import { openDatabase } from "../../../api/src/db.js";
 import { rebuildTenantDeleteProjections } from "../../../api/src/projections.js";
 import { createHash } from "node:crypto";
@@ -56,7 +56,7 @@ test.afterAll(() => {
 test.beforeEach(async ({ page }) => {
   if (process.env["JOBCTRL_E2E_ISOLATED"] !== "1") return;
   // The isolated API deliberately denies worker RPC outside its fixtures. This
-  // job has no locale artifacts; fixture only that unrelated read dependency.
+  // job has no locale artifacts or DOCX sources; fixture only those unrelated reads.
   // Company briefing, interview and digest reads still use the actual API/DB.
   await page.route(`**/v1/jobs/${job}/material-locales`, async (route) => {
     expect(route.request().method()).toBe("POST");
@@ -65,10 +65,17 @@ test.beforeEach(async ({ page }) => {
       supportedLocales: [], variants: [], profileVersion: null, sources: [],
     }) });
   });
+  await page.route(`**/v1/jobs/${job}/material-exports`, async (route) => {
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().postDataJSON()).toEqual({ operation: "history" });
+    await route.fulfill({ json: AcceptedMaterialExportsSchema.parse({
+      tenantId: "local", jobId: job, sources: [], exports: [], exportedArtifactId: null,
+    }) });
+  });
 });
 
 for (const mobile of [false, true]) {
-  test(`Shared company briefing preserves stale citations across Job Detail, Interviews and digest${mobile ? " @mobile" : ""}`, async ({ page }) => {
+  test(`Shared company briefing preserves stale citations across Job Detail, Interviews and digest${mobile ? " @mobile" : ""}`, async ({ page }, testInfo) => {
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     page.on("console", (message) => {
@@ -89,7 +96,7 @@ for (const mobile of [false, true]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await injectAxe(page);
     await checkA11y(page, '[aria-label="Company briefing"]', { includedImpacts: ["critical", "serious"] });
-    await page.screenshot({ path: `/tmp/jobctrl-1016-${mobile ? "mobile" : "desktop"}.png`, fullPage: false });
+    await page.screenshot({ path: testInfo.outputPath(`company-briefing-${mobile ? "mobile" : "desktop"}.png`), fullPage: false });
     await page.goto(`/interviews?card=B11&job=${job}`);
     await expect(page.getByRole("region", { name: "Company briefing", exact: true })).toContainText("Synthetic company hypothesis");
     await page.goto("/");

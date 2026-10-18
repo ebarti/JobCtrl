@@ -12,6 +12,11 @@ test("DryRunCompleted alone refreshes apply history without submitting the job",
 }) => {
   refreshE2eWorkerHeartbeat();
   const db = new Database(loadE2eDbPath());
+  const retainedExports = () =>
+    db.prepare(
+      "SELECT * FROM job_artifacts WHERE tenant_id = 'local' AND job_id = ? AND stage = 'export' ORDER BY artifact_id",
+    ).all(QA_PLATFORM_JOB_ID);
+  const initialExports = retainedExports();
   const runId = `qa-dry-run-completed-${randomUUID()}`;
   let completionEventId: number | bigint | undefined;
   const mutations: string[] = [];
@@ -23,13 +28,17 @@ test("DryRunCompleted alone refreshes apply history without submitting the job",
     const pathname = new URL(request.url()).pathname;
     if (pathname === "/v1/dashboard/summary") dashboardReads += 1;
     if (pathname === "/v1/events/stream") streamConnections += 1;
-    // This RPC-style endpoint uses POST for read-only history as well.
-    const isLocaleHistoryRead =
-      pathname === `/v1/jobs/${QA_PLATFORM_JOB_ID}/material-locales` &&
+    // These RPC-style endpoints also use POST for read-only history. Other
+    // operations on the same paths must still trip the mutation guard.
+    const isMaterialHistoryRead =
+      [
+        `/v1/jobs/${QA_PLATFORM_JOB_ID}/material-locales`,
+        `/v1/jobs/${QA_PLATFORM_JOB_ID}/material-exports`,
+      ].includes(pathname) &&
       request.method() === "POST" &&
       request.postDataJSON()?.operation === "history";
     if (
-      !isLocaleHistoryRead &&
+      !isMaterialHistoryRead &&
       pathname.startsWith("/v1/") &&
       !["GET", "HEAD", "OPTIONS"].includes(request.method())
     ) {
@@ -179,6 +188,7 @@ test("DryRunCompleted alone refreshes apply history without submitting the job",
         )
         .get(QA_PLATFORM_JOB_ID),
     ).toEqual({ count: 0 });
+    expect(retainedExports()).toEqual(initialExports);
     expect(mutations).toEqual([]);
   } finally {
     // Playwright owns the page and its CDP session. Explicitly detaching after
