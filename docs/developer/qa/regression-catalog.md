@@ -544,7 +544,11 @@ change during generation preserve the last approved text. Stale bindings block
 approval, clipboard copy and send logging; general SSE/activity/audit reads must
 exclude every private quotation and reason. Browser QA covers recording terms,
 deciding/correcting, reload/history, a linked-contact draft entry and mobile
-layout, using owned synthetic data only.
+layout, using owned synthetic data only. Run `offer-outcomes.spec.ts` in the
+production API/RPC browser gate (`JOBCTRL_E2E_ISOLATED=0`), which exercises
+supporting history reads as well. CI names it explicitly in that step; the
+isolated fixture skips it because it denies those Python RPCs. An isolated
+skip is not offer product-path proof.
 
 For interview preparation, inspect each actual drafting prompt with a supported
 question and explicitly empty selections. Only that question's selected evidence

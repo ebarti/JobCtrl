@@ -11045,7 +11045,11 @@ describe("local TypeScript API", () => {
 
   it("coalesces simultaneous genuine profile revisions into the newest durable continuation", async () => {
     const dispatched = deferred<ActionDispatchResult>();
-    const dispatch = vi.fn<ActionDispatcher>(() => dispatched.promise);
+    const dispatchStarted = deferred<void>();
+    const dispatch = vi.fn<ActionDispatcher>(() => {
+      dispatchStarted.resolve();
+      return dispatched.promise;
+    });
     const app = buildApp({ ...options, actionDispatcher: dispatch });
 
     const responses = Promise.all([
@@ -11061,7 +11065,10 @@ describe("local TypeScript API", () => {
       }),
     ]);
 
-    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1));
+    // Synchronize on the callback under the test's existing deadline. API
+    // startup and SQLite work on a loaded runner have no one-second SLA.
+    await dispatchStarted.promise;
+    expect(dispatch).toHaveBeenCalledTimes(1);
     const pendingDb = new Database(options.dbPath, { readonly: true });
     const events = pendingDb.prepare(
       "SELECT event_id FROM job_events WHERE event_type = 'ProfileUpdated' ORDER BY event_id",

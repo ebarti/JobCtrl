@@ -167,7 +167,8 @@ jobs:
           mkdir -p "$JOBCTRL_E2E_APP_DIR"
           corepack pnpm --filter @jobctrl/web exec playwright test --config e2e/playwright.config.ts \
             e2e/tests/discovery-saved-views.spec.ts e2e/tests/repeat-application.spec.ts \
-            e2e/tests/dry-run-completed.spec.ts e2e/tests/accepted-material-exports.spec.ts
+            e2e/tests/dry-run-completed.spec.ts e2e/tests/accepted-material-exports.spec.ts \
+            e2e/tests/offer-outcomes.spec.ts
 
   extension:
     name: Browser extension

@@ -5,6 +5,13 @@ import { expect, test } from "@playwright/test";
 import { checkA11y, injectAxe } from "axe-playwright";
 import { loadE2eDbPath } from "../fixtures/e2e-state.js";
 
+// The composed Job Detail reads supporting histories through Python RPC.
+// CI runs this scenario in its explicit production API/RPC step.
+test.skip(
+  process.env["JOBCTRL_E2E_ISOLATED"] === "1",
+  "Runs in the separate production API/RPC browser gate",
+);
+
 const JOB = "90000000-0000-4000-8000-000000001033";
 // The suite shares one independently owned workspace across specs. Do not let
 // this scenario's synthetic records alter later job counts or visual fixtures.
