@@ -2582,8 +2582,10 @@ function ResumePlateDocument({
           role="textbox"
           spellCheck={false}
           onKeyDownCapture={(event: ReactKeyboardEvent<HTMLDivElement>) => {
-            // Slate throttles selectionchange. Publish the user's current
-            // native range before keyboard handlers can use an older caret.
+            // Deletion can run before Slate's throttled selectionchange.
+            // Sync its range now, but leave text insertion to Slate: its
+            // native caret may lag the model while typing or composing.
+            if (event.key !== "Backspace" && event.key !== "Delete") return;
             if (event.defaultPrevented || event.nativeEvent.isComposing || editor.api.isComposing()) return;
             if (event.target instanceof Element && event.target.closest('[contenteditable="false"]')) return;
             const selection = event.currentTarget.ownerDocument.getSelection();
