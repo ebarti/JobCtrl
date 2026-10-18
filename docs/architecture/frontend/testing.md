@@ -55,6 +55,40 @@ graph TB
   `DomainEvent` union is plain TypeScript, not Zod, so it is not among
   these (§7.2).
 
+The boundary runner (`corepack pnpm web:lint:test`) permits canonical DTO,
+schema, constant and domain imports without routing exemptions. Its independent
+negative controls retain API-client, Query/Zustand, browser-port, dependency,
+barrel and stale-exemption enforcement. It inspects the actual tsconfig/generated
+route program, with direct loader-access controls for any/unresolved context,
+casts, aliases, nested destructuring, bracket access and unresolved barrels.
+Expression fallbacks, destructuring defaults, member assignments, computed
+capability slots and container/destructured runtime exports have independent
+controls for routes and views, with resolved and missing package declarations.
+Array spread/rest, awaited values and forwarding calls have independent
+source-located controls, including conditional/mutable callees and capability
+containers. Positive controls retain context-owned helper handoffs and harmless
+array positions.
+Loop bindings (including nested destructuring, assignments and `for await`),
+comma results/aliases and capability storage in instance, static or private
+class fields (including constructor/method writes) have separate generated-loader
+and view controls. Comma-result barrels are checked with both resolved and
+missing package declarations.
+Mixed default/named imports (including named type-only bindings), ordinary
+parameter defaults, constructor parameter properties, capability-bearing method
+receivers and raw context-helper returns through `any` have generated-program
+negative controls. Positive controls preserve harmless defaults, container
+methods, local shadowing and DTO-returning context helpers.
+These require boundary diagnostics at actionable source locations independently
+of compiler diagnostics; compiler-clean `any` cannot authorize a capability.
+Generated-route composition tests exercise loader-to-API/cache handoff, tenant
+separation, warm/cold caches, dependency changes and failed reads/recovery.
+Hook tests retain enabled/select/refetch policy; shell navigation scenarios
+cover passive reads, reload/Back and transport failure recovery against the owned
+synthetic API. Browser execution and independent QA remain separate gates.
+Type-level read-hook tests compare
+inferred results to canonical DTOs; readonly Jobs stage input remains a frontend
+refinement rather than a duplicate schema.
+
 These tests do not mount React components.
 
 ## 10.3 Component & Hook Tests (Vitest + React Testing Library + MSW)
@@ -94,6 +128,18 @@ per case. Event-stream tests use `FakeEventStreamPort` from
 `apps/web/src/test/testPorts.ts`, injected through `<PortsProvider />`.
 
 ## 10.4 End-to-End Tests (Playwright)
+
+Resume-review lifecycle coverage spans the Apply controller, Materials document
+modules, browser interactions and canonical API persistence. The controller's
+colocated tests cover tenant/job/source identity, stale cache responses,
+independent comments, normalized save acknowledgements and approval preparation.
+The `artifact-comparison.spec.ts` browser suite preserves later typing and undo
+through delayed responses, exercises real multiline HTML paste and reload, and
+requires recovery from save conflicts and failed renders before authorization.
+Its controlled HTTP responses isolate the session from providers/renderers;
+canonical artifact bytes and approval/audit preservation are checked separately
+by the API suites listed in [Frontend QA](../../developer/qa/frontend.md).
+
 
 The suite has **18** spec files under `apps/web/e2e/tests/` today:
 `analytics`, `artifact-comparison`, `dashboard`, `dry-run`, `evidence-map`,
@@ -187,25 +233,24 @@ the story path, affected production file and defect type.
 ## 10.9 CI Pipeline (Cross-Reference)
 
 The GitHub Actions TypeScript workflow (`.github/workflows/typescript.yml`)
-runs, in order:
+has independent API, web, Storybook and E2E jobs. After locked dependency setup:
 
-1. `pnpm -r check` (workspace typecheck, including `apps/web`). The
-   compile-time guards (`Record<DomainEventType, InvalidationHandler>`
-   exhaustiveness, etc.) fire here — this is the CI-enforced parity guard.
-2. `pnpm --filter @jobctrl/api test` (the API Vitest suite; API only).
-3. `pnpm --filter @jobctrl/web test` (web unit and integration coverage).
-4. `pnpm --filter @jobctrl/web test-d` (web type assertions).
-5. `pnpm --filter @jobctrl/web build` (Vite production build).
-6. `pnpm --filter @jobctrl/web storybook:build` (static Storybook build).
-7. Install Chromium for both the Node Playwright E2E runner and the locked
-   Python Playwright runtime used by API-backed preview routes.
-8. `pnpm --filter @jobctrl/web e2e` (browser coverage against the local API
-   and web servers).
-9. `pnpm --filter @jobctrl/web storybook:test` (Storybook test runner —
-   play functions + `@storybook/addon-a11y` axe checks).
+- The API job checks shared contracts, API client, domain types and API, then
+  tests domain types and API behavior with the locked worker available.
+- The web job runs `corepack pnpm web:lint` and `web:lint:test`, then
+  `web:check`, `web:test`, `web:test-d` and `web:build` in that order.
+  Compile-time guards such as
+  `Record<DomainEventType, InvalidationHandler>` enforce exhaustiveness here.
+- The Storybook job builds the stories, installs Chromium and runs
+  `web:storybook:test` for play functions and axe checks.
+- The E2E job installs Node and locked Python Chromium runtimes, then runs
+  `web:e2e` against the isolated fixture API and the selected real API/worker
+  RPC scenarios in a separate owned workspace.
 
-ESLint and dependency-boundary enforcement remain tracked in
-[#895](https://github.com/ebarti/JobCtrl/issues/895). Chromatic / Loki visual
+Dependency-boundary enforcement from
+[#895](https://github.com/ebarti/JobCtrl/issues/895) is delivered through
+`corepack pnpm web:lint` and its boundary regression suite, and runs in the
+TypeScript CI web job. Chromatic / Loki visual
 regression is named-not-built (§10.5). The frontend's parity tests are the
 analogue of the backend's `scripts/check-domain-type-parity.py`; both the
 typecheck and the web Vitest runtime backstop run in CI.

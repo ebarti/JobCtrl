@@ -2,6 +2,14 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import {
+  allKinds,
+  createTracer,
+  hasKind,
+  join,
+  origin,
+  unwrap,
+} from "./boundary-provenance.mjs";
 
 export const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const normalize = (path) => path.replaceAll("\\", "/");
@@ -36,6 +44,7 @@ export function dependencies(source) {
           (item) => (item.propertyName ?? item.name).text,
         );
         typeOnly ||=
+          !node.importClause?.name &&
           bindings.elements.length > 0 &&
           bindings.elements.every((item) => item.isTypeOnly);
       }
@@ -91,7 +100,7 @@ export function dependencies(source) {
 export function lintProgram(
   program,
   root,
-  exemptions = { contracts: {}, capabilities: {} },
+  exemptions = { capabilities: {}, dependencies: {} },
 ) {
   const checker = program.getTypeChecker();
   const options = program.getCompilerOptions();
@@ -101,6 +110,150 @@ export function lintProgram(
   const localPath = (path) => normalize(relative(src, path));
   const context = (path) => /^contexts\/([^/]+)\//.exec(path)?.[1];
   const view = (path) => /^views\/([^/]+)\//.exec(path)?.[1];
+  const resolveSource = (specifier, source) => {
+    const resolved = ts.resolveModuleName(specifier, source.fileName, options, {
+      fileExists: (file) =>
+        Boolean(program.getSourceFile(file)) || ts.sys.fileExists(file),
+      readFile: (file) =>
+        program.getSourceFile(file)?.text ?? ts.sys.readFile(file),
+    }).resolvedModule;
+    return resolved && program.getSourceFile(resolved.resolvedFileName);
+  };
+  // Re-export provenance must survive missing package declarations too. Inspect
+  // only the selected runtime exports, so a barrel's internal/type-only imports
+  // cannot poison a legitimate public helper.
+  function runtimeOrigins(specifier, names, source, seen = new Set()) {
+    if (
+      /^(@tanstack\/(react-query|query-core)|zustand)(?:\/|$)/.test(specifier)
+    )
+      return ["view-state"];
+    if (/^@jobctrl\/api-client(?:\/|$)/.test(specifier))
+      return names.every((name) => name === "JobCtrlApiError")
+        ? []
+        : ["api-adapter"];
+    const target = resolveSource(specifier, source);
+    if (!target) return [];
+    const identity = `${target.fileName}:${names.join(",")}`;
+    if (seen.has(identity)) return [];
+    seen.add(identity);
+    const origins = [];
+    const runtimeTrace = createTracer(checker, target, {
+      // Exporting a forwarded runtime capability does not change its owner.
+      // Composer calls use handoff diagnostics instead, preserving helper DTOs.
+      forwardArguments: true,
+      seed(node) {
+        const symbol =
+          ts.isIdentifier(node) && ts.isShorthandPropertyAssignment(node.parent)
+            ? checker.getShorthandAssignmentValueSymbol(node.parent)
+            : ts.isExportSpecifier(node.parent)
+              ? checker.getExportSpecifierLocalTargetSymbol(node.parent)
+              : checker.getSymbolAtLocation(node);
+        const found = (symbol?.declarations ?? []).flatMap((decl) => {
+          if (ts.isImportSpecifier(decl)) {
+            const statement = decl.parent.parent.parent;
+            if (decl.isTypeOnly || statement.importClause?.isTypeOnly)
+              return [];
+            return runtimeOrigins(
+              statement.moduleSpecifier.text,
+              [(decl.propertyName ?? decl.name).text],
+              target,
+              new Set(seen),
+            );
+          }
+          if (ts.isNamespaceImport(decl) || ts.isImportClause(decl)) {
+            const clause = ts.isNamespaceImport(decl) ? decl.parent : decl;
+            if (clause.isTypeOnly) return [];
+            if (ts.isNamespaceImport(decl))
+              return [{ namespace: clause.parent.moduleSpecifier.text }];
+            return runtimeOrigins(
+              clause.parent.moduleSpecifier.text,
+              ["default"],
+              target,
+              new Set(seen),
+            );
+          }
+          return [];
+        });
+        return join(...found.map(origin));
+      },
+      member(_node, base, keys) {
+        return join(
+          ...runtimeRules([...(base?.kinds ?? [])], keys).map(origin),
+        );
+      },
+    });
+    function runtimeRules(kinds, keys = ["*"]) {
+      return kinds.flatMap((kind) =>
+        typeof kind === "string"
+          ? [kind]
+          : runtimeOrigins(kind.namespace, keys, target, new Set(seen)),
+      );
+    }
+    const localOrigins = (node) =>
+      runtimeRules(allKinds(runtimeTrace.trace(node)));
+    function bindingNames(name) {
+      return ts.isIdentifier(name)
+        ? [name]
+        : name.elements.flatMap((element) =>
+            ts.isBindingElement(element) ? bindingNames(element.name) : [],
+          );
+    }
+    for (const statement of target.statements) {
+      if (
+        ts.isExportAssignment(statement) &&
+        (names.includes("*") || names.includes("default"))
+      )
+        origins.push(...localOrigins(statement.expression));
+      if (
+        ts.isVariableStatement(statement) &&
+        statement.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
+      )
+        for (const decl of statement.declarationList.declarations)
+          for (const name of bindingNames(decl.name))
+            if (names.includes("*") || names.includes(name.text))
+              origins.push(...localOrigins(name));
+      if (
+        ts.isExportDeclaration(statement) &&
+        !statement.isTypeOnly &&
+        !statement.moduleSpecifier &&
+        statement.exportClause &&
+        ts.isNamedExports(statement.exportClause)
+      ) {
+        for (const item of statement.exportClause.elements)
+          if (
+            !item.isTypeOnly &&
+            (names.includes("*") || names.includes(item.name.text))
+          )
+            origins.push(...localOrigins(item.propertyName ?? item.name));
+      }
+      if (
+        !ts.isExportDeclaration(statement) ||
+        statement.isTypeOnly ||
+        !statement.moduleSpecifier ||
+        !ts.isStringLiteralLike(statement.moduleSpecifier)
+      )
+        continue;
+      let selected = ["*"];
+      if (statement.exportClause && ts.isNamedExports(statement.exportClause))
+        selected = statement.exportClause.elements
+          .filter(
+            (item) =>
+              !item.isTypeOnly &&
+              (names.includes("*") || names.includes(item.name.text)),
+          )
+          .map((item) => (item.propertyName ?? item.name).text);
+      if (selected.length)
+        origins.push(
+          ...runtimeOrigins(
+            statement.moduleSpecifier.text,
+            selected,
+            target,
+            seen,
+          ),
+        );
+    }
+    return origins;
+  }
   function exempt(group, path, name) {
     const entry = exemptions[group]?.[path];
     if (!entry?.reason?.trim() || !entry.symbols.includes(name)) return false;
@@ -172,6 +325,27 @@ export function lintProgram(
             "Use a literal module specifier so frontend ownership can be checked.",
           );
         continue;
+      }
+      if (composer && !dep.typeOnly) {
+        const bindings = ts.isImportDeclaration(dep.node)
+          ? dep.node.importClause?.namedBindings
+          : undefined;
+        const names =
+          bindings && ts.isNamedImports(bindings)
+            ? [
+                ...bindings.elements
+                  .filter((item) => !item.isTypeOnly)
+                  .map((item) => (item.propertyName ?? item.name).text),
+                ...(dep.node.importClause.name ? ["default"] : []),
+              ]
+            : dep.names;
+        if (names.length)
+          for (const rule of runtimeOrigins(dep.specifier, names, source))
+            report(
+              dep.node,
+              rule,
+              "Runtime capabilities cannot be imported through a barrel, including when declarations are missing; use context-owned helpers and ports.",
+            );
       }
       const resolved = ts.resolveModuleName(
         dep.specifier,
@@ -263,19 +437,6 @@ export function lintProgram(
         }
       if (
         feature &&
-        path !== "contexts/operations/types.ts" &&
-        /^@jobctrl\/contracts(?:\/|$)/.test(dep.specifier)
-      ) {
-        for (const name of dep.names)
-          if (!exempt("contracts", path, name))
-            report(
-              dep.node,
-              "operations-acl",
-              `Import ${name} through contexts/operations/types.ts. Existing direct contract access requires an exact file/symbol exemption with an architectural reason.`,
-            );
-      }
-      if (
-        feature &&
         /^@jobctrl\/api-client(?:\/|$)/.test(dep.specifier) &&
         !dep.names.every((name) => name === "JobCtrlApiError")
       ) {
@@ -322,7 +483,507 @@ export function lintProgram(
         );
     }
     if (!feature) continue;
+    // Generated router declarations can resolve to `any` (or be absent). Follow
+    // capability origins through syntax as well as types; a cast cannot erase
+    // authority, and an unrelated local with the same spelling is not a port.
+
+    function keyText(node) {
+      if (!node) return undefined;
+      if (
+        ts.isIdentifier(node) ||
+        ts.isStringLiteralLike(node) ||
+        ts.isNumericLiteral(node)
+      )
+        return node.text;
+      if (ts.isComputedPropertyName(node)) return literalKey(node.expression);
+    }
+    function literalKeys(node) {
+      const value = capabilityTrace.trace(node);
+      return value?.keys.size && !value.unknownKeys
+        ? [...value.keys]
+        : undefined;
+    }
+    function literalKey(node) {
+      const keys = literalKeys(node);
+      return keys?.length === 1 ? keys[0] : undefined;
+    }
+    function weakMember(node, key) {
+      if (!node) return undefined;
+      const type = checker.getTypeAtLocation(node);
+      if (!(type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)))
+        return undefined;
+      const kind = {
+        context: "context",
+        ports: "ports",
+        api: "api",
+        queryClient: "query",
+      }[key];
+      return kind ? origin(kind) : undefined;
+    }
+    function loaderParameter(decl) {
+      const fn = decl.parent;
+      if (loaderFunctions.has(fn)) return true;
+      const owner = ts.isMethodDeclaration(fn) ? fn : fn?.parent;
+      return (
+        owner &&
+        (ts.isPropertyAssignment(owner) || ts.isMethodDeclaration(owner)) &&
+        keyText(owner.name) === "loader" &&
+        ts.isObjectLiteralExpression(owner.parent) &&
+        ts.isCallExpression(owner.parent.parent) &&
+        routerOrigin(owner.parent.parent.expression)
+      );
+    }
+    function routerOrigin(node, seen = new Set()) {
+      node = unwrap(node);
+      if (!node || seen.has(node)) return false;
+      seen.add(node);
+      if (ts.isCallExpression(node)) return routerOrigin(node.expression, seen);
+      const symbol = checker.getSymbolAtLocation(node);
+      for (const decl of symbol?.declarations ?? []) {
+        if (ts.isImportSpecifier(decl)) {
+          const statement = decl.parent.parent.parent;
+          if (
+            ts.isImportDeclaration(statement) &&
+            ts.isStringLiteralLike(statement.moduleSpecifier) &&
+            statement.moduleSpecifier.text === "@tanstack/react-router" &&
+            [
+              "createFileRoute",
+              "createRoute",
+              "createRootRouteWithContext",
+            ].includes((decl.propertyName ?? decl.name).text)
+          )
+            return true;
+        }
+        if (
+          ts.isVariableDeclaration(decl) &&
+          decl.initializer &&
+          routerOrigin(decl.initializer, seen)
+        )
+          return true;
+      }
+      return false;
+    }
+    const loaderFunctions = new Set();
+    function registerLoader(node, seen = new Set()) {
+      node = unwrap(node);
+      if (!node || seen.has(node)) return;
+      seen.add(node);
+      if (
+        ts.isArrowFunction(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isFunctionDeclaration(node) ||
+        ts.isMethodDeclaration(node)
+      )
+        loaderFunctions.add(node);
+      else {
+        for (const decl of checker.getSymbolAtLocation(node)?.declarations ??
+          []) {
+          if (ts.isVariableDeclaration(decl))
+            registerLoader(decl.initializer, seen);
+          if (ts.isFunctionDeclaration(decl)) loaderFunctions.add(decl);
+        }
+      }
+    }
+    function collectLoaders(node) {
+      if (
+        ts.isObjectLiteralExpression(node) &&
+        ts.isCallExpression(node.parent) &&
+        routerOrigin(node.parent.expression)
+      )
+        for (const prop of node.properties)
+          if (keyText(prop.name) === "loader")
+            registerLoader(
+              ts.isPropertyAssignment(prop)
+                ? prop.initializer
+                : ts.isShorthandPropertyAssignment(prop)
+                  ? prop.name
+                  : prop,
+            );
+      ts.forEachChild(node, collectLoaders);
+    }
+
+    const slots = {
+      loader: { context: "context" },
+      context: { ports: "ports", queryClient: "query" },
+      ports: { api: "api" },
+    };
+    const capabilityTrace = capabilityTracer(source);
+    const capability = (node) => capabilityTrace.trace(node);
+    function capabilityTracer(tracedSource, parameters = new Map()) {
+      const tracer = createTracer(checker, tracedSource, {
+        seed: capabilitySeed,
+        member(node, base, keys) {
+          const values = [];
+          for (const kind of base?.kinds ?? []) {
+            const fields = slots[kind] ?? {};
+            // Unknown computed access on a known capability container must not
+            // grant authority. Retain all possible child capabilities.
+            for (const key of keys ?? Object.keys(fields))
+              if (fields[key]) values.push(origin(fields[key]));
+          }
+          for (const key of keys ?? [])
+            values.push(
+              weakMember(
+                ts.isBindingElement(node) ? node.parent : node.expression,
+                key,
+              ),
+            );
+          return join(...values);
+        },
+      });
+      function capabilitySeed(node, seen, writes) {
+        const values = [];
+        if (ts.isParameter(node)) values.push(parameters.get(node)?.());
+        if (ts.isIdentifier(node))
+          for (const decl of checker.getSymbolAtLocation(node)?.declarations ??
+            [])
+            if (ts.isParameter(decl)) values.push(parameters.get(decl)?.());
+        if (ts.isParameter(node) && loaderParameter(node))
+          values.push(origin("loader"));
+        if (ts.isIdentifier(node)) {
+          const symbol = ts.isShorthandPropertyAssignment(node.parent)
+            ? checker.getShorthandAssignmentValueSymbol(node.parent)
+            : checker.getSymbolAtLocation(node);
+          let original = symbol;
+          if (original?.flags & ts.SymbolFlags.Alias)
+            original = checker.getAliasedSymbol(original);
+          if (
+            original?.name === "usePorts" &&
+            original.declarations?.some(
+              (decl) =>
+                localPath(decl.getSourceFile().fileName) ===
+                "shared/providers/PortsProvider.tsx",
+            )
+          )
+            values.push(origin("ports-factory"));
+          if (
+            original?.name === "useRouteContext" &&
+            original.declarations?.some((decl) =>
+              normalize(decl.getSourceFile().fileName).includes("/@tanstack/"),
+            )
+          )
+            values.push(origin("context-factory"));
+          if (
+            symbol?.declarations?.some(
+              (decl) => ts.isParameter(decl) && loaderParameter(decl),
+            )
+          )
+            values.push(origin("loader"));
+        }
+        if (ts.isCallExpression(node)) {
+          const callee = unwrap(node.expression);
+          const factory = tracer.trace(callee, new Set(seen), writes);
+          if (hasKind(factory, "ports-factory")) values.push(origin("ports"));
+          if (hasKind(factory, "context-factory"))
+            values.push(origin("context"));
+          if (
+            ts.isPropertyAccessExpression(callee) &&
+            callee.name.text === "useRouteContext" &&
+            routerOrigin(callee.expression)
+          )
+            values.push(origin("context"));
+        }
+        // Context ownership permits receiving dependencies, not exporting them as
+        // raw authority. Trace returned values with the actual argument origins,
+        // using the owner's source so local assignments and aliases survive any.
+        if (composer && ts.isCallExpression(node)) {
+          for (const fn of contextFunctions(node.expression)) {
+            if (seen.has(fn)) continue;
+            const bound = new Map(parameters);
+            fn.parameters.forEach((parameter, index) => {
+              // Evaluate with the caller's original scope only if the returned
+              // value reads this parameter. Pure helpers need not expand an
+              // entire session just to return a scalar independent of authority.
+              let evaluated = false;
+              let value;
+              bound.set(parameter, () => {
+                if (!evaluated) {
+                  value = tracer.trace(node.arguments[index], new Set(seen), writes);
+                  evaluated = true;
+                }
+                return value;
+              });
+            });
+            const resultTracer = capabilityTracer(fn.getSourceFile(), bound);
+            const next = new Set(seen).add(fn);
+            function returned(body) {
+              if (ts.isReturnStatement(body)) {
+                values.push(
+                  resultTracer.trace(body.expression, new Set(next), writes),
+                );
+                return;
+              }
+              // A nested function's returns do not belong to this invocation.
+              if (ts.isFunctionLike(body)) return;
+              ts.forEachChild(body, returned);
+            }
+            if (ts.isBlock(fn.body)) returned(fn.body);
+            else values.push(resultTracer.trace(fn.body, next, writes));
+          }
+        }
+        const type = checker.getTypeAtLocation(node);
+        for (const symbol of [type.aliasSymbol, type.getSymbol()]) {
+          for (const decl of symbol?.declarations ?? []) {
+            const path = localPath(decl.getSourceFile().fileName);
+            if (
+              path === "shared/ports/ApiClientPort.ts" &&
+              symbol.name === "ApiClientPort"
+            )
+              values.push(origin("api"));
+            if (
+              path === "shared/providers/PortsProvider.tsx" &&
+              symbol.name === "Ports"
+            )
+              values.push(origin("ports"));
+            if (path === "router.ts" && symbol.name === "RouterContext")
+              values.push(origin("context"));
+            if (
+              symbol.name === "QueryClient" &&
+              normalize(decl.getSourceFile().fileName).includes(
+                "/@tanstack/query-core/",
+              )
+            )
+              values.push(origin("query"));
+          }
+        }
+        return join(...values);
+      }
+      return tracer;
+    }
+    collectLoaders(source);
+
+    function inspectCapability(node) {
+      let base, keys, expression;
+      if (
+        ts.isPropertyAccessExpression(node) ||
+        ts.isElementAccessExpression(node)
+      ) {
+        expression = node.expression;
+        base = capability(expression);
+        keys = ts.isPropertyAccessExpression(node)
+          ? [node.name.text]
+          : literalKeys(node.argumentExpression);
+      } else if (
+        ts.isBindingElement(node) &&
+        ts.isObjectBindingPattern(node.parent)
+      ) {
+        base = capabilityTrace.bindingSource(node.parent);
+        expression = node.parent;
+        const key = keyText(node.propertyName ?? node.name);
+        keys = key === undefined ? undefined : [key];
+      } else return;
+      const key = keys?.length === 1 ? keys[0] : undefined;
+      if (
+        composer &&
+        (hasKind(base, "query") ||
+          (hasKind(base, "context") &&
+            (!keys || keys.includes("queryClient"))) ||
+          (keys?.includes("queryClient") &&
+            weakMember(expression, "queryClient")))
+      )
+        report(
+          node,
+          "view-state",
+          "QueryClient access belongs in a context-owned read helper or hook; weak/generated types, computed keys and aliases do not grant authority.",
+        );
+      if (
+        composer &&
+        hasKind(base, "api") &&
+        !exempt("capabilities", path, key)
+      )
+        report(
+          node,
+          "view-api",
+          "Move API access " +
+            (key ?? "[computed]") +
+            " into a context-owned read helper or hook; weak/generated types, computed keys and aliases do not grant authority.",
+        );
+    }
+    function contextFunctions(node, seen = new Set()) {
+      node = unwrap(node);
+      if (!node || seen.has(node)) return [];
+      seen.add(node);
+      if (ts.isConditionalExpression(node))
+        return [
+          ...contextFunctions(node.whenTrue, new Set(seen)),
+          ...contextFunctions(node.whenFalse, new Set(seen)),
+        ];
+      let symbol = checker.getSymbolAtLocation(node);
+      if (symbol?.flags & ts.SymbolFlags.Alias)
+        symbol = checker.getAliasedSymbol(symbol);
+      return (symbol?.declarations ?? []).flatMap((decl) => {
+        if (
+          context(localPath(decl.getSourceFile().fileName)) &&
+          !isSupport(localPath(decl.getSourceFile().fileName))
+        ) {
+          if (ts.isFunctionDeclaration(decl) && decl.body) return [decl];
+          if (ts.isVariableDeclaration(decl) && decl.initializer) {
+            const fn = unwrap(decl.initializer);
+            if (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn))
+              return [fn];
+          }
+        }
+        return ts.isVariableDeclaration(decl) && decl.initializer
+          ? contextFunctions(decl.initializer, new Set(seen))
+          : [];
+      });
+    }
+    function contextHelper(node, seen = new Set()) {
+      node = unwrap(node);
+      if (!node || seen.has(node)) return false;
+      seen.add(node);
+      // Permission requires every alternative to have a known owner.
+      if (ts.isConditionalExpression(node))
+        return (
+          contextHelper(node.whenTrue, new Set(seen)) &&
+          contextHelper(node.whenFalse, new Set(seen))
+        );
+      let symbol = checker.getSymbolAtLocation(node);
+      if (symbol?.flags & ts.SymbolFlags.Alias)
+        symbol = checker.getAliasedSymbol(symbol);
+      const declarations = symbol?.declarations ?? [];
+      return (
+        declarations.length > 0 &&
+        declarations.every((decl) => {
+          const file = localPath(decl.getSourceFile().fileName);
+          if (
+            context(file) &&
+            !isSupport(file) &&
+            (ts.isFunctionDeclaration(decl) ||
+              (ts.isVariableDeclaration(decl) &&
+                decl.initializer &&
+                (ts.isArrowFunction(unwrap(decl.initializer)) ||
+                  ts.isFunctionExpression(unwrap(decl.initializer)))))
+          )
+            return true;
+          return (
+            ts.isIdentifier(node) &&
+            ts.isVariableDeclaration(decl) &&
+            ts.isVariableDeclarationList(decl.parent) &&
+            Boolean(decl.parent.flags & ts.NodeFlags.Const) &&
+            contextHelper(decl.initializer, new Set(seen))
+          );
+        })
+      );
+    }
+    function inspectHandoff(argument) {
+      const kinds = allKinds(capability(argument));
+      if (
+        kinds.some((kind) =>
+          ["api", "ports", "context", "loader"].includes(kind),
+        )
+      )
+        report(
+          argument,
+          "view-api",
+          "API capabilities and their containers may only be handed to a context-owned helper; route/view calls, returns and class fields cannot acquire API authority.",
+        );
+      if (kinds.some((kind) => ["query", "context", "loader"].includes(kind)))
+        report(
+          argument,
+          "view-state",
+          "QueryClient capabilities and their containers may only be handed to a context-owned helper; route/view calls, returns and class fields cannot acquire cache authority.",
+        );
+    }
+    function writesReceiverField(target) {
+      target = unwrap(target);
+      if (!target) return false;
+      if (
+        ts.isPropertyAccessExpression(target) ||
+        ts.isElementAccessExpression(target)
+      ) {
+        let receiver = unwrap(target.expression);
+        while (
+          receiver &&
+          (ts.isPropertyAccessExpression(receiver) ||
+            ts.isElementAccessExpression(receiver))
+        )
+          receiver = unwrap(receiver.expression);
+        return receiver?.kind === ts.SyntaxKind.ThisKeyword;
+      }
+      if (ts.isArrayLiteralExpression(target))
+        return target.elements.some(writesReceiverField);
+      if (ts.isObjectLiteralExpression(target))
+        return target.properties.some(
+          (prop) =>
+            (ts.isPropertyAssignment(prop) &&
+              writesReceiverField(prop.initializer)) ||
+            (ts.isSpreadAssignment(prop) &&
+              writesReceiverField(prop.expression)),
+        );
+      if (ts.isSpreadElement(target))
+        return writesReceiverField(target.expression);
+      if (
+        ts.isBinaryExpression(target) &&
+        target.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      )
+        return writesReceiverField(target.left);
+      return false;
+    }
     function inspect(node) {
+      inspectCapability(node);
+      // An arbitrary forwarding call must not erase API authority when its
+      // return type is any. Only context-owned implementations may receive it.
+      // Inspect the argument handoff, including containers and spread args,
+      // without pretending that every function returns its arguments.
+      if (
+        composer &&
+        (ts.isCallExpression(node) || ts.isNewExpression(node)) &&
+        !contextHelper(node.expression)
+      ) {
+        for (const argument of node.arguments ?? []) {
+          inspectHandoff(argument);
+        }
+        const callee = unwrap(node.expression);
+        if (
+          ts.isPropertyAccessExpression(callee) ||
+          ts.isElementAccessExpression(callee)
+        ) {
+          const keys = ts.isPropertyAccessExpression(callee)
+            ? [callee.name.text]
+            : literalKeys(callee.argumentExpression);
+          const reviewedPreview =
+            hasKind(capability(callee.expression), "api") &&
+            keys?.length === 1 &&
+            exempt("capabilities", path, keys[0]);
+          if (!reviewedPreview) inspectHandoff(callee.expression);
+        }
+      }
+      if (composer && ts.isReturnStatement(node) && node.expression)
+        inspectHandoff(node.expression);
+      if (composer && ts.isArrowFunction(node) && !ts.isBlock(node.body))
+        inspectHandoff(node.body);
+      // A field annotated any hides its initializer from later instance reads.
+      // Reject capability storage at the transfer, independently of field type.
+      if (composer && ts.isPropertyDeclaration(node) && node.initializer)
+        inspectHandoff(node.initializer);
+      if (
+        composer &&
+        ts.isParameter(node) &&
+        node.initializer &&
+        ts.isConstructorDeclaration(node.parent) &&
+        ts.isParameterPropertyDeclaration(node, node.parent)
+      )
+        inspectHandoff(node.initializer);
+      if (
+        composer &&
+        ts.isForOfStatement(node) &&
+        !ts.isVariableDeclarationList(node.initializer) &&
+        writesReceiverField(node.initializer)
+      )
+        inspectHandoff(node.expression);
+      if (
+        composer &&
+        ts.isBinaryExpression(node) &&
+        [
+          ts.SyntaxKind.EqualsToken,
+          ts.SyntaxKind.QuestionQuestionEqualsToken,
+          ts.SyntaxKind.BarBarEqualsToken,
+          ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+        ].includes(node.operatorToken.kind) &&
+        writesReceiverField(node.left)
+      )
+        inspectHandoff(node.right);
       let symbol;
       if (ts.isIdentifier(node)) symbol = checker.getSymbolAtLocation(node);
       else if (
@@ -402,7 +1063,7 @@ export function lintProgram(
     }
     inspect(source);
   }
-  for (const group of ["contracts", "capabilities", "dependencies"])
+  for (const group of ["capabilities", "dependencies"])
     for (const [path, entry] of Object.entries(exemptions[group] ?? {})) {
       for (const name of entry.symbols)
         if (!used.has(`${group}:${path}:${name}`))
@@ -431,7 +1092,7 @@ export function lint(root = webRoot) {
     );
   const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, root);
   const program = ts.createProgram(
-    sourceFiles(resolve(root, "src")),
+    [...new Set([...parsed.fileNames, ...sourceFiles(resolve(root, "src"))])],
     parsed.options,
   );
   const exemptions = JSON.parse(

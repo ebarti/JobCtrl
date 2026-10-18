@@ -3,7 +3,7 @@ import type { JSX } from "react";
 
 import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import { Badge } from "../../../shared/ui/badge.js";
-import type { Stage, StageState } from "../../operations/types.js";
+import type { Stage, StageState } from "@jobctrl/contracts";
 import {
   stageStateTone,
   type StageStateTone,

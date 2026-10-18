@@ -5420,20 +5420,17 @@ export interface BrowserCapabilityErrorResponse {
   message: string;
 }
 
-export interface ProviderStatusResponse {
-  ok: true;
-  providers: ProviderStatusItem[];
-}
+export const ProviderStatusResponseSchema = ProviderStatusResultSchema.safeExtend({ ok: z.literal(true) });
+export type ProviderStatusResponse = z.infer<typeof ProviderStatusResponseSchema>;
 
-export interface ProviderModelCatalogResponse {
-  ok: true;
-  providers: ProviderModelCatalogItem[];
-}
+export const ProviderModelCatalogResponseSchema = ProviderModelCatalogResultSchema.safeExtend({ ok: z.literal(true) });
+export type ProviderModelCatalogResponse = z.infer<typeof ProviderModelCatalogResponseSchema>;
 
-export interface CodexVerifyResponse {
-  ok: true;
-  verification: z.infer<typeof CodexVerifyResultSchema>;
-}
+export const CodexVerifyResponseSchema = z.object({
+  ok: z.literal(true),
+  verification: CodexVerifyResultSchema,
+}).strict();
+export type CodexVerifyResponse = z.infer<typeof CodexVerifyResponseSchema>;
 
 export interface ProviderOperationErrorResponse {
   ok: false;

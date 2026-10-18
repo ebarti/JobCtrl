@@ -6,7 +6,7 @@ import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { createOptimisticMutation } from "../../../shared/lib/createOptimisticMutation.js";
 import { dashboardKeys } from "../../operations/dashboardKeys.js";
 import { jobsKeys } from "../../operations/jobsKeys.js";
-import type { ProfileConfigResponse } from "../../operations/types.js";
+import type { ProfileConfigResponse } from "@jobctrl/contracts";
 import { patchProfileResponse } from "../lib/profile-patches.js";
 import { profileKeys } from "../queryKeys.js";
 

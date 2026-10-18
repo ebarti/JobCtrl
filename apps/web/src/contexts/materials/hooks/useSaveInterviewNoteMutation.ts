@@ -1,5 +1,10 @@
 import { JobCtrlApiError } from "@jobctrl/api-client";
-import { InterviewQuestionNoteSchema, type InterviewNotesResponse, type SaveInterviewQuestionNoteRequest, type SaveInterviewQuestionNoteResponse } from "../../operations/types.js";
+import {
+  InterviewQuestionNoteSchema,
+  type InterviewNotesResponse,
+  type SaveInterviewQuestionNoteRequest,
+  type SaveInterviewQuestionNoteResponse,
+} from "@jobctrl/contracts";
 import { z } from "zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 

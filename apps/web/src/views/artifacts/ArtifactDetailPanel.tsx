@@ -23,11 +23,8 @@ import { useArtifactDetailQuery } from "../../contexts/operations/hooks/useArtif
 import { useArtifactsListQuery } from "../../contexts/operations/hooks/useArtifactsListQuery.js";
 import { useEvidenceMapQuery } from "../../contexts/operations/hooks/useEvidenceMapQuery.js";
 import { useJobDetailQuery } from "../../contexts/operations/hooks/useJobDetailQuery.js";
-import type {
-  ArtifactsListInput,
-  EvidenceMapEntry,
-  JobDetail,
-} from "../../contexts/operations/types.js";
+import type { ArtifactsListInput } from "../../contexts/operations/types.js";
+import type { EvidenceMapEntry, JobDetail } from "@jobctrl/contracts";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert.js";

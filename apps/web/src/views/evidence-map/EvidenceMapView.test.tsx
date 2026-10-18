@@ -17,10 +17,7 @@ import { userEvent } from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
 
-import type {
-  EvidenceMapEntry,
-  EvidenceUsageRef,
-} from "../../contexts/operations/types.js";
+import type { EvidenceMapEntry, EvidenceUsageRef } from "@jobctrl/contracts";
 import { artifactsSearchSchema } from "../../routes/-artifacts.search.js";
 import { evidenceMapSearchSchema } from "../../routes/-evidence-map.search.js";
 import { jobsSearchSchema } from "../../routes/-jobs.search.js";

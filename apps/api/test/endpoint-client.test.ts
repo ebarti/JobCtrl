@@ -1,3 +1,4 @@
+import { providerStatusResult, providerModelsResult, providerVerifyResult } from "./provider-fixture.js";
 import { describe, expect, it, vi } from "vitest";
 
 import { createEndpointMethods } from "@jobctrl/api-client";
@@ -126,5 +127,40 @@ describe("endpoint client factory", () => {
       ["POST", "/v1/resume-review/drafts/draft%2Fone/render", {}],
       ["POST", "/v1/outcomes/gmail/scan", {}],
     ]);
+  });
+});
+
+const providerCases = [
+  ["providerStatus", "GET", "/v1/providers/status", { ok: true, ...providerStatusResult }],
+  ["providerModels", "GET", "/v1/providers/models", { ok: true, ...providerModelsResult }],
+  ["verifyCodexProvider", "POST", "/v1/providers/codex/verify", { ok: true, verification: providerVerifyResult }],
+] as const;
+
+describe("generated provider clients", () => {
+  it.each(providerCases)("%s derives transport and validates success", async (name, method, route, response) => {
+    const transport = vi.fn(async () => response);
+    await expect(createEndpointMethods(transport)[name]()).resolves.toEqual(response);
+    expect(transport.mock.calls).toEqual([[method, route, method === "POST" ? {} : undefined]]);
+  });
+
+  it.each(providerCases)("%s rejects malformed and private response fields", async (name, _method, _route, response) => {
+    for (const invalid of [{ ok: true }, { ...response, privateAccount: "synthetic-private-marker" },
+      name === "verifyCodexProvider"
+        ? { ...response, verification: { ...providerVerifyResult, status: "unknown" } }
+        : { ok: true, providers: [{ ...providerStatusResult.providers[0], token: "synthetic-private-marker" }] }]) {
+      await expect(createEndpointMethods(async () => invalid)[name]()).rejects.toThrow();
+    }
+  });
+
+  it.each(providerCases)("%s propagates transport failures", async (name) => {
+    const error = new Error("synthetic transport failure");
+    await expect(createEndpointMethods(async () => { throw error; })[name]()).rejects.toBe(error);
+  });
+
+  it("retains catalog ordering and unready-provider controls at the client boundary", async () => {
+    for (const providers of [providerModelsResult.providers.toReversed(),
+      providerModelsResult.providers.map((p, i) => i === 0 ? { ...p, ready: false } : p)]) {
+      await expect(createEndpointMethods(async () => ({ ok: true, providers })).providerModels()).rejects.toThrow();
+    }
   });
 });

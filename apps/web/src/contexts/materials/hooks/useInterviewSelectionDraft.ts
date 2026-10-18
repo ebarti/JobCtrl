@@ -1,4 +1,4 @@
-import type { InterviewGenerationContext } from "../../operations/types.js";
+import type { InterviewGenerationContext } from "@jobctrl/contracts";
 import { useEffect } from "react";
 
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";

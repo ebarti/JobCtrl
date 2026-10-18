@@ -1,7 +1,12 @@
 import {
-  GenerateInterviewPrepRequestSchema, INTERVIEW_FORMATS, INTERVIEW_ROLE_LENSES, INTERVIEW_STAGES,
-  MAX_INTERVIEW_SELECTED_QUESTIONS, type InterviewCatalog, type InterviewGenerationContext,
-} from "../../operations/types.js";
+  GenerateInterviewPrepRequestSchema,
+  INTERVIEW_FORMATS,
+  INTERVIEW_ROLE_LENSES,
+  INTERVIEW_STAGES,
+  MAX_INTERVIEW_SELECTED_QUESTIONS,
+  type InterviewCatalog,
+  type InterviewGenerationContext,
+} from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
 import { useEffect, useId } from "react";
 import { JobCtrlApiError } from "@jobctrl/api-client";

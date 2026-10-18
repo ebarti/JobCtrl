@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 
-import type { DashboardSummary } from "../../contexts/operations/types.js";
+import type { DashboardSummary } from "@jobctrl/contracts";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Button } from "../../shared/ui/button.js";

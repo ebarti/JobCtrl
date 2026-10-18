@@ -1,4 +1,4 @@
-import type { ActivityEventSummary } from "../../contexts/operations/types.js";
+import type { ActivityEventSummary } from "@jobctrl/contracts";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import type { DataGridColumn } from "../../shared/ui/filterable-data-grid.js";
 import { RelativeTime } from "../../shared/ui/relative-time.js";

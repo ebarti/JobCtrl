@@ -26,7 +26,7 @@ import { JobAuditHistory } from "../../contexts/operations/components/JobAuditHi
 import { useDiscoverySettingsQuery } from "../../contexts/operations/hooks/useDiscoverySettingsQuery.js";
 import { useEvidenceMapQuery } from "../../contexts/operations/hooks/useEvidenceMapQuery.js";
 import { useJobDetailQuery } from "../../contexts/operations/hooks/useJobDetailQuery.js";
-import type { ArtifactSummary, EvidenceMapEntry } from "../../contexts/operations/types.js";
+import type { ArtifactSummary, EvidenceMapEntry } from "@jobctrl/contracts";
 import { JobActions } from "../../contexts/pipeline/components/JobActions.js";
 import { RetryStageButton } from "../../contexts/pipeline/components/RetryStageButton.js";
 import { StageTimeline } from "../../contexts/pipeline/components/StageTimeline.js";

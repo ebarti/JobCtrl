@@ -1,4 +1,4 @@
-import type { CompanyBriefingView } from "../../operations/types.js";
+import type { CompanyBriefingView } from "@jobctrl/contracts";
 import { formatDateTime } from "../../../shared/lib/formatters.js";
 
 const headings = { company_fact: "Company facts", reported_event: "Reported events", hypothesis: "Hypotheses" } as const;

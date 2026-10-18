@@ -1,3 +1,6 @@
+import { providerStatusResult, providerModelsResult, providerVerifyResult } from "./provider-fixture.js";
+import { workflowRpcFixture } from "./rpc-workflow-fixture.js";
+import { createActionDispatcher } from "../src/local-actions.js";
 import { recordArtifactAuthority, recordCompensationAuthority, recordRoleFeedback } from "./semantic-fixtures.js";
 import { recordCoachingDecision, recordCandidateProposal } from "./semantic-fixtures.js";
 import { seedApplicationUrl } from "./seed-enrichment.js";
@@ -39,7 +42,7 @@ import {
   KeychainCredentialStore,
 } from "../src/credentials.js";
 import type { NativeCredentialCommandRunner } from "../src/native-credential-store.js";
-import type { JsonRpcDispatcher } from "../src/json-rpc-adapter.js";
+import { callRpc, type JsonRpcDispatcher } from "../src/json-rpc-adapter.js";
 import {
   PROFILE_PREVIEW_SCRIPT,
   defaultActionDispatcher,
@@ -3499,7 +3502,7 @@ describe("local TypeScript API", () => {
     const recommendationId = `learning-recommendation:${"a".repeat(64)}`;
     const acceptedReviewId = `learning-recommendation-review:${"b".repeat(64)}`;
     const rejectedReviewId = `learning-recommendation-review:${"c".repeat(64)}`;
-    const call = vi.fn<JsonRpcDispatcher["call"]>(async (_method, params) => ({
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async (_method, params: Record<string, unknown>) => ({
       jsonrpc: "2.0" as const,
       id: 1,
       result:
@@ -10165,7 +10168,7 @@ describe("local TypeScript API", () => {
     let observed: Array<Array<{ originalText: string; evidence: unknown[] }>> = [];
     let rpcError: unknown = null;
     let probeDiagnostics = "";
-    const call: JsonRpcDispatcher["call"] = async (method, params) => {
+    const call: JsonRpcDispatcher["call"] = async (method, params: Record<string, unknown>) => {
       const probe = spawnSync("uv", ["--project", AUTOMATION_PROJECT_DIR, "run", "--no-sync", "python",
         path.join(AUTOMATION_PROJECT_DIR, "tests/fixtures/required_bullet_rpc_probe.py")], {
         cwd: tempDir, env: { ...process.env, JOBCTRL_DIR: tempDir, JOBCTRL_DB_PATH: options.dbPath,
@@ -10177,7 +10180,9 @@ describe("local TypeScript API", () => {
       observed = observation.modelSources;
       rpcError = observation.response.error;
       probeDiagnostics = probe.stderr;
-      return observation.response;
+      // Probe returns dataclass fields; reproduce the production to_dict envelope.
+      const { error, result, ...envelope } = observation.response;
+      return error ? { ...envelope, error } : { ...envelope, result };
     };
     const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
     const seed = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
@@ -13963,3 +13968,295 @@ function insertStage(
     "[]",
   );
 }
+
+
+function rpcContinuationMarkers() {
+  const db = new Database(options.dbPath, { readonly: true });
+  try { return db.prepare("SELECT event_id, idempotency_key, occurred_at, payload_json FROM job_events WHERE idempotency_key LIKE 'profile-continuation-handled:%' ORDER BY event_id").all(); }
+  finally { db.close(); }
+}
+
+function rpcPreservationControls(seed = false) {
+  const db = new Database(options.dbPath);
+  try {
+    if (seed) {
+      insertMaterialsGeneration(db, { jobUrl: "https://example.com/jobs/ready", artifactId: "rpc-accepted", artifactType: "tailored_resume", status: "approved", path: path.join(tempDir, "ready-resume.txt") });
+      db.prepare(`INSERT INTO application_review_decisions (tenant_id, decision_id, job_id, decision, decided_at, materials_generation, profile_version, email_attachment_artifact_id) VALUES ('local', 'rpc-approved', ?, 'approve_dry_run', '2026-10-17T00:00:00Z', 1, 1, 'rpc-accepted')`).run(jobIdFor("https://example.com/jobs/ready"));
+    }
+    return { materials: db.prepare("SELECT * FROM job_materials").all(), artifacts: db.prepare("SELECT * FROM job_materials_artifacts").all(), approvals: db.prepare("SELECT * FROM application_review_decisions").all(), acceptedBytes: fs.readFileSync(path.join(tempDir, "ready-resume.txt"), "utf8") };
+  } finally { db.close(); }
+}
+
+describe("enforcing route to registered worker handoffs", () => {
+  it("carries exact source IDs through HTTP, action dispatch, subprocess and registered Discover input", async () => {
+    const fixture = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
+    const app = buildApp({ ...options, actionDispatcher: createActionDispatcher(fixture.adapter) });
+    const observations: unknown[] = [];
+    try {
+      const sourceIds = ["jobspy:linkedin", "jobspy:indeed"];
+      const response = await app.inject({ method: "POST", url: "/v1/pipeline/actions/run-stage", payload: { stages: ["discover"], sourceIds, workers: 2, limit: 25 } });
+      observations.push({ status: response.statusCode, body: response.json() });
+      expect(response.statusCode, response.body).toBe(202);
+      expect(fixture.rows().find(row => row.kind === "request")).toMatchObject({ request: { params: { sourceIds } } });
+      expect(fixture.rows().find(row => row.kind === "start")).toMatchObject({ input: { source_ids: sourceIds, workers: 2, limit: 25 } });
+      const transmittedRequests = fixture.rows().filter(row => row.kind === "request").length;
+      for (const payload of [
+        { stages: ["discover"], sourceIds: ["jobspy:indeed", "jobspy:indeed"] },
+        { stages: ["discover"], workers: 0 },
+        { stages: ["discover"], limit: -1 },
+        { stages: ["discover"], minScore: 11 },
+        { stages: ["discover"], unexpected: true },
+        { stages: ["score"], sourceIds },
+      ]) {
+        const invalid = await app.inject({ method: "POST", url: "/v1/pipeline/actions/run-stage", payload });
+        observations.push({ input: payload, status: invalid.statusCode, body: invalid.body });
+        expect(invalid.statusCode).toBe(400);
+        expect(fixture.rows().filter(row => row.kind === "request")).toHaveLength(transmittedRequests);
+      }
+      observations.push({ transmittedBeforeInvalidInputs: transmittedRequests, transmittedAfterInvalidInputs: fixture.rows().filter(row => row.kind === "request").length });
+      expect(fixture.rows().filter(row => row.kind === "start")).toHaveLength(1);
+      fixture.mode("invalid_ack");
+      const malformed = await app.inject({ method: "POST", url: "/v1/pipeline/actions/run-stage", payload: { stages: ["discover"], sourceIds } });
+      observations.push({ malformedAckStatus: malformed.statusCode, body: malformed.json() });
+      expect(malformed.statusCode).toBeGreaterThanOrEqual(500);
+    } finally { fixture.retain("discover", observations); await app.close(); await fixture.adapter.close(); }
+  });
+
+  it.each([
+    { name: "single", stage: "discover" as const },
+    { name: "duplicate", stage: "discover" as const, stages: ["discover", "discover"] as const },
+    { name: "override", stage: "score" as const, stages: ["discover", "discover"] as const },
+  ])("requires the Discover completion dataclass for an awaited Discover call ($name)", async ({ name, stage, ...selection }) => {
+    const fixture = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
+    const observations: unknown[] = [];
+    try {
+      const params = { stage, ...("stages" in selection ? { stages: [...selection.stages] } : {}), awaitResult: true, sourceIds: ["jobspy:indeed"], expectedAppDir: tempDir, expectedDbPath: options.dbPath };
+      const completed = await callRpc(fixture.adapter, "run_stage", params);
+      expect(completed.result).toMatchObject({ result: { families_completed: ["synthetic-source"], failure: null } });
+      observations.push({ params, completed });
+      expect(fixture.rows().find(row => row.kind === "request")).toMatchObject({ request: { params } });
+      expect(fixture.rows().find(row => row.kind === "start")).toMatchObject({ input: { source_ids: params.sourceIds } });
+      fixture.mode("wrong_result_family");
+      await expect(callRpc(fixture.adapter, "run_stage", params)).rejects.toMatchObject({ name: "RpcContractError", phase: "result" });
+      observations.push({ rejectedPipelineResult: true });
+    } finally { fixture.retain("discover-awaited-" + name, observations); await fixture.adapter.close(); }
+  });
+
+  it.each([
+    { name: "duplicate", stage: "score" as const, stages: ["score", "score"] as const, effective: ["score"] },
+    { name: "mixed", stage: "discover" as const, stages: ["score", "discover", "score"] as const, effective: ["discover", "score"] },
+    { name: "override", stage: "discover" as const, stages: ["score"] as const, effective: ["score"] },
+  ])("requires pipeline completion for effective pipeline stages ($name)", async ({ name, stage, stages, effective }) => {
+    const fixture = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
+    const observations: unknown[] = [];
+    try {
+      const params = { stage, stages: [...stages], awaitResult: true, expectedAppDir: tempDir, expectedDbPath: options.dbPath };
+      const completed = await callRpc(fixture.adapter, "run_stage", params);
+      expect(completed.result).toMatchObject({ result: { stages_completed: ["score", "tailor", "cover"], failure: null } });
+      expect(fixture.rows().find(row => row.kind === "request")).toMatchObject({ request: { params } });
+      expect(fixture.rows().find(row => row.kind === "start")).toMatchObject({ input: { stages: effective } });
+      observations.push({ params, completed, effective });
+      fixture.mode("wrong_result_family");
+      await expect(callRpc(fixture.adapter, "run_stage", params)).rejects.toMatchObject({ name: "RpcContractError", phase: "result" });
+      observations.push({ rejectedDiscoverResult: true });
+    } finally { fixture.retain("pipeline-awaited-" + name, observations); await fixture.adapter.close(); }
+  });
+
+  it("serializes PATCH continuations until awaited completion and writes markers afterward", async () => {
+    const fixture = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
+    fixture.mode("hold");
+    const controls = rpcPreservationControls(true);
+    const dispatch = vi.fn(createActionDispatcher(fixture.adapter));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const observations: unknown[] = [];
+    try {
+      for (const name of ["First Synthetic Revision", "Second Synthetic Revision"]) {
+        const response = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: validProfileFixture(name) } });
+        observations.push({ status: response.statusCode, profile: response.json() });
+        expect(response.statusCode, response.body).toBe(200);
+        await vi.waitFor(() => expect(fixture.rows().some(row => row.kind === "waiting")).toBe(true), { timeout: 10000 });
+      }
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(rpcContinuationMarkers()).toEqual([]);
+      observations.push({ heldMarkers: rpcContinuationMarkers(), heldStarts: fixture.rows().filter(row => row.kind === "start") });
+      fixture.mode("success");
+      await vi.waitFor(() => expect(rpcContinuationMarkers()).toHaveLength(2), { timeout: 10000 });
+      const rows = fixture.rows();
+      expect(rows.filter(row => row.kind === "request")).toHaveLength(2);
+      expect(rows.find(row => row.kind === "request")).toMatchObject({ request: { params: { awaitResult: true, stages: ["score", "tailor", "cover"] } } });
+      expect(rows.findIndex(row => row.kind === "completed")).toBeLessThan(rows.findLastIndex(row => row.kind === "start"));
+      expect((await app.inject({ method: "GET", url: "/v1/profile" })).json().profile.personal.full_name).toBe("Second Synthetic Revision");
+      expect(rpcPreservationControls()).toEqual(controls);
+      observations.push({ settledMarkers: rpcContinuationMarkers(), preservation: controls });
+    } finally { fixture.mode("success"); fixture.retain("profile-serialization", observations); await app.close(); await fixture.adapter.close(); }
+  });
+
+  it.each(["start_failure", "wait_failure", "invalid_result", "wrong_result_family", "invalid_ack", "invalid_envelope", "transport_failure", "stage_failure", "stage_failure_without_message"])("keeps %s pending and startup reattaches the deterministic identity", async (mode) => {
+    const fixture = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
+    fixture.mode(mode === "transport_failure" ? "hold" : mode);
+    const controls = rpcPreservationControls(true);
+    const dispatch = vi.fn(createActionDispatcher(fixture.adapter));
+    let app = buildApp({ ...options, actionDispatcher: dispatch });
+    const observations: unknown[] = [];
+    try {
+      const response = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: validProfileFixture("Saved Through Failure") } });
+      expect(response.statusCode, response.body).toBe(200);
+      await vi.waitFor(() => expect(fixture.rows().some(row => row.kind === "start")).toBe(true), { timeout: 10000 });
+      const firstStart = fixture.rows().find(row => row.kind === "start");
+      if (mode === "transport_failure") await fixture.adapter.close();
+      if (mode === "start_failure" || mode === "wait_failure" || mode.startsWith("stage_failure")) await expect(dispatch.mock.results[0]!.value).resolves.toMatchObject({ status: "failed" });
+      else await expect(dispatch.mock.results[0]!.value).rejects.toThrow();
+      expect(rpcContinuationMarkers()).toEqual([]);
+      const saved = (await app.inject({ method: "GET", url: "/v1/profile" })).json();
+      expect(saved.profile.personal.full_name).toBe("Saved Through Failure");
+      expect(rpcPreservationControls()).toEqual(controls);
+      observations.push({ status: response.statusCode, saved, failedMarkers: rpcContinuationMarkers(), firstStart });
+      await app.close();
+      await fixture.adapter.close();
+      fixture.mode("success");
+      const restarted = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
+      const previousWaits = restarted.rows().filter(row => row.kind === "waiting").length;
+      restarted.mode("hold");
+      app = buildApp({ ...options, actionDispatcher: createActionDispatcher(restarted.adapter) });
+      try {
+        await app.listen({ host: "127.0.0.1", port: 0 });
+        await vi.waitFor(() => expect(restarted.rows().filter(row => row.kind === "waiting")).toHaveLength(previousWaits + 1), { timeout: 10000 });
+        expect(rpcContinuationMarkers()).toEqual([]);
+        observations.push({ startupHeldMarkers: rpcContinuationMarkers(), startupWait: restarted.rows().at(-1) });
+        restarted.mode("success");
+        await vi.waitFor(() => expect(rpcContinuationMarkers()).toHaveLength(1), { timeout: 10000 });
+        const starts = restarted.rows().filter(row => row.kind === "start");
+        expect(starts.at(-1)?.workflowId).toBe(firstStart?.workflowId);
+        const request = restarted.rows().find(row => row.kind === "request")?.request as { params: { reason: string } };
+        expect(firstStart?.workflowId).toBe("profile-continuation-" + createHash("sha256").update(request.params.reason).digest("hex").slice(0, 24));
+        expect(restarted.rows().filter(row => row.kind === "attached").at(-1)).toMatchObject({ reattached: mode !== "start_failure" });
+        expect(rpcPreservationControls()).toEqual(controls);
+        expect((await app.inject({ method: "GET", url: "/v1/profile" })).json()).toEqual(saved);
+        observations.push({ restartedStart: starts.at(-1), settledMarkers: rpcContinuationMarkers(), preservation: controls });
+      } finally { restarted.mode("success"); await restarted.adapter.close(); }
+    } finally { fixture.retain("profile-restart-" + mode, observations); await app.close(); await fixture.adapter.close(); }
+  });
+});
+
+it("preserves invalid-result HTTP mappings after shared boundary enforcement", async () => {
+  const app = buildApp({ ...options, providerDispatcher: { call: async () => ({ jsonrpc: "2.0", id: 1, result: {} }), close: async () => {} } });
+  try {
+    const saved = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: validProfileFixture("Invalid Result Controls") } });
+    for (const request of [
+      { method: "GET" as const, url: "/v1/providers/status" },
+      { method: "POST" as const, url: "/v1/providers/codex/verify" },
+      { method: "GET" as const, url: "/v1/browser-capabilities" },
+      { method: "POST" as const, url: `/v1/jobs/${jobIdFor("https://example.com/jobs/ready")}/actions/check-availability`, payload: {} },
+      { method: "POST" as const, url: "/v1/profile/target-role-suggestions", payload: { expectedProfileVersion: saved.json().profileVersion } },
+    ]) {
+      const response = await app.inject(request);
+      expect(response.statusCode, `${request.url}: ${response.body}`).toBe(502);
+    }
+  } finally { await app.close(); }
+});
+
+// Exercise the actual generated client, HTTP shell and typed worker boundary.
+describe("registered provider endpoint family", () => {
+  afterEach(() => vi.restoreAllMocks());
+  // Node fetch has no browser Origin; supply the first-party browser metadata.
+  function browserClient(baseUrl: string) {
+    const networkFetch = globalThis.fetch;
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => networkFetch(input, {
+      ...init, headers: { ...init?.headers, origin: "http://127.0.0.1:5173" },
+    }));
+    return createJobCtrlApiClient(baseUrl);
+  }
+  const cases = [
+    ["providerStatus", "GET", "/v1/providers/status", "provider_status", {}, { ok: true, ...providerStatusResult }, "provider_status_failed"],
+    ["providerModels", "GET", "/v1/providers/models", "provider_models", {}, { ok: true, ...providerModelsResult }, "provider_models_failed"],
+    ["verifyCodexProvider", "POST", "/v1/providers/codex/verify", "provider_verify", { provider: "codex" }, { ok: true, verification: providerVerifyResult }, "provider_verification_failed"],
+  ] as const;
+
+  it.each(cases)("%s preserves success, readiness and ignored legacy input", async (name, method, route, rpc, params, expected) => {
+    const result = rpc === "provider_status" ? providerStatusResult : rpc === "provider_models" ? providerModelsResult : providerVerifyResult;
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({ jsonrpc: "2.0", id: 1, result }));
+    const app = buildApp({ ...options, providerDispatcher: { call, close: async () => {} }, requireHealthyWorkerForActions: true });
+    try {
+      await app.listen({ host: "127.0.0.1", port: 0 });
+      const address = app.server.address();
+      if (!address || typeof address === "string") throw new Error("Expected loopback listener");
+      const client = browserClient(`http://127.0.0.1:${address.port}`);
+      await expect(client[name]()).resolves.toEqual(expected);
+      const legacy = await app.inject({ method, url: route + "?ignored=legacy", ...(method === "POST" ? { payload: { ignored: "legacy" } } : {}) });
+      expect(legacy.statusCode, legacy.body).toBe(200);
+      expect(legacy.json()).toEqual(expected);
+      expect(call).toHaveBeenCalledTimes(2);
+      for (const args of call.mock.calls) expect(args).toEqual([rpc, params]);
+    } finally { await app.close(); }
+  });
+
+  for (const failure of ["rpc", "invalid", "private", "transport"] as const) {
+    it.each(cases)(`%s sanitizes ${failure} failures through the client`, async (name, _method, _route, rpc, _params, _expected, errorCode) => {
+      const marker = "synthetic-private-failure-marker";
+      const call = vi.fn<JsonRpcDispatcher["call"]>(async () => {
+        if (failure === "transport") throw new Error(marker);
+        if (failure === "rpc") return { jsonrpc: "2.0", id: 1, error: { code: -32603, message: marker, data: { token: marker } } };
+        const valid = rpc === "provider_status" ? providerStatusResult : rpc === "provider_models" ? providerModelsResult : providerVerifyResult;
+        return { jsonrpc: "2.0", id: 1, result: failure === "private" ? { ...valid, token: marker } : {} };
+      });
+      const app = buildApp({ ...options, providerDispatcher: { call, close: async () => {} } });
+      try {
+        await app.listen({ host: "127.0.0.1", port: 0 });
+        const address = app.server.address();
+        if (!address || typeof address === "string") throw new Error("Expected loopback listener");
+        const client = browserClient(`http://127.0.0.1:${address.port}`);
+        const status = name === "providerModels" || failure === "transport" ? 503 : 502;
+        const message = name === "providerModels" ? "Provider models are temporarily unavailable."
+          : name === "providerStatus" ? (failure === "invalid" || failure === "private"
+            ? "Provider status returned an invalid response." : "Provider status is temporarily unavailable.")
+          : failure === "rpc" ? "Codex verification could not be completed."
+          : failure === "transport" ? "Codex verification is temporarily unavailable."
+          : "Codex verification returned an invalid response.";
+        const request = client[name]();
+        await expect(request).rejects.toMatchObject({ status, responseBody: { ok: false, error: errorCode, message } });
+        await request.catch(error => expect(JSON.stringify(error)).not.toContain(marker));
+      } finally { await app.close(); }
+    });
+  }
+
+  it.each(cases)("%s rejects unsafe Host and remote peers before dispatch", async (_name, method, route) => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>();
+    const app = buildApp({ ...options, providerDispatcher: { call, close: async () => {} } });
+    try {
+      for (const input of [{ headers: { host: "example.test" } }, { remoteAddress: "192.0.2.1" }]) {
+        const response = await app.inject({ method, url: route, ...input });
+        expect(response.statusCode, response.body).toBe(403);
+      }
+      expect(call).not.toHaveBeenCalled();
+    } finally { await app.close(); }
+  });
+
+  it("rejects cross-site verification before dispatch and keeps read CORS restrictions", async () => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({ jsonrpc: "2.0", id: 1, result: providerStatusResult }));
+    const app = buildApp({ ...options, providerDispatcher: { call, close: async () => {} } });
+    try {
+      const rejected = await app.inject({ method: "POST", url: "/v1/providers/codex/verify", headers: { origin: "https://example.test" }, payload: {} });
+      expect(rejected.statusCode, rejected.body).toBe(403);
+      expect(rejected.json().error).toBe("cross_site_request");
+      expect(call).not.toHaveBeenCalled();
+      const read = await app.inject({ method: "GET", url: "/v1/providers/status", headers: { origin: "https://example.test" } });
+      expect(read.statusCode).toBe(200);
+      expect(read.headers["access-control-allow-origin"]).toBeUndefined();
+    } finally { await app.close(); }
+  });
+
+  it.each(["not_configured", "failed"] as const)("returns an unsuccessful %s verification as a checked 200 response", async status => {
+    const verification = { ...providerVerifyResult, ok: false, status };
+    const app = buildApp({ ...options, providerDispatcher: { call: async () => ({ jsonrpc: "2.0", id: 1, result: verification }), close: async () => {} } });
+    try {
+      await app.listen({ host: "127.0.0.1", port: 0 });
+      const address = app.server.address();
+      if (!address || typeof address === "string") throw new Error("Expected loopback listener");
+      await expect(browserClient(`http://127.0.0.1:${address.port}`).verifyCodexProvider())
+        .resolves.toEqual({ ok: true, verification });
+      const response = await app.inject({ method: "POST", url: "/v1/providers/codex/verify", headers: { "content-type": "text/plain", origin: "http://127.0.0.1:5173" }, payload: "legacy ignored text" });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json()).toEqual({ ok: true, verification });
+    } finally { await app.close(); }
+  });
+});

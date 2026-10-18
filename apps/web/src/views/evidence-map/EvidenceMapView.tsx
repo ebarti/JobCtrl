@@ -17,7 +17,7 @@ import type {
   EvidenceGap,
   EvidenceMapEntry,
   EvidenceUsageRef,
-} from "../../contexts/operations/types.js";
+} from "@jobctrl/contracts";
 import type { EvidenceMapSearch } from "../../routes/-evidence-map.search.js";
 import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert.js";
 import { Button, buttonVariants } from "../../shared/ui/button.js";
