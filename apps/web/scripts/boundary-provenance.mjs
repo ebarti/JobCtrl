@@ -1,5 +1,9 @@
 import ts from "typescript";
 
+// SourceFile identity binds this immutable syntax to one compiler snapshot.
+// Parameter-dependent provenance is resolved separately by each tracer.
+const sourceAssignments = new WeakMap();
+
 // A syntax provenance value can carry both authority and a container shape.
 // Joins are conservative: a harmless fallback cannot erase another branch's
 // authority. Literal keys use the same expression/binding rules as values.
@@ -284,7 +288,8 @@ export function createTracer(
     ts.SyntaxKind.BarBarEqualsToken,
     ts.SyntaxKind.AmpersandAmpersandEqualsToken,
   ]);
-  const assignments = [];
+  const cachedAssignments = sourceAssignments.get(source);
+  const assignments = cachedAssignments ?? [];
   function assignmentTargets(left, right, projections = []) {
     left = unwrap(left);
     if (
@@ -344,7 +349,10 @@ export function createTracer(
       assignmentTargets(node.initializer, node.expression, [{ iterate: true }]);
     ts.forEachChild(node, collect);
   }
-  collect(source);
+  if (!cachedAssignments) {
+    collect(source);
+    sourceAssignments.set(source, assignments);
+  }
   let writesByRoot;
   function assignedValue(node, seen) {
     if (!assignments.length) return undefined;
