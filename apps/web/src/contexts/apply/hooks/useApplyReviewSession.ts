@@ -5,7 +5,7 @@ import type {
   ApplyReviewDecisionValue, ApplyReviewQueueItem, ResumeCommentThread,
   ResumeCommentReplyDecision, ResumeReviewCommentThreadSeedInput,
   ResumeReviewDraft, ResumeReviewDraftResponse, ResumeReviewDraftRenderResponse,
-} from "../../operations/types.js";
+} from "@jobctrl/contracts";
 import { useResumeReviewDraftQuery } from "../../operations/hooks/useResumeReviewDraftQuery.js";
 import { applyReviewKeys } from "../../operations/applyReviewKeys.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";

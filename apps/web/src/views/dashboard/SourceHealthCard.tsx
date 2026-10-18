@@ -1,7 +1,7 @@
 import { IconBan, type TablerIcon } from "@tabler/icons-react";
 
 import { SourcePolitenessBadges } from "../../contexts/discovery/components/SourcePolitenessBadges.js";
-import type { DashboardSummary } from "../../contexts/operations/types.js";
+import type { DashboardSummary } from "@jobctrl/contracts";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { StatusBadge } from "../../shared/ui/status-badge.js";

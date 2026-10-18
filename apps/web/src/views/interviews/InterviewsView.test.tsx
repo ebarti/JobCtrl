@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useInterviewDraftStore } from "../../contexts/materials/stores/interview-drafts.js";
 import { interviewKeys } from "../../contexts/operations/interviewKeys.js";
-import type { SaveInterviewQuestionNoteRequest } from "../../contexts/operations/types.js";
+import type { SaveInterviewQuestionNoteRequest } from "@jobctrl/contracts";
 import { interviewsSearchSchema } from "../../routes/-interviews.search.js";
 import { sampleInterviewCatalogResponse, makeQuestionPrep } from "../../test/fixtures/interviews.js";
 import { makeJobDetail, sampleInterviewPrep } from "../../test/fixtures/projections.js";

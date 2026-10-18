@@ -2,7 +2,7 @@ import {
   type ApplyReviewProfileSourceField,
   type ResumeCommentThread,
   type ResumeLayoutBox,
-} from "../../operations/types.js";
+} from "@jobctrl/contracts";
 
 import { type PdfAuditLineSelection } from "../../../shared/ui/PdfPreviewViewer.js";
 
@@ -227,6 +227,7 @@ type ResumeHtmlState =
   | { readonly status: "legacy"; readonly html: null; readonly message: string }
   | { readonly status: "missing"; readonly html: null; readonly message: string }
   | { readonly status: "error"; readonly html: null; readonly message: string };
+
 
 function ResumeHtmlUnavailable({
   message,

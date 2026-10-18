@@ -11,7 +11,7 @@ import { renderWithProviders } from "../../../test/render.js";
 import {
   SettingsForm,
 } from "./settings-form.js";
-import type { SettingsResponse } from "../../operations/types.js";
+import type { SettingsResponse } from "@jobctrl/contracts";
 import { DiscoveryAutomationSettingsForm } from "../../discovery/components/DiscoveryAutomationSettingsPanel.js";
 import type { DiscoverySettingsResponse } from "@jobctrl/contracts";
 

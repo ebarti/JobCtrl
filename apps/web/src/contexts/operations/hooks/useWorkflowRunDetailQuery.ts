@@ -2,7 +2,7 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
-import type { WorkflowRunDetail } from "../types.js";
+import type { WorkflowRunDetail } from "@jobctrl/contracts";
 import { workflowRunsKeys } from "../workflowRunsKeys.js";
 
 export function useWorkflowRunDetailQuery(

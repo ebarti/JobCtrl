@@ -155,8 +155,9 @@ file-based plugin.** Rationale:
   chunk; bundle size scales with usage, not with feature count. (Resolves
   §6 question 12.)
 - **Route loaders give a clean prefetch seam.** A route can declare
-  `loader: ({ context }) => context.queryClient.ensureQueryData(...)`,
-  prefetching the first paint's data before the component mounts.
+  `loader: ({ context }) => prefetchDashboard(context)`,
+  delegating to a context-owned helper before the component mounts. Routes
+  never invoke the API port or QueryClient directly; see §5.2.
 - **The "import convention shift" objection is small.** Route files import
   `createFileRoute(...)`. This is a one-time learning cost paid once;
   the alternative (code-based) loses generated type safety.
@@ -228,7 +229,7 @@ View composition (Dashboard, Jobs, Artifacts) is treated separately in §4.5.
 | Mutations | None — Operations is read-only. |
 | SSE keys consumed | All — Operations *owns* the invalidation router. |
 | Components | None directly. Owns the `<EventStreamProvider />` and the configured `QueryClient`. |
-| Provides | The `queryKeys` registry; the `invalidationRouter`; projection types via the ACL re-export (§6.5). |
+| Provides | The `queryKeys` registry; the `invalidationRouter`; frontend input refinements (§6.5); canonical DTOs are imported from their owning packages. |
 
 ### 4.4.2 Job Discovery
 
@@ -654,13 +655,14 @@ the leaf, not the root.
    `onError`; the global toast is suppressed for that mutation by passing
    `meta: { suppressGlobalErrorToast: true }` and re-checked in the global
    handler.
-3. **Route-level error boundaries.** Every route declares
-   `errorComponent: ({ error, reset }) => <RouteError error={error} reset={reset} />`.
-   The boundary renders a friendly "this view failed to load" panel and a
-   retry button that invokes `queryClient.invalidateQueries({ queryKey: route.key })`.
+3. **Loader versus observer errors.** Best-effort prefetch failures remain in
+   the query cache for context-owned observers to display and retry. Activity
+   detail propagates an ensure-read failure to TanStack Router's error boundary.
+   Query invalidation and retry authority remain in contexts; the routes do not
+   call QueryClient methods.
 
-**Retry policy lives in the query client config** (`shared/providers/query-client.ts`).
-Network-class errors retry; 4xx do not. Mutation retries are explicit
-(none by default; surface failure to the user).
+**Retry policy lives in the query client config** (`shared/lib/queryClient.ts`).
+Queries retry once by default, including HTTP errors. Mutation retries are
+disabled by default; surface failure to the user.
 
 ---

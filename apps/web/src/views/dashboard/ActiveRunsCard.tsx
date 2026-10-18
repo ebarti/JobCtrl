@@ -1,7 +1,7 @@
 import { IconAlertTriangle, IconBan, IconClock, type TablerIcon } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
 
-import type { WorkflowRunSummary } from "../../contexts/operations/types.js";
+import type { WorkflowRunSummary } from "@jobctrl/contracts";
 import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert.js";
 import { Button } from "../../shared/ui/button.js";
 import { CardHeader } from "../../shared/ui/card-header.js";

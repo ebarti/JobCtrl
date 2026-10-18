@@ -137,7 +137,7 @@ In the current runtime:
 - the TypeScript API starts and reuses one `jobctrl rpc` subprocess;
 - synchronous methods return their validated result through JSON-RPC;
 - workflow methods return run/workflow identity after the Python side starts a
-  Temporal workflow; and
+  Temporal workflow, with a nested `result` when `awaitResult` is true; and
 - the TypeScript API does not enqueue Temporal work directly.
 
 The browser does not call arbitrary JSON-RPC methods. Product routes validate
@@ -167,30 +167,75 @@ differences:
 | Fractional numeric `id` | Accepts | Rejects as invalid request |
 | Explicit `id: null` | Accepts | Treats as a notification and emits no response |
 | Extra envelope key | Rejects | Ignores |
-| `run_stage.sourceIds` from a source-filtered Discover command | Method schema rejects | Includes the IDs in the workflow input |
-| `run_stage.reason` from a recovery or profile continuation | Method schema rejects | Derives a stable workflow identity from the reason |
-| `run_stage.awaitResult: true` for a profile continuation | Method schema rejects | Waits for the workflow and adds its result to the acknowledgment |
 
-The suite also proves parameter and parse errors, unknown-method mapping,
-workflow acknowledgment shape, and a negative registration/schema mutation.
-It inventories all 29 handlers but exercises behavior for two. These 27 are
-currently inventory-only and need separate owned synthetic dependencies for
-their per-method parameter and result checks:
+`RunStageParamsSchema` includes the current caller controls: `sourceIds` (up to
+50 unique, trimmed IDs of 1–160 characters, only with an effective Discover
+stage), `reason` (up to 400 characters), and boolean `awaitResult` and
+`refreshApplyUrl`. An explicit `stages` list takes precedence over `stage`, as
+in `workflow_specs.py`. A true `refreshApplyUrl` requires only Enrich, one
+canonical `jobId`, and `limit: 1`. Profile import also accepts boolean
+`awaitResult`. Cancellation preserves the worker's `requestedBy`, `source`, and
+nullable `reason` metadata with its 160/80/500 character bounds.
 
-| Mode | Deferred methods |
-| --- | --- |
-| Synchronous (15) | `analyze_job`, `browser_capabilities_list`, `browser_capability_disable`, `browser_capability_enable`, `browser_profile_copy`, `cancel_run`, `generate_outreach_draft`, `gmail_feedback_scan`, `profile_target_role_suggestions`, `provider_status`, `provider_verify`, `rederive_learning_recommendations`, `render_resume_pdf`, `review_learning_recommendation`, `rollback_tailoring_policy` |
-| Workflow (12) | `apply`, `generate_interview_prep`, `job_url_import`, `manual_capture_import`, `profile_import`, `refresh_compensation`, `rescore_job`, `rescore_jobs_not_on_current_scoring_policy`, `retailor_current_policy`, `retailor_job`, `run_contact_research`, `tailor_job` |
+`RpcContracts` in `rpc.ts` associates the parameter and dispatch-result schemas
+owned there and derives method-specific `RpcParams` inputs and `RpcResult`
+outputs for every current TypeScript caller. `JsonRpcDispatcher.call` has no
+record-based public overload. `callRpc` applies the shared parameter and result
+parsers to injected dispatchers as well as the subprocess adapter; the adapter
+validates parameters before resolving or spawning a command. Endpoint dispatch
+specifications bind the method to those same schemas. Python registration
+remains the runtime inventory. Verification requires the explicit supported
+`provider: "codex"` parameter, matching the registered worker handler.
+Workflow starts use acknowledgments, even when their activity has a synchronous
+result schema. Compensation refresh also retains its supported
+synchronous result branch, and stage runs retain `LocalActionResult` for old
+sync adapters. Generic acknowledgments preserve additional identity metadata
+and nested payloads. Acknowledgments allow a null `firstExecutionRunId` when
+Temporal has no first execution identity; availability starts still require
+both `runId` and `workflowId`.
 
-A follow-up should first add the existing caller-owned `sourceIds`, `reason`,
-and `awaitResult` fields to `RunStageParamsSchema` with bounds and an awaited
-result branch, then make the API validate its constructed params. A separate
-wire-policy decision should resolve version, falsy params, extra keys, and ID
-semantics before aligning `JsonRpcRequest.from_dict` and the TypeScript envelope
+Awaited stage results mirror the actual serialized workflow dataclasses:
+`JobPipelineWorkflowResult` has `stages_completed`, `stages_failed`, `failure`,
+and `error_code`, without `status`; Discover has its own family, enrichment,
+and compensation fields. Awaited profile import retains `status`, `draft`,
+`error`, and `error_code`. URL and manual-capture imports require their nested
+workflow result because their current callers always await it. An awaited
+`run_stage` or `profile_import` call requires completion, rather than accepting
+a start-only acknowledgment. Stage completion must match Discover or pipeline
+input, using the worker's deduplicated effective stages; an explicit `stages`
+list takes precedence over `stage`. Transmitted stage values remain unchanged.
+Invalid output raises `RpcContractError` separately from transport
+failures, allowing each feature to preserve its HTTP error mapping. Worker
+error envelopes, request IDs, progress notifications, timeouts and close
+behavior remain transport concerns.
+
+Profile continuation keeps its `profile_updated:<eventId>` reason through the
+registered handler and deterministic workflow identity. The enforcing action
+dispatcher awaits completion before the server records a handled marker;
+structural, start, wait or transport failure leaves the durable intent available
+for startup reattachment. A failed pipeline completion also leaves it pending.
+The route integration tests in `apps/api/test/server.test.ts` use exact-schema
+owned workspaces and the registered Python handlers through the real adapter.
+Their synthetic WorkflowStarter and completion handle expose workflow input and
+ordering, returning the production result dataclasses. Held completion also
+checks marker ordering during startup reattachment. These fixtures do not
+exercise live acquisition, Temporal persistence or model quality.
+
+The shared suite also covers parameter and parse errors, unknown-method
+mapping, workflow acknowledgments, and a negative registration/schema mutation.
+Its behavior probes exercise two methods; registration coverage alone does not
+prove the other methods' parameter/result behavior. The probe's synthetic
+awaited `{status: "succeeded"}` object establishes acknowledgment preservation,
+not the production pipeline result shape. Contract tests separately cover
+the production shapes and malformed controls. The original Python observations
+and envelope compatibility assertions remain unchanged.
+
+A separate wire-policy decision should resolve version, falsy params, extra
+keys, and ID semantics before aligning `JsonRpcRequest.from_dict` and the TypeScript envelope
 schema with compatibility tests. In particular, decide both fractional and
 explicit-null ID behavior before tightening either side. The default API
 adapter currently generates integer IDs; the explicit-null case is outside
-its normal call path. Until the follow-up, the TypeScript API's constructed
+its normal call path. The TypeScript API's constructed
 outbound requests remain the supported caller path.
 
 ### Domain Events Over SSE
@@ -209,6 +254,12 @@ projection response contract.
 The exact framing, replay, tenant, and reconnect rules live in
 [Local TypeScript API](../local-ts-api.md) and
 [Frontend Realtime](frontend/realtime.md).
+
+Frontend consumers import unchanged REST DTOs, Zod schemas and constants directly
+from `@jobctrl/contracts`, and domain vocabulary/events from
+`@jobctrl/domain-types`. Operations owns read hooks and genuine frontend input
+refinements, not a transparent DTO facade; re-export aliases do not shield
+consumers from changes to their canonical shapes. See [frontend type ownership](frontend/state-and-ports.md#_6-5-canonical-dtos-and-frontend-input-refinements).
 
 ## Logical Types Are Not Rows Or DTOs
 
@@ -271,7 +322,8 @@ The strict endpoint spec owns `POST /v1/jobs/:jobId/actions/check-availability`
 and its queued acknowledgement. The API supplies trusted runtime identity to
 `check_posting_availability`; Python validates it before starting the registered
 Temporal workflow. The frontend consumes the generated API client through its
-port, re-exporting availability types through the operations boundary. Jobs GET
+port. It imports availability DTOs directly from `@jobctrl/contracts`; Operations
+retains only the endpoint-derived command acknowledgement type. Jobs GET
 exposes persisted observation DTOs and calculated freshness without transport
 side effects. Python and TypeScript event registries, endpoint JSON Schema
 fixtures and RPC registration observations are updated together.
@@ -282,3 +334,63 @@ fixtures and RPC registration observations are updated together.
 Contracts owns the versioned semantic codes/labels and strict read envelopes. Worker determinations own meaning, with closed enums, extra-field rejection and canonical citations. API/web/extension consumers join IDs and read persisted verdicts; they never construct provenance or categories from text overlap. Interactive calls are sync RPC, activity calls remain outside Temporal replay.
 
 See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+
+## Incremental Endpoint Migration
+
+The provider family uses the existing `ENDPOINTS` declarations in
+`packages/contracts/src/endpoint-spec.ts`: `providerStatus`, `providerModels`
+and `verifyCodexProvider`. The declarations own HTTP methods, paths, request
+and response schemas, worker dependencies and demo capability metadata.
+`apps/api/src/endpoint-routes.ts` registers them under the existing HTTP security
+hooks. `apps/api/src/provider-handlers.ts` owns provider orchestration and safe
+error mappings; its catalog function is also used by Settings validation.
+`callRpc` enforces the reconciled `RpcContracts` on injected dispatchers and the
+subprocess adapter. The response schemas reuse the sanitized RPC results,
+including catalog order and the prohibition on models for unready providers.
+
+`createEndpointMethods` supplies the checked methods on `JobCtrlApiClient`;
+there are no separate provider path/method implementations. The frontend port
+and local adapter keep their public methods. Demo status is synthetic and
+disconnected, demo models are a synthetic catalog, and verification remains
+unavailable. Their capability classifications come from the same declarations.
+
+Migrate the next family one cohesive slice at a time:
+
+1. Trace current client entry, HTTP security, feature operation, worker handoff,
+   response, consumers and any durable resume/settlement path. Record current
+   status codes, ignored inputs, readiness and demo behavior before moving it.
+2. Reuse or reconcile its owning RPC parameter/result schemas. Declare the
+   endpoint once with its method, path, request, sanitized response, dependencies
+   and demo metadata. Preserve the existing compatibility policy.
+3. Place orchestration in a feature-owned handler module, inject it through
+   `registerEndpointRoutes`, and remove the duplicate manual registration.
+   Use declarative dispatch only when its mapping already fits the operation.
+4. Remove handwritten client transport methods so `createEndpointMethods` owns
+   transport and parsing. Keep the frontend port and adapters compatible; remove
+   duplicate demo manifest entries when the declaration takes ownership.
+5. Extend the complete explicit JSON-Schema expectation, retaining all pinned
+   endpoints. The API contract test combines the historical domain-types fixture
+   with `apps/api/test/fixtures/provider-endpoint-specs.json` for this family.
+   Do not regenerate unrelated fixtures. Test generated-client-to-route success,
+   readiness outcomes, RPC/transport failures, malformed/private fields and
+   security rejection before dispatch, plus affected consumers.
+6. Update the owning API references and retain candidate-bound check evidence.
+   Independent product QA/review and controller publication gates still determine
+   delivery; a typecheck or implementation checkpoint does not establish it.
+
+This migration preserves the #954 compatibility boundary: the JSON-RPC envelope
+observations above (version, falsy params, extra keys and ID semantics) remain
+characterized differences. Moving HTTP registration does not authorize tightening
+Python envelope parsing or changing workflow acknowledgments. Provider operations
+are synchronous; they introduce no workflow start, durable settlement, artifact
+refresh or approval mutation. Existing Discover/profile workflow, continuation,
+restart and settlement compatibility checks remain applicable to the shared
+contract path.
+
+The provider integration tests use the actual generated HTTP client and a local
+Fastify listener, with a synthetic `JsonRpcDispatcher` returning bounded results
+or failures. Tests supply first-party Origin metadata to Node fetch to represent
+a browser request. These tests prove mapping, parsing, transport and security
+behavior; they do not prove SDK authentication, credential import, live model
+catalog access or model quality. The existing workflow fixtures described above
+use synthetic workflow handles and do not establish live Temporal recovery.

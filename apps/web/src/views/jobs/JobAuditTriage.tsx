@@ -1,6 +1,6 @@
 import type { ApplyAuditFact, ApplyAuditSource } from "@jobctrl/contracts";
 
-import type { JobDetail } from "../../contexts/operations/types.js";
+import type { JobDetail } from "@jobctrl/contracts";
 import { ResetStaleScoresButton } from "../../contexts/scoring/components/ResetStaleScoresButton.js";
 import { ScoreCorrectionControl } from "../../contexts/scoring/components/ScoreCorrectionControl.js";
 import { ScoreStalenessBadge } from "../../contexts/scoring/components/ScoreStalenessBadge.js";

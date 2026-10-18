@@ -2,7 +2,7 @@ import { act, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { LOCAL_TENANT, type TenantId } from "@jobctrl/domain-types";
 import type { Value } from "platejs";
-import type { ApplyReviewQueueItem, ResumeReviewDraft, ResumeReviewDraftRenderResponse, ResumeCommentThread } from "../../operations/types.js";
+import type { ApplyReviewQueueItem, ResumeReviewDraft, ResumeReviewDraftRenderResponse, ResumeCommentThread } from "@jobctrl/contracts";
 import { sampleApplyReviewQueue } from "../../../test/fixtures/projections.js";
 import { createTestQueryClient, renderHookWithProviders } from "../../../test/render.js";
 import { buildTestPorts, FakeSessionPort } from "../../../test/testPorts.js";

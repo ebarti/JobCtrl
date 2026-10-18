@@ -1,4 +1,8 @@
-import type { InterviewCatalog, InterviewPrep, InterviewQuestionCard } from "../../operations/types.js";
+import type {
+  InterviewCatalog,
+  InterviewPrep,
+  InterviewQuestionCard,
+} from "@jobctrl/contracts";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 

@@ -1,3 +1,4 @@
+import { callRpc, RpcContractError } from "./json-rpc-adapter.js";
 import type {
   JobUrlImportRequest,
   JobUrlImportResponse,
@@ -56,14 +57,15 @@ export function createWorkerJobUrlImporter(
   return async (input, context) => {
     let response;
     try {
-      response = await dispatcherFactory(context).call("job_url_import", {
+      response = await callRpc(dispatcherFactory(context), "job_url_import", {
         tenantId: "local",
         url: input.url,
         expectedAppDir: context.appDir,
         expectedDbPath: context.dbPath,
         awaitResult: true,
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof RpcContractError && error.phase === "result") throw invalidResult();
       throw new JobUrlImportError("Job import is temporarily unavailable.", 503);
     }
     if (response.error) {
