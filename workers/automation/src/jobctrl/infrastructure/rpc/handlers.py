@@ -1206,6 +1206,7 @@ def rollback_tailoring_policy(params: dict[str, Any]) -> dict[str, Any]:
 
 def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCanceler) -> None:
     """Wire the default JobCtrl method set onto *server*."""
+    server.register("career_learning", career_learning, mode="sync")
     server.register("material_locale_variants", material_locale_variants, mode="sync")
     server.register("accepted_material_exports", accepted_material_exports, mode="sync")
 
@@ -1306,6 +1307,26 @@ def material_locale_variants(params):
         raise invalid_params(error.code) from None
     finally:
         connection.close()
+
+def career_learning(params):
+    from jobctrl.database import init_db
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.infrastructure.career_learning import CareerLearningService
+
+    assert_expected_runtime(
+        expected_app_dir=str(_require(params, "expectedAppDir")),
+        expected_db_path=str(_require(params, "expectedDbPath")),
+    )
+    if set(params) - {"tenantId", "expectedAppDir", "expectedDbPath", "command"}:
+        raise invalid_params("invalid_command")
+    connection = init_db()
+    try:
+        return CareerLearningService(connection, tenant_id=_tenant_id(params)).execute(params.get("command"))
+    except DeterminationFailure as error:
+        raise invalid_params(error.code) from None
+    finally:
+        connection.close()
+
 
 def screening_answers(params):
     """Private local snapshots; runtime identity is mandatory at this boundary."""

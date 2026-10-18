@@ -7,6 +7,7 @@ import { DeterminationCitationSchema, DeterminationEnvelopeSchema, FormSnapshotS
  * worker over the local subprocess transport (target §6.5).
  */
 import { z } from "zod";
+import { CareerLearningParamsSchema, CareerLearningResponseSchema } from "./career-learning.js";
 import { AcceptedMaterialExportRequestSchema, AcceptedMaterialExportsSchema, MaterialLocaleRequestSchema } from "./schemas.js";
 import { GenerateInterviewPrepRequestSchema, refineInterviewEvidenceSelection } from "./interview.js";
 
@@ -77,6 +78,7 @@ export type JsonRpcResponse = z.infer<typeof JsonRpcResponseSchema>;
 /* ------------------------------------------------------------------ methods */
 
 export const RpcMethods = {
+  CareerLearning: "career_learning",
   ResetEnrichment: "reset_enrichment",
   MaterialLocaleVariants: "material_locale_variants",
   AcceptedMaterialExports: "accepted_material_exports",
@@ -951,6 +953,7 @@ export const ReviewResumeEditParamsSchema = RuntimeBindingSchema.extend({
  * consuming a response. Python default handler registration owns the inventory.
  */
 export const RpcContracts = {
+  [RpcMethods.CareerLearning]: { params: CareerLearningParamsSchema, result: CareerLearningResponseSchema },
   [RpcMethods.AcceptedMaterialExports]: { params: AcceptedMaterialExportParamsSchema, result: AcceptedMaterialExportsSchema },
   [RpcMethods.ResetEnrichment]: { params: ResetEnrichmentParamsSchema, result: ResetEnrichmentResultSchema },
   [RpcMethods.ProviderStatus]: { params: z.object({ provider: z.enum(["codex", "claude", "google"]).optional() }).strict(), result: ProviderStatusResultSchema },

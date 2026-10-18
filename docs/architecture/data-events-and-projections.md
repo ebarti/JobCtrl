@@ -333,3 +333,24 @@ never calls Discovery's policy-deletion routine and cannot emit `JobDeleted`.
 ## Company briefing reads
 
 The optional briefing ledger is read directly by Operations through exact tenant/company/job identities and its persisted determination ID. It adds no projection family. Accepted snapshots and failed attempts remain separate immutable records. Source bodies stay out of SSE; reference-only `JobUpdated` notifications invalidate each linked Job Detail and the existing digest. The [storage owner](storage.md#company-briefing-ledger) defines physical retention.
+
+## Selected-job cohorts and reviewed milestones
+
+The Operations career-learning service records private `career_cohort`,
+`career_milestone` and `career_attempt` entities on the existing indexed
+`job_events` journal. Accepted cohort revisions bind immutable canonical
+posting/confirmed-achievement snapshots to one `career_demand_comparison`
+envelope. The no-model preview fingerprints the exact sources; the browser
+supplies that fingerprint for comparison. Sources are rechecked before spend
+and, under a SQLite writer lock, before accepting a replacement. Cohort and
+milestone writes compare expected revisions. Failed refreshes add attempt state
+without replacing the accepted cohort. Choosing a proposal requires current
+sources and explicit user action; completion retains user evidence statements
+and revision history without promoting capability.
+
+The dedicated API reads recorded IDs and validates the envelope, request
+fingerprint, typed result and citations. General SSE suppresses the private
+`CareerLearningRecorded` payload. Profile and posting/identity events invalidate
+the tenant-scoped career-learning read key; successful mutations install the
+canonical response, and failed optimistic activity updates restore the accepted
+cache. Source changes mark historical records rather than reinterpreting them.

@@ -1081,6 +1081,207 @@
     },
     "schemaVersion": "1"
   },
+  "career_demand_comparison": {
+    "promptVersion": "career-demand-v1",
+    "schema": {
+      "$defs": {
+        "CareerDemand": {
+          "additionalProperties": false,
+          "properties": {
+            "capability": {
+              "enum": [
+                "demonstrated",
+                "partial",
+                "not_evidenced",
+                "uncertain"
+              ],
+              "title": "Capability",
+              "type": "string"
+            },
+            "demand_id": {
+              "maxLength": 80,
+              "minLength": 1,
+              "title": "Demand Id",
+              "type": "string"
+            },
+            "evidence": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 24,
+              "title": "Evidence",
+              "type": "array"
+            },
+            "mentions": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 60,
+              "minItems": 1,
+              "title": "Mentions",
+              "type": "array"
+            },
+            "rationale": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "skill": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Skill",
+              "type": "string"
+            },
+            "uncertainty": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "title": "Uncertainty",
+              "type": "string"
+            }
+          },
+          "required": [
+            "demand_id",
+            "skill",
+            "mentions",
+            "capability",
+            "evidence",
+            "rationale",
+            "uncertainty"
+          ],
+          "title": "CareerDemand",
+          "type": "object"
+        },
+        "CareerMilestoneProposal": {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "title": "Action",
+              "type": "string"
+            },
+            "completion_criterion": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "title": "Completion Criterion",
+              "type": "string"
+            },
+            "demand_id": {
+              "maxLength": 80,
+              "minLength": 1,
+              "title": "Demand Id",
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "learning",
+                "evidence_building"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "proposal_id": {
+              "maxLength": 80,
+              "minLength": 1,
+              "title": "Proposal Id",
+              "type": "string"
+            },
+            "rationale": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "title": {
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Title",
+              "type": "string"
+            }
+          },
+          "required": [
+            "proposal_id",
+            "demand_id",
+            "kind",
+            "title",
+            "action",
+            "completion_criterion",
+            "rationale"
+          ],
+          "title": "CareerMilestoneProposal",
+          "type": "object"
+        },
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "demands": {
+          "items": {
+            "$ref": "#/$defs/CareerDemand"
+          },
+          "maxItems": 60,
+          "title": "Demands",
+          "type": "array"
+        },
+        "proposals": {
+          "items": {
+            "$ref": "#/$defs/CareerMilestoneProposal"
+          },
+          "maxItems": 30,
+          "title": "Proposals",
+          "type": "array"
+        },
+        "uncertainty": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Uncertainty",
+          "type": "string"
+        }
+      },
+      "required": [
+        "demands",
+        "proposals",
+        "uncertainty"
+      ],
+      "title": "CareerDemandComparison",
+      "type": "object"
+    },
+    "schemaVersion": "1"
+  },
   "claim_verification": {
     "promptVersion": "claim-verification-v2",
     "schema": {

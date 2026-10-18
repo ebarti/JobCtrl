@@ -504,6 +504,22 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For selected-job demand, run locked `pytest tests/test_career_learning.py` and
+API `vitest run test/career-learning.test.ts` through their package owners.
+Require a no-model, read-only preview including all-missing descriptions;
+source-fingerprint/pre-spend fences; exact duplicate and missing-description
+counts; confirmed-only evidence with exact IDs; opposite valid model outcomes;
+provider/spend/schema/foreign-ID/non-verbatim/exact-value failures; and unchanged
+accepted comparisons after failure. Race a profile save with the model call.
+Choose a proposal through HTTP/registered RPC/SQLite, record completion evidence,
+restart and read it back. Rejected/stale writes must preserve origin/history and
+Profile/fit rows. Browser and hook checks cover explicit selection, citations,
+review before spend, pending state, optimistic rollback, source invalidation,
+separate aspirations/capability/activity and the unavailable demo. Inspect the
+expanded surface for accessibility and desktop/mobile overflow. Synthetic model
+doubles prove authority and failure handling; a configured-provider call with
+owned synthetic sources separately establishes live model integration.
+
 Every displayed semantic judgment must trace to a persisted determination:
 kind, schema/prompt versions, provider/model, input fingerprint, canonical source
 IDs and verbatim citations. Inspect the canonical writer, the accepted artifact

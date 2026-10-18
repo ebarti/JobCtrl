@@ -1,3 +1,4 @@
+import { evidenceMapKeys } from "../operations/evidenceMapKeys.js";
 import type {
   CompensationFactsUpdated,
   ContentDuplicateCandidateDetected,
@@ -23,6 +24,7 @@ import { patchJobActiveState, reconcileJobActiveStatePage } from "../operations/
 import type { JobsListInput } from "../operations/types.js";
 
 export const jobEnrichedHandler = (event: JobEnriched): readonly InvalidationItem[] => [
+  invalidate(evidenceMapKeys.learning(event.tenantId)),
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(discoveryKeys.sourceQuality(event.tenantId)),
@@ -48,6 +50,7 @@ export const enrichmentFailedHandler = (
 export const postingContentSnapshotCapturedHandler = (
   event: PostingContentSnapshotCaptured,
 ): readonly InvalidationItem[] => [
+  invalidate(evidenceMapKeys.learning(event.tenantId)),
   invalidate(interviewKeys.history(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(discoveryKeys.sourceQuality(event.tenantId)),

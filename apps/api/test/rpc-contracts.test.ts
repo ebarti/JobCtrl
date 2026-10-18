@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import careerLearningSchemaHashes from "./fixtures/career-learning-endpoint-hashes.json" with { type: "json" };
 import providerEndpointSpecs from "./fixtures/provider-endpoint-specs.json" with { type: "json" };
 /**
  * RPC contract schema coverage — keeps the TS contract package in sync with
@@ -262,15 +264,18 @@ describe("endpoint spec fixture", () => {
       expect(endpointSpecsFixture.endpoints).not.toHaveProperty(name);
     }
     expect(Object.keys(endpointSpecJsonSchemaFixture().endpoints).sort()).toEqual(
-      [...Object.keys(endpointSpecsFixture.endpoints), ...additions].sort(),
+      [...Object.keys(endpointSpecsFixture.endpoints), ...additions, ...Object.keys(careerLearningSchemaHashes)].sort(),
     );
   });
 
   it("pins every migrated request and response JSON Schema", () => {
-    expect(endpointSpecJsonSchemaFixture()).toEqual({
+    const current = endpointSpecJsonSchemaFixture();
+    const careerNames = Object.keys(careerLearningSchemaHashes);
+    expect({ ...current, endpoints: Object.fromEntries(Object.entries(current.endpoints).filter(([name]) => !careerNames.includes(name))) }).toEqual({
       ...endpointSpecsFixture,
       endpoints: { ...endpointSpecsFixture.endpoints, ...providerEndpointSpecs },
     });
+    expect(Object.fromEntries(Object.entries(current.endpoints).filter(([name]) => careerNames.includes(name)).map(([name, schema]) => [name, createHash("sha256").update(JSON.stringify(schema)).digest("hex")]))).toEqual(careerLearningSchemaHashes);
   });
 
   it("records the indirect worker RPCs used by merged endpoint handlers", () => {

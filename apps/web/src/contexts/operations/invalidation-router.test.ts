@@ -42,14 +42,17 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
     digestKeys.all(LOCAL_TENANT),
   ],
-  JobUpdated: [interviewKeys.history(LOCAL_TENANT, JOB_ID), dashboardKeys.summary(LOCAL_TENANT), jobsKeys.detail(LOCAL_TENANT, JOB_ID)],
+  JobUpdated: [
+    evidenceMapKeys.learning(LOCAL_TENANT),interviewKeys.history(LOCAL_TENANT, JOB_ID), dashboardKeys.summary(LOCAL_TENANT), jobsKeys.detail(LOCAL_TENANT, JOB_ID)],
   JobDeleted: [
+    evidenceMapKeys.learning(LOCAL_TENANT),
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     dashboardKeys.summary(LOCAL_TENANT),
     digestKeys.all(LOCAL_TENANT),
   ],
   JobRestored: [
+    evidenceMapKeys.learning(LOCAL_TENANT),
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     dashboardKeys.summary(LOCAL_TENANT),
@@ -87,11 +90,13 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   CanonicalJobIdentityResolved: [
+    evidenceMapKeys.learning(LOCAL_TENANT),
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     discoveryKeys.sourceQuality(LOCAL_TENANT),
   ],
   DuplicateJobLinked: [
+    evidenceMapKeys.learning(LOCAL_TENANT),
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     discoveryKeys.sourceQuality(LOCAL_TENANT),
@@ -132,6 +137,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   JobEnriched: [
+    evidenceMapKeys.learning(LOCAL_TENANT),
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     discoveryKeys.sourceQuality(LOCAL_TENANT),
@@ -144,6 +150,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   PostingContentSnapshotCaptured: [
+    evidenceMapKeys.learning(LOCAL_TENANT),
     interviewKeys.history(LOCAL_TENANT, JOB_ID),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     discoveryKeys.sourceQuality(LOCAL_TENANT),
