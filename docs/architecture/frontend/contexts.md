@@ -276,6 +276,16 @@ backend domain model [§4.5](../domain-model/tactical.md)):
   `MaterialsExhausted`) drive query-cache invalidation. The mutation
   resolves with `runId`; the UI shows "queued" until the corresponding
   events arrive (§7).
+- Resume document transforms live in `materials/lib/resume-document.ts`
+  (HTML/Plate normalization, serialization, signatures and semantic text
+  projection). `resume-provenance.ts` joins persisted source IDs and
+  `resume-comments.ts` places recorded anchors and builds bounded comment seeds.
+  `resume-formatting.ts` owns Plate formatting commands and link transforms;
+  `ResumePlateDocument.tsx` and `ResumeEditorToolbar.tsx` own presentation.
+  `ResumeAuditPins.tsx` composes these modules and retains HTML loading, draft
+  lifecycle, approval preparation and mounted-document PDF export. Its public
+  standalone editor and semantic text projection exports serve Profile and
+  Preferences. Feature contract types enter through the Operations ACL.
 - Interview prep commands and personal note saves stay Materials-owned, with
   reusable selection/detail/prep/notes components and validated forms. Generated
   prep remains visible while refresh fails; independently revisioned edits keep
