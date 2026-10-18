@@ -262,6 +262,12 @@ export class DemoApiClientAdapter implements ApiClientPort {
     );
   }
 
+  jobOffer = this.unsupported("jobOffer");
+  saveOfferTerms = this.unsupported("saveOfferTerms");
+  recordOfferDecision = this.unsupported("recordOfferDecision");
+  postedCompensationFact = this.unsupported("postedCompensationFact");
+  marketCompensationEstimate = this.unsupported("marketCompensationEstimate");
+
   applicationOutcomes() {
     return this.read((model) => model.analytics.outcomes);
   }

@@ -33,3 +33,5 @@ export * from "./semantic-determinations.js";
 export { isCurrentDeterminationVersion, validDeterminationResult } from "./semantic-result-schemas.js";
 
 export * from "./company-briefings.js";
+
+export * from "./offers.js";

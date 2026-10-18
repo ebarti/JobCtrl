@@ -1,3 +1,4 @@
+import type { OutreachDraftKind } from "@jobctrl/contracts";
 import type { OutreachDraftDto, OutreachThreadDetail } from "@jobctrl/contracts";
 import { useIsMutating } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type JSX } from "react";
@@ -24,6 +25,8 @@ import { RejectDraftButton } from "./RejectDraftButton.js";
 export interface OutreachThreadPanelProps {
   contactId: string;
   jobId?: string;
+  draftKind?: OutreachDraftKind;
+  offerRevisionId?: string;
 }
 
 type DraftDecision = "approve" | "reject";
@@ -83,7 +86,7 @@ function OutreachThreadBody({
   const approved = approvedDraftOf(thread);
   const candidate = candidateUnderReviewOf(thread);
   const history = historyNewestFirst(thread);
-  const canApprove = candidate ? candidate.gateResults.passed : false;
+  const canApprove = candidate ? candidate.gateResults.passed && candidate.offerSourcesCurrent !== false : false;
   const revisingApproved = revisionTarget === "approved";
   const revisingCandidate = revisionTarget === "candidate";
   const threadActionPending = pendingDecision !== null || activeThreadMutations > 0;
@@ -137,10 +140,11 @@ function OutreachThreadBody({
       {approved ? (
         <div className="outreach-approved-draft">
           <h4>Approved message</h4>
+          {approved.offerSourcesCurrent === false ? <p role="status">Offer terms or decision changed. This approved message remains in history; generate and review a new offer draft before copying.</p> : null}
           <DraftMeta draft={approved} timestamp={`approved ${formatDateTime(approved.approvedAt)}`} />
           <DraftBody bodyText={approved.bodyText} />
           <div className="outreach-draft-actions">
-            <CopyDraftButton draft={approved} />
+            <CopyDraftButton draft={approved} contactId={contactId} {...(jobId ? { jobId } : {})} />
             <Button
               type="button"
               variant="outline"
@@ -289,7 +293,7 @@ function OutreachThreadBody({
 // review with its gate results + claim provenance + approve/reject/revise actions,
 // and the full generation history so a re-draft never hides prior generations
 // (INV-5). There is no send action anywhere (INV-1).
-export function OutreachThreadPanel({ contactId, jobId }: OutreachThreadPanelProps): JSX.Element {
+export function OutreachThreadPanel({ contactId, jobId, draftKind, offerRevisionId }: OutreachThreadPanelProps): JSX.Element {
   const query = useOutreachThreadQuery({ contactId, ...(jobId ? { jobId } : {}) });
   const errorMessage = query.error instanceof Error ? query.error.message : "";
   const thread = query.data?.thread ?? null;
@@ -298,7 +302,7 @@ export function OutreachThreadPanel({ contactId, jobId }: OutreachThreadPanelPro
     <section className="section outreach-thread-panel" aria-label="Outreach">
       <div className="outreach-thread-head">
         <h3>Outreach</h3>
-        <GenerateDraftButton contactId={contactId} {...(jobId ? { jobId } : {})} />
+        <GenerateDraftButton contactId={contactId} {...(jobId ? { jobId } : {})} {...(draftKind ? { kind: draftKind } : {})} {...(offerRevisionId ? { offerRevisionId, label: "Generate offer draft" } : {})} />
       </div>
       {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
       {!thread && !errorMessage ? (

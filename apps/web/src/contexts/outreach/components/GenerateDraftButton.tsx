@@ -13,6 +13,7 @@ export interface GenerateDraftButtonProps {
   contactId: string;
   jobId?: string;
   kind?: OutreachDraftKind;
+  offerRevisionId?: string;
   label?: string;
 }
 
@@ -23,6 +24,7 @@ export function GenerateDraftButton({
   contactId,
   jobId,
   kind,
+  offerRevisionId,
   label = "Generate draft",
 }: GenerateDraftButtonProps): JSX.Element {
   const { featureFlags } = usePorts();
@@ -42,6 +44,7 @@ export function GenerateDraftButton({
     mutation.mutate({
       ...(jobId ? { jobId } : {}),
       ...(kind ? { kind } : {}),
+      ...(offerRevisionId ? { offerRevisionId } : {}),
     });
   };
 

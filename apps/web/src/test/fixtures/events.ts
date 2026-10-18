@@ -2,6 +2,7 @@ import {
   createApplicationEmailFeedbackIngested,
   createApplicationFailed,
   createApplicationOutcomeRecorded,
+  createOfferRecordChanged,
   createApplicationSubmitted,
   createDryRunCompleted,
   createApplyReviewDecisionRecorded,
@@ -605,6 +606,7 @@ export const eventByType = {
     emailRecipient: null,
     emailAttachmentArtifactId: null,
   }),
+  OfferRecordChanged: createOfferRecordChanged(LOCAL_TENANT, { jobId: JOB_ID, revisionId: "offer-revision-1", decisionId: null }),
   ApplicationOutcomeRecorded: createApplicationOutcomeRecorded(LOCAL_TENANT, {
     jobKey: JOB_ID,
     outcomeId: "outcome-1",

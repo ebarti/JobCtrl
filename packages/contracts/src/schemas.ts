@@ -6765,8 +6765,8 @@ export interface ConfirmContactCandidateResponse {
 // an approved draft is copied out via the browser clipboard, never sent.
 // ---------------------------------------------------------------------------
 
-export const OUTREACH_DRAFT_KINDS = ["intro_request", "follow_up"] as const;
-export const OutreachDraftKindSchema = z.enum(OUTREACH_DRAFT_KINDS).catch("intro_request");
+export const OUTREACH_DRAFT_KINDS = ["intro_request", "follow_up", "offer_negotiation", "offer_clarification", "offer_acceptance", "offer_decline"] as const;
+export const OutreachDraftKindSchema = z.enum(OUTREACH_DRAFT_KINDS);
 export type OutreachDraftKind = (typeof OUTREACH_DRAFT_KINDS)[number];
 
 export const OUTREACH_DRAFT_STATUSES = [
@@ -6804,6 +6804,7 @@ export interface OutreachGateJudge {
 export interface OutreachDraftGateResults {
   passed: boolean;
   computedAgainst: string;
+  sourceContext?: { binding: { jobId: string; termsRevisionId: string; decisionId: string | null }; fingerprint: string; sources: { source_id: string; text: string }[] } | null;
   fabrications: OutreachGateFabrication[];
   validation: OutreachGateValidation;
   judge: OutreachGateJudge | null;
@@ -6811,6 +6812,7 @@ export interface OutreachDraftGateResults {
 
 /** One claim in a draft bound to the confirmed fact(s) it rests on (INV-2). */
 export interface OutreachClaimProvenanceDto {
+  sourceCitations?: { sourceId: string; quote: string }[];
   claimId: string;
   section: string;
   generatedText: string;
@@ -6820,6 +6822,7 @@ export interface OutreachClaimProvenanceDto {
 }
 
 export interface OutreachDraftDto {
+  offerSourcesCurrent?: boolean;
   draftId: string;
   threadId: string;
   generation: number;
@@ -6861,6 +6864,7 @@ export const GenerateOutreachDraftRequestSchema = z
   .object({
     jobId: outreachJobIdField,
     kind: OutreachDraftKindSchema.optional(),
+    offerRevisionId: z.uuid().optional(),
     applicationRole: z.string().trim().max(200).optional(),
     llmModel: z.string().trim().min(1).max(120).optional(),
   })
@@ -6871,6 +6875,7 @@ export const ReviseOutreachDraftRequestSchema = z
   .object({
     editedBodyText: z.string().trim().min(1).max(8000),
     kind: OutreachDraftKindSchema.optional(),
+    offerRevisionId: z.uuid().optional(),
     applicationRole: z.string().trim().max(200).optional(),
     llmModel: z.string().trim().min(1).max(120).optional(),
   })
