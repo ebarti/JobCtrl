@@ -1,3 +1,4 @@
+import { callRpc, RpcContractError } from "./json-rpc-adapter.js";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { ZodType } from "zod";
 
@@ -12,7 +13,8 @@ import {
   type EndpointResponse,
   type EndpointSpec,
   type JsonRpcError,
-  type RpcMethod,
+  parseRpcParams,
+  type ContractRpcMethod,
 } from "./contracts.js";
 import type { JsonRpcDispatcher } from "./json-rpc-adapter.js";
 
@@ -48,7 +50,7 @@ export interface RegisterEndpointRoutesDependencies {
 }
 
 interface RuntimeDispatch {
-  readonly rpcMethod: RpcMethod;
+  readonly rpcMethod: ContractRpcMethod;
   readonly params: (
     input: { readonly request: unknown; readonly pathParam: unknown },
     context: EndpointDispatchContext,
@@ -121,15 +123,15 @@ export function registerEndpointRoutes(
         const dispatch = endpoint.dispatch;
         let rpcResponse;
         try {
-          const params = dispatch.paramsSchema.parse(
+          const params = parseRpcParams(dispatch.rpcMethod, dispatch.paramsSchema.parse(
             dispatch.params(
               { request: parsedRequest, pathParam },
               dependencies.dispatchContext,
             ),
-          ) as Record<string, unknown>;
-          rpcResponse = await dependencies.dispatcher.call(dispatch.rpcMethod, params);
-        } catch {
-          return endpointFailure(reply, dispatch.error({ kind: "transport" }));
+          ));
+          rpcResponse = await callRpc(dependencies.dispatcher, dispatch.rpcMethod, params);
+        } catch (error) {
+          return endpointFailure(reply, dispatch.error({ kind: error instanceof RpcContractError && error.phase === "result" ? "invalid_result" : "transport" }));
         }
         if (rpcResponse.error) {
           return endpointFailure(

@@ -1,3 +1,4 @@
+import { callRpc } from "./json-rpc-adapter.js";
 import type {
   ApplicationOutcomeKind,
   GmailOutcomeScanRequest,
@@ -34,7 +35,7 @@ export function createWorkerGmailFeedbackScanner(dispatcher: JsonRpcDispatcher):
   return async (input, context) => {
     let response: Awaited<ReturnType<JsonRpcDispatcher["call"]>>;
     try {
-      response = await dispatcher.call(RpcMethods.GmailFeedbackScan, {
+      response = await callRpc(dispatcher, RpcMethods.GmailFeedbackScan, {
       expectedAppDir: context.appDir,
       expectedDbPath: context.dbPath,
       ...(input.recipientEmail !== undefined ? { recipientEmail: input.recipientEmail } : {}),

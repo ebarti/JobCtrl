@@ -22,7 +22,7 @@ const unavailable = async () => {
   throw new Error("Operation is outside the isolated E2E fixture");
 };
 const providerDispatcher: JsonRpcDispatcher = {
-  call: async (method, params) =>
+  call: async (method, params: Record<string, unknown>) =>
     method === RpcMethods.ProfileRequiredBulletSuggestions
       ? (() => {
           // Chosen model findings exercise the same persisted authority contract

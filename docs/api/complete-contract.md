@@ -2375,3 +2375,31 @@ For language capabilities, review flow and CLI examples, see
 ## Screening Answer Contract
 
 GET/POST `/v1/jobs/:jobId/screening-answers` use `ScreeningReadResponseSchema`, `ScreeningCommandSchema` and `ScreeningWriteResponseSchema` from shared contracts. Read responses retain `questions`, `history`, `library`, `facts`, nullable `sourceBinding`/`sourceFailure` persisted `determinations` and safe `failures`. Commands reject unknown fields, bound text to 16,000 characters and require expected revisions/idempotency keys; capture questions/context are each limited to 4,000 characters. The [owning route reference](jobs-and-materials.md#screening-answers) and [action fields](../user/screening-answers.md#cli-and-local-api) define behavior. Runtime identity comes from the API, never the request body. Transport failures return 503, invalid worker parameters 409, and malformed/foreign completions 502 with safe errors; body-schema failures return 400.
+
+## Provider Transport And Error Details
+
+The provider routes retain their methods and paths under the shared endpoint
+specification. Requests ignore query/body values; the generated verification
+client sends an empty JSON object. Success responses are strict:
+
+- Status: `{ ok: true, providers }`, with each item restricted to `provider`,
+  `configured`, `ready`, nullable `mode` and optional bounded `message`.
+- Models: `{ ok: true, providers }`, exactly three entries in Codex, Claude,
+  Google order. Unready providers have empty model arrays.
+- Verification: `{ ok: true, verification: { provider: "codex", ok, status, message } }`;
+  inner `ok: false` with `not_configured`/`failed` remains HTTP 200.
+
+Status and verification map RPC errors or invalid results to 502 and transport
+failures to 503. Models maps all three failure classes to 503. Errors are
+`{ ok: false, error, message }` with the operation-specific code and fixed
+message from the [provider compatibility table](profile-and-settings.md#provider-endpoint-compatibility).
+Status RPC/transport failures say “Provider status is temporarily unavailable.”;
+invalid results say “Provider status returned an invalid response.” Models
+failures say “Provider models are temporarily unavailable.” Verification RPC
+errors say “Codex verification could not be completed.”, invalid results say
+“Codex verification returned an invalid response.”, and transport failures say
+“Codex verification is temporarily unavailable.” Extra/private result fields
+fail validation. Existing HTTP security rejection precedes provider dispatch.
+
+This changes no #954 JSON-RPC envelope policy or durable workflow result.
+See the [incremental migration recipe and synthetic test seams](../architecture/contracts-types-and-api-boundaries.md#incremental-endpoint-migration).
