@@ -26,6 +26,7 @@ const managedEnvironmentKeys = [
   "JOBCTRL_E2E_API_PORT",
   "JOBCTRL_E2E_STATE_FILE",
   "JOBCTRL_E2E_WEB_PORT",
+  "JOBCTRL_E2E_WEB_SERVER",
   "JOBCTRL_DIR",
   "JOBCTRL_DB_PATH",
   "JOBCTRL_CONFIG_PATH",
@@ -89,6 +90,8 @@ describe("Playwright run ownership", () => {
       UV_LOCKED: "1",
     });
     expect(config.webServer[1]?.env).toMatchObject({
+      JOBCTRL_E2E_WEB_SERVER: "preview",
+      JOBCTRL_E2E_WEB_PORT: "15174",
       VITE_DEV_API_PROXY_TARGET: "http://127.0.0.1:18767",
       HOME: serviceHome,
       TZ: "UTC",
@@ -97,6 +100,22 @@ describe("Playwright run ownership", () => {
     expect(process.env["JOBCTRL_E2E_STATE_FILE"]).toBe(
       path.join(appDir, ".jobctrl-e2e-state.json"),
     );
+  });
+
+  test("focused runs can explicitly use the development server", async () => {
+    const config = await loadPlaywrightConfig({
+      JOBCTRL_E2E_WEB_SERVER: "dev",
+    });
+    if (!Array.isArray(config.webServer))
+      throw new Error("Missing E2E servers");
+    expect(config.webServer[1]?.command).toContain("fixtures/start-web.cjs");
+    expect(config.webServer[1]?.env?.JOBCTRL_E2E_WEB_SERVER).toBe("dev");
+  });
+
+  test("a misspelled web-server mode cannot silently select another test path", async () => {
+    await expect(
+      loadPlaywrightConfig({ JOBCTRL_E2E_WEB_SERVER: "preveiw" }),
+    ).rejects.toThrow("must be preview or dev");
   });
 
   test("repeated ordinary runs under the same parent preserve its data and get distinct paths", async () => {

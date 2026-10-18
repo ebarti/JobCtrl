@@ -91,6 +91,21 @@ refinement rather than a duplicate schema.
 
 These tests do not mount React components.
 
+Pure files explicitly select Node with `// @vitest-environment node`; tests that
+need browser behavior retain jsdom. Both environments reject unexpected network
+requests through MSW. DOM setup, React cleanup, and browser polyfills load only
+for jsdom files. Tests using the shared provider render helper also install the
+default API handlers and interview fixtures. Teardown unmounts React before
+resetting handlers and fixture state. The upstream axe assertion remains
+synchronous and loads its implementation when used.
+
+The boundary regression suite runs two files through Node's test runner with
+`--test-concurrency=2`: module ownership/generated-route controls and capability
+handoff/flow controls. Each process uses independent in-memory fixtures and
+fresh TypeScript programs; every real-program case still requests semantic
+diagnostics for the complete graph. The standalone production boundary check
+remains an independent cold run.
+
 ## 10.3 Component & Hook Tests (Vitest + React Testing Library + MSW)
 
 **Decision (resolves §6 question 14):** **Both** domain hooks (with MSW)
@@ -168,9 +183,15 @@ critical flows:
    timeline → simulated `DryRunComplete` event closes the run.
 8. **Settings update** → change a setting → confirm persistence.
 
-Playwright is configured with **per-test isolated SQLite databases**
-seeded from fixture files; the `apps/api` boots against the test DB; the
-test interacts with the rendered web app at `http://127.0.0.1:5173`.
+Each main web Playwright invocation owns a disposable workspace with a seeded
+SQLite database and its own API and web servers. Tests share that database
+serially and use fresh browser contexts. By default the web server builds a fresh production
+bundle inside the workspace and serves it through Vite preview, retaining the
+same-origin API and SSE proxy. `JOBCTRL_E2E_WEB_SERVER=dev` selects Vite's
+development server for small focused runs where a fresh build would dominate.
+The default API/web ports are `8767`/`5174`; the owning
+[development commands](../../local-development.md#frontend-test-pyramid)
+describe isolated runs and overrides.
 
 ## 10.5 Storybook (Component-Driven Development)
 

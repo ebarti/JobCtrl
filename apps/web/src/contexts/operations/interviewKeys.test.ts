@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it } from "vitest";
 import type { TenantId } from "@jobctrl/domain-types";
 import { interviewKeys } from "./interviewKeys.js";

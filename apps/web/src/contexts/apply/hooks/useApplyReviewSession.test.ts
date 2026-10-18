@@ -66,7 +66,9 @@ function mount(overrides: Partial<Api> = {}, initial = item, autosave = 0) {
   const hook = renderHookWithProviders((owner: ApplyReviewQueueItem) => useApplyReviewSession(owner, autosave), { ports, initialProps: initial });
   return { ...hook, api, draft };
 }
-const ready = async (hook: ReturnType<typeof mount>) => { await waitFor(() => expect(hook.result.current.draft).not.toBeNull()); };
+// Hook state has no DOM mutation to wake waitFor's observer; poll readiness
+// promptly while retaining its normal timeout and the same acceptance condition.
+const ready = async (hook: ReturnType<typeof mount>) => { await waitFor(() => expect(hook.result.current.draft).not.toBeNull(), { interval: 1 }); };
 
 describe("Apply review session", () => {
   it.each(["unchanged", "later text", "later formatting", "undo"])("acknowledges normalized multiline paste while preserving %s", async (change) => {
@@ -484,24 +486,32 @@ describe("Apply review session", () => {
       await waitFor(() => expect(hook.result.current.errors.load).toBe("load failed"));
       expect(hook.result.current.document).toEqual(document("A"));
       const version = hook.result.current.documentVersion;
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       if (editTiming === "before") act(() => hook.result.current.edit(document("typed during retry", true)));
       act(() => hook.result.current.retryLoad());
       if (editTiming === "during") act(() => hook.result.current.edit(document("typed during retry", true)));
-      await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(create).toHaveBeenCalledTimes(2);
       expect(hook.result.current.loading).toBe(true);
       expect(hook.result.current.canSave).toBe(false);
       // Exceed the production 1,500 ms interval without allowing a write during loading.
-      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1650)); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1650); });
       expect(save).not.toHaveBeenCalled();
-      await act(async () => { pending.resolve({ ok: true, draft: cached }); });
-      await waitFor(() => expect(hook.result.current.loading).toBe(false));
+      await act(async () => {
+        pending.resolve({ ok: true, draft: cached });
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(hook.result.current.loading).toBe(false);
       expect(hook.result.current.dirty).toBe(true);
       expect(hook.result.current.canSave).toBe(true);
-      await waitFor(() => expect(save).toHaveBeenCalledTimes(1), { timeout: 2500 });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1499); });
+      expect(save).not.toHaveBeenCalled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      expect(save).toHaveBeenCalledTimes(1);
       expect(save).toHaveBeenCalledWith(cached.draftId, expect.objectContaining({
         editedText: "typed during retry", plateDocument: next.latestRevision!.plateDocument,
       }));
-      await waitFor(() => expect(hook.result.current.dirty).toBe(false));
+      expect(hook.result.current.dirty).toBe(false);
       expect(hook.result.current.documentVersion).toBe(version);
       expect(hook.result.current.document).toEqual(document("typed during retry", true));
       expect(hook.result.current.errors.save).toBeUndefined();
@@ -510,7 +520,10 @@ describe("Apply review session", () => {
       expect(applyJob).not.toHaveBeenCalled();
       expect(decideApplyReview).not.toHaveBeenCalled();
       expect(renderResumeReviewDraft).not.toHaveBeenCalled();
-    } finally { hook.unmount(); }
+    } finally {
+      hook.unmount();
+      vi.useRealTimers();
+    }
   });
 
   it("allows load retry without replacing the accepted document with a failed attempt", async () => {

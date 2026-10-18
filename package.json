@@ -78,7 +78,7 @@
     "ttfv:probe": "node scripts/ttfv-real.mjs probe",
     "ttfv:summary": "node scripts/ttfv-real.mjs summarize",
     "scripts:test": "node --test scripts/*.test.mjs",
-    "python:test": "uv --project workers/automation run --locked --all-extras pytest -q",
+    "python:test": "uv --project workers/automation run --locked --all-extras pytest workers/automation/tests -q -n 2 --dist=loadfile --max-worker-restart=0",
     "python:lint": "uv --project workers/automation run --locked --all-extras ruff check . && uv --project workers/automation run --locked --all-extras python scripts/generate-semantic-result-schemas.py --check && node scripts/sync-semantic-taxonomy.mjs --check",
     "python:build": "uv --project workers/automation run --locked --all-extras python -m build --no-isolation workers/automation",
     "check": "corepack pnpm --filter @jobctrl/contracts check && corepack pnpm --filter @jobctrl/api-client check && corepack pnpm api:check && corepack pnpm web:check && corepack pnpm extension:check && corepack pnpm demo-edge:check && corepack pnpm python:lint && corepack pnpm launcher:check",

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { DOMAIN_EVENT_TYPES, LOCAL_TENANT } from "@jobctrl/domain-types";
 import { describe, expect, it } from "vitest";
 

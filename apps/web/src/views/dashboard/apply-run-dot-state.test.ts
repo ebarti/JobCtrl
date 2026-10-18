@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it } from "vitest";
 
 import { applyRunDotState } from "./apply-run-dot-state.js";
