@@ -44,6 +44,7 @@ export function dependencies(source) {
           (item) => (item.propertyName ?? item.name).text,
         );
         typeOnly ||=
+          !node.importClause?.name &&
           bindings.elements.length > 0 &&
           bindings.elements.every((item) => item.isTypeOnly);
       }
@@ -331,9 +332,12 @@ export function lintProgram(
           : undefined;
         const names =
           bindings && ts.isNamedImports(bindings)
-            ? bindings.elements
-                .filter((item) => !item.isTypeOnly)
-                .map((item) => (item.propertyName ?? item.name).text)
+            ? [
+                ...bindings.elements
+                  .filter((item) => !item.isTypeOnly)
+                  .map((item) => (item.propertyName ?? item.name).text),
+                ...(dep.node.importClause.name ? ["default"] : []),
+              ]
             : dep.names;
         if (names.length)
           for (const rule of runtimeOrigins(dep.specifier, names, source))
@@ -603,100 +607,140 @@ export function lintProgram(
       context: { ports: "ports", queryClient: "query" },
       ports: { api: "api" },
     };
-    const capabilityTrace = createTracer(checker, source, {
-      seed: capabilitySeed,
-      member(node, base, keys) {
-        const values = [];
-        for (const kind of base?.kinds ?? []) {
-          const fields = slots[kind] ?? {};
-          // Unknown computed access on a known capability container must not
-          // grant authority. Retain all possible child capabilities.
-          for (const key of keys ?? Object.keys(fields))
-            if (fields[key]) values.push(origin(fields[key]));
-        }
-        for (const key of keys ?? [])
-          values.push(
-            weakMember(
-              ts.isBindingElement(node) ? node.parent : node.expression,
-              key,
-            ),
-          );
-        return join(...values);
-      },
-    });
+    const capabilityTrace = capabilityTracer(source);
     const capability = (node) => capabilityTrace.trace(node);
-    function capabilitySeed(node, seen, writes) {
-      const values = [];
-      if (ts.isParameter(node) && loaderParameter(node))
-        values.push(origin("loader"));
-      if (ts.isIdentifier(node)) {
-        const symbol = ts.isShorthandPropertyAssignment(node.parent)
-          ? checker.getShorthandAssignmentValueSymbol(node.parent)
-          : checker.getSymbolAtLocation(node);
-        let original = symbol;
-        if (original?.flags & ts.SymbolFlags.Alias)
-          original = checker.getAliasedSymbol(original);
-        if (
-          original?.name === "usePorts" &&
-          original.declarations?.some(
-            (decl) =>
-              localPath(decl.getSourceFile().fileName) ===
-              "shared/providers/PortsProvider.tsx",
-          )
-        )
-          values.push(origin("ports-factory"));
-        if (
-          original?.name === "useRouteContext" &&
-          original.declarations?.some((decl) =>
-            normalize(decl.getSourceFile().fileName).includes("/@tanstack/"),
-          )
-        )
-          values.push(origin("context-factory"));
-        if (
-          symbol?.declarations?.some(
-            (decl) => ts.isParameter(decl) && loaderParameter(decl),
-          )
-        )
+    function capabilityTracer(tracedSource, parameters = new Map()) {
+      const tracer = createTracer(checker, tracedSource, {
+        seed: capabilitySeed,
+        member(node, base, keys) {
+          const values = [];
+          for (const kind of base?.kinds ?? []) {
+            const fields = slots[kind] ?? {};
+            // Unknown computed access on a known capability container must not
+            // grant authority. Retain all possible child capabilities.
+            for (const key of keys ?? Object.keys(fields))
+              if (fields[key]) values.push(origin(fields[key]));
+          }
+          for (const key of keys ?? [])
+            values.push(
+              weakMember(
+                ts.isBindingElement(node) ? node.parent : node.expression,
+                key,
+              ),
+            );
+          return join(...values);
+        },
+      });
+      function capabilitySeed(node, seen, writes) {
+        const values = [];
+        if (ts.isParameter(node)) values.push(parameters.get(node));
+        if (ts.isIdentifier(node))
+          for (const decl of checker.getSymbolAtLocation(node)?.declarations ??
+            [])
+            if (ts.isParameter(decl)) values.push(parameters.get(decl));
+        if (ts.isParameter(node) && loaderParameter(node))
           values.push(origin("loader"));
-      }
-      if (ts.isCallExpression(node)) {
-        const callee = unwrap(node.expression);
-        const factory = capabilityTrace.trace(callee, new Set(seen), writes);
-        if (hasKind(factory, "ports-factory")) values.push(origin("ports"));
-        if (hasKind(factory, "context-factory")) values.push(origin("context"));
-        if (
-          ts.isPropertyAccessExpression(callee) &&
-          callee.name.text === "useRouteContext" &&
-          routerOrigin(callee.expression)
-        )
-          values.push(origin("context"));
-      }
-      const type = checker.getTypeAtLocation(node);
-      for (const symbol of [type.aliasSymbol, type.getSymbol()]) {
-        for (const decl of symbol?.declarations ?? []) {
-          const path = localPath(decl.getSourceFile().fileName);
+        if (ts.isIdentifier(node)) {
+          const symbol = ts.isShorthandPropertyAssignment(node.parent)
+            ? checker.getShorthandAssignmentValueSymbol(node.parent)
+            : checker.getSymbolAtLocation(node);
+          let original = symbol;
+          if (original?.flags & ts.SymbolFlags.Alias)
+            original = checker.getAliasedSymbol(original);
           if (
-            path === "shared/ports/ApiClientPort.ts" &&
-            symbol.name === "ApiClientPort"
-          )
-            values.push(origin("api"));
-          if (
-            path === "shared/providers/PortsProvider.tsx" &&
-            symbol.name === "Ports"
-          )
-            values.push(origin("ports"));
-          if (path === "router.ts" && symbol.name === "RouterContext")
-            values.push(origin("context"));
-          if (
-            symbol.name === "QueryClient" &&
-            normalize(decl.getSourceFile().fileName).includes(
-              "/@tanstack/query-core/",
+            original?.name === "usePorts" &&
+            original.declarations?.some(
+              (decl) =>
+                localPath(decl.getSourceFile().fileName) ===
+                "shared/providers/PortsProvider.tsx",
             )
           )
-            values.push(origin("query"));
+            values.push(origin("ports-factory"));
+          if (
+            original?.name === "useRouteContext" &&
+            original.declarations?.some((decl) =>
+              normalize(decl.getSourceFile().fileName).includes("/@tanstack/"),
+            )
+          )
+            values.push(origin("context-factory"));
+          if (
+            symbol?.declarations?.some(
+              (decl) => ts.isParameter(decl) && loaderParameter(decl),
+            )
+          )
+            values.push(origin("loader"));
         }
+        if (ts.isCallExpression(node)) {
+          const callee = unwrap(node.expression);
+          const factory = tracer.trace(callee, new Set(seen), writes);
+          if (hasKind(factory, "ports-factory")) values.push(origin("ports"));
+          if (hasKind(factory, "context-factory"))
+            values.push(origin("context"));
+          if (
+            ts.isPropertyAccessExpression(callee) &&
+            callee.name.text === "useRouteContext" &&
+            routerOrigin(callee.expression)
+          )
+            values.push(origin("context"));
+        }
+        // Context ownership permits receiving dependencies, not exporting them as
+        // raw authority. Trace returned values with the actual argument origins,
+        // using the owner's source so local assignments and aliases survive any.
+        if (composer && ts.isCallExpression(node)) {
+          for (const fn of contextFunctions(node.expression)) {
+            if (seen.has(fn)) continue;
+            const bound = new Map(parameters);
+            fn.parameters.forEach((parameter, index) =>
+              bound.set(
+                parameter,
+                tracer.trace(node.arguments[index], new Set(seen), writes),
+              ),
+            );
+            const resultTracer = capabilityTracer(fn.getSourceFile(), bound);
+            const next = new Set(seen).add(fn);
+            function returned(body) {
+              if (ts.isReturnStatement(body)) {
+                values.push(
+                  resultTracer.trace(body.expression, new Set(next), writes),
+                );
+                return;
+              }
+              // A nested function's returns do not belong to this invocation.
+              if (ts.isFunctionLike(body)) return;
+              ts.forEachChild(body, returned);
+            }
+            if (ts.isBlock(fn.body)) returned(fn.body);
+            else values.push(resultTracer.trace(fn.body, next, writes));
+          }
+        }
+        const type = checker.getTypeAtLocation(node);
+        for (const symbol of [type.aliasSymbol, type.getSymbol()]) {
+          for (const decl of symbol?.declarations ?? []) {
+            const path = localPath(decl.getSourceFile().fileName);
+            if (
+              path === "shared/ports/ApiClientPort.ts" &&
+              symbol.name === "ApiClientPort"
+            )
+              values.push(origin("api"));
+            if (
+              path === "shared/providers/PortsProvider.tsx" &&
+              symbol.name === "Ports"
+            )
+              values.push(origin("ports"));
+            if (path === "router.ts" && symbol.name === "RouterContext")
+              values.push(origin("context"));
+            if (
+              symbol.name === "QueryClient" &&
+              normalize(decl.getSourceFile().fileName).includes(
+                "/@tanstack/query-core/",
+              )
+            )
+              values.push(origin("query"));
+          }
+        }
+        return join(...values);
       }
-      return join(...values);
+      return tracer;
     }
     collectLoaders(source);
 
@@ -746,6 +790,35 @@ export function lintProgram(
             (key ?? "[computed]") +
             " into a context-owned read helper or hook; weak/generated types, computed keys and aliases do not grant authority.",
         );
+    }
+    function contextFunctions(node, seen = new Set()) {
+      node = unwrap(node);
+      if (!node || seen.has(node)) return [];
+      seen.add(node);
+      if (ts.isConditionalExpression(node))
+        return [
+          ...contextFunctions(node.whenTrue, new Set(seen)),
+          ...contextFunctions(node.whenFalse, new Set(seen)),
+        ];
+      let symbol = checker.getSymbolAtLocation(node);
+      if (symbol?.flags & ts.SymbolFlags.Alias)
+        symbol = checker.getAliasedSymbol(symbol);
+      return (symbol?.declarations ?? []).flatMap((decl) => {
+        if (
+          context(localPath(decl.getSourceFile().fileName)) &&
+          !isSupport(localPath(decl.getSourceFile().fileName))
+        ) {
+          if (ts.isFunctionDeclaration(decl) && decl.body) return [decl];
+          if (ts.isVariableDeclaration(decl) && decl.initializer) {
+            const fn = unwrap(decl.initializer);
+            if (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn))
+              return [fn];
+          }
+        }
+        return ts.isVariableDeclaration(decl) && decl.initializer
+          ? contextFunctions(decl.initializer, new Set(seen))
+          : [];
+      });
     }
     function contextHelper(node, seen = new Set()) {
       node = unwrap(node);
@@ -853,6 +926,20 @@ export function lintProgram(
         for (const argument of node.arguments ?? []) {
           inspectHandoff(argument);
         }
+        const callee = unwrap(node.expression);
+        if (
+          ts.isPropertyAccessExpression(callee) ||
+          ts.isElementAccessExpression(callee)
+        ) {
+          const keys = ts.isPropertyAccessExpression(callee)
+            ? [callee.name.text]
+            : literalKeys(callee.argumentExpression);
+          const reviewedPreview =
+            hasKind(capability(callee.expression), "api") &&
+            keys?.length === 1 &&
+            exempt("capabilities", path, keys[0]);
+          if (!reviewedPreview) inspectHandoff(callee.expression);
+        }
       }
       if (composer && ts.isReturnStatement(node) && node.expression)
         inspectHandoff(node.expression);
@@ -861,6 +948,14 @@ export function lintProgram(
       // A field annotated any hides its initializer from later instance reads.
       // Reject capability storage at the transfer, independently of field type.
       if (composer && ts.isPropertyDeclaration(node) && node.initializer)
+        inspectHandoff(node.initializer);
+      if (
+        composer &&
+        ts.isParameter(node) &&
+        node.initializer &&
+        ts.isConstructorDeclaration(node.parent) &&
+        ts.isParameterPropertyDeclaration(node, node.parent)
+      )
         inspectHandoff(node.initializer);
       if (
         composer &&

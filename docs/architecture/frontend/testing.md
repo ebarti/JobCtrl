@@ -73,6 +73,11 @@ comma results/aliases and capability storage in instance, static or private
 class fields (including constructor/method writes) have separate generated-loader
 and view controls. Comma-result barrels are checked with both resolved and
 missing package declarations.
+Mixed default/named imports (including named type-only bindings), ordinary
+parameter defaults, constructor parameter properties, capability-bearing method
+receivers and raw context-helper returns through `any` have generated-program
+negative controls. Positive controls preserve harmless defaults, container
+methods, local shadowing and DTO-returning context helpers.
 These require boundary diagnostics at actionable source locations independently
 of compiler diagnostics; compiler-clean `any` cannot authorize a capability.
 Generated-route composition tests exercise loader-to-API/cache handoff, tenant

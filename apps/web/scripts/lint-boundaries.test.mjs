@@ -312,6 +312,21 @@ test("API methods obtained through the port remain forbidden in a view, includin
     );
 });
 test("a preview helper exemption does not allow network reads", () => {
+  const previewOnly = check(
+    {
+      "views/lint-example/Page.ts": `import type { ApiClientPort } from '../../shared/ports/ApiClientPort.js';
+      declare const client: ApiClientPort; client.artifactPreviewPdfUrl('id');`,
+    },
+    {
+      capabilities: {
+        "views/lint-example/Page.ts": {
+          symbols: ["artifactPreviewPdfUrl"],
+          reason: "Pure URL helper",
+        },
+      },
+    },
+  );
+  assert.deepEqual(previewOnly, []);
   const result = check(
     {
       "views/lint-example/Page.ts": `
@@ -330,7 +345,16 @@ test("a preview helper exemption does not allow network reads", () => {
     },
   );
   assert.deepEqual(rules(result), ["view-api"]);
-  assert.match(result[0].message, /health/);
+  assert.ok(
+    result.some(
+      (item) =>
+        item.rule === "view-api" &&
+        item.file === "views/lint-example/Page.ts" &&
+        item.line === 4 &&
+        item.column > 0 &&
+        item.message.includes("health"),
+    ),
+  );
 });
 test("concrete transport and primitive packages are rejected in features", () => {
   assert.deepEqual(
@@ -1069,7 +1093,7 @@ test("spread/rest preserve harmless positions and context-owned capability hando
 });
 
 // Each row owns its source line in both the generated loader and a view.
-function checkReviewForms(control, controls) {
+function checkReviewForms(control, controls, extraFiles = {}, imports = "") {
   const route = "routes/dashboard.tsx",
     view = "views/lint-flow/Page.ts";
   const body = controls.map(([code]) => `    { ${code} }`).join("\n");
@@ -1081,7 +1105,11 @@ function checkReviewForms(control, controls) {
     `  loader: async ({ context }: any) => {\n${body}\n  },\n`,
   );
   const header = `import { useRouteContext } from '@tanstack/react-router';\nasync function probe() { const context: any = useRouteContext({ strict: false });\n`;
-  const inputs = { [route]: routeText, [view]: header + body + "\n}" };
+  const inputs = {
+    ...extraFiles,
+    [route]: imports + routeText,
+    [view]: imports + header + body + "\n}",
+  };
   const results = check(inputs, {}, true);
   console.log(
     JSON.stringify({
@@ -1096,8 +1124,12 @@ function checkReviewForms(control, controls) {
   assert.equal(results.compilerDiagnostics.length, 0);
   assert.deepEqual(
     [
-      [route, routeText.slice(0, routeText.indexOf(body)).split("\n").length],
-      [view, header.split("\n").length],
+      [
+        route,
+        (imports + routeText.slice(0, routeText.indexOf(body))).split("\n")
+          .length,
+      ],
+      [view, (imports + header).split("\n").length],
     ].flatMap(([file, first]) =>
       controls
         .filter(
@@ -1115,6 +1147,193 @@ function checkReviewForms(control, controls) {
     [],
   );
 }
+
+test("review repairs: mixed default imports retain runtime export authority", () => {
+  for (const suffix of ["", "/missing-declaration"]) {
+    const inputs = {},
+      expected = [];
+    const barrel = "shared/lint-mixed.ts";
+    inputs[barrel] =
+      `import { QueryClient } from '@tanstack/react-query${suffix}';
+      const Client: any = QueryClient; export default Client;
+      export const marker = 1; export type Marker = number;`;
+    for (const [i, clause] of [
+      "Client",
+      "Client, { marker }",
+      "Client, { type Marker }",
+    ].entries()) {
+      for (const kind of ["routes", "views"]) {
+        const file = `${kind}/lint-mixed-${i}.ts`;
+        inputs[file] =
+          `import ${clause} from '../shared/lint-mixed.js'; new Client().clear();`;
+        expected.push(file);
+      }
+    }
+    // Exercise the real generated loader too, keeping its route identity.
+    const route = "routes/dashboard.tsx";
+    inputs[route] =
+      `import Client, { type Marker } from '../shared/lint-mixed.js';\nimport NamedClient, { marker } from '../shared/lint-mixed.js';\n` +
+      readFileSync(resolve(webRoot, "src", route), "utf8").replace(
+        /  loader:.*\n/,
+        "  loader: () => { new Client().clear(); new NamedClient().clear(); },\n",
+      );
+    expected.push(route);
+    const results = check(inputs, {}, true);
+    console.log(
+      JSON.stringify({
+        control: "mixed-default-import",
+        suffix,
+        inputs,
+        boundary: results,
+        compiler: results.compilerDiagnostics.map((d) =>
+          ts.flattenDiagnosticMessageText(d.messageText, "\n"),
+        ),
+      }),
+    );
+    if (!suffix) assert.equal(results.compilerDiagnostics.length, 0);
+    else assert.ok(results.compilerDiagnostics.length > 0);
+    assert.ok(
+      results.some(
+        (d) =>
+          d.file === route &&
+          d.rule === "view-state" &&
+          d.line === 2 &&
+          d.column > 0,
+      ),
+    );
+    assert.deepEqual(
+      expected.filter(
+        (file) =>
+          !results.some(
+            (d) =>
+              d.file === file &&
+              d.rule === "view-state" &&
+              d.line === 1 &&
+              d.column > 0,
+          ),
+      ),
+      [],
+    );
+  }
+});
+
+test("review repairs: parameter defaults and parameter properties retain capabilities", () => {
+  checkReviewForms("parameter-default", [
+    [
+      "const read = (api: any = context.ports.api) => api.health(); read();",
+      "view-api",
+    ],
+    [
+      "function read(client: any = context.queryClient) { client.clear(); } read();",
+      "view-state",
+    ],
+    [
+      "const read = (box: any = { nested: context.ports.api }) => box.nested.health(); read();",
+      "view-api",
+    ],
+    [
+      "class Box { constructor(public api: any = context.ports.api) {} } new Box().api.health();",
+      "view-api",
+    ],
+    [
+      "class Box { constructor(readonly client: any = context.queryClient) {} } new Box().client.clear();",
+      "view-state",
+    ],
+    [
+      "class Box { constructor(private api: any = context.ports.api) {} run() { this.api.health(); } } new Box().run();",
+      "view-api",
+    ],
+  ]);
+});
+
+test("review repairs: method receiver handoffs cannot erase container authority", () => {
+  checkReviewForms("method-receiver", [
+    ["const api = [context.ports.api].at(0); api.health();", "view-api"],
+    ["const api = [context.ports.api].pop(); api.health();", "view-api"],
+    ["[context.ports.api].forEach((api: any) => api.health());", "view-api"],
+    [
+      "const clients = [context.queryClient]; clients.pop().clear();",
+      "view-state",
+    ],
+    [
+      "const nested = { values: [context.ports.api] }; nested.values['at'](0).health();",
+      "view-api",
+    ],
+    [
+      "[context.queryClient].map((client: any) => client.clear());",
+      "view-state",
+    ],
+  ]);
+});
+
+test("review repairs: context helpers cannot return raw capabilities through any", () => {
+  checkReviewForms(
+    "context-return",
+    [
+      ["rawApi(context).health();", "view-api"],
+      ["rawClient(context).clear();", "view-state"],
+      ["const alias = rawApi; alias(context).health();", "view-api"],
+      ["identity(context.ports.api).health();", "view-api"],
+      ["const { nested: api } = container(context); api.health();", "view-api"],
+      ["(await rawAsync(context)).health();", "view-api"],
+    ],
+    {
+      "contexts/lint-returns/read.ts": `export function rawApi(context: any): any { return context.ports.api; }
+      export function rawClient(context: any): any { return context.queryClient; }
+      export const identity = (value: any): any => value;
+      export function container(context: any): any { const box: any = {}; box.nested = context.ports.api; return box; }
+      export async function rawAsync(context: any): Promise<any> { return rawApi(context); }`,
+      "shared/lint-returns.ts":
+        "export * from '../contexts/lint-returns/read.js';",
+    },
+    "import { rawApi, rawClient, identity, container, rawAsync } from '../shared/lint-returns.js';\n".replace(
+      "../shared",
+      "@/shared",
+    ),
+  );
+});
+
+test("parameter, receiver and context return controls preserve DTOs and local shadowing", () => {
+  const inputs = {
+    "contexts/lint-dto/read.ts": `export function read(context: any): any { return { health() {}, tenantId: context.tenantId }; }
+      export const identity = (value: any): any => value;
+      export function readAsync(context: any) { return Promise.resolve(read(context)); }`,
+    "views/lint-dto/Page.ts": `import { useRouteContext } from '@tanstack/react-router';
+      import { read, identity, readAsync } from '../../contexts/lint-dto/read.js';
+      async function probe() {
+        const context: any = useRouteContext({ strict: false });
+        read(context).health(); (await readAsync(context)).health();
+        identity({ health() {} }).health();
+        const run = (api = { health() {} }) => api.health(); run();
+        class Box { constructor(public api = read(context)) {} } new Box().api.health();
+        const values = [{ health() {} }]; values.at(0)!.health(); values.forEach(api => api.health());
+        { const context = { ports: { api: { health() {} } } };
+          const run = (api = context.ports.api) => api.health(); run();
+          class Local { constructor(public api = context.ports.api) {} } new Local().api.health();
+          [context.ports.api].pop()!.health(); }
+      }`,
+    "routes/dashboard.tsx": readFileSync(
+      resolve(webRoot, "src/routes/dashboard.tsx"),
+      "utf8",
+    ).replace(
+      /  loader:.*\n/,
+      `  loader: ({ context }) => { const run = (deps = context) => prefetchDashboard(deps); return run(); },\n`,
+    ),
+  };
+  const results = check(inputs, {}, true);
+  console.log(
+    JSON.stringify({
+      control: "safe-returns-defaults-receivers",
+      inputs,
+      boundary: results,
+      compiler: results.compilerDiagnostics.map((d) =>
+        ts.flattenDiagnosticMessageText(d.messageText, "\n"),
+      ),
+    }),
+  );
+  assert.equal(results.compilerDiagnostics.length, 0);
+  assert.deepEqual([...results], []);
+});
 
 test("review findings: for-of bindings retain iterable capability provenance", () => {
   checkReviewForms("for-of", [

@@ -333,18 +333,24 @@ provenance to check dependency and capability boundaries:
   Type-only imports remain valid; API error values and URL-only preview helpers
   have scoped exceptions.
 - Loader context, API and QueryClient origins remain protected through aliases,
-  casts, fallback/conditional expressions, destructuring defaults, array
+  casts, fallback/conditional expressions, parameter and destructuring defaults, array
   spread/rest positions, `for...of` bindings and assignments, comma-expression
   results, `await` and member assignments even with `any` or
   unresolved context declarations. API/cache capabilities and their containers
   cannot escape through arbitrary calls, route/view return values, class-field
-  initializers or receiver-field assignments. Passing them to a helper requires
+  initializers, constructor parameter properties or receiver-field assignments.
+  Method receivers containing capabilities are handoffs too, including array
+  extraction and iteration calls. Passing them to a helper requires
   a resolved context-owned implementation (including immutable aliases). The
   shared syntax tracer follows computed keys through containers and bindings; an
   unresolved key on a known capability container cannot grant access. Local
   shadowing, known non-capability keys and context helper calls remain valid.
+  Context helper results retain returned capability provenance across module
+  boundaries and `any` annotations; ownership permits dependency handoff, not
+  returning raw API/cache authority to a route or view. DTO results remain valid.
   Runtime re-exports cannot hide Query/API imports in exported containers or
-  destructured aliases, including when package declarations are missing.
+  destructured aliases, including mixed default/named imports and missing package
+  declarations.
   `web:lint:test` overlays negative controls on the real
   tsconfig/generated route program and requires source-located boundary
   diagnostics independently of compiler errors.

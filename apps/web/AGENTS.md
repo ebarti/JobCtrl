@@ -34,7 +34,10 @@ Non-negotiable implementation rules:
   direction, Operations read-kernel access, browser-port, and context-owned
   API/query/store rules above from TypeScript syntax, resolved symbols and
   capability provenance (any, missing generated declarations, casts and aliases
-  cannot grant access), and
+  cannot grant access). Context helpers may receive dependencies but must not
+  return raw API/query authority to routes or views, including through `any`.
+  Capability-bearing method receivers and constructor parameter properties
+  remain subject to the same handoff boundary, and
   the TypeScript CI web job blocks on it. Scoped exemptions live in
   `apps/web/boundary-exemptions.json` and fail when stale. Run the whole
   `corepack pnpm web:lint:test` suite, including real generated-route controls;

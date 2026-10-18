@@ -447,6 +447,12 @@ export function createTracer(
           value = join(value, declarationValue(decl, new Set(seen), writes));
         if (ts.isBindingElement(decl))
           value = join(value, bindingValue(decl, new Set(seen), writes));
+        if (ts.isParameter(decl))
+          value = join(
+            value,
+            seed(decl, new Set(seen), writes),
+            trace(decl.initializer, new Set(seen), writes),
+          );
       }
     } else if (ts.isObjectLiteralExpression(node)) {
       for (const prop of node.properties) {
