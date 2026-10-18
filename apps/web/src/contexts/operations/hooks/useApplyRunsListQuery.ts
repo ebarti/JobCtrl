@@ -3,7 +3,7 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { dashboardKeys } from "../dashboardKeys.js";
-import type { DashboardSummary } from "../types.js";
+import type { DashboardSummary } from "@jobctrl/contracts";
 
 export type ApplyRunSummary = DashboardSummary["applyRuns"][number];
 

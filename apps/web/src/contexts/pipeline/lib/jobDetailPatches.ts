@@ -1,6 +1,10 @@
 import type { Stage, StageState } from "@jobctrl/contracts";
 
-import type { JobDetail, JobSummary, PaginatedResponse } from "../../operations/types.js";
+import type {
+  JobDetail,
+  JobSummary,
+  PaginatedResponse,
+} from "@jobctrl/contracts";
 
 function isJobDetail(value: unknown): value is JobDetail {
   return (

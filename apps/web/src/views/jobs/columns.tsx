@@ -9,7 +9,7 @@ import { ScoreBadge } from "../../contexts/scoring/components/ScoreBadge.js";
 import { ScoreStalenessBadge } from "../../contexts/scoring/components/ScoreStalenessBadge.js";
 import { StageBadge } from "../../contexts/pipeline/components/StageBadge.js";
 import { UserFacingStageBadge } from "../../contexts/pipeline/components/UserFacingStageBadge.js";
-import type { JobState, JobSummary } from "../../contexts/operations/types.js";
+import type { JobState, JobSummary } from "@jobctrl/contracts";
 import type {
   DataGridColumn,
   DataGridCellContext,

@@ -1,6 +1,9 @@
 import { Fragment, useId, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 
-import type { InterviewCatalog, InterviewQuestionCard } from "../../operations/types.js";
+import type {
+  InterviewCatalog,
+  InterviewQuestionCard,
+} from "@jobctrl/contracts";
 import { useAvailableViewportHeight } from "../../../shared/hooks/useAvailableViewportHeight.js";
 import { Button } from "../../../shared/ui/button.js";
 

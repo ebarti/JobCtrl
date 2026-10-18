@@ -3,7 +3,7 @@ import { useId } from "react";
 
 import { RefreshAllCompensationButton } from "../../contexts/enrichment/index.js";
 import { RetailorCurrentPolicyButton } from "../../contexts/materials/components/RetailorCurrentPolicyButton.js";
-import type { JobState } from "../../contexts/operations/types.js";
+import type { JobState } from "@jobctrl/contracts";
 import { RescoreCurrentPolicyButton } from "../../contexts/scoring/components/RescoreCurrentPolicyButton.js";
 import { ResetStaleScoresButton } from "../../contexts/scoring/components/ResetStaleScoresButton.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";

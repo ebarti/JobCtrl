@@ -307,6 +307,7 @@ function canonicalSseEnvelope(row: EventRow): Record<string, unknown> | null {
   if (!isRecord(payload)) {
     return null;
   }
+  if (row.event_type === "CompanyBriefingRecorded") return null;
   if (row.event_type === "ScreeningAnswerRecorded") {
     payload = screeningEventReferences(payload);
     if (!isRecord(payload)) return null;

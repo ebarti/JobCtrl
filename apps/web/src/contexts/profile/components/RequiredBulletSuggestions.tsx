@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { getApiCapabilityAvailability, LOCAL_INSTALL_GUIDE_URL } from "../../../shared/lib/apiCapabilityAvailability.js";
-import type { RequiredBulletSuggestion } from "../../operations/types.js";
+import type { RequiredBulletSuggestion } from "@jobctrl/contracts";
 import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
 import { Badge } from "../../../shared/ui/badge.js";
 import { Button } from "../../../shared/ui/button.js";

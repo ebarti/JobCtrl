@@ -9,6 +9,7 @@ browser behavior, and visual consistency catch different failures.
 | --- | --- |
 | TypeScript | `corepack pnpm web:check` |
 | Frontend boundaries | `corepack pnpm web:lint` |
+| Boundary regression controls | `corepack pnpm web:lint:test` |
 | Unit, hook, component, a11y | `corepack pnpm --filter @jobctrl/web test` |
 | Type-level contracts | `corepack pnpm --filter @jobctrl/web test-d` |
 | Production bundle | `corepack pnpm web:build` |
@@ -22,9 +23,18 @@ browser behavior, and visual consistency catch different failures.
 - Type-level tests prove the public inferred shapes of read hooks and contracts.
 - The boundary lint proves the documented context/view dependency direction,
   Operations read-kernel access, browser-capability ports, and context-owned
-  API/query/store usage from TypeScript syntax and resolved symbols. The
+  API/query/store usage from TypeScript syntax, resolved symbols and capability
+  provenance. Weak/missing generated declarations and casts cannot authorize
+  direct route/view API or QueryClient access. The
   TypeScript CI web job blocks on it; see
   [automated boundary checks](../../architecture/frontend/state-and-ports.md#automated-boundary-checks).
+- Boundary regressions allow canonical DTO/schema/constant imports without
+  exemptions while rejecting independent API-client, Query/Zustand, browser-port,
+  dependency and barrel violations. Real generated-route controls require
+  actionable boundary diagnostics independently of compiler diagnostics. Capability/dependency exemptions still need
+  reasons and stale-entry controls. Canonical-import changes retain the full web
+  suite: inspect Jobs paging, saved-view inputs, optimistic rollback, SSE,
+  event/stage parity and list/detail route composition coverage.
 - Playwright uses a real API plus seeded SQLite fixtures to prove route and
   realtime behavior without a live worker or model.
 - `shipped-fit-lifecycle.spec.ts` reads canonical final-fit metadata through the
@@ -32,6 +42,20 @@ browser behavior, and visual consistency catch different failures.
   recorded after acceptance, retains the original gate and provenance coverage,
   and keeps historical judge-claimed coverage visibly separate from grounded
   coverage. Its fixture restores the original metadata after each case.
+- Resume review uses complementary session, browser and persistence checks.
+  `useApplyReviewSession.test.ts` owns tenant/job/material fences, independent
+  comment/revision ordering, overlapping saves, stale cache publications,
+  normalized acknowledgements and approval preparation.
+  `artifact-comparison.spec.ts` drives the real Plate editor and Apply session
+  through multiline paste, autosave/reload, delayed acknowledgements, conflicts,
+  failed render and recovery before dry-run authorization. Its save/render/model
+  HTTP responses are controlled, and its attachments retain the submitted
+  documents and observed transition order.
+  `apps/api/test/resume-review-drafts.test.ts`, `resume-templates.test.ts`,
+  `apply-audit.test.ts` and the application-feedback suites own canonical SQLite,
+  accepted-artifact bytes, revision conflicts and approval/audit preservation.
+  Browser response controls do not establish those persistence guarantees or
+  live provider behavior.
 - Storybook proves state/variant rendering and shared accessibility behavior.
 
 ## Visual And Base UI Contracts

@@ -1,7 +1,7 @@
 import type { JSX } from "react";
 
 import { Badge } from "../../../shared/ui/badge.js";
-import type { Stage } from "../../operations/types.js";
+import type { Stage } from "@jobctrl/contracts";
 
 const PREPARATION_STAGES = new Set<Stage>(["discover", "enrich", "score", "tailor", "cover"]);
 

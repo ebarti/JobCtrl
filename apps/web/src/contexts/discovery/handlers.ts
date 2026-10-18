@@ -44,6 +44,7 @@ export const jobDiscoveredHandler = (event: JobDiscovered): readonly Invalidatio
 ];
 
 export const jobUpdatedHandler = (event: JobUpdated): readonly InvalidationItem[] => [
+  ...(Object.hasOwn(event.payload.changedFields, "companyBriefing") ? [invalidate(digestKeys.all(event.tenantId))] : []),
   invalidate(interviewKeys.history(event.tenantId, event.payload.jobId)),
   reconcileQuery(jobsKeys.lists(event.tenantId), (current, key) =>
     reconcileJobUpdatedPage(current, key[4] as JobsListInput, event.payload)),

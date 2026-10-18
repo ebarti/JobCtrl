@@ -1,11 +1,7 @@
 import type { BulkJobMutationRequest } from "@jobctrl/contracts";
 
-import {
-  JOB_STATES,
-  type JobState,
-  type JobsListInput,
-  type Stage,
-} from "../../contexts/operations/types.js";
+import { JOB_STATES, type JobState, type Stage } from "@jobctrl/contracts";
+import type { JobsListInput } from "../../contexts/operations/types.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
 
 export function jobsListInput(

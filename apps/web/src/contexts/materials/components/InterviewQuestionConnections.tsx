@@ -1,4 +1,7 @@
-import type { InterviewCatalog, InterviewQuestionCard } from "../../operations/types.js";
+import type {
+  InterviewCatalog,
+  InterviewQuestionCard,
+} from "@jobctrl/contracts";
 
 import { useJobDetailQuery } from "../../operations/hooks/useJobDetailQuery.js";
 import { useEvidenceMapQuery } from "../../operations/hooks/useEvidenceMapQuery.js";

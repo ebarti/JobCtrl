@@ -1,5 +1,5 @@
 import { RunStatusBadge } from "../../contexts/apply/components/RunStatusBadge.js";
-import type { WorkflowRunSummary } from "../../contexts/operations/types.js";
+import type { WorkflowRunSummary } from "@jobctrl/contracts";
 import { CancelWorkflowRunButton } from "../../contexts/pipeline/components/CancelWorkflowRunButton.js";
 import type { DataGridColumn } from "../../shared/ui/filterable-data-grid.js";
 import { RelativeTime } from "../../shared/ui/relative-time.js";
