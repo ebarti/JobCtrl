@@ -1482,3 +1482,18 @@ test("loop, comma and class flows preserve harmless values and context helpers",
   );
   assert.deepEqual([...results], []);
 });
+
+
+test("reused source syntax keeps context helper parameter bindings independent", () => {
+  const helper = "export function read(value: any): any { const box: any = {}; box.value = value; return box.value; }";
+  checkReviewForms("source-snapshot-binding-isolation", [
+    ["read({ health() {} }).health(); read(context.ports.api).health();", "view-api"],
+    ["read({ clear() {} }).clear(); read(context.queryClient).clear();", "view-state"],
+  ], { "contexts/lint-reuse/read.ts": helper }, "import { read } from '@/contexts/lint-reuse/read.js';\n");
+  const results = check({
+    "contexts/lint-reuse/read.ts": helper,
+    "views/lint-reuse/Page.ts": "import { read } from '../../contexts/lint-reuse/read.js'; read({ health() {} }).health(); read({ clear() {} }).clear();",
+  }, {}, true);
+  assert.equal(results.compilerDiagnostics.length, 0);
+  assert.deepEqual([...results], []);
+});
