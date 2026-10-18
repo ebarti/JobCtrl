@@ -481,8 +481,14 @@ test("multiline HTML paste acknowledges one autosave and survives reload", async
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   const plateDocument = [{ type: "resume_block", tagName: "main", className: "resume-page", pageNumber: 1,
-    children: [{ type: "resume_block", tagName: "p", lineNumber: 1, pageNumber: 1,
-      children: [{ text: "Saved baseline." }] }],
+    children: [
+      { type: "resume_block", tagName: "h1", lineNumber: 1, pageNumber: 1,
+        children: [{ text: "Principal Platform Engineer" }] },
+      { type: "resume_block", tagName: "h2", lineNumber: 2, pageNumber: 1,
+        children: [{ text: "Experience" }] },
+      { type: "resume_block", tagName: "p", lineNumber: 3, pageNumber: 1,
+        semanticId: "experience:line:3", children: [{ text: "Saved baseline." }] },
+    ],
   }];
   let current = { ...draft, latestRevision: { ...draft.latestRevision, plateDocument }, commentThreads: [] };
   const saves: Array<{ editedText: string; plateDocument: typeof plateDocument }> = [];
@@ -503,9 +509,9 @@ test("multiline HTML paste acknowledges one autosave and survives reload", async
   const editor = page.getByRole("textbox", { name: "Tailored resume preview editor" });
   const paper = page.getByLabel("Editable resume page");
   await expect(editor).toContainText("Saved baseline.");
-  await editor.locator("[data-slate-string]").first().click();
+  await editor.locator('[data-resume-line-number="3"] [data-slate-string]').first().click();
   await editor.evaluate(element => {
-    const leaf = element.querySelector("[data-slate-string]")!;
+    const leaf = element.querySelector('[data-resume-line-number="3"] [data-slate-string]')!;
     const range = document.createRange();
     range.setStart(leaf.firstChild!, 0);
     range.collapse(true);
