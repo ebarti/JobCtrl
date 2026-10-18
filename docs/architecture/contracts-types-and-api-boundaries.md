@@ -137,7 +137,7 @@ In the current runtime:
 - the TypeScript API starts and reuses one `jobctrl rpc` subprocess;
 - synchronous methods return their validated result through JSON-RPC;
 - workflow methods return run/workflow identity after the Python side starts a
-  Temporal workflow; and
+  Temporal workflow, with a nested `result` when `awaitResult` is true; and
 - the TypeScript API does not enqueue Temporal work directly.
 
 The browser does not call arbitrary JSON-RPC methods. Product routes validate
@@ -167,30 +167,52 @@ differences:
 | Fractional numeric `id` | Accepts | Rejects as invalid request |
 | Explicit `id: null` | Accepts | Treats as a notification and emits no response |
 | Extra envelope key | Rejects | Ignores |
-| `run_stage.sourceIds` from a source-filtered Discover command | Method schema rejects | Includes the IDs in the workflow input |
-| `run_stage.reason` from a recovery or profile continuation | Method schema rejects | Derives a stable workflow identity from the reason |
-| `run_stage.awaitResult: true` for a profile continuation | Method schema rejects | Waits for the workflow and adds its result to the acknowledgment |
 
-The suite also proves parameter and parse errors, unknown-method mapping,
-workflow acknowledgment shape, and a negative registration/schema mutation.
-It inventories all 29 handlers but exercises behavior for two. These 27 are
-currently inventory-only and need separate owned synthetic dependencies for
-their per-method parameter and result checks:
+`RunStageParamsSchema` includes the current caller controls: `sourceIds` (up to
+50 unique, trimmed IDs of 1–160 characters, only with an effective Discover
+stage), `reason` (up to 400 characters), and boolean `awaitResult` and
+`refreshApplyUrl`. An explicit `stages` list takes precedence over `stage`, as
+in `workflow_specs.py`. A true `refreshApplyUrl` requires only Enrich, one
+canonical `jobId`, and `limit: 1`. Profile import also accepts boolean
+`awaitResult`. Cancellation preserves the worker's `requestedBy`, `source`, and
+nullable `reason` metadata with its 160/80/500 character bounds.
 
-| Mode | Deferred methods |
-| --- | --- |
-| Synchronous (15) | `analyze_job`, `browser_capabilities_list`, `browser_capability_disable`, `browser_capability_enable`, `browser_profile_copy`, `cancel_run`, `generate_outreach_draft`, `gmail_feedback_scan`, `profile_target_role_suggestions`, `provider_status`, `provider_verify`, `rederive_learning_recommendations`, `render_resume_pdf`, `review_learning_recommendation`, `rollback_tailoring_policy` |
-| Workflow (12) | `apply`, `generate_interview_prep`, `job_url_import`, `manual_capture_import`, `profile_import`, `refresh_compensation`, `rescore_job`, `rescore_jobs_not_on_current_scoring_policy`, `retailor_current_policy`, `retailor_job`, `run_contact_research`, `tailor_job` |
+`RpcContracts` in `rpc.ts` associates the parameter and dispatch-result schemas
+owned there and derives `RpcParams` inputs and `RpcResult` outputs. It covers
+every registered workflow method; other method families retain their existing
+schema owners. It is not a second registration inventory or automatic runtime
+enforcement. Workflow starts use acknowledgments, even when their activity has
+a synchronous result schema. Compensation refresh also retains its supported
+synchronous result branch, and stage runs retain `LocalActionResult` for old
+sync adapters. Generic acknowledgments preserve additional identity metadata
+and nested payloads. Acknowledgments allow a null `firstExecutionRunId` when
+Temporal has no first execution identity; availability starts still require
+both `runId` and `workflowId`.
 
-A follow-up should first add the existing caller-owned `sourceIds`, `reason`,
-and `awaitResult` fields to `RunStageParamsSchema` with bounds and an awaited
-result branch, then make the API validate its constructed params. A separate
-wire-policy decision should resolve version, falsy params, extra keys, and ID
+Awaited stage results mirror the actual serialized workflow dataclasses:
+`JobPipelineWorkflowResult` has `stages_completed`, `stages_failed`, `failure`,
+and `error_code`, without `status`; Discover has its own family, enrichment,
+and compensation fields. Awaited profile import retains `status`, `draft`,
+`error`, and `error_code`. URL and manual-capture imports require their nested
+workflow result because their current callers always await it.
+
+The shared suite also covers parameter and parse errors, unknown-method
+mapping, workflow acknowledgments, and a negative registration/schema mutation.
+Its behavior probes exercise two methods; registration coverage alone does not
+prove the other methods' parameter/result behavior. The probe's synthetic
+awaited `{status: "succeeded"}` object establishes acknowledgment preservation,
+not the production pipeline result shape. Contract tests separately cover
+the production shapes and malformed controls. The original Python observations
+and envelope compatibility assertions remain unchanged.
+
+The API still needs to validate its constructed params and method results at
+dispatch. A separate wire-policy decision should resolve version, falsy
+params, extra keys, and ID
 semantics before aligning `JsonRpcRequest.from_dict` and the TypeScript envelope
 schema with compatibility tests. In particular, decide both fractional and
 explicit-null ID behavior before tightening either side. The default API
 adapter currently generates integer IDs; the explicit-null case is outside
-its normal call path. Until the follow-up, the TypeScript API's constructed
+its normal call path. The TypeScript API's constructed
 outbound requests remain the supported caller path.
 
 ### Domain Events Over SSE

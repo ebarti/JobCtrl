@@ -20,6 +20,8 @@ import {
   MANUAL_CAPTURE_MODE_VALUES,
   STAGES,
   TailoringPolicyLearnedRuleSchema,
+  MaterialLocaleHistorySchema,
+  TargetRoleSuggestionResultSchema,
 } from "./schemas.js";
 
 /* ------------------------------------------------------------------ codes */
@@ -183,10 +185,29 @@ export const RunStageParamsSchema = z
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
     continuous: z.boolean().default(false),
+    sourceIds: z.array(z.string().trim().min(1).max(160)).max(50).optional(),
+    reason: z.string().trim().max(400).optional(),
+    awaitResult: z.boolean().optional(),
+    refreshApplyUrl: z.boolean().optional(),
   })
   .strict()
   .refine((params) => !("jobId" in params && "jobIds" in params), {
     message: "provide jobId or jobIds, not both",
+  })
+  .refine((params) => !params.sourceIds || new Set(params.sourceIds).size === params.sourceIds.length, {
+    message: "sourceIds must be unique",
+    path: ["sourceIds"],
+  })
+  .refine((params) => !params.sourceIds?.length || (params.stages ?? [params.stage]).includes("discover"), {
+    message: "sourceIds can only be used when running discover",
+    path: ["sourceIds"],
+  })
+  .refine((params) => !params.refreshApplyUrl || (
+    (params.stages ?? [params.stage]).every((stage) => stage === "enrich")
+    && params.jobId !== undefined && !params.jobIds?.length && params.limit === 1
+  ), {
+    message: "refreshApplyUrl requires one selected Enrich job and limit 1",
+    path: ["refreshApplyUrl"],
   });
 export type RunStageParams = z.infer<typeof RunStageParamsSchema>;
 
@@ -388,7 +409,7 @@ export const CheckPostingAvailabilityParamsSchema = z.object({
 export const AvailabilityWorkflowStartSchema = z.object({
   runId: z.string().min(1),
   workflowId: z.string().min(1),
-  firstExecutionRunId: z.string().min(1).optional(),
+  firstExecutionRunId: z.string().min(1).nullish(),
 }).strict();
 
 export const RefreshCompensationParamsSchema = z
@@ -408,7 +429,7 @@ export const RefreshCompensationParamsSchema = z
   });
 export type RefreshCompensationParams = z.infer<typeof RefreshCompensationParamsSchema>;
 
-export const RefreshCompensationResultSchema = z
+export const RefreshCompensationSyncResultSchema = z
   .object({
     ok: z.literal(true),
     status: z.literal("succeeded"),
@@ -565,13 +586,14 @@ export type ApplyParams = z.infer<typeof ApplyParamsSchema>;
 // SSE / dashboard wiring stays compatible) plus ``workflowId`` and
 // ``firstExecutionRunId``. ``workflowId`` is a duplicate of ``runId`` for
 // the apply path today but the field stays for forward compatibility with
-// future workflows whose run id and workflow id diverge. NOT ``.strict()``
-// because future Temporal versions may add more identifiers.
+// future workflows whose run id and workflow id diverge. Preserve additional
+// identity metadata and awaited payloads instead of silently stripping them.
 export const ApplyResultSchema = z.object({
-  runId: z.string(),
-  workflowId: z.string().optional(),
-  firstExecutionRunId: z.string().optional(),
-});
+  runId: z.string().min(1),
+  workflowId: z.string().min(1).optional(),
+  firstExecutionRunId: z.string().min(1).nullish(),
+  result: z.unknown().optional(),
+}).passthrough();
 export type ApplyResult = z.infer<typeof ApplyResultSchema>;
 
 // NOTE: rescore_job / tailor_job / retailor_job / retailor_current_policy /
@@ -586,6 +608,9 @@ export const CancelRunParamsSchema = z
   .object({
     tenantId: TenantParam,
     runId: z.string().min(1),
+    requestedBy: z.string().trim().min(1).max(160).optional(),
+    source: z.string().trim().min(1).max(80).optional(),
+    reason: z.string().max(500).nullable().optional(),
   })
   .strict();
 export type CancelRunParams = z.infer<typeof CancelRunParamsSchema>;
@@ -781,6 +806,7 @@ export const ProfileImportParamsSchema = z
     pdfPath: z.string().min(1),
     importProfile: z.boolean().default(true),
     importStyle: z.boolean().default(true),
+    awaitResult: z.boolean().optional(),
   })
   .strict();
 export type ProfileImportParams = z.infer<typeof ProfileImportParamsSchema>;
@@ -824,3 +850,100 @@ export const ScreeningAnswersParamsSchema = z.object({
   jobId: z.string().min(1).max(160), command: ScreeningCommandSchema.optional(),
 }).strict();
 export const ScreeningAnswersResultSchema = z.union([ScreeningReadResponseSchema, ScreeningWriteResponseSchema]);
+
+/** Serialized dataclasses returned by workflow_specs.workflow_result_to_dict.
+ * A pipeline result has no `status` field; failures live in stages_failed/failure.
+ */
+export const JobPipelineWorkflowResultSchema = z.object({
+  stages_completed: z.array(z.enum(STAGES)),
+  stages_failed: z.array(z.enum(STAGES)),
+  failure: z.string().nullable(),
+  error_code: z.string().nullable(),
+}).strict();
+export type JobPipelineWorkflowResult = z.infer<typeof JobPipelineWorkflowResultSchema>;
+
+export const DiscoverWorkflowResultSchema = z.object({
+  families_completed: z.array(z.string()),
+  families_failed: z.array(z.string()),
+  preparation_started: z.number().int().nonnegative(),
+  enrichment_status: z.string(),
+  enrichment_site_errors: z.record(z.string(), z.unknown()),
+  compensation_refresh_status: z.string(),
+  compensation_estimates_written: z.number().int().nonnegative(),
+  compensation_refresh_warnings: z.array(z.string()),
+  failure: z.string().nullable(),
+  error_code: z.string().nullable(),
+}).strict();
+export type DiscoverWorkflowResult = z.infer<typeof DiscoverWorkflowResultSchema>;
+
+export const RunStageWorkflowResultSchema = z.union([
+  JobPipelineWorkflowResultSchema,
+  DiscoverWorkflowResultSchema,
+]);
+export const RunStageResultSchema = z.union([
+  ApplyResultSchema.extend({ result: RunStageWorkflowResultSchema.optional() }),
+  LocalActionResultSchema,
+]);
+export type RunStageResult = z.infer<typeof RunStageResultSchema>;
+
+export const ProfileImportWorkflowResultSchema = z.object({
+  status: z.enum(["succeeded", "failed"]),
+  draft: z.record(z.string(), z.unknown()),
+  error: z.string().nullable(),
+  error_code: z.string().nullable(),
+}).strict();
+export const ProfileImportResultSchema = ApplyResultSchema.extend({
+  result: ProfileImportWorkflowResultSchema.optional(),
+});
+export type ProfileImportWorkflowResult = z.infer<typeof ProfileImportWorkflowResultSchema>;
+export type ProfileImportResult = z.infer<typeof ProfileImportResultSchema>;
+
+export const JobUrlImportResultSchema = ApplyResultSchema.extend({
+  result: JobUrlImportWorkflowResultSchema,
+});
+export const ManualCaptureImportResultSchema = ApplyResultSchema.extend({
+  result: ManualCaptureImportWorkflowResultSchema,
+});
+export const RefreshCompensationResultSchema = z.union([
+  RefreshCompensationSyncResultSchema,
+  ApplyResultSchema,
+]);
+
+/** Parameter/result relationships for the methods with schemas owned here.
+ * This describes dispatch responses, not the synchronous activity payloads of
+ * workflow-start methods. Runtime dispatch enforcement is a separate boundary.
+ * Other method families keep their existing owners; this is not a registration
+ * inventory (the Python default handler registration owns that inventory).
+ */
+export const RpcContracts = {
+  [RpcMethods.RunStage]: { params: RunStageParamsSchema, result: RunStageResultSchema },
+  [RpcMethods.RescoreJob]: { params: RescoreJobParamsSchema, result: ApplyResultSchema },
+  [RpcMethods.RescoreJobsNotOnCurrentScoringPolicy]: { params: RescoreJobsNotOnCurrentScoringPolicyParamsSchema, result: ApplyResultSchema },
+  [RpcMethods.TailorJob]: { params: TailorJobParamsSchema, result: ApplyResultSchema },
+  [RpcMethods.RetailorJob]: { params: RetailorJobParamsSchema, result: ApplyResultSchema },
+  [RpcMethods.RetailorCurrentPolicy]: { params: RetailorCurrentPolicyParamsSchema, result: ApplyResultSchema },
+  [RpcMethods.Apply]: { params: ApplyParamsSchema, result: ApplyResultSchema },
+  [RpcMethods.ProfileImport]: { params: ProfileImportParamsSchema, result: ProfileImportResultSchema },
+  [RpcMethods.JobUrlImport]: { params: JobUrlImportParamsSchema, result: JobUrlImportResultSchema },
+  [RpcMethods.ManualCaptureImport]: { params: ManualCaptureImportParamsSchema, result: ManualCaptureImportResultSchema },
+  [RpcMethods.RefreshCompensation]: { params: RefreshCompensationParamsSchema, result: RefreshCompensationResultSchema },
+  [RpcMethods.CheckPostingAvailability]: { params: CheckPostingAvailabilityParamsSchema, result: AvailabilityWorkflowStartSchema },
+  [RpcMethods.GenerateInterviewPrep]: { params: GenerateInterviewPrepParamsSchema, result: ApplyResultSchema },
+  [RpcMethods.RunContactResearch]: { params: RunContactResearchParamsSchema, result: ApplyResultSchema },
+  [RpcMethods.AnalyzeJob]: { params: AnalyzeJobParamsSchema, result: AnalyzeJobResultSchema },
+  [RpcMethods.CancelRun]: { params: CancelRunParamsSchema, result: CancelRunResultSchema },
+  [RpcMethods.GenerateOutreachDraft]: { params: GenerateOutreachDraftParamsSchema, result: GenerateOutreachDraftResultSchema },
+  [RpcMethods.RederiveLearningRecommendations]: { params: RederiveLearningRecommendationsParamsSchema, result: RederiveLearningRecommendationsResultSchema },
+  [RpcMethods.ReviewLearningRecommendation]: { params: ReviewLearningRecommendationParamsSchema, result: ReviewLearningRecommendationResultSchema },
+  [RpcMethods.RollbackTailoringPolicy]: { params: RollbackTailoringPolicyParamsSchema, result: RollbackTailoringPolicyResultSchema },
+  [RpcMethods.RenderResumePdf]: { params: RenderResumePdfParamsSchema, result: RenderResumePdfResultSchema },
+  [RpcMethods.GmailFeedbackScan]: { params: GmailFeedbackScanParamsSchema, result: GmailFeedbackScanResultSchema },
+  [RpcMethods.ProfileRequiredBulletSuggestions]: { params: ProfileRequiredBulletSuggestionsParamsSchema, result: RequiredBulletModelResultSchema },
+  [RpcMethods.ProfileTargetRoleSuggestions]: { params: ProfileTargetRoleSuggestionsParamsSchema, result: TargetRoleSuggestionResultSchema },
+  [RpcMethods.MaterialLocaleVariants]: { params: MaterialLocaleParamsSchema, result: MaterialLocaleHistorySchema },
+  [RpcMethods.ScreeningAnswers]: { params: ScreeningAnswersParamsSchema, result: ScreeningAnswersResultSchema },
+} as const satisfies Partial<Record<RpcMethod, { params: z.ZodType; result: z.ZodType }>>;
+
+export type ContractRpcMethod = keyof typeof RpcContracts;
+export type RpcParams<M extends ContractRpcMethod> = z.input<(typeof RpcContracts)[M]["params"]>;
+export type RpcResult<M extends ContractRpcMethod> = z.output<(typeof RpcContracts)[M]["result"]>;

@@ -3,7 +3,8 @@
  * the Python worker handler set.  Each new RPC method gets a parse + reject
  * pair here so type drift between TS and Python surfaces in CI.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
+import type { AnalyzeJobResult, ApplyResult, RpcParams, RpcResult } from "../src/contracts.js";
 import endpointSpecsFixture from "../../../packages/domain-types/test/fixtures/endpoint_specs.json" with {
   type: "json",
 };
@@ -12,6 +13,8 @@ import {
   AnalyzeJobParamsSchema,
   AnalyzeJobResultSchema,
   ApplyParamsSchema,
+  ApplyResultSchema,
+  AvailabilityWorkflowStartSchema,
   CancelRunParamsSchema,
   CancelRunResultSchema,
   DEFAULT_PIPELINE_LLM_MODEL,
@@ -21,6 +24,10 @@ import {
   GenerateInterviewPrepParamsSchema,
   ManualCaptureImportParamsSchema,
   ManualCaptureImportWorkflowResultSchema,
+  JobUrlImportResultSchema,
+  ManualCaptureImportResultSchema,
+  ProfileImportParamsSchema,
+  ProfileImportResultSchema,
   ProviderModelCatalogResultSchema,
   ProfileTargetRoleSuggestionsParamsSchema,
   ProfileUpdateRequestSchema,
@@ -33,8 +40,10 @@ import {
   RetailorCurrentPolicyParamsSchema,
   RetailorJobParamsSchema,
   RpcMethods,
+  RpcContracts,
   RunContactResearchParamsSchema,
   RunStageParamsSchema,
+  RunStageResultSchema,
   SettingsUpdateRequestSchema,
   TailorJobParamsSchema,
   TargetRoleSuggestionResultSchema,
@@ -46,6 +55,196 @@ const ENDPOINT_DISPATCH_CONTEXT = {
   appDir: "/tmp/jobctrl",
   dbPath: "/tmp/jobctrl/jobctrl.db",
 } as const;
+
+describe("current RPC caller controls and dispatch results", () => {
+  const ack = { runId: "workflow-1", workflowId: "workflow-1", firstExecutionRunId: "execution-1" };
+
+  it("infers caller inputs before defaults and method-specific dispatch outputs", () => {
+    const request: RpcParams<typeof RpcMethods.RunStage> = {
+      stage: "discover", sourceIds: ["source-1"], awaitResult: true,
+    };
+    expect(RpcContracts.run_stage.params.parse(request)).toMatchObject({
+      ...request, tenantId: "local", limit: 0,
+    });
+    expectTypeOf<RpcParams<"run_stage">["awaitResult"]>().toEqualTypeOf<boolean | undefined>();
+    expectTypeOf<RpcParams<"run_stage">["refreshApplyUrl"]>().toEqualTypeOf<boolean | undefined>();
+    expectTypeOf<RpcParams<"profile_import">["awaitResult"]>().toEqualTypeOf<boolean | undefined>();
+    expectTypeOf<RpcResult<"analyze_job">>().toEqualTypeOf<AnalyzeJobResult>();
+    expectTypeOf<RpcResult<"tailor_job">>().toEqualTypeOf<ApplyResult>();
+    expectTypeOf<RpcResult<"manual_capture_import">["result"]["status"]>()
+      .toEqualTypeOf<"succeeded" | "failed">();
+  });
+
+  it("preserves source filters and recovery/await controls with caller-compatible bounds", () => {
+    const sourceIds = Array.from({ length: 50 }, (_, index) => `${index}`.padEnd(160, "x"));
+    expect(RunStageParamsSchema.parse({ stage: "discover", sourceIds })).toMatchObject({ sourceIds });
+    expect(RunStageParamsSchema.parse({ stage: "discover", sourceIds: [] }).sourceIds).toEqual([]);
+    expect(RunStageParamsSchema.parse({ stage: "discover", sourceIds: [" source-1 "] }).sourceIds).toEqual(["source-1"]);
+    for (const reason of ["condition_resolved:synthetic-check", "profile_updated:42", "r".repeat(400)]) {
+      const params = { stage: "score", stages: ["score", "tailor", "cover"], limit: 0, retailor: true, reason, awaitResult: true };
+      expect(RunStageParamsSchema.parse(params)).toMatchObject(params);
+    }
+    expect(RunStageParamsSchema.parse({ stage: "score", awaitResult: false }).awaitResult).toBe(false);
+    // workflow_specs.py gives an explicit stages list precedence over stage.
+    expect(RunStageParamsSchema.parse({ stage: "score", stages: ["discover", "score"], sourceIds: ["source-1"] }).sourceIds).toEqual(["source-1"]);
+  });
+
+  it.each([
+    { sourceIds: "source-1" }, { sourceIds: [42] }, { sourceIds: [""] }, { sourceIds: [" "] },
+    { sourceIds: ["x".repeat(161)] }, { sourceIds: Array.from({ length: 51 }, (_, i) => `source-${i}`) },
+    { sourceIds: ["source-1", " source-1 "] }, { sourceIds: null },
+    { sourceIds: ["source-1"], stages: ["score"] },
+    { reason: "r".repeat(401) }, { reason: 42 }, { reason: null },
+    { awaitResult: "true" }, { awaitResult: 1 }, { awaitResult: null },
+    { refreshApplyUrl: "false" }, { refreshApplyUrl: 1 }, { refreshApplyUrl: null },
+    { unexpected: true },
+  ])("rejects malformed run_stage controls: %j", (controls) => {
+    expect(RunStageParamsSchema.safeParse({ stage: "discover", ...controls }).success).toBe(false);
+  });
+
+  it("rejects source filters when the effective stage list excludes Discover", () => {
+    for (const params of [
+      { stage: "score" }, { stage: "discover", stages: ["score", "tailor"] },
+    ]) {
+      expect(RunStageParamsSchema.safeParse({ ...params, sourceIds: ["source-1"] }).success).toBe(false);
+    }
+  });
+
+  it("restricts refreshApplyUrl to one selected Enrich job with limit 1", () => {
+    const params = { stage: "enrich", jobId: CANONICAL_JOB_ID, limit: 1, refreshApplyUrl: true };
+    expect(RunStageParamsSchema.parse(params)).toMatchObject(params);
+    expect(RunStageParamsSchema.parse({ ...params, stages: ["enrich"] })).toMatchObject(params);
+    expect(RunStageParamsSchema.parse({ stage: "score", refreshApplyUrl: false }).refreshApplyUrl).toBe(false);
+    // Repeated stages are deduplicated by the worker; the singular stage is a fallback.
+    expect(RunStageParamsSchema.parse({ ...params, stage: "score", stages: ["enrich", "enrich"] }).refreshApplyUrl).toBe(true);
+    for (const change of [
+      { jobId: undefined }, { limit: 0 }, { limit: 2 }, { stage: "score" },
+      { stage: "discover" }, { stages: ["discover"] }, { stages: ["enrich", "score"] },
+      { jobIds: [CANONICAL_JOB_ID] }, { jobId: undefined, jobIds: [CANONICAL_JOB_ID] },
+      { jobIds: [] },
+    ]) {
+      expect(RunStageParamsSchema.safeParse({ ...params, ...change }).success).toBe(false);
+    }
+  });
+
+  it("accepts profile import awaiting and cancellation audit metadata without dropping fields", () => {
+    const params = { pdfPath: "/synthetic/profile.pdf", awaitResult: true };
+    expect(ProfileImportParamsSchema.parse(params)).toMatchObject(params);
+    expect(ProfileImportParamsSchema.parse({ ...params, awaitResult: false }).awaitResult).toBe(false);
+    expect(ProfileImportParamsSchema.parse({ pdfPath: params.pdfPath })).not.toHaveProperty("awaitResult");
+    const cancel = { runId: "workflow-1", requestedBy: "local_operator", source: "jobctrl_api", reason: "Canceled from JobCtrl." };
+    expect(CancelRunParamsSchema.parse(cancel)).toMatchObject(cancel);
+    expect(CancelRunParamsSchema.parse({ ...cancel, requestedBy: "x".repeat(160), source: "s".repeat(80), reason: "r".repeat(500) }).reason).toHaveLength(500);
+    expect(CancelRunParamsSchema.parse({ runId: "workflow-1", reason: null }).reason).toBeNull();
+    for (const value of ["true", 1, null]) {
+      expect(ProfileImportParamsSchema.safeParse({ ...params, awaitResult: value }).success).toBe(false);
+    }
+    for (const change of [
+      { requestedBy: "x".repeat(161) }, { requestedBy: " " }, { requestedBy: 1 },
+      { source: "s".repeat(81) }, { source: " " }, { source: false },
+      { reason: "r".repeat(501) }, { reason: {} }, { unexpected: true },
+    ]) {
+      expect(CancelRunParamsSchema.safeParse({ ...cancel, ...change }).success).toBe(false);
+    }
+  });
+
+  it("preserves real awaited pipeline successes and failures, which have no status field", () => {
+    // JobPipelineWorkflowResult in pipeline/workflow.py, serialized by
+    // workflow_result_to_dict in workflow_specs.py (not the #954 probe's status stub).
+    for (const result of [
+      { stages_completed: ["score", "tailor", "cover"], stages_failed: [], failure: null, error_code: null },
+      { stages_completed: ["score"], stages_failed: ["tailor"], failure: "synthetic failure", error_code: "budget_exceeded" },
+      { stages_completed: [], stages_failed: [], failure: null, error_code: null },
+    ]) {
+      expect(RunStageResultSchema.parse({ ...ack, result })).toEqual({ ...ack, result });
+      expect(ApplyResultSchema.parse({ ...ack, result })).toEqual({ ...ack, result });
+    }
+    expect(RunStageResultSchema.parse(ack)).toEqual(ack);
+    for (const result of [
+      { status: "succeeded" }, { stages_completed: [], stages_failed: [] },
+      { stages_completed: [], stages_failed: ["unknown"], failure: null, error_code: null },
+      null,
+    ]) {
+      expect(RunStageResultSchema.safeParse({ ...ack, result }).success).toBe(false);
+    }
+  });
+
+  it("preserves the distinct Discover and profile import awaited payloads", () => {
+    const discover = {
+      families_completed: ["synthetic-source"], families_failed: [], preparation_started: 0,
+      enrichment_status: "ok", enrichment_site_errors: {}, compensation_refresh_status: "skipped",
+      compensation_estimates_written: 0, compensation_refresh_warnings: [], failure: null, error_code: null,
+    };
+    expect(RunStageResultSchema.parse({ ...ack, result: discover })).toEqual({ ...ack, result: discover });
+    expect(RunStageResultSchema.parse({ ...ack, result: { ...discover, families_failed: ["synthetic-source"], failure: "synthetic failure" } })).toMatchObject({ result: { failure: "synthetic failure" } });
+    for (const result of [
+      { status: "succeeded", draft: { profile: {}, style: {}, source: {}, templateText: "synthetic" }, error: null, error_code: null },
+      { status: "failed", draft: {}, error: "synthetic import failure", error_code: "profile_import_failed" },
+    ]) {
+      expect(ProfileImportResultSchema.parse({ ...ack, result })).toEqual({ ...ack, result });
+    }
+    expect(ProfileImportResultSchema.parse(ack)).toEqual(ack);
+    expect(ProfileImportResultSchema.safeParse({ ...ack, result: { status: "succeeded" } }).success).toBe(false);
+  });
+
+  it("retains required awaited import payloads and rejects missing or malformed nested results", () => {
+    const jobUrlResult = { status: "succeeded", outcome: "imported", job_id: CANONICAL_JOB_ID, item_id: null, reason: null, imported_at: "2026-10-17T00:00:00Z", already_existed: false, error: null, error_code: null };
+    const captureResult = { status: "succeeded", job_id: CANONICAL_JOB_ID, item_id: "synthetic-capture", imported_at: "2026-10-17T00:00:00Z", retry_context: { synthetic: true }, error: null, error_code: null };
+    for (const [schema, result] of [
+      [JobUrlImportResultSchema, jobUrlResult], [ManualCaptureImportResultSchema, captureResult],
+    ] as const) {
+      expect(schema.parse({ ...ack, result })).toEqual({ ...ack, result });
+      expect(schema.safeParse(ack).success).toBe(false);
+      expect(schema.safeParse({ ...ack, result: { status: "succeeded" } }).success).toBe(false);
+    }
+  });
+
+  it("keeps the supported legacy local-action and compensation sync branches", () => {
+    const legacy = { ok: true, action_id: "synthetic-action", stage: "score", status: "succeeded", started_at: "2026-10-17T00:00:00Z", finished_at: "2026-10-17T00:00:01Z", duration_ms: 1000, dry_run: false, result: { nested: true }, extension: "preserved" };
+    expect(RunStageResultSchema.parse(legacy)).toEqual(legacy);
+    expect(RefreshCompensationResultSchema.parse(ack)).toEqual(ack);
+    expect(RefreshCompensationResultSchema.parse({ ok: true, status: "succeeded", postingUrl: null, postedFactsRefreshed: 1, reportedObservationsLoaded: 0, estimatesRefreshed: 1, tenantId: "local" })).toMatchObject({ postingUrl: null, estimatesRefreshed: 1 });
+    expect(ApplyResultSchema.parse({ runId: "legacy-run", firstExecutionRunId: null, extraIdentity: "preserved" })).toEqual({ runId: "legacy-run", firstExecutionRunId: null, extraIdentity: "preserved" });
+    for (const schema of [ApplyResultSchema, RunStageResultSchema, ProfileImportResultSchema, RefreshCompensationResultSchema]) {
+      expect(schema.safeParse({ ...ack, runId: 7 }).success).toBe(false);
+      expect(schema.safeParse({ ...ack, runId: "" }).success).toBe(false);
+      expect(schema.parse({ ...ack, firstExecutionRunId: null })).toEqual({ ...ack, firstExecutionRunId: null });
+      for (const change of [
+        { workflowId: null }, { workflowId: "" }, { workflowId: 7 },
+        { firstExecutionRunId: "" }, { firstExecutionRunId: false },
+      ]) {
+        expect(schema.safeParse({ ...ack, ...change }).success).toBe(false);
+      }
+    }
+  });
+
+  it("associates workflow methods with dispatch acknowledgments rather than activity results", () => {
+    for (const method of [
+      RpcMethods.RescoreJob, RpcMethods.RescoreJobsNotOnCurrentScoringPolicy,
+      RpcMethods.TailorJob, RpcMethods.RetailorJob, RpcMethods.RetailorCurrentPolicy,
+      RpcMethods.Apply, RpcMethods.ProfileImport, RpcMethods.RefreshCompensation,
+      RpcMethods.CheckPostingAvailability, RpcMethods.GenerateInterviewPrep, RpcMethods.RunContactResearch,
+    ] as const) {
+      expect(RpcContracts[method].result.parse(ack)).toEqual(ack);
+      expect(RpcContracts[method].result.safeParse({ status: "succeeded" }).success).toBe(false);
+    }
+    expect(RpcContracts.analyze_job.result).toBe(AnalyzeJobResultSchema);
+    expect(RpcContracts.cancel_run.params).toBe(CancelRunParamsSchema);
+    expect(RpcContracts.run_stage.result).toBe(RunStageResultSchema);
+    expect(AnalyzeJobResultSchema.safeParse(ack).success).toBe(false);
+  });
+
+  it("preserves availability acknowledgments when Temporal has no first execution ID", () => {
+    // server.py forwards handle.first_execution_run_id, which may be None.
+    const start = { ...ack, firstExecutionRunId: null };
+    expect(AvailabilityWorkflowStartSchema.parse(start)).toEqual(start);
+    expect(RpcContracts.check_posting_availability.result.parse(start)).toEqual(start);
+    expect(AvailabilityWorkflowStartSchema.safeParse({ runId: ack.runId }).success).toBe(false);
+    for (const firstExecutionRunId of ["", 7, false]) {
+      expect(AvailabilityWorkflowStartSchema.safeParse({ ...ack, firstExecutionRunId }).success).toBe(false);
+    }
+  });
+});
 
 describe("endpoint spec fixture", () => {
   it("pins every migrated request and response JSON Schema", () => {
