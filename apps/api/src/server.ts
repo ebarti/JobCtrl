@@ -1,3 +1,4 @@
+import { callRpc, RpcContractError } from "./json-rpc-adapter.js";
 import { readTargetRoleProposal } from "./candidate-interpretations.js";
 import { ResumeEditIntentReviewSchema } from "@jobctrl/contracts";
 import { readDetermination } from "./semantic-determinations.js";
@@ -74,6 +75,8 @@ import {
   RequiredBulletModelResultSchema,
   ProfileRequiredBulletSuggestionsParamsSchema,
   RpcMethods,
+  type RpcParams,
+  type BrowserCapabilityId,
   TargetRoleSuggestionRequestSchema,
   TargetRoleSuggestionResultSchema,
   ProfileUpdateRequestSchema,
@@ -904,7 +907,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     const profile=withDb(reply,options.dbPath,(db)=>readExtensionAutofillProfile(db));
     if(!profile?.ok || !profile.profileVersion){void reply.code(409);return {ok:false,error:"profile_unavailable"};}
     try{
-      const response=await providerDispatcher.call(RpcMethods.MapExtensionForm,{tenantId:"local",expectedAppDir:appDir,expectedDbPath:options.dbPath,expectedProfileVersion:profile.profileVersion,...snapshot});
+      const response=await callRpc(providerDispatcher, RpcMethods.MapExtensionForm,{tenantId:"local",expectedAppDir:appDir,expectedDbPath:options.dbPath,expectedProfileVersion:profile.profileVersion,...snapshot});
       if(response.error){void reply.code(503);return {ok:false,error:"form_mapping_unavailable",message:response.error.message};}
       return FormMappingResponseSchema.parse(response.result);
     }catch{void reply.code(503);return {ok:false,error:"form_mapping_unavailable"};}
@@ -988,7 +991,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         try {
           const params = CheckPostingAvailabilityParamsSchema.parse({ tenantId: "local", jobId,
             expectedAppDir: appDir, expectedDbPath: options.dbPath });
-          const result = await providerDispatcher.call(RpcMethods.CheckPostingAvailability, params);
+          const result = await callRpc(providerDispatcher, RpcMethods.CheckPostingAvailability, params);
           if (result.error) {
             void reply.code(result.error.code === JsonRpcErrorCodes.InvalidParams ? 400 : 503);
             return { ok: false, error: "availability_check_failed", message: result.error.message };
@@ -1000,7 +1003,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           }
           void reply.code(202);
           return { ok: true, status: "queued", runId: start.data.runId, workflowId: start.data.workflowId };
-        } catch {
+        } catch (error) {
+          if (error instanceof RpcContractError && error.phase === "result") {
+            void reply.code(502);
+            return { ok: false, error: "invalid_availability_dispatch_result" };
+          }
           void reply.code(503);
           return { ok: false, error: "availability_worker_unavailable" };
         }
@@ -1070,7 +1077,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
             request,
             resumePdfRenderer,
             async (reviewDraftId,revisionId)=>{
-              const response=await providerDispatcher.call(RpcMethods.ReviewResumeEdit,{tenantId:"local",expectedAppDir:appDir,expectedDbPath:options.dbPath,draftId:reviewDraftId,revisionId});
+              const response=await callRpc(providerDispatcher, RpcMethods.ReviewResumeEdit,{tenantId:"local",expectedAppDir:appDir,expectedDbPath:options.dbPath,draftId:reviewDraftId,revisionId}).catch((error: unknown) => {
+                if (error instanceof RpcContractError && error.phase === "result") throw new SemanticStageError("schema_violation");
+                throw error;
+              });
               if(response.error)throw new SemanticStageError(safeDeterminationFailureCode(response.error.message));
               const parsed=ResumeEditReviewSchema.safeParse(response.result);
               if(!parsed.success)throw new SemanticStageError("schema_violation");
@@ -1749,7 +1759,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       const saved=await withWritableDb(reply,options.dbPath,db=>saveResumeReviewDraftRevision(db,draftId,body));
       if(!saved || !("revision" in saved))return saved;
       try {
-        const response=await providerDispatcher.call(RpcMethods.ReviewResumeEdit,{tenantId:"local",expectedAppDir:actionContext.appDir,expectedDbPath:options.dbPath,draftId,revisionId:saved.revision.revisionId,operation:"intent"});
+        const response=await callRpc(providerDispatcher, RpcMethods.ReviewResumeEdit,{tenantId:"local",expectedAppDir:actionContext.appDir,expectedDbPath:options.dbPath,draftId,revisionId:saved.revision.revisionId,operation:"intent"});
         if(response.error)return {...saved,editIntent:{status:"unavailable",failureCode:safeDeterminationFailureCode(response.error.message)}};
         const review=ResumeEditIntentReviewSchema.parse(response.result);
         const intentDb=openDatabase(options.dbPath);
@@ -1757,7 +1767,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         const refreshed=withDb(reply,options.dbPath,db=>getResumeReviewDraftForJob(db,saved.draft.jobKey));
         return {...saved,...refreshed,editIntent:{status:"accepted",determinationId:review.editIntentId}};
       }catch(error){
-        return {...saved,editIntent:{status:"unavailable",failureCode:error instanceof z.ZodError ? "schema_violation" : "provider_error"}};
+        return {...saved,editIntent:{status:"unavailable",failureCode:(error instanceof z.ZodError || error instanceof RpcContractError && error.phase === "result") ? "schema_violation" : "provider_error"}};
       }
     },
   );
@@ -1993,7 +2003,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   app.post<{Params:{jobKey:string}}>("/v1/jobs/:jobKey/repeat-application/check",async(request,reply)=>{
     const jobId=withDb(reply,options.dbPath,db=>resolveJobId(db,"local",decodeRouteParam(request.params.jobKey)));
     if(typeof jobId!=="string"){void reply.code(404);return {ok:false,error:"job_not_found"};}
-    const response=await providerDispatcher.call(RpcMethods.PrepareRepeatApplicationDeterminations,{tenantId:"local",expectedAppDir:appDir,expectedDbPath:options.dbPath,jobId});
+    const response=await callRpc(providerDispatcher, RpcMethods.PrepareRepeatApplicationDeterminations,{tenantId:"local",expectedAppDir:appDir,expectedDbPath:options.dbPath,jobId});
     if(response.error){void reply.code(503);return {ok:false,error:"repeat_determination_unavailable",message:response.error.message};}
     return withDb(reply,options.dbPath,db=>({ok:true,assessment:evaluateRepeatApplication(db,jobId)}));
   });
@@ -2546,7 +2556,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       }
       if (!body.dryRun) {
         if(evaluateRepeatApplication(db,jobId,{recordAudit:false}).status==="unavailable") {
-          const prepared=await providerDispatcher.call(RpcMethods.PrepareRepeatApplicationDeterminations,{tenantId:"local",expectedAppDir:appDir,expectedDbPath:options.dbPath,jobId});
+          const prepared=await callRpc(providerDispatcher, RpcMethods.PrepareRepeatApplicationDeterminations,{tenantId:"local",expectedAppDir:appDir,expectedDbPath:options.dbPath,jobId});
           if(prepared.error)throw new InputError("repeat_determination_unavailable");
         }
         assertLiveApplicationMayDispatch(db, jobId);
@@ -2996,9 +3006,9 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         request.log.error({ err: error }, "Failed to dispatch profile-update preparation continuation");
       });
     }
-    if (profileUpdatedEvent && profileResponse) {
+    if (profileUpdatedEvent && profileResponse?.profileVersion) {
       try {
-        await providerDispatcher.call(RpcMethods.ProfileTargetRoleSuggestions, {
+        await callRpc(providerDispatcher, RpcMethods.ProfileTargetRoleSuggestions, {
           expectedAppDir: actionContext.appDir, expectedDbPath: options.dbPath,
           expectedProfileVersion: profileResponse.profileVersion, maximumSuggestions: 5,
         });
@@ -3090,12 +3100,16 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       }));
       let response;
       try {
-        response = await providerDispatcher.call(RpcMethods.ProfileRequiredBulletSuggestions, ProfileRequiredBulletSuggestionsParamsSchema.parse({
+        response = await callRpc(providerDispatcher, RpcMethods.ProfileRequiredBulletSuggestions, ProfileRequiredBulletSuggestionsParamsSchema.parse({
           tenantId: "local", expectedAppDir: actionContext.appDir, expectedDbPath: actionContext.dbPath,
           expectedProfileVersion: body.expectedProfileVersion,
           maximumSuggestions: body.maximumSuggestions, sources,
         }));
-      } catch {
+      } catch (error) {
+        if (error instanceof RpcContractError && error.phase === "result") {
+          void reply.code(502);
+          return { ok: false, error: "required_bullet_suggestions_failed", message: "The coaching model returned an invalid response." };
+        }
         void reply.code(503);
         return { ok: false, error: "required_bullet_suggestions_unavailable",
           message: "The coaching model is unavailable. Try again when your provider is ready." };
@@ -3157,7 +3171,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       };
     }
     try {
-      const response = await providerDispatcher.call(RpcMethods.ProfileTargetRoleSuggestions, {
+      const response = await callRpc(providerDispatcher, RpcMethods.ProfileTargetRoleSuggestions, {
         tenantId: "local",
         expectedAppDir: actionContext.appDir,
         expectedDbPath: actionContext.dbPath,
@@ -3212,7 +3226,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         };
       }
       return { ok: true as const, ...parsed.data };
-    } catch {
+    } catch (error) {
+      if (error instanceof RpcContractError && error.phase === "result") {
+        void reply.code(502);
+        return { ok: false, error: "target_role_suggestions_failed", message: "Target role suggestions returned an invalid response." };
+      }
       void reply.code(503);
       return {
         ok: false,
@@ -3329,7 +3347,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       const body = parseBody(reply, BrowserCapabilityEnableRequestSchema, request.body ?? {});
       if (!body) return undefined;
       const result = await dispatchBrowserCapabilities(reply, providerDispatcher, "browser_capability_enable", {
-        capabilityId,
+        capabilityId: capabilityId as BrowserCapabilityId,
         ...body,
       });
       return result;
@@ -3344,7 +3362,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         void reply.code(400);
         return { ok: false, error: "browser_capability_failed", message: "This browser capability cannot be disabled." };
       }
-      return dispatchBrowserCapabilities(reply, providerDispatcher, "browser_capability_disable", { capabilityId });
+      return dispatchBrowserCapabilities(reply, providerDispatcher, "browser_capability_disable", { capabilityId: capabilityId as BrowserCapabilityId });
     },
   );
 
@@ -3477,7 +3495,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get("/v1/providers/status", async (_request, reply) => {
     try {
-      const response = await providerDispatcher.call("provider_status", {});
+      const response = await callRpc(providerDispatcher, "provider_status", {});
       if (response.error) {
         void reply.code(502);
         return providerOperationError(
@@ -3494,7 +3512,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         );
       }
       return { ok: true as const, providers: parsed.data.providers };
-    } catch {
+    } catch (error) {
+      if (error instanceof RpcContractError && error.phase === "result") {
+        void reply.code(502);
+        return providerOperationError("provider_status_failed", "Provider status returned an invalid response.");
+      }
       void reply.code(503);
       return providerOperationError(
         "provider_status_failed",
@@ -3518,7 +3540,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.post("/v1/providers/codex/verify", async (_request, reply) => {
     try {
-      const response = await providerDispatcher.call("provider_verify", {
+      const response = await callRpc(providerDispatcher, "provider_verify", {
         provider: "codex",
       });
       if (response.error) {
@@ -3537,7 +3559,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         );
       }
       return { ok: true as const, verification: parsed.data };
-    } catch {
+    } catch (error) {
+      if (error instanceof RpcContractError && error.phase === "result") {
+        void reply.code(502);
+        return providerOperationError("provider_verification_failed", "Codex verification returned an invalid response.");
+      }
       void reply.code(503);
       return providerOperationError(
         "provider_verification_failed",
@@ -4191,7 +4217,7 @@ function providerOperationError(
 async function dispatchProviderModelCatalog(
   dispatcher: JsonRpcDispatcher,
 ): Promise<{ providers: ProviderModelCatalogItem[] }> {
-  const response = await dispatcher.call("provider_models", {});
+  const response = await callRpc(dispatcher, "provider_models", {});
   if (response.error) {
     throw new Error("provider model catalog RPC failed");
   }
@@ -4246,13 +4272,22 @@ async function dispatchPendingProfileContinuations(
   }
 }
 
-async function dispatchBrowserCapabilities(
+type BrowserRpcMethod = "browser_capabilities_list" | "browser_capability_enable" | "browser_capability_disable" | "browser_profile_copy";
+
+async function dispatchBrowserCapabilities<M extends BrowserRpcMethod>(
   reply: FastifyReply,
   dispatcher: JsonRpcDispatcher,
-  method: Parameters<JsonRpcDispatcher["call"]>[0],
-  params: Record<string, unknown>,
+  method: M,
+  params: RpcParams<NoInfer<M>>,
 ) {
-  const response = await dispatcher.call(method, params);
+  let response;
+  try {
+    response = await callRpc(dispatcher, method, params);
+  } catch (error) {
+    if (!(error instanceof RpcContractError) || error.phase !== "result") throw error;
+    void reply.code(502);
+    return { ok: false as const, error: "browser_capability_failed" as const, message: "Browser capability status is temporarily unavailable." };
+  }
   if (response.error) {
     void reply.code(response.error.code === JsonRpcErrorCodes.InvalidParams ? 400 : 502);
     return {
