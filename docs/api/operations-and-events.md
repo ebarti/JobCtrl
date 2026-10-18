@@ -314,3 +314,17 @@ because a generation event arrived.
 | HTTP, operations snapshot, JSON-RPC, and SSE transport | `apps/api` |
 | Durable workflows and activities | `workers/automation` |
 | Browser cache and invalidation | `apps/web/src/contexts/operations` |
+
+## Provider Operations And Workflow Boundaries
+
+Provider status, model catalogs and explicit Codex verification are synchronous
+registered feature handlers. Their [compatibility contract](profile-and-settings.md#provider-endpoint-compatibility)
+keeps provider readiness separate from Temporal action-worker readiness. They
+do not start or resume a workflow, emit settlement markers, refresh accepted
+materials or change approvals. Existing Discover/profile entry, handoff,
+checks, recovery and settlement remain covered by their owning workflow tests.
+
+The provider tests use a synthetic dispatcher; the workflow compatibility tests
+use the synthetic handles described in the
+[architecture reference](../architecture/contracts-types-and-api-boundaries.md#incremental-endpoint-migration).
+Neither seam establishes live Temporal persistence or provider authentication.
