@@ -3,6 +3,7 @@ import { readCompanyBriefing } from "./company-briefings.js";
 import { createProviderHandlers, dispatchProviderModelCatalog, providerOperationError } from "./provider-handlers.js";
 import { callRpc, RpcContractError } from "./json-rpc-adapter.js";
 import { readTargetRoleProposal } from "./candidate-interpretations.js";
+import { resetJobStageWithEnrichmentOwner, retryFailedJobsWithEnrichmentOwner } from "./enrichment-retry.js";
 import { ResumeEditIntentReviewSchema } from "@jobctrl/contracts";
 import { readDetermination } from "./semantic-determinations.js";
 import { isDeepStrictEqual } from "node:util";
@@ -389,8 +390,6 @@ import {
   permanentlyDeleteJob,
   permanentlyDeleteJobs,
   queueRetriedJobsForWorkflow,
-  resetJobStage,
-  retryFailedJobs,
   type RetryFailedJobTarget,
   restoreJob,
   restoreJobs,
@@ -1855,7 +1854,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           return undefined;
         }
       }
-      const reset = retryFailedJobs(db, body);
+      const reset = await retryFailedJobsWithEnrichmentOwner(db, providerDispatcher, actionContext, body);
       const actions: ActionRunResponse[] = [];
       const runnableGroups = body.runAfter
         ? groupRunnableBulkRetryTargets(reset.targets)
@@ -2242,7 +2241,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           return undefined;
         }
       }
-      const reset = resetJobStage(db, decodeRouteParam(request.params.jobKey), body.stage, {
+      const reset = await resetJobStageWithEnrichmentOwner(db, providerDispatcher, actionContext, decodeRouteParam(request.params.jobKey), body.stage, {
         resetAttempts: body.resetAttempts,
       });
       const jobId = requireJobId(db, reset.jobUrl);

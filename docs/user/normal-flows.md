@@ -806,7 +806,7 @@ exist only in the installed launcher.
 | `discover` / `enrich` / `score` / `tailor` / `cover` | Start one stage; `score --rescore` re-scores jobs that already have a score. |
 | `job <url>` | Tailor and/or apply one job (`--tailor`, `--apply`, `--dry-run`). |
 | `apply` | Start apply automation (`--dry-run`, `--url`, `--continuous` to keep polling for new jobs). Utility modes: `--mark-applied`, `--mark-failed`, `--reset-failed`, and `--gen` (inspection-only dry-run prompt). |
-| `retry <stage> <url>` | Reset one failed stage for one job (`--reset-attempts`, `--run`). |
+| `retry <stage> <url>` | Reset one failed stage for one job (`--reset-attempts`, `--run`). Enrich retains accepted content and automatically renews an exhausted stage budget; see [Enrichment](enrichment-and-extraction.md). |
 | `action <stage>` | Low-level single-action dispatch with JSON output, for scripts. |
 | `compensation-refresh` | Re-parse posted salaries and refresh market estimates for all jobs or one (`--job-id`, `--observations-json`, `--no-eurotoptech`). |
 | `pipeline-status` / `runs` | Show pipeline stats, or recent apply runs and one run's event timeline (`runs --failed-only`, `--run-id`). |

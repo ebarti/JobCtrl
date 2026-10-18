@@ -564,6 +564,11 @@ readiness before resetting a stage or appending the reset event. A
 `503 worker_runtime_unavailable` leaves the durable failed/blocked stage and
 its events unchanged. The reset happens first only after dispatch prerequisites
 are satisfied; a reset-only command remains a deliberate local transition.
+Explicit Enrich reset uses the same Python application service from HTTP and
+CLI. Its atomic reset and durable event invalidate the previous execution
+fence without discarding accepted content. See
+[Enrichment Retry Ownership](../contracts-types-and-api-boundaries.md#enrichment-retry-ownership)
+for transactions, bulk cohorts, attempt counters and downstream preservation.
 
 The authoritative TypeScript runtime registry lives in
 `packages/domain-types/src/events/`. The

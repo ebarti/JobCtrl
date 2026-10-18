@@ -22,7 +22,13 @@ Temporal accepts the workflow. Eligibility no-ops and synchronous commands use
 `200`; invalid input or a failed start returns an error.
 
 `POST /v1/jobs/:jobKey/actions/retry-stage` has two distinct commands. A plain
-reset (`runAfter: false`) is local and synchronous. A reset-and-run
+reset (`runAfter: false`) is local and synchronous. Enrichment resets cross the
+local Python RPC boundary and acknowledge the committed application-service
+transaction with the same `200` reset response; Temporal and a healthy activity
+worker are not required for reset-only. A mixed bulk retry containing Enrich
+uses that same transaction for the complete cohort. See
+[ownership and preservation](../architecture/contracts-types-and-api-boundaries.md#enrichment-retry-ownership).
+A reset-and-run
 (`runAfter: true`) checks worker readiness before the reset; on
 `503 worker_runtime_unavailable`, the failed/blocked stage and its event history
 are preserved exactly so a dispatch precondition cannot erase retry evidence.
