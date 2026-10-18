@@ -1,10 +1,7 @@
 import type { RowSelectionState, SortingState } from "@tanstack/react-table";
 import { useMemo } from "react";
 
-import type {
-  ArtifactSummary,
-  PaginatedResponse,
-} from "../../contexts/operations/types.js";
+import type { ArtifactSummary, PaginatedResponse } from "@jobctrl/contracts";
 import { useIsMobile } from "../../shared/hooks/use-mobile.js";
 import {
   FilterableDataGrid,

@@ -21,7 +21,11 @@ import { KpiGrid, KpiSkeleton } from "./KpiGrid.js";
 import { RecentActivityCard } from "./RecentActivityCard.js";
 import { SourceHealthCard } from "./SourceHealthCard.js";
 import { WorkStatusCard } from "./WorkStatusCard.js";
-import { IN_PROGRESS_RUNS_INPUT, mergeActiveRuns, STARTING_RUNS_INPUT } from "./active-runs.js";
+import { mergeActiveRuns } from "./active-runs.js";
+import {
+  IN_PROGRESS_RUNS_INPUT,
+  STARTING_RUNS_INPUT,
+} from "../../contexts/operations/activeRuns.js";
 
 export function DashboardView() {
   const { data: summary, isLoading, error } = useDashboardSummaryQuery();
@@ -29,7 +33,8 @@ export function DashboardView() {
   const startingRuns = useWorkflowRunsListQuery(STARTING_RUNS_INPUT);
   const inProgressRuns = useWorkflowRunsListQuery(IN_PROGRESS_RUNS_INPUT);
   const message = error instanceof Error ? error.message : null;
-  const outcomesError = outcomes.error instanceof Error ? outcomes.error.message : null;
+  const outcomesError =
+    outcomes.error instanceof Error ? outcomes.error.message : null;
   const activeRunsError =
     startingRuns.error instanceof Error
       ? startingRuns.error.message
@@ -87,17 +92,28 @@ export function DashboardView() {
             <section className="card col-span-full">
               <CardHeader
                 title="Outcome suggestions"
-                meta={outcomes.data ? `${pendingSuggestions.length} pending` : "loading"}
+                meta={
+                  outcomes.data
+                    ? `${pendingSuggestions.length} pending`
+                    : "loading"
+                }
               />
               {outcomes.isFetching && !outcomes.data ? (
                 <Empty title="Loading outcome suggestions." />
               ) : null}
-              {outcomes.data ? <OutcomeSuggestionsPanel suggestions={pendingSuggestions} interpretationStatus={outcomes.data.interpretationStatus} /> : null}
+              {outcomes.data ? (
+                <OutcomeSuggestionsPanel
+                  suggestions={pendingSuggestions}
+                  interpretationStatus={outcomes.data.interpretationStatus}
+                />
+              ) : null}
             </section>
           </div>
         </div>
       ) : (
-        <Empty title={isLoading ? "Loading dashboard." : "No dashboard data."} />
+        <Empty
+          title={isLoading ? "Loading dashboard." : "No dashboard data."}
+        />
       )}
     </div>
   );

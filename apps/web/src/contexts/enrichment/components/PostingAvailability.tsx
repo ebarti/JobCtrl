@@ -1,4 +1,4 @@
-import type { PostingAvailability as Availability } from "../../operations/types.js";
+import type { PostingAvailability as Availability } from "@jobctrl/contracts";
 
 import { Button } from "../../../shared/ui/button.js";
 import { useCheckAvailabilityMutation } from "../hooks/useCheckAvailabilityMutation.js";

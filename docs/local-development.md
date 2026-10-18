@@ -630,7 +630,10 @@ corepack pnpm web:build
 ```
 
 `web:lint` checks production imports and browser-capability access using the
-TypeScript syntax tree. Existing boundary debt has scoped exceptions; new
+TypeScript syntax tree and capability provenance, including real generated
+loader controls independent of compiler diagnostics. Run
+`corepack pnpm web:lint:test` for the complete positive/negative boundary suite.
+Existing boundary debt has scoped exceptions; new
 imports cannot silently widen them. See the
 [frontend boundary checks](architecture/frontend/state-and-ports.md#automated-boundary-checks)
 for the enforced rules, legitimate infrastructure access, and review limits.

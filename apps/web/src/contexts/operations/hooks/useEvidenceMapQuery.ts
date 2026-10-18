@@ -2,15 +2,14 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
-import { evidenceMapKeys } from "../evidenceMapKeys.js";
-import type { EvidenceMapEntry, EvidenceMapResponse } from "../types.js";
+import { evidenceMapQuery } from "../readQueries.js";
+import type { EvidenceMapEntry, EvidenceMapResponse } from "@jobctrl/contracts";
 
 export function useEvidenceMapQuery(): UseQueryResult<EvidenceMapResponse> {
   const tenantId = useTenantId();
   const { api } = usePorts();
   return useQuery({
-    queryKey: evidenceMapKeys.list(tenantId),
-    queryFn: () => api.evidenceMap(),
+    ...evidenceMapQuery({ tenantId, ports: { api } }),
   });
 }
 
@@ -20,9 +19,10 @@ export function useEvidenceMapEntryQuery(
   const tenantId = useTenantId();
   const { api } = usePorts();
   return useQuery({
-    queryKey: evidenceMapKeys.list(tenantId),
-    queryFn: () => api.evidenceMap(),
+    ...evidenceMapQuery({ tenantId, ports: { api } }),
     select: (response) =>
-      entryId ? response.entries.find((entry) => entry.entryId === entryId) ?? null : null,
+      entryId
+        ? (response.entries.find((entry) => entry.entryId === entryId) ?? null)
+        : null,
   });
 }

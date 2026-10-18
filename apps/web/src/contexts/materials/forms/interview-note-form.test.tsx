@@ -3,7 +3,10 @@ import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import { act, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { InterviewQuestionNote, SaveInterviewQuestionNoteRequest } from "../../operations/types.js";
+import type {
+  InterviewQuestionNote,
+  SaveInterviewQuestionNoteRequest,
+} from "@jobctrl/contracts";
 import { interviewKeys } from "../../operations/interviewKeys.js";
 import { renderWithProviders } from "../../../test/render.js";
 import { buildTestPorts } from "../../../test/testPorts.js";

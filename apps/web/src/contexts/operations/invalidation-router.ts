@@ -126,7 +126,8 @@ import {
 import { activityKeys } from "./activityKeys.js";
 import { applyRunsKeys } from "./applyRunsKeys.js";
 import { digestKeys } from "./digestKeys.js";
-import type { KnownDomainEvent, KnownDomainEventType } from "./types.js";
+import type { DomainEventUnion as KnownDomainEvent } from "@jobctrl/domain-types";
+import type { KnownDomainEventType } from "./types.js";
 
 export type InvalidationItem =
   | { readonly kind: "invalidate"; readonly queryKey: QueryKey }

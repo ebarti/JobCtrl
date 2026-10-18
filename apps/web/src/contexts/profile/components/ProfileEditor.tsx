@@ -11,7 +11,7 @@ import {
   type ResumePlateSemanticTextChange,
 } from "../../materials/components/ResumeAuditPins.js";
 import { ProfileForm, type ProfilePlateTextController } from "../forms/profile-form.js";
-import type { ProfileConfigResponse } from "../../operations/types.js";
+import type { ProfileConfigResponse } from "@jobctrl/contracts";
 import { useProfileHtmlPreviewUrl } from "../hooks/useProfileHtmlPreviewUrl.js";
 import { useProfileQuery } from "../hooks/useProfileQuery.js";
 import { useResumeTemplatesQuery } from "../hooks/useResumeTemplatesQuery.js";

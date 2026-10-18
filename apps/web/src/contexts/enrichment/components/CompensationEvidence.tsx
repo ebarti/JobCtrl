@@ -18,7 +18,7 @@ import type {
   PostedCompensationWarning,
 } from "@jobctrl/contracts";
 
-import type { DeterminationEnvelope } from "../../operations/types.js";
+import type { DeterminationEnvelope } from "@jobctrl/contracts";
 
 import { Empty } from "../../../shared/ui/empty.js";
 import { Button } from "../../../shared/ui/button.js";

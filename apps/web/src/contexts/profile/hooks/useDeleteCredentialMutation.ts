@@ -4,7 +4,7 @@ import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/r
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { createOptimisticMutation } from "../../../shared/lib/createOptimisticMutation.js";
-import type { CredentialsResponse } from "../../operations/types.js";
+import type { CredentialsResponse } from "@jobctrl/contracts";
 import { patchCredentialConfigured } from "../lib/profile-patches.js";
 import { profileKeys } from "../queryKeys.js";
 

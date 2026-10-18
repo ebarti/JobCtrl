@@ -66,7 +66,7 @@ import { useSettingsPolicyQuery } from "../../operations/hooks/useSettingsPolicy
 import type {
   DashboardSummary,
   SourceRegistryEntrySummary,
-} from "../../operations/types.js";
+} from "@jobctrl/contracts";
 import { CancelWorkflowRunButton } from "./CancelWorkflowRunButton.js";
 import { useRunPipelineStagesMutation } from "../hooks/useRunPipelineStagesMutation.js";
 import { useUpdatePipelineInternalConcurrencyMutation } from "../hooks/useUpdatePipelineInternalConcurrencyMutation.js";

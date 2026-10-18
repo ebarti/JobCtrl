@@ -7,7 +7,7 @@ describe("resume pdf renderer", () => {
   it("dispatches render_resume_pdf and resolves on a valid result", async () => {
     const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
     const dispatcher: JsonRpcDispatcher = {
-      call: async (method, params) => {
+      call: async (method, params: Record<string, unknown>) => {
         calls.push({ method, params });
         return {
           jsonrpc: "2.0" as const,
