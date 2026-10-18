@@ -327,3 +327,63 @@ fixtures and RPC registration observations are updated together.
 Contracts owns the versioned semantic codes/labels and strict read envelopes. Worker determinations own meaning, with closed enums, extra-field rejection and canonical citations. API/web/extension consumers join IDs and read persisted verdicts; they never construct provenance or categories from text overlap. Interactive calls are sync RPC, activity calls remain outside Temporal replay.
 
 See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+
+## Incremental Endpoint Migration
+
+The provider family uses the existing `ENDPOINTS` declarations in
+`packages/contracts/src/endpoint-spec.ts`: `providerStatus`, `providerModels`
+and `verifyCodexProvider`. The declarations own HTTP methods, paths, request
+and response schemas, worker dependencies and demo capability metadata.
+`apps/api/src/endpoint-routes.ts` registers them under the existing HTTP security
+hooks. `apps/api/src/provider-handlers.ts` owns provider orchestration and safe
+error mappings; its catalog function is also used by Settings validation.
+`callRpc` enforces the reconciled `RpcContracts` on injected dispatchers and the
+subprocess adapter. The response schemas reuse the sanitized RPC results,
+including catalog order and the prohibition on models for unready providers.
+
+`createEndpointMethods` supplies the checked methods on `JobCtrlApiClient`;
+there are no separate provider path/method implementations. The frontend port
+and local adapter keep their public methods. Demo status is synthetic and
+disconnected, demo models are a synthetic catalog, and verification remains
+unavailable. Their capability classifications come from the same declarations.
+
+Migrate the next family one cohesive slice at a time:
+
+1. Trace current client entry, HTTP security, feature operation, worker handoff,
+   response, consumers and any durable resume/settlement path. Record current
+   status codes, ignored inputs, readiness and demo behavior before moving it.
+2. Reuse or reconcile its owning RPC parameter/result schemas. Declare the
+   endpoint once with its method, path, request, sanitized response, dependencies
+   and demo metadata. Preserve the existing compatibility policy.
+3. Place orchestration in a feature-owned handler module, inject it through
+   `registerEndpointRoutes`, and remove the duplicate manual registration.
+   Use declarative dispatch only when its mapping already fits the operation.
+4. Remove handwritten client transport methods so `createEndpointMethods` owns
+   transport and parsing. Keep the frontend port and adapters compatible; remove
+   duplicate demo manifest entries when the declaration takes ownership.
+5. Extend the complete explicit JSON-Schema expectation, retaining all pinned
+   endpoints. The API contract test combines the historical domain-types fixture
+   with `apps/api/test/fixtures/provider-endpoint-specs.json` for this family.
+   Do not regenerate unrelated fixtures. Test generated-client-to-route success,
+   readiness outcomes, RPC/transport failures, malformed/private fields and
+   security rejection before dispatch, plus affected consumers.
+6. Update the owning API references and retain candidate-bound check evidence.
+   Independent product QA/review and controller publication gates still determine
+   delivery; a typecheck or implementation checkpoint does not establish it.
+
+This migration preserves the #954 compatibility boundary: the JSON-RPC envelope
+observations above (version, falsy params, extra keys and ID semantics) remain
+characterized differences. Moving HTTP registration does not authorize tightening
+Python envelope parsing or changing workflow acknowledgments. Provider operations
+are synchronous; they introduce no workflow start, durable settlement, artifact
+refresh or approval mutation. Existing Discover/profile workflow, continuation,
+restart and settlement compatibility checks remain applicable to the shared
+contract path.
+
+The provider integration tests use the actual generated HTTP client and a local
+Fastify listener, with a synthetic `JsonRpcDispatcher` returning bounded results
+or failures. Tests supply first-party Origin metadata to Node fetch to represent
+a browser request. These tests prove mapping, parsing, transport and security
+behavior; they do not prove SDK authentication, credential import, live model
+catalog access or model quality. The existing workflow fixtures described above
+use synthetic workflow handles and do not establish live Temporal recovery.

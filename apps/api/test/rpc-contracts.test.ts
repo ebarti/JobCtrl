@@ -1,3 +1,4 @@
+import providerEndpointSpecs from "./fixtures/provider-endpoint-specs.json" with { type: "json" };
 /**
  * RPC contract schema coverage — keeps the TS contract package in sync with
  * the Python worker handler set.  Each new RPC method gets a parse + reject
@@ -254,11 +255,28 @@ describe("current RPC caller controls and dispatch results", () => {
 });
 
 describe("endpoint spec fixture", () => {
+  it("adds exactly the provider family without replacing historical endpoint expectations", () => {
+    const additions = Object.keys(providerEndpointSpecs).sort();
+    expect(additions).toEqual(["providerModels", "providerStatus", "verifyCodexProvider"]);
+    for (const name of additions) {
+      expect(endpointSpecsFixture.endpoints).not.toHaveProperty(name);
+    }
+    expect(Object.keys(endpointSpecJsonSchemaFixture().endpoints).sort()).toEqual(
+      [...Object.keys(endpointSpecsFixture.endpoints), ...additions].sort(),
+    );
+  });
+
   it("pins every migrated request and response JSON Schema", () => {
-    expect(endpointSpecJsonSchemaFixture()).toEqual(endpointSpecsFixture);
+    expect(endpointSpecJsonSchemaFixture()).toEqual({
+      ...endpointSpecsFixture,
+      endpoints: { ...endpointSpecsFixture.endpoints, ...providerEndpointSpecs },
+    });
   });
 
   it("records the indirect worker RPCs used by merged endpoint handlers", () => {
+    expect(ENDPOINTS.providerStatus.rpcDependencies).toEqual([RpcMethods.ProviderStatus]);
+    expect(ENDPOINTS.providerModels.rpcDependencies).toEqual([RpcMethods.ProviderModels]);
+    expect(ENDPOINTS.verifyCodexProvider.rpcDependencies).toEqual([RpcMethods.ProviderVerify]);
     expect(ENDPOINTS.renderResumeReviewDraft.rpcDependencies).toEqual([
       RpcMethods.RenderResumePdf,
     ]);

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ProviderStatusResponseSchema, ProviderModelCatalogResponseSchema, CodexVerifyResponseSchema } from "./schemas.js";
 import { MaterialLocaleRequestSchema, MaterialLocaleHistorySchema } from "./schemas.js";
 import {
   InterviewCatalogQuerySchema,
@@ -580,7 +581,28 @@ const screeningFailure = (failure: EndpointDispatchFailure): EndpointFailureResp
   message: failure.kind === "rpc" && /^(screening_[a-z_]+|provider_unavailable|provider_error|budget_denied|spend_denied|source_schema_violation|duplicate_source_id|cache_binding_invalid|cache_lock_unavailable|schema_violation|foreign_source_id|non_verbatim_quote|mismatched_value|malformed_json|persistence_error)$/.test(failure.error.message) ? failure.error.message : "Screening answer operation unavailable; saved history is preserved.",
 });
 
+// These legacy routes ignore query/body input; tightening it would break compatibility.
+const ProviderOperationRequestSchema = z.unknown().optional();
+
 export const ENDPOINTS = {
+  providerStatus: defineEndpoint({
+    name: "providerStatus", method: "GET", path: "/v1/providers/status",
+    request: ProviderOperationRequestSchema, response: ProviderStatusResponseSchema,
+    rpcDependencies: [RpcMethods.ProviderStatus],
+    demo: { class: "browser_local", reason: "Synthetic disconnected status is available offline; no provider is contacted." },
+  }),
+  providerModels: defineEndpoint({
+    name: "providerModels", method: "GET", path: "/v1/providers/models",
+    request: ProviderOperationRequestSchema, response: ProviderModelCatalogResponseSchema,
+    rpcDependencies: [RpcMethods.ProviderModels],
+    demo: { class: "browser_local", reason: "The demo exposes a synthetic model catalog without connecting an account." },
+  }),
+  verifyCodexProvider: defineEndpoint({
+    name: "verifyCodexProvider", method: "POST", path: "/v1/providers/codex/verify",
+    request: ProviderOperationRequestSchema, response: CodexVerifyResponseSchema,
+    rpcDependencies: [RpcMethods.ProviderVerify],
+    demo: { class: "unavailable", reason: "Provider verification requires local credentials." },
+  }),
   materialLocaleVariants: defineEndpoint({
     name: "materialLocaleVariants",
     method: "POST",
