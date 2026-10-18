@@ -99,7 +99,7 @@ Rejecting a candidate records durable suppression for its source coordinate,
 including alternate posting URLs and ordinary automatic learning. Run
 `jobctrl source-proposals reset CANDIDATE_ID` to explicitly clear that rejection,
 then run `from-history` again if desired. Reset never enables a source or creates
-a schedule. Pending and rejected history proposals cannot be promoted by normal
+a schedule. Pending, rejected and reset history coordinates cannot be promoted by normal
 worker learning. Retries reuse unchanged evidence; failed persistence rolls back
 the scan and retains the prior queue and receipts. Proposal evidence and review
 decisions remain local source-control history, including after job-data purge.

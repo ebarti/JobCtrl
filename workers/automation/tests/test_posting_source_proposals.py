@@ -237,6 +237,9 @@ def test_rejection_survives_reproposal_and_requires_explicit_reset(workspace):
     assert command("list")["candidates"] == []
     assert conn.execute("SELECT COUNT(*) FROM source_registry_entries").fetchone()[0] == 0
     assert command("reset", candidate["candidate_id"])["decision"] == "reset"
+    # Reset permits a new proposal, never automatic activation between commands.
+    run_deterministic_source_locator(conn, ())
+    assert conn.execute("SELECT COUNT(*) FROM source_registry_entries").fetchone()[0] == 0
     assert command("from-history")["counts"]["proposed"] == 2
     assert len(command("list")["candidates"]) == 1
     assert command("from-history")["counts"]["unchanged"] == 2

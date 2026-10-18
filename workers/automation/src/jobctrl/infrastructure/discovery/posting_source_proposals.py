@@ -157,7 +157,7 @@ def automatic_learning_blocked(conn: sqlite3.Connection, url: str) -> bool:
     if coordinate is None:
         return True
     state, _ = review_state(conn, coordinate)
-    return state in {"pending", "reject", "invalid"} or bool(registry_overlaps(conn, coordinate, held_only=True))
+    return state in {"pending", "reject", "reset", "invalid"} or bool(registry_overlaps(conn, coordinate, held_only=True))
 
 
 def propose_posting_source(
