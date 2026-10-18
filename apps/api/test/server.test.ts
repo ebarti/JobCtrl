@@ -13985,6 +13985,7 @@ describe("enforcing route to registered worker handoffs", () => {
       expect(response.statusCode, response.body).toBe(202);
       expect(fixture.rows().find(row => row.kind === "request")).toMatchObject({ request: { params: { sourceIds } } });
       expect(fixture.rows().find(row => row.kind === "start")).toMatchObject({ input: { source_ids: sourceIds, workers: 2, limit: 25 } });
+      const transmittedRequests = fixture.rows().filter(row => row.kind === "request").length;
       for (const payload of [
         { stages: ["discover"], sourceIds: ["jobspy:indeed", "jobspy:indeed"] },
         { stages: ["discover"], workers: 0 },
@@ -13996,7 +13997,9 @@ describe("enforcing route to registered worker handoffs", () => {
         const invalid = await app.inject({ method: "POST", url: "/v1/pipeline/actions/run-stage", payload });
         observations.push({ input: payload, status: invalid.statusCode, body: invalid.body });
         expect(invalid.statusCode).toBe(400);
+        expect(fixture.rows().filter(row => row.kind === "request")).toHaveLength(transmittedRequests);
       }
+      observations.push({ transmittedBeforeInvalidInputs: transmittedRequests, transmittedAfterInvalidInputs: fixture.rows().filter(row => row.kind === "request").length });
       expect(fixture.rows().filter(row => row.kind === "start")).toHaveLength(1);
       fixture.mode("invalid_ack");
       const malformed = await app.inject({ method: "POST", url: "/v1/pipeline/actions/run-stage", payload: { stages: ["discover"], sourceIds } });

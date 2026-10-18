@@ -190,7 +190,9 @@ Workflow starts use acknowledgments, even when their activity has a synchronous
 result schema. Compensation refresh also retains its supported
 synchronous result branch, and stage runs retain `LocalActionResult` for old
 sync adapters. Generic acknowledgments preserve additional identity metadata
-and nested payloads.
+and nested payloads. Acknowledgments allow a null `firstExecutionRunId` when
+Temporal has no first execution identity; availability starts still require
+both `runId` and `workflowId`.
 
 Awaited stage results mirror the actual serialized workflow dataclasses:
 `JobPipelineWorkflowResult` has `stages_completed`, `stages_failed`, `failure`,

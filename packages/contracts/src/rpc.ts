@@ -411,7 +411,7 @@ export const CheckPostingAvailabilityParamsSchema = z.object({
 export const AvailabilityWorkflowStartSchema = z.object({
   runId: z.string().min(1),
   workflowId: z.string().min(1),
-  firstExecutionRunId: z.string().min(1).optional(),
+  firstExecutionRunId: z.string().min(1).nullish(),
 }).strict();
 
 export const RefreshCompensationParamsSchema = z

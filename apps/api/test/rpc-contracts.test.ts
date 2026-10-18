@@ -15,6 +15,7 @@ import {
   AnalyzeJobResultSchema,
   ApplyParamsSchema,
   ApplyResultSchema,
+  AvailabilityWorkflowStartSchema,
   CancelRunParamsSchema,
   CancelRunResultSchema,
   DEFAULT_PIPELINE_LLM_MODEL,
@@ -239,6 +240,17 @@ describe("current RPC caller controls and dispatch results", () => {
     expect(RpcContracts.cancel_run.params).toBe(CancelRunParamsSchema);
     expect(RpcContracts.run_stage.result).toBe(RunStageResultSchema);
     expect(AnalyzeJobResultSchema.safeParse(ack).success).toBe(false);
+  });
+
+  it("preserves availability acknowledgments when Temporal has no first execution ID", () => {
+    // server.py forwards handle.first_execution_run_id, which may be None.
+    const start = { ...ack, firstExecutionRunId: null };
+    expect(AvailabilityWorkflowStartSchema.parse(start)).toEqual(start);
+    expect(RpcContracts.check_posting_availability.result.parse(start)).toEqual(start);
+    expect(AvailabilityWorkflowStartSchema.safeParse({ runId: ack.runId }).success).toBe(false);
+    for (const firstExecutionRunId of ["", 7, false]) {
+      expect(AvailabilityWorkflowStartSchema.safeParse({ ...ack, firstExecutionRunId }).success).toBe(false);
+    }
   });
 });
 
