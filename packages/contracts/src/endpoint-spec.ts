@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AcceptedMaterialExportRequestSchema, AcceptedMaterialExportsSchema, MaterialLocaleRequestSchema, MaterialLocaleHistorySchema } from "./schemas.js";
+import { AcceptedMaterialExportRequestSchema, AcceptedMaterialExportsSchema, ProviderStatusResponseSchema, ProviderModelCatalogResponseSchema, CodexVerifyResponseSchema, MaterialLocaleRequestSchema, MaterialLocaleHistorySchema } from "./schemas.js";
 import {
   InterviewCatalogQuerySchema,
   InterviewCatalogResponseSchema,
@@ -40,6 +40,10 @@ import {
   RollbackTailoringPolicyParamsSchema,
   RollbackTailoringPolicyResultSchema,
   RpcMethods,
+  RpcContracts,
+  type ContractRpcMethod,
+  type RpcParams,
+  type RpcResult,
   type JsonRpcError,
   type RpcMethod,
 } from "./rpc.js";
@@ -106,23 +110,22 @@ type AnyEndpointPath = string | EndpointPath<any, string>;
 export interface RpcEndpointDispatch<
   TRequestSchema extends AnySchema,
   TPathParam,
-  TRpcParamsSchema extends AnySchema,
-  TRpcResultSchema extends AnySchema,
+  TMethod extends ContractRpcMethod,
 > {
-  readonly rpcMethod: RpcMethod;
+  readonly rpcMethod: TMethod;
   readonly params: (
     input: {
       readonly request: z.output<TRequestSchema>;
       readonly pathParam: TPathParam;
     },
     context: EndpointDispatchContext,
-  ) => z.input<TRpcParamsSchema>;
-  readonly paramsSchema: TRpcParamsSchema;
-  readonly result: TRpcResultSchema;
+  ) => RpcParams<TMethod>;
+  readonly paramsSchema: (typeof RpcContracts)[TMethod]["params"];
+  readonly result: (typeof RpcContracts)[TMethod]["result"];
   readonly response: (input: {
     readonly request: z.output<TRequestSchema>;
     readonly pathParam: TPathParam;
-    readonly result: z.output<TRpcResultSchema>;
+    readonly result: RpcResult<TMethod>;
   }) => unknown | null;
   readonly error: (failure: EndpointDispatchFailure) => EndpointFailureResponse;
 }
@@ -577,6 +580,9 @@ const screeningFailure = (failure: EndpointDispatchFailure): EndpointFailureResp
   message: failure.kind === "rpc" && /^(screening_[a-z_]+|provider_unavailable|provider_error|budget_denied|spend_denied|source_schema_violation|duplicate_source_id|cache_binding_invalid|cache_lock_unavailable|schema_violation|foreign_source_id|non_verbatim_quote|mismatched_value|malformed_json|persistence_error)$/.test(failure.error.message) ? failure.error.message : "Screening answer operation unavailable; saved history is preserved.",
 });
 
+// These legacy routes ignore query/body input; tightening it would break compatibility.
+const ProviderOperationRequestSchema = z.unknown().optional();
+
 export const ENDPOINTS = {
   acceptedMaterialExports: defineEndpoint({
     name: "acceptedMaterialExports", method: "POST",
@@ -584,6 +590,24 @@ export const ENDPOINTS = {
     request: AcceptedMaterialExportRequestSchema, response: AcceptedMaterialExportsSchema,
     rpcDependencies: [RpcMethods.AcceptedMaterialExports],
     demo: { class: "unavailable", reason: "DOCX export requires accepted materials saved in your local workspace." },
+  }),
+  providerStatus: defineEndpoint({
+    name: "providerStatus", method: "GET", path: "/v1/providers/status",
+    request: ProviderOperationRequestSchema, response: ProviderStatusResponseSchema,
+    rpcDependencies: [RpcMethods.ProviderStatus],
+    demo: { class: "browser_local", reason: "Synthetic disconnected status is available offline; no provider is contacted." },
+  }),
+  providerModels: defineEndpoint({
+    name: "providerModels", method: "GET", path: "/v1/providers/models",
+    request: ProviderOperationRequestSchema, response: ProviderModelCatalogResponseSchema,
+    rpcDependencies: [RpcMethods.ProviderModels],
+    demo: { class: "browser_local", reason: "The demo exposes a synthetic model catalog without connecting an account." },
+  }),
+  verifyCodexProvider: defineEndpoint({
+    name: "verifyCodexProvider", method: "POST", path: "/v1/providers/codex/verify",
+    request: ProviderOperationRequestSchema, response: CodexVerifyResponseSchema,
+    rpcDependencies: [RpcMethods.ProviderVerify],
+    demo: { class: "unavailable", reason: "Provider verification requires local credentials." },
   }),
   materialLocaleVariants: defineEndpoint({
     name: "materialLocaleVariants",
@@ -603,7 +627,7 @@ export const ENDPOINTS = {
       paramsSchema: ScreeningAnswersParamsSchema, result: ScreeningAnswersResultSchema,
       response: ({ pathParam, result }) => "questions" in result && result.jobId === pathParam && result.questions.every((question) => question.jobId === pathParam) && result.history.every((question) => question.jobId === pathParam) ? result : null,
       error: screeningFailure,
-    } satisfies RpcEndpointDispatch<typeof ScreeningReadRequestSchema, string, typeof ScreeningAnswersParamsSchema, typeof ScreeningAnswersResultSchema>,
+    } satisfies RpcEndpointDispatch<typeof ScreeningReadRequestSchema, string, "screening_answers">,
     demo: { class: "unavailable", reason: "Private reviewed screening answers require the local worker and saved sources." },
   }),
   writeScreeningAnswer: defineEndpoint({
@@ -615,7 +639,7 @@ export const ENDPOINTS = {
       paramsSchema: ScreeningAnswersParamsSchema, result: ScreeningAnswersResultSchema,
       response: ({ request, pathParam, result }) => "state" in result && result.jobId === pathParam && result.state.jobId === pathParam && result.state.action === request.action && result.state.revision === request.expectedRevision + 1 && (!request.questionId || result.state.questionId === request.questionId) ? result : null,
       error: screeningFailure,
-    } satisfies RpcEndpointDispatch<typeof ScreeningCommandSchema, string, typeof ScreeningAnswersParamsSchema, typeof ScreeningAnswersResultSchema>,
+    } satisfies RpcEndpointDispatch<typeof ScreeningCommandSchema, string, "screening_answers">,
     demo: { class: "unavailable", reason: "Drafting, review and manual-use attestations require local persisted authority." },
   }),
 
@@ -715,8 +739,7 @@ export const ENDPOINTS = {
     } satisfies RpcEndpointDispatch<
       typeof LearningRecommendationReviewRequestSchema,
       string,
-      typeof ReviewLearningRecommendationParamsSchema,
-      typeof ReviewLearningRecommendationResultSchema
+      "review_learning_recommendation"
     >,
     demo: {
       class: "unavailable",
@@ -759,8 +782,7 @@ export const ENDPOINTS = {
     } satisfies RpcEndpointDispatch<
       typeof TailoringPolicyRollbackRequestSchema,
       undefined,
-      typeof RollbackTailoringPolicyParamsSchema,
-      typeof RollbackTailoringPolicyResultSchema
+      "rollback_tailoring_policy"
     >,
     demo: {
       class: "unavailable",

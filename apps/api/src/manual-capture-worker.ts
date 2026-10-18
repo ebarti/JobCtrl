@@ -1,3 +1,4 @@
+import { callRpc, RpcContractError } from "./json-rpc-adapter.js";
 import type {
   ManualCaptureImportRequest,
   ManualCaptureImportResponse,
@@ -71,7 +72,7 @@ export function createWorkerManualCaptureImporter(
   return async (itemId, input, context) => {
     let response;
     try {
-      response = await dispatcherFactory(context).call("manual_capture_import", {
+      response = await callRpc(dispatcherFactory(context), "manual_capture_import", {
         tenantId: "local",
         itemId,
         captureMode: input.captureMode,
@@ -84,7 +85,8 @@ export function createWorkerManualCaptureImporter(
         expectedDbPath: context.dbPath,
         awaitResult: true,
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof RpcContractError && error.phase === "result") throw invalidWorkflowResultError();
       // JSON-RPC transport rejection means the local RPC/Temporal runtime could
       // not accept the import. Never expose command lines, worker logs, or input.
       throw new ManualCaptureImportError("Manual capture import is temporarily unavailable.", 503);

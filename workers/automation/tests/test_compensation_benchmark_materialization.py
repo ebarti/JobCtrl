@@ -3,6 +3,7 @@
 import json
 import pytest
 from jobctrl.database import init_db, close_connection
+from jobctrl.infrastructure.compensation.benchmark_lineage import load_market_benchmark_lineage
 from jobctrl.infrastructure.compensation.benchmark_materialization import materialize_automatic_compensation_estimates
 from jobctrl.infrastructure.compensation.sqlite_market_repository import SqliteMarketCompensationRepository
 from tests.compensation_fakes import NOW, JOB, ClassificationModel, put_job, configure_classifier, refresh
@@ -35,14 +36,17 @@ def test_two_jobs_share_a_classified_slice_and_repeated_materialization_is_idemp
     )
     for ident in (JOB, second):
         row = database.execute(
-            "SELECT compensation_summary_json,compensation_audit_json FROM job_detail_projections WHERE job_id=?",
+            "SELECT compensation_summary_json FROM job_list_projections WHERE job_id=?",
             (ident,),
         ).fetchone()
-        audit = json.loads(row[1])
         summary = json.loads(row[0])
         assert summary["market"]["displayRange"] == "EUR 60000-90000/year"
-        assert audit["market"]["estimate"]["benchmarkLineage"]["roleFamilyCode"] == "software_engineering"
-        assert audit["market"]["estimate"]["benchmarkLineage"]["seniorityLabel"] == "senior"
+        estimate = SqliteMarketCompensationRepository(database).get_estimate("local", ident)
+        assert estimate is not None
+        lineage = load_market_benchmark_lineage(database, tenant_id="local", estimator_version=estimate.estimator_version)
+        assert lineage is not None
+        assert lineage["roleFamilyCode"] == "software_engineering"
+        assert lineage["seniorityLabel"] == "senior"
 
 
 @pytest.mark.parametrize(

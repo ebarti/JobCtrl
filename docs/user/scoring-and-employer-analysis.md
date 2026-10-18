@@ -260,3 +260,7 @@ not for an employer ranking people.
 Scoring work limits use recency and stable IDs. The model supplies typed blockers with spans and requirement verdicts bound to canonical IDs; code resolves only weights, caps and bands. Posting constraints, seniority, geography and requirement scope come from the accepted job interpretation. No prose reclassification or lexical retrieval decides eligibility.
 
 See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+
+## Optional company context
+
+[Company briefings](company-briefings.md) add separately dated public context beside Role Analysis. They are explicitly configured and refreshed, shared across confirmed company/job links, and do not change fit scores or posting requirements.

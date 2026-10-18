@@ -14,6 +14,7 @@ import {
   JsonRpcResponseSchema,
   ProviderModelCatalogResultSchema,
   RpcMethods,
+  RpcContracts,
   RunStageParamsSchema,
 } from "../src/contracts.js";
 
@@ -41,6 +42,11 @@ type Probe = {
 
 const fixture = boundaryFixture as unknown as { cases: BoundaryCase[] };
 const probe = pythonObservation as Probe;
+// The shared fixture's TS outcomes describe the pre-reconciliation baseline.
+// Keep its Python observations unchanged; these current caller shapes now parse.
+const reconciledRunStageCases = new Set([
+  "run_stage_source_ids", "run_stage_recovery_reason", "run_stage_profile_continuation",
+]);
 
 describe("TypeScript/Python JSON-RPC boundary", () => {
   it("matches the live Python registration inventory to RpcMethods", () => {
@@ -50,6 +56,11 @@ describe("TypeScript/Python JSON-RPC boundary", () => {
     expect(probe.inventory.find(({ method }) => method === RpcMethods.ScreeningAnswers)?.mode).toBe("sync");
     expect(probe.inventory.find(({ method }) => method === RpcMethods.ProviderModels)?.mode).toBe("sync");
     expect(probe.inventory.find(({ method }) => method === RpcMethods.RunStage)?.mode).toBe("workflow");
+    for (const { method, mode } of probe.inventory) {
+      if (mode === "workflow") {
+        expect(RpcContracts).toHaveProperty(method);
+      }
+    }
 
     // The endpoint spec remains the source for route-to-worker dispatch.
     const endpointReferences = Object.values(ENDPOINTS).flatMap((endpoint) => {
@@ -95,16 +106,16 @@ describe("TypeScript/Python JSON-RPC boundary", () => {
     }
     if (boundaryCase.tsRunStageParams !== undefined) {
       expect(RunStageParamsSchema.safeParse(boundaryCase.request?.params).success).toBe(
-        boundaryCase.tsRunStageParams,
+        reconciledRunStageCases.has(boundaryCase.name) || boundaryCase.tsRunStageParams,
       );
     }
-    if (["run_stage_source_ids", "run_stage_recovery_reason", "run_stage_profile_continuation"]
-      .includes(boundaryCase.name)) {
-      const knownParams = { ...(boundaryCase.request?.params as Record<string, unknown>) };
-      delete knownParams.sourceIds;
-      delete knownParams.reason;
-      delete knownParams.awaitResult;
-      expect(RunStageParamsSchema.safeParse(knownParams).success).toBe(true);
+    if (reconciledRunStageCases.has(boundaryCase.name)) {
+      const params = boundaryCase.request?.params as Record<string, unknown>;
+      expect(RunStageParamsSchema.parse(params)).toMatchObject(params);
+      // This probe returns a synthetic {status} payload, not a production
+      // JobPipelineWorkflowResult. It only proves generic ack preservation.
+      const ack = response?.result;
+      expect(ApplyResultSchema.parse(ack)).toEqual(ack);
     }
   });
 

@@ -311,8 +311,9 @@ or apply dispatch behavior.
 Operations projections materialize compensation read data from those canonical
 tables into `job_list_projections.compensation_summary_json`,
 `job_detail_projections.compensation_summary_json`, and
-`job_detail_projections.compensation_audit_json`. Both Python and TypeScript
-projection builders own the same JSON shape. The list/detail API deserializes
+`job_detail_projections.compensation_audit_json`. TypeScript exclusively writes
+the detail family; list summaries remain shared pending their own cutover.
+See the [writer inventory and recovery contract](data-events-and-projections.md#projection-ownership-and-consistency). The list/detail API deserializes
 those projection columns only; it does not parse raw salary text on read.
 `JobSummary.salary` remains the compatibility raw string.
 
@@ -455,3 +456,7 @@ staged files. See [Material Locale Variants](material-locale-variants.md).
 ## Screening Answer Ledger
 
 Exact-v14 screening answer revisions use existing indexed `job_events` entries with `screening_question`, `screening_library`, `screening_failure` and `screening_notification` entity kinds. Private snapshots and supporting facts are exposed only by the screening owner; general activity/SSE retain references. The [owning contract](reviewed-screening-answers.md) defines atomic revision comparisons and source/version fences. No schema migration is introduced.
+
+## Company Briefing Ledger
+
+Materials stores immutable `company_briefing_config`, `company_briefing_link`, `company_briefing_accepted` and `company_briefing_attempt` records in the existing indexed exact-v14 `job_events` table. `entity_ref` is the explicit company URL hash or canonical JobId; tenant and event ID select the current revision. Accepted snapshots retain bounded public text and join their recorded `semantic_determinations` ID. Configuration and company history have no JobId foreign key and survive removal of the last linked job. Job link rows use the canonical JobId foreign key. No schema migration or separate store is introduced. See [Company Briefings](../user/company-briefings.md).

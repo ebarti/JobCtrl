@@ -22,6 +22,10 @@ authoritative aggregate tables for each dirty job, which means
     3. The same code path serves the ``replay_from_events`` initial
        backfill and the ``process_event`` live update.
 
+Job detail is owned exclusively by TypeScript; this builder never writes
+``job_detail_projections``. CLI/workflow consumers use canonical stages instead
+of waiting for that API-owned family.
+
 Watermark semantics (``event_watermarks`` table from Phase 3 / S-10):
 the builder reads ``last_event_id`` for the
 ``python:operations_projections:<tenant>`` projection name, processes every
@@ -57,7 +61,6 @@ from jobctrl.domain.operations.projections import (
     DashboardFunnelStage,
     DashboardProjection,
     DueFollowUpProjection,
-    JobDetailProjection,
     JobListProjection,
     OutreachThreadProjection,
     StageProjection,
@@ -987,7 +990,6 @@ class ProjectionBuilder:
         dirty_job_ids.update(self._stale_artifact_projection_jobs())
         dirty_job_ids.update(self._stale_stage_projection_jobs())
         dirty_job_ids.update(self._stale_compensation_projection_jobs())
-        dirty_job_ids.update(self._stale_analysis_projection_jobs())
 
         # One-time score-audit backfill (see SCORE_AUDIT_BACKFILL): rebuild any
         # already-projected scored job whose audit columns are still NULL. This
@@ -1458,10 +1460,8 @@ class ProjectionBuilder:
         score = self._load_latest_score(job_id)
         materials = self._load_latest_materials(job_id)
         material_analytics = self._load_material_analytics(job_id)
-        employer_analysis_json = self._load_employer_analysis(job_id)
         requirement_fit_report_json = self._load_requirement_fit_report(job_id)
         requirement_fit_band = _fit_band_from_report_json(requirement_fit_report_json)
-        interview_prep_json = self._load_interview_prep(job_id)
         provenance_by_artifact = self._load_bullet_provenance_by_artifact(job_id)
         layout_boxes_by_artifact = self._load_layout_boxes_by_artifact(job_id)
         enrichment = self._load_enrichment(job_id)
@@ -1542,7 +1542,7 @@ class ProjectionBuilder:
         # description fallbacks
         description = _row_str(job_row, "description")
         full_description = enrichment.get("full_description") or description
-        compensation_summary, compensation_audit = self._build_compensation_projection(
+        compensation_summary, _ = self._build_compensation_projection(
             job_id=job_id,
             legacy_raw_salary=_row_nullable_str(job_row, "salary"),
         )
@@ -1595,29 +1595,6 @@ class ProjectionBuilder:
             last_updated_at=last_updated_at,
         )
         self._store.upsert_job_list(list_proj)
-
-        # JobDetail
-        detail_proj = JobDetailProjection(
-            tenant_id=self._tenant_id,
-            job_id=job_id,
-            description_preview=_preview_text(full_description or description, 6000),
-            compensation_summary_json=compensation_summary,
-            compensation_audit_json=compensation_audit,
-            score_breakdown_json=score_breakdown_json,
-            score_keywords_json=score_keywords_json,
-            score_reasoning=score_reasoning,
-            score_version=score_version,
-            scored_at=scored_at,
-            score_criteria_json=score_criteria_json,
-            score_trace_json=score_trace_json,
-            score_correction_json=score_correction_json,
-            stages=tuple(stages),
-            employer_analysis_json=employer_analysis_json,
-            requirement_fit_report_json=requirement_fit_report_json,
-            interview_prep_json=interview_prep_json,
-            last_updated_at=last_updated_at,
-        )
-        self._store.upsert_job_detail(detail_proj)
 
         # Artifacts (replace-set per job).
         artifact_projs = [
@@ -2530,26 +2507,6 @@ class ProjectionBuilder:
             metadata.extend(_row_nullable_str(row, "metadata_json") for row in rows)
         return metadata
 
-    def _load_employer_analysis(self, job_id: str) -> str | None:
-        """Project the latest canonical employer analysis read shape (Phase 1).
-
-        The single owner of the analysis read shape: it loads the latest
-        ``EmployerAnalysis`` generation from canonical rows and serialises
-        ``to_read_model()`` to JSON for the detail projection. Returns ``None``
-        when no analysis exists yet (the common case before a job is tailored).
-        """
-        from jobctrl.infrastructure.materials.employer_analysis_repository import (
-            SqliteEmployerAnalysisRepository,
-        )
-
-        try:
-            record = SqliteEmployerAnalysisRepository(self._conn).load(self._tenant_id, JobId(job_id))
-        except sqlite3.OperationalError:
-            return None
-        if record is None:
-            return None
-        return json.dumps(record.to_read_model(), ensure_ascii=False)
-
     def _load_requirement_fit_report(self, job_id: str) -> str | None:
         """Project the latest canonical requirement-fit report read shape.
 
@@ -2567,25 +2524,6 @@ class ProjectionBuilder:
         if record is None:
             return None
         read_model = record.to_read_model()
-        read_model.pop("jobKey", None)
-        read_model["jobId"] = job_id
-        return json.dumps(read_model, ensure_ascii=False)
-
-    def _load_interview_prep(self, job_id: str) -> str | None:
-        """Project the latest accepted interview-prep read shape.
-
-        Failed generations stay in canonical history but never replace the
-        accepted prep shown on job detail.
-        """
-        from jobctrl.infrastructure.interview import SqliteInterviewPrepRepository
-
-        try:
-            record = SqliteInterviewPrepRepository(self._conn).load_latest_read_model(self._tenant_id, JobId(job_id))
-        except sqlite3.OperationalError:
-            return None
-        if record is None:
-            return None
-        read_model = dict(record)
         read_model.pop("jobKey", None)
         read_model["jobId"] = job_id
         return json.dumps(read_model, ensure_ascii=False)
@@ -2890,77 +2828,17 @@ class ProjectionBuilder:
             if (row["job_id"] if not isinstance(row, tuple) else row[0])
         }
 
-    def _stale_analysis_projection_jobs(self) -> set[str]:
-        """Rebuild cached analyses from older contracts even after event folding."""
-        from jobctrl.domain.materials.analysis import PROMPT_VERSION
-
-        try:
-            rows = self._conn.execute(
-                """
-                SELECT job_id FROM job_detail_projections
-                WHERE tenant_id = ? AND employer_analysis_json IS NOT NULL
-                  AND (CASE WHEN json_valid(employer_analysis_json)
-                       THEN json_extract(employer_analysis_json, '$.prompt_version')
-                       END) IS NOT ?
-                """,
-                (str(self._tenant_id), PROMPT_VERSION),
-            ).fetchall()
-        except sqlite3.OperationalError:
-            return set()
-        return {
-            str(row["job_id"] if not isinstance(row, tuple) else row[0])
-            for row in rows
-            if (row["job_id"] if not isinstance(row, tuple) else row[0])
-        }
-
     def _stale_compensation_projection_jobs(self) -> set[str]:
-        """Return settled jobs whose compensation read model predates v2.
-
-        Compensation v2 enforces the posted-versus-market authority boundary.
-        Event watermarks cannot invalidate projections that were fully folded
-        before that rule shipped, so the embedded version is a one-time,
-        deterministic rebuild marker shared with the TypeScript projection
-        owner.
-        """
-
-        version_expr = """
-            CASE
-              WHEN json_valid({column})
-              THEN CAST(json_extract({column}, '$.projectionVersion') AS INTEGER)
-            END
-        """
-        list_version = version_expr.format(column="p.compensation_summary_json")
-        detail_summary_version = version_expr.format(column="d.compensation_summary_json")
-        detail_audit_version = version_expr.format(column="d.compensation_audit_json")
-        try:
-            rows = self._conn.execute(
-                f"""
-                SELECT p.job_id
-                  FROM job_list_projections p
-                  LEFT JOIN job_detail_projections d
-                    ON d.tenant_id = p.tenant_id
-                   AND d.job_id = p.job_id
-                 WHERE p.tenant_id = ?
-                   AND (
-                     ({list_version} >= 1 AND {list_version} < ?)
-                     OR ({detail_summary_version} >= 1 AND {detail_summary_version} < ?)
-                     OR ({detail_audit_version} >= 1 AND {detail_audit_version} < ?)
-                   )
-                """,
-                (
-                    str(self._tenant_id),
-                    COMPENSATION_PROJECTION_VERSION,
-                    COMPENSATION_PROJECTION_VERSION,
-                    COMPENSATION_PROJECTION_VERSION,
-                ),
-            ).fetchall()
-        except sqlite3.OperationalError:
-            return set()
-        return {
-            str(row["job_id"] if not isinstance(row, tuple) else row[0])
-            for row in rows
-            if (row["job_id"] if not isinstance(row, tuple) else row[0])
-        }
+        """Repair this runtime's list summary, never the TypeScript detail family."""
+        rows = self._conn.execute(
+            """SELECT job_id FROM job_list_projections WHERE tenant_id = ? AND (
+                CASE WHEN json_valid(compensation_summary_json)
+                  THEN CAST(json_extract(compensation_summary_json, '$.projectionVersion') AS INTEGER)
+                END
+            ) BETWEEN 1 AND ? - 1""",
+            (str(self._tenant_id), COMPENSATION_PROJECTION_VERSION),
+        ).fetchall()
+        return {str(row[0]) for row in rows}
 
     @property
     def _score_audit_backfill_marker(self) -> str:
@@ -3230,23 +3108,13 @@ class ProjectionBuilder:
             }
             for stage in STAGE_ORDER
         }
-        # Per-stage funnel uses the per-job stage rows (not just the
-        # current stage) so a funnel shows downstream stages too.  We
-        # fan out by reading job_detail_projections.stages_json — those
-        # were just rebuilt by ``_rebuild_job``.
+        # The dashboard remains usable in CLI/worker-only sessions. Its funnel
+        # reads canonical stages, independently of TypeScript's detail cursor.
         for row in active_rows:
             job_id = _row_str(row, "job_id")
-            detail = self._store.fetch_job_detail(str(self._tenant_id), job_id)
-            if detail is None:
-                continue
-            stages_json = _row_str(detail, "stages_json") or "[]"
-            try:
-                stages_list = json.loads(stages_json)
-            except json.JSONDecodeError:
-                stages_list = []
-            for stage_dict in stages_list:
-                stage = stage_dict.get("stage")
-                state = stage_dict.get("state", "pending")
+            for projected_stage in self._load_stage_projections(job_id):
+                stage = projected_stage.stage
+                state = projected_stage.state
                 if stage not in funnel_counts:
                     continue
                 if state == "skipped":

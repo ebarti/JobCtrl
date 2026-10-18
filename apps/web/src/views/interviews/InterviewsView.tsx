@@ -1,4 +1,7 @@
-import { INTERVIEW_ANSWER_FORMATS, INTERVIEW_ROLE_LENSES } from "../../contexts/operations/types.js";
+import {
+  INTERVIEW_ANSWER_FORMATS,
+  INTERVIEW_ROLE_LENSES,
+} from "@jobctrl/contracts";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useId, useMemo } from "react";
 

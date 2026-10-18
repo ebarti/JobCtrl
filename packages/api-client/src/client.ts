@@ -60,7 +60,6 @@ import type {
   CorrectScoreResponse,
   CredentialsResponse,
   CredentialUpdateRequest,
-  CodexVerifyResponse,
   DigestAcknowledgeRequest,
   DigestAcknowledgeResponse,
   DashboardSummary,
@@ -114,8 +113,6 @@ import type {
   TargetRoleSuggestionRequest,
   TargetRoleSuggestionResponse,
   ProfileUpdateRequest,
-  ProviderStatusResponse,
-  ProviderModelCatalogResponse,
   PipelineStageRunResponse,
   QuarantineDecision,
   QuarantineDecisionResponse,
@@ -1136,18 +1133,6 @@ export class JobCtrlApiClient {
       "/v1/browser-capabilities/authenticated-linkedin-browser/profile-copy",
       body,
     );
-  }
-
-  providerStatus(): Promise<ProviderStatusResponse> {
-    return this.get("/v1/providers/status");
-  }
-
-  providerModels(): Promise<ProviderModelCatalogResponse> {
-    return this.get("/v1/providers/models");
-  }
-
-  verifyCodexProvider(): Promise<CodexVerifyResponse> {
-    return this.post("/v1/providers/codex/verify", {});
   }
 
   retryStage(

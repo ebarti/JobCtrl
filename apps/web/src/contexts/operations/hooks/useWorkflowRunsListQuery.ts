@@ -2,12 +2,9 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
-import type {
-  PaginatedResponse,
-  WorkflowRunsListInput,
-  WorkflowRunSummary,
-} from "../types.js";
-import { workflowRunsKeys } from "../workflowRunsKeys.js";
+import type { PaginatedResponse, WorkflowRunSummary } from "@jobctrl/contracts";
+import type { WorkflowRunsListInput } from "../types.js";
+import { workflowRunsListQuery } from "../readQueries.js";
 
 export function useWorkflowRunsListQuery(
   input: WorkflowRunsListInput = {},
@@ -15,7 +12,6 @@ export function useWorkflowRunsListQuery(
   const tenantId = useTenantId();
   const { api } = usePorts();
   return useQuery({
-    queryKey: workflowRunsKeys.list(tenantId, input),
-    queryFn: () => api.workflowRuns(input),
+    ...workflowRunsListQuery({ tenantId, ports: { api } }, input),
   });
 }

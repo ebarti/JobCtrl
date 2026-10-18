@@ -31,6 +31,25 @@ Canonical facts enter bounded prompts by ID. The generator returns strict JSON w
 7. If voice is requested, the model chooses wording changes; changed text receives fresh claim verification, quality and applicable persona review. An optional rewrite provider or shape failure records a rejected voice attempt and retains the already-verified candidate. A failure of verification for changed text blocks that refresh.
 8. Commit the accepted generation and audit together. A failed attempt cannot replace the accepted resume/PDF or its approval.
 
+## Local Application Boundary
+
+`scoring/tailor.py` resolves configured model choices and explicit request
+overrides into the frozen `TailoringLlmPolicy` before constructing
+`TailorResumeUseCase`. The use case requires this value; it never reads ambient
+configuration. Saved profile controls and versioned policy history remain
+canonical inputs, with the existing profile/policy fence at generation commit.
+
+The same composition root injects `ArtifactTextWriter`, implemented locally by
+`LocalArtifactTextWriter`. This small capability creates directories, writes exact
+UTF-8 text and reports its byte size. The use case retains candidate selection,
+rejected-candidate inspection content, generation filenames and side-file
+formatting. Validation, selection, evidence construction and aggregate transitions
+do not perform file I/O. The writer does not register or accept artifacts:
+`MaterialsRepository` registers the generation and `UnitOfWork` preserves the
+atomic acceptance/provenance transition. `PdfRendererPort` still renders before
+that transition. Candidate write errors propagate before acceptance; diagnostic
+`_JOB.txt` and `_REPORT.json` writes remain best effort after persistence.
+
 ## Inputs To Tailoring
 
 Inputs are versioned profile facts and confirmed evidence, canonical posting text, accepted job interpretation, employer requirements, model-backed requirement-fit verdicts and user-authored selections/policy. Unconfirmed evidence cards, interview notes and new recollections do not become facts. The prompt does not dump credentials or unrelated private profile fields.

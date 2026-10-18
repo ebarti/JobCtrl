@@ -20,7 +20,7 @@ import { usePermanentlyDeleteJobsBulkMutation } from "../../contexts/discovery/h
 import { useRestoreJobsBulkMutation } from "../../contexts/discovery/hooks/useRestoreJobsBulkMutation.js";
 import { useUnhideJobsBulkMutation } from "../../contexts/discovery/hooks/useUnhideJobsBulkMutation.js";
 import { useJobsListQuery } from "../../contexts/operations/hooks/useJobsListQuery.js";
-import { JOB_STATES, type JobState } from "../../contexts/operations/types.js";
+import { JOB_STATES, type JobState } from "@jobctrl/contracts";
 import { useRetryFailedJobsMutation } from "../../contexts/pipeline/hooks/useRetryFailedJobsMutation.js";
 import { useRunPendingPreparationMutation } from "../../contexts/pipeline/hooks/useRunPendingPreparationMutation.js";
 import { useStageTriggerStore } from "../../contexts/pipeline/stores/stage-trigger-store.js";

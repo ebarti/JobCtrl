@@ -299,3 +299,9 @@ reviews, version fences, failure preservation and export ownership.
 ## Reviewed Screening Answer Ownership
 
 Materials owns the source-bound generator, claim/quality determinations and immutable reviewed library revisions described in [Reviewed Screening Answers](reviewed-screening-answers.md). Apply separately owns question/context versions and application-bound review/use snapshots.
+
+## Optional Company Briefings
+
+Materials owns reusable public company context independently of posting analysis. Explicitly confirmed canonical JobIds link to a hash of the exact normalized public company URL; names never merge identities. Operations reads accepted snapshots in Job Detail, Interviews and the existing digest. The company artifact does not alter role analysis, scoring, preparation inputs or approvals.
+
+`company_briefing` is a source-bound determination on the enrichment lane. Strict claim kinds separate company facts, reported events and hypotheses; every claim has uncertainty and verbatim citations. Literal event dates must belong to cited exact values. Source observations retain selected/final URL, UTC time, bounded text and its SHA-256. Ambiguous identity prevents acceptance. A company-level lock coalesces refreshes, while an atomic configuration/link comparison fences replacement. Failed fetches, model determinations or commits preserve the accepted revision and observation clock. Reads derive seven-day and configuration staleness without provider work. See [Company Briefings](../user/company-briefings.md) for limits and controls.

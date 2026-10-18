@@ -14,7 +14,7 @@ import { useWorkflowRunDetailQuery } from "../../contexts/operations/hooks/useWo
 import type {
   WorkflowRunDetail,
   WorkflowRunTimelineEvent,
-} from "../../contexts/operations/types.js";
+} from "@jobctrl/contracts";
 import { CancelWorkflowRunButton } from "../../contexts/pipeline/components/CancelWorkflowRunButton.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";

@@ -1,7 +1,7 @@
 import { IconBan } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
 
-import type { DashboardSummary, Stage } from "../../contexts/operations/types.js";
+import type { DashboardSummary, Stage } from "@jobctrl/contracts";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Button } from "../../shared/ui/button.js";
 import { SegmentBar } from "../../shared/ui/segment-bar.js";

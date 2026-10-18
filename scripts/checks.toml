@@ -187,6 +187,20 @@ argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EX
 min_executed = 10
 timeout_seconds = 600
 
+[checks.enrichment-retry-worker]
+kind = "junit"
+description = "Canonical enrichment retries preserve accepted artifacts and prove CLI/RPC parity, atomic rollback, writer contention and stale-worker fencing"
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "pytest", "-q", "workers/automation/tests/test_enrichment_retry.py", "workers/automation/tests/test_rpc_contract_boundary.py", "--junitxml={report_path}"]
+min_executed = 28
+timeout_seconds = 300
+
+[checks.enrichment-retry-api]
+kind = "junit"
+description = "Actual HTTP/RPC and CLI resets share a synthetic fixture, preserve acknowledgements and reject malformed target bindings"
+argv = ["corepack", "pnpm", "--filter", "@jobctrl/api", "exec", "vitest", "run", "test/enrichment-retry.test.ts", "test/write-model-state.test.ts", "test/write-model-cancel.test.ts", "test/rpc-parity.test.ts", "--reporter=junit", "--outputFile={report_path}"]
+min_executed = 43
+timeout_seconds = 300
+
 [checks.discovery-api]
 kind = "junit"
 description = "Full API suite checks optional Discovery transport, worker readiness, extension broker and startup fixtures"
@@ -230,7 +244,7 @@ timeout_seconds = 600
 [checks.review-evidence-worker]
 kind = "junit"
 description = "Compensation population matching and narrative validation preserve canonical evidence and accepted analysis on failed regeneration"
-argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "pytest", "-q", "workers/automation/tests/test_compensation_benchmark_materialization.py", "workers/automation/tests/test_automatic_compensation_refresh.py", "workers/automation/tests/test_employer_analysis_ensemble.py", "workers/automation/tests/test_analyze_job_use_case.py", "workers/automation/tests/test_employer_analysis_model.py", "workers/automation/tests/test_employer_analysis_projection.py", "workers/automation/tests/test_employer_analysis_repository.py", "--junitxml={report_path}"]
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "pytest", "-q", "workers/automation/tests/test_compensation_benchmark_materialization.py", "workers/automation/tests/test_automatic_compensation_refresh.py", "workers/automation/tests/test_employer_analysis_ensemble.py", "workers/automation/tests/test_analyze_job_use_case.py", "workers/automation/tests/test_employer_analysis_model.py", "workers/automation/tests/test_audit_projection_parity.py", "workers/automation/tests/test_employer_analysis_repository.py", "--junitxml={report_path}"]
 timeout_seconds = 600
 
 [checks.salary-lookup-worker]

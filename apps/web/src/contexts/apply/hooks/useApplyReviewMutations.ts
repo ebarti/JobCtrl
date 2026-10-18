@@ -113,9 +113,10 @@ export function useApplyReviewDecisionMutation(): UseMutationResult<
   const { api } = usePorts();
   const queryClient = useQueryClient();
   return useMutation({
+    onMutate: () => ({ tenantId }),
     mutationFn: ({ jobId, body }) => api.decideApplyReview(jobId, body),
-    onSettled: (_data, _error, variables) => {
-      invalidateApplyReviewSurfaces(queryClient, tenantId, variables.jobId);
+    onSettled: (_data, _error, variables, context) => {
+      invalidateApplyReviewSurfaces(queryClient, context!.tenantId, variables.jobId);
     },
   });
 }

@@ -1,4 +1,4 @@
-import { LOCAL_TENANT, createTenantId, createAvailabilityLeaseChanged, type DomainEventUnion } from "@jobctrl/domain-types";
+import { LOCAL_TENANT, createTenantId, createAvailabilityLeaseChanged, createJobUpdated, type DomainEventUnion } from "@jobctrl/domain-types";
 import { QueryClient, QueryObserver, type QueryKey } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -675,6 +675,26 @@ describe("invalidationRouter", () => {
       for (const read of reads) read.unsubscribe();
       client.clear();
     }
+  });
+
+  it("refreshes shared company briefings in job detail and the current tenant digest", () => {
+    const client = new QueryClient();
+    const detailKey = jobsKeys.detail(LOCAL_TENANT, JOB_ID);
+    const digestKey = digestKeys.all(LOCAL_TENANT);
+    const otherDigestKey = digestKeys.all(createTenantId("other-tenant"));
+    for (const key of [detailKey, digestKey, otherDigestKey]) {
+      client.setQueryData(key, { cached: true });
+    }
+
+    invalidationRouter.handle(createJobUpdated(LOCAL_TENANT, {
+      jobId: JOB_ID,
+      changedFields: { companyBriefing: { companyId: "company-synthetic" } },
+    }), client);
+
+    expect(client.getQueryState(detailKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(digestKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(otherDigestKey)?.isInvalidated).toBe(false);
+    client.clear();
   });
 
   it("keeps dry-run completion separate from submission and other runs", () => {

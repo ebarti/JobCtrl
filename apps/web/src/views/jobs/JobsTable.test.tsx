@@ -4,7 +4,7 @@ import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { JobSummary } from "../../contexts/operations/types.js";
+import type { JobSummary } from "@jobctrl/contracts";
 import {
   makeJobsPage,
   sampleJob,

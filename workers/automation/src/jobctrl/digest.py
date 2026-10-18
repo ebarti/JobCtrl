@@ -86,6 +86,8 @@ def build_digest(
     since = read_digest_state(conn)["lastAcknowledgedAt"]
     threshold = _normalize_threshold(min_fit_score)
     budget_status = budget or read_spend_budget_status(lane="discovery")
+    from jobctrl.infrastructure.materials.company_briefings import CompanyBriefingRepository
+    briefings = CompanyBriefingRepository(conn).summaries(now=_utc_now(now))
     return {
         "ok": True,
         "generatedAt": generated_at,
@@ -103,6 +105,7 @@ def build_digest(
             "dayBoundary": DAY_BOUNDARY,
         },
         "budget": _budget_payload(budget_status),
+        "companyBriefings": briefings,
         "deepLinks": _deep_links(since=since),
     }
 
