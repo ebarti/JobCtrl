@@ -6,6 +6,46 @@ import { checkA11y, injectAxe } from "axe-playwright";
 import { loadE2eDbPath } from "../fixtures/e2e-state.js";
 
 const JOB = "90000000-0000-4000-8000-000000001033";
+// The suite shares one independently owned workspace across specs. Do not let
+// this scenario's synthetic records alter later job counts or visual fixtures.
+test.afterEach(() => {
+  const db = new Database(loadE2eDbPath());
+  try {
+    db.transaction(() => {
+      db.prepare(
+        "DELETE FROM contact_attributes WHERE tenant_id='local' AND contact_id IN (SELECT contact_id FROM contacts WHERE tenant_id='local' AND job_id=?)",
+      ).run(JOB);
+      db.prepare(
+        "DELETE FROM contact_projections WHERE tenant_id='local' AND job_id=?",
+      ).run(JOB);
+      db.prepare(
+        "DELETE FROM contacts WHERE tenant_id='local' AND job_id=?",
+      ).run(JOB);
+      for (const table of [
+        "job_list_projections",
+        "job_detail_projections",
+        "application_outcomes",
+        "job_events",
+        "job_stage_states",
+        "jobs",
+      ]) {
+        db.prepare(
+          `DELETE FROM ${table} WHERE tenant_id='local' AND job_id=?`,
+        ).run(JOB);
+      }
+    })();
+    expect(
+      db
+        .prepare(
+          "SELECT COUNT(*) count FROM jobs WHERE tenant_id='local' AND job_id=?",
+        )
+        .get(JOB),
+    ).toEqual({ count: 0 });
+  } finally {
+    db.close();
+  }
+});
+
 test("actual offer terms, decisions and corrections through Job Detail", async ({
   page,
 }) => {
