@@ -479,8 +479,9 @@ preserve the last accepted artifact. Do not create eval sets, labeled corpora,
 baseline comparisons, English sentence corpora or recorded-output replay fixtures.
 
 For version changes, seed an obsolete analysis projection with already-folded
-event cursors. Both builders must rebuild it from the current canonical version
-without a new event, or expose no current analysis if none exists. The native
+event cursors. The TypeScript detail owner must rebuild it from the current
+canonical version on startup or keyed detail read without a new event, or expose
+no current analysis if none exists. Python refresh must leave this family untouched. The native
 cutover removes the cached shape while preserving canonical history, cursors
 and accepted artifact bytes. Citation format checks must reject fragments of
 numbers and dotted identifiers while accepting complete values followed by

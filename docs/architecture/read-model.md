@@ -244,9 +244,16 @@ read; nested passes preserve the caller's transaction. The
 [consistency contract](data-events-and-projections.md#projection-ownership-and-consistency)
 owns replay and failure recovery.
 
-Both runtimes emit the same JSON shapes. Shared parity fixtures guard the
-dual-written job, contact, research, outreach, follow-up, compensation, and
-audit projections. That makes a one-sided column or shape change a test failure
+TypeScript exclusively materializes `job_detail_projections` using its own
+`typescript:job_detail_projections:v1:<tenant>` cursor. API startup repairs that
+family from canonical state; incremental reads fold bounded event batches and
+Job Detail and Apply Review repair only their requested jobs when necessary and
+read list metadata with detail evidence in a coherent transaction.
+Python CLI/workflow consumers obtain dashboard stages directly from canonical rows.
+
+Shared parity fixtures guard the remaining dual-written list, artifact, contact,
+research, outreach, follow-up, compensation and audit projections. The same
+fixture continues to verify the surviving TypeScript detail shape. That makes a one-sided column or shape change a test failure
 instead of a client surprise.
 
 With both development toolchains installed, the disposable mixed-runtime

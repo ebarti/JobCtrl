@@ -51,7 +51,7 @@ import { bindRequirementFitReport, requirementCoverageForArtifact, requirementId
 import { missingApplicationAttestationFields } from "./application-attestations.js";
 import { buildApplyAudit } from "./apply-audit.js";
 import { allRows, getRow, type SqliteDatabase } from "./db.js";
-import { refreshProjections } from "./projections.js";
+import { ensureJobDetailProjection, refreshProjections } from "./projections.js";
 import { evaluateRepeatApplication } from "./repeat-application.js";
 import { resumeTemplateStateForJob } from "./resume-templates.js";
 import { InputError, resolveJobId } from "./write-model.js";
@@ -185,7 +185,7 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
          latest_employer_analysis.generation AS employer_analysis_generation,
          latest_employer_analysis.ideal_candidate_narrative AS employer_ideal_candidate_narrative,
          latest_employer_analysis.requirements_json AS employer_requirements_json`;
-  const rows = allRows<ReviewQueueRow>(
+  const loadRows = () => allRows<ReviewQueueRow>(
     db,
     `
     WITH latest_decision AS (
@@ -299,6 +299,17 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
       ...CLOSED_ACTIVE_STATES,
     ],
   );
+
+  // Keep selected list metadata and detail evidence in one SQLite snapshot,
+  // including when both consumers are behind a missed Python notification.
+  const rows = db.transaction(() => {
+    const selected = loadRows();
+    let repaired = false;
+    for (const row of selected) {
+      if (ensureJobDetailProjection(db, DEFAULT_TENANT, row.job_id)) repaired = true;
+    }
+    return repaired ? loadRows() : selected;
+  }).immediate();
 
   const profileSourceFields = profileSourceFieldsForApplyReview(db);
   const missingProfileData = missingApplicationAttestationFields(db);

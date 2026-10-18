@@ -156,27 +156,74 @@ work. Those rows are product state, not a second workflow queue.
 
 ## Projection Ownership And Consistency
 
-There are two materializers over the same SQLite read-model spine:
+The first family cutover gives `job_detail_projections` to TypeScript. The
+runtime inventory and designated destinations for subsequent bounded cutovers
+are below. A destination is a plan until its duplicate writer is removed; this
+change does not claim exclusive ownership of the remaining shared families.
 
-- Python `ProjectionBuilder` in
-  `workers/automation/src/jobctrl/infrastructure/projections/` refreshes at
-  bootstrap, from its event-bus subscription, and from explicit workflow/activity
-  finalize paths.
-- TypeScript `refreshProjections` in `apps/api/src/projections.ts` refreshes
-  before reads and after TypeScript-owned writes.
+| Family | Current materializers | Designated owner |
+| --- | --- | --- |
+| `job_detail_projections` | TypeScript only | TypeScript (cut over) |
+| `job_list_projections`, `evidence_usage_projections` | Python and TypeScript | Python (CLI digest and interview consumers), pending separate cutovers |
+| `artifact_list_projections`, `dashboard_projections` | Python and TypeScript | TypeScript (API consumers), pending separate cutovers |
+| `apply_run_projections`, `workflow_run_projections` | Python only | Python (preserved) |
+| `pipeline_step_projections`, `source_quality_stats` | Python and TypeScript | Python, pending a separate cutover |
+| `contact_projections`, `contact_research_task_projections`, `outreach_thread_projections`, `due_follow_up_projections` | Python and TypeScript | TypeScript (API consumers), pending separate cutovers |
 
-They derive overlapping projections from the same canonical state, but each
-consumer and tenant has an independent monotonic cursor in `event_watermarks`:
+Python refreshes its families at bootstrap, through its event subscription and
+explicit workflow/activity finalization. TypeScript refreshes its families
+before API reads and after API-owned writes. Command-owned deletion/purge may
+remove derived rows; frozen offline migrations construct their version's
+candidate schema. Neither is a second live detail materializer.
+
+The remaining shared families retain independent
 `typescript:operations_projections:<tenant>` and
-`python:operations_projections:<tenant>`. Neither consumer can acknowledge
-events on behalf of the other. Runtime-first names cannot collide with legacy
-`operations_projections` or `operations_projections:<tenant>` keys, even when
-an opaque tenant ID contains colons. Those legacy cursors and their timestamps
-are retained but unused; the first consumer-specific pass replays history so it
-repairs terminal events previously skipped behind that shared cursor. Some families
-have a narrower owner: apply-run and workflow-run projections are materialized
-on the Python side and read by TypeScript. Shared fixtures and parity tests
-guard the projection families written by both runtimes.
+`python:operations_projections:<tenant>` cursors. Detail uses
+`typescript:job_detail_projections:v1:<tenant>`; none of these consumers can
+acknowledge another's events. Legacy `operations_projections` cursors are
+retained but unused, including opaque tenant IDs containing colons.
+
+### Job-detail freshness and recovery
+
+`refreshJobDetailProjections` processes at most `REFRESH_EVENT_BATCH_LIMIT`
+tenant-filtered events in one transaction, rebuilding each affected JobId from
+canonical rows and publishing its cursor atomically. A settled detail pass
+only reads its cursor and pending-event index: it does not scan all jobs or
+acquire a writer. The existing TypeScript background drain continues capped
+passes without requiring another request. Other, uncut families still retain
+their existing broad reconciliation paths; this is not a claim that every API
+GET is free of SQLite writes.
+
+API Job Detail checks its requested JobId; Apply Review checks each returned
+job before reading requirement evidence. A pending event beyond the
+current batch, a missing/obsolete row, mismatched score versions or compensation
+summaries, or newer canonical stage state causes a single-job repair through
+the existing list and detail materializers without advancing either cursor. The selected list metadata and
+detail evidence are read in one SQLite transaction, so a missed Python
+notification cannot mix score versions. This preserves read-after-write even
+behind an unrelated backlog. Python CLI/workflow commands
+commit canonical state and events; detail catches up when the API consumes
+them. Their dashboard funnel reads canonical stages and never waits for detail.
+Apply/workflow family ownership and approval bindings are unchanged.
+
+`repairJobDetailProjections` is the explicit canonical full scan for API startup,
+migration and operator repair. It repairs missing rows, removes orphans and
+recovers canonical writes with no event. First activation (no family cursor)
+also performs this scan. Ordinary incremental passes never perform it. Repair
+and cursor publication share a writer transaction; failed repair or refresh
+preserves the previous projection and all accepted artifacts. A nested call
+uses the caller's savepoint boundary and cannot commit its canonical changes.
+
+The rollout requires no schema migration: stop both old runtimes, install the
+matching API/worker revision, then start the API to atomically rebuild detail.
+Retain the existing schema, canonical rows, files and runtime cursors. The
+pre-removal shared parity fixtures establish column/JSON compatibility; the
+mixed-runtime fixture proves the Python writer no longer touches detail and
+that committed events recover in either process order. Rollback stops both
+runtimes and restores the previous matching API/worker revision, whose shared
+fold still understands the unchanged table. Do not mix old and new processes
+across the ownership boundary. The new family cursor may remain; older builds
+ignore it. Restarting the new API after rollback repairs canonical state again.
 
 Event coverage is registry-derived. `DOMAIN_EVENT_TYPES`, its Python mirror,
 projection folds, and the frontend invalidation-handler map must agree through
@@ -197,9 +244,9 @@ and retains these cursors; it does not replay unrelated history. First-run and
 schema-recovery paths also detect missing/stale projection rows and rebuild from
 canonical state even when old events are already watermarked.
 
-Employer-analysis projections carry the analysis prompt version. Both builders
-rebuild a cached shape with an obsolete or missing version without requiring a
-new job event. The API also checks that version before serving it as current;
+Employer-analysis detail projections carry the analysis prompt version. The
+TypeScript owner repairs an obsolete shape at startup or on its keyed detail
+read without requiring a new event. The API also checks that version before serving it as current;
 the native semantic-schema cutover clears the derived shape and keeps canonical
 analysis history and accepted artifacts.
 

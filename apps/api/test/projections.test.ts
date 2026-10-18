@@ -18,7 +18,7 @@ import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp } from "../src/server.js";
 import { initializeExactDatabase } from "./exact-schema.js";
 import {
-  REFRESH_EVENT_BATCH_LIMIT, refreshProjections, setWatermark,
+  REFRESH_EVENT_BATCH_LIMIT, refreshProjections, repairJobDetailProjections, setWatermark,
   refreshContactProjections, refreshContactResearchProjections, refreshOutreachProjections,
 } from "../src/projections.js";
 import { recoveryKeyDigest } from "../src/discovery-execution-recovery.js";
@@ -588,8 +588,10 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         );
 
         // The original event is already folded; projectionVersion is the
-        // deterministic dirty signal for this authority migration.
+        // deterministic dirty signal for this authority migration. Detail's
+        // owning startup/migration repair is explicit after the family cutover.
         refreshProjections(db);
+        repairJobDetailProjections(db);
 
         const rebuilt = db
           .prepare(
@@ -4473,6 +4475,8 @@ describe("consumer watermark discipline", () => {
         expect(db.prepare("SELECT projection_name, last_event_id FROM event_watermarks ORDER BY projection_name").all()).toEqual([
           { projection_name: PROJECTION_WATERMARK_NAME, last_event_id: localLast },
           { projection_name: `python:${PROJECTION_WATERMARK_NAME}:local`, last_event_id: localLast },
+          { projection_name: "typescript:job_detail_projections:v1:foreign", last_event_id: foreignLast },
+          { projection_name: "typescript:job_detail_projections:v1:local", last_event_id: localLast },
           { projection_name: `typescript:${PROJECTION_WATERMARK_NAME}:foreign`, last_event_id: foreignLast },
           { projection_name: watermarkName, last_event_id: localLast },
         ]);
