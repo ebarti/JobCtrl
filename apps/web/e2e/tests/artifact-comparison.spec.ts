@@ -552,7 +552,7 @@ test("multiline HTML paste acknowledges one autosave and survives reload", async
   await expect(paper).toHaveAttribute("data-draft-dirty", "false");
   await expect(page.locator("vite-error-overlay")).toHaveCount(0);
   expect(errors).toEqual([]);
-  await testInfo.attach("normalized-paste-saved-and-reloaded", { body: await paper.screenshot(), contentType: "image/png" });
+  await testInfo.attach("normalized-paste-saved-and-reloaded", { body: await paper.screenshot({ path: testInfo.outputPath("normalized-paste-saved-and-reloaded.png") }), contentType: "image/png" });
   await testInfo.attach("paste-save-observations", { body: JSON.stringify(saves, null, 2), contentType: "application/json" });
 });
 
@@ -634,7 +634,7 @@ test("save conflict and render failure recover before dry-run authorization", as
   expect(queue().items.find(item => item.jobKey === jobKey)!.materialsPreview).toMatchObject({ resumeTextArtifactId: acceptedSource.text, resumePdfArtifactId: acceptedSource.pdf });
   expect(decisions).toHaveLength(0);
   await expect(authorize).toBeDisabled();
-  await testInfo.attach("failed-render-preserves-editor", { body: await page.getByLabel("Editable resume page").screenshot(), contentType: "image/png" });
+  await testInfo.attach("failed-render-preserves-editor", { body: await page.getByLabel("Editable resume page").screenshot({ path: testInfo.outputPath("render-recovery-" + renderCount + ".png") }), contentType: "image/png" });
   await render.click();
   await expect(page.getByText("replacement rendered", { exact: true })).toBeVisible();
   await expect(authorize).toBeEnabled();
@@ -647,5 +647,5 @@ test("save conflict and render failure recover before dry-run authorization", as
   await expect(page.locator("vite-error-overlay")).toHaveCount(0);
   expect(errors).toEqual([]);
   await testInfo.attach("failure-recovery-observations", { body: JSON.stringify({ acceptedSource, observations, decisions }, null, 2), contentType: "application/json" });
-  await testInfo.attach("recovered-session", { body: await page.getByLabel("Editable resume page").screenshot(), contentType: "image/png" });
+  await testInfo.attach("recovered-session", { body: await page.getByLabel("Editable resume page").screenshot({ path: testInfo.outputPath("render-recovery-" + renderCount + ".png") }), contentType: "image/png" });
 });
