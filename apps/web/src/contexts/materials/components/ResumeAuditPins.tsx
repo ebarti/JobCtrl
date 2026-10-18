@@ -2581,6 +2581,18 @@ function ResumePlateDocument({
           data-rendered-line-count={lines.length}
           role="textbox"
           spellCheck={false}
+          onKeyDownCapture={(event: ReactKeyboardEvent<HTMLDivElement>) => {
+            // Slate throttles selectionchange. Publish the user's current
+            // native range before keyboard handlers can use an older caret.
+            if (event.defaultPrevented || event.nativeEvent.isComposing || editor.api.isComposing()) return;
+            if (event.target instanceof Element && event.target.closest('[contenteditable="false"]')) return;
+            const selection = event.currentTarget.ownerDocument.getSelection();
+            if (!selection?.anchorNode || !selection.focusNode
+              || !event.currentTarget.contains(selection.anchorNode)
+              || !event.currentTarget.contains(selection.focusNode)) return;
+            const range = editor.api.toSlateRange(selection, { exactMatch: false, suppressThrow: true });
+            if (range) editor.tf.select(range);
+          }}
         />
       </Plate>
     </ResumePlateRenderContext.Provider>
