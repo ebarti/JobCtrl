@@ -1,6 +1,6 @@
+import { prefetchWorkflowRunsList } from "../contexts/operations/readQueries.js";
 import { createFileRoute, Outlet } from "@tanstack/react-router";
 
-import { workflowRunsKeys } from "../contexts/operations/workflowRunsKeys.js";
 import { runsSearchSchema, type RunsSearch } from "./-runs.search.js";
 
 function workflowRunsInput(search: RunsSearch) {
@@ -14,12 +14,7 @@ function workflowRunsInput(search: RunsSearch) {
 export const Route = createFileRoute("/runs")({
   validateSearch: (search) => runsSearchSchema.parse(search),
   loaderDeps: ({ search }) => ({ search }),
-  loader: ({ deps, context }) => {
-    const input = workflowRunsInput(deps.search);
-    return context.queryClient.prefetchQuery({
-      queryKey: workflowRunsKeys.list(context.tenantId, input),
-      queryFn: () => context.ports.api.workflowRuns(input),
-    });
-  },
+  loader: ({ context, deps }) =>
+    prefetchWorkflowRunsList(context, workflowRunsInput(deps.search)),
   component: Outlet,
 });

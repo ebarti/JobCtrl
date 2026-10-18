@@ -72,19 +72,18 @@ the upstream advances its watermark before redelivery.
 
 ### R4. Route-loader prefetch racing with mutations
 
-A loader-driven `ensureQueryData(...)` runs before navigation
-finalizes; a mutation invalidating the same key mid-navigation can
-cause the loader to return a stale snapshot.
+Context-owned loader helpers and observers share tenant-first keys/read functions.
+Most loaders await best-effort `prefetchQuery`; Activity detail uses
+`ensureQueryData`, which returns accepted cached data even when stale and does
+not request background revalidation. Observer freshness/refetch policies,
+mutation settlement and exhaustive SSE invalidation reconcile the cache.
+Failed refreshes retain accepted query data while exposing the error.
 
-**Mitigations:**
-- Loaders use `ensureQueryData`, not `fetchQuery` — `ensureQueryData`
-  honors stale state and triggers a background refetch when needed.
-- Mutations that change a route's data set explicitly call
-  `router.invalidate()` after the mutation settles, forcing the affected
-  routes' loaders to re-run.
-- Mutations have a `meta: { affectsRoutes: ['/jobs', '/dashboard'] }`
-  field consumed by a small middleware that calls `router.invalidate()`
-  for the affected routes.
+There is no route-affecting mutation metadata middleware or automatic
+`router.invalidate()` settlement layer. Adding one would require a separate
+implementation and verification of navigation/mutation races. Routes delegate
+reads to Operations, Profile or Outreach and never gain API/QueryClient access.
+Jobs has no loader; its effective-query ownership remains in the Jobs view.
 
 ### R5. `exactOptionalPropertyTypes` adoption surfaces latent bugs
 
@@ -282,7 +281,7 @@ first's reconciliation.
 | **JobsTable** | Frontend (Jobs view) | The shared data-grid instance in `views/jobs/JobsTable.tsx` rendering the jobs list; receives data from `useJobsListQuery` (Operations) and column cell components from `contexts/scoring/`, `contexts/pipeline/`, etc. |
 | **KPI** | Frontend (Dashboard) | A top-line metric in the dashboard's continuous ruled ledger. |
 | **LayerSeparation** | Frontend (Modeling) | The architectural rule that every datum lives in exactly one of three layers: server (Query), URL (Router), or client (Zustand/Context). See §2.1. |
-| **Loader (Route)** | Frontend (Routing) | A function on a TanStack Router route that prefetches data via `queryClient.ensureQueryData(...)` before the component renders. |
+| **Loader (Route)** | Frontend (Routing) | A function on a TanStack Router route that maps validated URL inputs and delegates reads to its owning context before the component renders. |
 | **LOCAL_TENANT** | Domain (shared) | The singleton `TenantId` used in local mode. Threaded through every query key and SSE subscription. |
 | **MutationInvalidationStrategy** | Frontend (Operations) | The hybrid policy: optimistic updates for synchronous mutations; SSE-driven invalidation for async (202) mutations. See §8.3. |
 | **OpenInOsPort** | Frontend (Hexagonal) | Port for "open this artifact in the OS default app" — a local-only feature. The hosted adapter returns "Unsupported" and the UI offers a download instead. |

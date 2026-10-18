@@ -1,7 +1,10 @@
+import { prefetchArtifactsList } from "../contexts/operations/readQueries.js";
 import { createFileRoute, Outlet } from "@tanstack/react-router";
 
-import { artifactsKeys } from "../contexts/operations/artifactsKeys.js";
-import { artifactsSearchSchema, type ArtifactsSearch } from "./-artifacts.search.js";
+import {
+  artifactsSearchSchema,
+  type ArtifactsSearch,
+} from "./-artifacts.search.js";
 
 function artifactsListInput(search: ArtifactsSearch) {
   return {
@@ -17,12 +20,7 @@ function artifactsListInput(search: ArtifactsSearch) {
 export const Route = createFileRoute("/artifacts")({
   validateSearch: (search) => artifactsSearchSchema.parse(search),
   loaderDeps: ({ search }) => ({ search }),
-  loader: ({ deps, context }) => {
-    const input = artifactsListInput(deps.search);
-    return context.queryClient.prefetchQuery({
-      queryKey: artifactsKeys.list(context.tenantId, input),
-      queryFn: () => context.ports.api.artifacts(input),
-    });
-  },
+  loader: ({ context, deps }) =>
+    prefetchArtifactsList(context, artifactsListInput(deps.search)),
   component: Outlet,
 });
