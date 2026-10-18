@@ -376,6 +376,12 @@ preserve prior accepted materials. If a save response is lost, reload to recover
 the committed version, or retry the same preview. A replacement requires renewed
 approval and dry-run evidence for the new material generation.
 
+Approval also checks the accepted PDF's recorded byte hash against its file.
+A missing, changed or unverifiable historical PDF requires a fresh preview and
+explicit save. Matching source and PDF generation numbers alone do not establish
+that the PDF prints the current letter. Failed checks retain the accepted record
+and history; they do not adopt replacement file bytes.
+
 Defaults are Letter, Georgia-family 11pt, 17.78mm (0.7 inch) margins, 1.6 line
 spacing and 14px paragraph spacing. Controls permit A4 or Letter; Georgia, Times
 or Arial font families; 9–14pt text; 8–28mm margins; 1–2 line spacing; and 0–24px

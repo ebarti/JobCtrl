@@ -497,3 +497,7 @@ version. A saved version survives reload; an acknowledgement for an earlier
 snapshot never accepts newer local edits.
 Unchanged resume and cover-letter sources remain available for DOCX export by
 their displayed generation after repeated formatting saves.
+New generated cover PDFs record both the full source-text hash and PDF byte hash,
+along with their source artifact, settings and renderer identity. Historical PDFs
+without a verifiable source binding need an explicit preview/save before Apply
+approval. Files changed outside JobCtrl never silently become accepted materials.

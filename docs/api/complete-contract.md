@@ -2487,7 +2487,9 @@ original `generation` and full-file `textSha256`. `preview` adds a UUID
 `previewId`, `expectedAcceptedVersion`, normalized `settings`, `rendererVersion`
 and `pdfSha256`. `accepted` contains `source`, `acceptedVersion`, `pdfArtifactId`,
 `pdfSha256`, `pdfSourceCurrent`, `settings` and `rendererVersion`. Historical
-unformatted PDFs use the existing defaults and a null renderer version. An
+unformatted PDFs use the existing defaults and a null renderer version, with
+`pdfSourceCurrent:false` unless recorded source/PDF hashes, settings and renderer
+establish their identity. Generation equality alone is insufficient. An
 unreadable canonical source blocks rendering, saving and approval. A saved
 receipt keeps its last accepted source identity, settings and PDF viewable;
 `pdfSourceCurrent` is false until the canonical source is readable again.
@@ -2503,7 +2505,18 @@ Settings are strict objects with `paper: Letter|A4`,
 CSS strings and extra keys are rejected. Defaults are Letter/georgia/11/17.78/1.6/14.
 Canonical sources must be nonempty readable UTF-8 and at most 512,000 bytes.
 The worker `render_cover_letter_pdf` checks the snapshot hash and renderer
-version before rendering with CSS paper-size preference enabled.
+version before rendering with CSS paper-size preference enabled. Its `settings`
+must be an object; explicit null is an invalid JSON-RPC parameter, not defaults.
+The source and output must name `source.txt` and a new `letter.pdf` in the same
+owned UUID preview directory. Source, manifest and PDF reads reject symlinks and
+bound descriptor reads. Canonical source paths outside the workspace return 403;
+unowned preview IDs/manifests return 404.
+
+`pdfSha256` comes from persisted acceptance metadata. Actual bytes must match it
+for approval and accepted downloads; a mismatch returns 422 on download and
+marks the accepted source/PDF relationship noncurrent without adopting the new
+bytes. Normal generation persists both source-text and PDF hashes, settings,
+renderer and source occurrence; old unbound PDFs require explicit preview/save.
 
 Malformed requests return 400; stale source/version/save snapshots return 409
 `cover_letter_version_conflict`; renderer/transport failure returns 502

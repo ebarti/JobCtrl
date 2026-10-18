@@ -479,3 +479,11 @@ Unchanged slots reuse their artifact IDs across generations. Readers that need
 an exact source, including DOCX export, bind both ID and generation. Artifact
 projections use the newest canonical occurrence with only that generation's
 layout and provenance rows; retained copies are history, not additional lines.
+
+The persisted review PDF digest remains authoritative if a file disappears or
+changes. Default generated cover PDFs store source-text and PDF digests in their
+artifact metadata with the source ID/generation, print settings and renderer.
+Unbound historical PDFs are never inferred current from generation alone.
+Owned source/preview/PDF I/O rejects symlink components, hard-linked files and
+nonregular or oversized inputs. RPC render output is a new exclusive file in its
+UUID attempt; failed cleanup removes only the original owned attempt directory.

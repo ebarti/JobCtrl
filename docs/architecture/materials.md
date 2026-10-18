@@ -340,3 +340,17 @@ opening a preview and failed operations leave that binding unchanged.
 Acceptance records the existing `PdfRendered` event in the same transaction as
 the PDF and copied slots. Warm projections and SSE invalidations discover the
 accepted artifact; retrying an already committed preview emits no second event.
+
+Acceptance uses the persisted PDF digest, not a new digest adopted from the live
+file. Reads compare actual bytes with that receipt; a mismatch preserves the
+durable identity and blocks approval and accepted download. Default generation
+also records `cover_letter_text_sha256`, `cover_letter_pdf_sha256`, validated
+settings, renderer version and the source artifact/generation occurrence. Both
+API and launcher require that proof. Generation equality cannot validate a
+historical PDF's content relationship. Such PDFs remain inspectable when readable
+but require explicit rendering and acceptance before approval.
+
+Cover source, manifest and PDF reads reject symlinks beneath the trusted workspace
+and bound regular-file reads through descriptors. The worker opens owned attempt
+directories relative to descriptors and writes Chromium's returned PDF bytes
+exclusively; Chromium receives no output filename from RPC input.

@@ -1,8 +1,9 @@
-import { safeCoverLetterAccepted, coverLetterAccepted, requireCoverLetterApproval } from "./cover-letter-review.js";
+import { safeCoverLetterAccepted, coverLetterAccepted, coverLetterSourceBytes, requireCoverLetterApproval } from "./cover-letter-review.js";
 import { MessageOutcomeDeterminationSchema } from "@jobctrl/contracts";
 import { readArtifactLineAnchors, readDetermination } from "./semantic-determinations.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 
 import type {
   ApplicationOutcome,
@@ -65,7 +66,6 @@ const POSITION_PREVIEW_CHAR_LIMIT = 6000;
 const MATERIAL_PREVIEW_CHAR_LIMIT = 4000;
 const MATERIAL_PREVIEW_BYTE_LIMIT = 24_000;
 const RESUME_AUDIT_TEXT_BYTE_LIMIT = 128_000;
-const COVER_LETTER_REVIEW_TEXT_BYTE_LIMIT = 128_000;
 const EVIDENCE_LIST_LIMIT = 12;
 const EVIDENCE_TEXT_LIMIT = 180;
 const IDEAL_CANDIDATE_TEXT_LIMIT = 1400;
@@ -152,7 +152,7 @@ export function ensureApplicationFeedbackTables(db: SqliteDatabase): void {
   void db;
 }
 
-export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueResponse {
+export function listApplyReviewQueue(db: SqliteDatabase, appDir?: string): ApplyReviewQueueResponse {
   ensureApplicationFeedbackTables(db);
   refreshProjections(db);
 
@@ -317,7 +317,7 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
   return {
     ok: true,
     items: rows.map((row) =>
-      reviewQueueItemFromRow(db, row, profileSourceFields, missingProfileData),
+      reviewQueueItemFromRow(db, row, profileSourceFields, missingProfileData, appDir),
     ),
   };
 }
@@ -326,10 +326,11 @@ export function recordApplyReviewDecision(
   db: SqliteDatabase,
   jobLocator: string,
   request: ApplyReviewDecisionRequest,
+  appDir?: string,
 ): ApplyReviewDecisionResponse {
-  return db.transaction(() => recordApplyReviewDecisionSnapshot(db, jobLocator, request)).immediate();
+  return db.transaction(() => recordApplyReviewDecisionSnapshot(db, jobLocator, request, appDir)).immediate();
 }
-function recordApplyReviewDecisionSnapshot(db: SqliteDatabase, jobLocator: string, request: ApplyReviewDecisionRequest): ApplyReviewDecisionResponse {
+function recordApplyReviewDecisionSnapshot(db: SqliteDatabase, jobLocator: string, request: ApplyReviewDecisionRequest, appDir?: string): ApplyReviewDecisionResponse {
   ensureApplicationFeedbackTables(db);
   const jobId = resolveExternalJobId(db, jobLocator);
   const applicationUrl = currentApplicationUrl(db, jobId);
@@ -338,7 +339,7 @@ function recordApplyReviewDecisionSnapshot(db: SqliteDatabase, jobLocator: strin
   const partialOverrideRunId =
     request.decision === "approve_submit" ? request.partialOverrideRunId ?? null : null;
   if (request.decision === "approve_submit") {
-    const cover = requireCoverLetterApproval(db, jobId);
+    const cover = requireCoverLetterApproval(db, jobId, appDir);
     if ((cover?.acceptedVersion ?? null) !== (request.coverLetterAcceptedVersion ?? null)) throw new InputError("approval_stale_materials");
     if (
       request.materialsGeneration === undefined ||
@@ -434,7 +435,7 @@ function recordApplyReviewDecisionSnapshot(db: SqliteDatabase, jobLocator: strin
       tenantId: DEFAULT_TENANT,
       jobId,
       decisionId: decision.decisionId,
-      coverLetterBinding: safeCoverLetterAccepted(db, jobId),
+      coverLetterBinding: safeCoverLetterAccepted(db, jobId, appDir),
       decision: decision.decision,
       reasonPresent: Boolean(decision.reason),
       materialsGeneration: decision.materialsGeneration,
@@ -757,6 +758,7 @@ function reviewQueueItemFromRow(
   row: ReviewQueueRow,
   profileSourceFields: readonly ApplyReviewProfileSourceField[],
   missingProfileData: readonly string[],
+  appDir?: string,
 ): ApplyReviewQueueItem {
   const jobId = canonicalJobId(row.job_id);
   const currentState = stageState(row.current_state);
@@ -765,7 +767,7 @@ function reviewQueueItemFromRow(
   const scoreBreakdown = parseQueueScoreBreakdown(row.score_breakdown_json);
   const scoreKeywords = boundedEvidenceList(parseStringListJson(row.score_keywords_json));
   const applicationUrl = applyTargetUrl(row);
-  const materialsPreview = materialPreviewsForJob(db, jobId, profileSourceFields);
+  const materialsPreview = materialPreviewsForJob(db, jobId, profileSourceFields, appDir);
   const emailApplication = latestEmailApplicationCandidate(db, jobId);
   const materialsGeneration = materialsPreview.materialsGeneration;
   const profileVersion = currentProfileVersion(db);
@@ -1539,16 +1541,17 @@ function materialPreviewsForJob(
   db: SqliteDatabase,
   jobId: JobId,
   profileSourceFields: readonly ApplyReviewProfileSourceField[],
+  appDir?: string,
 ): ApplyReviewQueueItem["materialsPreview"] {
   const resumePreview = resumeMaterialPreviewForJob(db, jobId);
   let coverLetter: ReturnType<typeof coverLetterAccepted> = null;
   let coverLetterPdfError: string | null = null;
-  try { coverLetter = coverLetterAccepted(db, jobId); }
+  try { coverLetter = coverLetterAccepted(db, jobId, appDir); }
   catch { coverLetterPdfError = "The accepted cover-letter source cannot be read or exceeds the supported size. Restore or regenerate the letter before previewing or approving."; }
   return {
     ...resumePreview,
     profileSourceFields: [...profileSourceFields],
-    coverLetterText: coverLetterMaterialPreviewForJob(db, jobId),
+    coverLetterText: coverLetterMaterialPreviewForJob(db, jobId, appDir),
     coverLetter,
     coverLetterPdfError,
   };
@@ -1809,17 +1812,17 @@ const RESUME_TEXT_ARTIFACT_TYPES = ["tailored_resume", "tailored_resume_txt", "r
 const RESUME_PDF_ARTIFACT_TYPES = ["tailored_resume_pdf", "resume_pdf"] as const;
 const COVER_LETTER_TEXT_ARTIFACT_TYPES = ["cover_letter", "cover_letter_txt"] as const;
 
-function coverLetterMaterialPreviewForJob(db: SqliteDatabase, jobId: JobId): string | null {
-  const text = firstReadableTextCandidate(
-    materialArtifactCandidates(db, {
+function coverLetterMaterialPreviewForJob(db: SqliteDatabase, jobId: JobId, appDir = path.dirname(path.resolve(db.name))): string | null {
+  for (const candidate of materialArtifactCandidates(db, {
       artifactTypes: COVER_LETTER_TEXT_ARTIFACT_TYPES,
       binary: false,
       includeLegacyJobColumn: "cover_letter_path",
       jobId,
-    }),
-    { byteLimit: COVER_LETTER_REVIEW_TEXT_BYTE_LIMIT, charLimit: null },
-  );
-  return text?.preview ?? null;
+    })) {
+    try { return coverLetterSourceBytes(appDir, candidate.path).toString("utf8"); }
+    catch { /* An unreadable or unowned candidate is never displayed. */ }
+  }
+  return null;
 }
 
 function resumeMaterialPreviewForJob(db: SqliteDatabase, jobId: JobId): ResumeMaterialPreview {

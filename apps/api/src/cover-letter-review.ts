@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-import fs from "node:fs";
 import path from "node:path";
 import {
   COVER_LETTER_RENDERER_VERSION, DEFAULT_COVER_LETTER_SETTINGS,
@@ -8,6 +7,7 @@ import {
 } from "@jobctrl/contracts";
 import { allRows, getRow, type SqliteDatabase } from "./db.js";
 import { InputError, resolveJobId } from "./write-model.js";
+import { CoverLetterPathError, createCoverLetterAttempt, ownedCoverLetterPath, readOwnedCoverLetterFile, removeCoverLetterAttempt, writeOwnedCoverLetterFile } from "./cover-letter-files.js";
 
 const TENANT = "local";
 const MAX_SOURCE_BYTES = 512_000;
@@ -20,7 +20,7 @@ interface ArtifactRow extends Record<string, unknown> {
   artifact_id: string; path: string; status: string; metadata_json: string | null;
 }
 function metadata(raw: string | null): Record<string, unknown> {
-  try { return JSON.parse(raw ?? "{}") as Record<string, unknown>; } catch { return {}; }
+  try { const value: unknown = JSON.parse(raw ?? "{}"); return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; } catch { return {}; }
 }
 function approved(db: SqliteDatabase, jobId: string, types: string[]): ArtifactRow | undefined {
   return getRow<ArtifactRow>(db, `SELECT * FROM job_materials_artifacts
@@ -28,42 +28,41 @@ function approved(db: SqliteDatabase, jobId: string, types: string[]): ArtifactR
       AND status='approved' AND superseded_at IS NULL ORDER BY generation DESC, created_at DESC, rowid DESC LIMIT 1`,
   [TENANT, jobId, ...types]);
 }
-function sourceBytes(file: string): Buffer {
+export function coverLetterSourceBytes(appDir: string, file: string): Buffer {
   try {
-    const fd = fs.openSync(file, "r");
-    try {
-      const raw = Buffer.alloc(MAX_SOURCE_BYTES + 1);
-      const length = fs.readSync(fd, raw, 0, raw.length, 0);
-      if (!length || length > MAX_SOURCE_BYTES) throw new Error();
-      const bytes = raw.subarray(0, length);
-      if (!new TextDecoder("utf-8", { fatal: true }).decode(bytes).trim()) throw new Error();
-      return bytes;
-    } finally { fs.closeSync(fd); }
-  } catch { throw new CoverLetterReviewError("cover_letter_source_unreadable_or_oversized", 422); }
+    const bytes = readOwnedCoverLetterFile(appDir, file, MAX_SOURCE_BYTES);
+    if (!new TextDecoder("utf-8", { fatal: true }).decode(bytes).trim()) throw new Error();
+    return bytes;
+  } catch (error) {
+    if (error instanceof CoverLetterPathError) throw new CoverLetterReviewError("cover_letter_path_forbidden", 403);
+    throw new CoverLetterReviewError("cover_letter_source_unreadable_or_oversized", 422);
+  }
 }
-function pdfBytes(file: string): Buffer {
+function pdfBytes(appDir: string, file: string): Buffer {
   try {
-    if (fs.statSync(file).size > 32_000_000) throw new Error();
-    const bytes = fs.readFileSync(file);
+    const bytes = readOwnedCoverLetterFile(appDir, file, 32_000_000);
     if (!bytes.subarray(0, 5).equals(Buffer.from("%PDF-")) || !bytes.includes(Buffer.from("%%EOF"))) throw new Error();
     return bytes;
-  } catch { throw new CoverLetterReviewError("cover_letter_pdf_missing_or_invalid", 422); }
+  } catch (error) {
+    if (error instanceof CoverLetterPathError) throw new CoverLetterReviewError("cover_letter_path_forbidden", 403);
+    throw new CoverLetterReviewError("cover_letter_pdf_missing_or_invalid", 422);
+  }
 }
 function generation(db: SqliteDatabase, jobId: string): number {
   return getRow<{ value: number }>(db, "SELECT max(generation) AS value FROM job_materials WHERE tenant_id=? AND job_id=?", [TENANT, jobId])?.value ?? 0;
 }
-export function coverLetterAccepted(db: SqliteDatabase, jobId: string): CoverLetterAccepted | null {
+export function coverLetterAccepted(db: SqliteDatabase, jobId: string, appDir = path.dirname(path.resolve(db.name))): CoverLetterAccepted | null {
   const text = approved(db, jobId, ["cover_letter", "cover_letter_txt"]);
   if (!text) return null;
   const pdf = approved(db, jobId, ["cover_letter_pdf"]);
   const pdfMetadata = metadata(pdf?.metadata_json ?? null);
-  const print = pdfMetadata["cover_letter_review"] as CoverLetterPreview | undefined;
+  const print = CoverLetterPreviewSchema.safeParse(pdfMetadata["cover_letter_review"]).data;
   const settings = CoverLetterSettingsSchema.parse(print?.settings ?? pdfMetadata["cover_letter_settings"] ?? DEFAULT_COVER_LETTER_SETTINGS);
   const originalGeneration = getRow<{ value: number }>(db, `SELECT min(generation) AS value FROM job_materials_artifacts
     WHERE tenant_id=? AND job_id=? AND artifact_id=?`, [TENANT, jobId, text.artifact_id])?.value ?? text.generation;
   let textSha256: string;
   let sourceReadable = true;
-  try { textSha256 = hash(sourceBytes(text.path)); }
+  try { textSha256 = hash(coverLetterSourceBytes(appDir, text.path)); }
   catch (error) {
     // Retain the last accepted source identity and PDF when its source file
     // becomes unreadable. This receipt is historical authority, never permission
@@ -74,39 +73,48 @@ export function coverLetterAccepted(db: SqliteDatabase, jobId: string): CoverLet
     sourceReadable = false;
   }
   const source = { tenantId: TENANT, jobId, artifactId: text.artifact_id, generation: originalGeneration, textSha256 };
-  // Missing/corrupt PDFs remain visible as an error in the viewer, while a new
-  // valid preview can repair them. Their identity still changes on corruption.
-  let pdfSha256: string | null = null;
-  if (pdf) { try { if (fs.statSync(pdf.path).size <= 32_000_000) pdfSha256 = hash(fs.readFileSync(pdf.path)); } catch { /* unavailable */ } }
+  // Acceptance is persisted authority. A replaced/missing file must not mint a
+  // new accepted identity or turn its current bytes into approval evidence.
+  const recordedHash = print?.pdfSha256 ?? pdfMetadata["cover_letter_pdf_sha256"];
+  const pdfSha256 = typeof recordedHash === "string" && /^[a-f0-9]{64}$/.test(recordedHash) ? recordedHash : null;
+  let currentPdfSha256: string | null = null;
+  if (pdf) { try { currentPdfSha256 = hash(pdfBytes(appDir, pdf.path)); } catch { /* preserve durable identity, block approval */ } }
   const rendererVersion = print?.rendererVersion ?? (typeof pdfMetadata["cover_letter_renderer_version"] === "string" ? pdfMetadata["cover_letter_renderer_version"] : null);
-  const pdfSourceCurrent = Boolean(sourceReadable && pdf && pdfSha256 && (print
-    ? print.source.artifactId === source.artifactId && print.source.textSha256 === source.textSha256
-    : pdf.generation === text.generation));
+  const generatedSourceGeneration = pdfMetadata["source_generation"];
+  const generatedSourceCurrent = pdfMetadata["source_artifact_id"] === source.artifactId
+    && pdfMetadata["cover_letter_text_sha256"] === source.textSha256
+    && pdfMetadata["cover_letter_renderer_version"] === COVER_LETTER_RENDERER_VERSION
+    && CoverLetterSettingsSchema.safeParse(pdfMetadata["cover_letter_settings"]).success
+    && typeof generatedSourceGeneration === "number" && Number.isSafeInteger(generatedSourceGeneration)
+    && Boolean(getRow(db, "SELECT 1 FROM job_materials_artifacts WHERE tenant_id=? AND job_id=? AND artifact_id=? AND generation=?",
+      [TENANT, jobId, source.artifactId, generatedSourceGeneration]));
+  const pdfSourceCurrent = Boolean(sourceReadable && pdf && pdfSha256 && pdfSha256 === currentPdfSha256 && (print
+    ? JSON.stringify(print.source) === JSON.stringify(source)
+    : pdfMetadata["cover_letter_review"] === undefined && generatedSourceCurrent));
   // Allocation includes rejected attempts; acceptance is owned only by the
   // selected source and PDF. Unaccepted work must not invalidate approval.
   const acceptedVersion = hash(JSON.stringify([source, pdf?.artifact_id ?? null, pdfSha256, settings, rendererVersion]));
   return { source, acceptedVersion, pdfArtifactId: pdf?.artifact_id ?? null, pdfSha256, pdfSourceCurrent, settings, rendererVersion };
 }
-export function requireCoverLetterApproval(db: SqliteDatabase, jobId: string): CoverLetterAccepted | null {
-  const accepted = coverLetterAccepted(db, jobId);
+export function requireCoverLetterApproval(db: SqliteDatabase, jobId: string, appDir?: string): CoverLetterAccepted | null {
+  const accepted = coverLetterAccepted(db, jobId, appDir);
   if (!accepted) return null;
   const pdf = approved(db, jobId, ["cover_letter_pdf"]);
   if (!accepted.pdfSourceCurrent || !pdf) throw new InputError("approval_stale_materials");
-  pdfBytes(pdf.path);
   return accepted;
 }
-export function safeCoverLetterAccepted(db: SqliteDatabase, jobId: string): CoverLetterAccepted | null {
-  try { return coverLetterAccepted(db, jobId); } catch { return null; }
+export function safeCoverLetterAccepted(db: SqliteDatabase, jobId: string, appDir?: string): CoverLetterAccepted | null {
+  try { return coverLetterAccepted(db, jobId, appDir); } catch { return null; }
 }
 export function coverLetterJobId(db: SqliteDatabase, locator: string): string {
   const jobId = resolveJobId(db, TENANT, locator);
   if (!jobId || !getRow(db, "SELECT 1 FROM jobs WHERE tenant_id=? AND job_id=?", [TENANT, jobId])) throw new InputError("Job not found");
   return jobId;
 }
-function requireSnapshot(db: SqliteDatabase, jobId: string, version: string, source?: CoverLetterPreview["source"]): CoverLetterAccepted {
-  const accepted = coverLetterAccepted(db, jobId);
+function requireSnapshot(db: SqliteDatabase, appDir: string, jobId: string, version: string, source?: CoverLetterPreview["source"]): CoverLetterAccepted {
+  const accepted = coverLetterAccepted(db, jobId, appDir);
   const canonicalText = approved(db, jobId, ["cover_letter", "cover_letter_txt"]);
-  if (canonicalText && accepted && hash(sourceBytes(canonicalText.path)) !== accepted.source.textSha256) {
+  if (canonicalText && accepted && hash(coverLetterSourceBytes(appDir, canonicalText.path)) !== accepted.source.textSha256) {
     throw new CoverLetterReviewError("cover_letter_version_conflict", 409);
   }
   if (!accepted || accepted.acceptedVersion !== version || (source && JSON.stringify(accepted.source) !== JSON.stringify(source))) {
@@ -115,20 +123,31 @@ function requireSnapshot(db: SqliteDatabase, jobId: string, version: string, sou
   return accepted;
 }
 function attemptPath(appDir: string, previewId: string): string {
-  if (!/^[a-f0-9-]{36}$/.test(previewId)) throw new CoverLetterReviewError("cover_letter_preview_not_found", 404);
-  return path.join(appDir, "generated", "cover-letter-previews", previewId);
+  if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(previewId)) throw new CoverLetterReviewError("cover_letter_preview_not_found", 404);
+  return ownedCoverLetterPath(appDir, path.join(appDir, "generated", "cover-letter-previews", previewId));
 }
 function readPreview(appDir: string, jobId: string, previewId: string): CoverLetterPreview {
   try {
-    const preview = CoverLetterPreviewSchema.parse(JSON.parse(fs.readFileSync(path.join(attemptPath(appDir, previewId), "preview.json"), "utf8")));
+    const preview = CoverLetterPreviewSchema.parse(JSON.parse(readOwnedCoverLetterFile(appDir, path.join(attemptPath(appDir, previewId), "preview.json"), 128_000).toString("utf8")));
     if (preview.previewId !== previewId || preview.source.tenantId !== TENANT || preview.source.jobId !== jobId) throw new Error();
     return preview;
   } catch { throw new CoverLetterReviewError("cover_letter_preview_not_found", 404); }
 }
 export function coverLetterPreviewBytes(appDir: string, jobId: string, previewId: string): Buffer {
   const preview = readPreview(appDir, jobId, previewId);
-  const bytes = pdfBytes(path.join(attemptPath(appDir, previewId), "letter.pdf"));
+  const bytes = pdfBytes(appDir, path.join(attemptPath(appDir, previewId), "letter.pdf"));
   if (hash(bytes) !== preview.pdfSha256) throw new CoverLetterReviewError("cover_letter_preview_corrupt", 422);
+  return bytes;
+}
+export function coverLetterArtifactPdfBytes(db: SqliteDatabase, appDir: string, artifactId: string): Buffer {
+  const row = getRow<ArtifactRow>(db, "SELECT * FROM job_materials_artifacts WHERE tenant_id=? AND artifact_id=? AND artifact_type='cover_letter_pdf' ORDER BY generation DESC LIMIT 1", [TENANT, artifactId]);
+  if (!row) throw new CoverLetterReviewError("artifact_not_found", 404);
+  const bytes = pdfBytes(appDir, row.path);
+  const meta = metadata(row.metadata_json);
+  const review = CoverLetterPreviewSchema.safeParse(meta["cover_letter_review"]).data;
+  if (meta["cover_letter_review"] !== undefined && !review) throw new CoverLetterReviewError("cover_letter_pdf_missing_or_invalid", 422);
+  const expected = review?.pdfSha256 ?? meta["cover_letter_pdf_sha256"];
+  if (expected !== undefined && hash(bytes) !== expected) throw new CoverLetterReviewError("cover_letter_pdf_changed", 422);
   return bytes;
 }
 export type CoverLetterPdfRenderer = (input: {
@@ -138,27 +157,27 @@ export type CoverLetterPdfRenderer = (input: {
 export async function renderCoverLetterPreview(db: SqliteDatabase, appDir: string, jobId: string,
   request: CoverLetterRenderRequest, render: CoverLetterPdfRenderer): Promise<{ ok: true; preview: CoverLetterPreview }> {
   const settings = CoverLetterSettingsSchema.parse(request.settings);
-  const accepted = requireSnapshot(db, jobId, request.expectedAcceptedVersion, request.source);
+  const accepted = requireSnapshot(db, appDir, jobId, request.expectedAcceptedVersion, request.source);
   const source = approved(db, jobId, ["cover_letter", "cover_letter_txt"])!;
   const previewId = crypto.randomUUID();
-  const directory = attemptPath(appDir, previewId);
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const { directory, stat } = createCoverLetterAttempt(appDir, previewId);
   try {
     // The worker reads this immutable full-text snapshot. The canonical source
     // is checked again after rendering and inside the save transaction.
-    const bytes = sourceBytes(source.path);
+    const bytes = coverLetterSourceBytes(appDir, source.path);
     if (hash(bytes) !== accepted.source.textSha256) throw new CoverLetterReviewError("cover_letter_version_conflict", 409);
     const sourcePath = path.join(directory, "source.txt");
-    const pdfPath = path.join(directory, "letter.pdf");
-    fs.writeFileSync(sourcePath, bytes, { flag: "wx", mode: 0o600 });
+    const pdfPath = ownedCoverLetterPath(appDir, path.join(directory, "letter.pdf"), true);
+    writeOwnedCoverLetterFile(appDir, sourcePath, bytes);
     await render({ sourcePath, pdfPath, textSha256: accepted.source.textSha256, settings, rendererVersion: COVER_LETTER_RENDERER_VERSION });
-    requireSnapshot(db, jobId, request.expectedAcceptedVersion, request.source);
+    if (hash(coverLetterSourceBytes(appDir, sourcePath)) !== accepted.source.textSha256) throw new CoverLetterReviewError("cover_letter_version_conflict", 409);
+    requireSnapshot(db, appDir, jobId, request.expectedAcceptedVersion, request.source);
     const preview: CoverLetterPreview = { previewId, source: accepted.source, expectedAcceptedVersion: accepted.acceptedVersion,
-      settings, rendererVersion: COVER_LETTER_RENDERER_VERSION, pdfSha256: hash(pdfBytes(pdfPath)) };
-    fs.writeFileSync(path.join(directory, "preview.json"), JSON.stringify(preview), { flag: "wx", mode: 0o600 });
+      settings, rendererVersion: COVER_LETTER_RENDERER_VERSION, pdfSha256: hash(pdfBytes(appDir, pdfPath)) };
+    writeOwnedCoverLetterFile(appDir, path.join(directory, "preview.json"), JSON.stringify(preview));
     return { ok: true, preview };
   } catch (error) {
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeCoverLetterAttempt(appDir, directory, stat);
     throw error;
   }
 }
@@ -212,12 +231,12 @@ export function acceptCoverLetterPreview(db: SqliteDatabase, appDir: string, job
     const currentPdf = approved(db, jobId, ["cover_letter_pdf"]);
     const saved = metadata(currentPdf?.metadata_json ?? null)["cover_letter_review"] as CoverLetterPreview | undefined;
     if (saved?.previewId === preview.previewId) {
-      const accepted = coverLetterAccepted(db, jobId)!;
+      const accepted = coverLetterAccepted(db, jobId, appDir)!;
       if (accepted.pdfSourceCurrent && JSON.stringify(accepted.source) === JSON.stringify(preview.source) && accepted.pdfSha256 === preview.pdfSha256
         && JSON.stringify(accepted.settings) === JSON.stringify(preview.settings)
         && accepted.rendererVersion === preview.rendererVersion) return { ok: true as const, accepted };
     }
-    requireSnapshot(db, jobId, request.expectedAcceptedVersion, preview.source);
+    requireSnapshot(db, appDir, jobId, request.expectedAcceptedVersion, preview.source);
     const bytes = coverLetterPreviewBytes(appDir, jobId, preview.previewId);
     const previousGeneration = generation(db, jobId);
     const next = previousGeneration + 1;
@@ -248,6 +267,6 @@ export function acceptCoverLetterPreview(db: SqliteDatabase, appDir: string, job
       (tenant_id,job_id,identity_version,stage,event_type,level,message,occurred_at,payload_json)
       VALUES (?,?,1,'pdf','PdfRendered','info','Accepted cover-letter PDF',?,?)`)
       .run(TENANT, jobId, now, JSON.stringify({tenantId:TENANT,jobId,artifactType:"cover_letter_pdf",artifactId,renderedAt:now}));
-    return { ok: true as const, accepted: coverLetterAccepted(db, jobId)! };
+    return { ok: true as const, accepted: coverLetterAccepted(db, jobId, appDir)! };
   }).immediate();
 }

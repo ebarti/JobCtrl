@@ -11,6 +11,7 @@ own HTML/Playwright scaffold because they don't share the resume layout map.
 from __future__ import annotations
 
 import html as html_mod
+import hashlib
 import logging
 import os
 import uuid
@@ -77,7 +78,7 @@ p {{
 </html>"""
 
 
-def _render_pdf_playwright(html_content: str, output_path: str) -> None:
+def _render_pdf_playwright(html_content: str, output_path: str, *, workspace_root: Path | None = None) -> None:
     """Render HTML to PDF using Playwright's headless Chromium (cover letters only)."""
     from playwright.sync_api import sync_playwright
 
@@ -86,19 +87,23 @@ def _render_pdf_playwright(html_content: str, output_path: str) -> None:
         try:
             page = browser.new_page()
             page.set_content(html_content, wait_until="networkidle")
-            page.pdf(
-                path=output_path,
+            data = page.pdf(
                 format="Letter",
                 prefer_css_page_size=True,
                 margin={"top": "0", "right": "0", "bottom": "0", "left": "0"},
                 print_background=True,
             )
+            from jobctrl.infrastructure.materials.cover_letter_files import write_owned_cover_file
+
+            output = Path(output_path)
+            write_owned_cover_file(workspace_root or output.parent, output, data, exclusive=workspace_root is not None)
         finally:
             browser.close()
 
 
 def convert_cover_letter_text_to_pdf(
     text: str, output_path: str | os.PathLike[str], settings: dict | None = None,
+    *, workspace_root: Path | None = None,
 ) -> Path:
     """Render plain text cover letter to PDF at the given output path.
 
@@ -108,7 +113,7 @@ def convert_cover_letter_text_to_pdf(
     """
     out = Path(output_path)
     html_content = _build_letter_html(text, settings)
-    _render_pdf_playwright(html_content, str(out))
+    _render_pdf_playwright(html_content, str(out), workspace_root=workspace_root)
     log.info("Cover letter PDF generated: %s", out)
     return out
 
@@ -148,11 +153,9 @@ class PlaywrightHtmlPdfAdapter:
         settings: dict | None = None,
     ) -> Artifact:
         out = convert_cover_letter_text_to_pdf(cover_letter_text, output_path, settings)
-        size = None
-        try:
-            size = out.stat().st_size if out.exists() else None
-        except OSError:
-            pass
+        from jobctrl.infrastructure.materials.cover_letter_files import read_owned_cover_file
+
+        data = read_owned_cover_file(out.parent, out, 32_000_000)
         return Artifact(
             artifact_id=uuid.uuid4().hex,
             type=ArtifactType.COVER_LETTER_PDF,
@@ -160,7 +163,9 @@ class PlaywrightHtmlPdfAdapter:
             path=str(out),
             render_format=RenderFormat.HTML_PDF,
             created_at=created_at,
-            size_bytes=size,
-            metadata={"cover_letter_settings": validate_settings(settings), "cover_letter_renderer_version": RENDERER_VERSION},
+            size_bytes=len(data),
+            metadata={"cover_letter_settings": validate_settings(settings), "cover_letter_renderer_version": RENDERER_VERSION,
+                      "cover_letter_text_sha256": hashlib.sha256(cover_letter_text.encode("utf-8")).hexdigest(),
+                      "cover_letter_pdf_sha256": hashlib.sha256(data).hexdigest()},
             superseded_at=None,
         )

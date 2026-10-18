@@ -575,7 +575,7 @@ def _approval_refusal_reason_unchecked(
         return "approval_stale_materials"
     from jobctrl.apply.cover_letter_binding import cover_letter_approval_current
 
-    if not cover_letter_approval_current(conn, tenant_id, job_id, str(decision.get("decision_id") or "")):
+    if not cover_letter_approval_current(conn, tenant_id, job_id, str(decision.get("decision_id") or ""), app_dir=config.APP_DIR):
         return "approval_stale_materials"
     try:
         decision_profile_version = int(decision.get("profile_version"))

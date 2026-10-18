@@ -1243,3 +1243,29 @@ Populate artifact projections before saving, then download the new accepted PDF
 without restarting. Acceptance must commit its existing `PdfRendered` event
 atomically; fail the event insert to prove full rollback, and retry a committed
 preview to prove that neither the generation nor event is duplicated.
+
+Prepare owned outside-root synthetic files and replace the generated directory,
+preview root, UUID directory, manifest, PDF and canonical source with symlinks.
+Neither preview, download, rendering nor acceptance may follow them. Exercise
+literal traversal, direct outside paths, existing output files and hard links;
+failed cleanup must preserve replaced directories and outside bytes. Repeat at
+the registered worker RPC boundary before its renderer runs.
+
+Replace an accepted PDF with corrupt bytes that retain `%PDF-`/`%%EOF` markers.
+Its persisted identity must remain unchanged and approval/download must fail.
+Replace text at the same generation and prove the older PDF is noncurrent even
+with no review receipt. New default-generated PDFs must carry both hashes and
+their source occurrence; missing or invalid identity metadata cannot grant
+approval. Keep `test_apply_approval_vocabulary.py`'s refusal assertions on an
+exact-schema no-cover connection, exercising the real cover guard.
+
+For retained browser evidence, set an owned `PLAYWRIGHT_JUNIT_OUTPUT_FILE` and
+retain its complete sibling `<report path>.artifacts` directory, including
+successful attachments. `materials.spec.ts` measures long Unicode/HTML-sensitive
+source at defaults and bounds for each font through
+`workers/automation/tests/cover_letter_pdf_probe.py` with the prepared worker
+interpreter. It requires Poppler on PATH, records source/settings/PDF identities,
+paper and text geometry, font sizes, line/paragraph deltas, every-page PNGs and
+viewer screenshots. Inspect every page; passing interactions alone cannot prove
+visual acceptance. Keep controlled-response race scenarios separate from these
+real render measurements.

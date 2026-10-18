@@ -1,7 +1,7 @@
 import { readCompanyBriefing } from "./company-briefings.js";
 
 import { createProviderHandlers, dispatchProviderModelCatalog, providerOperationError } from "./provider-handlers.js";
-import { acceptCoverLetterPreview, coverLetterJobId, coverLetterPreviewBytes, CoverLetterReviewError, renderCoverLetterPreview, type CoverLetterPdfRenderer } from "./cover-letter-review.js";
+import { acceptCoverLetterPreview, coverLetterArtifactPdfBytes, coverLetterJobId, coverLetterPreviewBytes, CoverLetterReviewError, renderCoverLetterPreview, type CoverLetterPdfRenderer } from "./cover-letter-review.js";
 import { callRpc, RpcContractError } from "./json-rpc-adapter.js";
 import { readTargetRoleProposal } from "./candidate-interpretations.js";
 import { resetJobStageWithEnrichmentOwner, retryFailedJobsWithEnrichmentOwner } from "./enrichment-retry.js";
@@ -1193,7 +1193,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     withDb(reply, options.dbPath, (db) => {
       const discoverySettings = readDiscoverySettings(db).settings;
       return buildDigest(db, {
-        applyReviewQueue: listApplyReviewQueue(db),
+        applyReviewQueue: listApplyReviewQueue(db, appDir),
         budget: readLlmSpendHealth(options.dbPath, options.configPath),
         minFitScore: discoverySettings.minFitScore,
       });
@@ -1639,7 +1639,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   });
 
   app.get("/v1/apply/review-queue", async (_request, reply) =>
-    withDb(reply, options.dbPath, (db) => listApplyReviewQueue(db)),
+    withDb(reply, options.dbPath, (db) => listApplyReviewQueue(db, appDir)),
   );
 
   app.get("/v1/resume-templates", async (_request, reply) =>
@@ -2025,7 +2025,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         return undefined;
       }
       return withWritableDb(reply, options.dbPath, (db) =>
-        recordApplyReviewDecision(db, decodeRouteParam(request.params.jobKey), body),
+        recordApplyReviewDecision(db, decodeRouteParam(request.params.jobKey), body, appDir),
       );
     },
   );
@@ -2852,6 +2852,19 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!isPdfArtifact(detail.artifact.type, detail.artifact.localPath)) {
       void reply.code(415);
       return { ok: false, error: "artifact_preview_unsupported" };
+    }
+    if (detail.artifact.type === "cover_letter_pdf") {
+      return withReadOnlyDb(reply, options.dbPath, db => {
+        try {
+          const bytes = coverLetterArtifactPdfBytes(db, appDir, detail.artifact.artifactId);
+          return reply.type("application/pdf").header("cache-control", "no-store")
+            .header("content-disposition", 'inline; filename="cover-letter.pdf"')
+            .send(bytes);
+        } catch (error) {
+          if (error instanceof CoverLetterReviewError) return reply.code(error.status).send({ok:false,error:error.code});
+          throw error;
+        }
+      });
     }
     if (!fs.existsSync(detail.artifact.localPath) || !fs.statSync(detail.artifact.localPath).isFile()) {
       void reply.code(404);

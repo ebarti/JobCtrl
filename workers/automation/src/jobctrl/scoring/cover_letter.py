@@ -29,6 +29,7 @@ from jobctrl.domain.materials.services import ContentValidator
 from jobctrl.domain.materials.use_cases import (
     CoverLetterOutcome,
     GenerateCoverLetterUseCase,
+    _pdf_with_accepted_source,
 )
 from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.ports.llm import LlmPort
@@ -397,10 +398,11 @@ def cover_letter_by_id(
                 text_path = Path(outcome.text_path)
                 pdf_path = text_path.with_suffix(".pdf")
                 pdf_artifact = pdf_renderer.render_cover_letter_to_pdf(
-                    cover_letter_text=text_path.read_text(encoding="utf-8"),
+                    cover_letter_text=text_path.read_bytes().decode("utf-8"),
                     output_path=str(pdf_path),
                     created_at=utc_now(),
                 )
+                pdf_artifact = _pdf_with_accepted_source(pdf_artifact, outcome.materials.cover_letter, outcome.materials.generation)
                 materials = outcome.materials.with_cover_letter_pdf(pdf_artifact, updated_at=utc_now())
                 if material_unit_of_work is not None:
                     with material_unit_of_work:
