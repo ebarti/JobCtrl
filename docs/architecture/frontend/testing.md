@@ -129,6 +129,18 @@ per case. Event-stream tests use `FakeEventStreamPort` from
 
 ## 10.4 End-to-End Tests (Playwright)
 
+Resume-review lifecycle coverage spans the Apply controller, Materials document
+modules, browser interactions and canonical API persistence. The controller's
+colocated tests cover tenant/job/source identity, stale cache responses,
+independent comments, normalized save acknowledgements and approval preparation.
+The `artifact-comparison.spec.ts` browser suite preserves later typing and undo
+through delayed responses, exercises real multiline HTML paste and reload, and
+requires recovery from save conflicts and failed renders before authorization.
+Its controlled HTTP responses isolate the session from providers/renderers;
+canonical artifact bytes and approval/audit preservation are checked separately
+by the API suites listed in [Frontend QA](../../developer/qa/frontend.md).
+
+
 The suite has **18** spec files under `apps/web/e2e/tests/` today:
 `analytics`, `artifact-comparison`, `dashboard`, `dry-run`, `evidence-map`,
 `interview-prep`, `jobs-bulk`, `jobs-drawer`, `materials`,

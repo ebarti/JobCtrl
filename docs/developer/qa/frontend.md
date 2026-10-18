@@ -42,6 +42,20 @@ browser behavior, and visual consistency catch different failures.
   recorded after acceptance, retains the original gate and provenance coverage,
   and keeps historical judge-claimed coverage visibly separate from grounded
   coverage. Its fixture restores the original metadata after each case.
+- Resume review uses complementary session, browser and persistence checks.
+  `useApplyReviewSession.test.ts` owns tenant/job/material fences, independent
+  comment/revision ordering, overlapping saves, stale cache publications,
+  normalized acknowledgements and approval preparation.
+  `artifact-comparison.spec.ts` drives the real Plate editor and Apply session
+  through multiline paste, autosave/reload, delayed acknowledgements, conflicts,
+  failed render and recovery before dry-run authorization. Its save/render/model
+  HTTP responses are controlled, and its attachments retain the submitted
+  documents and observed transition order.
+  `apps/api/test/resume-review-drafts.test.ts`, `resume-templates.test.ts`,
+  `apply-audit.test.ts` and the application-feedback suites own canonical SQLite,
+  accepted-artifact bytes, revision conflicts and approval/audit preservation.
+  Browser response controls do not establish those persistence guarantees or
+  live provider behavior.
 - Storybook proves state/variant rendering and shared accessibility behavior.
 
 ## Visual And Base UI Contracts
