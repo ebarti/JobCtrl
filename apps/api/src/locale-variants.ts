@@ -1,3 +1,4 @@
+import { callRpc, RpcContractError } from "./json-rpc-adapter.js";
 import { MaterialLocaleHistorySchema, MaterialLocaleParamsSchema, RpcMethods, type MaterialLocaleRequest } from "./contracts.js";
 import type { JsonRpcDispatcher } from "./json-rpc-adapter.js";
 
@@ -12,8 +13,8 @@ export async function materialLocaleVariants(
 ) {
   const params = MaterialLocaleParamsSchema.parse({ ...context, request });
   let response;
-  try { response = await dispatcher.call(RpcMethods.MaterialLocaleVariants, params); }
-  catch { throw new LocaleVariantError("locale_worker_unavailable", 503); }
+  try { response = await callRpc(dispatcher, RpcMethods.MaterialLocaleVariants, params); }
+  catch (error) { if (error instanceof RpcContractError && error.phase === "result") throw new LocaleVariantError("invalid_locale_worker_result", 503); throw new LocaleVariantError("locale_worker_unavailable", 503); }
   if (response.error) {
     const code = response.error.message;
     const status = code.startsWith("stale_") ? 409 : code === "job_not_found" ? 404

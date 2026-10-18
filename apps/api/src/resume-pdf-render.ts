@@ -1,3 +1,4 @@
+import { callRpc, RpcContractError } from "./json-rpc-adapter.js";
 import type { JsonRpcDispatcher } from "./json-rpc-adapter.js";
 import { getDefaultJsonRpcDispatcher } from "./json-rpc-adapter.js";
 import { RenderResumePdfResultSchema, RpcMethods } from "./contracts.js";
@@ -25,8 +26,9 @@ export function createResumeHtmlPdfRenderer(dispatcher: JsonRpcDispatcher): Resu
   return async ({ htmlPath, pdfPath }) => {
     let response: Awaited<ReturnType<JsonRpcDispatcher["call"]>>;
     try {
-      response = await dispatcher.call(RpcMethods.RenderResumePdf, { htmlPath, pdfPath });
+      response = await callRpc(dispatcher, RpcMethods.RenderResumePdf, { htmlPath, pdfPath });
     } catch (error) {
+      if (error instanceof RpcContractError && error.phase === "result") throw new ResumeRenderError("Resume HTML-to-PDF render returned an invalid result.");
       // Transport-level failures (spawn/write errors, the request timeout,
       // child exit) reject instead of returning a JSON-RPC error envelope.
       throw new ResumeRenderError(
