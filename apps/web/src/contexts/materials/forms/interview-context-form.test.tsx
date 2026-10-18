@@ -2,7 +2,7 @@ import { JobCtrlApiError } from "@jobctrl/api-client";
 import { act, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { GenerateInterviewPrepRequest } from "../../operations/types.js";
+import type { GenerateInterviewPrepRequest } from "@jobctrl/contracts";
 import { profileKeys } from "../../operations/queryKeys.js";
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import { renderWithProviders } from "../../../test/render.js";

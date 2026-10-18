@@ -12,7 +12,7 @@ import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { ArtifactSummary } from "../../contexts/operations/types.js";
+import type { ArtifactSummary } from "@jobctrl/contracts";
 import {
   makeArtifactsPage,
   sampleArtifact,

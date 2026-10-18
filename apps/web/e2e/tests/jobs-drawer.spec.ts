@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import { test, expect, type Locator, type Page } from "@playwright/test";
 
-import type { JobDetail } from "../../src/contexts/operations/types.js";
+import type { JobDetail } from "@jobctrl/contracts";
 import { sampleHealthResponse } from "../../src/test/fixtures/projections.js";
 import { loadE2eDbPath, QA_PLATFORM_JOB_ID } from "../fixtures/e2e-state.js";
 import { recordCompensationAuthority } from "../../../api/test/semantic-fixtures.js";

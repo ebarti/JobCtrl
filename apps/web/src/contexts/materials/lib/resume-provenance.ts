@@ -3,7 +3,7 @@ import {
   type ArtifactTailoringExplanation,
   type BulletProvenanceEntry,
   type ApplyReviewProfileSourceField,
-} from "../../operations/types.js";
+} from "@jobctrl/contracts";
 import {
   type ResumeLineEntry,
   type ResumeAuditPin,

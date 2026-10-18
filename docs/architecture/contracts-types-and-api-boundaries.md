@@ -255,6 +255,12 @@ The exact framing, replay, tenant, and reconnect rules live in
 [Local TypeScript API](../local-ts-api.md) and
 [Frontend Realtime](frontend/realtime.md).
 
+Frontend consumers import unchanged REST DTOs, Zod schemas and constants directly
+from `@jobctrl/contracts`, and domain vocabulary/events from
+`@jobctrl/domain-types`. Operations owns read hooks and genuine frontend input
+refinements, not a transparent DTO facade; re-export aliases do not shield
+consumers from changes to their canonical shapes. See [frontend type ownership](frontend/state-and-ports.md#_6-5-canonical-dtos-and-frontend-input-refinements).
+
 ## Logical Types Are Not Rows Or DTOs
 
 A single fact can have three representations without having three owners:
@@ -316,7 +322,8 @@ The strict endpoint spec owns `POST /v1/jobs/:jobId/actions/check-availability`
 and its queued acknowledgement. The API supplies trusted runtime identity to
 `check_posting_availability`; Python validates it before starting the registered
 Temporal workflow. The frontend consumes the generated API client through its
-port, re-exporting availability types through the operations boundary. Jobs GET
+port. It imports availability DTOs directly from `@jobctrl/contracts`; Operations
+retains only the endpoint-derived command acknowledgement type. Jobs GET
 exposes persisted observation DTOs and calculated freshness without transport
 side effects. Python and TypeScript event registries, endpoint JSON Schema
 fixtures and RPC registration observations are updated together.

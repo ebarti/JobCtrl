@@ -416,6 +416,13 @@ the SSE subscription that fans events out to invalidate query keys.
 - Implement the **invalidation router** that consumes events and calls
   `queryClient.invalidateQueries({ queryKey })` (or `setQueryData(...)`
   for high-frequency events).
+- Expose loader prefetch/ensure helpers beside the read hooks in
+  `readQueries.ts`, accepting narrow structural dependencies. Operations owns
+  dashboard, activity, review queue, analytics, artifact, evidence-map and run
+  reads; Profile owns profile/settings reads; Outreach owns contact reads.
+  Routes pass validated/mapped inputs and await these helpers. Contexts do not
+  import routes, generated route trees or views. The Jobs effective-query
+  handoff remains view-owned with no loader.
 - Own _all_ projection-typed read hooks. The core set:
   `useDashboardSummaryQuery`, `useJobsListQuery`, `useJobDetailQuery`,
   `useArtifactsListQuery`, `useArtifactDetailQuery`, `useApplyRunsListQuery`,
@@ -431,10 +438,9 @@ the SSE subscription that fans events out to invalidate query keys.
   endpoint, so `useApplyRunsListQuery` derives runs from the dashboard
   summary via `select`, and per-run live events are patched onto
   `applyRunsKeys.detail(...)` by the invalidation router (§7.5).
-- Re-export projection and API response types (sourced from
-  `@jobctrl/domain-types` via `@jobctrl/contracts`) through
-  `contexts/operations/types.ts` so feature contexts and views can import
-  them from one place. (This is the frontend Anti-Corruption Layer — §6.5.)
+- Own frontend list-input refinements in `contexts/operations/types.ts`
+  (§6.5). Consumers import unchanged DTOs, schemas and constants directly from
+  `@jobctrl/contracts`, and domain vocabulary from `@jobctrl/domain-types`.
 - Expose catalog/card and job prep-history/note reads through the public
   Operations kernel and tenant-first query keys. Global catalog reads must not
   require a job detail query; optional job preparation is composed in a child

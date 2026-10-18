@@ -9,7 +9,7 @@ import {
   type ResumePlateLine,
 } from "./resume-editor-types.js";
 import { type Descendant, type Value } from "platejs";
-import { type ResumeLayoutBox } from "../../operations/types.js";
+import { type ResumeLayoutBox } from "@jobctrl/contracts";
 
 const RENDERED_RESUME_SECTION_HEADINGS = new Set([
   "certifications",

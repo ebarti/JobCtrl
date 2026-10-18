@@ -2,7 +2,7 @@ import {
   type ApplyReviewProfileSourceField,
   type ResumeCommentThread,
   type ResumeLayoutBox,
-} from "../../operations/types.js";
+} from "@jobctrl/contracts";
 
 import { type PdfAuditLineSelection } from "../../../shared/ui/PdfPreviewViewer.js";
 

@@ -7,7 +7,7 @@ import { ArtifactTypeBadge } from "../../contexts/materials/components/ArtifactT
 import { OpenArtifactButton } from "../../contexts/materials/components/OpenArtifactButton.js";
 import { ResumeTemplateStatusBadge } from "../../contexts/materials/components/ResumeTemplateStatusBadge.js";
 import { formatBytes } from "../../contexts/materials/lib/artifact-type-format.js";
-import type { ArtifactSummary } from "../../contexts/operations/types.js";
+import type { ArtifactSummary } from "@jobctrl/contracts";
 import type {
   DataGridColumn,
   DataGridHeaderContext,

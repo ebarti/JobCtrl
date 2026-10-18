@@ -6,7 +6,7 @@ import {
 } from "@jobctrl/contracts";
 import { z } from "zod";
 
-import { JobStatesFilterSchema } from "../contexts/operations/types.js";
+import { JobStatesFilterSchema } from "@jobctrl/contracts";
 
 const STAGE_OR_ALL = [...STAGES, "all"] as const;
 const STATE_OR_ALL = [...STAGE_STATES, "all"] as const;

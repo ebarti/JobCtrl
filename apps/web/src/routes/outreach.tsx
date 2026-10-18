@@ -1,7 +1,10 @@
+import { prefetchContactsList } from "../contexts/outreach/readQueries.js";
 import { createFileRoute, Outlet } from "@tanstack/react-router";
 
-import { outreachKeys } from "../contexts/operations/queryKeys.js";
-import { outreachSearchSchema, type OutreachSearch } from "./-outreach.search.js";
+import {
+  outreachSearchSchema,
+  type OutreachSearch,
+} from "./-outreach.search.js";
 
 function contactsListInput(search: OutreachSearch) {
   const input: { jobId?: string; employer?: string } = {};
@@ -17,12 +20,7 @@ function contactsListInput(search: OutreachSearch) {
 export const Route = createFileRoute("/outreach")({
   validateSearch: (search) => outreachSearchSchema.parse(search),
   loaderDeps: ({ search }) => ({ search }),
-  loader: ({ deps, context }) => {
-    const input = contactsListInput(deps.search);
-    return context.queryClient.prefetchQuery({
-      queryKey: outreachKeys.contactList(context.tenantId, input),
-      queryFn: () => context.ports.api.listContacts(input),
-    });
-  },
+  loader: ({ context, deps }) =>
+    prefetchContactsList(context, contactsListInput(deps.search)),
   component: Outlet,
 });

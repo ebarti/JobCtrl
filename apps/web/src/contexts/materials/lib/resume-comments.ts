@@ -16,7 +16,7 @@ import {
 import {
   type ResumeCommentThread,
   type ResumeReviewCommentThreadSeedInput,
-} from "../../operations/types.js";
+} from "@jobctrl/contracts";
 
 export function pinForPlateLine(
   line: ResumePlateLine,

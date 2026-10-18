@@ -3,7 +3,7 @@ import {
   type ResumeCommentThread,
   type ResumeLayoutBox,
   type ResumeCommentReplyDecision,
-} from "../../operations/types.js";
+} from "@jobctrl/contracts";
 import {
   type ResumePlateLineEntry,
   type ResumePlateEditorProps,

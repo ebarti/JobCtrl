@@ -2,7 +2,7 @@ import { render } from "@testing-library/react";
 import { axe } from "jest-axe";
 import { describe, expect, it } from "vitest";
 
-import type { DashboardSummary } from "../../contexts/operations/types.js";
+import type { DashboardSummary } from "@jobctrl/contracts";
 import { sampleDashboardSummary } from "../../test/fixtures/projections.js";
 import { ConversionPanel } from "./ConversionPanel.js";
 

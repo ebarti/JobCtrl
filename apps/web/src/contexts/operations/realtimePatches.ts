@@ -10,17 +10,16 @@ import type {
   WorkflowTimedOut,
 } from "@jobctrl/domain-types";
 
+import type { ArtifactsListInput, JobsListInput } from "./types.js";
 import type {
-  ArtifactsListInput,
   DashboardSummary,
-  JobsListInput,
   PaginatedResponse,
   ArtifactDetail,
   ArtifactSummary,
   JobDetail,
   JobSummary,
   WorkflowRunDetail,
-} from "./types.js";
+} from "@jobctrl/contracts";
 
 export type WorkflowLifecycleEvent =
   | WorkflowStarted

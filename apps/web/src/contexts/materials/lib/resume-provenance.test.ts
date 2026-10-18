@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { makeArtifactTailoringExplanation } from "../../../test/fixtures/projections.js";
-import type { BulletProvenanceEntry } from "../../operations/types.js";
+import type { BulletProvenanceEntry } from "@jobctrl/contracts";
 import {
   emptyRiskSignals,
   pinsFromResumeLines,

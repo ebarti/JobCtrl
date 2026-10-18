@@ -1,6 +1,6 @@
 import { IconExternalLink } from "@tabler/icons-react";
 
-import type { JobDetail } from "../../contexts/operations/types.js";
+import type { JobDetail } from "@jobctrl/contracts";
 import { ScoreBadge } from "../../contexts/scoring/components/ScoreBadge.js";
 import { ContextHelp } from "../../shared/ui/context-help.js";
 import { StatusBadge } from "../../shared/ui/status-badge.js";

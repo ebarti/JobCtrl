@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { sampleApplyReviewQueue } from "../../../test/fixtures/projections.js";
-import type { ResumeCommentThread } from "../../operations/types.js";
+import type { ResumeCommentThread } from "@jobctrl/contracts";
 import {
   placeResumeCommentThreads,
   seedThreadKey,

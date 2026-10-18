@@ -9,7 +9,7 @@ import {
   type ResumeReviewCommentThreadSeedInput,
   type ResumeTemplateTheme,
   type ArtifactTailoringExplanation,
-} from "../../operations/types.js";
+} from "@jobctrl/contracts";
 import {
   type PdfAuditLineTarget,
   type PdfAuditLineSelection,
