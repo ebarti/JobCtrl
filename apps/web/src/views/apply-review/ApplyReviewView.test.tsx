@@ -2002,6 +2002,79 @@ describe("<ApplyReviewView>", () => {
     );
   });
 
+  it("acknowledges a multiline HTML paste without remounting or repeating autosaves", async () => {
+    const draft = makeResumeReviewDraft();
+    let acknowledge!: () => void;
+    const save = vi.fn(async (_draftId, body) => {
+      await new Promise<void>((resolve) => { acknowledge = resolve; });
+      const saved = makeResumeReviewDraft(draft.jobKey, { ...body, revisionId: "paste-saved", revisionNumber: 2 });
+      return { ok: true as const, draft: saved, revision: saved.latestRevision! };
+    });
+    const render = vi.fn<ReturnType<typeof buildTestPorts>["api"]["renderResumeReviewDraft"]>();
+    const applyJob = vi.fn();
+    renderWithProviders(<ApplyReviewView />, { ports: buildTestPorts({ api: {
+      applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+      createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft })),
+      saveResumeReviewDraftRevision: save, renderResumeReviewDraft: render, applyJob,
+      seedResumeReviewCommentThreads: vi.fn(async () => ({ ok: true as const, draft, commentThreads: [], seededCount: 0, updatedCount: 0 })),
+    } }) });
+    const editor = await screen.findByRole("textbox", { name: "Tailored resume preview editor" });
+    // JSDOM omits contenteditable inheritance; Slate uses it to admit paste and
+    // map DOM selection. Keep this DOM capability shim local to these nodes.
+    Object.defineProperty(editor, "isContentEditable", { value: true });
+    const leaf = editor.querySelector('[data-slate-string]')!;
+    Object.defineProperty(leaf, "isContentEditable", { value: true });
+    await userEvent.click(editor);
+    const range = document.createRange();
+    range.setStart(leaf.firstChild!, 0);
+    range.collapse(true);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    fireEvent(document, new Event("selectionchange"));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 150)));
+    // Slate checks the DataTransfer constructor name for cross-window pastes.
+    const clipboardData = new (class DataTransfer {
+      types = ["text/html", "text/plain"];
+      files = [];
+      getData(type: string) { return type === "text/html" ? "<p>First synthetic pasted paragraph</p><p>Second synthetic pasted paragraph</p>"
+        : type === "text/plain" ? "First synthetic pasted paragraph\nSecond synthetic pasted paragraph" : ""; }
+    })();
+    fireEvent.paste(editor, { clipboardData });
+    await waitFor(() => expect(editor).toHaveTextContent("Second synthetic pasted paragraph"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
+    await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0]?.[1].editedText).toContain("First synthetic pasted paragraph");
+    expect(save.mock.calls[0]?.[1].editedText).toContain("Second synthetic pasted paragraph");
+    await userEvent.click(editor);
+    const pastedLeaf = editor.querySelector('[data-slate-string]')!;
+    if (!Object.hasOwn(pastedLeaf, "isContentEditable")) Object.defineProperty(pastedLeaf, "isContentEditable", { value: true });
+    const caret = document.createRange();
+    caret.setStart(pastedLeaf.firstChild!, 2);
+    caret.collapse(true);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(caret);
+    fireEvent(document, new Event("selectionchange"));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 150)));
+    const selection = window.getSelection();
+    const anchor = selection?.anchorNode;
+    const offset = selection?.anchorOffset;
+    expect(anchor).toBe(pastedLeaf.firstChild);
+    expect(offset).toBe(2);
+    await act(async () => acknowledge());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Render replacement" })).toBeEnabled());
+    expect(screen.getByRole("textbox", { name: "Tailored resume preview editor" })).toBe(editor);
+    expect(editor).toHaveFocus();
+    expect(window.getSelection()?.anchorNode).toBe(anchor);
+    expect(window.getSelection()?.anchorOffset).toBe(offset);
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+    // Longer than the production 1500 ms debounce: acknowledgements must stop it.
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 1700)));
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(render).not.toHaveBeenCalled();
+    expect(applyJob).not.toHaveBeenCalled();
+  });
+
   it("preserves later formatting and focus when a saved snapshot and stale seed response arrive", async () => {
     const draft = makeResumeReviewDraft();
     let acknowledge: (() => void) | undefined;

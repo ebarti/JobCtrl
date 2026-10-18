@@ -503,7 +503,26 @@ function resumeLineTextsFromPlateNode(node: Descendant): string[] {
     const text = resumeTextFromPlateNode(node).replace(/\s+/g, " ").trim();
     return text ? [text] : [];
   }
-  return node.children.flatMap(resumeLineTextsFromPlateNode);
+  // Pasted blocks have no generation-time line number. Include their text in
+  // document order while keeping inline links/marks in the same paragraph.
+  const lines: string[] = [];
+  let inline: Descendant[] = [];
+  const flush = () => {
+    const text = inline.map(resumeTextFromPlateNode).join("").replace(/\s+/g, " ").trim();
+    if (text) lines.push(text);
+    inline = [];
+  };
+  for (const child of node.children) {
+    if (!("text" in child) && (typeof child.lineNumber === "number" || shouldRenderResumeElementAsBlock(
+      typeof child.tagName === "string" ? child.tagName : "div",
+      typeof child.className === "string" ? child.className : undefined,
+    ))) {
+      flush();
+      lines.push(...resumeLineTextsFromPlateNode(child));
+    } else inline.push(child);
+  }
+  flush();
+  return lines;
 }
 
 export function resumePlateValueSignature(value: Value | null): string {

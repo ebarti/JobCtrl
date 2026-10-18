@@ -45,7 +45,9 @@ interface SessionState {
   renderTask: Promise<ResumeReviewDraftRenderResponse | undefined> | null;
 }
 
-const signature = (value: Value | null) => resumePlateValueSignature(value);
+// Plate may insert default blocks (e.g. HTML paste) whose persisted form is
+// normalized. Compare that form without replacing the live editor or selection.
+const signature = (value: Value | null) => resumePlateValueSignature(value ? normalizeResumePlateValue(value) : null);
 const baseArtifact = (draft: ResumeReviewDraft) => draft.baseResumeTextArtifactId ?? draft.baseResumePdfArtifactId;
 const draftIdentity = (draft: ResumeReviewDraft | null) => draft ? JSON.stringify([draft.draftId, draft.baseGeneration]) : null;
 const materialIdentity = (item: ApplyReviewQueueItem) => JSON.stringify([item.materialsPreview.resumeTextArtifactId, item.materialsPreview.resumePdfArtifactId]);
@@ -116,10 +118,14 @@ export function useApplyReviewSession(item: ApplyReviewQueueItem, autosaveDelayM
   const receive = useCallback((owner: SessionState, incoming: ResumeReviewDraft) => {
     if (!active(owner) || incoming.jobKey !== owner.item.jobKey) return;
     const previous = owner.draft;
-    // Mutation responses also arrive through the shared query cache. On first
-    // load, that path must obey the same source binding as the request callback.
-    if (!previous && (incoming.baseResumeTextArtifactId !== owner.item.materialsPreview.resumeTextArtifactId
-      || incoming.baseResumePdfArtifactId !== owner.item.materialsPreview.resumePdfArtifactId)) return;
+    // Every publication, including the shared cache, must belong to the current
+    // material. Only this session's accepted render may retain its original base
+    // while the queue points at the promoted output.
+    const matchesSource = incoming.baseResumeTextArtifactId === owner.item.materialsPreview.resumeTextArtifactId
+      && incoming.baseResumePdfArtifactId === owner.item.materialsPreview.resumePdfArtifactId;
+    const ownsPromotion = draftIdentity(incoming) === draftIdentity(owner.accepted?.result.draft ?? null)
+      && acceptedMatchesItem(owner.accepted, owner.item);
+    if (!matchesSource && !ownsPromotion) return;
     const next = reconcileResumeReviewDraft(previous ?? undefined, incoming);
     const replacement = draftIdentity(previous) !== draftIdentity(next);
     const savedValue = next.latestRevision?.plateDocument;
@@ -209,7 +215,7 @@ export function useApplyReviewSession(item: ApplyReviewQueueItem, autosaveDelayM
       if (active(owner) && owner.loadKey === loadKey
         && JSON.stringify([currentPreview.resumeTextArtifactId, currentPreview.resumePdfArtifactId]) === loadKey) receive(owner, draft);
     }).catch((error: unknown) => {
-      if (active(owner) && owner.loadKey === loadKey) owner.errors.load = message(error);
+      if (active(owner) && owner.loadKey === loadKey && materialIdentity(owner.item) === loadKey) owner.errors.load = message(error);
     }).finally(() => { finish(owner, "load"); publish(owner); });
   }, [active, create.mutateAsync, publish, receive, session]);
   const loadKey = JSON.stringify([item.materialsPreview.resumeTextArtifactId, item.materialsPreview.resumePdfArtifactId]);
@@ -342,11 +348,11 @@ export function useApplyReviewSession(item: ApplyReviewQueueItem, autosaveDelayM
       if (!active(owner)) return;
       sync(owner);
       if (draftIdentity(owner.draft) !== identity || owner.draft?.currentRevisionId !== revision) return;
-      receive(owner, result.draft);
       owner.renderResult = result;
       if (result.ok) owner.accepted = {
         result, baselineArtifactId,
       };
+      receive(owner, result.draft);
       return result;
     });
     owner.renderTask = task;

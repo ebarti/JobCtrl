@@ -8,6 +8,7 @@ import { createTestQueryClient, renderHookWithProviders } from "../../../test/re
 import { buildTestPorts, FakeSessionPort } from "../../../test/testPorts.js";
 import { applyReviewKeys } from "../../operations/applyReviewKeys.js";
 import { useApplyReviewSession } from "./useApplyReviewSession.js";
+import { normalizeResumePlateValue } from "../../materials/lib/resume-document.js";
 
 const time = "2026-10-18T00:00:00Z";
 const item = sampleApplyReviewQueue.items[0]!;
@@ -68,6 +69,63 @@ function mount(overrides: Partial<Api> = {}, initial = item, autosave = 0) {
 const ready = async (hook: ReturnType<typeof mount>) => { await waitFor(() => expect(hook.result.current.draft).not.toBeNull()); };
 
 describe("Apply review session", () => {
+  it.each(["unchanged", "later text", "later formatting", "undo"])("acknowledges normalized multiline paste while preserving %s", async (change) => {
+    const pending = deferred<Awaited<ReturnType<Api["saveResumeReviewDraftRevision"]>>>();
+    const hook = mount({ saveResumeReviewDraftRevision: vi.fn(() => pending.promise) }); await ready(hook);
+    const pasted: Value = [...document("first pasted paragraph"), { type: "p", children: [{ text: "second pasted paragraph" }] }];
+    act(() => hook.result.current.edit(pasted));
+    const version = hook.result.current.documentVersion;
+    let saving!: ReturnType<typeof hook.result.current.save>;
+    act(() => { saving = hook.result.current.save(); });
+    await waitFor(() => expect(hook.api.saveResumeReviewDraftRevision).toHaveBeenCalledTimes(1));
+    const later = change === "unchanged" ? pasted : change === "undo" ? document("A")
+      : change === "later formatting" ? [...pasted.slice(0, 1), { type: "p", children: [{ text: "second pasted paragraph", bold: true }] }]
+      : [...pasted.slice(0, 1), { type: "p", children: [{ text: "later paragraph" }] }];
+    if (change !== "unchanged") act(() => hook.result.current.edit(later));
+    const saved = draftFor(item, normalizeResumePlateValue(pasted), 2);
+    await act(async () => { pending.resolve({ ok: true, draft: saved, revision: saved.latestRevision! }); await saving; });
+    expect(hook.result.current.document).toBe(later);
+    expect(hook.result.current.documentVersion).toBe(version);
+    expect(hook.result.current.dirty).toBe(change !== "unchanged");
+    expect(hook.result.current.canRender).toBe(change === "unchanged");
+    expect(hook.ports.api.applyJob).not.toHaveBeenCalled();
+  });
+
+  it.each(["success", "failure"])("ignores superseded B load %s through cache after loaded A switches to C", async (outcome) => {
+    const itemB = { ...item, materialsPreview: { ...item.materialsPreview, resumeTextArtifactId: "text-B", resumePdfArtifactId: "pdf-B" } };
+    const itemC = { ...item, materialsPreview: { ...item.materialsPreview, resumeTextArtifactId: "text-C", resumePdfArtifactId: "pdf-C" } };
+    const draftB = { ...draftFor(itemB, document("B"), 1, "draft-B"), baseGeneration: 2 };
+    const draftC = { ...draftFor(itemC, document("C"), 1, "draft-C"), baseGeneration: 3 };
+    const pendingB = deferred<Awaited<ReturnType<Api["createResumeReviewDraft"]>>>();
+    const pendingC = deferred<Awaited<ReturnType<Api["createResumeReviewDraft"]>>>();
+    const create = vi.fn<Api["createResumeReviewDraft"]>().mockResolvedValueOnce({ ok: true, draft: draftFor() })
+      .mockImplementationOnce(() => pendingB.promise).mockImplementationOnce(() => pendingC.promise);
+    const hook = mount({ createResumeReviewDraft: create }); await ready(hook);
+    hook.rerender(itemB);
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+    hook.rerender(itemC);
+    const later = document("typed while waiting for C");
+    act(() => hook.result.current.edit(later));
+    const version = hook.result.current.documentVersion;
+    await act(async () => {
+      if (outcome === "success") pendingB.resolve({ ok: true, draft: draftB });
+      else pendingB.reject(new Error("B offline"));
+    });
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(3));
+    expect(hook.result.current.draft?.draftId).toBe(hook.draft.draftId);
+    expect(hook.result.current.document).toBe(later);
+    expect(hook.result.current.documentVersion).toBe(version);
+    expect(hook.result.current.dirty).toBe(true);
+    expect(hook.result.current.errors.load).toBeUndefined();
+    await act(async () => { await hook.result.current.decide("approve_dry_run", "synthetic"); });
+    expect(hook.api.decideApplyReview).not.toHaveBeenCalled();
+    await act(async () => pendingC.resolve({ ok: true, draft: draftC }));
+    await waitFor(() => expect(hook.result.current.draft?.draftId).toBe(draftC.draftId));
+    expect(hook.result.current.document).toEqual(document("C"));
+    expect(hook.result.current.dirty).toBe(false);
+    expect(hook.ports.api.applyJob).not.toHaveBeenCalled();
+  });
+
   it("reuses compatible early seeds for a replacement of the same material", async () => {
     const replacement = { ...draftFor(item, document("replacement"), 1, "replacement"), baseGeneration: 2 };
     const seed = vi.fn<Api["seedResumeReviewCommentThreads"]>(async (id) => ({
@@ -628,7 +686,7 @@ describe("Apply review session", () => {
     expect(hook.ports.api.applyJob).not.toHaveBeenCalled();
   });
 
-  it("keeps later edits and the same editor when its own render promotes the queue preview", async () => {
+  it.each(["before settlement", "after settlement"])("keeps later edits and the same editor when its own render promotes the queue preview %s", async (promotion) => {
     const pending = deferred<ResumeReviewDraftRenderResponse>();
     const create = vi.fn<Api["createResumeReviewDraft"]>()
       .mockResolvedValueOnce({ ok: true, draft: draftFor() })
@@ -639,14 +697,20 @@ describe("Apply review session", () => {
     act(() => { rendering = hook.result.current.render(); });
     await waitFor(() => expect(hook.result.current.rendering).toBe(true));
     act(() => hook.result.current.edit(document("later edit", true)));
+    if (promotion === "before settlement") {
+      hook.rerender(promotedItem());
+      act(() => hook.queryClient.setQueryData(applyReviewKeys.draft(LOCAL_TENANT, item.jobKey), { ok: true, draft: rendered(hook.draft).draft }));
+    }
     await act(async () => { pending.resolve(rendered(hook.draft)); await rendering; });
-    hook.rerender(promotedItem());
+    if (promotion === "after settlement") hook.rerender(promotedItem());
     expect(create).toHaveBeenCalledTimes(1);
     expect(hook.result.current.draft?.draftId).toBe(hook.draft.draftId);
     expect(hook.result.current.document).toEqual(document("later edit", true));
     expect(hook.result.current.documentVersion).toBe(version);
     expect(hook.result.current.dirty).toBe(true);
     expect(hook.result.current.canSave).toBe(true);
+    expect(hook.result.current.draft?.state).toBe("promoted");
+    expect(hook.result.current.comparison).not.toBeNull();
   });
 
   it("blocks approval while a cached draft is being reloaded", async () => {
