@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { QueryClient, MutationObserver } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 

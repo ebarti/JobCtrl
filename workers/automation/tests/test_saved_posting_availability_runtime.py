@@ -33,6 +33,7 @@ from jobctrl.infrastructure.temporal.registry import ACTIVITIES, WORKFLOWS
 
 from .availability_transports import POSTING_URL, SyntheticAvailabilityTransport
 from .temporal_env import time_skipping_env
+from .politeness_helpers import VirtualClock, no_sleep_limiter
 from .rpc_contract_probe import build_server
 from .test_scorer import profile_snapshot as _profile_snapshot
 
@@ -663,7 +664,14 @@ def test_real_context_guard_keeps_failed_status_resource_uncertain_with_its_hash
     assert not value["checkInProgress"]
 
 
-def test_real_anonymous_fallback_renders_resource_rich_closed_page_without_exhausting_quota(runtime):
+def test_real_anonymous_fallback_renders_resource_rich_closed_page_without_exhausting_quota(runtime, monkeypatch):
+    # Keep the actual browser, admission ledger and two-second host spacing;
+    # only the parent's pacing clock advances without a wall-clock wait.
+    clock = VirtualClock()
+    monkeypatch.setattr("jobctrl.infrastructure.network.rate_limiter._SHARED_RATE_LIMITER", no_sleep_limiter(clock))
+    started_at = availability._now()
+    monkeypatch.setattr(availability, "_now", lambda: started_at + timedelta(seconds=clock.now()))
+    monkeypatch.setattr(availability, "time", SimpleNamespace(monotonic=time.monotonic, sleep=clock.sleep))
     runtime.page_decisions.extend(["unknown", "closed"])
     public_url = "https://93.184.216.34/jobs/resource-rich-closed"
     runtime.conn.execute("UPDATE jobs SET url=? WHERE job_id=?", (public_url, JOB))
@@ -685,6 +693,15 @@ def test_real_anonymous_fallback_renders_resource_rich_closed_page_without_exhau
     assert value["method"] == "anonymous_browser"
     assert sum(url.endswith(".css") for url in calls) == 16
     assert len(calls) > availability.MAX_REQUESTS
+    request_times = [
+        datetime.fromisoformat(row[0])
+        for row in runtime.conn.execute(
+            "SELECT occurred_at FROM job_events WHERE entity_kind='availability_request' ORDER BY event_id"
+        )
+    ]
+    assert len(request_times) == len(calls)
+    assert all(later - earlier >= timedelta(seconds=2) for earlier, later in zip(request_times, request_times[1:]))
+    assert sum(clock.sleeps) >= 2 * (len(calls) - 1)
     assert (
         runtime.conn.execute("SELECT COUNT(*) FROM job_events WHERE entity_kind='availability_acquisition'").fetchone()[
             0

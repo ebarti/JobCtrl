@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -117,12 +117,61 @@ exec sleep 300
   };
 
   const runForegroundUntilReady = (...args) =>
-    spawnSync(fixtureLauncher, args, {
-      cwd: homeDir,
-      env,
-      encoding: "utf8",
-      timeout: 1_500,
-      killSignal: "SIGINT",
+    new Promise((resolve, reject) => {
+      const child = spawn(fixtureLauncher, args, {
+        cwd: homeDir,
+        env,
+        detached: true,
+      });
+      const targets = args.length > 1 ? args.slice(1) : ["temporal", "api", "web", "worker"];
+      const readiness = {
+        temporal: "[temporal] Ready",
+        api: "[api] API ready",
+        web: "[web] Local:",
+        worker: "[worker] Ready",
+        docs: "[docs] Local:",
+        "demo-api": "[demo-api] Ready on",
+        "demo-web": "[demo-web] Local:",
+      };
+      let stdout = "";
+      let stderr = "";
+      let stopping = false;
+      const signalGroup = (signal) => {
+        try {
+          process.kill(-child.pid, signal);
+        } catch (error) {
+          if (error.code !== "ESRCH") throw error;
+        }
+      };
+      const deadline = setTimeout(() => {
+        signalGroup("SIGKILL");
+        reject(new Error(`Foreground fixture did not start and stop within 10s:\n${stdout}\n${stderr}`));
+      }, 10_000);
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk;
+        if (!stopping && stdout.includes("dev: foreground run active;") &&
+            targets.every((name) => stdout.includes(readiness[name]))) {
+          stopping = true;
+          // Ctrl-C reaches the foreground process group. Stop as soon as the
+          // supervisor and all synthetic services are ready, then prove cleanup.
+          signalGroup("SIGINT");
+        }
+      });
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      child.once("error", (error) => {
+        clearTimeout(deadline);
+        reject(error);
+      });
+      child.once("close", (status, signal) => {
+        clearTimeout(deadline);
+        if (!stopping) {
+          reject(new Error(`Foreground fixture exited before readiness:\n${stdout}\n${stderr}`));
+          return;
+        }
+        resolve({ status, signal, stdout, stderr });
+      });
     });
 
   return {
@@ -237,8 +286,8 @@ test("demo detached lifecycle owns both API and web processes", { timeout: 30_00
 test("foreground demo API advances from migrations to the long-lived server", async () => {
   const harness = await createHarness();
   try {
-    const result = harness.runForegroundUntilReady("run", "demo-api");
-    assert.equal(result.error?.code, "ETIMEDOUT");
+    const result = await harness.runForegroundUntilReady("run", "demo-api");
+    assert.equal(result.status, 130, `${result.stdout}\n${result.stderr}`);
     assert.match(result.stdout, /\[demo-api\] Ready on http:\/\/127\.0\.0\.1:48787\//);
     assert.match(harness.run("status", "demo-api"), /^demo-api\s+down\s+-/m);
   } finally {
@@ -258,8 +307,8 @@ for (const mode of ["run", "start", "restart"]) {
 
         let output;
         if (mode === "run") {
-          const result = harness.runForegroundUntilReady(mode, ...targets);
-          assert.equal(result.error?.code, "ETIMEDOUT");
+          const result = await harness.runForegroundUntilReady(mode, ...targets);
+          assert.equal(result.status, 130, `${result.stdout}\n${result.stderr}`);
           output = result.stdout;
         } else {
           output = harness.run(mode, ...targets);
@@ -323,8 +372,8 @@ for (const mode of ["run", "start", "restart"]) {
       await harness.failBuild();
       const targets = ["temporal", "api", "worker", "docs", "demo-api", "demo-web"];
       if (mode === "run") {
-        const result = harness.runForegroundUntilReady(mode, ...targets);
-        assert.equal(result.error?.code, "ETIMEDOUT");
+        const result = await harness.runForegroundUntilReady(mode, ...targets);
+        assert.equal(result.status, 130, `${result.stdout}\n${result.stderr}`);
         assert.match(result.stdout, /foreground run active/);
       } else {
         assert.match(harness.run(mode, ...targets), /demo-web: started/);

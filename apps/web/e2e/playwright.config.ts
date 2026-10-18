@@ -7,6 +7,14 @@ import { defineConfig, devices } from "@playwright/test";
 const here = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = path.resolve(here, "..", "..", "..");
 
+const { resolveE2eWebServerMode } = createRequire(import.meta.url)(
+  "./fixtures/start-web.cjs",
+) as {
+  resolveE2eWebServerMode(value: string | undefined): "preview" | "dev";
+};
+const E2E_WEB_SERVER = resolveE2eWebServerMode(
+  process.env["JOBCTRL_E2E_WEB_SERVER"],
+);
 const { configureE2eWorkspace } = createRequire(import.meta.url)(
   "./fixtures/owned-workspace.cjs",
 ) as {
@@ -100,11 +108,15 @@ export default defineConfig({
       timeout: 120_000,
     },
     {
-      command: `corepack pnpm --filter @jobctrl/web exec vite --host 127.0.0.1 --port ${WEB_PORT} --strictPort`,
+      // Build once per owned run: fresh browser contexts load the production
+      // chunks instead of repeatedly fetching Vite's development module graph.
+      command: "node apps/web/e2e/fixtures/start-web.cjs",
       port: Number(WEB_PORT),
       cwd: repoRoot,
       env: {
         ...DOCS_SERVICE_ENVIRONMENT,
+        JOBCTRL_E2E_WEB_SERVER: E2E_WEB_SERVER,
+        JOBCTRL_E2E_WEB_PORT: WEB_PORT,
         VITE_JOBCTRL_API_BASE_URL: "",
         VITE_DEV_API_PROXY_TARGET: `http://127.0.0.1:${API_PORT}`,
         VITE_JOBCTRL_HIDE_DEVTOOLS: "1",

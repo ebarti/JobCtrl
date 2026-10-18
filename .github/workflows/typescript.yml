@@ -161,6 +161,7 @@ jobs:
         env:
           JOBCTRL_E2E_ISOLATED: "0"
           JOBCTRL_E2E_PROFILE_SUGGESTIONS: "0"
+          JOBCTRL_E2E_WEB_SERVER: dev
           JOBCTRL_E2E_APP_DIR: /tmp/jobctrl-real-rpc-e2e
         run: |
           mkdir -p "$JOBCTRL_E2E_APP_DIR"
@@ -188,9 +189,8 @@ jobs:
         run: corepack pnpm install --frozen-lockfile
       - name: Install Playwright Chromium
         run: corepack pnpm --filter @jobctrl/extension exec playwright install --with-deps chromium
-      - name: Check, test, build, and exercise extension
+      - name: Check, test, and exercise extension
         run: |
           corepack pnpm extension:check
           corepack pnpm extension:test
-          corepack pnpm extension:build
           xvfb-run --auto-servernum corepack pnpm extension:e2e

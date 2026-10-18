@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { LOCAL_TENANT, createTenantId, createAvailabilityLeaseChanged, createJobUpdated, type DomainEventUnion } from "@jobctrl/domain-types";
 import { QueryClient, QueryObserver, type QueryKey } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";

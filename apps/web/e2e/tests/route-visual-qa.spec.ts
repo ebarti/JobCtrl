@@ -1849,10 +1849,24 @@ test("warning actions use the contrasting focus token in both themes", async ({ 
     await expectKeyboardFocusIndicator(page, stop, `${theme} warning action`);
     const focus = await stop.evaluate((element) => {
       const style = getComputedStyle(element);
-      return {
-        ring: style.getPropertyValue("--tw-ring-color").trim(),
-        expected: style.getPropertyValue("--ring").trim(),
+      const colorProbe = document.createElement("span");
+      colorProbe.style.position = "absolute";
+      colorProbe.style.visibility = "hidden";
+      element.append(colorProbe);
+      const resolveTokenColor = (token: string) => {
+        const value = style.getPropertyValue(token).trim();
+        if (!value || !CSS.supports("color", value)) {
+          throw new Error(`Warning action has no valid ${token} color`);
+        }
+        colorProbe.style.color = value;
+        return getComputedStyle(colorProbe).color;
       };
+      // Resolve custom properties through the same browser serializer as the
+      // box shadow, including production CSS's percentage/decimal spelling.
+      const ring = resolveTokenColor("--tw-ring-color");
+      const expected = resolveTokenColor("--ring");
+      colorProbe.remove();
+      return { ring, expected };
     });
     expect(focus.ring).toBe(focus.expected);
     await expect

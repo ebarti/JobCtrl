@@ -7,7 +7,7 @@ import json
 import shutil
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -101,9 +101,12 @@ def world(tmp_path, monkeypatch):
 
     install_page_models(monkeypatch)
     original_start = WorkflowEnvironment.start_local
-    monkeypatch.setattr(
-        WorkflowEnvironment, "start_local", lambda: original_start(dev_server_existing_path=shutil.which("temporal"))
-    )
+
+    def start_local(**kwargs):
+        kwargs.setdefault("dev_server_existing_path", shutil.which("temporal"))
+        return original_start(**kwargs)
+
+    monkeypatch.setattr(WorkflowEnvironment, "start_local", start_local)
 
     def reject_playwright():
         pytest.fail("Temporal enrichment must use the live Chrome transport")
@@ -1096,7 +1099,7 @@ async def test_owned_score_persists_report_and_automatic_tailor_consumes_it(evid
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("continuation", ["automatic", "normal"])
-async def test_exact_normal_rescore_repairs_historical_missing_report(evidence_world, continuation):
+async def test_exact_normal_rescore_repairs_historical_missing_report(evidence_world, continuation, monkeypatch):
     world = evidence_world
     job_id = seed(world)
     other_id = seed(world, 2)
@@ -1162,9 +1165,19 @@ async def test_exact_normal_rescore_repairs_historical_missing_report(evidence_w
             assert await tick(env.client, world, queue) == 0
             updated = datetime.fromisoformat(repaired["updated_at"].replace("Z", "+00:00"))
             cooldown = min(1800, 60 * (2 ** repaired["attempt_count"]))
-            remaining = cooldown - (datetime.now(timezone.utc) - updated).total_seconds()
-            await asyncio.sleep(max(0, remaining) + 0.2)
-            await run_auto(env.client, world, queue, job_id, "tailor")
+            # Exercise the real reservation policy on either side of its
+            # deadline; waiting a production minute does not add clock proof.
+            reserve = recovery.reserve_recovery_batch
+            reservation_now = updated + timedelta(seconds=cooldown, microseconds=-1)
+
+            def reserve_at_clock(*args, **kwargs):
+                return reserve(*args, **kwargs, now=reservation_now)
+
+            with monkeypatch.context() as reservation_clock:
+                reservation_clock.setattr(recovery, "reserve_recovery_batch", reserve_at_clock)
+                assert await tick(env.client, world, queue) == 0
+                reservation_now += timedelta(microseconds=1)
+                await run_auto(env.client, world, queue, job_id, "tailor")
         else:
             await wait_idle(env.client)
             tailor_id = f"qa-normal-tailor-{uuid.uuid4()}"

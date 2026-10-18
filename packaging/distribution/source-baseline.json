@@ -8,8 +8,8 @@
     "pnpmPackageRecords": 1482,
     "pythonCoreRuntimeDirect": 20,
     "pythonProviderRuntimeDirect": 4,
-    "pythonDevelopmentDirect": 10,
-    "uvPackageRecords": 103
+    "pythonDevelopmentDirect": 11,
+    "uvPackageRecords": 107
   },
   "referenceFootprint": {
     "status": "observational",
