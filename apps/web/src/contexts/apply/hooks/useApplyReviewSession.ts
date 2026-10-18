@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useCoverLetterReview } from "./useCoverLetterReview.js";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Value } from "platejs";
 import type {
@@ -81,6 +82,7 @@ const message = (error: unknown) => error instanceof Error ? error.message : "Re
 
 /** Apply owns the mounted review session. Materials only renders its document. */
 export function useApplyReviewSession(item: ApplyReviewQueueItem, autosaveDelayMs = 1500) {
+  const coverLetter = useCoverLetterReview(item);
   const tenantId = useTenantId();
   const { api } = usePorts();
   const queryClient = useQueryClient();
@@ -376,7 +378,7 @@ export function useApplyReviewSession(item: ApplyReviewQueueItem, autosaveDelayM
     const stillCurrent = () => {
       if (!active(owner)) return false;
       sync(owner);
-      return draftIdentity(owner.draft) === identity && owner.editVersion === editVersion && !dirty(owner)
+      return coverLetter.readyForApproval() && draftIdentity(owner.draft) === identity && owner.editVersion === editVersion && !dirty(owner)
         && !owner.pending.has("load") && owner.draft?.currentRevisionId === expectedRevision && draftMatchesItem(owner);
     };
     begin(owner, "decision");
@@ -384,6 +386,7 @@ export function useApplyReviewSession(item: ApplyReviewQueueItem, autosaveDelayM
     publish(owner);
     try {
       if (approving) {
+        if (!coverLetter.readyForApproval()) throw new Error("Save or restore cover-letter settings before approval.");
         await owner.tail;
         if (waitingForSave) expectedRevision = owner.draft?.currentRevisionId;
         if (waitingForRender) {
@@ -411,7 +414,8 @@ export function useApplyReviewSession(item: ApplyReviewQueueItem, autosaveDelayM
       const canonical = queue?.items.find((entry) => entry.jobKey === owner.item.jobKey) ?? (approving ? null : owner.item);
       if (!canonical) throw new Error("Review inputs changed. Reload the review queue and try again.");
       if (approving && (
-        canonical.approvalGate.profileVersion !== initialItem.approvalGate.profileVersion
+        JSON.stringify([canonical.materialsPreview.coverLetter?.source, canonical.materialsPreview.coverLetter?.pdfArtifactId, canonical.materialsPreview.coverLetter?.pdfSha256, canonical.materialsPreview.coverLetter?.settings]) !== JSON.stringify([initialItem.materialsPreview.coverLetter?.source, initialItem.materialsPreview.coverLetter?.pdfArtifactId, initialItem.materialsPreview.coverLetter?.pdfSha256, initialItem.materialsPreview.coverLetter?.settings])
+        || canonical.approvalGate.profileVersion !== initialItem.approvalGate.profileVersion
         || canonical.approvalGate.applicationUrl !== initialItem.approvalGate.applicationUrl
         || canonical.emailApplication?.recipient !== initialItem.emailApplication?.recipient
         || (canonical.emailApplication?.attachmentArtifactId !== initialItem.emailApplication?.attachmentArtifactId
@@ -436,6 +440,7 @@ export function useApplyReviewSession(item: ApplyReviewQueueItem, autosaveDelayM
         decision: value, reason, decidedBy: "user",
         ...(value === "approve_submit" ? {
           materialsGeneration: canonical.approvalGate.materialsGeneration,
+          coverLetterAcceptedVersion: canonical.materialsPreview.coverLetter?.acceptedVersion ?? null,
           profileVersion: canonical.approvalGate.profileVersion,
           applicationUrl: canonical.approvalGate.applicationUrl,
           ...(canonical.emailApplication ? { emailRecipient: canonical.emailApplication.recipient,
@@ -445,7 +450,7 @@ export function useApplyReviewSession(item: ApplyReviewQueueItem, autosaveDelayM
       } });
     } catch (error) { if (active(owner)) owner.errors.decision = message(error); }
     finally { finish(owner, "decision"); publish(owner); }
-  }, [active, api, decisionMutation.mutateAsync, publish, queryClient, renderSavedRevision, session, sync, tenantId]);
+  }, [active, api, coverLetter, decisionMutation.mutateAsync, publish, queryClient, renderSavedRevision, session, sync, tenantId]);
 
   const documentSignature = signature(session.document);
   const isDirty = dirty(session);
@@ -472,12 +477,13 @@ export function useApplyReviewSession(item: ApplyReviewQueueItem, autosaveDelayM
   const accepted = session.accepted;
   const comparisonMatches = accepted && acceptedMatchesItem(accepted, item);
   return {
+    coverLetter,
     identity: key, draft: session.draft, document: session.document, documentVersion: `${key}:${session.documentVersion}`,
     canSave,
     canRender: Boolean(session.draft?.latestRevision && !isDirty && !saving && !rendering && !loading && !session.errors.save && !sourceChanged && !session.pending.has("decision")),
     dirty: isDirty, loading, saving, rendering, replying: session.pending.has("reply"),
     preparing: session.pending.has("decision"), errors: session.errors,
-    renderResult: session.renderResult, reason, notice,
+    renderResult: session.renderResult, reason: reason ?? coverLetter.approvalReason, notice,
     status: loading ? session.draft ? "refreshing draft" : "loading draft" : rendering ? "rendering saved draft" : saving ? "saving draft"
       : session.errors.save || session.errors.load || session.errors.render || (session.renderResult && !session.renderResult.ok) ? "draft save issue"
       : isDirty ? "unsaved changes" : rendered ? "replacement rendered"

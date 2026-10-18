@@ -356,3 +356,27 @@ has no outreach-send capability. Their posture:
 ## Reviewed Screening Answers
 
 Job Detail and Apply Review include a [Screening Answers](screening-answers.md) library for open-ended questions. Generation, human review, copying and explicit manual-use recording are separate actions; none grants form-entry or submission authority or records an application-submitted outcome.
+
+## Cover-Letter PDF Review
+
+Apply Review can render the full accepted cover-letter text with bounded paper,
+font, margin and spacing settings. **Preview cover-letter PDF** renders a local
+snapshot; the displayed PDF and **Download displayed cover-letter PDF** use the
+same file. Opening a preview or changing controls does not accept new materials.
+Use **Restore accepted settings** to return to the accepted PDF. A displayed
+preview with different bytes must be saved or restored before approval, even if
+its settings match the accepted version.
+
+Choose **Save cover-letter PDF** to accept that rendered snapshot explicitly.
+The accepted version and local settings are shown separately. Save refuses a
+stale source or accepted version; render and save again after reviewing current
+materials. Edits made during a save remain local, including undoing to the
+previous settings while the saved version refreshes. Rendering and failed saves
+preserve prior accepted materials. If a save response is lost, reload to recover
+the committed version, or retry the same preview. A replacement requires renewed
+approval and dry-run evidence for the new material generation.
+
+Defaults are Letter, Georgia-family 11pt, 17.78mm (0.7 inch) margins, 1.6 line
+spacing and 14px paragraph spacing. Controls permit A4 or Letter; Georgia, Times
+or Arial font families; 9–14pt text; 8–28mm margins; 1–2 line spacing; and 0–24px
+paragraph spacing. Formatting changes the full letter, including every page.

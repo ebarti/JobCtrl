@@ -19,6 +19,7 @@ from pathlib import Path
 from jobctrl.domain.materials.entities import Artifact
 from jobctrl.domain.ports.artifact_review import ArtifactStatus
 from jobctrl.domain.materials.value_objects import ArtifactType, RenderFormat
+from jobctrl.domain.materials.cover_letter_settings import FONT_FAMILIES, RENDERER_VERSION, validate_settings
 
 log = logging.getLogger(__name__)
 
@@ -28,10 +29,11 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _build_letter_html(text: str) -> str:
+def _build_letter_html(text: str, settings: dict | None = None) -> str:
     """Build simple HTML for a plain-text cover letter."""
+    style = validate_settings(settings)
     paragraphs: list[str] = []
-    for block in text.strip().split("\n\n"):
+    for block in text.replace("\r\n", "\n").strip().split("\n\n"):
         block_lines = [html_mod.escape(line.strip()) for line in block.splitlines() if line.strip()]
         if block_lines:
             paragraphs.append(f"<p>{'<br>'.join(block_lines)}</p>")
@@ -44,24 +46,26 @@ def _build_letter_html(text: str) -> str:
 <meta charset="utf-8">
 <style>
 @page {{
-    size: letter;
-    margin: 0.7in;
+    size: {style['paper']};
+    margin: {style['marginMm']}mm;
 }}
 * {{
     box-sizing: border-box;
 }}
 body {{
-    font-family: 'Georgia', 'Times New Roman', serif;
-    font-size: 11pt;
-    line-height: 1.6;
+    margin: 0;
+    font-family: {FONT_FAMILIES[style['fontFamily']]};
+    font-size: {style['fontSizePt']}pt;
+    line-height: {style['lineHeight']};
     color: #1f1f1f;
 }}
 .letter {{
     width: 100%;
 }}
 p {{
-    margin: 0 0 14px;
+    margin: 0 0 {style['paragraphSpacingPx']}px;
     white-space: normal;
+    overflow-wrap: anywhere;
 }}
 </style>
 </head>
@@ -85,6 +89,7 @@ def _render_pdf_playwright(html_content: str, output_path: str) -> None:
             page.pdf(
                 path=output_path,
                 format="Letter",
+                prefer_css_page_size=True,
                 margin={"top": "0", "right": "0", "bottom": "0", "left": "0"},
                 print_background=True,
             )
@@ -92,7 +97,9 @@ def _render_pdf_playwright(html_content: str, output_path: str) -> None:
             browser.close()
 
 
-def convert_cover_letter_text_to_pdf(text: str, output_path: str | os.PathLike[str]) -> Path:
+def convert_cover_letter_text_to_pdf(
+    text: str, output_path: str | os.PathLike[str], settings: dict | None = None,
+) -> Path:
     """Render plain text cover letter to PDF at the given output path.
 
     Returns the resolved :class:`Path` to the generated PDF. Used by the
@@ -100,7 +107,7 @@ def convert_cover_letter_text_to_pdf(text: str, output_path: str | os.PathLike[s
     ``pipeline._run_pdf``.
     """
     out = Path(output_path)
-    html_content = _build_letter_html(text)
+    html_content = _build_letter_html(text, settings)
     _render_pdf_playwright(html_content, str(out))
     log.info("Cover letter PDF generated: %s", out)
     return out
@@ -138,8 +145,9 @@ class PlaywrightHtmlPdfAdapter:
         cover_letter_text: str,
         output_path: str,
         created_at: str,
+        settings: dict | None = None,
     ) -> Artifact:
-        out = convert_cover_letter_text_to_pdf(cover_letter_text, output_path)
+        out = convert_cover_letter_text_to_pdf(cover_letter_text, output_path, settings)
         size = None
         try:
             size = out.stat().st_size if out.exists() else None
@@ -153,6 +161,6 @@ class PlaywrightHtmlPdfAdapter:
             render_format=RenderFormat.HTML_PDF,
             created_at=created_at,
             size_bytes=size,
-            metadata={},
+            metadata={"cover_letter_settings": validate_settings(settings), "cover_letter_renderer_version": RENDERER_VERSION},
             superseded_at=None,
         )

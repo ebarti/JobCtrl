@@ -64,6 +64,7 @@ import { Input } from "../../shared/ui/input.js";
 import { MarkdownDocument } from "../../shared/ui/MarkdownDocument.js";
 import { PageHead } from "../../shared/ui/page-head.js";
 import type { PdfAuditLineSelection, PdfAuditLineTarget } from "../../shared/ui/PdfPreviewViewer.js";
+import { CoverLetterReviewSurface } from "../../contexts/apply/index.js";
 import {
   Select,
   SelectContent,
@@ -1595,6 +1596,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
               rightRiskLabels={comparisonDraft?.riskLabels ?? []}
             />
             <EmailApplicationPreview item={item} />
+            <CoverLetterReviewSurface review={session.coverLetter} />
             <TextPreview
               title="Cover letter"
               text={item.materialsPreview.coverLetterText}

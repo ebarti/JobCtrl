@@ -75,8 +75,8 @@ export function requirementCoverageForArtifact(
   const anchors=readArtifactLineAnchors(db,"local",artifact.artifact_type,artifactId,artifact.generation,jobId);
   const rows = allRows<{ bullet_id:string;generated_text: string; requirement_ids_json: string }>(db,
     `SELECT bullet_id,generated_text,requirement_ids_json FROM job_bullet_provenance
-     WHERE tenant_id = 'local' AND job_id = ? AND artifact_id = ? ORDER BY position, bullet_id`,
-    [jobId, artifactId]);
+     WHERE tenant_id = 'local' AND job_id = ? AND artifact_id = ? AND generation = ? ORDER BY position, bullet_id`,
+    [jobId, artifactId, artifact.generation]);
   if (!rows.length || !anchors.size) return result;
   for (const requirement of bound) {
     const hits = rows.filter((row) => {

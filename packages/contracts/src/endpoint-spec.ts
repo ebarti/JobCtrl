@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AcceptedMaterialExportRequestSchema, AcceptedMaterialExportsSchema, ProviderStatusResponseSchema, ProviderModelCatalogResponseSchema, CodexVerifyResponseSchema, MaterialLocaleRequestSchema, MaterialLocaleHistorySchema } from "./schemas.js";
+import { CoverLetterRenderRequestSchema, CoverLetterRenderResponseSchema, CoverLetterSaveRequestSchema, CoverLetterSaveResponseSchema } from "./cover-letter.js";
 import {
   InterviewCatalogQuerySchema,
   InterviewCatalogResponseSchema,
@@ -516,6 +517,16 @@ const recommendationReviewPath = defineEndpointPath({
     `/v1/learning/recommendations/${encodeURIComponent(recommendationId)}/reviews`,
 });
 
+const coverLetterRenderPath = defineEndpointPath({
+  route: "/v1/jobs/:jobKey/cover-letter/preview", paramName: "jobKey", paramSchema: z.string().min(1),
+  invalid: { status: 400, error: "invalid_job_key" },
+  build: (jobKey: string) => `/v1/jobs/${encodeURIComponent(jobKey)}/cover-letter/preview`,
+});
+const coverLetterSavePath = defineEndpointPath({
+  route: "/v1/jobs/:jobKey/cover-letter/accept", paramName: "jobKey", paramSchema: z.string().min(1),
+  invalid: { status: 400, error: "invalid_job_key" },
+  build: (jobKey: string) => `/v1/jobs/${encodeURIComponent(jobKey)}/cover-letter/accept`,
+});
 const resumeReviewDraftRenderPath = defineEndpointPath({
   route: "/v1/resume-review/drafts/:draftId/render",
   paramName: "draftId",
@@ -788,6 +799,18 @@ export const ENDPOINTS = {
       class: "unavailable",
       reason: "Tailoring policy rollback requires the local audited database.",
     },
+  }),
+  renderCoverLetterPreview: defineEndpoint({
+    name: "renderCoverLetterPreview", method: "POST", path: coverLetterRenderPath,
+    request: CoverLetterRenderRequestSchema, response: CoverLetterRenderResponseSchema,
+    rpcDependencies: [RpcMethods.RenderCoverLetterPdf],
+    demo: { class: "unavailable", reason: "Cover-letter rendering requires the local renderer and saved materials." },
+  }),
+  acceptCoverLetterPreview: defineEndpoint({
+    name: "acceptCoverLetterPreview", method: "POST", path: coverLetterSavePath,
+    request: CoverLetterSaveRequestSchema, response: CoverLetterSaveResponseSchema,
+    rpcDependencies: [],
+    demo: { class: "unavailable", reason: "Cover-letter acceptance requires the local material history." },
   }),
   renderResumeReviewDraft: defineEndpoint({
     name: "renderResumeReviewDraft",

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { copyMaterialSlots } from "./cover-letter-review.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -1098,6 +1099,7 @@ function persistRefreshRows(
     createdAt: now,
   });
   replaceLayoutBoxes(db, jobId, generation, pdfArtifactId, layoutBoxes, now);
+  copyMaterialSlots(db, jobId, generation, ["tailored_resume", "tailored_resume_txt", "resume_txt", "resume_pdf", "tailored_resume_pdf"]);
 }
 
 function insertMaterialArtifact(

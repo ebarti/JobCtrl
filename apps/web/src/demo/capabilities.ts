@@ -16,6 +16,8 @@ const endpointCapabilities = Object.fromEntries(
  */
 export const DEMO_CAPABILITY_MANIFEST = {
   downloadMaterialDocx: unavailable("DOCX downloads require retained exports in a local workspace."),
+
+  coverLetterPreviewPdfUrl: { class: "unavailable", reason: "Cover-letter PDF previews require the local renderer." },
   health: local("Shows synthetic browser-local service health."),
   dashboardSummary: local("Reads the synthetic dashboard projection."),
   pipelineOperations: unavailable("Pipeline operations telemetry is unavailable in the public demo."),

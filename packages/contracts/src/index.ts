@@ -1,4 +1,5 @@
 export * from "./schemas.js";
+export * from "./cover-letter.js";
 export * from "./rpc.js";
 export * from "./endpoint-spec.js";
 export * from "./demo-fixture-contract.js";

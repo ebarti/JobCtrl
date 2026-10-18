@@ -65,11 +65,17 @@ def _load_source(connection, *, tenant_id, job_id, artifact_id, generation, root
         "FROM job_materials_artifacts WHERE tenant_id=? AND job_id=? AND artifact_id=?",
         (tenant_id, job_id, artifact_id),
     ).fetchall()
-    if len(rows) != 1 or rows[0][3] != "approved" or rows[0][8] is not None:
+    # Unchanged slots retain their artifact ID across complete material sets.
+    # Export the explicitly requested generation, never combine copies or
+    # silently substitute the newest row for a historical selection.
+    selected = [row for row in rows if row[1] == generation]
+    if not rows:
         raise ExportFailure("accepted_source_unavailable")
-    row = tuple(rows[0])
-    if row[1] != generation:
+    if not selected:
         raise ExportFailure("stale_source_generation")
+    if len(selected) != 1 or selected[0][3] != "approved" or selected[0][8] is not None:
+        raise ExportFailure("accepted_source_unavailable")
+    row = tuple(selected[0])
     if row[2] not in {"tailored_resume", "cover_letter"} or row[5] != "text":
         raise ExportFailure("unsupported_source_format")
     path = _owned_path(root, row[4])

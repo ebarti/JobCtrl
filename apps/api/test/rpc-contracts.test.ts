@@ -255,6 +255,18 @@ describe("current RPC caller controls and dispatch results", () => {
 });
 
 describe("endpoint spec fixture", () => {
+  it("bounds cover-letter worker inputs and registers both checked routes", () => {
+    const schema = RpcContracts[RpcMethods.RenderCoverLetterPdf].params;
+    const valid = { sourcePath: "/owned/source.txt", pdfPath: "/owned/letter.pdf", textSha256: "a".repeat(64),
+      rendererVersion: "playwright-cover-letter-v2", settings: { paper: "A4", fontFamily: "georgia", fontSizePt: 9, marginMm: 8, lineHeight: 1, paragraphSpacingPx: 0 } };
+    expect(schema.safeParse(valid).success).toBe(true);
+    for (const settings of [ { ...valid.settings, fontSizePt: Infinity }, { ...valid.settings, marginMm: "8mm" },
+      { ...valid.settings, fontFamily: "Georgia; color:red" }, { ...valid.settings, paragraphSpacingPx: 25 } ]) {
+      expect(schema.safeParse({ ...valid, settings }).success).toBe(false);
+    }
+    expect(ENDPOINTS.renderCoverLetterPreview.rpcDependencies).toEqual([RpcMethods.RenderCoverLetterPdf]);
+    expect(ENDPOINTS.acceptCoverLetterPreview.method).toBe("POST");
+  });
   it("adds exactly the provider family without replacing historical endpoint expectations", () => {
     const additions = Object.keys(providerEndpointSpecs).sort();
     expect(additions).toEqual(["providerModels", "providerStatus", "verifyCodexProvider"]);

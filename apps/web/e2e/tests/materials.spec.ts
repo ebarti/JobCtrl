@@ -1,7 +1,68 @@
 import { test, expect } from "@playwright/test";
 import Database from "better-sqlite3";
+import { createHash } from "node:crypto";
+import type { ApplyReviewQueueResponse } from "@jobctrl/contracts";
 
 import { loadE2eDbPath, QA_PLATFORM_JOB_ID } from "../fixtures/e2e-state.js";
+
+// Real API/RPC renderer path. Keep this separate from controlled-response
+// browser race tests: no render/save/PDF route is intercepted here.
+for (const fontFamily of ["georgia", "times", "arial"] as const) for (const settings of [
+  { paper: "A4", fontSize: "9", margin: "8", lineHeight: "1", paragraphSpacing: "0" },
+  { paper: "Letter", fontSize: "14", margin: "28", lineHeight: "2", paragraphSpacing: "24" },
+]) test(`cover-letter ${settings.paper}/${fontFamily} preview accepts identical bytes explicitly and survives reload`, async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+  const queue = await page.request.get("/v1/apply/review-queue");
+  expect(queue.ok()).toBe(true);
+  const original = (await queue.json() as ApplyReviewQueueResponse).items.find(row => row.jobKey === QA_PLATFORM_JOB_ID)!;
+  expect(original?.materialsPreview.coverLetter).toBeTruthy();
+  const originalCover = original.materialsPreview.coverLetter!;
+  await page.goto(`/apply-review?jobKey=${QA_PLATFORM_JOB_ID}`);
+  const surface = page.getByRole("region", { name: "Cover-letter PDF formatting" });
+  await expect(surface).toBeVisible();
+  await surface.getByRole("combobox", { name: "Paper size" }).click();
+  await page.getByRole("option", { name: settings.paper, exact: true }).click();
+  await surface.getByRole("combobox", { name: "Font family" }).click();
+  await page.getByRole("option", { name: fontFamily, exact: true }).click();
+  await surface.getByLabel("Font size (pt)").fill(settings.fontSize);
+  await surface.getByLabel("Margins (mm)").fill(settings.margin);
+  await surface.getByLabel("Line spacing", { exact: true }).fill(settings.lineHeight);
+  await surface.getByLabel("Paragraph spacing (px)").fill(settings.paragraphSpacing);
+  const renderResponse = page.waitForResponse(response => response.url().endsWith("/cover-letter/preview") && response.request().method() === "POST");
+  await surface.getByRole("button", { name: "Preview cover-letter PDF" }).click();
+  expect((await renderResponse).ok()).toBe(true);
+  await expect(surface.locator(".pdf-preview-toolbar .toolbar-status")).toHaveText(/^\d+ pages?$/, { timeout: 60_000 });
+  const previewUrl = await surface.getByRole("link", { name: "Download displayed cover-letter PDF" }).getAttribute("href");
+  const preview = await page.request.get(previewUrl!);
+  expect(preview.ok()).toBe(true);
+  const bytes = await preview.body();
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  await testInfo.attach(`cover-preview-${settings.paper}`, { body: bytes, contentType: "application/pdf" });
+  const unchanged = await page.request.get("/v1/apply/review-queue");
+  expect((await unchanged.json() as ApplyReviewQueueResponse).items.find(row => row.jobKey === QA_PLATFORM_JOB_ID)!.materialsPreview.coverLetter).toEqual(originalCover);
+  const saveResponse = page.waitForResponse(response => response.url().endsWith("/cover-letter/accept") && response.request().method() === "POST");
+  await surface.getByRole("button", { name: "Save cover-letter PDF" }).click();
+  const savedResponse = await saveResponse;
+  expect(savedResponse.ok()).toBe(true);
+  const { accepted } = await savedResponse.json();
+  expect(accepted.pdfSha256).toBe(digest);
+  const downloaded = await page.request.get(`/v1/artifacts/${accepted.pdfArtifactId}/preview.pdf`);
+  expect(downloaded.ok()).toBe(true);
+  expect(await downloaded.body()).toEqual(bytes);
+  await page.reload();
+  await expect(surface.getByLabel("Font size (pt)")).toHaveValue(settings.fontSize);
+  await expect(surface.getByRole("combobox", { name: "Paper size" })).toContainText(settings.paper);
+  await expect(surface.getByRole("combobox", { name: "Font family" })).toContainText(fontFamily);
+  const reloaded = (await (await page.request.get("/v1/apply/review-queue")).json() as ApplyReviewQueueResponse).items.find(row => row.jobKey === QA_PLATFORM_JOB_ID)!;
+  expect(reloaded.materialsPreview.coverLetter).toEqual(accepted);
+  expect(reloaded.materialsPreview.resumePdfArtifactId).toBe(original.materialsPreview.resumePdfArtifactId);
+  expect(reloaded.materialsPreview.resumeTextArtifactId).toBe(original.materialsPreview.resumeTextArtifactId);
+  const pages = surface.locator(".pdf-preview-page");
+  await expect(surface.locator(".pdf-preview-toolbar .toolbar-status")).toHaveText(/^\d+ pages?$/);
+  for (let index = 0; index < await pages.count(); index++) {
+    await testInfo.attach(`cover-accepted-page-${index + 1}`, { body: await pages.nth(index).screenshot(), contentType: "image/png" });
+  }
+});
 
 // The seeded worker heartbeat is written once at global-setup; the suite runs
 // serially and can exceed the 45s staleness window before this spec runs. Refresh

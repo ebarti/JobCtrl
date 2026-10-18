@@ -1,3 +1,4 @@
+import { safeCoverLetterAccepted, coverLetterAccepted, requireCoverLetterApproval } from "./cover-letter-review.js";
 import { MessageOutcomeDeterminationSchema } from "@jobctrl/contracts";
 import { readArtifactLineAnchors, readDetermination } from "./semantic-determinations.js";
 import crypto from "node:crypto";
@@ -326,6 +327,9 @@ export function recordApplyReviewDecision(
   jobLocator: string,
   request: ApplyReviewDecisionRequest,
 ): ApplyReviewDecisionResponse {
+  return db.transaction(() => recordApplyReviewDecisionSnapshot(db, jobLocator, request)).immediate();
+}
+function recordApplyReviewDecisionSnapshot(db: SqliteDatabase, jobLocator: string, request: ApplyReviewDecisionRequest): ApplyReviewDecisionResponse {
   ensureApplicationFeedbackTables(db);
   const jobId = resolveExternalJobId(db, jobLocator);
   const applicationUrl = currentApplicationUrl(db, jobId);
@@ -334,6 +338,8 @@ export function recordApplyReviewDecision(
   const partialOverrideRunId =
     request.decision === "approve_submit" ? request.partialOverrideRunId ?? null : null;
   if (request.decision === "approve_submit") {
+    const cover = requireCoverLetterApproval(db, jobId);
+    if ((cover?.acceptedVersion ?? null) !== (request.coverLetterAcceptedVersion ?? null)) throw new InputError("approval_stale_materials");
     if (
       request.materialsGeneration === undefined ||
       request.materialsGeneration !== materialsGeneration
@@ -428,6 +434,7 @@ export function recordApplyReviewDecision(
       tenantId: DEFAULT_TENANT,
       jobId,
       decisionId: decision.decisionId,
+      coverLetterBinding: safeCoverLetterAccepted(db, jobId),
       decision: decision.decision,
       reasonPresent: Boolean(decision.reason),
       materialsGeneration: decision.materialsGeneration,
@@ -783,6 +790,17 @@ function reviewQueueItemFromRow(
     dryRunEvidence,
     partialDryRunEvidence,
   });
+  if (row.decision === "approve_submit") {
+    const event = getRow<{ payload_json: string }>(db, `SELECT payload_json FROM job_events
+      WHERE tenant_id=? AND job_id=? AND event_type='ApplyReviewDecisionRecorded'
+        AND json_extract(payload_json, '$.decisionId')=? ORDER BY event_id DESC LIMIT 1`, [DEFAULT_TENANT, jobId, row.decision_id]);
+    const bound = event ? parseJsonRecord(event.payload_json)?.["coverLetterBinding"] : null;
+    const boundVersion = (bound as { acceptedVersion?: string } | null)?.acceptedVersion ?? null;
+    if (boundVersion !== (materialsPreview.coverLetter?.acceptedVersion ?? null)
+      || materialsPreview.coverLetterPdfError || (materialsPreview.coverLetter && !materialsPreview.coverLetter.pdfSourceCurrent)) {
+      approvalReasons.splice(0, approvalReasons.length, "approval_stale_materials");
+    }
+  }
   const idealCandidate = cleanLimitedText(
     row.employer_ideal_candidate_narrative,
     IDEAL_CANDIDATE_TEXT_LIMIT,
@@ -1523,10 +1541,16 @@ function materialPreviewsForJob(
   profileSourceFields: readonly ApplyReviewProfileSourceField[],
 ): ApplyReviewQueueItem["materialsPreview"] {
   const resumePreview = resumeMaterialPreviewForJob(db, jobId);
+  let coverLetter: ReturnType<typeof coverLetterAccepted> = null;
+  let coverLetterPdfError: string | null = null;
+  try { coverLetter = coverLetterAccepted(db, jobId); }
+  catch { coverLetterPdfError = "The accepted cover-letter source cannot be read or exceeds the supported size. Restore or regenerate the letter before previewing or approving."; }
   return {
     ...resumePreview,
     profileSourceFields: [...profileSourceFields],
     coverLetterText: coverLetterMaterialPreviewForJob(db, jobId),
+    coverLetter,
+    coverLetterPdfError,
   };
 }
 

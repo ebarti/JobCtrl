@@ -1207,3 +1207,39 @@ deterministic; production claims/classifier/dispatch/persistence remain real.
 Use an owned exact-v14 synthetic workspace. Exercise explicit identity/source confirmation, cross-job reuse, unchanged-input zero-call reuse, concurrent refreshes and a configuration change during generation. Opposing valid model kinds and identity verdicts must control output without lexical fallback. Provider/budget/JSON/schema/foreign-ID/non-verbatim/exact-value failures and failed acceptance commits preserve the accepted snapshot and original clock. Check bounded body/redirect/request behavior, public destination checks, no credentials or personal context, and failed gateway transaction release.
 
 Run `test_company_briefings.py` and API `company-briefings.test.ts` to read real Python-written receipts through TypeScript and HTTP. Render Job Detail, Interviews and the existing digest through `company-briefings.spec.ts` on desktop and mobile; expand source excerpts and check critical/serious accessibility findings. These fixtures inject explicit model decisions and public transport, not recorded-output replay or judgment-quality evaluations. Report live provider/public transport evidence separately.
+
+## Cover-Letter PDF Review (#1042)
+
+Use an owned synthetic workspace. Pair API persistence and frontend race tests
+with real API → registered RPC → Chromium → PDF-viewer QA. Render full long text,
+HTML-sensitive characters, A4/Letter and all settings bounds. Compare the bytes
+and SHA-256 of preview and accepted download, measure paper dimensions and inspect
+every rendered page. Retain PDFs, page images, measurements and source hashes
+privately. Controlled renderer or browser responses prove boundary behavior only;
+they do not prove actual Chromium output or persistence.
+
+Exercise preview-only reads, explicit save, two previews saving concurrently,
+source replacement at the same generation, newer generations, tenant/job switches,
+rapid edits, edits during saves, reversed responses, unmount, missing/corrupt PDFs,
+renderer/RPC/validation/persistence failures, retries, reload, restart and a lost
+save acknowledgement. Failures retain accepted settings, provenance, bytes and
+approval bindings. Successful saves retain complete material history and resume
+behavior while requiring renewed approval for the new generation. Verify email
+bindings, resume draft rendering/comments, manual decisions/outcomes and jobs
+without a cover as preservation controls. The materials browser spec contains a
+real render/save/reload path; independent candidate-bound review/product gates
+remain governed by the reliability workflow.
+
+Repeat formatting saves and export both carried text sources as DOCX from each
+displayed generation. Inspect one set of resume layout/provenance rows in both
+projection writers, not concatenated copies. Seed a higher rejected generation:
+the accepted cover identity must remain unchanged while the next allocation
+exceeds it. Replace stale PDF provenance with current text metadata and recorded
+anchor/binding IDs, also without a prior PDF. During save, undo to the old settings
+and deliver canonical refresh before/after success or a lost acknowledgement;
+preserve the undo, reject obsolete query snapshots and require reconciliation
+before approval when the outcome is uncertain.
+Populate artifact projections before saving, then download the new accepted PDF
+without restarting. Acceptance must commit its existing `PdfRendered` event
+atomically; fail the event insert to prove full rollback, and retry a committed
+preview to prove that neither the generation nor event is duplicated.

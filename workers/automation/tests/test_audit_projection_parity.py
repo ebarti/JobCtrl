@@ -633,6 +633,35 @@ def test_python_builder_projects_audit_rows_matching_shared_fixture(
     assert json.loads(text_row["voice_pass_json"]) == expected["voicePassJson"]
 
 
+def test_carried_layout_and_provenance_project_one_generation(conn, fixture):
+    _seed_rows(conn, fixture)
+    job_id = _job_id(fixture["job"]["url"])
+    generation = fixture["job"]["generation"]
+    conn.execute("INSERT INTO job_material_layout_boxes "
+                 "(tenant_id,job_id,generation,artifact_id,box_index,semantic_id,page_number,"
+                 "text_excerpt,left_pct,top_pct,width_pct,height_pct,created_at) "
+                 "VALUES(?,?,?,'resume-1',0,'line-1',1,'Synthetic',10,10,80,2,'now')",
+                 (LOCAL_TENANT, job_id, generation))
+    for next_generation in (generation + 1, generation + 2):
+        conn.execute("INSERT INTO job_materials "
+                     "SELECT tenant_id,job_id,?,status,created_at,updated_at,last_validation_json,last_verdict_json,metadata_json "
+                     "FROM job_materials WHERE tenant_id=? AND job_id=? AND generation=?",
+                     (next_generation, LOCAL_TENANT, job_id, generation))
+        for table in ("job_materials_artifacts", "job_bullet_provenance", "job_material_layout_boxes"):
+            columns = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+            selected = ",".join("?" if c == "generation" else c for c in columns)
+            conn.execute(f"INSERT INTO {table} SELECT {selected} FROM {table} "
+                         "WHERE tenant_id=? AND job_id=? AND generation=?",
+                         (next_generation, LOCAL_TENANT, job_id, generation))
+    conn.commit()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+    row = conn.execute("SELECT generation,layout_boxes_json,bullet_provenance_json "
+                       "FROM artifact_list_projections WHERE artifact_id='resume-1'").fetchone()
+    assert row["generation"] == generation + 2
+    assert len(json.loads(row["layout_boxes_json"])) == 1
+    assert json.loads(row["bullet_provenance_json"]) == fixture["expected"]["bulletProvenanceJson"]
+
+
 def test_python_builder_projects_historical_artifact_generation_coverage_rows(
     conn: sqlite3.Connection,
 ) -> None:
