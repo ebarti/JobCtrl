@@ -795,14 +795,49 @@ export function lintProgram(
         report(
           argument,
           "view-api",
-          "API capabilities and their containers may only be handed to a context-owned helper; local or unresolved forwarding calls cannot acquire API authority.",
+          "API capabilities and their containers may only be handed to a context-owned helper; route/view calls, returns and class fields cannot acquire API authority.",
         );
       if (kinds.some((kind) => ["query", "context", "loader"].includes(kind)))
         report(
           argument,
           "view-state",
-          "QueryClient capabilities and their containers may only be handed to a context-owned helper; local or unresolved forwarding calls cannot acquire cache authority.",
+          "QueryClient capabilities and their containers may only be handed to a context-owned helper; route/view calls, returns and class fields cannot acquire cache authority.",
         );
+    }
+    function writesReceiverField(target) {
+      target = unwrap(target);
+      if (!target) return false;
+      if (
+        ts.isPropertyAccessExpression(target) ||
+        ts.isElementAccessExpression(target)
+      ) {
+        let receiver = unwrap(target.expression);
+        while (
+          receiver &&
+          (ts.isPropertyAccessExpression(receiver) ||
+            ts.isElementAccessExpression(receiver))
+        )
+          receiver = unwrap(receiver.expression);
+        return receiver?.kind === ts.SyntaxKind.ThisKeyword;
+      }
+      if (ts.isArrayLiteralExpression(target))
+        return target.elements.some(writesReceiverField);
+      if (ts.isObjectLiteralExpression(target))
+        return target.properties.some(
+          (prop) =>
+            (ts.isPropertyAssignment(prop) &&
+              writesReceiverField(prop.initializer)) ||
+            (ts.isSpreadAssignment(prop) &&
+              writesReceiverField(prop.expression)),
+        );
+      if (ts.isSpreadElement(target))
+        return writesReceiverField(target.expression);
+      if (
+        ts.isBinaryExpression(target) &&
+        target.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      )
+        return writesReceiverField(target.left);
+      return false;
     }
     function inspect(node) {
       inspectCapability(node);
@@ -823,6 +858,29 @@ export function lintProgram(
         inspectHandoff(node.expression);
       if (composer && ts.isArrowFunction(node) && !ts.isBlock(node.body))
         inspectHandoff(node.body);
+      // A field annotated any hides its initializer from later instance reads.
+      // Reject capability storage at the transfer, independently of field type.
+      if (composer && ts.isPropertyDeclaration(node) && node.initializer)
+        inspectHandoff(node.initializer);
+      if (
+        composer &&
+        ts.isForOfStatement(node) &&
+        !ts.isVariableDeclarationList(node.initializer) &&
+        writesReceiverField(node.initializer)
+      )
+        inspectHandoff(node.expression);
+      if (
+        composer &&
+        ts.isBinaryExpression(node) &&
+        [
+          ts.SyntaxKind.EqualsToken,
+          ts.SyntaxKind.QuestionQuestionEqualsToken,
+          ts.SyntaxKind.BarBarEqualsToken,
+          ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+        ].includes(node.operatorToken.kind) &&
+        writesReceiverField(node.left)
+      )
+        inspectHandoff(node.right);
       let symbol;
       if (ts.isIdentifier(node)) symbol = checker.getSymbolAtLocation(node);
       else if (

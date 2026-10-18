@@ -68,6 +68,11 @@ Array spread/rest, awaited values and forwarding calls have independent
 source-located controls, including conditional/mutable callees and capability
 containers. Positive controls retain context-owned helper handoffs and harmless
 array positions.
+Loop bindings (including nested destructuring, assignments and `for await`),
+comma results/aliases and capability storage in instance, static or private
+class fields (including constructor/method writes) have separate generated-loader
+and view controls. Comma-result barrels are checked with both resolved and
+missing package declarations.
 These require boundary diagnostics at actionable source locations independently
 of compiler diagnostics; compiler-clean `any` cannot authorize a capability.
 Generated-route composition tests exercise loader-to-API/cache handoff, tenant

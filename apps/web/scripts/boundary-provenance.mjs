@@ -123,6 +123,30 @@ export function createTracer(
       member(node, base, keys),
     );
   }
+  function iterableElement(node, base) {
+    // Iteration yields elements, not the array's length or named properties.
+    // Unknown iterable contents conservatively retain possible authority.
+    return join(
+      ...[...(base?.fields ?? [])]
+        .filter(([key]) => key === undefined || indexOf(key) !== undefined)
+        .map(([, value]) => value),
+      ...[...(base?.kinds ?? [])].map(origin),
+      member(node, base, undefined),
+    );
+  }
+  function loopOf(declaration) {
+    const list = declaration.parent;
+    return ts.isVariableDeclarationList(list) &&
+      ts.isForOfStatement(list.parent)
+      ? list.parent
+      : undefined;
+  }
+  function declarationValue(declaration, seen, writes) {
+    const loop = loopOf(declaration);
+    return loop
+      ? iterableElement(loop, trace(loop.expression, new Set(seen), writes))
+      : trace(declaration.initializer, new Set(seen), writes);
+  }
   function expressionKeys(node, seen, writes) {
     const value = trace(node, new Set(seen), writes);
     return value?.keys.size && !value.unknownKeys ? [...value.keys] : undefined;
@@ -145,7 +169,7 @@ export function createTracer(
   function bindingSource(pattern, seen = new Set(), writes = true) {
     const owner = pattern.parent;
     if (ts.isVariableDeclaration(owner))
-      return trace(owner.initializer, seen, writes);
+      return declarationValue(owner, seen, writes);
     if (ts.isParameter(owner))
       return join(
         seed(owner, seen, writes),
@@ -191,6 +215,14 @@ export function createTracer(
       const symbol = symbolOf(node);
       if (!symbol) return [];
       for (const decl of symbol.declarations ?? []) {
+        if (ts.isVariableDeclaration(decl) && loopOf(decl)) {
+          const refs = references(loopOf(decl).expression, new Set(seen));
+          if (refs.length)
+            return refs.map((ref) => ({
+              ...ref,
+              path: [...ref.path, undefined],
+            }));
+        }
         if (ts.isVariableDeclaration(decl) && decl.initializer) {
           const refs = references(decl.initializer, new Set(seen));
           if (refs.length) return refs;
@@ -202,14 +234,22 @@ export function createTracer(
           const owner = decl.parent.parent;
           const sourceNode = ts.isBindingElement(owner)
             ? owner.name
-            : (owner.initializer ?? owner);
+            : ts.isVariableDeclaration(owner) && loopOf(owner)
+              ? loopOf(owner).expression
+              : (owner.initializer ?? owner);
           const keys = bindingKeys(decl, seen, false);
           const refs = references(sourceNode, new Set(seen));
           if (refs.length)
             return refs.flatMap((ref) =>
               (keys ?? [undefined]).map((key) => ({
                 root: ref.root,
-                path: [...ref.path, key],
+                path: [
+                  ...ref.path,
+                  ...(ts.isVariableDeclaration(owner) && loopOf(owner)
+                    ? [undefined]
+                    : []),
+                  key,
+                ],
               })),
             );
         }
@@ -226,6 +266,11 @@ export function createTracer(
         ...references(node.left, new Set(seen)),
         ...references(node.right, new Set(seen)),
       ];
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.CommaToken
+    )
+      return references(node.right, seen);
     return [];
   }
   const branches = new Set([
@@ -292,6 +337,11 @@ export function createTracer(
       assignmentKinds.has(node.operatorToken.kind)
     )
       assignmentTargets(node.left, node.right);
+    if (
+      ts.isForOfStatement(node) &&
+      !ts.isVariableDeclarationList(node.initializer)
+    )
+      assignmentTargets(node.initializer, node.expression, [{ iterate: true }]);
     ts.forEachChild(node, collect);
   }
   collect(source);
@@ -326,6 +376,7 @@ export function createTracer(
           continue;
         let value = trace(write.value, new Set(seen));
         for (const projection of write.projections) {
+          if (projection.iterate) value = iterableElement(node, value);
           if ("rest" in projection)
             value = arrayRest(node, value, projection.rest);
           if (projection.keyNode || "keys" in projection)
@@ -375,7 +426,8 @@ export function createTracer(
       );
     else if (
       ts.isBinaryExpression(node) &&
-      assignmentKinds.has(node.operatorToken.kind)
+      (assignmentKinds.has(node.operatorToken.kind) ||
+        node.operatorToken.kind === ts.SyntaxKind.CommaToken)
     )
       value = trace(node.right, new Set(seen), writes);
     else if (
@@ -392,7 +444,7 @@ export function createTracer(
     else if (ts.isIdentifier(node)) {
       for (const decl of symbolOf(node)?.declarations ?? []) {
         if (ts.isVariableDeclaration(decl))
-          value = join(value, trace(decl.initializer, new Set(seen), writes));
+          value = join(value, declarationValue(decl, new Set(seen), writes));
         if (ts.isBindingElement(decl))
           value = join(value, bindingValue(decl, new Set(seen), writes));
       }

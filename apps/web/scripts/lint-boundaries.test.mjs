@@ -813,6 +813,7 @@ test("review findings: container and destructured barrel exports retain runtime 
         ["export const [load] = [Original];", "tools.load"],
         ["export const [load] = [...[Original]];", "tools.load"],
         ["export const load = await Original;", "tools.load"],
+        ["export const load = (Math.random(), Original);", "tools.load"],
         [
           "const forward = (value: any) => value; export const load = forward(Original);",
           "tools.load",
@@ -1056,6 +1057,202 @@ test("spread/rest preserve harmless positions and context-owned capability hando
         const identity = (value: any) => value;
         const api = await identity({ health() {} }); api.health();
       }`,
+  };
+  const results = check(inputs, {}, true);
+  assert.deepEqual(
+    results.compilerDiagnostics.map((d) =>
+      ts.flattenDiagnosticMessageText(d.messageText, "\n"),
+    ),
+    [],
+  );
+  assert.deepEqual([...results], []);
+});
+
+// Each row owns its source line in both the generated loader and a view.
+function checkReviewForms(control, controls) {
+  const route = "routes/dashboard.tsx",
+    view = "views/lint-flow/Page.ts";
+  const body = controls.map(([code]) => `    { ${code} }`).join("\n");
+  const routeText = readFileSync(
+    resolve(webRoot, "src", route),
+    "utf8",
+  ).replace(
+    /  loader:.*\n/,
+    `  loader: async ({ context }: any) => {\n${body}\n  },\n`,
+  );
+  const header = `import { useRouteContext } from '@tanstack/react-router';\nasync function probe() { const context: any = useRouteContext({ strict: false });\n`;
+  const inputs = { [route]: routeText, [view]: header + body + "\n}" };
+  const results = check(inputs, {}, true);
+  console.log(
+    JSON.stringify({
+      control,
+      inputs,
+      boundary: results,
+      compiler: results.compilerDiagnostics.map((d) =>
+        ts.flattenDiagnosticMessageText(d.messageText, "\n"),
+      ),
+    }),
+  );
+  assert.equal(results.compilerDiagnostics.length, 0);
+  assert.deepEqual(
+    [
+      [route, routeText.slice(0, routeText.indexOf(body)).split("\n").length],
+      [view, header.split("\n").length],
+    ].flatMap(([file, first]) =>
+      controls
+        .filter(
+          ([, rule], i) =>
+            !results.some(
+              (d) =>
+                d.file === file &&
+                d.line === first + i &&
+                d.column > 0 &&
+                d.rule === rule,
+            ),
+        )
+        .map(([code, rule]) => ({ file, code, rule })),
+    ),
+    [],
+  );
+}
+
+test("review findings: for-of bindings retain iterable capability provenance", () => {
+  checkReviewForms("for-of", [
+    ["for (const api of [context.ports.api]) api.health();", "view-api"],
+    [
+      "for (const { nested: [api] } of [{ nested: [context.ports.api] }]) api.health();",
+      "view-api",
+    ],
+    [
+      "for (const c of [context]) { const key: string = String(Math.random()); c[key].clear(); }",
+      "view-state",
+    ],
+    [
+      "for (const [client] of [[context.queryClient]]) client.clear();",
+      "view-state",
+    ],
+    [
+      "const clients = [context.ports.api]; for (const api of clients) api.health();",
+      "view-api",
+    ],
+    [
+      "let api: any; for (api of [context.ports.api]) api.health();",
+      "view-api",
+    ],
+    [
+      "let api: any; for ({ nested: [api] } of [{ nested: [context.ports.api] }]) api.health();",
+      "view-api",
+    ],
+    ["for await (const api of [context.ports.api]) api.health();", "view-api"],
+    ["for (const key of ['queryClient']) context[key!].clear();", "view-state"],
+    ["for (const { ports: { api } } of [context]) api.health();", "view-api"],
+  ]);
+});
+
+test("review findings: comma results retain capability provenance", () => {
+  checkReviewForms("comma", [
+    [
+      "const api = (Math.random(), context.ports.api); api.health();",
+      "view-api",
+    ],
+    [
+      "const client = (Math.random(), context.queryClient); client.clear();",
+      "view-state",
+    ],
+    [
+      "const c = (Math.random(), context); const key: string = String(Math.random()); c[key].clear();",
+      "view-state",
+    ],
+    [
+      "const { client: api } = (Math.random(), { client: context.ports.api }); api.health();",
+      "view-api",
+    ],
+    [
+      "const box: any = {}; const alias = (Math.random(), box); alias.client = context.ports.api; box.client.health();",
+      "view-api",
+    ],
+    [
+      "const key = (Math.random(), 'queryClient'); context[key].clear();",
+      "view-state",
+    ],
+  ]);
+});
+
+test("review findings: class fields cannot acquire API or cache authority", () => {
+  checkReviewForms("class-field", [
+    [
+      "class Box { client: any; run() { for (this.client of [context.ports.api]) this.client.health(); } } new Box().run();",
+      "view-api",
+    ],
+    [
+      "class Box { client: any; constructor() { this.client = context.ports.api; } } new Box().client.health();",
+      "view-api",
+    ],
+    [
+      "class Box { client: any; run() { this.client ??= context.queryClient; this.client.clear(); } } new Box().run();",
+      "view-state",
+    ],
+    [
+      "class Box { client: any; constructor() { [this.client] = [context.ports.api]; } } new Box().client.health();",
+      "view-api",
+    ],
+    [
+      "class Box { client: any; constructor() { ({ value: this.client } = { value: context.ports.api }); } } new Box().client.health();",
+      "view-api",
+    ],
+    [
+      "class Box { client: any = context.ports.api; } const b = new Box(); b.client.health();",
+      "view-api",
+    ],
+    [
+      "class Box { client: any = context.queryClient; } const b = new Box(); b.client.clear();",
+      "view-state",
+    ],
+    [
+      "class Box { static client: any = context.ports.api; } Box.client.health();",
+      "view-api",
+    ],
+    [
+      "class Box { #client: any = context.ports.api; run() { this.#client.health(); } } new Box().run();",
+      "view-api",
+    ],
+    [
+      "class Box { nested: any = { ports: context.ports }; } new Box().nested.ports.api.health();",
+      "view-api",
+    ],
+    [
+      "const Box = class { ['client']: any = context.queryClient; }; new Box().client.clear();",
+      "view-state",
+    ],
+  ]);
+});
+
+test("loop, comma and class flows preserve harmless values and context helpers", () => {
+  const inputs = {
+    "contexts/lint-flow/read.ts":
+      "export function read(api: any) { return { health() {} }; }",
+    "views/lint-flow/Page.ts": `import { useRouteContext } from '@tanstack/react-router';
+      import { read } from '../../contexts/lint-flow/read.js';
+      const context: any = useRouteContext({ strict: false });
+      for (const api of [{ health() {} }]) api.health();
+      for (const { nested: [api] } of [{ nested: [{ health() {} }] }]) api!.health();
+      for (const api of [context.ports.api]) read(api);
+      const api = (context.ports.api, { health() {} }); api.health();
+      const safe = (Math.random(), { health() {} }); safe.health();
+      class Box { client = read(context.ports.api); static count = 1; }
+      new Box().client.health();
+      class Owned { client: any; constructor() { this.client = read(context.ports.api); } }
+      new Owned().client.health();
+      { const context = { ports: { api: { health() {} } } }; class Local { client = context.ports.api; } new Local().client.health(); }
+      for (const key of ['tenantId'] as const) { const tenant = context[key]; }
+    `,
+    "routes/dashboard.tsx": readFileSync(
+      resolve(webRoot, "src/routes/dashboard.tsx"),
+      "utf8",
+    ).replace(
+      /  loader:.*\n/,
+      `  loader: ({ context }) => { for (const deps of [context]) prefetchDashboard(deps); const tenant = (Math.random(), context.tenantId); class Value { id = tenant; } return new Value().id; },\n`,
+    ),
   };
   const results = check(inputs, {}, true);
   assert.deepEqual(
