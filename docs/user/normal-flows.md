@@ -808,6 +808,7 @@ exist only in the installed launcher.
 | `setup` | Detect provider auth, save the enabled employer-analysis legs, and finish with a `doctor` report. In a source checkout it also syncs pnpm/uv dependencies and Playwright Chromium. |
 | `doctor` | Report setup checks for the database, LLM providers, Temporal, browser, Gmail, and telemetry. Read every row: it exits zero even when a check prints `MISSING`. |
 | `run [stages]` | Start pipeline workflows (default `all`, which maps to `discover`). |
+| `source-proposals from-history` / `list` / `reset CANDIDATE_ID` | Explicitly propose sources from saved canonical posting/application URLs, read retained evidence and review history, or reset one rejected coordinate. Review and promotion use the existing Source locator; see [Discovery](discovery.md#propose-sources-from-saved-posting-history). |
 | `discover` / `enrich` / `score` / `tailor` / `cover` | Start one stage; `score --rescore` re-scores jobs that already have a score. |
 | `job <url>` | Tailor and/or apply one job (`--tailor`, `--apply`, `--dry-run`). |
 | `apply` | Start apply automation (`--dry-run`, `--url`, `--continuous` to keep polling for new jobs). Utility modes: `--mark-applied`, `--mark-failed`, `--reset-failed`, and `--gen` (inspection-only dry-run prompt). |

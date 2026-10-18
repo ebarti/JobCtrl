@@ -333,3 +333,28 @@ never calls Discovery's policy-deletion routine and cannot emit `JobDeleted`.
 ## Company briefing reads
 
 The optional briefing ledger is read directly by Operations through exact tenant/company/job identities and its persisted determination ID. It adds no projection family. Accepted snapshots and failed attempts remain separate immutable records. Source bodies stay out of SSE; reference-only `JobUpdated` notifications invalidate each linked Job Detail and the existing digest. The [storage owner](storage.md#company-briefing-ledger) defines physical retention.
+
+## Saved-history source proposals
+
+The explicit `source-proposals from-history` command reads current posting
+locators/canonical identities and canonical enrichment application targets,
+then calls the existing learner in proposal-only mode. It writes only the
+existing source-locator queue and source-control events. Proposal receipts use
+`SourceLocationCandidateDiscovered` with `proposalOnly`, a normalized
+`coordinateKey`, candidate ID and immutable origin/extraction/sample evidence.
+They have null `job_id` so source review authority survives job removal.
+The normalized coordinate is also the event `entity_ref` under `discovery`,
+using the existing entity index for per-source learning fences.
+
+`SourceLocationCandidateReviewed` records candidate ID, coordinate, decision
+(`promote`, `reject`, `reset`), reason and decision time. The latest recorded
+review/proposal state fences ordinary learning by coordinate, including other
+posting URLs from the same recognized board. Rejection and queue deletion,
+and promotion and registry/queue updates, use one immediate transaction.
+Public-destination DNS checks precede the history scan's writer transaction.
+
+API and CLI reads never learn or promote. The API joins proposal receipts by
+recorded candidate ID and calculates registry overlap from exact coordinates;
+coverage remains unknown. The existing Discovery UI invalidates its locator and
+registry queries on the reviewed event. Application records, schedule settings
+and job identity are outside this writer's boundary.

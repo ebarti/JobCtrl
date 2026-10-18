@@ -394,3 +394,15 @@ prior bytes. See [Reviewed Locale Variants](locale-variants.md).
 [Screening answers](screening-answers.md), selected source facts and manual-use text are private local SQLite history. Only deliberate selected facts and exact saved question/posting context go to the configured Apply model lane. General activity and SSE carry safe references. Copying and manual-use attestation grant no form-entry or submission authority.
 
 Optional [company briefings](company-briefings.md) fetch only explicitly selected anonymous public pages and send bounded public text plus the reviewed company identity to the enrichment model. They send no profile, mail, resume or search query. The local database retains source snapshots, model receipts and accepted/failure history; shared company history survives removal of its linked jobs.
+
+## Retained Source Proposal History
+
+The opt-in `source-proposals from-history` command checks source hostnames through
+DNS; it sends no saved posting content to a model and fetches no remote page.
+Its local source-control receipts retain original posting/Job/run identifiers,
+input URLs, extraction hashes and bounded saved-content samples. These receipts
+and rejection/reset decisions survive job deletion and job-data purge, alongside
+the source registry and locator queue. `source-proposals list` reads that history
+without network access or mutations. See
+[Discovery](discovery.md#propose-sources-from-saved-posting-history) for review and
+explicit suppression reset.

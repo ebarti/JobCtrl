@@ -430,3 +430,13 @@ a browser request. These tests prove mapping, parsing, transport and security
 behavior; they do not prove SDK authentication, credential import, live model
 catalog access or model quality. The existing workflow fixtures described above
 use synthetic workflow handles and do not establish live Temporal recovery.
+
+## Source proposal review boundary
+
+`SourceProposalEvidenceSchema` and the additive `SourceLocatorCandidateSummary.proposal`
+DTO live in `packages/contracts`. Python's explicit history CLI feeds the existing
+learner/locator queue; the API reads its recorded receipts without running that
+learner. Source-coordinate parsing is a literal URL contract in both runtimes,
+covered by matching structural URL cases. It does not infer employer identity,
+relevance or completeness. `SourceLocationCandidateReviewed` belongs to both
+domain event registries and invalidates the existing source controls over SSE.

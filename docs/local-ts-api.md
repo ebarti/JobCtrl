@@ -190,6 +190,10 @@ See [Operations & Events](api/operations-and-events.md#pipeline-operations-snaps
 Source registry, quarantine, locator candidates, manual capture, schedules, and
 role-match feedback are covered in
 [Profile & Settings](api/profile-and-settings.md#discovery-controls).
+Source-locator GET uses a read-only database connection and never promotes.
+History proposals join saved source-control receipts and registry overlaps;
+review writes and durable coordinate decisions commit atomically. The history
+scan and explicit suppression reset are CLI-owned.
 
 `POST /v1/jobs/import-url` accepts `{ "url": "https://…" }` and awaits the
 worker-owned `JobUrlImportWorkflow`. It returns either the canonical imported

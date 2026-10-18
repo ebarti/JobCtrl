@@ -68,6 +68,10 @@ from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.ports.discovery import ScrapedJobPosting
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.discovery.target_queries import query_specs_for_source
+from jobctrl.infrastructure.discovery.posting_source_proposals import (
+    automatic_learning_blocked,
+    propose_posting_source,
+)
 from jobctrl.infrastructure.discovery.ats_adapters import (
     AshbyBoardAdapter,
     GreenhouseBoardAdapter,
@@ -254,7 +258,8 @@ def seed_source_registry_controls(
                 display_name = excluded.display_name,
                 owner = excluded.owner,
                 priority = excluded.priority,
-                state = excluded.state,
+                state = CASE WHEN source_registry_entries.state IN ('disabled', 'quarantined')
+                             THEN source_registry_entries.state ELSE excluded.state END,
                 policy_id = excluded.policy_id,
                 seed_url = excluded.seed_url,
                 updated_at = excluded.updated_at
@@ -313,7 +318,11 @@ def run_deterministic_source_locator(
 
     persisted = 0
     manual_actions = 0
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
     for candidate in candidates:
+        if automatic_learning_blocked(conn, candidate.candidate_url):
+            continue
         decision = validate_locator_candidate(candidate, active_policy)
         is_new = _locator_candidate_is_new(conn, candidate)
         persisted += 1
@@ -342,6 +351,9 @@ def learn_posting_source_from_url(
     observed_at: str,
     write_fence: Callable[[], None] | None = None,
     event_idempotency_prefix: str | None = None,
+    proposal_only: bool = False,
+    proposal_evidence: dict[str, Any] | None = None,
+    proposal_url_validator: Callable | None = None,
 ) -> LearnedPostingSource:
     """Learn a durable owner source from a broad-board posting URL.
 
@@ -360,8 +372,16 @@ def learn_posting_source_from_url(
             action="skipped",
         )
 
+    if proposal_only:
+        _apply_optional_write_fence(write_fence)
+        action, candidate_id = propose_posting_source(
+            conn, candidate_url, proposal_evidence or {}, validator=proposal_url_validator,
+        )
+        return LearnedPostingSource(None, None, candidate_id, action)
     ensure_worker_discovery_tables(conn)
     _apply_optional_write_fence(write_fence)
+    if automatic_learning_blocked(conn, candidate_url):
+        return LearnedPostingSource(None, None, None, "suppressed")
     detected = _detect_ats_kind(candidate_url)
     if detected is None:
         candidate = _source_location_candidate(
@@ -1145,6 +1165,8 @@ def _upsert_locator_candidate(
     conn: sqlite3.Connection,
     candidate: SourceLocationCandidate,
 ) -> None:
+    if automatic_learning_blocked(conn, candidate.candidate_url):
+        return
     conn.execute(
         """
         INSERT INTO source_locator_candidates (
@@ -1181,6 +1203,10 @@ def _promote_locator_candidate(
     *,
     event_idempotency_prefix: str | None = None,
 ) -> bool:
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    if automatic_learning_blocked(conn, candidate.candidate_url):
+        return False
     source_id = _source_id_from_locator_candidate(conn, candidate)
     now = utc_now()
     existing = conn.execute(
@@ -2039,13 +2065,13 @@ def _seed_url(entry: SourceRegistryEntry) -> str | None:
 
 def _detect_ats_kind(url: str) -> AtsKind | None:
     host = (urlparse(url).hostname or "").lower()
-    if "greenhouse.io" in host:
+    if host == "greenhouse.io" or host.endswith(".greenhouse.io"):
         return AtsKind.GREENHOUSE
-    if "lever.co" in host:
+    if host == "lever.co" or host.endswith(".lever.co"):
         return AtsKind.LEVER
-    if "ashbyhq.com" in host:
+    if host == "ashbyhq.com" or host.endswith(".ashbyhq.com"):
         return AtsKind.ASHBY
-    if "myworkdayjobs.com" in host:
+    if host == "myworkdayjobs.com" or host.endswith(".myworkdayjobs.com"):
         return AtsKind.WORKDAY
     return None
 

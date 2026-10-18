@@ -5535,6 +5535,34 @@ export const MANUAL_CAPTURE_MODE_VALUES = [
 ] as const;
 export type ManualCaptureModeValue = (typeof MANUAL_CAPTURE_MODE_VALUES)[number];
 
+export const SourceProposalEvidenceSchema = z.object({
+  originJobId: z.string(),
+  originPostingUrl: z.string(),
+  inputUrl: z.string(),
+  urlKind: z.enum(["posting_url", "canonical_url", "application_url"]),
+  observations: z.array(z.object({
+    observationId: z.string(), sourceId: z.string(), runId: z.string(),
+    observedUrl: z.string(), observedAt: z.string(),
+  })),
+  extraction: z.object({
+    tier: z.string().nullable(), enrichedAt: z.string().nullable(), snapshotVersion: z.number().nullable(),
+    descriptionSha256: z.string().nullable(), snapshotSha256: z.string().nullable(),
+    snapshotEvidence: z.array(z.string()).optional(),
+  }),
+  sample: z.object({ title: z.string(), company: z.string(), descriptionExcerpt: z.string() }),
+});
+export type SourceProposalEvidence = z.infer<typeof SourceProposalEvidenceSchema>;
+
+export interface SourceProposalReview {
+  coordinateKey: string;
+  sourceId: string;
+  atsKind: string | null;
+  boardToken: string | null;
+  completeness: "unknown";
+  evidence: SourceProposalEvidence[];
+  overlaps: { sourceId: string; state: string; seedUrl: string | null }[];
+}
+
 export interface SourceLocatorCandidateSummary {
   candidateId: string;
   candidateUrl: string;
@@ -5544,6 +5572,7 @@ export interface SourceLocatorCandidateSummary {
   employerDomainMatched: boolean;
   manualActionReason: ManualActionReasonValue | null;
   discoveredAt: string;
+  proposal?: SourceProposalReview;
 }
 
 export interface SourceLocatorListResponse {
