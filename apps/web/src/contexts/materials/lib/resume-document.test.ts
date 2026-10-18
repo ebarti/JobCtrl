@@ -14,6 +14,11 @@ import {
 } from "./resume-document.js";
 
 describe("resume document transforms", () => {
+  it("includes new unnumbered paragraphs beside anchored lines without splitting inline text", () => {
+    const value = resumePlateValueFromHtml('<main class="resume-page"><p>First <strong>pasted</strong> paragraph</p><p data-resume-line-number="1">Existing <a href="https://example.test">source</a> line</p><p>Last pasted paragraph</p></main>');
+    expect(resumeTextFromPlateValue(value)).toBe("First pasted paragraph\nExisting source line\nLast pasted paragraph");
+  });
+
   it("imports supported structure and identity while dropping active HTML and unsafe attributes", () => {
     const value = resumePlateValueFromHtml(`<main class="resume-page">
       <script>scriptPayload()</script><iframe>framePayload</iframe><style>stylePayload</style>

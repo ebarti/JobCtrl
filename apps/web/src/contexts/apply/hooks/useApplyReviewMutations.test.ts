@@ -21,6 +21,27 @@ import {
 } from "./useApplyReviewMutations.js";
 
 describe("apply review mutations", () => {
+  it("invalidates the initiating tenant when a decision settles after a tenant switch", async () => {
+    let finish!: () => void;
+    const ports = buildTestPorts({ api: { decideApplyReview: vi.fn(async (jobId, body) => {
+      await new Promise<void>((resolve) => { finish = resolve; });
+      return { ok: true as const, decision: { decisionId: "synthetic-decision", jobKey: jobId, decision: body.decision,
+        reason: null, decidedBy: "user", decidedAt: "2026-10-18T00:00:00Z" } };
+    }) } });
+    const { result, queryClient, rerender } = renderHookWithProviders(() => useApplyReviewDecisionMutation(), { ports });
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    act(() => result.current.mutate({ jobId: "job-2", body: { decision: "defer", decidedBy: "user" } }));
+    await waitFor(() => expect(finish).toBeDefined());
+    const otherTenant = "other-tenant" as TenantId;
+    Object.assign(ports, { session: new FakeSessionPort({ tenantId: otherTenant, userId: null }) });
+    rerender();
+    invalidate.mockClear();
+    await act(async () => { finish(); });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: applyReviewKeys.queue(LOCAL_TENANT) });
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: applyReviewKeys.queue(otherTenant) });
+  });
+
   it("publishes delayed responses to their original tenant/job without losing the newer saved revision", async () => {
     const jobId = "job-race";
     const draft: ResumeReviewDraft = {

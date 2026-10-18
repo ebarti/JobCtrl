@@ -12,7 +12,8 @@ import {
   IconX,
   type TablerIcon,
 } from "@tabler/icons-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 
 import {
   Alert,
@@ -28,15 +29,15 @@ import {
   TableHeader,
   TableRow,
 } from "../../../shared/ui/table.js";
-import { useApplyReviewDecisionMutation } from "../hooks/useApplyReviewMutations.js";
-
 export interface ApplyReviewDecisionControlsProps {
   readonly item: ApplyReviewQueueItem;
   readonly approvalDisabledReason?: string | null;
   readonly liveSubmitDisabledReason?: string | null;
   readonly approvalNotice?: string | null;
   readonly approvalPreparing?: boolean;
-  readonly onPrepareApproval?: (() => Promise<boolean>) | null;
+  readonly approvalRendering?: boolean;
+  readonly onDecision: (value: ApplyReviewDecisionValue, reason: string, partialOverrideRunId?: string) => Promise<void>;
+  readonly decisionError?: string | null;
 }
 
 const DECISION_LABELS: Record<ApplyReviewDecisionValue, string> = {
@@ -485,14 +486,19 @@ export function ApplyReviewDecisionControls({
   liveSubmitDisabledReason = null,
   approvalNotice = null,
   approvalPreparing = false,
+  approvalRendering = approvalPreparing,
   item,
-  onPrepareApproval = null,
+  onDecision,
+  decisionError = null,
 }: ApplyReviewDecisionControlsProps) {
-  const decision = useApplyReviewDecisionMutation();
-  const [preparingDecision, setPreparingDecision] =
-    useState<ApplyReviewDecisionValue | null>(null);
+  const tenantId = useTenantId();
+  const controlIdentity = JSON.stringify([tenantId, item.jobKey]);
+  type Preparation = { key: string; value: ApplyReviewDecisionValue };
+  const submitting = useRef<Preparation | null>(null);
+  const [preparation, setPreparation] = useState<Preparation | null>(null);
+  const preparingDecision = preparation?.key === controlIdentity ? preparation.value : null;
   const pending =
-    decision.isPending || preparingDecision !== null || approvalPreparing;
+    preparingDecision !== null || approvalPreparing;
   const primaryDecisions = PRIMARY_DECISIONS;
   const fullDryRunEvidence = item.approvalGate.dryRunEvidence;
   const partialDryRunEvidence = item.approvalGate.partialDryRunEvidence;
@@ -505,7 +511,7 @@ export function ApplyReviewDecisionControls({
     approvalDisabledReason,
     liveSubmitDisabledReason,
     approvalNotice,
-    approvalPreparing,
+    approvalRendering,
   );
   const hasBlockingGate = submitGateRows.some((row) => row.tone === "blocked");
 
@@ -513,41 +519,16 @@ export function ApplyReviewDecisionControls({
     value: ApplyReviewDecisionValue,
     partialOverrideRunId?: string,
   ) => {
-    if (pending) return;
-    if (value.startsWith("approve_") && onPrepareApproval) {
-      setPreparingDecision(value);
-      try {
-        const prepared = await onPrepareApproval();
-        if (!prepared) return;
-      } catch {
-        return;
-      } finally {
-        setPreparingDecision(null);
-      }
-    }
-    decision.mutate({
-      jobId: item.jobKey,
-      body: {
-        decision: value,
-        reason: DECISION_REASONS[value],
-        decidedBy: "user",
-        ...(value === "approve_submit"
-          ? {
-              materialsGeneration: item.approvalGate.materialsGeneration,
-              profileVersion: item.approvalGate.profileVersion,
-              applicationUrl: item.approvalGate.applicationUrl,
-              ...(item.emailApplication
-                ? {
-                    emailRecipient: item.emailApplication.recipient,
-                    emailAttachmentArtifactId:
-                      item.emailApplication.attachmentArtifactId,
-                  }
-                : {}),
-            }
-          : {}),
-        ...(partialOverrideRunId ? { partialOverrideRunId } : {}),
-      },
-    });
+    if (pending || submitting.current?.key === controlIdentity) return;
+    const attempt = { key: controlIdentity, value };
+    submitting.current = attempt;
+    const finish = () => {
+      if (submitting.current === attempt) submitting.current = null;
+      setPreparation((current) => current === attempt ? null : current);
+    };
+    setPreparation(attempt);
+    try { await onDecision(value, DECISION_REASONS[value], partialOverrideRunId); }
+    finally { finish(); }
   };
 
   return (
@@ -632,10 +613,8 @@ export function ApplyReviewDecisionControls({
             >
               <DecisionIcon aria-hidden="true" data-icon="inline-start" />
               {preparingDecision === value
-                ? "Rendering"
-                : decision.isPending
-                  ? "Saving"
-                  : DECISION_LABELS[value]}
+                ? approvalRendering ? "Rendering" : "Saving"
+                : DECISION_LABELS[value]}
             </Button>
           );
         })}
@@ -722,12 +701,12 @@ export function ApplyReviewDecisionControls({
           </TableBody>
         </Table>
       </div>
-      {decision.isError ? (
+      {decisionError ? (
         <Alert className="danger" variant="destructive">
           <IconAlertTriangle aria-hidden="true" />
           <AlertTitle>Decision failed</AlertTitle>
           <AlertDescription>
-            Your authorization decision was not saved. Try again.
+            {decisionError ?? "Your authorization decision was not saved. Try again."}
           </AlertDescription>
         </Alert>
       ) : null}

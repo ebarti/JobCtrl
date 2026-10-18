@@ -18,10 +18,9 @@ import { type Value, type TElement } from "platejs";
 
 export interface ResumePlateEditorProps {
   readonly artifactId: string;
-  readonly autosaveDelayMs?: number;
+  readonly documentState: ResumeReviewDocumentState;
   readonly draft: ResumeReviewDraft | null;
   readonly draftError?: string | null;
-  readonly draftLoading?: boolean;
   readonly finalUrl: string;
   readonly htmlUrl: string | null;
   readonly layoutBoxes: readonly ResumeLayoutBox[];
@@ -29,17 +28,14 @@ export interface ResumePlateEditorProps {
   readonly pdfFilename: string;
   readonly profileSourceFields?: readonly ApplyReviewProfileSourceField[];
   readonly renderError?: string | null;
-  readonly renderPending?: boolean;
   readonly renderResult?: ResumeReviewDraftRenderResponse | null;
   readonly resumeText?: string | null;
   readonly saveError?: string | null;
-  readonly savePending?: boolean;
   readonly replyError?: string | null;
+  readonly seedError?: string | null;
   readonly replyPending?: boolean;
   readonly selectedLine?: PdfAuditLineSelection | null;
   readonly title: string;
-  readonly onDraftGateChange?: (state: ResumeDraftGateState) => void;
-  readonly onPrepareApproval?: () => Promise<boolean>;
   readonly onRenderDraft?: () => void;
   readonly onReplyToThread?: (
     thread: ResumeCommentThread,
@@ -47,27 +43,25 @@ export interface ResumePlateEditorProps {
       readonly decision: ResumeCommentReplyDecision;
       readonly body: string;
     },
-  ) => void;
-  readonly onSaveDraft?: (input: {
-    readonly editedText: string;
-    readonly plateDocument: Value;
-    readonly source: "autosave" | "manual";
-  }) => void;
+  ) => void | Promise<boolean | void>;
+  readonly onSaveDraft?: () => void;
   readonly onSelectLine: (selection: PdfAuditLineSelection | null) => void;
   readonly onSeedCommentThreads?: (
     threads: readonly ResumeReviewCommentThreadSeedInput[],
   ) => void;
 }
 
-export interface ResumeDraftGateState {
-  readonly draftId: string | null;
+export interface ResumeReviewDocumentState {
+  readonly value: Value | null;
+  readonly version: string;
   readonly dirty: boolean;
-  readonly hasSavedRevision: boolean;
-  readonly notice: string | null;
-  readonly prepareApproval?: (() => Promise<boolean>) | null;
-  readonly preparing: boolean;
-  readonly rendered: boolean;
-  readonly reason: string | null;
+  readonly status: string;
+  readonly canSave: boolean;
+  readonly canRender: boolean;
+  readonly onChange: (value: Value) => void;
+  readonly onInitialize: (value: Value) => void;
+  readonly onRetryLoad: () => void;
+  readonly onRetryComments: () => void;
 }
 
 export interface ResumeLineEntry {

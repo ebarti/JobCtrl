@@ -56,7 +56,6 @@ import {
   resumeSemanticTextChangesFromPlateValues,
   isPlateValue,
   normalizeResumePlateValue,
-  resumeTextFromPlateValue,
   selectionFromPlateLine,
   resumeLinesFromText,
   resumeLineFromPdfSelection,
@@ -78,7 +77,6 @@ import { Empty } from "../../../shared/ui/empty.js";
 import {
   placeResumeCommentThreads,
   seedThreadsFromPins,
-  seedThreadKey,
 } from "../lib/resume-comments.js";
 
 import { formatToken } from "../lib/audit-format.js";
@@ -317,13 +315,13 @@ function useResumeHtmlState(
   htmlTransform?: (html: string) => string,
   transformKey?: string,
 ): ResumeHtmlState {
-  const [htmlState, setHtmlState] = useState<ResumeHtmlState>({
-    status: htmlUrl ? "loading" : "idle",
-    html: null,
-    message: null,
+  const requestKey = htmlUrl ? htmlUrl + ':' + (transformKey ?? '') : null;
+  const [loaded, setLoaded] = useState<{ key: string | null; state: ResumeHtmlState }>({
+    key: requestKey, state: { status: htmlUrl ? "loading" : "idle", html: null, message: null },
   });
 
   useEffect(() => {
+    const setHtmlState = (state: ResumeHtmlState) => setLoaded({ key: requestKey, state });
     if (!htmlUrl) {
       setHtmlState({ status: "idle", html: null, message: null });
       return;
@@ -332,6 +330,7 @@ function useResumeHtmlState(
     setHtmlState({ status: "loading", html: null, message: null });
     fetch(htmlUrl, { signal: abortController.signal })
       .then(async (response) => {
+        if (abortController.signal.aborted) return null;
         if (!response.ok) {
           const errorBody = await response.json().catch(() => null);
           const message =
@@ -361,9 +360,9 @@ function useResumeHtmlState(
         setHtmlState({ status: "error", html: null, message });
       });
     return () => abortController.abort();
-  }, [htmlTransform, htmlUrl, transformKey]);
+  }, [htmlTransform, htmlUrl, requestKey, transformKey]);
 
-  return htmlState;
+  return loaded.key === requestKey ? loaded.state : { status: htmlUrl ? "loading" : "idle", html: null, message: null };
 }
 
 export function ResumeStandalonePlateEditor({
@@ -572,11 +571,10 @@ export function ResumeStandalonePlateEditor({
 }
 
 export function ResumePlateEditor({
-  autosaveDelayMs = 1500,
+  documentState,
   artifactId,
   draft,
   draftError = null,
-  draftLoading = false,
   finalUrl,
   htmlUrl,
   layoutBoxes,
@@ -584,17 +582,14 @@ export function ResumePlateEditor({
   pdfFilename,
   profileSourceFields = [],
   renderError = null,
-  renderPending = false,
   renderResult = null,
   resumeText,
   saveError = null,
-  savePending = false,
   replyError = null,
+  seedError = null,
   replyPending = false,
   selectedLine,
   title,
-  onDraftGateChange,
-  onPrepareApproval,
   onRenderDraft,
   onReplyToThread,
   onSaveDraft,
@@ -624,17 +619,11 @@ export function ResumePlateEditor({
     () => seedThreadsFromPins(artifactId, linePins, risk),
     [artifactId, linePins, risk],
   );
-  const seedKey = useMemo(
-    () => (draft && seedThreads.length ? `${draft.draftId}:${seedThreads.map(seedThreadKey).join("|")}` : null),
-    [draft, seedThreads],
-  );
-  const seededKey = useRef<string | null>(null);
   const formattingApiRef = useRef<ResumeEditorFormattingApi | null>(null);
   const userClearedSelection = useRef(false);
   const initializedSelectionDocumentKey = useRef<string | null>(null);
   const [formattingApiReady, setFormattingApiReady] = useState(false);
   const [editorVersion, setEditorVersion] = useState(0);
-  const [draftSourceVersion, setDraftSourceVersion] = useState(0);
   const exportSourceRef = useRef<HTMLDivElement | null>(null);
   const initialPlateValue = useMemo<Value | null>(() => {
     const savedValue = draft?.latestRevision?.plateDocument;
@@ -643,132 +632,21 @@ export function ResumePlateEditor({
     }
     return htmlState.status === "ready" ? resumePlateValueFromHtml(htmlState.html) : null;
   }, [draft?.latestRevision?.plateDocument, htmlState]);
-  const [currentPlateValue, setCurrentPlateValue] = useState<Value | null>(initialPlateValue);
-
-  const reviewDocumentIdentity = draft ? `${draft.draftId}:${draft.baseGeneration}` : artifactId;
-  const savedDocument = useRef({ identity: reviewDocumentIdentity, signature: resumePlateValueSignature(initialPlateValue) });
-  const submittedDocument = useRef<{ identity: string; signature: string } | null>(null);
+  const currentPlateValue = documentState.value;
+  const setCurrentPlateValue = documentState.onChange;
   useEffect(() => {
-    const signature = resumePlateValueSignature(initialPlateValue);
-    const previous = savedDocument.current;
-    if (previous.identity === reviewDocumentIdentity && previous.signature === signature) return;
-    savedDocument.current = { identity: reviewDocumentIdentity, signature };
-    // Only the initial revision-zero arrival continues the current artifact's
-    // editing session; identical saved documents in another draft still reset it.
-    if (previous.identity === artifactId && draft?.latestRevisionNumber === 0 && previous.signature === signature) return;
-    // A saved response acknowledges its snapshot, not edits typed after it.
-    // Comment-only publications and identical acknowledgements never remount
-    // Plate, preserving formatting, focus and selection in the live document.
-    const currentSignature = resumePlateValueSignature(currentPlateValue);
-    const acknowledgesSubmission = submittedDocument.current?.identity === reviewDocumentIdentity
-      && submittedDocument.current.signature === signature;
-    if (previous.identity !== reviewDocumentIdentity || (!acknowledgesSubmission && currentSignature === previous.signature)) {
-      if (currentSignature !== signature) {
-        setCurrentPlateValue(initialPlateValue);
-        setDraftSourceVersion((currentVersion) => currentVersion + 1);
-      }
-    }
-  }, [artifactId, currentPlateValue, draft?.latestRevisionNumber, initialPlateValue, reviewDocumentIdentity]);
-
-  const currentDraftText = useMemo(
-    () => (currentPlateValue ? resumeTextFromPlateValue(currentPlateValue) : ""),
-    [currentPlateValue],
-  );
-  const initialDraftSignature = useMemo(
-    () => resumePlateValueSignature(initialPlateValue),
-    [initialPlateValue],
-  );
-  const currentDraftSignature = useMemo(
-    () => resumePlateValueSignature(currentPlateValue),
-    [currentPlateValue],
-  );
-  const handleSaveDraft = useCallback((source: "autosave" | "manual") => {
-    if (!currentPlateValue || !onSaveDraft) return;
-    submittedDocument.current = {
-      identity: reviewDocumentIdentity,
-      signature: resumePlateValueSignature(normalizeResumePlateValue(currentPlateValue)),
-    };
-    onSaveDraft({ editedText: currentDraftText, plateDocument: currentPlateValue, source });
-  }, [currentDraftText, currentPlateValue, onSaveDraft, reviewDocumentIdentity]);
-  const documentKey = `${artifactId}:${draft?.draftId ?? "no-draft"}:${htmlUrl ?? "no-html"}:${draftSourceVersion}:${editorVersion}`;
+    if (initialPlateValue) documentState.onInitialize(initialPlateValue);
+  }, [initialPlateValue, documentState.onInitialize]);
+  const handleSaveDraft = () => onSaveDraft?.();
+  const documentKey = documentState.version + ':' + editorVersion;
   const canFormat = formattingApiReady && Boolean(currentPlateValue);
-  const draftDirty = Boolean(currentPlateValue && currentDraftSignature !== initialDraftSignature);
-  const hasSavedRevision = Boolean(draft?.latestRevision);
-  const draftRendered = draft?.state === "rendered" || draft?.state === "promoted";
-  const savedDraftNeedsRender = hasSavedRevision && !draftRendered;
-  const draftGateReason = draft
-    ? draftDirty
-      ? "Save and render the edited resume before approval."
-      : renderPending && savedDraftNeedsRender
-        ? "Rendering saved resume draft before approval."
-        : renderResult && !renderResult.ok
-          ? "Resolve draft validation errors before approval."
-          : renderError && savedDraftNeedsRender
-            ? "Resume render failed; retry render before approval."
-            : savedDraftNeedsRender && !onPrepareApproval
-                ? "Render the saved resume draft before approval."
-                : null
-    : null;
-  const draftGateNotice =
-    draft && savedDraftNeedsRender && !draftDirty && !renderPending && !renderError && !(renderResult && !renderResult.ok)
-      ? "Saved draft will render automatically before approval."
-      : null;
-  const draftStatus = draftLoading
-    ? "loading draft"
-    : renderPending
-      ? "rendering saved draft"
-    : savePending
-      ? "saving draft"
-      : saveError || draftError || renderError || (renderResult && !renderResult.ok)
-        ? "draft save issue"
-      : draftDirty
-        ? "unsaved changes"
-        : draftRendered
-          ? "replacement rendered"
-        : draft?.latestRevision
-          ? `saved revision ${draft.latestRevision.revisionNumber}`
-          : draft
-            ? "draft ready"
-            : "draft unavailable";
-  const saveDisabled = !draft || !currentPlateValue || !draftDirty || savePending || draftLoading || !onSaveDraft;
-  const renderDisabled =
-    !draft ||
-    !draft.latestRevision ||
-    draftDirty ||
-    savePending ||
-    renderPending ||
-    draftLoading ||
-    !onRenderDraft;
-
+  const draftDirty = documentState.dirty;
+  const draftStatus = documentState.status;
+  const saveDisabled = !documentState.canSave || !onSaveDraft;
+  const renderDisabled = !documentState.canRender || !onRenderDraft;
   useEffect(() => {
-    onDraftGateChange?.({
-      draftId: draft?.draftId ?? null,
-      dirty: draftDirty,
-      hasSavedRevision,
-      notice: draftGateNotice,
-      prepareApproval: draftGateNotice ? (onPrepareApproval ?? null) : null,
-      preparing: Boolean(renderPending && savedDraftNeedsRender),
-      rendered: draftRendered,
-      reason: draftGateReason,
-    });
-  }, [
-    draft?.draftId,
-    draftDirty,
-    draftGateNotice,
-    draftGateReason,
-    draftRendered,
-    hasSavedRevision,
-    onDraftGateChange,
-    onPrepareApproval,
-    renderPending,
-    savedDraftNeedsRender,
-  ]);
-
-  useEffect(() => {
-    if (!seedKey || seededKey.current === seedKey || !seedThreads.length || !onSeedCommentThreads) return;
-    seededKey.current = seedKey;
-    onSeedCommentThreads(seedThreads);
-  }, [onSeedCommentThreads, seedKey, seedThreads]);
+    onSeedCommentThreads?.(seedThreads);
+  }, [onSeedCommentThreads, seedThreads]);
 
   const handleFormattingApiChange = useCallback((api: ResumeEditorFormattingApi | null) => {
     formattingApiRef.current = api;
@@ -817,39 +695,6 @@ export function ResumePlateEditor({
     [],
   );
   const handleFontSize = useCallback((value: ResumeEditorFontSize) => formattingApiRef.current?.setFontSize(value), []);
-
-  const lastAutosaveSignature = useRef<string | null>(null);
-  useEffect(() => {
-    if (
-      !autosaveDelayMs ||
-      !draft ||
-      !currentPlateValue ||
-      !draftDirty ||
-      savePending ||
-      draftLoading ||
-      !onSaveDraft ||
-      lastAutosaveSignature.current === currentDraftSignature
-    ) {
-      return;
-    }
-    const handle = window.setTimeout(() => {
-      if (!currentPlateValue || lastAutosaveSignature.current === currentDraftSignature) return;
-      lastAutosaveSignature.current = currentDraftSignature;
-      handleSaveDraft("autosave");
-    }, autosaveDelayMs);
-    return () => window.clearTimeout(handle);
-  }, [
-    autosaveDelayMs,
-    currentDraftSignature,
-    currentDraftText,
-    currentPlateValue,
-    draft,
-    draftDirty,
-    draftLoading,
-    handleSaveDraft,
-    onSaveDraft,
-    savePending,
-  ]);
 
   useEffect(() => {
     userClearedSelection.current = false;
@@ -908,7 +753,7 @@ export function ResumePlateEditor({
           disabled={saveDisabled}
           size="sm"
           type="button"
-          onClick={() => handleSaveDraft("manual")}
+          onClick={() => handleSaveDraft()}
         >
           Save draft
         </Button>
@@ -932,8 +777,9 @@ export function ResumePlateEditor({
           Open final file
         </a>
       </div>
-      {draftError ? <div className="banner inline">{draftError}</div> : null}
+      {draftError ? <div className="banner inline">{draftError}<Button onClick={documentState.onRetryLoad}>Retry loading draft</Button></div> : null}
       {saveError ? <div className="banner inline">{saveError}</div> : null}
+      {seedError ? <div className="banner inline">{seedError}<Button onClick={documentState.onRetryComments}>Retry comment review</Button></div> : null}
       {renderError ? <div className="banner inline">{renderError}</div> : null}
       {renderResult && !renderResult.ok ? (
         <div className="banner inline" role="status">
@@ -942,6 +788,7 @@ export function ResumePlateEditor({
       ) : null}
       {renderResult?.validation.warnings.length ? (
         <div className="resume-render-warnings" role="status">
+          <b>{renderResult.ok ? "Rendered replacement warnings" : "Warnings from rejected render attempt"}</b>
           {renderResult.validation.warnings.map((warning) => (
             <span key={warning}>{warning}</span>
           ))}
@@ -1298,6 +1145,6 @@ export function ResumeAuditPins({
 export { resumeSemanticTextChangesFromPlateValues } from "../lib/resume-document.js";
 
 export type {
-  ResumeDraftGateState,
+  ResumeReviewDocumentState,
   ResumePlateSemanticTextChange,
 } from "../lib/resume-editor-types.js";

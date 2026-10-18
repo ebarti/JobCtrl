@@ -63,6 +63,19 @@ loads the generated HTML source into a rich-text editor so text, formatting, and
 hyperlink edits, comments, validation, final PDF rendering, and layout boxes stay
 tied to the same material generation.
 
+Edits autosave, and **Save draft** also lets you retry a failed save. Saving
+keeps later edits in the editor; it does not render a replacement. Use **Render
+replacement** to validate the saved revision. A failed render keeps the last
+accepted materials and comparison available while you correct the draft or retry.
+Failed comment replies retain your text, and **Retry comment review** retries a
+failed comment refresh.
+
+When a clean saved draft needs rendering, an authorization request prepares it
+first and then reads the current application bindings. Editing, switching jobs,
+or replacing the draft during preparation cancels that authorization request.
+Review the current inputs and authorize again. Defer, decline and reset remain
+available without rendering or starting automation.
+
 Apply Review keeps its pending queue to the left at working desktop widths. The
 selected application's decision, evidence, and materials then occupy one
 full-width sequence rather than competing columns. When the surface becomes
