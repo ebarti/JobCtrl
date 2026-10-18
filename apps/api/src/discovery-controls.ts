@@ -746,6 +746,9 @@ export function promoteSourceLocatorCandidate(
     const coordinate = postingSourceCoordinate(candidate.candidate_url);
     if (!coordinate) throw new SourceLocatorReviewError("Source candidate URL is malformed or private.", 400);
     const proposal = sourceProposalReviews(db).get(candidateId);
+    if (proposal?.promotionBlockedReason) {
+      throw new SourceLocatorReviewError(proposal.promotionBlockedReason, 409);
+    }
     const now = new Date().toISOString();
     const kind = sourceKind(candidate.source_kind);
     const sourceId = proposal?.sourceId ?? sourceIdFromLocatorCandidate(candidate);

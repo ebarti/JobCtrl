@@ -1086,6 +1086,7 @@ function SourceLocatorPanel({
                   <span>{candidate.proposal.overlaps.length
                     ? `Existing sources: ${candidate.proposal.overlaps.map((entry) => `${entry.sourceId} (${entry.state})`).join(", ")}`
                     : "No existing source overlap"}</span>
+                  {candidate.proposal.promotionBlockedReason ? <span>{candidate.proposal.promotionBlockedReason}</span> : null}
                   <span>{candidate.proposal.evidence.length} saved origin records · Up to 3 samples shown</span>
                   {candidate.proposal.evidence.slice(0, 3).map((evidence, index) => (
                     <span key={`${evidence.originJobId}:${evidence.urlKind}:${index}`}>
@@ -1123,7 +1124,7 @@ function SourceLocatorPanel({
                 variant="ghost"
                 aria-label={`Promote ${candidate.candidateUrl}`}
                 title="Promote candidate"
-                disabled={promote.isPending || reject.isPending || candidate.proposal?.overlaps.some((entry) => entry.state !== "active")}
+                disabled={promote.isPending || reject.isPending || Boolean(candidate.proposal?.promotionBlockedReason) || candidate.proposal?.overlaps.some((entry) => entry.state !== "active")}
                 onClick={() =>
                   promote.mutate({
                     candidateId: candidate.candidateId,

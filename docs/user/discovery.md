@@ -93,7 +93,10 @@ requires the existing explicit review control and rechecks the public
 destination before enabling a source. An overlapping active registry
 entry is reused with its reviewed configuration intact. A disabled or
 quarantined overlap must be changed explicitly in the registry first; a proposal
-cannot enable it. Normal worker reconciliation also preserves disabled sources.
+cannot enable it. Normal worker reconciliation also preserves disabled sources. New Workday
+coordinates require the employer/site to be configured first; regional Lever
+coordinates remain review-only while the adapter supports global boards. The
+queue explains these promotion limits without hiding their evidence.
 
 Rejecting a candidate records durable suppression for its source coordinate,
 including alternate posting URLs and ordinary automatic learning. Run

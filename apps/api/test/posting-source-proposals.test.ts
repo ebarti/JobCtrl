@@ -33,10 +33,10 @@ function candidate(db: Database.Database, id = "candidate-history", url = "https
     VALUES ('local', ?, ?, 'ats_api', 0, 'greenhouse', 0, 'ambiguous_career_system', ?)`)
     .run(id, url, NOW);
 }
-function receipt(db: Database.Database, id = "candidate-history") {
+function receipt(db: Database.Database, id = "candidate-history", coordinateKey = "https://boards.greenhouse.io/acme", sourceEvidence = evidence) {
   db.prepare(`INSERT INTO job_events (tenant_id, identity_version, stage, event_type, occurred_at, payload_json, entity_kind, entity_ref)
-    VALUES ('local', 1, 'discover', 'SourceLocationCandidateDiscovered', ?, ?, 'discovery', 'https://boards.greenhouse.io/acme')`)
-    .run(NOW, JSON.stringify({ candidateId: id, coordinateKey: "https://boards.greenhouse.io/acme", proposalOnly: true, evidence }));
+    VALUES ('local', 1, 'discover', 'SourceLocationCandidateDiscovered', ?, ?, 'discovery', ?)`)
+    .run(NOW, JSON.stringify({ candidateId: id, coordinateKey, proposalOnly: true, evidence: sourceEvidence }), coordinateKey);
 }
 function source(db: Database.Database, state = "active") {
   db.prepare(`INSERT INTO source_registry_entries (tenant_id, source_id, kind, display_name, owner,
@@ -131,6 +131,24 @@ describe("posting-history source proposals", () => {
     try {
       candidate(db); receipt(db); source(db, "disabled");
       const before = db.serialize();
+      const response = await app.inject({ method: "POST", url: "/v1/discovery/locator-candidates/candidate-history/promote", payload: {} });
+      expect(response.statusCode, response.body).toBe(409);
+      expect(db.serialize()).toEqual(before);
+    } finally { await app.close(); db.close(); }
+  });
+
+  it.each([
+    ["https://jobs.eu.lever.co/acme", "lever", "regional board"],
+    ["https://acme.wd5.myworkdayjobs.com/Careers", "workday", "Configure this Workday"],
+  ])("retains unsupported/unconfigured %s proposals without activation", async (coordinateKey, kind, explanation) => {
+    const { db, app } = workspace();
+    try {
+      candidate(db, "candidate-history", coordinateKey);
+      db.prepare("UPDATE source_locator_candidates SET detected_ats_kind = ?").run(kind);
+      receipt(db, "candidate-history", coordinateKey, { ...evidence, inputUrl: `${coordinateKey}/posting`, urlKind: "application_url" });
+      const before = db.serialize();
+      const list = await app.inject({ method: "GET", url: "/v1/discovery/locator-candidates" });
+      expect(list.json().candidates[0].proposal.promotionBlockedReason).toContain(explanation);
       const response = await app.inject({ method: "POST", url: "/v1/discovery/locator-candidates/candidate-history/promote", payload: {} });
       expect(response.statusCode, response.body).toBe(409);
       expect(db.serialize()).toEqual(before);

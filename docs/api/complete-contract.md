@@ -785,7 +785,7 @@ type and policy metadata are visible as columns instead of compact badges:
   parseable ATS candidates. It returns `{ ok, candidates }`; existing candidate
   fields are unchanged. History proposals add optional `proposal` with
   `coordinateKey`, `sourceId`, nullable `atsKind`/`boardToken`,
-  `completeness: "unknown"`, `overlaps[]` (`sourceId`, `state`, `seedUrl`) and
+  `completeness: "unknown"`, optional nullable `promotionBlockedReason`, `overlaps[]` (`sourceId`, `state`, `seedUrl`) and
   `evidence[]`. Each evidence receipt contains `originJobId`,
   `originPostingUrl`, `inputUrl`, `urlKind` (`posting_url`, `canonical_url`,
   `application_url`), `observations[]` (observation/source/run IDs, observed URL

@@ -91,11 +91,15 @@ export function sourceProposalReviews(db: SqliteDatabase): Map<string, SourcePro
       if (!seen.has(fingerprint)) { receipts.push(evidence.data); seen.add(fingerprint); }
     }
     seenEvidence.set(payload["candidateId"], seen);
+    const overlaps = existing?.overlaps ?? registry.filter((row) => row.source_id === coordinate.sourceId ||
+      (row.seed_url && postingSourceCoordinate(row.seed_url)?.coordinateKey === coordinate.coordinateKey))
+      .map((row) => ({ sourceId: row.source_id, state: row.state, seedUrl: row.seed_url }));
+    const promotionBlockedReason = overlaps.length ? null
+      : coordinate.atsKind === "workday" ? "Configure this Workday employer and site before promoting the proposal."
+      : coordinate.coordinateKey.startsWith("https://jobs.eu.lever.co/") ? "The current Lever adapter supports global boards. This regional board remains available for review."
+      : null;
     reviews.set(payload["candidateId"], {
-      ...coordinate, completeness: "unknown", evidence: receipts,
-      overlaps: existing?.overlaps ?? registry.filter((row) => row.source_id === coordinate.sourceId ||
-        (row.seed_url && postingSourceCoordinate(row.seed_url)?.coordinateKey === coordinate.coordinateKey))
-        .map((row) => ({ sourceId: row.source_id, state: row.state, seedUrl: row.seed_url })),
+      ...coordinate, completeness: "unknown", promotionBlockedReason, evidence: receipts, overlaps,
     });
   }
   return reviews;

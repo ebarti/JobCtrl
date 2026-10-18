@@ -5559,6 +5559,7 @@ export interface SourceProposalReview {
   atsKind: string | null;
   boardToken: string | null;
   completeness: "unknown";
+  promotionBlockedReason?: string | null;
   evidence: SourceProposalEvidence[];
   overlaps: { sourceId: string; state: string; seedUrl: string | null }[];
 }
