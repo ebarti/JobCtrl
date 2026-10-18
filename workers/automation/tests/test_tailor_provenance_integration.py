@@ -41,7 +41,7 @@ from jobctrl.domain.materials.analysis import (
 from jobctrl.domain.materials.analyze_use_case import AnalyzeJobOutcome
 from jobctrl.domain.materials.provenance import BulletProvenanceSet
 from jobctrl.domain.materials.services import ContentValidator, ResumeAssembler
-from jobctrl.domain.materials.use_cases import TailorResumeUseCase
+from jobctrl.domain.materials.use_cases import TailorResumeUseCase, TailoringLlmPolicy
 from jobctrl.domain.profile.aggregate import Profile
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.ports.llm import LlmMessage
@@ -56,6 +56,7 @@ from jobctrl.domain.scoring import (
     RequirementTailoringDirective,
 )
 from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.materials.artifact_writer import LocalArtifactTextWriter
 from tests.determination_fakes import review_ports, JobInterpreter
 
 JOB_URL = "https://example.com/job/provenance"
@@ -623,6 +624,8 @@ def _use_case(
 
     verifier, quality = review_ports(quality_source=llm, verdict=verdict)
     return TailorResumeUseCase(
+        llm_policy=TailoringLlmPolicy(),
+        artifact_writer=LocalArtifactTextWriter(),
         claim_verifier=verifier,
         quality_judge=quality,
         job_interpreter=JobInterpreter(),
@@ -1428,6 +1431,8 @@ def test_retailor_pdf_render_failure_preserves_previous_approved_generation(
 
         verifier, quality = review_ports(quality_source=llm)
         return TailorResumeUseCase(
+            llm_policy=TailoringLlmPolicy(),
+            artifact_writer=LocalArtifactTextWriter(),
             claim_verifier=verifier,
             quality_judge=quality,
             job_interpreter=JobInterpreter(),
@@ -1512,6 +1517,8 @@ def test_tailor_opens_unit_of_work_around_generation_flip(tmp_path: Path) -> Non
         publisher=publisher,
         unit_of_work=unit_of_work,
         **tailor_dependencies(llm),
+        llm_policy=TailoringLlmPolicy(),
+        artifact_writer=LocalArtifactTextWriter(),
     )
 
     outcome = use_case.execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
@@ -1549,6 +1556,8 @@ def test_tailor_provenance_failure_rolls_back_flip_and_propagates(tmp_path: Path
         publisher=publisher,
         unit_of_work=unit_of_work,
         **tailor_dependencies(llm),
+        llm_policy=TailoringLlmPolicy(),
+        artifact_writer=LocalArtifactTextWriter(),
     )
 
     with pytest.raises(RuntimeError, match="provenance write failed"):

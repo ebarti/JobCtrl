@@ -12,7 +12,7 @@ import type {
   SourceLocatorDecisionRequest,
   SourceStatePatch,
   SourceUpsertRequest,
-} from "../../operations/types.js";
+} from "@jobctrl/contracts";
 
 export function useUpsertDiscoverySourceMutation() {
   const tenantId = useTenantId();

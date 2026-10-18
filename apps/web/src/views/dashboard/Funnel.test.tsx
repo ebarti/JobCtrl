@@ -10,7 +10,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
-import type { DashboardSummary } from "../../contexts/operations/types.js";
+import type { DashboardSummary } from "@jobctrl/contracts";
 import { jobsSearchSchema } from "../../routes/-jobs.search.js";
 import { sampleDashboardSummary } from "../../test/fixtures/projections.js";
 import { Funnel } from "./Funnel.js";

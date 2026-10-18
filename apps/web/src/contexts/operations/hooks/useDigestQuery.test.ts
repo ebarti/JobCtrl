@@ -1,3 +1,5 @@
+import { createTestQueryClient } from "../../../test/render.js";
+import { prefetchDigest } from "../readQueries.js";
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import { waitFor } from "@testing-library/react";
 import { act } from "react";
@@ -7,7 +9,10 @@ import { sampleDailyDigest } from "../../../test/fixtures/projections.js";
 import { renderHookWithProviders } from "../../../test/render.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
 import { digestKeys } from "../digestKeys.js";
-import { useAcknowledgeDigestMutation, useDigestQuery } from "./useDigestQuery.js";
+import {
+  useAcknowledgeDigestMutation,
+  useDigestQuery,
+} from "./useDigestQuery.js";
 
 describe("useDigestQuery", () => {
   it("reads the local digest through the operations API port", async () => {
@@ -29,7 +34,8 @@ describe("useAcknowledgeDigestMutation", () => {
     const acknowledgeDigest = vi.fn(async (body) => ({
       ok: true as const,
       state: {
-        lastAcknowledgedAt: body?.acknowledgedAt ?? sampleDailyDigest.generatedAt,
+        lastAcknowledgedAt:
+          body?.acknowledgedAt ?? sampleDailyDigest.generatedAt,
         updatedAt: sampleDailyDigest.generatedAt,
       },
     }));
@@ -42,12 +48,39 @@ describe("useAcknowledgeDigestMutation", () => {
     const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
 
     await act(async () => {
-      await result.current.mutateAsync({ acknowledgedAt: sampleDailyDigest.generatedAt });
+      await result.current.mutateAsync({
+        acknowledgedAt: sampleDailyDigest.generatedAt,
+      });
     });
 
     expect(acknowledgeDigest).toHaveBeenCalledWith({
       acknowledgedAt: sampleDailyDigest.generatedAt,
     });
-    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: digestKeys.all(LOCAL_TENANT) });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: digestKeys.all(LOCAL_TENANT),
+    });
   });
+});
+
+it("refreshes loader data on mount, retains it on failure, and retries successfully", async () => {
+  const read = vi.fn(async () => sampleDailyDigest);
+  const ports = buildTestPorts({ api: { digest: read } });
+  const queryClient = createTestQueryClient();
+  await prefetchDigest({ ports, queryClient, tenantId: LOCAL_TENANT });
+  read.mockRejectedValueOnce(new Error("synthetic mount refresh failed"));
+  const { result } = renderHookWithProviders(() => useDigestQuery(), {
+    ports,
+    queryClient,
+  });
+  await waitFor(() => expect(result.current.isError).toBe(true));
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(result.current.data).toEqual(sampleDailyDigest);
+  expect(queryClient.getQueryData(digestKeys.summary(LOCAL_TENANT))).toEqual(
+    sampleDailyDigest,
+  );
+  await act(async () => {
+    await result.current.refetch();
+  });
+  await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  expect(read).toHaveBeenCalledTimes(3);
 });

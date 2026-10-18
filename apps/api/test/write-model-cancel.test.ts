@@ -154,34 +154,13 @@ describe("cancelJobAction", () => {
     },
   );
 
-  it("resets enrichment only through the canonical aggregate", () => {
+  it("refuses enrichment reset outside its canonical owner", () => {
     insertStage("enrich", "failed", 2);
-    db.prepare(
-      `INSERT INTO job_enrichments (
-         tenant_id, job_id, current_status, full_description,
-         application_url, enriched_at, extraction_tier, updated_at
-       ) VALUES (?, ?, 'enriched', 'canonical description', ?, ?, 'json_ld', ?)`,
-    ).run(TENANT_ID, JOB_ID, `${JOB_URL}/canonical-apply`, RETIRED_AT, RETIRED_AT);
-    const retiredBefore = retiredJobState();
-
-    const result = resetJobStage(db, JOB_URL, "enrich", { resetAttempts: true });
-    const enrichment = db.prepare(
-      `SELECT current_status, full_description, application_url,
-              enriched_at, extraction_tier
-         FROM job_enrichments
-        WHERE tenant_id = ? AND job_id = ?`,
-    ).get(TENANT_ID, JOB_ID);
-
-    expect(result.stage).toMatchObject({ state: "pending", attemptCount: 0 });
-    expect(enrichment).toEqual({
-      current_status: "pending",
-      full_description: null,
-      application_url: null,
-      enriched_at: null,
-      extraction_tier: null,
-    });
-    expect(retiredJobState()).toEqual(retiredBefore);
-    expect(eventCount("StageReset")).toBe(1);
+    const before = db.prepare("SELECT * FROM job_stage_states").all();
+    expect(() => resetJobStage(db, JOB_URL, "enrich", { resetAttempts: true }))
+      .toThrow("canonical Python retry service");
+    expect(db.prepare("SELECT * FROM job_stage_states").all()).toEqual(before);
+    expect(eventCount("StageReset")).toBe(0);
   });
 
   function insertStage(stage: Stage, state: string, attemptCount: number): void {

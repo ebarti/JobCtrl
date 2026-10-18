@@ -11,7 +11,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ProfileConfigResponse,
   RequiredBulletSuggestion,
-} from "../../operations/types.js";
+} from "@jobctrl/contracts";
 import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
 import { Button } from "../../../shared/ui/button.js";
 import { getPathValue, isJsonRecord, setPathValue, type JsonRecord } from "../lib/json-record.js";

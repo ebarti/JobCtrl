@@ -350,7 +350,11 @@ execute inline in the TS process against shared `@jobctrl/domain-types`
 value objects; the full cancel action additionally fires `cancel_run` over
 JSON-RPC to signal the Temporal workflow. Complex commands and provider reads
 travel through `SubprocessJsonRpcAdapter` to the long-lived `jobctrl rpc`
-subprocess. Workflow-mode handlers return a workflow spec that the RPC server
+subprocess. Method-specific calls use the shared contract boundary described in
+[Contracts, Types & API Boundaries](contracts-types-and-api-boundaries.md#typescript-to-python-json-rpc):
+parameters validate before transport and results validate before consumption.
+Awaited profile continuations require completed pipeline results before a
+handled marker is persisted. Workflow-mode handlers return a workflow spec that the RPC server
 starts on Temporal (`run_stage`,
 `rescore_job`, `rescore_jobs_not_on_current_scoring_policy`, `tailor_job`,
 `retailor_job`, `retailor_current_policy`, `refresh_compensation`, `apply`,

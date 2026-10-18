@@ -52,3 +52,5 @@ export {
   applyRunEventRecordedHandler,
   applyRunStartedHandler,
 } from "./handlers.js";
+
+export { useApplyReviewSession, type ApplyReviewSession } from "./hooks/useApplyReviewSession.js";

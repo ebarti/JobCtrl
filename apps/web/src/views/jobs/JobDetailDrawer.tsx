@@ -1,3 +1,4 @@
+import { CompanyBriefingPanel } from "../../contexts/materials/components/CompanyBriefingPanel.js";
 import { ScreeningAnswerLibrary } from "../../contexts/materials/components/ScreeningAnswerLibrary.js";
 import { JobCtrlApiError } from "@jobctrl/api-client";
 import type { JobAuditEntry, StageSummary } from "@jobctrl/contracts";
@@ -25,7 +26,7 @@ import { JobAuditHistory } from "../../contexts/operations/components/JobAuditHi
 import { useDiscoverySettingsQuery } from "../../contexts/operations/hooks/useDiscoverySettingsQuery.js";
 import { useEvidenceMapQuery } from "../../contexts/operations/hooks/useEvidenceMapQuery.js";
 import { useJobDetailQuery } from "../../contexts/operations/hooks/useJobDetailQuery.js";
-import type { ArtifactSummary, EvidenceMapEntry } from "../../contexts/operations/types.js";
+import type { ArtifactSummary, EvidenceMapEntry } from "@jobctrl/contracts";
 import { JobActions } from "../../contexts/pipeline/components/JobActions.js";
 import { RetryStageButton } from "../../contexts/pipeline/components/RetryStageButton.js";
 import { StageTimeline } from "../../contexts/pipeline/components/StageTimeline.js";
@@ -312,7 +313,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
       id: "role-analysis",
       title: "Role Analysis",
       description: "Employer interpretation and requirement evidence",
-      content: <EmployerAnalysisPanel analysis={detail.employerAnalysis} className="section job-detail-role-analysis" requirementFitReport={detail.requirementFitReport} resolveEvidenceReference={resolveEvidenceReference} />,
+      content: <><EmployerAnalysisPanel analysis={detail.employerAnalysis} className="section job-detail-role-analysis" requirementFitReport={detail.requirementFitReport} resolveEvidenceReference={resolveEvidenceReference} /><CompanyBriefingPanel briefing={detail.companyBriefing} /></>,
     },
     {
       id: "screening-answers",

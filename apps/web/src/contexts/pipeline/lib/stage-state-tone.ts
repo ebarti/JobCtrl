@@ -1,6 +1,6 @@
 import { assertNever } from "../../../shared/lib/exhaustive.js";
 import type { StatusTagTone } from "../../../shared/ui/status-tokens.js";
-import type { StageState } from "../../operations/types.js";
+import type { StageState } from "@jobctrl/contracts";
 
 export type StageStateTone = StatusTagTone;
 

@@ -1160,3 +1160,9 @@ before owned intent remains a retryable failure of the already-started Apply run
 Use 300,000 unrelated
 events and 500 unchecked jobs, without ANALYZE, to bound read and sweep work. No application is submitted during QA. External transports may be
 deterministic; production claims/classifier/dispatch/persistence remain real.
+
+## Optional Company Briefings
+
+Use an owned exact-v14 synthetic workspace. Exercise explicit identity/source confirmation, cross-job reuse, unchanged-input zero-call reuse, concurrent refreshes and a configuration change during generation. Opposing valid model kinds and identity verdicts must control output without lexical fallback. Provider/budget/JSON/schema/foreign-ID/non-verbatim/exact-value failures and failed acceptance commits preserve the accepted snapshot and original clock. Check bounded body/redirect/request behavior, public destination checks, no credentials or personal context, and failed gateway transaction release.
+
+Run `test_company_briefings.py` and API `company-briefings.test.ts` to read real Python-written receipts through TypeScript and HTTP. Render Job Detail, Interviews and the existing digest through `company-briefings.spec.ts` on desktop and mobile; expand source excerpts and check critical/serious accessibility findings. These fixtures inject explicit model decisions and public transport, not recorded-output replay or judgment-quality evaluations. Report live provider/public transport evidence separately.

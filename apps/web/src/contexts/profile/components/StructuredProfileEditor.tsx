@@ -1,4 +1,4 @@
-import { SEMANTIC_TAXONOMY } from "../../operations/types.js";
+import { SEMANTIC_TAXONOMY } from "@jobctrl/contracts";
 import {
   Fragment,
   useEffect,

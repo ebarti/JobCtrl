@@ -432,7 +432,7 @@ Rationale:
   discipline the backend has, with `safeParse` handling at every form
   boundary.
 - Cohesion: all four primitives share idioms (router + query coordination
-  via route loaders is an officially supported pattern), and the SSR /
+  via route loaders delegating to context-owned read helpers), and the SSR /
   RSC evolution path is **TanStack Start** — the same router and query
   layer with a different bootstrap.
 
@@ -2665,3 +2665,27 @@ Validation uses fake-model authority tests, strict failure/binding tests, one-of
 ## Screening Answer Revisions on the Existing Ledger
 
 Materials owns source-bound screening drafting and reusable reviewed revisions; Apply owns application-bound questions, reviews and manual-use snapshots. Persist these in scoped existing exact-v14 ledger entries with tenant idempotency, expected-revision comparisons and atomic accepted replacements. Use persisted source-bound determinations plus independent claim/quality owners and human review, without lexical equivalence/fallback. Screening history confers no browser or submission authority. See [Reviewed Screening Answers](architecture/reviewed-screening-answers.md).
+
+## Optional company context uses explicit identity and existing owners
+
+Materials owns source-cited company briefings; Operations composes their read-only presentation in jobs, interviews and the existing digest. This bounded capability uses explicit CLI company-link confirmation and opt-in public-page refresh. It has no automatic company-name resolution, scheduler, private research input or separate digest. Company facts, reported events and hypotheses are model determinations with verbatim source references and uncertainty; job-specific implications retain their existing owners. Accepted artifacts remain immutable across failures. Existing indexed exact-v14 ledger records provide atomic revision fences without a migration. See [the owning guide](user/company-briefings.md) and [Materials](architecture/materials.md#optional-company-briefings).
+
+## 2026-10-17: Frontend Consumers Import Canonical DTOs Directly
+
+Unchanged wire DTOs, schemas and constants are imported from
+`@jobctrl/contracts`; domain vocabulary and events come from
+`@jobctrl/domain-types`. Remove transparent Operations facade exports and the
+obsolete contracts exemption group (179 file entries). Re-exporting an unchanged
+shape never insulated consumers from canonical schema changes and is not an
+anti-corruption mapping.
+
+Operations retains read hooks, query keys and genuine frontend input refinements,
+including readonly Jobs stage selections, partial list queries and UI sentinels.
+Existing string identifier compatibility remains; this decision does not convert
+all identifiers to domain brands or duplicate schemas. The endpoint-derived
+availability acknowledgement stays tied to its endpoint definition.
+
+Capability ports, context-owned API/query/store usage, dependency direction and
+barrel resolution remain independent enforced boundaries. Remaining capability
+and dependency exemptions still require scoped reasons and fail when stale.
+See [frontend type ownership](architecture/frontend/state-and-ports.md#_6-5-canonical-dtos-and-frontend-input-refinements).

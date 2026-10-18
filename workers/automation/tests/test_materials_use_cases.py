@@ -23,6 +23,7 @@ from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
 from jobctrl.infrastructure.enrichment.interpretation import PersistedJobInterpreter
 from jobctrl.infrastructure.materials.sqlite_repository import SqliteMaterialsRepository
 from jobctrl.infrastructure.materials.unit_of_work import SqliteUnitOfWork
+from jobctrl.infrastructure.materials.artifact_writer import LocalArtifactTextWriter
 from jobctrl.domain.materials.entities import Artifact
 from jobctrl.domain.materials.value_objects import ArtifactType, RenderFormat
 from tests.test_artifact_determinations import JOB, JOB_ID, PROFILE, Model, connection, ports
@@ -158,7 +159,10 @@ class ResumeModel(Model):
         return result
 
 
-def resume_case(conn, model, *, preflight=lambda: None, retries=0, renderer=None, repository=None):
+def resume_case(
+    conn, model, *, preflight=lambda: None, retries=0, renderer=None, repository=None,
+    writer=None, llm_policy=None, assembler=None,
+):
     verifier, quality = ports(conn, model, preflight)
     unit = SqliteUnitOfWork(conn)
     repository = repository or SqliteMaterialsRepository(conn, unit_of_work=unit)
@@ -175,7 +179,7 @@ def resume_case(conn, model, *, preflight=lambda: None, retries=0, renderer=None
         repository=repository,
         llm=model,
         validator=ContentValidator(),
-        assembler=ResumeAssembler(),
+        assembler=assembler if assembler is not None else ResumeAssembler(),
         claim_verifier=verifier,
         quality_judge=quality,
         job_interpreter=PersistedJobInterpreter(conn, dependencies=deps),
@@ -183,7 +187,10 @@ def resume_case(conn, model, *, preflight=lambda: None, retries=0, renderer=None
         max_retries=retries,
         pdf_renderer=renderer,
         unit_of_work=unit,
-        llm_policy=TailoringLlmPolicy(candidate_models=("codex:synthetic",), judge_model="codex:synthetic"),
+        llm_policy=llm_policy if llm_policy is not None else TailoringLlmPolicy(
+            candidate_models=("codex:synthetic",), judge_model="codex:synthetic",
+        ),
+        artifact_writer=writer if writer is not None else LocalArtifactTextWriter(),
     )
 
 

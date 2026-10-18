@@ -52,6 +52,13 @@ A failed fetch or exhausted cascade records a retryable attempt without
 manufacturing a snapshot. Failure remains isolated to that job, so useful
 results from the rest of the source batch survive.
 
+An explicit enrichment retry from the web app or CLI keeps the last accepted
+description, application URL and attempt history while reopening extraction.
+It clears the failed stage's error and execution fields. The attempt counter
+is retained unless you request a reset or its budget was exhausted. Saved
+scores, approved materials and approvals remain intact; downstream preparation
+waits for enrichment to succeed again.
+
 LinkedIn's public guest description and authenticated job-detail layouts both
 have deterministic extraction rules. When the public description is present in
 the captured content, anonymous enrichment can save it without an LLM or an

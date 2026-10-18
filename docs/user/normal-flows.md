@@ -806,7 +806,7 @@ exist only in the installed launcher.
 | `discover` / `enrich` / `score` / `tailor` / `cover` | Start one stage; `score --rescore` re-scores jobs that already have a score. |
 | `job <url>` | Tailor and/or apply one job (`--tailor`, `--apply`, `--dry-run`). |
 | `apply` | Start apply automation (`--dry-run`, `--url`, `--continuous` to keep polling for new jobs). Utility modes: `--mark-applied`, `--mark-failed`, `--reset-failed`, and `--gen` (inspection-only dry-run prompt). |
-| `retry <stage> <url>` | Reset one failed stage for one job (`--reset-attempts`, `--run`). |
+| `retry <stage> <url>` | Reset one failed stage for one job (`--reset-attempts`, `--run`). Enrich retains accepted content and automatically renews an exhausted stage budget; see [Enrichment](enrichment-and-extraction.md). |
 | `action <stage>` | Low-level single-action dispatch with JSON output, for scripts. |
 | `compensation-refresh` | Re-parse posted salaries and refresh market estimates for all jobs or one (`--job-id`, `--observations-json`, `--no-eurotoptech`). |
 | `pipeline-status` / `runs` | Show pipeline stats, or recent apply runs and one run's event timeline (`runs --failed-only`, `--run-id`). |
@@ -825,3 +825,7 @@ exist only in the installed launcher.
 Saved settings drive deterministic provider searches and canonical ingestion. Full-posting analysis and scoring assess suitability; there is no separate listing-admission model or queue. Role-analysis agreement is a persisted model determination. Resume/outreach/interview truthfulness and quality use separate model verdicts and source-bound anchors. Form answers and repeat-role equivalence come from determinations; confirmation and submission authorization remain distinct user actions.
 
 See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+
+### Optional company briefing commands
+
+`jobctrl company-briefing configure JOB_ID --company-url URL --source URL --confirm-identity` confirms a company link and selected public sources. `company-briefing refresh JOB_ID --allow-public-fetch` refreshes explicitly; `--force` re-fetches within the freshness window. `company-briefing show JOB_ID` reads the saved result. All support `--json`. Job Detail, Interviews and the existing digest share the result; see [Company Briefings](company-briefings.md) for bounds, stale state and retention.

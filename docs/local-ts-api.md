@@ -330,6 +330,9 @@ confirmation, outreach drafts, send logs, and follow-ups share one route family.
 Global and per-job stage runs, rescore/re-tailor, retry, mark-applied, and
 mark-skipped commands are summarized in
 [Operations & Events](api/operations-and-events.md#starting-work).
+Enrichment resets use the synchronous Python application service through
+`reset_enrichment`; its transaction and preservation rules are defined in
+[Enrichment Retry Ownership](architecture/contracts-types-and-api-boundaries.md#enrichment-retry-ownership).
 
 ## Discovery Target Search
 
@@ -441,3 +444,14 @@ Semantic read envelopes and citations are shared in Contracts. Discovery execute
 See [the decision](decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
 
 Private screening-answer reads and commands use the generated endpoint clients and registered `screening_answers` Python RPC. See [Jobs and Materials](api/jobs-and-materials.md#screening-answers).
+
+The existing Job Detail and daily digest reads also expose optional saved [company briefings](user/company-briefings.md). They perform no fetch/model work; configuration and refresh are explicit local CLI commands. See [the wire contract](api/complete-contract.md#company-briefings).
+
+## Provider Endpoint Registration
+
+`GET /v1/providers/status`, `GET /v1/providers/models`, and
+`POST /v1/providers/codex/verify` share the existing endpoint specification,
+registered feature handlers and generated checked clients. Legacy query/body
+values remain ignored. The [provider contract](api/profile-and-settings.md#provider-endpoint-compatibility)
+defines status/error compatibility; the [migration recipe](architecture/contracts-types-and-api-boundaries.md#incremental-endpoint-migration)
+shows how to adopt later families without changing the #954 envelope boundary.

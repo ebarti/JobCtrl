@@ -1,3 +1,4 @@
+import { companyBriefingSummaries } from "./company-briefings.js";
 import { resolveJobLocator } from "./job-locators.js";
 import { EMPLOYER_ANALYSIS_PROMPT_VERSION } from "./contracts.js";
 import { readDetermination, readArtifactLineAnchors, determinationOwnsArtifact } from "./semantic-determinations.js";
@@ -578,6 +579,7 @@ export function buildDigest(db: SqliteDatabase, options: BuildDigestOptions = {}
     generatedAt,
     since,
     highFitThreshold,
+    companyBriefings: companyBriefingSummaries(db, DEFAULT_TENANT, now),
     newMatches: countDigestNewMatches(db, since, highFitThreshold),
     blockedSources: digestBlockedSources(db),
     reviewNeededMaterials: {
