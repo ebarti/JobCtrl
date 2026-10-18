@@ -119,6 +119,7 @@ def test_acknowledge_digest_updates_watermark_and_records_event(tmp_path: Path) 
 def _create_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
+        CREATE TABLE jobs (tenant_id TEXT NOT NULL, job_id TEXT NOT NULL, company TEXT, PRIMARY KEY (tenant_id, job_id));
         CREATE TABLE digest_state (
             tenant_id              TEXT PRIMARY KEY DEFAULT 'local',
             last_acknowledged_at   TEXT,
@@ -263,7 +264,9 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             duration_ms INTEGER,
             events_json TEXT NOT NULL DEFAULT '[]'
         );
+        CREATE TABLE jobctrl_deleted_jobs (tenant_id TEXT, job_id TEXT, deleted_at TEXT, restored_at TEXT);
         CREATE TABLE jobctrl_hidden_jobs (
+            job_id TEXT,
             tenant_id TEXT NOT NULL DEFAULT 'local',
             job_url TEXT NOT NULL,
             hidden_at TEXT NOT NULL,
@@ -297,6 +300,7 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             error_class TEXT
         );
         CREATE TABLE job_events (
+            tenant_id TEXT NOT NULL DEFAULT 'local', job_id TEXT, entity_kind TEXT, entity_ref TEXT,
             event_id INTEGER PRIMARY KEY AUTOINCREMENT,
             job_url TEXT,
             stage TEXT,

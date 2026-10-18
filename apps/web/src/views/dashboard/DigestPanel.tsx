@@ -178,6 +178,7 @@ export function DigestPanel() {
               <DigestRowLink key={row.key} row={row} />
             ))}
           </div>
+          {data.companyBriefings?.length ? <section className="section" aria-label="Company briefings"><h3>Company briefings</h3><ul>{data.companyBriefings.map((briefing) => <li key={briefing.companyId}><a href={`/jobs/${briefing.jobId}`}>{briefing.name}</a> · {briefing.status} · {briefing.observedAt ? `observed ${formatDateTime(briefing.observedAt)}` : "not yet observed"}{briefing.failureCode ? " · refresh failed; saved briefing preserved" : ""}</li>)}</ul></section> : null}
           <div className="digest-actions">
             <span className="meta">Generated {formatDateTime(data.generatedAt)}</span>
             <Button

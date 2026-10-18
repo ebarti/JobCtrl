@@ -71,6 +71,7 @@ has one defining page; other pages summarize it briefly and link to that owner.
 - [`user/scoring-and-employer-analysis.md`](user/scoring-and-employer-analysis.md):
   fit evidence, requirement assessment, policy, corrections, and ranking; it
   consumes the employer analysis owned by Discovery.
+- [`user/company-briefings.md`](user/company-briefings.md): optional public-source company context, explicit identity links, bounded CLI refresh and shared job/interview/digest reads.
 - [`user/materials-and-tailoring.md`](user/materials-and-tailoring.md): generated
   materials, provenance, validation, review, and accepted-artifact history.
 - [`user/locale-variants.md`](user/locale-variants.md): source-linked translations,

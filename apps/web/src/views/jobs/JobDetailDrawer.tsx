@@ -1,3 +1,4 @@
+import { CompanyBriefingPanel } from "../../contexts/materials/components/CompanyBriefingPanel.js";
 import { ScreeningAnswerLibrary } from "../../contexts/materials/components/ScreeningAnswerLibrary.js";
 import { JobCtrlApiError } from "@jobctrl/api-client";
 import type { JobAuditEntry, StageSummary } from "@jobctrl/contracts";
@@ -312,7 +313,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
       id: "role-analysis",
       title: "Role Analysis",
       description: "Employer interpretation and requirement evidence",
-      content: <EmployerAnalysisPanel analysis={detail.employerAnalysis} className="section job-detail-role-analysis" requirementFitReport={detail.requirementFitReport} resolveEvidenceReference={resolveEvidenceReference} />,
+      content: <><EmployerAnalysisPanel analysis={detail.employerAnalysis} className="section job-detail-role-analysis" requirementFitReport={detail.requirementFitReport} resolveEvidenceReference={resolveEvidenceReference} /><CompanyBriefingPanel briefing={detail.companyBriefing} /></>,
     },
     {
       id: "screening-answers",

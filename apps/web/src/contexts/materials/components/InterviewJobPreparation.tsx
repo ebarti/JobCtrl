@@ -1,8 +1,5 @@
-import type {
-  InterviewCatalog,
-  InterviewPrep,
-  InterviewQuestionCard,
-} from "@jobctrl/contracts";
+import { CompanyBriefingPanel } from "./CompanyBriefingPanel.js";
+import type { InterviewCatalog, InterviewPrep, InterviewQuestionCard } from "@jobctrl/contracts";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
@@ -65,6 +62,7 @@ export function InterviewJobPreparation({ jobId, catalog, question, unavailableQ
     <section className="card full" aria-label="Job interview preparation">
       <h2 data-typography="section-title">Preparation for {job.job.title}</h2>
       <Link to="/jobs/$jobId" params={{ jobId: job.job.jobKey }}>Open canonical job</Link>
+      <CompanyBriefingPanel briefing={job.companyBriefing} />
       <InterviewContextForm jobId={job.job.jobKey} catalog={catalog} questionId={question?.id ?? ""} context={prep?.generationContext} />
       {noteQuestionId ? <InterviewNoteForm key={`${jobId}:${noteQuestionId}`} jobId={job.job.jobKey} questionId={noteQuestionId} sourceGeneration={selectedSnapshot ? prep?.generation ?? null : null} bindings={noteBindings} allowNewNote={Boolean(question || selectedSnapshot)} /> : null}
       <InterviewPrepPanel jobId={job.job.jobKey} prep={prep} requirements={job.employerAnalysis?.requirements ?? []} resolveEvidenceReference={resolveEvidenceReference} generationAction={null} emptyContent={history.isPending ? <Empty title="Loading saved preparation." /> : history.error ? <p role="alert">Saved preparation unavailable. Retry loading the accepted history.</p> : undefined} />

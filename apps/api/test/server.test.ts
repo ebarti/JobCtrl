@@ -850,6 +850,18 @@ describe("local TypeScript API", () => {
         postingUrl: "https://example.com/jobs/legacy-timestamp",
       }),
     );
+    insertEvent.run(
+      "local",
+      null,
+      null,
+      "CompanyBriefingRecorded",
+      occurredAt,
+      JSON.stringify({
+        tenantId: "local",
+        companyId: "company-synthetic",
+        sources: [{ text: "company-briefing-source-canary" }],
+      }),
+    );
     const outcomeOccurredAt = "2026-04-01T09:00:00+00:00";
     insertEvent.run(
       "local",
@@ -929,6 +941,8 @@ describe("local TypeScript API", () => {
     expect(streamed).not.toContain("event: ProfileUpdated");
     expect(streamed).not.toContain("\"jobKey\"");
     expect(streamed).not.toContain("legacy-timestamp");
+    expect(streamed).not.toContain("CompanyBriefingRecorded");
+    expect(streamed).not.toContain("company-briefing-source-canary");
     await reader.cancel();
     db.close();
     await app.close();

@@ -21,6 +21,7 @@ from rich.table import Table
 from rich.text import Text
 
 from jobctrl import __version__
+from jobctrl.company_briefing_cli import app as company_briefing_app
 from jobctrl.pipeline import SUPPORTED_STAGE_ORDER, run_single_job
 from jobctrl.workflow_specs import (
     build_apply_workflow_spec,
@@ -45,6 +46,7 @@ capability_app = typer.Typer(help="Inspect and explicitly manage optional browse
 app.add_typer(capability_app, name="capability")
 credentials_app = typer.Typer(help="Manage provider credentials in the operating system's native store.")
 app.add_typer(credentials_app, name="credentials")
+app.add_typer(company_briefing_app, name="company-briefing")
 console = Console()
 log = logging.getLogger(__name__)
 
@@ -1868,6 +1870,10 @@ def digest(
         "[/dim]\n"
     )
     console.print(_render_digest_table(digest_payload))
+    for briefing in digest_payload.get("companyBriefings", []):
+        console.print(Text(f"Company briefing: {briefing['name']} · {briefing['status']} · observed {briefing['observedAt'] or 'never'} · /jobs/{briefing['jobId']}"))
+        if briefing["failureCode"]:
+            console.print(Text("Refresh failed: " + briefing["failureCode"]))
     links_table = _render_digest_links_table(digest_payload)
     if links_table:
         console.print()

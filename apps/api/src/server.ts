@@ -1,3 +1,5 @@
+import { readCompanyBriefing } from "./company-briefings.js";
+
 import { createProviderHandlers, dispatchProviderModelCatalog, providerOperationError } from "./provider-handlers.js";
 import { callRpc, RpcContractError } from "./json-rpc-adapter.js";
 import { readTargetRoleProposal } from "./candidate-interpretations.js";
@@ -1978,6 +1980,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         return { ok: false, error: "job_not_found" };
       }
       const response = structuredClone(detail);
+      response.companyBriefing = readCompanyBriefing(db, "local", response.job.jobKey);
       response.interviewPrep = loadLatestAcceptedInterviewPrep(db, "local", response.job.jobKey, loadInterviewPrepReadModel);
       if (response.interviewPrep) response.interviewPrep.staleReasons = interviewPrepStaleReasons(
         db, "local", response.job.jobKey, response.interviewPrep.generationContext ?? null, currentCatalogOrNull(), appDir,

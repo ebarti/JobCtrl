@@ -335,6 +335,8 @@ Contracts owns the versioned semantic codes/labels and strict read envelopes. Wo
 
 See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
 
+Company briefing DTOs live in `packages/contracts/src/company-briefings.ts`; Python owns the generated `company_briefing` determination schema. Operations validates stored shapes, IDs, source hashes and verbatim citation membership before returning the optional Job Detail view. Corrupt optional provenance yields an explicit unavailable view rather than breaking unrelated job content. See [Company Briefings](../user/company-briefings.md).
+
 ## Incremental Endpoint Migration
 
 The provider family uses the existing `ENDPOINTS` declarations in
