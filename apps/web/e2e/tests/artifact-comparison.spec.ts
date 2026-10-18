@@ -503,8 +503,19 @@ test("multiline HTML paste acknowledges one autosave and survives reload", async
   const editor = page.getByRole("textbox", { name: "Tailored resume preview editor" });
   const paper = page.getByLabel("Editable resume page");
   await expect(editor).toContainText("Saved baseline.");
-  await editor.click();
-  await editor.press("ControlOrMeta+End");
+  await editor.locator("[data-slate-string]").first().click();
+  await editor.evaluate(element => {
+    const leaf = element.querySelector("[data-slate-string]")!;
+    const range = document.createRange();
+    range.setStart(leaf.firstChild!, 0);
+    range.collapse(true);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+  });
+  // Slate admits paste against its throttled model selection.
+  await page.waitForTimeout(200);
   await editor.evaluate(element => {
     const data = new DataTransfer();
     data.setData("text/html", "<p>First pasted paragraph.</p><p>Second pasted paragraph.</p>");
@@ -603,7 +614,7 @@ test("save conflict and render failure recover before dry-run authorization", as
   await editor.pressSequentially(" recovery edit");
   await expect(save).toBeEnabled();
   await save.click();
-  await expect(page.getByText("Synthetic save conflict", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Resume audit").getByText("Synthetic save conflict", { exact: true })).toBeVisible();
   await expect(editor).toContainText("recovery edit");
   await expect(render).toBeDisabled();
   await expect(authorize).toBeDisabled();
@@ -612,7 +623,7 @@ test("save conflict and render failure recover before dry-run authorization", as
   await expect(page.getByLabel("Editable resume page")).toHaveAttribute("data-draft-dirty", "false");
   await expect(render).toBeEnabled();
   await render.click();
-  await expect(page.getByText("Synthetic render failure", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Resume audit").getByText("Synthetic render failure", { exact: true })).toBeVisible();
   expect(promoted).toBe(false);
   expect(queue().items.find(item => item.jobKey === jobKey)!.materialsPreview).toMatchObject({ resumeTextArtifactId: acceptedSource.text, resumePdfArtifactId: acceptedSource.pdf });
   expect(decisions).toHaveLength(0);
