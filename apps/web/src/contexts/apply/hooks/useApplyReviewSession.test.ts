@@ -68,6 +68,106 @@ function mount(overrides: Partial<Api> = {}, initial = item, autosave = 0) {
 const ready = async (hook: ReturnType<typeof mount>) => { await waitFor(() => expect(hook.result.current.draft).not.toBeNull()); };
 
 describe("Apply review session", () => {
+  it("reuses compatible early seeds for a replacement of the same material", async () => {
+    const replacement = { ...draftFor(item, document("replacement"), 1, "replacement"), baseGeneration: 2 };
+    const seed = vi.fn<Api["seedResumeReviewCommentThreads"]>(async (id) => ({
+      ok: true, draft: id === replacement.draftId ? replacement : draftFor(), commentThreads: [], seededCount: 1, updatedCount: 0,
+    }));
+    const hook = mount({ seedResumeReviewCommentThreads: seed }); await ready(hook);
+    const threads = [{ baseArtifactId: item.materialsPreview.resumeTextArtifactId!, sourcePinId: "compatible-pin", commentBody: "Source question" }];
+    act(() => hook.result.current.seed(threads));
+    await waitFor(() => expect(seed).toHaveBeenCalledTimes(1));
+    act(() => hook.queryClient.setQueryData(applyReviewKeys.draft(LOCAL_TENANT, item.jobKey), { ok: true, draft: replacement }));
+    await waitFor(() => expect(seed).toHaveBeenCalledWith(replacement.draftId, { threads }));
+    expect(hook.result.current.document).toEqual(document("replacement"));
+  });
+
+  it("discards seeds when only the PDF source changes, and rejects explicitly foreign inputs", async () => {
+    const nextItem = { ...item, materialsPreview: { ...item.materialsPreview, resumePdfArtifactId: "pdf-B" } };
+    const nextDraft = { ...draftFor(nextItem, document("B"), 1, "draft-B"), baseGeneration: 2 };
+    const seed = vi.fn<Api["seedResumeReviewCommentThreads"]>(async () => ({
+      ok: true, draft: draftFor(), commentThreads: [], seededCount: 1, updatedCount: 0,
+    }));
+    const hook = mount({ seedResumeReviewCommentThreads: seed, createResumeReviewDraft: vi.fn<Api["createResumeReviewDraft"]>()
+      .mockResolvedValueOnce({ ok: true, draft: draftFor() }).mockResolvedValueOnce({ ok: true, draft: nextDraft }) }); await ready(hook);
+    act(() => hook.result.current.seed([{ commentBody: "A" }]));
+    await waitFor(() => expect(seed).toHaveBeenCalledTimes(1));
+    const retryA = hook.result.current.retrySeed;
+    hook.rerender(nextItem);
+    await waitFor(() => expect(hook.result.current.draft?.draftId).toBe(nextDraft.draftId));
+    act(() => {
+      retryA();
+      hook.result.current.retrySeed();
+      hook.result.current.seed([{ baseArtifactId: "foreign-text", commentBody: "Foreign" }]);
+    });
+    expect(seed).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets a newer pin payload recover when an older seed fails", async () => {
+    const pending = deferred<Awaited<ReturnType<Api["seedResumeReviewCommentThreads"]>>>();
+    const seed = vi.fn<Api["seedResumeReviewCommentThreads"]>().mockImplementationOnce(() => pending.promise)
+      .mockResolvedValue({ ok: true, draft: draftFor(), commentThreads: [], seededCount: 1, updatedCount: 0 });
+    const hook = mount({ seedResumeReviewCommentThreads: seed }); await ready(hook);
+    act(() => hook.result.current.seed([{ sourcePinId: "old", commentBody: "Old" }]));
+    await waitFor(() => expect(seed).toHaveBeenCalledTimes(1));
+    const threads = [{ sourcePinId: "new", commentBody: "New" }];
+    act(() => hook.result.current.seed(threads));
+    await act(async () => pending.reject(new Error("Old failed")));
+    await waitFor(() => expect(seed).toHaveBeenCalledWith(hook.draft.draftId, { threads }));
+    expect(hook.result.current.errors.seed).toBeUndefined();
+  });
+
+  it.each(["empty pins", "new pins"])("fences retained seeds while replacement HTML is delayed, then accepts %s", async (pins) => {
+    const nextItem = { ...item, materialsPreview: { ...item.materialsPreview,
+      resumeTextArtifactId: "text-B", resumePdfArtifactId: "pdf-B" } };
+    const nextDraft = { ...draftFor(nextItem, document("B"), 1, "draft-B"), baseGeneration: 2 };
+    const create = vi.fn<Api["createResumeReviewDraft"]>()
+      .mockResolvedValueOnce({ ok: true, draft: draftFor() }).mockResolvedValueOnce({ ok: true, draft: nextDraft });
+    const seed = vi.fn<Api["seedResumeReviewCommentThreads"]>(async (draftId) => ({
+      ok: true, draft: draftId === nextDraft.draftId ? nextDraft : draftFor(), commentThreads: [], seededCount: 1, updatedCount: 0,
+    }));
+    const hook = mount({ createResumeReviewDraft: create, seedResumeReviewCommentThreads: seed }); await ready(hook);
+    const oldSeed = hook.result.current.seed;
+    const oldThreads = [{ baseArtifactId: item.materialsPreview.resumeTextArtifactId!, sourcePinId: "pin-A", commentBody: "A source question" }];
+    act(() => oldSeed(oldThreads));
+    await waitFor(() => expect(seed).toHaveBeenCalledTimes(1));
+    hook.rerender(nextItem);
+    await waitFor(() => expect(hook.result.current.draft?.draftId).toBe(nextDraft.draftId));
+    // No B callback yet: its HTML/provenance is still loading.
+    expect(seed.mock.calls.filter(([id]) => id === nextDraft.draftId)).toEqual([]);
+    act(() => oldSeed(oldThreads)); // A's delayed publisher must also stay fenced.
+    const threads = pins === "empty pins" ? [] : [{ baseArtifactId: "text-B", sourcePinId: "pin-B", commentBody: "B source question" }];
+    act(() => hook.result.current.seed(threads));
+    if (threads.length) await waitFor(() => expect(seed).toHaveBeenCalledWith(nextDraft.draftId, { threads }));
+    expect(seed.mock.calls.filter(([id]) => id === nextDraft.draftId)).toEqual(threads.length ? [[nextDraft.draftId, { threads }]] : []);
+    expect(hook.ports.api.applyJob).not.toHaveBeenCalled();
+  });
+
+  it.each(["success", "failure"])("settles a pending A seed %s after replacement without replaying it or blocking B", async (outcome) => {
+    const pending = deferred<Awaited<ReturnType<Api["seedResumeReviewCommentThreads"]>>>();
+    const nextItem = { ...item, materialsPreview: { ...item.materialsPreview, resumeTextArtifactId: "text-B", resumePdfArtifactId: "pdf-B" } };
+    const nextDraft = { ...draftFor(nextItem, document("B"), 1, "draft-B"), baseGeneration: 2 };
+    const seed = vi.fn<Api["seedResumeReviewCommentThreads"]>().mockImplementationOnce(() => pending.promise)
+      .mockResolvedValue({ ok: true, draft: nextDraft, commentThreads: [], seededCount: 1, updatedCount: 0 });
+    const hook = mount({ seedResumeReviewCommentThreads: seed, createResumeReviewDraft: vi.fn<Api["createResumeReviewDraft"]>()
+      .mockResolvedValueOnce({ ok: true, draft: draftFor() }).mockResolvedValueOnce({ ok: true, draft: nextDraft }) }); await ready(hook);
+    act(() => hook.result.current.seed([{ baseArtifactId: item.materialsPreview.resumeTextArtifactId!, sourcePinId: "pin-A", commentBody: "A" }]));
+    await waitFor(() => expect(seed).toHaveBeenCalledTimes(1));
+    hook.rerender(nextItem);
+    await waitFor(() => expect(hook.result.current.draft?.draftId).toBe(nextDraft.draftId));
+    await act(async () => {
+      if (outcome === "failure") pending.reject(new Error("A offline"));
+      else pending.resolve({ ok: true, draft: draftFor(), commentThreads: [], seededCount: 1, updatedCount: 0 });
+    });
+    expect(seed).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.errors.seed).toBeUndefined();
+    const threads = [{ baseArtifactId: "text-B", sourcePinId: "pin-B", commentBody: "B" }];
+    act(() => hook.result.current.seed(threads));
+    await waitFor(() => expect(seed).toHaveBeenCalledWith(nextDraft.draftId, { threads }));
+    expect(hook.result.current.draft?.draftId).toBe(nextDraft.draftId);
+    expect(hook.result.current.document).toEqual(document("B"));
+  });
+
   it("preserves edits made before an existing saved draft finishes loading", async () => {
     const pending = deferred<Awaited<ReturnType<Api["createResumeReviewDraft"]>>>();
     const hook = mount({ createResumeReviewDraft: vi.fn(() => pending.promise) });

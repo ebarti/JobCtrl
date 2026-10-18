@@ -2827,6 +2827,49 @@ describe("<ApplyReviewView>", () => {
     expect(artifact).not.toHaveBeenCalledWith("resume-pdf-2");
   });
 
+  it("does not seed A's pins into B while its HTML is delayed or when B has no lines", async () => {
+    const original = sampleApplyReviewQueue.items[0]!;
+    const draftA = makeResumeReviewDraft(original.jobKey, null);
+    const next = { ...original, materialsPreview: { ...original.materialsPreview,
+      resumeTextArtifactId: "text-B", resumePdfArtifactId: "pdf-B", profileSourceFields: [] } };
+    const draftB = { ...draftA, draftId: "draft-B", baseGeneration: 2,
+      baseResumeTextArtifactId: "text-B", baseResumePdfArtifactId: "pdf-B" };
+    let queue = { ...sampleApplyReviewQueue, items: [original] };
+    const create = vi.fn(async (_jobId: string, body: { resumePdfArtifactId?: string }) => ({
+      ok: true as const, draft: body.resumePdfArtifactId === "pdf-B" ? draftB : draftA,
+    }));
+    const seed = vi.fn(async (draftId: string, _body: ResumeReviewCommentThreadSeedRequest) => ({
+      ok: true as const, draft: draftId === draftB.draftId ? draftB : draftA, commentThreads: [], seededCount: 1, updatedCount: 0,
+    }));
+    const fetchPreview = globalThis.fetch;
+    let releaseHtml!: (response: Response) => void;
+    const pendingHtml = new Promise<Response>((resolve) => { releaseHtml = resolve; });
+    const delayedFetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" || input instanceof URL ? input.toString() : input.url;
+      return url.includes("pdf-B") && url.includes("preview.html") ? pendingHtml : fetchPreview(input, init);
+    });
+    vi.stubGlobal("fetch", delayedFetch);
+    const queryClient = createTestQueryClient();
+    const applyJob = vi.fn();
+    renderWithProviders(<ApplyReviewView />, { queryClient, ports: buildTestPorts({ api: {
+      applyReviewQueue: vi.fn(async () => queue), createResumeReviewDraft: create,
+      seedResumeReviewCommentThreads: seed, applyJob,
+    } }) });
+    await waitFor(() => expect(seed).toHaveBeenCalledWith(draftA.draftId, expect.objectContaining({
+      threads: expect.arrayContaining([expect.objectContaining({ baseArtifactId: "resume-text-2" })]),
+    })));
+    queue = { ...queue, items: [next] };
+    act(() => queryClient.setQueryData(applyReviewKeys.queue(LOCAL_TENANT), queue));
+    await waitFor(() => expect(queryClient.getQueryData<{ draft: ResumeReviewDraft }>(
+      applyReviewKeys.draft(LOCAL_TENANT, original.jobKey))?.draft.draftId).toBe(draftB.draftId));
+    expect(delayedFetch.mock.calls.some(([input]) => String(input).includes("pdf-B"))).toBe(true);
+    expect(seed.mock.calls.filter(([id]) => id === draftB.draftId)).toEqual([]);
+    await act(async () => releaseHtml(new Response('<main class="resume-page"></main>', { status: 200 })));
+    await waitFor(() => expect(document.querySelector(".resume-plate-document .resume-page")).toBeTruthy());
+    expect(seed.mock.calls.filter(([id]) => id === draftB.draftId)).toEqual([]);
+    expect(applyJob).not.toHaveBeenCalled();
+  });
+
   it("bounds generated comment seed identifiers for long profile source paths", async () => {
     const jobKey = sampleApplyReviewQueue.items[0]!.jobKey;
     const longFields = Array.from({ length: 8 }, (_, index) => ({

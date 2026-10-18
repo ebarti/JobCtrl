@@ -644,7 +644,7 @@ export function ResumePlateEditor({
   const saveDisabled = !documentState.canSave || !onSaveDraft;
   const renderDisabled = !documentState.canRender || !onRenderDraft;
   useEffect(() => {
-    if (seedThreads.length) onSeedCommentThreads?.(seedThreads);
+    onSeedCommentThreads?.(seedThreads);
   }, [onSeedCommentThreads, seedThreads]);
 
   const handleFormattingApiChange = useCallback((api: ResumeEditorFormattingApi | null) => {

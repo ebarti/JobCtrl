@@ -38,6 +38,7 @@ interface SessionState {
   tail: Promise<unknown>;
   loadKey: string | null;
   seedKey: string | null;
+  seedSourceKey: string | null;
   seedThreads: readonly ResumeReviewCommentThreadSeedInput[];
   accepted: { result: AcceptedRender; baselineArtifactId: string | null } | null;
   renderResult: ResumeReviewDraftRenderResponse | null;
@@ -47,6 +48,13 @@ interface SessionState {
 const signature = (value: Value | null) => resumePlateValueSignature(value);
 const baseArtifact = (draft: ResumeReviewDraft) => draft.baseResumeTextArtifactId ?? draft.baseResumePdfArtifactId;
 const draftIdentity = (draft: ResumeReviewDraft | null) => draft ? JSON.stringify([draft.draftId, draft.baseGeneration]) : null;
+const materialIdentity = (item: ApplyReviewQueueItem) => JSON.stringify([item.materialsPreview.resumeTextArtifactId, item.materialsPreview.resumePdfArtifactId]);
+function clearSeeds(owner: SessionState) {
+  owner.seedSourceKey = null;
+  owner.seedThreads = [];
+  owner.seedKey = null;
+  delete owner.errors.seed;
+}
 function acceptedMatchesItem(accepted: SessionState["accepted"], item: ApplyReviewQueueItem): boolean {
   if (!accepted) return false;
   const { result } = accepted;
@@ -89,11 +97,15 @@ export function useApplyReviewSession(item: ApplyReviewQueueItem, autosaveDelayM
     current.current = {
       key, item, draft: null, document: null, baseline: signature(null), documentVersion: 0,
       editVersion: 0, hasLocalEdits: false, submitted: null, pending: new Map(), errors: {}, tail: Promise.resolve(),
-      loadKey: null, seedKey: null, seedThreads: [], accepted: null, renderResult: null, renderTask: null,
+      loadKey: null, seedKey: null, seedSourceKey: null, seedThreads: [], accepted: null, renderResult: null, renderTask: null,
     };
   }
   const session = current.current;
   session.item = item;
+  const materialKey = materialIdentity(item);
+  // Provenance can arrive before a draft, or after its replacement has loaded.
+  // Never retain a payload across material sources while waiting for either.
+  if (session.seedSourceKey !== null && session.seedSourceKey !== materialKey) clearSeeds(session);
   const active = useCallback((owner: SessionState) => mounted.current && current.current === owner, []);
   const publish = useCallback((owner: SessionState) => { if (active(owner)) update(); }, [active]);
   useEffect(() => {
@@ -127,6 +139,7 @@ export function useApplyReviewSession(item: ApplyReviewQueueItem, autosaveDelayM
         owner.errors = {};
         owner.renderResult = null;
         owner.seedKey = null;
+        if (owner.seedSourceKey !== JSON.stringify([next.baseResumeTextArtifactId, next.baseResumePdfArtifactId])) clearSeeds(owner);
       } else if (nextDocument) {
         const nextSignature = signature(nextDocument);
         if (!owner.hasLocalEdits) {
@@ -253,15 +266,21 @@ export function useApplyReviewSession(item: ApplyReviewQueueItem, autosaveDelayM
   }, [active, enqueue, receive, saveMutation.mutateAsync, session, sync]);
   const seed = useCallback((threads: readonly ResumeReviewCommentThreadSeedInput[]) => {
     const owner = session;
-    if (!active(owner)) return;
+    // Capture the publisher's source, rather than reading its mutable item at
+    // invocation time: an old Materials callback can finish after a switch.
+    if (!active(owner) || materialIdentity(owner.item) !== materialKey) return;
+    const artifactId = owner.item.materialsPreview.resumeTextArtifactId ?? owner.item.materialsPreview.resumePdfArtifactId;
+    if (threads.some((thread) => thread.baseArtifactId != null && thread.baseArtifactId !== artifactId)) return;
     const draft = owner.draft;
     const changed = owner.seedThreads !== threads;
+    owner.seedSourceKey = materialKey;
     owner.seedThreads = threads;
+    if (changed) delete owner.errors.seed;
     if (!draft || !threads.length || owner.pending.has("seed") || !draftMatchesItem(owner)) {
       if (changed) publish(owner);
       return;
     }
-    const seedKey = JSON.stringify([draft.draftId, threads]);
+    const seedKey = JSON.stringify([draftIdentity(draft), materialKey, threads]);
     if (owner.seedKey === seedKey) return;
     owner.seedKey = seedKey;
     // Comments advance independently of document writes and may settle in any order.
@@ -269,19 +288,24 @@ export function useApplyReviewSession(item: ApplyReviewQueueItem, autosaveDelayM
     delete owner.errors.seed;
     publish(owner);
     void seedMutation.mutateAsync({ jobId: owner.item.jobKey, draftId: draft.draftId, body: { threads: [...threads] } })
-      .then(({ draft: incoming }) => receive(owner, incoming))
-      .catch((error: unknown) => { if (active(owner) && draftIdentity(owner.draft) === draftIdentity(draft)) { owner.errors.seed = message(error); owner.seedKey = null; } })
+      .then(({ draft: incoming }) => {
+        if (materialIdentity(owner.item) === materialKey && draftIdentity(owner.draft) === draftIdentity(draft)) receive(owner, incoming);
+      })
+      .catch((error: unknown) => {
+        if (active(owner) && materialIdentity(owner.item) === materialKey && draftIdentity(owner.draft) === draftIdentity(draft)
+          && owner.seedThreads === threads) { owner.errors.seed = message(error); owner.seedKey = null; }
+      })
       .finally(() => { finish(owner, "seed"); publish(owner); });
-  }, [active, publish, receive, seedMutation.mutateAsync, session]);
+  }, [active, materialKey, publish, receive, seedMutation.mutateAsync, session]);
   useEffect(() => {
-    if (!session.errors.seed) seed(session.seedThreads);
-  }, [seed, session, session.draft?.draftId, session.pending.has("seed"), session.seedThreads]);
+    if (!session.errors.seed && session.seedSourceKey === materialKey) seed(session.seedThreads);
+  }, [materialKey, seed, session, session.draft?.draftId, session.draft?.baseGeneration, session.pending.has("seed"), session.seedThreads]);
   const retrySeed = useCallback(() => {
     const owner = session;
-    if (!active(owner)) return;
+    if (!active(owner) || materialIdentity(owner.item) !== materialKey || owner.seedSourceKey !== materialKey) return;
     owner.seedKey = null;
     seed(owner.seedThreads);
-  }, [active, seed, session]);
+  }, [active, materialKey, seed, session]);
   const reply = useCallback((thread: ResumeCommentThread, input: { body: string; decision: ResumeCommentReplyDecision }) => {
     const owner = session;
     if (!active(owner)) return;
