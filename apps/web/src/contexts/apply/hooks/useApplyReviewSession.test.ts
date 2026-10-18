@@ -4,7 +4,7 @@ import { LOCAL_TENANT, type TenantId } from "@jobctrl/domain-types";
 import type { Value } from "platejs";
 import type { ApplyReviewQueueItem, ResumeReviewDraft, ResumeReviewDraftRenderResponse, ResumeCommentThread } from "../../operations/types.js";
 import { sampleApplyReviewQueue } from "../../../test/fixtures/projections.js";
-import { renderHookWithProviders } from "../../../test/render.js";
+import { createTestQueryClient, renderHookWithProviders } from "../../../test/render.js";
 import { buildTestPorts, FakeSessionPort } from "../../../test/testPorts.js";
 import { applyReviewKeys } from "../../operations/applyReviewKeys.js";
 import { useApplyReviewSession } from "./useApplyReviewSession.js";
@@ -305,6 +305,54 @@ describe("Apply review session", () => {
     expect(save).toHaveBeenCalledTimes(1);
     await act(async () => { await hook.result.current.save(); });
     expect(save).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["before", "during"])("resumes default-delay autosave for edits made %s a slow load retry returning the same revision", async (editTiming) => {
+    const cached = draftFor();
+    const next = draftFor(item, document("typed during retry", true), 2);
+    const pending = deferred<Awaited<ReturnType<Api["createResumeReviewDraft"]>>>();
+    const create = vi.fn<Api["createResumeReviewDraft"]>().mockRejectedValueOnce(new Error("load failed"))
+      .mockImplementationOnce(() => pending.promise);
+    const save = vi.fn<Api["saveResumeReviewDraftRevision"]>().mockResolvedValue({ ok: true, draft: next, revision: next.latestRevision! });
+    const applyJob = vi.fn<Api["applyJob"]>();
+    const decideApplyReview = vi.fn<Api["decideApplyReview"]>();
+    const renderResumeReviewDraft = vi.fn<Api["renderResumeReviewDraft"]>();
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(applyReviewKeys.draft(LOCAL_TENANT, item.jobKey), { ok: true, draft: cached });
+    const ports = buildTestPorts({ api: { createResumeReviewDraft: create, saveResumeReviewDraftRevision: save,
+      applyJob, decideApplyReview, renderResumeReviewDraft } });
+    const hook = renderHookWithProviders(() => useApplyReviewSession(item), { ports, queryClient });
+    try {
+      await waitFor(() => expect(hook.result.current.errors.load).toBe("load failed"));
+      expect(hook.result.current.document).toEqual(document("A"));
+      const version = hook.result.current.documentVersion;
+      if (editTiming === "before") act(() => hook.result.current.edit(document("typed during retry", true)));
+      act(() => hook.result.current.retryLoad());
+      if (editTiming === "during") act(() => hook.result.current.edit(document("typed during retry", true)));
+      await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+      expect(hook.result.current.loading).toBe(true);
+      expect(hook.result.current.canSave).toBe(false);
+      // Exceed the production 1,500 ms interval without allowing a write during loading.
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1650)); });
+      expect(save).not.toHaveBeenCalled();
+      await act(async () => { pending.resolve({ ok: true, draft: cached }); });
+      await waitFor(() => expect(hook.result.current.loading).toBe(false));
+      expect(hook.result.current.dirty).toBe(true);
+      expect(hook.result.current.canSave).toBe(true);
+      await waitFor(() => expect(save).toHaveBeenCalledTimes(1), { timeout: 2500 });
+      expect(save).toHaveBeenCalledWith(cached.draftId, expect.objectContaining({
+        editedText: "typed during retry", plateDocument: next.latestRevision!.plateDocument,
+      }));
+      await waitFor(() => expect(hook.result.current.dirty).toBe(false));
+      expect(hook.result.current.documentVersion).toBe(version);
+      expect(hook.result.current.document).toEqual(document("typed during retry", true));
+      expect(hook.result.current.errors.save).toBeUndefined();
+      expect(hook.result.current.errors.load).toBeUndefined();
+      expect(hook.result.current.canRender).toBe(true);
+      expect(applyJob).not.toHaveBeenCalled();
+      expect(decideApplyReview).not.toHaveBeenCalled();
+      expect(renderResumeReviewDraft).not.toHaveBeenCalled();
+    } finally { hook.unmount(); }
   });
 
   it("allows load retry without replacing the accepted document with a failed attempt", async () => {

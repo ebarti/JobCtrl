@@ -420,16 +420,18 @@ export function useApplyReviewSession(item: ApplyReviewQueueItem, autosaveDelayM
   const documentSignature = signature(session.document);
   const isDirty = dirty(session);
   const saving = session.pending.has("save");
+  const loading = session.pending.has("load") || (!session.loadKey && Boolean(item.materialsPreview.resumePdfArtifactId));
+  const sourceChanged = !draftMatchesItem(session);
+  const canSave = Boolean(session.draft && session.document && (isDirty || session.errors.save) && !saving && !loading && !sourceChanged);
   useEffect(() => {
-    if (!autosaveDelayMs || !isDirty || !session.draft || saving || session.errors.save) return;
+    // Recovery can restore eligibility without changing the document or revision.
+    if (!autosaveDelayMs || !isDirty || !canSave || session.errors.save) return;
     const timer = window.setTimeout(() => { void save(); }, autosaveDelayMs);
     return () => window.clearTimeout(timer);
-  }, [autosaveDelayMs, documentSignature, isDirty, save, saving, session, session.draft?.draftId, session.errors.save]);
+  }, [autosaveDelayMs, canSave, documentSignature, isDirty, save, session, session.draft?.draftId, session.errors.save]);
   const rendered = session.draft?.state === "rendered" || session.draft?.state === "promoted";
   const needsRender = Boolean(session.draft?.latestRevision && !rendered);
   const rendering = session.pending.has("render");
-  const loading = session.pending.has("load") || (!session.loadKey && Boolean(item.materialsPreview.resumePdfArtifactId));
-  const sourceChanged = !draftMatchesItem(session);
   const reason = isDirty || saving ? "Save and render the edited resume before approval."
     : loading || session.errors.load || sourceChanged ? "Load the resume draft before approval."
     : rendering ? "Rendering saved resume draft before approval."
@@ -441,7 +443,7 @@ export function useApplyReviewSession(item: ApplyReviewQueueItem, autosaveDelayM
   const comparisonMatches = accepted && acceptedMatchesItem(accepted, item);
   return {
     identity: key, draft: session.draft, document: session.document, documentVersion: `${key}:${session.documentVersion}`,
-    canSave: Boolean(session.draft && session.document && (isDirty || session.errors.save) && !saving && !loading && !sourceChanged),
+    canSave,
     canRender: Boolean(session.draft?.latestRevision && !isDirty && !saving && !rendering && !loading && !session.errors.save && !sourceChanged && !session.pending.has("decision")),
     dirty: isDirty, loading, saving, rendering, replying: session.pending.has("reply"),
     preparing: session.pending.has("decision"), errors: session.errors,
