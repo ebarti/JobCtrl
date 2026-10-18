@@ -633,11 +633,11 @@ export function lintProgram(
       });
       function capabilitySeed(node, seen, writes) {
         const values = [];
-        if (ts.isParameter(node)) values.push(parameters.get(node));
+        if (ts.isParameter(node)) values.push(parameters.get(node)?.());
         if (ts.isIdentifier(node))
           for (const decl of checker.getSymbolAtLocation(node)?.declarations ??
             [])
-            if (ts.isParameter(decl)) values.push(parameters.get(decl));
+            if (ts.isParameter(decl)) values.push(parameters.get(decl)?.());
         if (ts.isParameter(node) && loaderParameter(node))
           values.push(origin("loader"));
         if (ts.isIdentifier(node)) {
@@ -690,12 +690,20 @@ export function lintProgram(
           for (const fn of contextFunctions(node.expression)) {
             if (seen.has(fn)) continue;
             const bound = new Map(parameters);
-            fn.parameters.forEach((parameter, index) =>
-              bound.set(
-                parameter,
-                tracer.trace(node.arguments[index], new Set(seen), writes),
-              ),
-            );
+            fn.parameters.forEach((parameter, index) => {
+              // Evaluate with the caller's original scope only if the returned
+              // value reads this parameter. Pure helpers need not expand an
+              // entire session just to return a scalar independent of authority.
+              let evaluated = false;
+              let value;
+              bound.set(parameter, () => {
+                if (!evaluated) {
+                  value = tracer.trace(node.arguments[index], new Set(seen), writes);
+                  evaluated = true;
+                }
+                return value;
+              });
+            });
             const resultTracer = capabilityTracer(fn.getSourceFile(), bound);
             const next = new Set(seen).add(fn);
             function returned(body) {
