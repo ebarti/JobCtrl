@@ -520,7 +520,13 @@ test("multiline HTML paste acknowledges one autosave and survives reload", async
     const data = new DataTransfer();
     data.setData("text/html", "<p>First pasted paragraph.</p><p>Second pasted paragraph.</p>");
     data.setData("text/plain", "First pasted paragraph.\nSecond pasted paragraph.");
-    element.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+    const paste = new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true });
+    element.dispatchEvent(paste);
+    // Chromium handles rich paste through beforeinput. A synthetic ClipboardEvent
+    // has no browser default action, so emit the matching native input event too.
+    if (!paste.defaultPrevented) element.dispatchEvent(new InputEvent("beforeinput", {
+      inputType: "insertFromPaste", dataTransfer: data, bubbles: true, cancelable: true,
+    }));
   });
   await expect(editor).toContainText("First pasted paragraph.");
   await expect(editor).toContainText("Second pasted paragraph.");
