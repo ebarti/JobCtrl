@@ -817,7 +817,7 @@ function TextPreview({
     <section className="apply-review-preview-block">
       <h3>{title}</h3>
       {text ? (
-        <div className="apply-review-document preformatted" data-typography="body">
+        <div className="apply-review-document preformatted" data-typography="body" tabIndex={0} role="region" aria-label={title}>
           {text}
         </div>
       ) : (
@@ -849,7 +849,7 @@ function EmailApplicationPreview({ item }: { readonly item: ApplyReviewQueueItem
           <dd>{preview.attachmentName}</dd>
         </div>
       </dl>
-      <div className="apply-review-document preformatted" data-typography="body">
+      <div className="apply-review-document preformatted" data-typography="body" tabIndex={0} role="region" aria-label="Email application body">
         {preview.body}
       </div>
     </section>

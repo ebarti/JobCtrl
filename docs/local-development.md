@@ -705,6 +705,15 @@ node scripts/live-worker-browser-smoke.mjs
 ```
 
 `web:e2e` uses the deterministic stub dispatcher and seeded worker heartbeat.
+Its cover-letter PDF measurement cases also require the Poppler system tools
+`pdfinfo`, `pdffonts`, `pdftotext` and `pdftoppm` on PATH. Install them during
+environment preparation, before browser tests: on Ubuntu/Linux CI use
+`sudo apt-get update && sudo apt-get install --yes poppler-utils`; on macOS use
+`brew install poppler`. Verify preparation with
+`corepack pnpm --filter @jobctrl/web e2e:check-pdf-tools`. The materials test
+preflight fails explicitly if any required tool is unavailable; it never skips
+measurements or installs system packages during a test run.
+
 The direct `node scripts/live-worker-browser-smoke.mjs` command is a separate,
 slower, opt-in integration lane: it starts an owned Temporal dev server, the
 standard Python worker registry, the real API JSON-RPC dispatcher, and Vite

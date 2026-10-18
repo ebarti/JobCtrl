@@ -5,11 +5,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import type { ApplyReviewQueueResponse } from "@jobctrl/contracts";
 
 import { loadE2eDbPath, QA_PLATFORM_JOB_ID } from "../fixtures/e2e-state.js";
 
 const repoRoot = fileURLToPath(new URL("../../../..", import.meta.url));
+const { assertPdfMeasurementTools } = createRequire(import.meta.url)("../fixtures/pdf-measurement-tools.cjs") as {
+  assertPdfMeasurementTools(): void;
+};
+test.beforeAll(() => { assertPdfMeasurementTools(); });
 const fullCoverText = Array.from({ length: 18 }, (_, index) => [
   `Paragraph ${index + 1}: Zoë's résumé costs €0.`,
   `Literal <b>tags</b> & "quotes" stay visible.`,
@@ -117,20 +122,22 @@ for (const fontFamily of ["georgia", "times", "arial"] as const) for (const sett
   }
 });
 
-test("cover-letter competing saves accept one snapshot and preserve its displayed bytes", async ({ page }, testInfo) => {
+test("cover-letter competing saves accept one snapshot and preserve its displayed bytes", async ({ page, baseURL }, testInfo) => {
   test.setTimeout(180_000);
   seedFullCoverText();
   const original = (await (await page.request.get("/v1/apply/review-queue")).json() as ApplyReviewQueueResponse).items.find(row => row.jobKey === QA_PLATFORM_JOB_ID)!;
   const cover = original.materialsPreview.coverLetter!;
+  const headers = { origin: new URL(baseURL!).origin };
   const previews = [];
   for (const fontSizePt of [10, 13]) {
-    const response = await page.request.post(`/v1/jobs/${QA_PLATFORM_JOB_ID}/cover-letter/preview`, { data: {
+    const response = await page.request.post(`/v1/jobs/${QA_PLATFORM_JOB_ID}/cover-letter/preview`, { headers, data: {
       source: cover.source, expectedAcceptedVersion: cover.acceptedVersion, settings: { ...cover.settings, fontSizePt },
     } });
-    expect(response.ok()).toBe(true);
+    expect(response.status(), await response.text()).toBe(200);
     previews.push((await response.json()).preview);
   }
   const results = await Promise.all(previews.map(preview => page.request.post(`/v1/jobs/${QA_PLATFORM_JOB_ID}/cover-letter/accept`, {
+    headers,
     data: { previewId: preview.previewId, expectedAcceptedVersion: preview.expectedAcceptedVersion },
   })));
   expect(results.map(response => response.status()).sort()).toEqual([200, 409]);
@@ -147,7 +154,8 @@ test("cover-letter competing saves accept one snapshot and preserve its displaye
 });
 
 // The API/RPC render and acceptance remain real. Only delivery of the committed
-// HTTP save acknowledgement is interrupted; this is transport-control evidence.
+// HTTP save acknowledgement and automatic queue-refresh delivery are interrupted;
+// this is transport-control evidence, not a mocked render or persistence result.
 test("cover-letter lost save acknowledgement reconciles on reload without accepting later edits", async ({ page }, testInfo) => {
   test.setTimeout(180_000);
   seedFullCoverText();
@@ -156,6 +164,10 @@ test("cover-letter lost save acknowledgement reconciles on reload without accept
   await surface.getByLabel("Font size (pt)").fill("12");
   await surface.getByRole("button", { name: "Preview cover-letter PDF" }).click();
   await expect(surface.getByRole("button", { name: "Save cover-letter PDF", exact: true })).toBeEnabled({ timeout: 60_000 });
+  // A successful canonical refetch can legitimately reconcile a lost save
+  // acknowledgement. Keep that transport unavailable until the reload below,
+  // so this assertion exercises uncertain-save fencing independently of SSE timing.
+  await page.route("**/v1/apply/review-queue", route => route.abort("failed"));
   let committed: unknown;
   await page.route("**/cover-letter/accept", async route => {
     const response = await route.fetch();
@@ -167,9 +179,14 @@ test("cover-letter lost save acknowledgement reconciles on reload without accept
   await surface.getByRole("button", { name: "Save cover-letter PDF", exact: true }).click();
   await expect(surface.getByLabel("Font size (pt)")).toHaveValue("9");
   await expect(surface.getByRole("button", { name: "Save cover-letter PDF", exact: true })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Authorize dry run", exact: true })).toBeDisabled();
+  const authorization = page.getByRole("group", { name: "Authorization decision for Director of Platform Engineering", exact: true });
+  await expect(authorization.getByRole("button", { name: "Authorize dry run for Director of Platform Engineering", exact: true })).toBeDisabled();
+  await expect(authorization.getByRole("button", { name: "Authorize live submit for Director of Platform Engineering", exact: true })).toBeDisabled();
+  await expect(authorization.getByRole("button", { name: "Authorize dry run for Director of Platform Engineering", exact: true }))
+    .toHaveAttribute("title", "Reload to reconcile the cover-letter save before approval.");
   await testInfo.attach("lost-ack-committed-receipt.json", { body: JSON.stringify(committed), contentType: "application/json" });
   await page.unroute("**/cover-letter/accept");
+  await page.unroute("**/v1/apply/review-queue");
   await page.reload();
   await expect(surface.getByLabel("Font size (pt)")).toHaveValue("12");
   const queue = await (await page.request.get("/v1/apply/review-queue")).json() as ApplyReviewQueueResponse;

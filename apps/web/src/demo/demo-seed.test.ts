@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { ENDPOINTS } from "@jobctrl/contracts";
 import { DEMO_ARTIFACTS } from "./artifacts.js";
 import { DEMO_CAPABILITY_MANIFEST } from "./capabilities.js";
 import { materializeDemoSeed } from "./clock.js";
@@ -18,8 +19,20 @@ const CONTOSO_GENERATION_ONE_ARTIFACT_IDS = [
 
 describe("canonical public demo seed", () => {
   it("has a complete classified API capability manifest", () => {
-    expect(Object.keys(DEMO_CAPABILITY_MANIFEST)).toHaveLength(150);
-    expect(Object.values(DEMO_CAPABILITY_MANIFEST).every((entry) => entry.reason.length > 0)).toBe(true);
+    // The manifest's satisfies DemoCapabilityManifest checks every port member;
+    // also check runtime registry coverage instead of freezing its cardinality.
+    for (const endpoint of Object.values(ENDPOINTS)) {
+      expect(DEMO_CAPABILITY_MANIFEST[endpoint.name].class, endpoint.name).toBe(endpoint.demo.class);
+    }
+    for (const capability of Object.values(DEMO_CAPABILITY_MANIFEST)) {
+      expect(["browser_local", "rehearsed_external", "unavailable"]).toContain(capability.class);
+      expect(capability.reason.trim()).not.toBe("");
+    }
+    for (const method of ["renderCoverLetterPreview", "acceptCoverLetterPreview", "coverLetterPreviewPdfUrl"] as const) {
+      expect(DEMO_CAPABILITY_MANIFEST[method]).toMatchObject({ class: "unavailable" });
+    }
+    expect(DEMO_CAPABILITY_MANIFEST.applyReviewQueue.class).toBe("browser_local");
+    expect(DEMO_CAPABILITY_MANIFEST.openArtifact.class).toBe("rehearsed_external");
   });
 
   it("is deterministic, immutable by type, and covers the required lifecycle arms", () => {

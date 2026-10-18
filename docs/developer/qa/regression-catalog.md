@@ -1269,3 +1269,14 @@ paper and text geometry, font sizes, line/paragraph deltas, every-page PNGs and
 viewer screenshots. Inspect every page; passing interactions alone cannot prove
 visual acceptance. Keep controlled-response race scenarios separate from these
 real render measurements.
+
+Run materials before shipped-fit lifecycle browser cases in the same owned
+workspace. Formatting saves carry resume slots into later material generations;
+the lifecycle fixture must change and restore the currently accepted audit,
+preserving generation-one history and the exact legacy coverage assertions.
+Direct browser-test mutation requests must send the configured first-party
+Origin; absent or foreign Origins must still receive 403. For a committed save
+whose acknowledgement is lost, inspect the job-qualified authorization buttons:
+both must remain disabled with the reconciliation reason until canonical state
+is recovered. Check keyboard focus/scroll access to long cover-letter and email
+text, and retain the existing critical/serious axe checks.

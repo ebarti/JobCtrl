@@ -67,16 +67,22 @@ function shippedFitMetadata(lifecycle: QaShippedFitLifecycle): Record<string, un
   };
 }
 
-/** Switch only the owned seed's canonical final audit, retaining all other metadata. */
+/** Switch the owned seed's currently accepted resume audit, retaining history.
+ * Cover-letter formatting carries resume slots forward into later material sets.
+ */
 export function seedQaShippedFitLifecycle(dbPath: string, lifecycle: QaShippedFitLifecycle): () => void {
   const db = new Database(dbPath);
   const originals: Array<{ table: string; rowid: number; metadata_json: string }> = [];
   try {
     db.transaction(() => {
+      const accepted = db.prepare(`SELECT max(generation) AS generation FROM job_materials_artifacts
+        WHERE tenant_id = 'local' AND job_id = ? AND artifact_type IN ('tailored_resume', 'resume_pdf')
+          AND status = 'approved' AND superseded_at IS NULL`).get(QA_PLATFORM_JOB_ID) as { generation: number | null };
+      if (accepted.generation === null) throw new Error("Expected an accepted synthetic resume.");
       for (const table of ["job_materials", "job_materials_artifacts"]) {
         const rows = db.prepare(
-          `SELECT rowid, metadata_json FROM ${table} WHERE tenant_id = 'local' AND job_id = ? AND generation = 1`,
-        ).all(QA_PLATFORM_JOB_ID) as Array<{ rowid: number; metadata_json: string }>;
+          `SELECT rowid, metadata_json FROM ${table} WHERE tenant_id = 'local' AND job_id = ? AND generation = ?`,
+        ).all(QA_PLATFORM_JOB_ID, accepted.generation) as Array<{ rowid: number; metadata_json: string }>;
         for (const row of rows) {
           const metadata = JSON.parse(row.metadata_json) as Record<string, unknown>;
           if (!metadata.post_generation_fit) continue;

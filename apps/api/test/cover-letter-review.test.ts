@@ -323,7 +323,7 @@ describe("exact cover-letter review", () => {
     const app = buildApp({ appDir: directory, dbPath: path.join(directory, "jobs.db"), configPath: path.join(directory, "config.json"), coverLetterPdfRenderer: render });
     try {
       const client = createEndpointMethods(async (method, url, body) => {
-        const response = await app.inject({ method, url, payload: body as object });
+        const response = await app.inject({ method, url, headers: { origin: "http://127.0.0.1:5173" }, payload: body as object });
         if (response.statusCode !== 200) throw new Error(response.body);
         return response.json();
       });
@@ -359,6 +359,26 @@ describe("exact cover-letter review", () => {
         expect(forbidden.json().error).toBe("cover_letter_path_forbidden");
         expect(fs.readFileSync(moved)).toEqual(pdf);
       } finally { fs.rmSync(outside,{recursive:true,force:true}); }
+    } finally { await app.close(); }
+  });
+
+  it("requires a first-party Origin for preview and acceptance without changing accepted state", async () => {
+    const app = buildApp({ appDir: directory, dbPath: path.join(directory, "jobs.db"), configPath: path.join(directory, "config.json"), coverLetterPdfRenderer: render });
+    const before = acceptedRows();
+    try {
+      const { preview } = await renderCoverLetterPreview(db, directory, jobId, request(), render);
+      for (const operation of ["preview", "accept"] as const) {
+        for (const headers of [{}, { origin: "https://example.test" }]) {
+          const response = await app.inject({ method: "POST", url: `/v1/jobs/${jobId}/cover-letter/${operation}`, headers,
+            payload: operation === "preview" ? request() : { previewId: preview.previewId, expectedAcceptedVersion: preview.expectedAcceptedVersion } });
+          expect(response.statusCode, response.body).toBe(403);
+          expect(response.json().error).toBe("cross_site_request");
+          expect(acceptedRows()).toEqual(before);
+        }
+      }
+      const response = await app.inject({ method: "POST", url: `/v1/jobs/${jobId}/cover-letter/accept`,
+        headers: { origin: "http://127.0.0.1:5173" }, payload: { previewId: preview.previewId, expectedAcceptedVersion: preview.expectedAcceptedVersion } });
+      expect(response.statusCode, response.body).toBe(200);
     } finally { await app.close(); }
   });
 
