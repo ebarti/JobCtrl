@@ -1,4 +1,4 @@
-import type { JobDetail } from "../../contexts/operations/types.js";
+import type { JobDetail } from "@jobctrl/contracts";
 
 export function fitScoreHelp(job: JobDetail["job"]): string {
   if (job.scoreCorrection) {

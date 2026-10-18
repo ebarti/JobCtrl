@@ -3,7 +3,7 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { artifactsKeys } from "../artifactsKeys.js";
-import type { ArtifactDetail } from "../types.js";
+import type { ArtifactDetail } from "@jobctrl/contracts";
 
 export interface UseArtifactDetailQueryOptions {
   readonly enabled?: boolean;

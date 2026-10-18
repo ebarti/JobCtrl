@@ -91,7 +91,7 @@ export function dependencies(source) {
 export function lintProgram(
   program,
   root,
-  exemptions = { contracts: {}, capabilities: {} },
+  exemptions = { capabilities: {}, dependencies: {} },
 ) {
   const checker = program.getTypeChecker();
   const options = program.getCompilerOptions();
@@ -263,19 +263,6 @@ export function lintProgram(
         }
       if (
         feature &&
-        path !== "contexts/operations/types.ts" &&
-        /^@jobctrl\/contracts(?:\/|$)/.test(dep.specifier)
-      ) {
-        for (const name of dep.names)
-          if (!exempt("contracts", path, name))
-            report(
-              dep.node,
-              "operations-acl",
-              `Import ${name} through contexts/operations/types.ts. Existing direct contract access requires an exact file/symbol exemption with an architectural reason.`,
-            );
-      }
-      if (
-        feature &&
         /^@jobctrl\/api-client(?:\/|$)/.test(dep.specifier) &&
         !dep.names.every((name) => name === "JobCtrlApiError")
       ) {
@@ -402,7 +389,7 @@ export function lintProgram(
     }
     inspect(source);
   }
-  for (const group of ["contracts", "capabilities", "dependencies"])
+  for (const group of ["capabilities", "dependencies"])
     for (const [path, entry] of Object.entries(exemptions[group] ?? {})) {
       for (const name of entry.symbols)
         if (!used.has(`${group}:${path}:${name}`))

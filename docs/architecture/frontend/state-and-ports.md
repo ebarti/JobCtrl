@@ -262,40 +262,28 @@ The hosted-mode `WebSocketEventStreamAdapter` (if the SSE adapter proves
 limiting under cross-region or CDN-buffered conditions, see fitness
 function §9.4) preserves the same interface; only the transport changes.
 
-### 6.5 `contexts/operations/types.ts` — Frontend ACL
+### 6.5 Canonical DTOs And Frontend Input Refinements
 
-The frontend has an Anti-Corruption Layer too: `contexts/operations/types.ts`
-re-exports the projection and API response types and adds frontend-only
-refinements (e.g., narrower string-union types over `state` / `stage`
-derived from `STAGES` / `STAGE_STATE_KINDS`). The projection shapes are
-canonically defined in `@jobctrl/domain-types` (`operations/`) and
-re-exported through `@jobctrl/contracts`; the ACL is the intended single
-import surface for feature code, though `@jobctrl/contracts` is still
-imported directly in places today.
+Import unchanged wire DTOs, Zod schemas and wire constants directly from
+`@jobctrl/contracts`. Import domain vocabulary and the domain-event union from
+`@jobctrl/domain-types`. Those packages own the shapes; transparent aliases or
+re-exports do not isolate consumers from a wire-shape change. A canonical shape
+change requires updating its affected consumers.
 
-`corepack pnpm web:lint` guards this boundary in production feature source.
-Existing direct `@jobctrl/contracts` imports have exact file-and-imported-symbol
-exceptions with reasons: projection/response imports are migration debt, while
-runtime schemas and constants are intentional contract consumption. New callers
-or symbols require an explicit boundary decision; unused exceptions must be
-removed. Shared ports, adapters, and the Operations ACL legitimately consume
-contracts. Canonical `@jobctrl/domain-types` vocabulary, including tenant
-identities and domain events, remains available directly.
+`contexts/operations/types.ts` owns genuine frontend input refinements:
+`JobsListInput` accepts readonly stage selections, list inputs allow partial
+queries, and stage filters include the UI's `"all"` sentinel. It also retains
+string `JobId` compatibility, the indexed event-type union and the
+endpoint-derived availability acknowledgement. It does not mirror canonical
+DTOs, schemas or constants. The Operations public barrel exposes its hooks,
+query keys, infrastructure and frontend refinements.
 
-Why an ACL (this thin):
-
-- **Single point of compile-time impact** when a backend projection
-  shape changes — the ACL re-export site is the first error; we update
-  the frontend only at that boundary.
-- **Frontend-only refinements** (string narrowing for exhaustive
-  `switch`, branded date types, etc.) are introduced once.
-- **Future deviation from contract types** (e.g., a frontend-derived
-  computed field) has a natural home.
-
-This is an extremely thin ACL — it is mostly re-exports today. It exists
-because the alternative ("just import from `@jobctrl/contracts` directly")
-makes a future tightening of types or addition of frontend computed shape
-into a sprawling refactor.
+`corepack pnpm web:lint` permits canonical package imports without contract
+exemptions. It independently enforces capability ports, context-owned API/query/
+store usage and dependency direction, including edges hidden by local barrels.
+Remaining capability and dependency exemptions require exact file/symbol reasons
+and fail when stale. Canonical imports grant no capability to call the API client
+or query client from a view.
 
 ### 6.6 No Direct DOM Access from Feature Code
 

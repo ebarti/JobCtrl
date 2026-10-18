@@ -1,7 +1,7 @@
-import type { JobSummary, PaginatedResponse } from "@jobctrl/contracts";
+import { JobListQuerySchema, type JobSummary, type PaginatedResponse } from "@jobctrl/contracts";
 
 import type { ApiClientPort } from "../../shared/ports/ApiClientPort.js";
-import { JobListQuerySchema, type JobsListInput } from "./types.js";
+import type { JobsListInput } from "./types.js";
 
 /** The server owns combined ordering, totals, clamping and the bounded page. */
 export function fetchJobsList(

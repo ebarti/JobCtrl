@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { sampleJob, sampleSecondaryJob, sampleArtifact } from "../../../test/fixtures/projections.js";
-import type { ArtifactSummary } from "../../../contexts/operations/types.js";
+import type { ArtifactSummary } from "@jobctrl/contracts";
 import { groupArtifactsByJob, summarizeFunnel } from "./jobsSelectors.js";
 
 describe("summarizeFunnel", () => {

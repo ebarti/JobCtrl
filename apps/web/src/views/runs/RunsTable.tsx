@@ -1,10 +1,7 @@
 import type { SortingState } from "@tanstack/react-table";
 import { useMemo } from "react";
 
-import type {
-  PaginatedResponse,
-  WorkflowRunSummary,
-} from "../../contexts/operations/types.js";
+import type { PaginatedResponse, WorkflowRunSummary } from "@jobctrl/contracts";
 import { useIsMobile } from "../../shared/hooks/use-mobile.js";
 import {
   FilterableDataGrid,

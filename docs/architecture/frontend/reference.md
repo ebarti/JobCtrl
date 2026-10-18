@@ -221,16 +221,14 @@ The frontend's domain language is `JobId` per backend domain model [§4.1](../do
 client still accepts `jobKey: string` for compatibility:
 `apiClient.deleteJob(jobKey: string, ...)`.
 
-**Mitigations:**
-- The frontend ACL (§6.5) is the single mapping site:
-  `useDeleteJobMutation({ jobId })` calls `apiClient.deleteJob(jobId, ...)`
-  with the `JobId` value passed as the API's currently-named `jobKey`
-  parameter. When the backend rename lands, only the ACL changes; every
-  call site is already on `jobId: JobId`.
-- A `JobId` value is brand-typed (`string & { __brand: "JobId" }`) so
-  passing a raw string fails TypeScript at the boundary — the developer
-  must explicitly construct via `createJobId(...)` from
-  `@jobctrl/domain-types`.
+**Compatibility:**
+- Context-owned mutation hooks pass job identifiers to the API-client port.
+  `contexts/operations/types.ts` keeps `JobId = string` for existing route and
+  client inputs; it does not brand or convert identifiers. The canonical domain
+  package separately owns the branded `JobId` and its constructor.
+- Canonical DTOs are imported directly (§6.5). A client parameter rename must
+  update the affected port and callers; a transparent type alias cannot isolate
+  that change.
 
 ### R14. Materials-set generation invalidation under concurrent re-tailoring
 
@@ -254,7 +252,7 @@ first's reconciliation.
 
 | Term | Context | Definition |
 |---|---|---|
-| **ACL (Frontend)** | Architecture | The thin Anti-Corruption Layer in `contexts/operations/types.ts` that re-exports backend projection types into frontend code. Provides a single point to refine or override types as the frontend evolves. |
+| **Frontend input refinements** | Architecture | `contexts/operations/types.ts` owns partial list inputs, readonly Jobs stage selections and UI sentinels. Unchanged DTOs, schemas and constants come directly from their canonical packages (§6.5). |
 | **ApiClientPort** | Frontend (Hexagonal) | The interface through which feature code reaches the backend HTTP API. Local adapter wraps `@jobctrl/api-client`; hosted adapter adds JWT injection. |
 | **AppliedAction** | Frontend (Apply context) | UI affordance to manually mark a job as applied without running the apply automation. Surfaces `MarkAppliedUseCase`. |
 | **ApplyRunBadge** | Frontend (Apply context) | Legacy-named status component that renders a compact dot/glyph plus text in dashboard ledgers and run detail workspaces to summarize an `ApplyRun`'s current `SubmissionResult`. |
@@ -280,7 +278,7 @@ first's reconciliation.
 | **InvalidationRouter** | Frontend (Operations) | Pure function mapping `DomainEvent` to a list of cache operations (`invalidateQueries` / `setQueryData`). The single contract surface between the backend's event taxonomy and the frontend's query cache. |
 | **JobActions** | Frontend (Pipeline composer) | Toolbar component composing per-stage / per-action buttons (`<RetryStageButton />`, `<GenerateMaterialsButton />`, `<ApplyButton />`, `<MarkAppliedButton />`, etc.). |
 | **JobDetailDrawer** | Frontend (Jobs view) | Legacy filename/component name for the full `RouteWorkspace` in `views/jobs/` that opens when a job is selected. It composes the header ledger, ruled evidence sections, inspector, score, stages, artifacts, apply history, and actions from the contexts that own each. It is not a detached drawer or side sheet. |
-| **JobId** | Domain (shared) | The system-generated stable identifier for a job per backend domain model [§3.1](../domain-model/strategic.md) / [§4.1](../domain-model/tactical.md). Branded type (`string & { __brand: "JobId" }`) constructed via `createJobId(...)` from `@jobctrl/domain-types`. The frontend uses `JobId` as its domain term throughout; the API client's currently-named `jobKey: string` parameter is a transport detail mapped at the ACL boundary ([§6.5](../domain-model/integration.md)). |
+| **JobId** | Domain (shared) | The stable job identifier. `@jobctrl/domain-types` owns the branded domain type and `createJobId(...)`; frontend Operations retains `JobId = string` for existing URL and API-client compatibility (§6.5 / R13). |
 | **JobsTable** | Frontend (Jobs view) | The shared data-grid instance in `views/jobs/JobsTable.tsx` rendering the jobs list; receives data from `useJobsListQuery` (Operations) and column cell components from `contexts/scoring/`, `contexts/pipeline/`, etc. |
 | **KPI** | Frontend (Dashboard) | A top-line metric in the dashboard's continuous ruled ledger. |
 | **LayerSeparation** | Frontend (Modeling) | The architectural rule that every datum lives in exactly one of three layers: server (Query), URL (Router), or client (Zustand/Context). See §2.1. |

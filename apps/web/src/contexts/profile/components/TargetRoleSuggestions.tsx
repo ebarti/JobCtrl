@@ -1,6 +1,9 @@
 import { useRef, useState } from "react";
 
-import type { TargetPreferenceSuggestion, TargetRoleSuggestion } from "../../operations/types.js";
+import type {
+  TargetPreferenceSuggestion,
+  TargetRoleSuggestion,
+} from "@jobctrl/contracts";
 import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
 import { Badge } from "../../../shared/ui/badge.js";
 import { Button } from "../../../shared/ui/button.js";

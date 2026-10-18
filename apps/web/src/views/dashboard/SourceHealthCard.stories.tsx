@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import type { DashboardSummary } from "../../contexts/operations/types.js";
+import type { DashboardSummary } from "@jobctrl/contracts";
 
 import { sampleDashboardSummary } from "../../test/fixtures/projections.js";
 import { SourceHealthCard } from "./SourceHealthCard.js";
