@@ -49,6 +49,7 @@ from jobctrl.domain.scoring import (
     RequirementTailoringDirective,
 )
 from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.materials.artifact_writer import LocalArtifactTextWriter
 from jobctrl.infrastructure.materials.html_resume_pdf import (
     build_resume_document,
     build_resume_html,
@@ -453,6 +454,7 @@ def _use_case(materials_repo, provenance_repo, llm, publisher, voice, *, verdict
 
     verifier, quality = review_ports(quality_source=llm, verdict=verdict)
     return TailorResumeUseCase(
+        artifact_writer=LocalArtifactTextWriter(),
         claim_verifier=verifier,
         quality_judge=quality,
         job_interpreter=JobInterpreter(),
@@ -872,6 +874,8 @@ def test_no_voice_port_keeps_pre_phase3_behaviour(tmp_path: Path) -> None:
     llm = _approved_llm(clean)
     outcome = TailorResumeUseCase(
         **tailor_dependencies(llm),
+        llm_policy=TailoringLlmPolicy(),
+        artifact_writer=LocalArtifactTextWriter(),
         repository=materials_repo,
         llm=llm,
         validator=ContentValidator(),
