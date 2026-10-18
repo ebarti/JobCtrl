@@ -38,6 +38,7 @@ describe("offline model capabilities", () => {
       "generateInterviewPrep",
       "rescoreJob", "retailorJob", "retryStage", "runJobStage",
       "targetRoleSuggestions", "requiredBulletSuggestions", "importResume",
+      "careerLearning", "writeCareerLearning",
       "discoverySourcePreview", "importManualCapture",
     ] as const;
     const repository = new DemoWorkspaceRepository({
