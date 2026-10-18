@@ -68,6 +68,16 @@ describe("posting-history source proposals", () => {
     expect(postingSourceCoordinate(url)).toBeNull();
   });
 
+  it.each([
+    ["https://jobs.lever.co/acme/1", "https://jobs.eu.lever.co/acme/1"],
+    ["https://boards.greenhouse.io/acme_team/jobs/1", "https://boards.greenhouse.io/acme-team/jobs/1"],
+    ["https://www.example.com/job", "https://example.com/job"],
+    ["https://foo.bar.com/job", "https://foo-bar.com/job"],
+    ["https://acme.wd5.myworkdayjobs.com/Careers/job/1", "https://acme.wd5.myworkdayjobs.com/Students/job/1"],
+  ])("keeps distinct literal board source IDs for %s and %s", (first, second) => {
+    expect(postingSourceCoordinate(first)?.sourceId).not.toBe(postingSourceCoordinate(second)?.sourceId);
+  });
+
   it("reads saved evidence and existing overlaps without any mutation", async () => {
     const { db, app } = workspace();
     try {

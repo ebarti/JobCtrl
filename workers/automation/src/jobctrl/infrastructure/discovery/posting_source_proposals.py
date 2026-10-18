@@ -105,12 +105,13 @@ def source_coordinate(raw_url: str) -> SourceCoordinate | None:
     if kind:
         if not token or not re.fullmatch(r"[A-Za-z0-9_-]+", token):
             return None
-        source_slug = re.sub(r"[^a-z0-9]+", "-", token.lower()).strip("-")
+        # Registry identity retains literal board tokens and regional hosts;
+        # display slugs must not collapse distinct provider coordinates.
+        source_token = f"eu:{token}" if kind == "lever" and board_host == "jobs.eu.lever.co" else token
         if kind == "workday":
-            source_slug = re.sub(r"[^a-z0-9]+", "-", f"{host}-{token}").strip("-")
-        return SourceCoordinate(f"https://{board_host}/{token}", f"{kind}:{source_slug}", kind, token)
-    slug = re.sub(r"[^a-z0-9]+", "-", host.removeprefix("www.")).strip("-")
-    return SourceCoordinate(f"https://{host}/", f"employer_careers_page:{slug}", None, None)
+            source_token = f"{host}:{token}"
+        return SourceCoordinate(f"https://{board_host}/{token}", f"{kind}:{source_token}", kind, token)
+    return SourceCoordinate(f"https://{host}/", f"employer_careers_page:{host}", None, None)
 
 
 def review_state(conn: sqlite3.Connection, coordinate: SourceCoordinate) -> tuple[str | None, int]:

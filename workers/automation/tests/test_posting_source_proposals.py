@@ -310,3 +310,50 @@ def test_source_receipts_survive_canonical_job_deletion(workspace):
     conn.execute("DELETE FROM jobs WHERE tenant_id = 'local' AND job_id = ?", (job_id,))
     conn.commit()
     assert command("list") == before
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("https://jobs.lever.co/acme/1", "https://jobs.eu.lever.co/acme/1"),
+        ("https://boards.greenhouse.io/acme_team/jobs/1", "https://boards.greenhouse.io/acme-team/jobs/1"),
+        ("https://www.example.com/job", "https://example.com/job"),
+    ("https://foo.bar.com/job", "https://foo-bar.com/job"),
+        ("https://acme.wd5.myworkdayjobs.com/Careers/job/1", "https://acme.wd5.myworkdayjobs.com/Students/job/1"),
+    ],
+)
+def test_distinct_board_coordinates_cannot_share_a_proposal_source_id(first, second):
+    assert proposals.source_coordinate(first).source_id != proposals.source_coordinate(second).source_id
+
+
+def test_ordinary_learning_reuses_the_reviewed_coordinate(workspace):
+    conn = workspace
+    url = "https://boards.greenhouse.io/acme_team/jobs/1"
+    seed_job(conn, url)
+    command("from-history")
+    candidate = command("list")["candidates"][0]
+    conn.execute(
+        "INSERT INTO source_registry_entries (tenant_id, source_id, kind, display_name, owner, priority, state, policy_id, seed_url, created_at, updated_at) VALUES ('local', 'greenhouse:acme_team', 'ats_api', 'Reviewed Acme', 'user', 'canonical', 'active', 'ats_api_canonical', ?, ?, ?)",
+        (candidate["candidate_url"], NOW, NOW),
+    )
+    record_job_event(
+        conn,
+        None,
+        "discover",
+        "SourceLocationCandidateReviewed",
+        entity_kind="discovery",
+        entity_ref=candidate["candidate_url"],
+        payload={
+            "candidateId": candidate["candidate_id"],
+            "coordinateKey": candidate["candidate_url"],
+            "decision": "promote",
+            "reason": "Synthetic review",
+            "decidedAt": NOW,
+        },
+    )
+    conn.execute("DELETE FROM source_locator_candidates")
+    conn.commit()
+    learn_posting_source_from_url(
+        conn, job_url=url, posting_url=url, discovered_via_source_id="jobspy:linkedin", observed_at=NOW
+    )
+    assert [row[0] for row in conn.execute("SELECT source_id FROM source_registry_entries")] == ["greenhouse:acme_team"]

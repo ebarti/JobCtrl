@@ -71,6 +71,8 @@ from jobctrl.discovery.target_queries import query_specs_for_source
 from jobctrl.infrastructure.discovery.posting_source_proposals import (
     automatic_learning_blocked,
     propose_posting_source,
+    registry_overlaps,
+    source_coordinate,
 )
 from jobctrl.infrastructure.discovery.ats_adapters import (
     AshbyBoardAdapter,
@@ -1253,6 +1255,8 @@ def _promote_locator_candidate(
         )
         changed = True
     else:
+        if str(existing["state"]) in {"disabled", "quarantined"}:
+            return False
         changed_fields: list[str] = []
         if str(existing["state"]) != "active":
             changed_fields.append("state")
@@ -1600,6 +1604,10 @@ def _source_id_from_locator_candidate(
     conn: sqlite3.Connection,
     candidate: SourceLocationCandidate,
 ) -> str:
+    coordinate = source_coordinate(candidate.candidate_url)
+    overlaps = registry_overlaps(conn, coordinate) if coordinate is not None else []
+    if overlaps:
+        return str(overlaps[0]["source_id"])
     slug = _source_slug_from_locator_url(
         candidate.candidate_url,
         candidate.evidence.detected_ats_kind,
@@ -1632,6 +1640,8 @@ def _source_id_from_locator_candidate(
     ).fetchone()
     if existing is not None:
         return str(existing["source_id"])
+    if coordinate is not None and coordinate.ats_kind is not None:
+        return coordinate.source_id
     if candidate.evidence.detected_ats_kind:
         return f"{candidate.evidence.detected_ats_kind}:{slug}"
     return f"{candidate.source_kind.value}:{slug}"

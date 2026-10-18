@@ -50,12 +50,13 @@ export function postingSourceCoordinate(rawUrl: string): SourceCoordinate | null
     if (parts[0] && /^[a-z]{2}-[A-Z]{2}$/.test(parts[0])) parts = parts.slice(1);
     token = parts[0] === "wday" && parts[1] === "cxs" ? parts[3] ?? null : parts[0] ?? null;
   }
-  const slug = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
   if (kind) {
     if (!token || !/^[A-Za-z0-9_-]+$/.test(token)) return null;
-    return { coordinateKey: `https://${boardHost}/${token}`, sourceId: `${kind}:${slug(kind === "workday" ? `${host}-${token}` : token)}`, atsKind: kind, boardToken: token };
+    const sourceToken = kind === "workday" ? `${host}:${token}`
+      : kind === "lever" && boardHost === "jobs.eu.lever.co" ? `eu:${token}` : token;
+    return { coordinateKey: `https://${boardHost}/${token}`, sourceId: `${kind}:${sourceToken}`, atsKind: kind, boardToken: token };
   }
-  return { coordinateKey: `https://${host}/`, sourceId: `employer_careers_page:${slug(host.replace(/^www\./, ""))}`, atsKind: null, boardToken: null };
+  return { coordinateKey: `https://${host}/`, sourceId: `employer_careers_page:${host}`, atsKind: null, boardToken: null };
 }
 
 export function sourceCoordinateOverlaps(db: SqliteDatabase, coordinateKey: string, sourceId: string): SourceProposalReview["overlaps"] {

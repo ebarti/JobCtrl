@@ -71,7 +71,9 @@ fetches a page, invokes a model or starts a Discover run.
 
 Proposals enter the existing **Source controls → Source locator** review queue.
 URLs for one recognized ATS board share a candidate coordinate, including
-posting/API/apply URL forms. Unknown hosts are proposed at host scope with no
+posting/API/apply URL forms. Literal board tokens, regional Lever hosts and
+Workday site names retain distinct source identities; display slugs do not
+merge them. Ordinary learning reuses a reviewed coordinate. Unknown hosts are proposed at host scope with no
 verified board identity. Malformed, credential-bearing, local/private and
 unresolvable destinations are not proposed. Public network policy still
 applies when a reviewed source is later acquired.
