@@ -1,7 +1,239 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Locator, type TestInfo } from "@playwright/test";
 import Database from "better-sqlite3";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
+import type { ApplyReviewQueueResponse } from "@jobctrl/contracts";
 
 import { loadE2eDbPath, QA_PLATFORM_JOB_ID } from "../fixtures/e2e-state.js";
+
+const repoRoot = fileURLToPath(new URL("../../../..", import.meta.url));
+// Reload performs the same full PDF.js page rendering as the initial preview.
+// Use its existing one-minute readiness budget for both, below the test budget.
+const viewerReadyTimeout = 60_000;
+const { assertPdfMeasurementTools } = createRequire(import.meta.url)("../fixtures/pdf-measurement-tools.cjs") as {
+  assertPdfMeasurementTools(): void;
+};
+test.beforeAll(() => { assertPdfMeasurementTools(); });
+const fullCoverText = Array.from({ length: 18 }, (_, index) => [
+  `Paragraph ${index + 1}: Zoë's résumé costs €0.`,
+  `Literal <b>tags</b> & "quotes" stay visible.`,
+  `Full accepted source line ${index + 1}; end of paragraph.`,
+].join("\n")).join("\n\n") + "\n\nEND OF COMPLETE SYNTHETIC LETTER";
+
+async function retainJson(testInfo: TestInfo, name: string, value: unknown): Promise<void> {
+  const file = testInfo.outputPath("cover-evidence", name);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(value, null, 2));
+  await testInfo.attach(name, { path: file, contentType: "application/json" });
+}
+
+async function retainViewerPages(surface: Locator, testInfo: TestInfo, stage: string, pdfSha256: string): Promise<number> {
+  const page = surface.page();
+  const viewport = page.viewportSize()!;
+  // Keep the real viewer at its normal width, with enough vertical room for a
+  // complete paper page and the sticky navigation above it during capture.
+  await page.setViewportSize({ ...viewport, height: Math.max(viewport.height, 1600) });
+  try {
+    const pages = surface.locator(".pdf-preview-page");
+    const count = await pages.count();
+    expect(count).toBeGreaterThan(0);
+    const captures = [];
+    for (let index = 0; index < count; index++) {
+      const file = testInfo.outputPath("cover-evidence", `viewer-${stage}-page-${index + 1}.png`);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const bytes = await pages.nth(index).screenshot({ path: file });
+      await testInfo.attach(`cover-${stage}-page-${index + 1}`, { path: file, contentType: "image/png" });
+      captures.push({ page: index + 1, file: path.basename(file), sha256: createHash("sha256").update(bytes).digest("hex") });
+    }
+    await retainJson(testInfo, `viewer-${stage}.json`, { pdfSha256, viewport: page.viewportSize(), captures });
+    return count;
+  } finally { await page.setViewportSize(viewport); }
+}
+
+function seedFullCoverText(): void {
+  const dbPath = loadE2eDbPath(); // asserts the isolated workspace ownership
+  const db = new Database(dbPath);
+  try {
+    const source = db.prepare(`SELECT path FROM job_materials_artifacts WHERE tenant_id='local' AND job_id=?
+      AND artifact_type IN ('cover_letter','cover_letter_txt') AND status='approved' AND superseded_at IS NULL
+      ORDER BY generation DESC,created_at DESC,rowid DESC LIMIT 1`).get(QA_PLATFORM_JOB_ID) as { path: string };
+    const root = fs.realpathSync(process.env["JOBCTRL_E2E_APP_DIR"]!);
+    const file = fs.realpathSync(source.path);
+    expect(file.startsWith(root + path.sep)).toBe(true);
+    fs.writeFileSync(file, fullCoverText);
+  } finally { db.close(); }
+}
+
+// Real API/RPC renderer path. Keep this separate from controlled-response
+// browser race tests: no render/save/PDF route is intercepted here.
+for (const fontFamily of ["georgia", "times", "arial"] as const) for (const settings of [
+  { paper: "A4", fontSize: "9", margin: "8", lineHeight: "1", paragraphSpacing: "0" },
+  { paper: "Letter", fontSize: "14", margin: "28", lineHeight: "2", paragraphSpacing: "24" },
+  { paper: "Letter", fontSize: "11", margin: "17.78", lineHeight: "1.6", paragraphSpacing: "14" },
+]) test(`cover-letter ${settings.paper}/${fontFamily}/${settings.fontSize}pt preview accepts identical bytes explicitly and survives reload`, async ({ page }, testInfo) => {
+  test.setTimeout(180_000);
+  seedFullCoverText();
+  const queue = await page.request.get("/v1/apply/review-queue");
+  expect(queue.ok()).toBe(true);
+  const original = (await queue.json() as ApplyReviewQueueResponse).items.find(row => row.jobKey === QA_PLATFORM_JOB_ID)!;
+  expect(original?.materialsPreview.coverLetter).toBeTruthy();
+  const originalCover = original.materialsPreview.coverLetter!;
+  await page.goto(`/apply-review?jobKey=${QA_PLATFORM_JOB_ID}`);
+  const surface = page.getByRole("region", { name: "Cover-letter PDF formatting" });
+  await expect(surface).toBeVisible();
+  await surface.getByRole("combobox", { name: "Paper size" }).click();
+  await page.getByRole("option", { name: settings.paper, exact: true }).click();
+  await surface.getByRole("combobox", { name: "Font family" }).click();
+  await page.getByRole("option", { name: fontFamily, exact: true }).click();
+  await surface.getByLabel("Font size (pt)").fill(settings.fontSize);
+  await surface.getByLabel("Margins (mm)").fill(settings.margin);
+  await surface.getByLabel("Line spacing", { exact: true }).fill(settings.lineHeight);
+  await surface.getByLabel("Paragraph spacing (px)").fill(settings.paragraphSpacing);
+  const renderResponse = page.waitForResponse(response => response.url().endsWith("/cover-letter/preview") && response.request().method() === "POST");
+  await surface.getByRole("button", { name: "Preview cover-letter PDF" }).click();
+  const rendered = await renderResponse;
+  expect(rendered.ok()).toBe(true);
+  const renderReceipt = await rendered.json();
+  await expect(surface.locator(".pdf-preview-toolbar .toolbar-status")).toHaveText(/^\d+ pages?$/, { timeout: viewerReadyTimeout });
+  const previewUrl = await surface.getByRole("link", { name: "Download displayed cover-letter PDF" }).getAttribute("href");
+  const preview = await page.request.get(previewUrl!);
+  expect(preview.ok()).toBe(true);
+  const bytes = await preview.body();
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  const evidenceDir = testInfo.outputPath("cover-evidence");
+  fs.mkdirSync(evidenceDir, { recursive: true });
+  fs.writeFileSync(path.join(evidenceDir, "preview.pdf"), bytes);
+  await testInfo.attach(`cover-preview-${settings.paper}`, { path: path.join(evidenceDir, "preview.pdf"), contentType: "application/pdf" });
+  fs.writeFileSync(path.join(evidenceDir, "source.txt"), fullCoverText);
+  fs.writeFileSync(path.join(evidenceDir, "settings.json"), JSON.stringify(renderReceipt.preview.settings));
+  // This measures actual HTTP/RPC/Chromium bytes. Keep its inputs and outputs
+  // even when a measurement fails; no recorded PDF or structural seam is used.
+  const measurement = spawnSync(path.join(repoRoot, "workers/automation/.venv/bin/python"), [
+    path.join(repoRoot, "workers/automation/tests/cover_letter_pdf_probe.py"),
+    "--pdf", path.join(evidenceDir, "preview.pdf"), "--source", path.join(evidenceDir, "source.txt"),
+    "--settings", path.join(evidenceDir, "settings.json"), "--output", evidenceDir,
+  ], { encoding: "utf8", env: process.env });
+  fs.writeFileSync(path.join(evidenceDir, "measurement.stdout"), measurement.stdout ?? "");
+  fs.writeFileSync(path.join(evidenceDir, "measurement.stderr"), measurement.stderr ?? String(measurement.error ?? ""));
+  expect(measurement.status, measurement.stderr).toBe(0);
+  const measured = JSON.parse(fs.readFileSync(path.join(evidenceDir, "measurements.json"), "utf8")) as { pages: unknown[] };
+  expect(await retainViewerPages(surface, testInfo, "preview", digest)).toBe(measured.pages.length);
+  const unchanged = await page.request.get("/v1/apply/review-queue");
+  expect((await unchanged.json() as ApplyReviewQueueResponse).items.find(row => row.jobKey === QA_PLATFORM_JOB_ID)!.materialsPreview.coverLetter).toEqual(originalCover);
+  const saveResponse = page.waitForResponse(response => response.url().endsWith("/cover-letter/accept") && response.request().method() === "POST");
+  await surface.getByRole("button", { name: "Save cover-letter PDF" }).click();
+  const savedResponse = await saveResponse;
+  expect(savedResponse.ok()).toBe(true);
+  const { accepted } = await savedResponse.json();
+  expect(accepted.pdfSha256).toBe(digest);
+  const downloaded = await page.request.get(`/v1/artifacts/${accepted.pdfArtifactId}/preview.pdf`);
+  expect(downloaded.ok()).toBe(true);
+  expect(await downloaded.body()).toEqual(bytes);
+  fs.writeFileSync(path.join(evidenceDir, "accepted.pdf"), await downloaded.body());
+  await testInfo.attach("cover-accepted.pdf", { path: path.join(evidenceDir, "accepted.pdf"), contentType: "application/pdf" });
+  fs.writeFileSync(path.join(evidenceDir, "identities.json"), JSON.stringify({ original: originalCover, renderReceipt, accepted,
+    previewDownloadSha256: digest, acceptedDownloadSha256: createHash("sha256").update(await downloaded.body()).digest("hex"),
+    sourceSha256: createHash("sha256").update(fullCoverText).digest("hex") }, null, 2));
+  await page.reload();
+  await expect(surface.getByLabel("Font size (pt)")).toHaveValue(settings.fontSize);
+  await expect(surface.getByRole("combobox", { name: "Paper size" })).toContainText(settings.paper);
+  await expect(surface.getByRole("combobox", { name: "Font family" })).toContainText(fontFamily);
+  const reloaded = (await (await page.request.get("/v1/apply/review-queue")).json() as ApplyReviewQueueResponse).items.find(row => row.jobKey === QA_PLATFORM_JOB_ID)!;
+  expect(reloaded.materialsPreview.coverLetter).toEqual(accepted);
+  expect(await (await page.request.get(`/v1/artifacts/${accepted.pdfArtifactId}/preview.pdf`)).body()).toEqual(bytes);
+  expect(reloaded.materialsPreview.resumePdfArtifactId).toBe(original.materialsPreview.resumePdfArtifactId);
+  expect(reloaded.materialsPreview.resumeTextArtifactId).toBe(original.materialsPreview.resumeTextArtifactId);
+  await expect(surface.locator(".pdf-preview-toolbar .toolbar-status")).toHaveText(/^\d+ pages?$/, { timeout: viewerReadyTimeout });
+  expect(await retainViewerPages(surface, testInfo, "accepted", digest)).toBe(measured.pages.length);
+});
+
+test("cover-letter competing saves accept one snapshot and preserve its displayed bytes", async ({ page, baseURL }, testInfo) => {
+  test.setTimeout(180_000);
+  seedFullCoverText();
+  const original = (await (await page.request.get("/v1/apply/review-queue")).json() as ApplyReviewQueueResponse).items.find(row => row.jobKey === QA_PLATFORM_JOB_ID)!;
+  const cover = original.materialsPreview.coverLetter!;
+  const headers = { origin: new URL(baseURL!).origin };
+  const previews = [];
+  for (const fontSizePt of [10, 13]) {
+    const response = await page.request.post(`/v1/jobs/${QA_PLATFORM_JOB_ID}/cover-letter/preview`, { headers, data: {
+      source: cover.source, expectedAcceptedVersion: cover.acceptedVersion, settings: { ...cover.settings, fontSizePt },
+    } });
+    expect(response.status(), await response.text()).toBe(200);
+    previews.push((await response.json()).preview);
+  }
+  const results = await Promise.all(previews.map(preview => page.request.post(`/v1/jobs/${QA_PLATFORM_JOB_ID}/cover-letter/accept`, {
+    headers,
+    data: { previewId: preview.previewId, expectedAcceptedVersion: preview.expectedAcceptedVersion },
+  })));
+  const receipts = { previews, statuses: results.map(response => response.status()), responses: await Promise.all(results.map(response => response.json())) };
+  await retainJson(testInfo, "competing-save-receipts.json", receipts);
+  expect(results.map(response => response.status()).sort()).toEqual([200, 409]);
+  const winner = results.findIndex(response => response.status() === 200);
+  const accepted = (await results[winner]!.json()).accepted;
+  const previewBytes = await (await page.request.get(`/v1/jobs/${QA_PLATFORM_JOB_ID}/cover-letter/previews/${previews[winner].previewId}.pdf`)).body();
+  expect(await (await page.request.get(`/v1/artifacts/${accepted.pdfArtifactId}/preview.pdf`)).body()).toEqual(previewBytes);
+  await page.goto(`/apply-review?jobKey=${QA_PLATFORM_JOB_ID}`);
+  const surface = page.getByRole("region", { name: "Cover-letter PDF formatting" });
+  await expect(surface.getByLabel("Font size (pt)")).toHaveValue(String(accepted.settings.fontSizePt));
+  await expect(surface.locator(".pdf-preview-toolbar .toolbar-status")).toHaveText(/^\d+ pages?$/, { timeout: viewerReadyTimeout });
+  const pdfFile = testInfo.outputPath("cover-evidence", "competing-save-accepted.pdf");
+  fs.writeFileSync(pdfFile, previewBytes);
+  await testInfo.attach("competing-save-accepted.pdf", { path: pdfFile, contentType: "application/pdf" });
+  const digest = createHash("sha256").update(previewBytes).digest("hex");
+  expect(accepted.pdfSha256).toBe(digest);
+  await retainJson(testInfo, "competing-save-identities.json", { accepted, pdfSha256: digest });
+});
+
+// The API/RPC render and acceptance remain real. Only delivery of the committed
+// HTTP save acknowledgement and automatic queue-refresh delivery are interrupted;
+// this is transport-control evidence, not a mocked render or persistence result.
+test("cover-letter lost save acknowledgement reconciles on reload without accepting later edits", async ({ page }, testInfo) => {
+  test.setTimeout(180_000);
+  seedFullCoverText();
+  await page.goto(`/apply-review?jobKey=${QA_PLATFORM_JOB_ID}`);
+  const surface = page.getByRole("region", { name: "Cover-letter PDF formatting" });
+  await surface.getByLabel("Font size (pt)").fill("12");
+  await surface.getByRole("button", { name: "Preview cover-letter PDF" }).click();
+  await expect(surface.getByRole("button", { name: "Save cover-letter PDF", exact: true })).toBeEnabled({ timeout: 60_000 });
+  // A successful canonical refetch can legitimately reconcile a lost save
+  // acknowledgement. Keep that transport unavailable until the reload below,
+  // so this assertion exercises uncertain-save fencing independently of SSE timing.
+  await page.route("**/v1/apply/review-queue", route => route.abort("failed"));
+  let committed: unknown;
+  await page.route("**/cover-letter/accept", async route => {
+    const response = await route.fetch();
+    expect(response.ok()).toBe(true);
+    committed = await response.json();
+    await retainJson(testInfo, "lost-ack-committed-receipt.json", { status: response.status(), committed });
+    await surface.getByLabel("Font size (pt)").fill("9");
+    await route.abort("failed");
+  });
+  await surface.getByRole("button", { name: "Save cover-letter PDF", exact: true }).click();
+  await expect(surface.getByLabel("Font size (pt)")).toHaveValue("9");
+  await expect(surface.getByRole("button", { name: "Save cover-letter PDF", exact: true })).toBeDisabled();
+  const authorization = page.getByRole("group", { name: "Authorization decision for Director of Platform Engineering", exact: true });
+  await expect(authorization.getByRole("button", { name: "Authorize dry run for Director of Platform Engineering", exact: true })).toBeDisabled();
+  await expect(authorization.getByRole("button", { name: "Authorize live submit for Director of Platform Engineering", exact: true })).toBeDisabled();
+  await expect(authorization.getByRole("button", { name: "Authorize dry run for Director of Platform Engineering", exact: true }))
+    .toHaveAttribute("title", "Reload to reconcile the cover-letter save before approval.");
+  await retainJson(testInfo, "lost-ack-uncertain-authority.json", {
+    localFontSizePt: await surface.getByLabel("Font size (pt)").inputValue(),
+    dryRunDisabled: await authorization.getByRole("button", { name: "Authorize dry run for Director of Platform Engineering", exact: true }).isDisabled(),
+    submitDisabled: await authorization.getByRole("button", { name: "Authorize live submit for Director of Platform Engineering", exact: true }).isDisabled(),
+    reason: await authorization.getByRole("button", { name: "Authorize dry run for Director of Platform Engineering", exact: true }).getAttribute("title"),
+  });
+  await page.unroute("**/cover-letter/accept");
+  await page.unroute("**/v1/apply/review-queue");
+  await page.reload();
+  await expect(surface.getByLabel("Font size (pt)")).toHaveValue("12");
+  const queue = await (await page.request.get("/v1/apply/review-queue")).json() as ApplyReviewQueueResponse;
+  expect(queue.items.find(row => row.jobKey === QA_PLATFORM_JOB_ID)!.materialsPreview.coverLetter).toEqual((committed as { accepted: unknown }).accepted);
+  await retainJson(testInfo, "lost-ack-reloaded-receipt.json", queue.items.find(row => row.jobKey === QA_PLATFORM_JOB_ID)!.materialsPreview.coverLetter);
+});
 
 // The seeded worker heartbeat is written once at global-setup; the suite runs
 // serially and can exceed the 45s staleness window before this spec runs. Refresh

@@ -21,6 +21,8 @@ export const DEMO_CAPABILITY_MANIFEST = {
   postedCompensationFact: unavailable("Canonical compensation evidence requires a local workspace."),
   marketCompensationEstimate: unavailable("Recorded compensation evidence requires a local workspace."),
   downloadMaterialDocx: unavailable("DOCX downloads require retained exports in a local workspace."),
+
+  coverLetterPreviewPdfUrl: { class: "unavailable", reason: "Cover-letter PDF previews require the local renderer." },
   health: local("Shows synthetic browser-local service health."),
   dashboardSummary: local("Reads the synthetic dashboard projection."),
   pipelineOperations: unavailable("Pipeline operations telemetry is unavailable in the public demo."),

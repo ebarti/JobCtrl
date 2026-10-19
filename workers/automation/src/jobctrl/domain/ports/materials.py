@@ -457,6 +457,7 @@ class PdfRendererPort(Protocol):
         cover_letter_text: str,
         output_path: str,
         created_at: str,
+        settings: dict | None = None,
     ) -> Artifact:
         """Render plain-text cover letter to PDF at ``output_path``."""
         ...

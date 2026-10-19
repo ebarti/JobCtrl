@@ -2488,6 +2488,77 @@ fail validation. Existing HTTP security rejection precedes provider dispatch.
 This changes no #954 JSON-RPC envelope policy or durable workflow result.
 See the [incremental migration recipe and synthetic test seams](../architecture/contracts-types-and-api-boundaries.md#incremental-endpoint-migration).
 
+## Cover-Letter PDF Review
+
+The registered checked-client methods `renderCoverLetterPreview(jobKey, body)`
+and `acceptCoverLetterPreview(jobKey, body)` use these synchronous routes:
+
+| Route | Request / result |
+| --- | --- |
+| `POST /v1/jobs/:jobKey/cover-letter/preview` | `{source, expectedAcceptedVersion, settings}` → `{ok:true, preview}` |
+| `GET /v1/jobs/:jobKey/cover-letter/previews/:previewId.pdf` | Tenant/job-owned immutable PDF bytes, `application/pdf`, `Cache-Control: no-store` |
+| `POST /v1/jobs/:jobKey/cover-letter/accept` | `{previewId, expectedAcceptedVersion}` → `{ok:true, accepted}` |
+
+`source` contains `tenantId`, canonical `jobId`, accepted text `artifactId`, its
+original `generation` and full-file `textSha256`. `preview` adds a UUID
+`previewId`, `expectedAcceptedVersion`, normalized `settings`, `rendererVersion`
+and `pdfSha256`. `accepted` contains `source`, `acceptedVersion`, `pdfArtifactId`,
+`pdfSha256`, `pdfSourceCurrent`, `settings` and `rendererVersion`. Historical
+unformatted PDFs use the existing defaults and a null renderer version, with
+`pdfSourceCurrent:false` unless recorded source/PDF hashes, settings and renderer
+establish their identity. Generation equality alone is insufficient. An
+unreadable canonical source blocks rendering, saving and approval. A saved
+receipt keeps its last accepted source identity, settings and PDF viewable;
+`pdfSourceCurrent` is false until the canonical source is readable again.
+`materialsPreview.coverLetterText` reads that canonical source ID and verifies
+its full-file hash. Projection ordering cannot select a different cover alias;
+an unreadable bound source exposes the source error instead of substitute text.
+Cover-only saves carry the coherent resume text/PDF selection already displayed
+in Apply Review, preserving its metadata and recorded provenance even when a
+newer partial resume generation exists.
+
+`acceptedVersion` binds the accepted source/PDF identities, bytes, settings and
+renderer. A rejected attempt does not change it. Generation allocation still
+advances beyond every attempt. Unchanged material slots retain IDs across
+generations; DOCX export requests select the exact ID/generation pair.
+
+Settings are strict objects with `paper: Letter|A4`,
+`fontFamily: georgia|times|arial`, `fontSizePt: 9..14`, `marginMm: 8..28`,
+`lineHeight: 1..2`, and `paragraphSpacingPx: 0..24`. Numeric values must be finite;
+CSS strings and extra keys are rejected. Defaults are Letter/georgia/11/17.78/1.6/14.
+Canonical sources must be nonempty readable UTF-8 and at most 512,000 bytes.
+The worker `render_cover_letter_pdf` checks the snapshot hash and renderer
+version before rendering with CSS paper-size preference enabled. Its `settings`
+must be an object; explicit null is an invalid JSON-RPC parameter, not defaults.
+The source and output must name `source.txt` and a new `letter.pdf` in the same
+owned UUID preview directory. Source, manifest and PDF reads reject symlinks and
+bound descriptor reads. Canonical source paths outside the workspace return 403;
+unowned preview IDs/manifests return 404.
+
+`pdfSha256` comes from persisted acceptance metadata. Actual bytes must match it
+for approval and accepted downloads; a mismatch returns 422 on download and
+marks the accepted source/PDF relationship noncurrent without adopting the new
+bytes. Normal generation persists both source-text and PDF hashes, settings,
+renderer and source occurrence; old unbound PDFs require explicit preview/save.
+
+Malformed requests return 400; stale source/version/save snapshots return 409
+`cover_letter_version_conflict`; renderer/transport failure returns 502
+`cover_letter_render_failed`; unreadable/oversized sources or missing/corrupt
+PDFs return 422. A preview is readable only by its owning tenant/job. Save
+rechecks source bytes, accepted version and preview PDF hash inside an immediate
+SQLite transaction, then appends a complete material generation. Preview and
+accepted download bytes are identical. Existing generations and files remain
+historical. A repeated save of the still-current preview reconciles an uncertain
+acknowledgement without creating another generation. A failed save retains the
+preview for retry and leaves accepted rows and files untouched.
+
+`POST /v1/jobs/:jobKey/apply-review/decision` with `approve_submit` and a cover
+source requires the current `coverLetterAcceptedVersion` alongside existing
+material/profile/URL/email bindings. The decision event retains the exact cover
+binding; API and worker approval checks reject later source, settings or PDF
+changes. Manual decisions and jobs without a cover retain their existing input
+contract. Preview-only activity and failures do not change accepted authorization.
+
 ## Selected-cohort demand and milestones
 
 `GET /v1/evidence-map/learning` returns `{ ok, preview: null, cohorts,

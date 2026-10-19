@@ -1086,6 +1086,57 @@ def make_cancel_run(canceler: WorkflowCanceler):
     return cancel_run
 
 
+def render_cover_letter_pdf(params: dict[str, Any]) -> dict[str, Any]:
+    """Print the full source snapshot, never a browser-provided excerpt or HTML."""
+    import hashlib
+
+    from jobctrl.domain.materials.cover_letter_settings import (
+        MAX_SOURCE_BYTES, RENDERER_VERSION, validate_settings,
+    )
+    from jobctrl.infrastructure.materials.playwright_html_pdf import convert_cover_letter_text_to_pdf
+    from jobctrl.infrastructure.materials.cover_letter_files import read_owned_cover_file, require_cover_review_paths
+    from jobctrl import config
+
+    if set(params) != {"sourcePath", "pdfPath", "textSha256", "settings", "rendererVersion"}:
+        raise invalid_params("Invalid cover-letter render fields")
+    if params["rendererVersion"] != RENDERER_VERSION:
+        raise invalid_params("Unsupported cover-letter renderer")
+    try:
+        if not isinstance(params["settings"], dict):
+            raise ValueError("Cover-letter settings object required")
+        settings = validate_settings(params["settings"])
+        source = Path(params["sourcePath"])
+        output = Path(params["pdfPath"])
+        require_cover_review_paths(config.APP_DIR, source, output)
+        raw = read_owned_cover_file(config.APP_DIR, source, MAX_SOURCE_BYTES)
+        if len(raw) > MAX_SOURCE_BYTES or not raw.strip():
+            raise ValueError("Cover-letter source is empty or oversized")
+        if hashlib.sha256(raw).hexdigest() != params["textSha256"]:
+            raise ValueError("Cover-letter source changed")
+        text = raw.decode("utf-8", errors="strict")
+    except (OSError, ValueError, TypeError) as exc:
+        raise invalid_params("Cover-letter source or settings invalid") from exc
+    convert_cover_letter_text_to_pdf(text, params["pdfPath"], settings, workspace_root=config.APP_DIR)
+    # A successful subprocess acknowledgement must represent a readable PDF,
+    # not merely a file with PDF markers. No accepted state is written here.
+    from pypdf import PdfReader
+
+    from io import BytesIO
+
+    with BytesIO(read_owned_cover_file(config.APP_DIR, output, 32_000_000)) as stream:
+        document = PdfReader(stream, strict=True)
+        if document.is_encrypted or not document.pages:
+            raise ValueError("Cover-letter PDF output invalid")
+        for page in document.pages:
+            if page.mediabox.width <= 0 or page.mediabox.height <= 0:
+                raise ValueError("Cover-letter PDF output invalid")
+            # Resolve page content objects before acknowledging the render.
+            content = page.get_contents()
+            if content is not None:
+                content.get_data()
+    return {"status": "succeeded", "pdfPath": params["pdfPath"]}
+
+
 def render_resume_pdf(params: dict[str, Any]) -> dict[str, Any]:
     """Render pre-built resume HTML to a paginated PDF for the TS API.
 
@@ -1293,6 +1344,7 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     )
     server.register("rollback_tailoring_policy", rollback_tailoring_policy, mode="sync")
     server.register("render_resume_pdf", render_resume_pdf, mode="sync")
+    server.register("render_cover_letter_pdf", render_cover_letter_pdf, mode="sync")
     server.register("gmail_feedback_scan", gmail_feedback_scan, mode="sync")
     server.register("check_posting_availability", check_posting_availability, mode="workflow")
     server.register("refresh_compensation", refresh_compensation, mode="workflow")

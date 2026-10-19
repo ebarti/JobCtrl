@@ -1,4 +1,5 @@
 import { DeterminationCitationSchema, DeterminationEnvelopeSchema, FormSnapshotSchema, FormMappingResponseSchema, ResumeEditReviewSchema, ResumeEditIntentReviewSchema } from "./semantic-determinations.js";
+import { CoverLetterSettingsSchema, COVER_LETTER_RENDERER_VERSION } from "./cover-letter.js";
 /**
  * JSON-RPC 2.0 wire envelope + JobCtrl method schemas.
  *
@@ -111,6 +112,7 @@ export const RpcMethods = {
   ReviewLearningRecommendation: "review_learning_recommendation",
   RollbackTailoringPolicy: "rollback_tailoring_policy",
   RenderResumePdf: "render_resume_pdf",
+  RenderCoverLetterPdf: "render_cover_letter_pdf",
   GmailFeedbackScan: "gmail_feedback_scan",
   ProfileRequiredBulletSuggestions: "profile_required_bullet_suggestions",
   MapExtensionForm: "map_extension_form",
@@ -794,6 +796,12 @@ export const RenderResumePdfParamsSchema = z
   })
   .strict();
 export type RenderResumePdfParams = z.infer<typeof RenderResumePdfParamsSchema>;
+export const RenderCoverLetterPdfParamsSchema = z.object({
+  sourcePath: z.string().min(1), pdfPath: z.string().min(1),
+  textSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  settings: CoverLetterSettingsSchema,
+  rendererVersion: z.literal(COVER_LETTER_RENDERER_VERSION),
+}).strict();
 
 export const RenderResumePdfResultSchema = z
   .object({
@@ -988,6 +996,7 @@ export const RpcContracts = {
   [RpcMethods.ReviewLearningRecommendation]: { params: ReviewLearningRecommendationParamsSchema, result: ReviewLearningRecommendationResultSchema },
   [RpcMethods.RollbackTailoringPolicy]: { params: RollbackTailoringPolicyParamsSchema, result: RollbackTailoringPolicyResultSchema },
   [RpcMethods.RenderResumePdf]: { params: RenderResumePdfParamsSchema, result: RenderResumePdfResultSchema },
+  [RpcMethods.RenderCoverLetterPdf]: { params: RenderCoverLetterPdfParamsSchema, result: RenderResumePdfResultSchema },
   [RpcMethods.GmailFeedbackScan]: { params: GmailFeedbackScanParamsSchema, result: GmailFeedbackScanResultSchema },
   [RpcMethods.ProfileRequiredBulletSuggestions]: { params: ProfileRequiredBulletSuggestionsParamsSchema, result: RequiredBulletModelResultSchema },
   [RpcMethods.ProfileTargetRoleSuggestions]: { params: ProfileTargetRoleSuggestionsParamsSchema, result: TargetRoleSuggestionResultSchema },

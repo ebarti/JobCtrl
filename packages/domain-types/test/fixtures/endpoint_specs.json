@@ -8450,6 +8450,400 @@
         ],
         "additionalProperties": false
       }
+    },
+    "renderCoverLetterPreview": {
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "object",
+            "properties": {
+              "tenantId": {
+                "type": "string"
+              },
+              "jobId": {
+                "type": "string"
+              },
+              "artifactId": {
+                "type": "string"
+              },
+              "generation": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "textSha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "required": [
+              "tenantId",
+              "jobId",
+              "artifactId",
+              "generation",
+              "textSha256"
+            ],
+            "additionalProperties": false
+          },
+          "expectedAcceptedVersion": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "settings": {
+            "type": "object",
+            "properties": {
+              "paper": {
+                "type": "string",
+                "enum": [
+                  "Letter",
+                  "A4"
+                ]
+              },
+              "fontFamily": {
+                "type": "string",
+                "enum": [
+                  "georgia",
+                  "times",
+                  "arial"
+                ]
+              },
+              "fontSizePt": {
+                "type": "number",
+                "minimum": 9,
+                "maximum": 14
+              },
+              "marginMm": {
+                "type": "number",
+                "minimum": 8,
+                "maximum": 28
+              },
+              "lineHeight": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 2
+              },
+              "paragraphSpacingPx": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 24
+              }
+            },
+            "required": [
+              "paper",
+              "fontFamily",
+              "fontSizePt",
+              "marginMm",
+              "lineHeight",
+              "paragraphSpacingPx"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "source",
+          "expectedAcceptedVersion",
+          "settings"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "preview": {
+            "type": "object",
+            "properties": {
+              "previewId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "source": {
+                "type": "object",
+                "properties": {
+                  "tenantId": {
+                    "type": "string"
+                  },
+                  "jobId": {
+                    "type": "string"
+                  },
+                  "artifactId": {
+                    "type": "string"
+                  },
+                  "generation": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "textSha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "tenantId",
+                  "jobId",
+                  "artifactId",
+                  "generation",
+                  "textSha256"
+                ],
+                "additionalProperties": false
+              },
+              "expectedAcceptedVersion": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "settings": {
+                "type": "object",
+                "properties": {
+                  "paper": {
+                    "type": "string",
+                    "enum": [
+                      "Letter",
+                      "A4"
+                    ]
+                  },
+                  "fontFamily": {
+                    "type": "string",
+                    "enum": [
+                      "georgia",
+                      "times",
+                      "arial"
+                    ]
+                  },
+                  "fontSizePt": {
+                    "type": "number",
+                    "minimum": 9,
+                    "maximum": 14
+                  },
+                  "marginMm": {
+                    "type": "number",
+                    "minimum": 8,
+                    "maximum": 28
+                  },
+                  "lineHeight": {
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 2
+                  },
+                  "paragraphSpacingPx": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 24
+                  }
+                },
+                "required": [
+                  "paper",
+                  "fontFamily",
+                  "fontSizePt",
+                  "marginMm",
+                  "lineHeight",
+                  "paragraphSpacingPx"
+                ],
+                "additionalProperties": false
+              },
+              "rendererVersion": {
+                "type": "string",
+                "const": "playwright-cover-letter-v2"
+              },
+              "pdfSha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "required": [
+              "previewId",
+              "source",
+              "expectedAcceptedVersion",
+              "settings",
+              "rendererVersion",
+              "pdfSha256"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "ok",
+          "preview"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "acceptCoverLetterPreview": {
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "previewId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "expectedAcceptedVersion": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "previewId",
+          "expectedAcceptedVersion"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "accepted": {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "object",
+                "properties": {
+                  "tenantId": {
+                    "type": "string"
+                  },
+                  "jobId": {
+                    "type": "string"
+                  },
+                  "artifactId": {
+                    "type": "string"
+                  },
+                  "generation": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "textSha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "tenantId",
+                  "jobId",
+                  "artifactId",
+                  "generation",
+                  "textSha256"
+                ],
+                "additionalProperties": false
+              },
+              "acceptedVersion": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "pdfArtifactId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "pdfSha256": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "pdfSourceCurrent": {
+                "type": "boolean"
+              },
+              "settings": {
+                "type": "object",
+                "properties": {
+                  "paper": {
+                    "type": "string",
+                    "enum": [
+                      "Letter",
+                      "A4"
+                    ]
+                  },
+                  "fontFamily": {
+                    "type": "string",
+                    "enum": [
+                      "georgia",
+                      "times",
+                      "arial"
+                    ]
+                  },
+                  "fontSizePt": {
+                    "type": "number",
+                    "minimum": 9,
+                    "maximum": 14
+                  },
+                  "marginMm": {
+                    "type": "number",
+                    "minimum": 8,
+                    "maximum": 28
+                  },
+                  "lineHeight": {
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 2
+                  },
+                  "paragraphSpacingPx": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 24
+                  }
+                },
+                "required": [
+                  "paper",
+                  "fontFamily",
+                  "fontSizePt",
+                  "marginMm",
+                  "lineHeight",
+                  "paragraphSpacingPx"
+                ],
+                "additionalProperties": false
+              },
+              "rendererVersion": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "source",
+              "acceptedVersion",
+              "pdfArtifactId",
+              "pdfSha256",
+              "pdfSourceCurrent",
+              "settings",
+              "rendererVersion"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "ok",
+          "accepted"
+        ],
+        "additionalProperties": false
+      }
     }
   }
 }

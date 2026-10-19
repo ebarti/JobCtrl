@@ -3854,11 +3854,18 @@ class RenderPdfOutcome:
 
 
 def _pdf_with_accepted_source(pdf, source, generation):
+    metadata = {**pdf.metadata, **source.metadata}
+    if pdf.type is ArtifactType.COVER_LETTER_PDF:
+        metadata.pop("cover_letter_review", None)
+        # Print identity belongs to this renderer output; source provenance
+        # must not override its settings or byte/source hashes.
+        for key in ("cover_letter_settings", "cover_letter_renderer_version", "cover_letter_text_sha256", "cover_letter_pdf_sha256"):
+            if key in pdf.metadata:
+                metadata[key] = pdf.metadata[key]
     return replace(
         pdf,
         metadata={
-            **pdf.metadata,
-            **source.metadata,
+            **metadata,
             "source_artifact_id": source.artifact_id,
             "source_generation": generation,
         },
@@ -3956,7 +3963,7 @@ class RenderPdfUseCase:
             text_path = Path(materials.cover_letter.path)
             pdf_path = text_path.with_suffix(".pdf")
             try:
-                cover_text = text_path.read_text(encoding="utf-8")
+                cover_text = text_path.read_bytes().decode("utf-8")
                 pdf_artifact = self._cover_letter_renderer.render_cover_letter_to_pdf(
                     cover_letter_text=cover_text,
                     output_path=str(pdf_path),

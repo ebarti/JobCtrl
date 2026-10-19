@@ -305,3 +305,65 @@ Materials owns the source-bound generator, claim/quality determinations and immu
 Materials owns reusable public company context independently of posting analysis. Explicitly confirmed canonical JobIds link to a hash of the exact normalized public company URL; names never merge identities. Operations reads accepted snapshots in Job Detail, Interviews and the existing digest. The company artifact does not alter role analysis, scoring, preparation inputs or approvals.
 
 `company_briefing` is a source-bound determination on the enrichment lane. Strict claim kinds separate company facts, reported events and hypotheses; every claim has uncertainty and verbatim citations. Literal event dates must belong to cited exact values. Source observations retain selected/final URL, UTC time, bounded text and its SHA-256. Ambiguous identity prevents acceptance. A company-level lock coalesces refreshes, while an atomic configuration/link comparison fences replacement. Failed fetches, model determinations or commits preserve the accepted revision and observation clock. Reads derive seven-day and configuration staleness without provider work. See [Company Briefings](../user/company-briefings.md) for limits and controls.
+
+## Cover-Letter Print Acceptance
+
+Apply Review uses `cover-letter-review.ts` to select the latest approved canonical
+text, hash the complete UTF-8 file, and bind a render to tenant/job, source ID and
+original generation, normalized settings, accepted version and renderer version.
+The registered worker `render_cover_letter_pdf` delegates to
+`PlaywrightHtmlPdfAdapter`'s HTML scaffold with bounded settings. Chromium honors
+CSS `@page` dimensions. No semantic determination is introduced by formatting.
+
+Preview renders have immutable attempt-owned files and manifests; they do not
+write accepted artifact rows. Explicit acceptance appends a material generation
+with a fresh lineage token, retaining all current approved slots, layout boxes,
+anchors and determination bindings. The new cover PDF inherits content
+provenance from the accepted text. Resume draft promotion also carries unchanged
+cover slots forward. Historical rows and PDFs remain intact. The immediate save
+transaction revalidates the full source and preview hashes plus accepted version;
+concurrent writers cannot promote a superseded snapshot.
+After the last promotion write, it checks the final source/PDF binding and
+submitted manifest before commit. Drift rolls back the material generation,
+provenance copies and event, retaining prior accepted bytes and decision rows.
+A newer canonical source file survives that rollback and correctly stales the
+older PDF until the new source is rendered and explicitly accepted.
+
+Carried slots retain artifact IDs in each complete generation. DOCX exports
+select the exact artifact/generation pair; artifact projections select one
+canonical occurrence and its matching layout/provenance generation. Copies do
+not concatenate audit rows. A new PDF takes metadata, anchors and determination
+bindings from the accepted text, including when there was no earlier PDF.
+Cover-only acceptance reuses Apply Review's resume selector and copies the exact
+selected text/PDF pair and its aggregate metadata. Newer text-only or PDF-only
+generations remain historical rather than being combined with another version.
+Legacy and review-required selections keep their existing authority. Cover-text
+aliases retain their current generation and row order; displayed cover text joins
+the canonical source ID and verifies its full-text hash instead of choosing an
+alias independently from projections. An unreadable canonical source never falls
+back to a different alias.
+The cover accepted-version hash includes source, PDF bytes/ID, normalized settings
+and renderer identity; rejected material attempts affect generation allocation
+only.
+
+The Apply decision event stores the accepted cover binding. Approval preparation,
+API checks and the worker launcher compare it to current source/PDF identities.
+A formatting save advances the material generation and stales earlier approval;
+opening a preview and failed operations leave that binding unchanged.
+Acceptance records the existing `PdfRendered` event in the same transaction as
+the PDF and copied slots. Warm projections and SSE invalidations discover the
+accepted artifact; retrying an already committed preview emits no second event.
+
+Acceptance uses the persisted PDF digest, not a new digest adopted from the live
+file. Reads compare actual bytes with that receipt; a mismatch preserves the
+durable identity and blocks approval and accepted download. Default generation
+also records `cover_letter_text_sha256`, `cover_letter_pdf_sha256`, validated
+settings, renderer version and the source artifact/generation occurrence. Both
+API and launcher require that proof. Generation equality cannot validate a
+historical PDF's content relationship. Such PDFs remain inspectable when readable
+but require explicit rendering and acceptance before approval.
+
+Cover source, manifest and PDF reads reject symlinks beneath the trusted workspace
+and bound regular-file reads through descriptors. The worker opens owned attempt
+directories relative to descriptors and writes Chromium's returned PDF bytes
+exclusively; Chromium receives no output filename from RPC input.

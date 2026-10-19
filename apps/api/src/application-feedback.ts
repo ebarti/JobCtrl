@@ -1,7 +1,9 @@
+import { selectResumeMaterial, materialArtifactCandidates, RESUME_TEXT_ARTIFACT_TYPES, RESUME_PDF_ARTIFACT_TYPES, type MaterialArtifactCandidate } from "./material-preview-selection.js";
+import { safeCoverLetterAccepted, coverLetterAccepted, coverLetterSourceBytes, coverLetterTextForSource, requireCoverLetterApproval } from "./cover-letter-review.js";
 import { MessageOutcomeDeterminationSchema } from "@jobctrl/contracts";
 import { readArtifactLineAnchors, readDetermination } from "./semantic-determinations.js";
 import crypto from "node:crypto";
-import fs from "node:fs";
+import path from "node:path";
 
 import type {
   ApplicationOutcome,
@@ -61,10 +63,6 @@ const DEFAULT_PROFILE_ID = "default";
 const CANONICAL_JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CLOSED_ACTIVE_STATES = ["closed", "expired", "removed", "location_incompatible"];
 const POSITION_PREVIEW_CHAR_LIMIT = 6000;
-const MATERIAL_PREVIEW_CHAR_LIMIT = 4000;
-const MATERIAL_PREVIEW_BYTE_LIMIT = 24_000;
-const RESUME_AUDIT_TEXT_BYTE_LIMIT = 128_000;
-const COVER_LETTER_REVIEW_TEXT_BYTE_LIMIT = 128_000;
 const EVIDENCE_LIST_LIMIT = 12;
 const EVIDENCE_TEXT_LIMIT = 180;
 const IDEAL_CANDIDATE_TEXT_LIMIT = 1400;
@@ -151,7 +149,7 @@ export function ensureApplicationFeedbackTables(db: SqliteDatabase): void {
   void db;
 }
 
-export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueResponse {
+export function listApplyReviewQueue(db: SqliteDatabase, appDir?: string): ApplyReviewQueueResponse {
   ensureApplicationFeedbackTables(db);
   refreshProjections(db);
 
@@ -316,7 +314,7 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
   return {
     ok: true,
     items: rows.map((row) =>
-      reviewQueueItemFromRow(db, row, profileSourceFields, missingProfileData),
+      reviewQueueItemFromRow(db, row, profileSourceFields, missingProfileData, appDir),
     ),
   };
 }
@@ -325,7 +323,11 @@ export function recordApplyReviewDecision(
   db: SqliteDatabase,
   jobLocator: string,
   request: ApplyReviewDecisionRequest,
+  appDir?: string,
 ): ApplyReviewDecisionResponse {
+  return db.transaction(() => recordApplyReviewDecisionSnapshot(db, jobLocator, request, appDir)).immediate();
+}
+function recordApplyReviewDecisionSnapshot(db: SqliteDatabase, jobLocator: string, request: ApplyReviewDecisionRequest, appDir?: string): ApplyReviewDecisionResponse {
   ensureApplicationFeedbackTables(db);
   const jobId = resolveExternalJobId(db, jobLocator);
   const applicationUrl = currentApplicationUrl(db, jobId);
@@ -334,6 +336,8 @@ export function recordApplyReviewDecision(
   const partialOverrideRunId =
     request.decision === "approve_submit" ? request.partialOverrideRunId ?? null : null;
   if (request.decision === "approve_submit") {
+    const cover = requireCoverLetterApproval(db, jobId, appDir);
+    if ((cover?.acceptedVersion ?? null) !== (request.coverLetterAcceptedVersion ?? null)) throw new InputError("approval_stale_materials");
     if (
       request.materialsGeneration === undefined ||
       request.materialsGeneration !== materialsGeneration
@@ -428,6 +432,7 @@ export function recordApplyReviewDecision(
       tenantId: DEFAULT_TENANT,
       jobId,
       decisionId: decision.decisionId,
+      coverLetterBinding: safeCoverLetterAccepted(db, jobId, appDir),
       decision: decision.decision,
       reasonPresent: Boolean(decision.reason),
       materialsGeneration: decision.materialsGeneration,
@@ -750,6 +755,7 @@ function reviewQueueItemFromRow(
   row: ReviewQueueRow,
   profileSourceFields: readonly ApplyReviewProfileSourceField[],
   missingProfileData: readonly string[],
+  appDir?: string,
 ): ApplyReviewQueueItem {
   const jobId = canonicalJobId(row.job_id);
   const currentState = stageState(row.current_state);
@@ -758,7 +764,7 @@ function reviewQueueItemFromRow(
   const scoreBreakdown = parseQueueScoreBreakdown(row.score_breakdown_json);
   const scoreKeywords = boundedEvidenceList(parseStringListJson(row.score_keywords_json));
   const applicationUrl = applyTargetUrl(row);
-  const materialsPreview = materialPreviewsForJob(db, jobId, profileSourceFields);
+  const materialsPreview = materialPreviewsForJob(db, jobId, profileSourceFields, appDir);
   const emailApplication = latestEmailApplicationCandidate(db, jobId);
   const materialsGeneration = materialsPreview.materialsGeneration;
   const profileVersion = currentProfileVersion(db);
@@ -783,6 +789,17 @@ function reviewQueueItemFromRow(
     dryRunEvidence,
     partialDryRunEvidence,
   });
+  if (row.decision === "approve_submit") {
+    const event = getRow<{ payload_json: string }>(db, `SELECT payload_json FROM job_events
+      WHERE tenant_id=? AND job_id=? AND event_type='ApplyReviewDecisionRecorded'
+        AND json_extract(payload_json, '$.decisionId')=? ORDER BY event_id DESC LIMIT 1`, [DEFAULT_TENANT, jobId, row.decision_id]);
+    const bound = event ? parseJsonRecord(event.payload_json)?.["coverLetterBinding"] : null;
+    const boundVersion = (bound as { acceptedVersion?: string } | null)?.acceptedVersion ?? null;
+    if (boundVersion !== (materialsPreview.coverLetter?.acceptedVersion ?? null)
+      || materialsPreview.coverLetterPdfError || (materialsPreview.coverLetter && !materialsPreview.coverLetter.pdfSourceCurrent)) {
+      approvalReasons.splice(0, approvalReasons.length, "approval_stale_materials");
+    }
+  }
   const idealCandidate = cleanLimitedText(
     row.employer_ideal_candidate_narrative,
     IDEAL_CANDIDATE_TEXT_LIMIT,
@@ -1285,16 +1302,6 @@ function parseJsonRecord(value: string | null): Record<string, unknown> | null {
   }
 }
 
-function isReviewRequiredMaterialMetadata(value: string | null): boolean {
-  const metadata = parseJsonRecord(value);
-  if (!metadata) return false;
-  if (Boolean(recordValue(metadata, "reviewRequired", "review_required"))) return true;
-  const fit = asRecord(recordValue(metadata, "postGenerationFit", "post_generation_fit"));
-  const decision = asRecord(recordValue(fit, "revisionDecision", "revision_decision"));
-  if (Boolean(recordValue(decision, "reviewBlocked", "review_blocked"))) return true;
-  const fitScore = asRecord(recordValue(fit, "fitScore", "fit_score"));
-  return parseStringList(recordValue(fitScore, "reviewBlockers", "review_blockers")).length > 0;
-}
 
 function parseQueueCompensationSummary(value: string | null): JobCompensationSummary | null {
   if (!value) {
@@ -1521,12 +1528,24 @@ function materialPreviewsForJob(
   db: SqliteDatabase,
   jobId: JobId,
   profileSourceFields: readonly ApplyReviewProfileSourceField[],
+  appDir?: string,
 ): ApplyReviewQueueItem["materialsPreview"] {
   const resumePreview = resumeMaterialPreviewForJob(db, jobId);
+  let coverLetter: ReturnType<typeof coverLetterAccepted> = null;
+  let coverLetterText: string | null = null;
+  let coverLetterPdfError: string | null = null;
+  try {
+    coverLetter = coverLetterAccepted(db, jobId, appDir);
+    coverLetterText = coverLetter ? coverLetterTextForSource(db, appDir ?? path.dirname(path.resolve(db.name)), coverLetter.source)
+      : coverLetterMaterialPreviewForJob(db, jobId, appDir);
+  }
+  catch { coverLetterPdfError = "The accepted cover-letter source cannot be read or exceeds the supported size. Restore or regenerate the letter before previewing or approving."; }
   return {
     ...resumePreview,
     profileSourceFields: [...profileSourceFields],
-    coverLetterText: coverLetterMaterialPreviewForJob(db, jobId),
+    coverLetterText,
+    coverLetter,
+    coverLetterPdfError,
   };
 }
 
@@ -1770,117 +1789,40 @@ type ResumeMaterialPreview = Pick<
   | "resumeTemplate"
 >;
 
-interface MaterialArtifactCandidate {
-  readonly artifactId: string | null;
-  readonly createdAt: string;
-  readonly generation: number | null;
-  readonly metadataJson: string | null;
-  readonly path: string;
-  readonly reviewRequired: boolean;
-  readonly rowRank: number;
-  readonly sourceRank: number;
-}
-
-const RESUME_TEXT_ARTIFACT_TYPES = ["tailored_resume", "tailored_resume_txt", "resume_txt"] as const;
-const RESUME_PDF_ARTIFACT_TYPES = ["tailored_resume_pdf", "resume_pdf"] as const;
 const COVER_LETTER_TEXT_ARTIFACT_TYPES = ["cover_letter", "cover_letter_txt"] as const;
 
-function coverLetterMaterialPreviewForJob(db: SqliteDatabase, jobId: JobId): string | null {
-  const text = firstReadableTextCandidate(
-    materialArtifactCandidates(db, {
+function coverLetterMaterialPreviewForJob(db: SqliteDatabase, jobId: JobId, appDir = path.dirname(path.resolve(db.name))): string | null {
+  for (const candidate of materialArtifactCandidates(db, {
       artifactTypes: COVER_LETTER_TEXT_ARTIFACT_TYPES,
       binary: false,
       includeLegacyJobColumn: "cover_letter_path",
       jobId,
-    }),
-    { byteLimit: COVER_LETTER_REVIEW_TEXT_BYTE_LIMIT, charLimit: null },
-  );
-  return text?.preview ?? null;
+    })) {
+    try { return coverLetterSourceBytes(appDir, candidate.path).toString("utf8"); }
+    catch { /* An unreadable or unowned candidate is never displayed. */ }
+  }
+  return null;
 }
 
 function resumeMaterialPreviewForJob(db: SqliteDatabase, jobId: JobId): ResumeMaterialPreview {
-  const textCandidates = materialArtifactCandidates(db, {
-    artifactTypes: RESUME_TEXT_ARTIFACT_TYPES,
-    binary: false,
-    includeLegacyJobColumn: "tailored_resume_path",
-    jobId,
-  });
-  const pdfCandidates = materialArtifactCandidates(db, {
-    artifactTypes: RESUME_PDF_ARTIFACT_TYPES,
-    binary: true,
-    jobId,
-  }).filter((candidate) => candidate.artifactId);
-  const reviewRequiredText = textCandidates.find((candidate) => candidate.reviewRequired);
-  if (reviewRequiredText) {
-    const text = firstReadableTextCandidate([reviewRequiredText], {
-      byteLimit: RESUME_AUDIT_TEXT_BYTE_LIMIT,
-      charLimit: null,
-    });
-    if (text) {
-      return {
-        materialsGeneration: text.candidate.generation,
-        resumeText: text.preview,
-        resumeTextArtifactId: text.candidate.artifactId,
-        resumePdfArtifactId: null,
-        resumePdfLayoutBoxes: [],
-        requirementLedAudit: requirementLedAuditForCandidates(db, jobId, text.candidate),
-        resumeTemplate: resumeTemplateStateForJob(db, jobId),
-      };
-    }
-  }
-
-  for (const pdf of pdfCandidates) {
-    const text = firstReadableTextCandidate(
-      textCandidates.filter((candidate) => sameMaterialGeneration(candidate, pdf)),
-      { byteLimit: RESUME_AUDIT_TEXT_BYTE_LIMIT, charLimit: null },
-    );
-    if (text) {
-      return {
-        materialsGeneration: text.candidate.generation,
-        resumeText: text.preview,
-        resumeTextArtifactId: text.candidate.artifactId,
-        resumePdfArtifactId: pdf.artifactId,
-        resumePdfLayoutBoxes: resumeLayoutBoxesForArtifact(db, pdf.artifactId),
-        requirementLedAudit: requirementLedAuditForCandidates(db, jobId, text.candidate, pdf),
-        resumeTemplate: resumeTemplateStateForJob(db, jobId),
-      };
-    }
-  }
-
-  const pdfOnly = pdfCandidates[0];
-  if (pdfOnly) {
+  const { text, pdf } = selectResumeMaterial(db, jobId);
+  if (text || pdf) {
+    const candidates = [text?.candidate, pdf].filter((candidate): candidate is MaterialArtifactCandidate => Boolean(candidate));
     return {
-      materialsGeneration: pdfOnly.generation,
-      resumeText: null,
-      resumeTextArtifactId: null,
-      resumePdfArtifactId: pdfOnly.artifactId,
-      resumePdfLayoutBoxes: resumeLayoutBoxesForArtifact(db, pdfOnly.artifactId),
-        requirementLedAudit: requirementLedAuditForCandidates(db, jobId, pdfOnly),
-        resumeTemplate: resumeTemplateStateForJob(db, jobId),
-    };
-  }
-
-  const text = firstReadableTextCandidate(textCandidates, { byteLimit: RESUME_AUDIT_TEXT_BYTE_LIMIT, charLimit: null });
-  if (text) {
-    return {
-      materialsGeneration: text.candidate.generation,
-      resumeText: text.preview,
-      resumeTextArtifactId: text.candidate.artifactId,
-      resumePdfArtifactId: null,
-      resumePdfLayoutBoxes: [],
-      requirementLedAudit: requirementLedAuditForCandidates(db, jobId, text.candidate),
+      materialsGeneration: text?.candidate.generation ?? pdf?.generation ?? null,
+      resumeText: text?.preview ?? null,
+      resumeTextArtifactId: text?.candidate.artifactId ?? null,
+      resumePdfArtifactId: pdf?.artifactId ?? null,
+      resumePdfLayoutBoxes: pdf?.artifactId ? resumeLayoutBoxesForArtifact(db, pdf.artifactId) : [],
+      requirementLedAudit: requirementLedAuditForCandidates(db, jobId, ...candidates),
       resumeTemplate: resumeTemplateStateForJob(db, jobId),
     };
   }
-
   const failedAudit = failedRequirementLedAuditForJob(db, jobId);
   return {
     materialsGeneration: failedAudit?.generation ?? null,
-    resumeText: null,
-    resumeTextArtifactId: null,
-    resumePdfArtifactId: null,
-    resumePdfLayoutBoxes: [],
-    requirementLedAudit: failedAudit?.audit ?? null,
+    resumeText: null, resumeTextArtifactId: null, resumePdfArtifactId: null,
+    resumePdfLayoutBoxes: [], requirementLedAudit: failedAudit?.audit ?? null,
     resumeTemplate: resumeTemplateStateForJob(db, jobId),
   };
 }
@@ -2277,258 +2219,6 @@ function parseResumeLayoutBoxes(value: string | null): ResumeLayoutBox[] {
     });
   }
   return boxes;
-}
-
-function firstReadableTextCandidate(
-  candidates: readonly MaterialArtifactCandidate[],
-  options: ReadTextOptions = {},
-): { candidate: MaterialArtifactCandidate; preview: string } | null {
-  for (const candidate of candidates) {
-    const preview = readTextPreview(candidate.path, options);
-    if (preview) {
-      return { candidate, preview };
-    }
-  }
-  return null;
-}
-
-function materialArtifactCandidates(
-  db: SqliteDatabase,
-  {
-    artifactTypes,
-    binary,
-    includeLegacyJobColumn,
-    jobId,
-  }: {
-    readonly artifactTypes: readonly string[];
-    readonly binary: boolean;
-    readonly includeLegacyJobColumn?: "tailored_resume_path" | "cover_letter_path";
-    readonly jobId: JobId;
-  },
-): MaterialArtifactCandidate[] {
-  const candidates: MaterialArtifactCandidate[] = [];
-  const placeholders = artifactTypes.map(() => "?").join(", ");
-
-  const projectedRows = allRows<{
-    artifact_id: string | null;
-    created_at: string | null;
-    generation: number | null;
-    local_path: string | null;
-    metadata_json: string | null;
-    status: string | null;
-  }>(
-    db,
-    `SELECT artifact_id, local_path, generation, created_at, status, metadata_json
-     FROM artifact_list_projections
-     WHERE tenant_id = ?
-       AND job_id = ?
-       AND artifact_type IN (${placeholders})
-       AND COALESCE(status, 'active') IN ('approved', 'active', 'candidate')
-       AND local_path IS NOT NULL
-       AND local_path != ''
-     ORDER BY COALESCE(generation, -1) DESC, COALESCE(created_at, '') DESC, artifact_id DESC
-     LIMIT 16`,
-    [DEFAULT_TENANT, jobId, ...artifactTypes],
-  );
-  for (const [index, row] of projectedRows.entries()) {
-    const reviewRequired = row.status === "candidate" && isReviewRequiredMaterialMetadata(row.metadata_json);
-    if (row.status === "candidate" && !reviewRequired) continue;
-    pushMaterialCandidate(candidates, {
-      artifactId: row.artifact_id,
-      binary,
-      createdAt: row.created_at,
-      generation: row.generation,
-      metadataJson: row.metadata_json,
-      path: row.local_path,
-      reviewRequired,
-      rowRank: index,
-      sourceRank: 0,
-    });
-  }
-
-  const materialRows = allRows<{
-    artifact_id: string | null;
-    created_at: string | null;
-    generation: number | null;
-    metadata_json: string | null;
-    path: string | null;
-    status: string | null;
-  }>(
-    db,
-    `SELECT artifact_id, path, generation, created_at, status, metadata_json
-     FROM job_materials_artifacts
-     WHERE tenant_id = ?
-       AND job_id = ?
-       AND artifact_type IN (${placeholders})
-       AND COALESCE(status, 'approved') IN ('approved', 'active', 'candidate')
-       AND path IS NOT NULL
-       AND path != ''
-     ORDER BY COALESCE(generation, -1) DESC, COALESCE(created_at, '') DESC, rowid DESC
-     LIMIT 16`,
-    [DEFAULT_TENANT, jobId, ...artifactTypes],
-  );
-  for (const [index, row] of materialRows.entries()) {
-    const reviewRequired = row.status === "candidate" && isReviewRequiredMaterialMetadata(row.metadata_json);
-    if (row.status === "candidate" && !reviewRequired) continue;
-    pushMaterialCandidate(candidates, {
-      artifactId: row.artifact_id,
-      binary,
-      createdAt: row.created_at,
-      generation: row.generation,
-      metadataJson: row.metadata_json,
-      path: row.path,
-      reviewRequired,
-      rowRank: index,
-      sourceRank: 1,
-    });
-  }
-
-  const artifactRows = allRows<{
-    created_at: string | null;
-    path: string | null;
-    artifact_id: string | number | null;
-  }>(
-    db,
-    `SELECT artifact_id, path, created_at
-     FROM job_artifacts
-     WHERE tenant_id = ?
-       AND job_id = ?
-       AND artifact_type IN (${placeholders})
-       AND COALESCE(status, 'active') NOT IN ('missing', 'failed', 'superseded', 'suppressed')
-       AND path IS NOT NULL
-       AND path != ''
-     ORDER BY COALESCE(created_at, '') DESC, artifact_id DESC
-     LIMIT 16`,
-    [DEFAULT_TENANT, jobId, ...artifactTypes],
-  );
-  for (const [index, row] of artifactRows.entries()) {
-    pushMaterialCandidate(candidates, {
-      artifactId: row.artifact_id === null || row.artifact_id === undefined ? null : String(row.artifact_id),
-      binary,
-      createdAt: row.created_at,
-      generation: null,
-      metadataJson: null,
-      path: row.path,
-      reviewRequired: false,
-      rowRank: index,
-      sourceRank: 2,
-    });
-  }
-
-  if (includeLegacyJobColumn) {
-    const legacyRow = getRow<{ path: string | null }>(
-      db,
-      `SELECT ${includeLegacyJobColumn} AS path FROM jobs WHERE tenant_id = ? AND job_id = ?`,
-      [DEFAULT_TENANT, jobId],
-    );
-    pushMaterialCandidate(candidates, {
-      artifactId: null,
-      binary,
-      createdAt: "",
-      generation: null,
-      metadataJson: null,
-      path: legacyRow?.path ?? null,
-      reviewRequired: false,
-      rowRank: 0,
-      sourceRank: 3,
-    });
-  }
-
-  return candidates.sort(compareMaterialCandidates);
-}
-
-function pushMaterialCandidate(
-  candidates: MaterialArtifactCandidate[],
-  input: {
-    readonly artifactId: string | null | undefined;
-    readonly binary: boolean;
-    readonly createdAt: string | null | undefined;
-    readonly generation: number | null | undefined;
-    readonly metadataJson: string | null | undefined;
-    readonly path: string | null | undefined;
-    readonly reviewRequired?: boolean;
-    readonly rowRank: number;
-    readonly sourceRank: number;
-  },
-): void {
-  const path = String(input.path ?? "").trim();
-  if (!path || !artifactPathExists(path, { binary: input.binary })) {
-    return;
-  }
-  candidates.push({
-    artifactId: input.artifactId ? String(input.artifactId) : null,
-    createdAt: String(input.createdAt ?? ""),
-    generation: nullableNumber(input.generation),
-    metadataJson: input.metadataJson ? String(input.metadataJson) : null,
-    path,
-    reviewRequired: Boolean(input.reviewRequired),
-    rowRank: input.rowRank,
-    sourceRank: input.sourceRank,
-  });
-}
-
-function compareMaterialCandidates(a: MaterialArtifactCandidate, b: MaterialArtifactCandidate): number {
-  const generation = (b.generation ?? -1) - (a.generation ?? -1);
-  if (generation !== 0) return generation;
-  const createdAt = b.createdAt.localeCompare(a.createdAt);
-  if (createdAt !== 0) return createdAt;
-  const source = a.sourceRank - b.sourceRank;
-  if (source !== 0) return source;
-  return a.rowRank - b.rowRank;
-}
-
-function sameMaterialGeneration(a: MaterialArtifactCandidate, b: MaterialArtifactCandidate): boolean {
-  return a.generation === b.generation;
-}
-
-function artifactPathExists(artifactPath: string, { binary }: { readonly binary: boolean }): boolean {
-  try {
-    if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
-      return false;
-    }
-    return binary || !isBinaryPreviewPath(artifactPath);
-  } catch {
-    // Artifact files can disappear while the local projection still exists.
-    // In that case the review UI should fall back to the next available source.
-    return false;
-  }
-}
-
-function isBinaryPreviewPath(artifactPath: string): boolean {
-  return /\.(pdf|docx?|png|jpe?g|webp|gif|zip)$/i.test(artifactPath);
-}
-
-interface ReadTextOptions {
-  readonly byteLimit?: number;
-  readonly charLimit?: number | null;
-}
-
-function readTextPreview(artifactPath: string, options: ReadTextOptions = {}): string | null {
-  let fd: number | null = null;
-  try {
-    const stats = fs.statSync(artifactPath);
-    if (!stats.isFile()) {
-      return null;
-    }
-    const byteCount = Math.min(stats.size, options.byteLimit ?? MATERIAL_PREVIEW_BYTE_LIMIT);
-    if (byteCount <= 0) {
-      return null;
-    }
-    const buffer = Buffer.alloc(byteCount);
-    fd = fs.openSync(artifactPath, "r");
-    const bytesRead = fs.readSync(fd, buffer, 0, byteCount, 0);
-    const text = buffer.subarray(0, bytesRead).toString("utf8");
-    if (!text.trim() || text.includes("\u0000")) {
-      return null;
-    }
-    return options.charLimit === null ? previewText(text, text.length) : previewText(text, options.charLimit ?? MATERIAL_PREVIEW_CHAR_LIMIT);
-  } catch {
-    return null;
-  } finally {
-    if (fd !== null) {
-      fs.closeSync(fd);
-    }
-  }
 }
 
 function outcomeFromRow(row: OutcomeRow): ApplicationOutcome {

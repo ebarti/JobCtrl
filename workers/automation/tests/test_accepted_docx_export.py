@@ -73,6 +73,25 @@ def run(owned, kind="tailored_resume", **overrides):
     return export.export_accepted_material(connection, **args)
 
 
+@pytest.mark.parametrize("kind", ["tailored_resume", "cover_letter"])
+def test_carried_source_exports_each_exact_generation_without_ambiguity(owned, kind):
+    connection, _ = owned
+    for generation in (2, 3):
+        connection.execute("INSERT INTO job_materials(tenant_id,job_id,generation,status,created_at,updated_at) "
+                           "VALUES('local',?,?,'approved','now','now')", (JOB, generation))
+        connection.execute("INSERT INTO job_materials_artifacts "
+                           "SELECT tenant_id,job_id,?,artifact_type,artifact_id,status,path,render_format,"
+                           "size_bytes,metadata_json,created_at,superseded_at FROM job_materials_artifacts "
+                           "WHERE tenant_id='local' AND job_id=? AND generation=1", (generation, JOB))
+    connection.commit()
+    before = preservation_state(owned)
+    for generation in (1, 2, 3):
+        receipt = run(owned, kind, generation=generation)
+        assert receipt["generation"] == generation
+        assert Document(receipt["path"]).core_properties.identifier == kind
+    assert preservation_state(owned) == before
+
+
 def preservation_state(owned):
     connection, root = owned
     return {

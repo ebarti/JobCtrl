@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import Database from "better-sqlite3";
+import { acceptCoverLetterPreview, coverLetterAccepted, renderCoverLetterPreview } from "../src/cover-letter-review.js";
 
 import type {
   CredentialBatchOperation,
@@ -56,6 +58,42 @@ afterEach(() => {
 });
 
 describe("seeded local QA workflow", () => {
+  it("switches and restores only the current audit after cover formatting carries resume slots forward", async () => {
+    const db = new Database(workspace.dbPath);
+    try {
+      const initial = coverLetterAccepted(db, QA_PLATFORM_JOB_ID, workspace.appDir)!;
+      const { preview } = await renderCoverLetterPreview(db, workspace.appDir, QA_PLATFORM_JOB_ID, {
+        source: initial.source, expectedAcceptedVersion: initial.acceptedVersion,
+        settings: { ...initial.settings, fontSizePt: 12 },
+      }, async ({ pdfPath }) => { fs.writeFileSync(pdfPath, "%PDF-1.4\nowned synthetic render\n%%EOF"); });
+      acceptCoverLetterPreview(db, workspace.appDir, QA_PLATFORM_JOB_ID, {
+        previewId: preview.previewId, expectedAcceptedVersion: preview.expectedAcceptedVersion,
+      });
+      const snapshot = () => db.prepare("SELECT * FROM job_materials_artifacts WHERE job_id=? ORDER BY generation,artifact_type").all(QA_PLATFORM_JOB_ID);
+      const before = snapshot();
+      const history = db.prepare("SELECT * FROM job_materials_artifacts WHERE job_id=? AND generation=1 ORDER BY artifact_type").all(QA_PLATFORM_JOB_ID);
+      const app = buildApp(options);
+      try {
+        for (const lifecycle of ["post_voice_shipped", "post_acceptance_audit"] as const) {
+          const restore = seedQaShippedFitLifecycle(workspace.dbPath, lifecycle);
+          try {
+            const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+            expect(response.statusCode, response.body).toBe(200);
+            const item = response.json().items.find((row: { jobKey: string }) => row.jobKey === QA_PLATFORM_JOB_ID);
+            expect(item.materialsPreview.materialsGeneration).toBe(2);
+            expect(item.materialsPreview.requirementLedAudit.shippedFit).toMatchObject({
+              lifecycle, score: lifecycle === "post_voice_shipped" ? 6 : 5,
+              mustHaveCoverage: lifecycle === "post_voice_shipped" ? 1 : 0.5,
+              coverageBasis: lifecycle === "post_voice_shipped" ? "grounded_shipped_text_v1" : "judge_claimed_legacy",
+            });
+            expect(db.prepare("SELECT * FROM job_materials_artifacts WHERE job_id=? AND generation=1 ORDER BY artifact_type").all(QA_PLATFORM_JOB_ID)).toEqual(history);
+          } finally { restore(); }
+          expect(snapshot()).toEqual(before);
+        }
+      } finally { await app.close(); }
+    } finally { db.close(); }
+  });
+
   it.each(["post_voice_shipped", "post_acceptance_audit"] as const)(
     "projects canonical %s findings separately from the acceptance gate",
     async (lifecycle) => {

@@ -802,6 +802,7 @@ class HtmlResumePdfAdapter:
         cover_letter_text: str,
         output_path: str,
         created_at: str,
+        settings: dict | None = None,
     ) -> Artifact:
         raise NotImplementedError("HtmlResumePdfAdapter does not render cover letters; use PlaywrightHtmlPdfAdapter.")
 
