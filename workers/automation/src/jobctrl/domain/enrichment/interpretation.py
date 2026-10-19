@@ -86,10 +86,20 @@ class ModelJobInterpreter:
             for row in result.compensation:
                 if row.state == "stated":
                     if not row.citations or (row.lower is None and row.upper is None) or row.currency is None:
-                        raise DeterminationFailure("missing_compensation_citation")
+                        raise DeterminationFailure("missing_compensation_citation", repair_context={
+                            "compensation": row.model_dump(),
+                            "missing_fields": [name for name, missing in (
+                                ("citations", not row.citations),
+                                ("lower_or_upper", row.lower is None and row.upper is None),
+                                ("currency", row.currency is None),
+                            ) if missing],
+                        })
                     numbers = {number for cite in row.citations for _, number in numeric_literals(cite.quote)}
-                    if any(Decimal(value) not in numbers for value in (row.lower, row.upper) if value is not None):
-                        raise DeterminationFailure("mismatched_value")
+                    invalid = [value for value in (row.lower, row.upper) if value is not None and Decimal(value) not in numbers]
+                    if invalid:
+                        raise DeterminationFailure("mismatched_value", repair_context={
+                            "compensation": row.model_dump(), "invalid_amounts": invalid,
+                        })
                     if row.lower is not None and row.upper is not None and Decimal(row.lower) > Decimal(row.upper):
                         raise DeterminationFailure("invalid_numeric_range")
                 elif row.lower is not None or row.upper is not None:

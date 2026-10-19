@@ -240,9 +240,19 @@ def test_model_support_verdict_controls_actual_resume_path(tmp_path, verdict, ex
 @pytest.mark.parametrize("quality,score,approved", [("pass", 0.01, True), ("fail", 0.99, False)])
 def test_independent_quality_verdict_controls_approval_without_score_threshold(tmp_path, quality, score, approved):
     conn = connection()
-    outcome = resume_case(conn, ResumeModel(quality=quality, score=score)).execute(**request(tmp_path))
+    model = ResumeModel(quality=quality, score=score)
+    kwargs = request(tmp_path)
+    outcome = resume_case(conn, model).execute(**kwargs)
     assert outcome.materials.is_resume_approved is approved
     assert conn.execute("SELECT COUNT(*) FROM semantic_determinations WHERE kind='artifact_quality'").fetchone()[0] == 1
+    from jobctrl.domain.job_snapshot import build_jd_snapshot
+
+    messages = next(messages for title, _, messages in model.calls if title == "ArtifactQuality")
+    supplied = json.loads(messages[1].content)
+    assert next(row["text"] for row in supplied["sources"] if row["source_id"] == "posting") == build_jd_snapshot(kwargs["job"])
+    permissions = json.loads(supplied["context"]["rubric"]["generation_permissions"])
+    assert permissions["required_experience_entry_ids"] == ["entry"]
+    assert permissions["max_bullets_per_experience"] == 4
 
 
 @pytest.mark.parametrize("verdict", ["pass", "fail"])
@@ -260,6 +270,10 @@ def test_high_fit_resume_keeps_all_six_personas_and_their_model_verdict(tmp_path
     assert len(result["personas"]) == 6
     assert result["verdict"] == verdict
     assert result["score"] == 0.1
+    messages = next(messages for title, _, messages in model.calls if title == "ResumeAdversarialReview")
+    supplied = json.loads(messages[1].content)
+    assert any(row["source_id"] == "posting" for row in supplied["sources"])
+    assert "generation_permissions" in supplied["context"]["rubric"]
     if verdict == "pass":
         metadata = conn.execute(
             "SELECT metadata_json FROM job_materials_artifacts WHERE artifact_type='tailored_resume'"
@@ -292,7 +306,28 @@ def test_repaired_claim_uses_cited_model_reason_and_new_generation_text(tmp_path
         messages for title, _, messages in reversed(model.calls) if title == "GeneratedResumeDraft"
     )
     assert "Model rejects support" in " ".join(row.content for row in generation_prompt)
+    feedback = next(json.loads(row.content) for row in generation_prompt if row.content.startswith('{"review_feedback"'))
+    assert feedback["review_feedback"][0]["rejected_candidate"]["experience_updates"][0]["bullets"] == ["Synthetic draft revision 1"]
     assert "revision 2" in Path(outcome.materials.tailored_resume.path).read_text()
+
+
+def test_unaffirmed_generator_anchor_identifies_the_line_and_source_for_repair(tmp_path):
+    class UnaffirmedModel(ResumeModel):
+        def chat_json(self, messages, *, response_schema, **kwargs):
+            result = super().chat_json(messages, response_schema=response_schema, **kwargs)
+            if response_schema["title"] == "ClaimVerification":
+                row = next(row for row in result["lines"] if row["line_id"] == "experience:entry#0")
+                row["source_evidence"] = []
+            return result
+
+    conn, model = connection(), UnaffirmedModel()
+    outcome = resume_case(conn, model, retries=1).execute(**request(tmp_path))
+    assert not outcome.materials.is_resume_approved
+    messages = [messages for title, _, messages in model.calls if title == "GeneratedResumeDraft"][1]
+    feedback = next(json.loads(row.content) for row in messages if row.content.startswith('{"review_feedback"'))
+    finding = next(row for row in feedback["review_feedback"][0]["claim_findings"] if row["kind"] == "source_anchor_binding_invalid")
+    assert finding["line_id"] == "experience:entry#0"
+    assert '["fact"]' in finding["rationale"]
 
 
 @pytest.mark.parametrize("stage", ["GeneratedResumeDraft", "ClaimVerification", "ArtifactQuality", "ResumeAdversarialReview"])

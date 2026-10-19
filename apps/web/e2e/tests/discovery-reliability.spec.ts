@@ -5,6 +5,7 @@ import {
   pipelinesDiscoveringSnapshot,
   pipelinesRecoveringProjectionSnapshot,
 } from "../../src/views/pipelines/PipelinesView.fixtures.js";
+import { refreshE2eWorkerHeartbeat } from "../fixtures/e2e-state.js";
 
 test.skip(process.env["JOBCTRL_E2E_ISOLATED"] !== "1", "Requires the owned synthetic API workspace");
 
@@ -49,6 +50,7 @@ test("a confirmed Target search save stays saved while its profile query catches
 
 test("Discover explains occupied slots and unlocks automatically after the runtime becomes idle", async ({ page }, testInfo) => {
   test.setTimeout(60_000);
+  refreshE2eWorkerHeartbeat();
   await page.setViewportSize({ width: 1216, height: 1228 });
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));

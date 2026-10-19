@@ -121,8 +121,15 @@ mechanical response failure, including invalid citation spans, line/requirement
 bindings, missing stated-pay citations or inconsistent aggregate verdicts. Each
 call repeats lane/spend admission and all existing validation. A valid semantic
 rejection remains a rejection and goes back to the generator for revision.
+Supported candidate-fact citation IDs must also appear in the line's declared
+source contributions. An inconsistent inventory is repaired as a structural
+binding failure; code never infers contribution from wording.
 Corrections receive the immediately rejected response as explicitly untrusted
 data so they can repair individual bindings against the original source inputs.
+Exact citation/value failures also identify the rejected citation or compensation
+row in request-local correction data; exception text and persisted failure state
+remain code-only. Rejected resume reports retain only verifier-affirmed anchors,
+while preserving the failed gate, original candidate and missing-ID findings.
 Provider, budget, cache and persistence failures do not enter this response
 repair loop. A failed repair never replaces the accepted envelope or artifact.
 

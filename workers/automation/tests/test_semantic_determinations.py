@@ -251,8 +251,10 @@ def test_invalid_evidence_is_reasked_under_the_same_sources_and_budget():
     assert admissions == ["interview", "interview"]
     assert model.calls[0][0][:2] == model.calls[1][0][:2]
     assert "non_verbatim_quote" in model.calls[1][0][-1].content
-    rejected = json.loads(model.calls[1][0][-1].content.split("\n", 1)[1])["rejected_response"]
+    feedback = json.loads(model.calls[1][0][-1].content.split("\n", 1)[1])
+    rejected = feedback["rejected_response"]
     assert rejected["citations"][0]["quote"] == "invented"
+    assert feedback["binding_failure"]["citation"]["quote"] == "invented"
     assert "untrusted data" in model.calls[1][0][-1].content
     assert len(repository.rows) == 1
     assert call(model, repository)[1] == envelope
@@ -264,6 +266,25 @@ def test_provider_failure_is_not_reasked_as_a_response_repair():
     with pytest.raises(DeterminationFailure, match="provider_error"):
         call(model, Repository())
     assert len(model.calls) == 1
+
+
+def test_exact_value_repair_identifies_the_literal_without_disclosing_it_in_failure_state():
+    class RecordingRepository(Repository):
+        def record_state(self, **kwargs):
+            self.last_state = kwargs
+
+    invalid = {**response(), "citations": [
+        {"source_id": "canonical:1", "quote": "value 10%", "exact_values": ["private invalid value"]},
+    ]}
+    repository, model = RecordingRepository(), Model(invalid)
+    with pytest.raises(DeterminationFailure) as caught:
+        call(model, repository)
+    assert str(caught.value) == "semantic_determination:mismatched_value"
+    assert "private invalid value" not in json.dumps(repository.last_state)
+    feedback = json.loads(model.calls[1][0][-1].content.split("\n", 1)[1])
+    assert feedback["binding_failure"]["invalid_exact_value"] == "private invalid value"
+    assert feedback["binding_failure"]["citation"] == invalid["citations"][0]
+    assert len(model.calls) == 3
 
 
 @pytest.mark.parametrize("code", ["claim_line_binding_invalid", "missing_compensation_citation", "inconsistent_verdict"])

@@ -52,7 +52,7 @@ class LineVerification(DeterminationModel):
 
     source_evidence: list[Citation] = Field(
         max_length=400,
-        description="Only candidate evidence IDs in this line's allowed_evidence_ids. When allowed_evidence_ids is empty, return []. Requirements/posting citations belong in claims.evidence or served_requirements, never in this list.",
+        description="Only candidate evidence IDs in this line's allowed_evidence_ids. Include every source used to support a candidate_fact in claims.evidence. When allowed_evidence_ids is empty, return []. Requirements/posting citations belong in claims.evidence or served_requirements, never in this list.",
     )
     claims: list[VerifiedClaim] = Field(max_length=40)
     findings: list["VerificationFinding"] = Field(max_length=20)

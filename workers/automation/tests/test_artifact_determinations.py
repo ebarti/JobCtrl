@@ -317,3 +317,30 @@ def test_supported_numeric_claim_cannot_borrow_values_from_another_source():
             requirements=[],
             rubric={},
         )
+
+
+@pytest.mark.parametrize("kind,expected_calls", [("candidate_fact", 2), ("advice", 1)])
+def test_supported_candidate_citation_must_be_in_its_declared_contributions(kind, expected_calls):
+    class ContributionModel:
+        calls = 0
+
+        def chat_json(self, messages, **kwargs):
+            self.calls += 1
+            fact = {"source_id": "fact", "quote": "3 units", "exact_values": []}
+            return {"verdict": "pass", "rationale": "Synthetic model decision", "lines": [{
+                "line_id": "line", "verdict": "pass", "served_requirements": [], "findings": [],
+                "source_evidence": [fact] if self.calls > 1 else [],
+                "claims": [{"kind": kind, "support": "supported", "rationale": "Synthetic reason",
+                            "text": {"source_id": "line:line", "quote": "3 units", "exact_values": []},
+                            "evidence": [fact]}],
+            }]}
+
+    conn, model = connection(), ContributionModel()
+    verifier, _ = ports(conn, model)
+    result, _ = verifier.verify(
+        artifact_kind="resume", entity_id="owned",
+        lines=[ArtifactLine(line_id="line", text="3 units", allowed_evidence_ids=["fact"], allowed_requirement_ids=[])],
+        evidence=[Source(source_id="fact", text="3 units")], requirements=[], rubric={},
+    )
+    assert result.verdict == "pass"
+    assert model.calls == expected_calls

@@ -81,6 +81,14 @@ Authored experience, education and skill rows remain canonical. Exact row IDs co
 
 A generated candidate must pass structural binding, claim verification and the separate quality judge. Model findings supply repair reasons and exact line IDs. Arithmetic may compare accepted typed fit results; it does not assess prose. Provider, spend, JSON, schema and source-binding failures remain distinct and preserve accepted material.
 
+Quality and persona reviewers receive the canonical posting plus the same user
+generation permissions, required roles and bullet limits as the generator.
+Seniority does not imply direct reports, and omitted optional roles alone do not
+require a complete career inventory. Reviewers assess the truthful artifact;
+unsupported qualification gaps remain gaps rather than requests to invent proof.
+Repairs receive the rejected typed candidate and exact unaffirmed source IDs as
+untrusted data, with the current source and coverage allowlists remaining authoritative.
+
 ## Validation Layers
 
 ### 1. Structured Output Schema

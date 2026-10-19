@@ -123,6 +123,9 @@ class ModelClaimVerifier:
                             raise DeterminationFailure("mismatched_value")
                     if claim.support in {"unsupported", "uncertain"} and row.verdict != "fail":
                         raise DeterminationFailure("inconsistent_verdict")
+                    if claim.kind == "candidate_fact" and claim.support == "supported":
+                        if {cite.source_id for cite in claim.evidence} - {cite.source_id for cite in row.source_evidence}:
+                            raise DeterminationFailure("source_contribution_binding_invalid")
                 if any(finding.citation.source_id != "line:" + row.line_id for finding in row.findings):
                     raise DeterminationFailure("finding_line_binding_invalid")
                 if row.findings and row.verdict != "fail":
