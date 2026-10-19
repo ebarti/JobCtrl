@@ -189,8 +189,14 @@ historical version's original controller. The additional 0.2.1 fault-injection
 case must not replace its ordinary successful-update case.
 Include a separate workspace that first reproduces the released 0.2.1-to-0.3.0
 failure, then recovers it using the new authenticated formula controller.
-The serial matrix retains time for real installer notarization and repeated
-service restarts; do not shorten it to a version-only check to fit a timeout.
+Each case runs on its own macOS runner, with at most five concurrent cases and
+a 20-minute limit per case. Fixed loopback ports prevent sharing one runner.
+An Ubuntu aggregation gate rejects missing, duplicate, failed, incomplete or
+different-candidate reports before publication. The combined evidence retains
+per-case elapsed time. Verification uses Node, the existing self-contained
+release-verification bundle and actual bundled runtimes; it does not reinstall
+application development dependencies.
+Keep real installer notarization and repeated service restarts in every case.
 Also upgrade a real 0.2.1 installation that has never started or created either
 database, then roll back its initialized predecessor pair. Partial pairs and
 orphaned sidecars must fail before any selection change in the native suite.
