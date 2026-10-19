@@ -93,11 +93,13 @@ authorized by this investigation.
 The #1013 delivery path is this documentation checkpoint → controller-owned
 single early unmerged PR → independent review and QA plus concurrent CI where
 permitted → batch repair/recheck → controller settlement at the unmerged PR.
-Publication requires retained passing evidence for the candidate's mandatory
-`checks.diff`, `checks.docs`, independent review/QA and applicable required PR
-CI, including Docs Site / Build's dead-link gate and rendered docs runtime
-check. Changed documents invalidate affected evidence; unchanged source-bound
-measurements may be reused with explicit limits. Actual start/finish times
+Delivery readiness and settlement require retained passing evidence for the
+candidate's mandatory `checks.diff`, `checks.docs`, independent review/QA and
+applicable required PR CI, including Docs Site / Build's dead-link gate and
+rendered docs runtime check. The controller may publish the early unmerged PR
+before review/QA and required PR CI complete, then run review and CI concurrently
+where permitted. Changed documents invalidate affected evidence; unchanged
+source-bound measurements may be reused with explicit limits. Actual start/finish times
 belong in retained runtime records. This design records no future gate outcome
 and authorizes no merge, release, deployment, statistics reset or other intake.
 
@@ -320,7 +322,7 @@ replacement never deletes the last accepted profile facts or material artifact.
 
 ### 4.5 Semantic authority and preflight
 
-Follow the accepted [semantic-determination decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations)
+Follow the accepted [semantic-determination decision](../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations)
 and [auditability checks](../developer/qa/regression-catalog.md#auditability-checks).
 New extraction/reconciliation/question judgments use strict source-bound
 `LlmPort.chat_json` determinations with minimized local inputs, closed schemas,
