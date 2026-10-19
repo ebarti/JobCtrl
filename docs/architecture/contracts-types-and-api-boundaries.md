@@ -273,66 +273,22 @@ adapter currently generates integer IDs; the explicit-null case is outside
 its normal call path. The TypeScript API's constructed
 outbound requests remain the supported caller path.
 
-#### Issue #954 reassessment
+#### Python RPC contract ownership
 
-The reassessment of [#954](https://github.com/ebarti/JobCtrl/issues/954) on
-2026-10-19 inspected main revision `f734ef8bf1d27e3219b2122aed089421f61b7ca8`.
-**Retain the Python runtime registry and TypeScript contract ownership.** No
-current supported-path gap reproduced in the selected synthetic checks, so
-this investigation justifies no production repair, generated registry or
-envelope tightening. The missing deliverable was a current disposition of the
-earlier investigation, rather than another implementation of its completed
-follow-ups.
+Python's runtime registry and TypeScript's `RpcMethods`/`RpcContracts` remain
+the contract owners. Registration mode, caller parameters, workflow
+acknowledgments and awaited result families must agree across that boundary.
+HTTP endpoint declarations do not replace Python registration.
 
-The earlier work remains applicable at the following source revisions. Its
-reported validation belongs to those revisions, not to this reassessment:
+The shared envelope fixture covers two methods. Inventory equality and selected
+feature tests do not establish exhaustive per-method parameter/result parity or
+live Temporal recovery. Handler-specific checks remain necessary when changing
+a supported call path. Existing canonical facts, accepted materials and approval
+bindings retain their current owners during transport or continuation failures.
 
-| Earlier work | What it already supplies |
-| --- | --- |
-| [#782](https://github.com/ebarti/JobCtrl/pull/782), `4b3933898`; [#783](https://github.com/ebarti/JobCtrl/pull/783), `48ae0c5ca`; [#784](https://github.com/ebarti/JobCtrl/pull/784), `feb1647c0` | Endpoint declarations, derived HTTP client methods and registered Fastify shells. These remove mechanical HTTP transcription; they do not replace Python registration or define a new JSON-RPC envelope policy. |
-| [#980](https://github.com/ebarti/JobCtrl/pull/980), `7c2ea5ad1` | Shared parser/server observations, registration parity and negative mutations. Its original inventory had 29 methods, with behavior probes for two; its historical registration-only remainder was 27, not a current inventory. |
-| [#1088](https://github.com/ebarti/JobCtrl/pull/1088), `718ad465b` | Reconciled caller parameters, workflow acknowledgments, awaited result families and legacy synchronous branches. The former source-filter/recovery/profile parameter mismatch is already addressed. |
-| [#1090](https://github.com/ebarti/JobCtrl/pull/1090), `97b2b7323` | Method-specific dispatch enforcement, validation before transport and success, plus Discover/profile continuation handoffs and failure/restart checks. |
-| [#1103](https://github.com/ebarti/JobCtrl/pull/1103), `624bc9a98` | Provider family adoption and the incremental migration guidance below. Its reported broad checks were measured on `8fbd590a`; those counts are historical, not fresh results here. |
-
-Fresh measurements at the inspected main revision found **40 registrations:
-26 sync and 14 workflow**, matching `RpcMethods`, `RpcContracts` and the pinned
-Python observation's modes. The live shared probe still matches that snapshot.
-The following checks executed with the prepared locked Python environment and
-Node 22.21.1/pnpm 10.24.0; no production source changed:
-
-| Boundary and source anchors | Fresh result and scope |
-| --- | --- |
-| `workers/automation/src/jobctrl/infrastructure/rpc/handlers.py::register_default_handlers`; `workers/automation/tests/{rpc_contract_probe,test_rpc_contract_boundary,test_jsonrpc_server,test_rpc_server_workflow_mode,test_jsonrpc_handlers}.py` | 103 tests passed, zero skipped: live inventory/modes, the 21 shared cases, sync results, workflow starts, errors, notifications, concurrent replies and handler-specific canonical identity/input checks. |
-| `packages/contracts/src/rpc.ts`; `apps/api/test/{rpc-parity,rpc-contracts,json-rpc-adapter}.test.ts` | 149 tests passed, zero skipped: envelope characterization, malformed controls/results, acknowledgments, awaited families, legacy branches, request correlation, progress, timeout and close settlement. |
-| `apps/api/test/server.test.ts`, selector `enforcing route to registered worker handoffs`; `apps/api/test/rpc-workflow-fixture.ts` | All 17 selected tests passed. The selector excluded 307 unrelated tests; none of the selected scenarios skipped. HTTP Discover source IDs reach the registered handler; invalid input stops before transport; duplicate/overridden stage selection requires the correct awaited result family. |
-| `apps/api/src/{server,profile-events,local-actions,json-rpc-adapter}.ts`, `workers/automation/src/jobctrl/workflow_specs.py`, the same 17 handoff tests | Held profile completion prevents early handled markers and serializes continuations. Start/wait, malformed result/family/acknowledgment/envelope, transport and stage failures (with and without an error message) leave continuations pending. Startup reattaches the deterministic identity, waits before marking completion, and preserves saved profile, accepted material rows/bytes and approval bindings. |
-
-These measurements ran from `2026-10-19T15:23:12Z` to
-`2026-10-19T15:23:50Z`; a separate live observation completed at `15:24:15Z`.
-Commands, JUnit, full outputs, probe source, inputs, source/lock hashes and
-exact UTC timings are retained in the controller-allocated #954 authoring
-evidence bundle for candidate
-`043e270a4ede87afa9a3e5bd8f776f1e71c777096bc981a425774ec46ed4aed2`.
-The supplied baseline receipt contains preparation and diff evidence only;
-it is not the source of these fresh test counts.
-
-The shared 21-case fixture exercises **two methods**, not all 40 method
-behaviors. Feature-specific tests add coverage; neither inventory equality nor
-these selected suites establish exhaustive per-method parameter/result parity.
-The workflow handoffs use real registered handlers, workflow-spec builders and
-production result dataclasses with **synthetic WorkflowStarter/handles**. They
-establish structural rejection, identity and marker ordering under injected
-failures, not live Temporal persistence/recovery, acquisition, provider
-authentication or model quality. Canonical facts and unknowns retain their
-existing owners; no semantic judgment, accepted artifact or approval is
-recomputed by this investigation.
-
-The unresolved design question is the separate wire policy described above:
-version, falsy parameters, extra keys and fractional/null IDs. That proposal
-remains **unimplemented**. A later change must first choose compatibility
-semantics and reproduce its supported caller trigger; this reassessment does
-not authorize a registry framework or blanket schema tightening.
+The separate wire-policy proposal above remains unimplemented. A future change
+to version handling, falsy parameters, extra keys or fractional/null IDs must
+first choose compatibility semantics and reproduce the affected caller path.
 
 ### Domain Events Over SSE
 
