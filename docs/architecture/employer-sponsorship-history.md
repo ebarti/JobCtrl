@@ -44,12 +44,13 @@ Inspected the merged changes and public PR bodies for
 - #761 (`dc3f2fc52`) separates resume qualifications from eligibility,
   logistics and employer conditions. That ownership boundary remains relevant;
   later source-bound requirement interpretation owns the semantic scope.
-- #208 (`4211fdd4a`) repaired period-aware compensation and sponsorship phrase
-  checks in an earlier scorer. Those lexical decisions are historical, not the
+- #208 (`4211fdd4a`) changed period-aware compensation and remote-work handling
+  in an earlier scorer while retaining the existing sponsorship gate unchanged.
+  Those lexical decisions are historical, not the
   current architecture. The issue's `7c432089` eligibility excerpt also predates
   the current simple typed-verdict reader. Do not restore those heuristics.
 
-The [semantic determination decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations)
+The [semantic determination decision](../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations)
 now owns semantic authority. A public GitHub PR search for `repo:ebarti/JobCtrl
 is:pr 1012` returned zero results, and local history/document searches found no
 issue-specific implementation or retained owning design. This is a bounded
