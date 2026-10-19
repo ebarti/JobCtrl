@@ -67,30 +67,22 @@ def test_release_workflow_has_one_deployment_after_one_signing_approval() -> Non
 def test_immutable_publication_requires_real_released_upgrade_proof() -> None:
     jobs = yaml.safe_load(RELEASE_WORKFLOW.read_text())["jobs"]
     gate = jobs["verify-released-upgrades"]
-    cases = jobs["released-upgrade-case"]
-    assert _needs(cases) == {"resolve", "sign", "package-signed-candidate"}
-    assert cases["runs-on"] == "macos-15"
-    assert cases["timeout-minutes"] == 20
-    assert cases["strategy"]["fail-fast"] is False
-    assert cases["strategy"]["max-parallel"] == 5
-    assert cases["strategy"]["matrix"]["case"] == [
-        "from-0.1.0", "from-0.1.1", "from-0.2.0", "from-0.2.1", "from-0.3.0",
-        "readiness-0.2.1", "recovery-0.2.1", "unused-0.2.1",
-    ]
-    assert cases["if"] == "${{ inputs.channel == 'stable' }}"
-    assert cases["permissions"] == {"actions": "read", "contents": "read"}
-    assert "environment" not in cases
-    assert _needs(gate) == {"resolve", "released-upgrade-case"}
-    assert gate["runs-on"] == "ubuntu-24.04"
+    assert _needs(gate) == {"resolve", "sign", "package-signed-candidate"}
+    assert gate["runs-on"] == "macos-15"
+    assert gate["timeout-minutes"] == 20
+    assert gate["strategy"]["fail-fast"] is True
+    assert gate["strategy"]["max-parallel"] == 5
+    assert gate["strategy"]["matrix"]["case"] == (
+        "${{ fromJSON(inputs.channel == 'stable' && "
+        "'[\"from-0.2.0\",\"from-0.2.1\",\"from-0.3.0\",\"recovery-0.2.1\",\"unused-0.2.1\"]' "
+        "|| '[\"not-required\"]') }}"
+    )
     assert gate["permissions"] == {"actions": "read", "contents": "read"}
     assert "environment" not in gate
-    assert gate["if"] == "${{ !cancelled() && needs.resolve.result == 'success' && (needs.released-upgrade-case.result == 'success' || (inputs.channel != 'stable' && needs.released-upgrade-case.result == 'skipped')) }}"
     assert "verify-released-upgrades" in _needs(jobs["publish-immutable"])
-    proof = next(step for step in cases["steps"] if "released-upgrade-smoke.mjs" in step.get("run", ""))
+    proof = next(step for step in gate["steps"] if "released-upgrade-smoke.mjs" in step.get("run", ""))
     assert proof["if"] == "${{ inputs.channel == 'stable' }}"
     assert proof["env"]["JOBCTRL_RELEASE_PUBLIC_KEY"] == "${{ needs.resolve.outputs.release_public_key }}"
     assert proof["env"]["JOBCTRL_RELEASE_KEY_ID"] == "${{ needs.resolve.outputs.release_key_id }}"
-    assert "--release-dir" in proof["run"]
     assert '--case "${{ matrix.case }}"' in proof["run"]
-    aggregate = next(step for step in gate["steps"] if "released-upgrade-cases.mjs" in step.get("run", ""))
-    assert aggregate["env"]["CANDIDATE_BUILD_ID"] == "${{ needs.resolve.outputs.release_build_id }}"
+    assert all("pnpm install" not in step.get("run", "") for step in gate["steps"])
