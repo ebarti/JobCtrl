@@ -240,8 +240,16 @@ started work rechecks the effective selection when it acquires the shared
 adapter and receives a new adapter object when the saved preference changed; no worker
 restart is required for a preferred-model edit. The initially selected ready
 provider stays process-stable on warm acquisitions so status checks do not rerun
-for every workflow. Provider credential/readiness changes retain their existing
-restart requirement (or require an explicit adapter reset).
+for every workflow until a real SDK call reports an availability failure.
+Authentication rejection excludes that provider from subsequent automatic
+attempts in the same process. Rate limits, transport failures and service
+outages exclude the failed model route. A durable retry acquires a fresh
+adapter through another ready route, so its recorded provider/model identify
+the call that actually ran. Existing adapters and accepted determinations are
+never relabeled. Explicit model pins remain bound and fail visibly when their
+route is unavailable. Response/schema/citation failures and spend denial do
+not discard a provider. Restart or an explicit adapter reset clears observed
+availability failures; credential changes retain their restart requirement.
 
 The **Employer analysis perspectives** selection is also saved here. Its
 execution behavior belongs to the Discover preparation workflow and is

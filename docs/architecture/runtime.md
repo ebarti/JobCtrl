@@ -909,6 +909,22 @@ ephemeral and no point-in-time lineage reconstruction is implemented,
 `GET /v1/pipeline/operations` is explicitly a current snapshot rather than a
 historical execution API.
 
+## Activity Storage Lifetimes
+
+Broad-board and explicit-URL intake commit completed canonical identity and
+intake events before optional posted-compensation inference. Model calls run
+without retaining that intake writer. Fact persistence then reserves the
+writer, rechecks the source text and any discovery lease, and preserves the
+previous accepted fact if the source changed during inference. Provider retries
+therefore cannot hold the database writer for the duration of an intake pay
+analysis.
+
+Activity cleanup closes thread-owned connections and rolls back unfinished
+writes before executor threads are reused. The Profile repository cache follows
+the live connection identity as well as its thread and reset generation; a later
+activity rebuilds a repository whose previous connection was closed. Keeping a
+pool thread alive cannot extend a repository's database lifetime.
+
 ## Saved Posting Availability Runtime
 
 The local worker admits `SavedPostingAvailabilityWorkflow` at startup and on

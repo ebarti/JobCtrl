@@ -28,6 +28,7 @@ from jobctrl.domain.materials.analysis import (
 from jobctrl.infrastructure.analysis.prompts import build_synthesizer_user_prompt
 from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
 from jobctrl.llm_lanes import lane_bound
+from jobctrl.infrastructure.llm.provider_errors import raise_on_claude_execution_failure
 from jobctrl.infrastructure.setup_probes import bundled_claude_sdk_options
 from jobctrl.runtime import activate_provider_pack, is_bundled_runtime
 
@@ -186,12 +187,16 @@ class _ClaudeStructuredCaller:
             messages = [message async for message in iterator]
             input_tokens, output_tokens = _usage_from_messages(messages)
             record("", input_tokens=input_tokens, output_tokens=output_tokens)
+            raise_on_claude_execution_failure(messages, model=self._model, operation="analysis")
             structured = _structured_output_from_messages(messages)
             return structured
 
 
 class ClaudeAnalysisAdapter:
     """Claude Agent SDK draft leg (``AnalysisDraftPort``)."""
+
+    provider_id = "claude"
+    default_model_selection = False
 
     def __init__(
         self,

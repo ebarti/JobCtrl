@@ -37,6 +37,7 @@ from jobctrl.infrastructure.network import (
     validate_public_http_url,
 )
 from jobctrl.infrastructure.network.proxy import ProxyConfig
+from jobctrl.infrastructure.network.fetch_failures import PublicFetchFailureKind
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +58,12 @@ class DetailPageFetchBlocked(RuntimeError):
 
 class DetailPageFetchUnavailable(RuntimeError):
     """The browser could not acquire a page for a transient runtime reason."""
+
+
+def _route_block_error(guard: PublicHttpUrlRouteGuard) -> DetailPageFetchBlocked:
+    kind = getattr(guard, "failure_kind", None)
+    code = "unsafe_redirect" if not isinstance(kind, PublicFetchFailureKind) or kind.destination_denied else kind.value
+    return DetailPageFetchBlocked(code, guard.blocked_reason or "Public page acquisition blocked")
 
 
 class PlaywrightDetailPageFetcher:
@@ -185,10 +192,7 @@ class PlaywrightDetailPageFetcher:
                                 route_guard.blocked_reason,
                             )
                             if self._raise_on_unavailable:
-                                raise DetailPageFetchBlocked(
-                                    "unsafe_redirect",
-                                    route_guard.blocked_reason or "unsafe redirect blocked",
-                                )
+                                raise _route_block_error(route_guard)
                             return DetailPage(
                                 url=url,
                                 final_url=route_guard.blocked_url or url,
@@ -218,10 +222,7 @@ class PlaywrightDetailPageFetcher:
                             route_guard.blocked_reason,
                         )
                         if self._raise_on_unavailable:
-                            raise DetailPageFetchBlocked(
-                                "unsafe_redirect",
-                                route_guard.blocked_reason or "unsafe redirect blocked",
-                            )
+                            raise _route_block_error(route_guard)
                         return DetailPage(
                             url=url,
                             final_url=route_guard.blocked_url or url,
@@ -270,10 +271,7 @@ class PlaywrightDetailPageFetcher:
                             route_guard.blocked_reason,
                         )
                         if self._raise_on_unavailable:
-                            raise DetailPageFetchBlocked(
-                                "unsafe_redirect",
-                                route_guard.blocked_reason or "unsafe redirect blocked",
-                            )
+                            raise _route_block_error(route_guard)
                         return DetailPage(
                             url=url,
                             final_url=route_guard.blocked_url or final_url,

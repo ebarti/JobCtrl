@@ -194,6 +194,20 @@ def execute_job_url_import(
     tenant_id = TenantId(payload.tenant_id)
     repository = SqliteJobRepository(connection)
     existing = repository.resolve_by_posting_url(tenant_id, PostingUrl(value=url))
+    if existing is None:
+        captured = connection.execute(
+            """
+            SELECT DISTINCT j.job_id
+            FROM manual_capture_queue m
+            JOIN jobs j ON j.tenant_id=m.tenant_id AND j.job_id=m.job_id
+            WHERE m.tenant_id=? AND m.originating_url=? AND m.status='imported'
+            """,
+            (str(tenant_id), url),
+        ).fetchall()
+        if len(captured) == 1:
+            return _imported_output(
+                captured[0][0], already_existed=True, conn=connection, resolved_urls=(url,),
+            )
     if existing is not None:
         source_native_id = _manual_import_source_native_id(
             connection,
@@ -355,7 +369,9 @@ def execute_job_url_import(
             )
         extracted = _extract_posting_page(page, dependencies=dependencies, entity_id=url)
     except DeterminationFailure as error:
-        raise ApplicationError(error.code, type="semantic_determination_" + error.code, non_retryable=True) from None
+        raise ApplicationError(
+            error.code, type="semantic_determination_" + error.code, non_retryable=not error.retryable,
+        ) from None
 
     final_url = str(getattr(page, "final_url", "") or url).strip()
     final_safety = active_url_validator(final_url)
@@ -768,6 +784,9 @@ def _ensure_posted_compensation_fact(
         posted_compensation_source_from_job,
     )
 
+    # Canonical intake and its idempotent events are a completed import phase.
+    # Optional posted-pay inference must not keep that phase's writer reserved.
+    conn.commit()
     row = conn.execute(
         """
         SELECT job_id, salary, full_description, description
@@ -1132,6 +1151,7 @@ def _fetch_block_reason(reason_code: str) -> Any | None:
         "rate_limited": ManualActionReason.RATE_LIMIT,
         "rate_limit": ManualActionReason.RATE_LIMIT,
         "bot_detection": ManualActionReason.BOT_DETECTION,
+        "response_limit": ManualActionReason.AMBIGUOUS_CAREER_SYSTEM,
     }.get(reason_code)
 
 

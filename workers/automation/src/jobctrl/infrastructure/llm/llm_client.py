@@ -21,9 +21,12 @@ import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Protocol
 
-from jobctrl.domain.ports.llm import LlmMessage
+from jobctrl.domain.ports.llm import LlmFailure, LlmMessage
+from jobctrl.infrastructure.llm.provider_availability import provider_route_available, record_provider_failure
 from jobctrl.infrastructure.llm.codex_turn import run_codex_turn
-from jobctrl.infrastructure.llm.provider_errors import ProviderCallError, provider_exception_error
+from jobctrl.infrastructure.llm.provider_errors import (
+    ProviderCallError, provider_exception_error, raise_on_claude_execution_failure,
+)
 
 _DEFAULT_MODEL_SENTINELS = {"", "default"}
 _ROUTED_PROVIDERS = {"claude", "codex", "gemini", "google"}
@@ -389,6 +392,9 @@ class ClaudeSdkBackend:
             sdk_messages = [message async for message in iterator]
             input_tokens, output_tokens = _usage_from_messages(sdk_messages)
             record("", input_tokens=input_tokens, output_tokens=output_tokens)
+            raise_on_claude_execution_failure(
+                sdk_messages, model=self.model, operation="chat_json" if response_schema else "chat",
+            )
             value: str | dict
             if response_schema is not None:
                 value = _structured_output_from_messages(sdk_messages)
@@ -707,7 +713,7 @@ def _default_provider() -> str:
         return LiveWorkerSmokeBackend.provider_id
     from jobctrl.infrastructure.setup_probes import ready_llm_providers
 
-    ready = ready_llm_providers()
+    ready = tuple(provider for provider in ready_llm_providers() if provider_route_available(provider))
     if not ready:
         raise RuntimeError("No core LLM provider is ready. Authenticate Claude, Codex, or Google.")
     return ready[0]
@@ -739,7 +745,9 @@ def _effective_default_selection(
     """Resolve the provider/model facts that determine a new adapter default."""
 
     provider, selected_model, label = _resolve_default_model_spec(default_model)
-    selected_provider = provider or default_provider or _default_provider()
+    selected_provider = provider or (
+        default_provider if default_provider and provider_route_available(default_provider) else None
+    ) or _default_provider()
     if label == "default":
         from jobctrl.infrastructure.scoring.criteria_provider import read_preferred_model
 
@@ -764,7 +772,9 @@ class LlmAdapter:
             self._clients: dict[str, Any] = {"default": client}
             self._default_selection: tuple[str, str | None] | None = None
             self._injected = True
+            self._pinned = False
             return
+        self._pinned = _resolve_default_model_spec(default_model)[2] != "default"
         provider, selected_model = _resolved_default or _effective_default_selection(
             default_model,
             default_provider=default_provider,
@@ -807,6 +817,22 @@ class LlmAdapter:
         self._clients[label] = backend
         return backend
 
+    def _invoke(self, operation: str, client: Any, payload: list[dict], kwargs: dict, *, pinned: bool) -> Any:
+        provider = str(getattr(client, "provider_id", "injected"))
+        selected_model = getattr(client, "model", None)
+        if not self._injected and not provider_route_available(provider, selected_model):
+            # The workflow retry must bind a fresh provider/model fingerprint.
+            raise LlmFailure("provider_unavailable" if pinned else "provider_error")
+        try:
+            return getattr(client, operation)(payload, **kwargs)
+        except Exception as error:
+            if not self._injected:
+                record_provider_failure(
+                    provider, selected_model, error,
+                    default_model=client is self._client and self._default_selection == (provider, None),
+                )
+            raise
+
     @staticmethod
     def _kwargs(
         *,
@@ -835,14 +861,15 @@ class LlmAdapter:
     ) -> str:
         client = self._client_for_model(model)
         payload = [{"role": message.role, "content": message.content} for message in messages]
-        return client.chat(
-            payload,
-            **self._kwargs(
+        return self._invoke(
+            "chat", client, payload,
+            self._kwargs(
                 temperature=temperature,
                 max_tokens=max_tokens,
                 response_schema=response_schema,
                 thinking_budget=thinking_budget,
             ),
+            pinned=self._pinned or _parse_model_spec(model)[2] != "default",
         )
 
     def chat_json(
@@ -857,14 +884,15 @@ class LlmAdapter:
     ) -> dict:
         client = self._client_for_model(model)
         payload = [{"role": message.role, "content": message.content} for message in messages]
-        return client.chat_json(
-            payload,
-            **self._kwargs(
+        return self._invoke(
+            "chat_json", client, payload,
+            self._kwargs(
                 temperature=temperature,
                 max_tokens=max_tokens,
                 response_schema=response_schema,
                 thinking_budget=thinking_budget,
             ),
+            pinned=self._pinned or _parse_model_spec(model)[2] != "default",
         )
 
     def ask(self, prompt: str, **kwargs: Any) -> str:
@@ -888,6 +916,7 @@ def get_llm_adapter() -> LlmAdapter:
             )
             if selection != _singleton._default_selection:
                 _singleton = LlmAdapter(_resolved_default=selection)
+                _singleton_default_provider = selection[0]
         return _singleton
 
 
@@ -896,6 +925,9 @@ def reset_llm_adapter() -> None:
     with _lock:
         _singleton = None
         _singleton_default_provider = None
+    from jobctrl.infrastructure.llm.provider_availability import reset_provider_availability
+
+    reset_provider_availability()
 
 
 __all__ = [

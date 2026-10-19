@@ -1204,6 +1204,14 @@ def _policy_allows(active_policy: str, required_policy: str) -> bool:
     return _POLICY_RANK.get(active_policy, 0) >= _POLICY_RANK.get(required_policy, 0)
 
 
+def generated_claim_labels_for_policy(claim_policy: str) -> tuple[str, ...]:
+    """Expose the validator's literal policy allowlist to generation."""
+    return tuple(
+        label for label in GENERATED_CLAIM_LABELS
+        if label not in _LABEL_REQUIRED_POLICY or _policy_allows(claim_policy, _LABEL_REQUIRED_POLICY[label])
+    )
+
+
 @dataclass(frozen=True)
 class _RequirementLike:
     id: str

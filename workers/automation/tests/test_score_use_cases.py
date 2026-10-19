@@ -1089,13 +1089,14 @@ def test_score_job_resolves_final_score_from_policy_not_llm_overall(profile_snap
 def test_score_job_returns_error_on_unparseable_response(profile_snapshot) -> None:
     repo = _MemoryRepo()
     # Payload missing the required ``score`` field — parser flags ok=False.
-    llm = _ScriptedLlm({"keywords": ["a"], "reasoning": "missing score"})
+    llm = _ScriptedLlm(*[{"keywords": ["a"], "reasoning": "missing score"} for _ in range(3)])
     use_case = _score_case(repository=repo, llm=llm)
 
     outcome = use_case.score(job=_job(), profile_snapshot=profile_snapshot)
     assert outcome.ok is False
     assert outcome.score is None
     assert outcome.error == "semantic_determination:schema_violation"
+    assert len(llm.calls) == 3
     assert repo.load(LOCAL_TENANT, JobId(_job()["job_id"])) is None
 
 

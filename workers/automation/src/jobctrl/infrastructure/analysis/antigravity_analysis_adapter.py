@@ -119,6 +119,9 @@ def _runtime_subdir(name: str) -> str:
 class AntigravityAnalysisAdapter:
     """Google Antigravity (Gemini) Agent SDK draft leg (``AnalysisDraftPort``)."""
 
+    provider_id = "google"
+    default_model_selection = False
+
     def __init__(
         self,
         *,

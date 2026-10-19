@@ -133,3 +133,13 @@ def require_explicit_model_ports(monkeypatch, request):
         raise DeterminationFailure("provider_unavailable")
 
     monkeypatch.setattr(LlmAdapter, "chat_json", unavailable)
+
+
+@pytest.fixture(autouse=True)
+def isolate_observed_provider_availability():
+    """Availability evidence belongs to one process scenario, not the test suite."""
+    from jobctrl.infrastructure.llm.provider_availability import reset_provider_availability
+
+    reset_provider_availability()
+    yield
+    reset_provider_availability()

@@ -20,6 +20,17 @@ individual regression to exact test files.
 | Provider/browser setup | Environment ownership and passive detection cannot silently become credential or browser adoption. Extension pairing-token presence remains distinct from one explicitly selected installation's fresh live heartbeat; another Chrome profile with the token cannot lease. Integrated Discovery and Enrich prefer the selected connected extension or choose guarded public HTTP/anonymous Playwright before acquisition. Offline status must not block eligible dispatch. Neither mode reads a copied profile; acquisition errors and cancellation never trigger a second transport. Anonymous provider initial/redirect/recreated/detail requests retain public URL/DNS/socket checks and reject proxy routing. Connected worker tasks must not carry browser-owned cookie/user-agent headers. Hanging/canceled tasks close their tabs, active leases remain live past 45 seconds, four-way admission uses backpressure, cross-origin redirects are blocked before dispatch, and UTF-8 byte bounds stop streaming early. | Worker/API bridge tests, two-installation contention and lease-liveness tests, extension persistent-context timeout/redirect E2E, Settings/Pipelines components, and a bounded live Discovery smoke. |
 | Retry preflight | Starting a retry cannot erase failure evidence before worker readiness is known. | API state-before/state-after regression plus route smoke. |
 
+Provider recovery regressions exercise an actual adapter over explicit fake SDK
+boundaries: a rejected route is excluded from the next automatic acquisition,
+the replacement carries its own provider/model, and the failed adapter is never
+relabeled. Auth failures, model-specific rate limits, implicit SDK defaults,
+explicit reset, malformed responses and budget denial remain distinct. Use
+`test_provider_availability_recovery.py`, `test_llm_port.py`,
+`test_employer_analysis_leg_config.py` and `test_job_url_import_workflow.py`.
+Employer-analysis tests also bind each draft's preferred model and effective
+model-set cache identity. Shared determination repair tests repeat budget
+admission, retain strict citation checks and prove bounded failure preservation.
+
 ## Bounded Combined Jobs Pages (#1003)
 
 The Operations helper must make one combined list request and return its server

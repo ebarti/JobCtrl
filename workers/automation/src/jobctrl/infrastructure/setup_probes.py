@@ -938,7 +938,9 @@ def ready_llm_providers(env: Mapping[str, str] | None = None) -> tuple[str, ...]
     google_auth = probe_antigravity_auth(values)
     if google_auth.ok and probe_antigravity_sdk().ok:
         ready.append("google")
-    return tuple(ready)
+    from jobctrl.infrastructure.llm.provider_availability import provider_route_available
+
+    return tuple(provider for provider in ready if provider_route_available(provider))
 
 
 def core_llm_ready(env: Mapping[str, str] | None = None) -> bool:

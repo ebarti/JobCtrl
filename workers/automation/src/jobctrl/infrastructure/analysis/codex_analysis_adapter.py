@@ -243,6 +243,9 @@ def _deny_all_approval_mode() -> Any:
 class CodexAnalysisAdapter:
     """Codex SDK draft leg (``AnalysisDraftPort``)."""
 
+    provider_id = "codex"
+    default_model_selection = False
+
     def __init__(
         self,
         *,

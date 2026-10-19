@@ -483,8 +483,10 @@ def _upsert_posted_compensation_fact(
         posted_compensation_source_from_job,
     )
 
+    # Intake is convergent and replayable. Make its completed writes durable
+    # before optional model work; the fact writer rechecks the lease afterward.
+    conn.commit()
     repository = SqlitePostedCompensationRepository(conn)
-    _apply_write_fence(write_fence)
     row = conn.execute(
         """
         SELECT job_id, salary, full_description, description

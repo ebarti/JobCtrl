@@ -102,6 +102,7 @@ from jobctrl.domain.materials.requirement_coverage import (
     GeneratedClaimMapping,
     bullet_limit_overflows,
     decide_score_gated_revision,
+    generated_claim_labels_for_policy,
     reselect_coverage_graph,
     score_generated_resume_against_target,
     validate_generated_claim_mappings,
@@ -172,7 +173,7 @@ class ClaimIssue:
 
 log = logging.getLogger(__name__)
 
-TAILORING_PROMPT_VERSION = "tailor.v13.model-claim-anchors"
+TAILORING_PROMPT_VERSION = "tailor.v14.explicit-claim-bindings"
 TAILORING_SCHEMA_VERSION = "tailored-resume.v5"
 TAILORING_JUDGE_SCHEMA_VERSION = "artifact-quality.v2"
 TAILORING_JUDGE_CRITERIA: tuple[str, ...] = (
@@ -192,6 +193,9 @@ def _tailored_resume_response_schema(plan: TailoringPlan) -> dict[str, Any]:
     """Constrain provider output to the same active edge namespace as validation."""
     schema = GeneratedResumeDraft.model_json_schema()
     properties = schema["$defs"]["GeneratedClaim"]["properties"]
+    properties["claim_label"]["enum"] = list(
+        generated_claim_labels_for_policy(plan.requirement_led_controls.claim_policy)
+    )
     edges = sorted(plan.coverage_graph.edge_ids) if plan.coverage_graph is not None else []
     if edges:
         properties["coverage_edge_ids"]["items"]["enum"] = edges
@@ -1443,6 +1447,16 @@ def build_master_tailor_prompt(
         f"\nUSER ADDITIONAL TAILORING PROMPT:\n{custom_tailoring_prompt}\n" if custom_tailoring_prompt else ""
     )
     quality_plan_block = "\n" + tailoring_plan.to_prompt_context() + "\n" if tailoring_plan is not None else ""
+    bullet_evidence_by_role = (
+        {
+            str(entry["id"]): [
+                item.evidence_id for item in tailoring_plan.evidence_items
+                if item.experience_entry_id == str(entry["id"])
+            ]
+            for entry in experience_entries
+        }
+        if tailoring_plan is not None else {}
+    )
     learned_rule_lines = (learned_tailoring_rules or LearnedTailoringRules()).prompt_lines()
     learned_rule_block = (
         "\nACCEPTED LEARNING RULES FOR FUTURE MATERIALS:\n" + "\n".join(learned_rule_lines) + "\n"
@@ -1512,6 +1526,12 @@ HARD RULES:
   executive_profile exactly
 - Use executive_profile only when executive_profile_sentences has exactly one item;
   otherwise map every explicit item with executive_profile.sentence[N], where N is zero-based
+- Every summary sentence uses line_id "executive_profile#0", including sentence[1],
+  sentence[2] and sentence[3], because they render into the same paragraph
+- An experience.<entry-id>.bullets[N] mapping uses line_id "experience:<entry-id>#N";
+  N is the zero-based bullet index and entry-id is the exact experience update id
+- A skills.<category-id> mapping uses line_id "skills:<category-id>#0";
+  category-id is the exact skill update id. claim_id is a separate unique claim identifier
 - For a skills.<category-id> mapping, text must be the exact selected items in
   rendered order joined with ", " (comma plus one space), not the category label
 - COVERAGE_GRAPH.coverage_edges is the complete active edge allowlist for this
@@ -1520,6 +1540,9 @@ HARD RULES:
 - Every edge in COVERAGE_GRAPH.coverage_edges must appear in at least one bound
   mapping citing its achievement_evidence_id and requirement_id
 - Each experience bullet must cite exactly one primary achievement evidence id
+- For an experience bullet, choose that evidence id only from its matching entry
+  in EXPERIENCE BULLET EVIDENCE IDS BY ROLE. General summary, skill and education
+  sources may support their corresponding surfaces but do not belong to another role
 - Use each achievement evidence id in at most one experience bullet
 - If a required role has target-covered or explicitly pinned evidence, include
   only those bullets and no positioning-only filler. If it has neither, include
@@ -1536,7 +1559,9 @@ HARD RULES:
   role has no active coverage or explicit bullet pin, use positioning for its one grounded bullet,
   even though the role itself is mandatory. Do not use pinned when the response
   schema excludes it
-- Adjacent or draft claims must be labeled adjacent_translation or
+- Use only claim_label values permitted by the response schema and current claim policy.
+  If the policy excludes adjacent or draft claims, omit those claims entirely
+- Where the policy permits them, adjacent or draft claims must be labeled adjacent_translation or
   draft_requires_confirmation and marked review_required unless the advanced
   auto-approval policy explicitly allows the claim label
 
@@ -1580,6 +1605,9 @@ WRITING STYLE:
 {chr(10).join(style_lines)}
 {custom_prompt_block}
 {quality_plan_block}
+EXPERIENCE BULLET EVIDENCE IDS BY ROLE:
+{json.dumps(bullet_evidence_by_role, indent=2, ensure_ascii=False)}
+
 REQUIRED EXPERIENCE IDS:
 {json.dumps(required_experience_ids, ensure_ascii=False)}
 

@@ -33,6 +33,7 @@ import logging
 from pydantic import ValidationError
 from jobctrl.domain.determinations import DeterminationFailure
 from jobctrl.domain.ports.analysis_agreement import AnalysisAgreementJudge
+from jobctrl.infrastructure.llm.provider_availability import record_provider_failure
 
 from jobctrl.domain.materials.analysis import (
     AnalysisAgreement,
@@ -95,6 +96,11 @@ async def _draft_with_retry(
                 type(exc).__name__,
             )
         except Exception as exc:  # noqa: BLE001 — SDK/transport errors are per-leg failures
+            if record_provider_failure(
+                getattr(adapter, "provider_id", "injected"), adapter.model_id, exc,
+                default_model=getattr(adapter, "default_model_selection", False),
+            ):
+                raise
             last_error = exc
             log.warning(
                 "Analysis leg %s raised (attempt %d/%d): %s",

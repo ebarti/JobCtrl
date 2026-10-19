@@ -164,13 +164,18 @@ def _build_voice_port():
     seam, not the legacy httpx client (the all-new-AI-via-SDK directive).
     """
     from jobctrl.infrastructure.setup_probes import probe_claude_auth
+    from jobctrl.infrastructure.llm.provider_availability import provider_route_available
+    from jobctrl.infrastructure.scoring.criteria_provider import read_preferred_model
 
     if not probe_claude_auth().ok:
         return None
 
-    from jobctrl.infrastructure.materials.voice_adapter import ClaudeVoiceAdapter
+    from jobctrl.infrastructure.materials.voice_adapter import CLAUDE_VOICE_MODEL, ClaudeVoiceAdapter
 
-    return ClaudeVoiceAdapter()
+    selected_model = read_preferred_model("claude") or CLAUDE_VOICE_MODEL
+    if not provider_route_available("claude", selected_model):
+        return None
+    return ClaudeVoiceAdapter(model=selected_model)
 
 
 def _build_use_case(

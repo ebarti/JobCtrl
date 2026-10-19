@@ -236,6 +236,46 @@ def test_unavailable_and_budget_denial_are_distinct_and_do_not_call() -> None:
     assert repository.rows == {}
 
 
+def test_invalid_evidence_is_reasked_under_the_same_sources_and_budget():
+    class CorrectingModel(Model):
+        def chat_json(self, messages, **kwargs):
+            self.output = response() if self.calls else {
+                **response(), "citations": [{"source_id": "canonical:1", "quote": "invented"}],
+            }
+            return super().chat_json(messages, **kwargs)
+
+    model, repository = CorrectingModel(None), Repository()
+    admissions = []
+    result, envelope = call(model, repository, lambda: admissions.append(current_llm_lane()))
+    assert result.verdict == "accept"
+    assert admissions == ["interview", "interview"]
+    assert model.calls[0][0][:2] == model.calls[1][0][:2]
+    assert "non_verbatim_quote" in model.calls[1][0][-1].content
+    rejected = json.loads(model.calls[1][0][-1].content.split("\n", 1)[1])["rejected_response"]
+    assert rejected["citations"][0]["quote"] == "invented"
+    assert "untrusted data" in model.calls[1][0][-1].content
+    assert len(repository.rows) == 1
+    assert call(model, repository)[1] == envelope
+    assert len(model.calls) == 2
+
+
+def test_provider_failure_is_not_reasked_as_a_response_repair():
+    model = Model(RuntimeError("private provider details"))
+    with pytest.raises(DeterminationFailure, match="provider_error"):
+        call(model, Repository())
+    assert len(model.calls) == 1
+
+
+def test_evidence_repairs_are_bounded_and_preserve_an_accepted_result():
+    repository = Repository()
+    accepted = call(Model(response()), repository)[1]
+    invalid = Model({**response(), "citations": [{"source_id": "canonical:1", "quote": "invented"}]})
+    with pytest.raises(DeterminationFailure, match="non_verbatim_quote"):
+        call(invalid, repository, entity_id="synthetic:2")
+    assert len(invalid.calls) == 3
+    assert list(repository.rows.values()) == [accepted]
+
+
 def test_concurrent_identical_requests_make_one_paid_call():
     from concurrent.futures import ThreadPoolExecutor
 

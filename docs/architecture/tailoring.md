@@ -62,6 +62,13 @@ Prompts contain minimized canonical source IDs/text, allowed mappings, artifact 
 
 `GeneratedResumeDraft` contains explicit summary sentences, experience updates, skill updates and `generated_claim_mappings`. Each mapping records a line ID, location, evidence/requirement IDs, transform and rationale. Code rejects foreign IDs, duplicate IDs and locations that do not map to the shipped line. The verifier cites exact final text and sources; generator assertions alone never establish support or coverage.
 
+Generation describes the renderer's literal bindings: every summary sentence
+uses `executive_profile#0`, bullet N uses `experience:<entry-id>#N`, and a selected
+skill group uses `skills:<category-id>#0`. The prompt supplies the exact evidence
+IDs belonging to each experience entry. The response schema permits only claim
+labels allowed by the active claim policy; validation independently enforces the
+same policy and checks every emitted binding.
+
 ## What "Profile-Row Based" Means
 
 Authored experience, education and skill rows remain canonical. Exact row IDs control selection and rendering. Reframing prose requires source-bound model verification; immutable employer/title/date fields retain literal binding. Selection does not convert a draft evidence card into confirmed history.

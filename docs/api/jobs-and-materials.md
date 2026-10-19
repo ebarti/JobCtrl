@@ -32,6 +32,16 @@ alreadyExisted }`. A blocked, login-walled, rate-limited, or ambiguous page
 returns `{ ok, status: "manual_capture_required", itemId, reason }`; that
 outcome creates no Job row. Repeating an already-imported URL resolves the same
 canonical `JobId` without another fetch.
+This includes an exact originating URL whose accepted Manual Capture receipt
+already points to an existing job, even when the captured canonical URL differs.
+
+Provider execution errors retain their retryable domain classification, allowing
+the workflow's bounded retry to acquire another ready route. Citation, schema
+and other source-binding failures remain distinct failures after bounded model
+correction; none can create a guessed job or replace accepted data.
+An oversized public page resource retains its acquisition-limit classification
+and opens Manual Capture. Destination denial still rejects the URL; byte caps
+and public-address checks remain enforced.
 
 Each job-detail stage may include an optional `applyUrlOutcome` object with the
 allow-listed `code`, user-facing `message`, `retryable`, and resolver `method`

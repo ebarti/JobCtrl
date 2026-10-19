@@ -8,6 +8,8 @@ the local-mode application adapter that wires the analysis ports.
 from __future__ import annotations
 
 import sqlite3
+import hashlib
+import json
 
 from jobctrl.domain.identifiers import canonical_job_id
 from jobctrl.domain.ports.events import EventPublisher
@@ -86,6 +88,7 @@ def build_analyze_use_case(
     )
     from jobctrl.infrastructure.llm import LlmAdapter
     from jobctrl.infrastructure.setup_probes import ready_llm_providers
+    from jobctrl.infrastructure.scoring.criteria_provider import read_preferred_model
 
     enabled_legs = enabled_analysis_legs()
     ready = ready_llm_providers()
@@ -98,34 +101,34 @@ def build_analyze_use_case(
     )
     llm = LlmAdapter(default_provider=selected_provider)
     selected_provider = llm.provider_id
-    adapters = []
-    if "claude" in enabled_legs:
-        adapters.append(ClaudeAnalysisAdapter())
-    if "codex" in enabled_legs:
-        adapters.append(CodexAnalysisAdapter())
-    if "antigravity" in enabled_legs:
-        adapters.append(AntigravityAnalysisAdapter())
-    adapter_providers = {
-        "claude"
-        if isinstance(adapter, ClaudeAnalysisAdapter)
-        else "codex"
-        if isinstance(adapter, CodexAnalysisAdapter)
-        else "google"
-        if isinstance(adapter, AntigravityAnalysisAdapter)
-        else "local"
-        for adapter in adapters
+    active_legs = [leg for leg in enabled_legs if leg_provider[leg] in ready]
+    selected_leg = next(leg for leg, provider in leg_provider.items() if provider == selected_provider)
+    if selected_leg not in active_legs:
+        active_legs.append(selected_leg)
+    factories = {
+        "claude": ClaudeAnalysisAdapter,
+        "codex": CodexAnalysisAdapter,
+        "antigravity": AntigravityAnalysisAdapter,
     }
-    if selected_provider == "claude" and "claude" not in adapter_providers:
-        adapters.append(ClaudeAnalysisAdapter())
-    elif selected_provider == "codex" and "codex" not in adapter_providers:
-        adapters.append(CodexAnalysisAdapter())
-    elif selected_provider == "google" and "google" not in adapter_providers:
-        adapters.append(AntigravityAnalysisAdapter())
+    adapters = []
+    for leg in active_legs:
+        model = read_preferred_model(leg_provider[leg])
+        adapter = factories[leg](**({"model": model} if model else {}))
+        adapter.default_model_selection = model is None
+        adapters.append(adapter)
     synthesizer = LlmAnalysisSynthesizer(
         llm=llm,
         provider_id=llm.provider_id,
         model=llm.model,
     )
+    model_set = {
+        "drafts": [(leg, adapter.model_id) for leg, adapter in zip(active_legs, adapters, strict=True)],
+        "synthesizer": [llm.provider_id, llm.model],
+    }
+    model_set_fingerprint = hashlib.sha256(json.dumps(model_set, sort_keys=True).encode()).hexdigest()[:16]
+    sdk_set_version = analysis_sdk_set_version(
+        tuple(active_legs), synthesizer_provider=llm.provider_id,
+    ) + "-models-" + model_set_fingerprint
 
     from jobctrl.infrastructure.determinations import determination_dependencies
     from jobctrl.domain.materials.claim_verification import ModelClaimVerifier
@@ -142,10 +145,7 @@ def build_analyze_use_case(
         job_interpreter=PersistedJobInterpreter(conn, tenant_id=tenant_id, dependencies=deps),
         publisher=publisher
         or EmployerAnalyzedEventRecorder(conn, stage=event_stage, record_cached_hits=record_cached_hits),
-        sdk_set_version=analysis_sdk_set_version(
-            enabled_legs,
-            synthesizer_provider=llm.provider_id,
-        ),
+        sdk_set_version=sdk_set_version,
     )
 
 

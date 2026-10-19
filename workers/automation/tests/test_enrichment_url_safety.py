@@ -204,6 +204,27 @@ def test_public_route_guard_fulfills_public_requests_with_pinned_fetcher() -> No
     assert not route.aborted
 
 
+def test_oversized_public_resource_remains_an_acquisition_limit():
+    from jobctrl.infrastructure.enrichment.playwright_fetcher import _route_block_error
+    from jobctrl.infrastructure.network.fetch_failures import PublicFetchFailureKind, PublicResponseLimitError
+
+    page, route = _RouteOnlyPage(), _FulfillRoute()
+
+    def oversized(*_args):
+        raise PublicResponseLimitError("bounded public resource")
+
+    guard = PublicHttpUrlRouteGuard(
+        page, resolver=_resolver_for("93.184.216.34"),
+        fetch_public_requests=True, request_fetcher=oversized,
+    ).install()
+    page.handler(route, SimpleNamespace(url="https://cdn.example/bundle.js", method="GET", headers={}))
+    assert route.aborted and not route.continued
+    assert guard.failure_kind is PublicFetchFailureKind.RESPONSE_LIMIT
+    assert _route_block_error(guard).reason_code == "response_limit"
+    guard.failure_kind = PublicFetchFailureKind.DNS_NON_PUBLIC
+    assert _route_block_error(guard).reason_code == "unsafe_redirect"
+
+
 def test_public_route_guard_aborts_public_write_without_poisoning_page() -> None:
     page = _RouteOnlyPage()
     calls: list[tuple[str, str, dict[str, str]]] = []
