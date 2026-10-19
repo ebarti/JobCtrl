@@ -169,6 +169,15 @@ Update and rollback verification must also exercise the real launcher entry
 point with a resumable transition journal, including the detached supervisor.
 A fresh installation and tests that replace the readiness-start function do not
 prove that an authenticated candidate can start before the journal is finalized.
+The protected release workflow also runs `scripts/released-upgrade-smoke.mjs`
+against the actual published 0.1.0, 0.1.1, 0.2.0, 0.2.1 and 0.3.0 executables and the signed
+candidate before any immutable publication or stable promotion. Its isolated signed formula-cache adapter
+replaces only Homebrew acquisition; native installers, migrations, services,
+readiness failure, explicit rollback, interrupted recovery, paired backups and
+repeated update execute through the real binaries. Retain the credential-free
+`released-upgrade-smoke.json` evidence and require every matrix case to pass.
+Include a separate workspace that first reproduces the released 0.2.1-to-0.3.0
+failure, then recovers it using the new authenticated formula controller.
 
 Report the release URL, version, exact source SHA, run result, channel sequence,
 registry verification, upgrade consequences, and any unresolved limitation.

@@ -277,11 +277,21 @@ var startCommand = executeStart
 // the re-exec made by `jobctrl start`.
 func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Writer) error {
 	if len(args) > 0 && args[0] == "rollback" {
+		_, controllerErr := homebrewBootstrap(executable, args, inheritedEnv, stdout, stderr, true)
 		if handled, recoveryErr := recoverRevokedTransitionBeforePrepare(inheritedEnv, stdout); handled {
+			if recoveryErr != nil && controllerErr != nil {
+				return fmt.Errorf("prepare recovery controller: %v; recovery: %w", controllerErr, recoveryErr)
+			}
 			return recoveryErr
 		}
 		if handled, recoveryErr := recoverInterruptedTransitionBeforeBootstrap(inheritedEnv, stdout); handled {
+			if recoveryErr != nil && controllerErr != nil {
+				return fmt.Errorf("prepare recovery controller: %v; recovery: %w", controllerErr, recoveryErr)
+			}
 			return recoveryErr
+		}
+		if controllerErr != nil {
+			return controllerErr
 		}
 	}
 	if handled, uninstallErr := uninstallUnsafeActiveBeforePrepare(args, inheritedEnv, stdout); handled {
@@ -313,13 +323,23 @@ func transitionRecoveryCommand(args []string) bool {
 }
 
 func authenticatedTransitionStartup(ctx launchContext, args []string) bool {
-	executable, err := filepath.EvalSymlinks(ctx.Executable)
-	if err != nil || executable != filepath.Join(ctx.PayloadRoot, "launcher", "jobctrl") {
-		return false
-	}
 	starting := len(args) == 2 && args[0] == "start" && args[1] == "--no-open"
 	supervising := len(args) == 1 && args[0] == "__supervise"
 	if !starting && !supervising {
+		return false
+	}
+	if environmentMap(ctx.Environment)["JOBCTRL_TRANSITION_TARGET"] != "" {
+		// prepare already authenticated the controller bytes and complete target
+		// tree. Revalidate the live journal/receipt here without hashing the full
+		// distribution again at every dispatch and migration boundary.
+		if !sameExecutable(ctx.Executable, filepath.Join(ctx.Instance.RuntimeHome, "bin", "jobctrl")) || environmentMap(ctx.Environment)["JOBCTRL_TRANSITION_TARGET"] != ctx.Distribution.BuildID {
+			return false
+		}
+		return verifyDirectTransitionExecution(ctx.PayloadRoot, ctx.Distribution, ctx.Environment) == nil
+	}
+	executable, err := filepath.EvalSymlinks(ctx.Executable)
+	root, rootErr := filepath.EvalSymlinks(ctx.PayloadRoot)
+	if err != nil || rootErr != nil || executable != filepath.Join(root, "launcher", "jobctrl") {
 		return false
 	}
 	// Internal readiness starts are the work that completes the journal. Bind
@@ -388,6 +408,9 @@ func executeStart(ctx launchContext, args []string, stdout io.Writer) error {
 	foreground, noOpen, err := parseStartArgs(args)
 	if err != nil {
 		return err
+	}
+	if err := migrateHistoricalTransition(ctx); err != nil {
+		return fmt.Errorf("prepare target schema for historical update: %w", err)
 	}
 	if foreground {
 		return supervise(ctx, nil)
@@ -551,6 +574,10 @@ func locatePayloadRootLocked(executable string, inheritedEnv []string) (string, 
 	path, err = filepath.Abs(path)
 	if err != nil {
 		return "", nil, nil, err
+	}
+	if environmentMap(inheritedEnv)["JOBCTRL_TRANSITION_TARGET"] != "" {
+		root, receipt, err := transitionSelectorPayload(path, inheritedEnv)
+		return root, receipt, nil, err
 	}
 	if filepath.Base(path) == "jobctrl" && filepath.Base(filepath.Dir(path)) == "launcher" {
 		return filepath.Dir(filepath.Dir(path)), nil, nil, nil

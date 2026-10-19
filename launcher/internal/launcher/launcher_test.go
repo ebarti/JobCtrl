@@ -441,6 +441,7 @@ func verifiedPayloadFixture(t *testing.T) (string, distributionManifest) {
 		{path: "api/payload", contents: "api", mode: 0o644},
 		{path: "launcher/links/to-safe", target: "../safe.txt"},
 		{path: "launcher/safe.txt", contents: "safe payload", mode: 0o644},
+		{path: "launcher/update-protocol.json", contents: "{\"schemaVersion\":1,\"journalStartup\":true}\n", mode: 0o644},
 		{path: "node/payload", contents: "node", mode: 0o644},
 		{path: "python/payload", contents: "python", mode: 0o644},
 		{path: "temporal/payload", contents: "temporal", mode: 0o644},

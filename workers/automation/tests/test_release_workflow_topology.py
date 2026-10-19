@@ -62,3 +62,18 @@ def test_release_workflow_has_one_deployment_after_one_signing_approval() -> Non
 
     for job_name in expected_environment_jobs - {"resolve", "sign"}:
         assert "sign" in ancestors(job_name), job_name
+
+
+def test_immutable_publication_requires_real_released_upgrade_proof() -> None:
+    jobs = yaml.safe_load(RELEASE_WORKFLOW.read_text())["jobs"]
+    gate = jobs["verify-released-upgrades"]
+    assert _needs(gate) == {"resolve", "sign", "package-signed-candidate"}
+    assert gate["runs-on"] == "macos-15"
+    assert gate["permissions"] == {"actions": "read", "contents": "read"}
+    assert "environment" not in gate
+    assert "verify-released-upgrades" in _needs(jobs["publish-immutable"])
+    proof = next(step for step in gate["steps"] if "released-upgrade-smoke.mjs" in step.get("run", ""))
+    assert proof["if"] == "${{ inputs.channel == 'stable' }}"
+    assert proof["env"]["JOBCTRL_RELEASE_PUBLIC_KEY"] == "${{ needs.resolve.outputs.release_public_key }}"
+    assert proof["env"]["JOBCTRL_RELEASE_KEY_ID"] == "${{ needs.resolve.outputs.release_key_id }}"
+    assert "--release-dir" in proof["run"]

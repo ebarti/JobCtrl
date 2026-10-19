@@ -243,6 +243,12 @@ If activation or readiness fails, recovery restores the saved pair. An explicit
 rollback also restores the database snapshot associated with the previous
 release: data added since that snapshot is not carried backward.
 
+Rollback keeps a compatible launcher for recovery while restoring the older
+application. Homebrew commands preserve that selection until you explicitly run
+`jobctrl update` again. If an older updater reports a failed candidate and cannot
+restart its previous release, run `jobctrl rollback` through the corrected
+launcher to restore the saved database pair and restart the previous application.
+
 
 ## Semantic Determination Authority
 
