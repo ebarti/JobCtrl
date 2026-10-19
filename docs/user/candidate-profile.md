@@ -23,13 +23,15 @@ this record; they do not rewrite it to suit a job.
 JobCtrl does not let a generated resume or an import silently become truth. The
 profile boundary works in this order:
 
-1. **Import creates a draft.** Resume-PDF import returns extracted profile data
-   and inferred style for review. It does not change the saved profile until you
-   explicitly save the draft.
+1. **The import API returns a draft.** Resume-PDF import returns extracted
+   profile data and inferred style without changing saved facts. The current
+   browser confirmation returns to the saved Profile without staging that
+   returned draft into the editor; see the import limitation below.
 2. **Save validates and normalizes.** The API parses the submitted profile
    through the Candidate Profile domain rules, validates target places when
    present, and replaces the normalized profile rows in one database
-   transaction. Every accepted save advances the local profile version.
+   transaction, with an expected-version check for existing browser profiles.
+   A content change advances the local profile version; unchanged saves do not.
 3. **Work receives an immutable snapshot.** Scoring, Materials, interview prep,
    and Apply read a deep-copied `ProfileSnapshot`. Derived compatibility fields are regenerated
    from the canonical rows, and changing a returned object cannot mutate the
@@ -46,6 +48,21 @@ profile boundary works in this order:
 
 This version boundary is what lets JobCtrl prove which candidate facts a score,
 resume, or application decision actually used.
+
+## Current Import Limitation
+
+The web import flow previews your PDF and asks whether to extract profile data,
+style, or both. Its confirmation currently receives an API draft, clears the
+upload state and returns to `/profile`, which loads the saved profile. It does
+not populate the editor with that extracted draft or save imported facts. Review
+and save deliberate changes through Profile; completing import alone does not
+establish a saved change.
+
+Reviewed multi-source intake, duplicate/conflict reconciliation and item-level
+fact promotion are **proposed, not implemented**. The [owning intake design and
+current-path assessment](../plans/2026-09-21-profile-evidence-selective-tailoring.md#_2-reconciled-baseline-and-acceptance-map-1013)
+preserve explicit acceptance, unknown facts and canonical ownership. They do
+not change the current import flow or authorize generated facts.
 
 ## What You Can See And Control
 
@@ -172,8 +189,9 @@ bounded excerpts. Sparse storage keys remain available only from each row's
 
 ## Lifecycle
 
-1. **Create or import.** First-run setup creates the local profile; the web
-   import flow can extract a draft from a resume PDF for review.
+1. **Create or request an import draft.** First-run setup creates the local
+   profile. Resume import extracts a draft through the API; the current browser
+   handoff limitation above prevents it from populating the canonical editor.
 2. **Validate and save.** The API normalizes the accepted data into profile and
    child rows, records the update, and refreshes profile reads.
 3. **Snapshot for work.** A scoring, tailoring, or Apply run receives an
