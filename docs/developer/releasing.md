@@ -178,25 +178,24 @@ point with a resumable transition journal, including the detached supervisor.
 A fresh installation and tests that replace the readiness-start function do not
 prove that an authenticated candidate can start before the journal is finalized.
 The protected release workflow runs `scripts/released-upgrade-smoke.mjs` against
-actual released executables before immutable publication. Five independent cases
-run concurrently on separate macOS runners:
+actual released executables before immutable publication. One case upgrades from
+**the latest published stable version before the candidate**, rolls back to that
+version with its paired data backup, then explicitly upgrades again. It checks
+real service readiness, retained job data and Temporal history throughout.
 
-- 0.2.0 (schema v10): upgrade, paired rollback and one explicit update afterward.
-- 0.2.1 (schema v11) and 0.3.0 (schema v14): one upgrade each, checking retained job
-  data and Temporal history.
-- An already-failed 0.2.1-to-0.3.0 update: recovery through the corrected launcher,
-  then one successful upgrade.
-- A never-started 0.2.1 installation: initialization, upgrade and paired rollback,
-  preserving an unrelated file.
+The harness resolves that source from GitHub's published stable releases, so the
+source advances automatically after each release. Drafts, prereleases and the
+candidate itself are excluded; a rerun after publication still tests the previous
+release. Its signed descriptor and artifact hashes must verify against protected
+release trust, and its signed sequence must precede the candidate's.
 
-The native suite owns detailed readiness-fault injection, partial-pair and
-orphaned-sidecar checks. Do not repeat that whole suite for every old binary in
-the release gate. Historical source schemas remain covered by native migration tests rather than
-additional 0.1.x release lifecycle cases.
+Historical source schemas, detailed readiness-fault injection, old failed
+transitions, never-started installations, partial pairs and orphaned sidecars
+remain covered by the native suite. Do not repeat that compatibility matrix in
+every release's publication gate.
 
-Each release case retains its report and elapsed time, with a 20-minute limit.
-GitHub's matrix dependency requires every case to pass before publication; there
-is no additional report-aggregation job. Cases use the existing self-contained
+The single case retains its report and elapsed time, with a 20-minute limit.
+Publication depends directly on its success. It uses the existing self-contained
 verification bundle and actual bundled runtimes without installing application
 development dependencies. The signed formula-cache adapter replaces only
 Homebrew acquisition. Keep installers, migrations, services and data/history

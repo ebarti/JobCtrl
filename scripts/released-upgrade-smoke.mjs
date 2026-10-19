@@ -1,29 +1,28 @@
 #!/usr/bin/env node
 
-// Run actual historical release executables and the signed candidate. Only the
+// Run the latest stable release executable and the signed candidate. Only the
 // Homebrew download adapter is replaced: its cache is an exact signed release.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash, createPublicKey } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { verifyReleaseDescriptorSignature } from "./distribution-homebrew.render.bundle.mjs";
 
-const releaseCases = [
-  { id: "from-0.2.0", version: "0.2.0", roundTrip: true },
-  { id: "from-0.2.1", version: "0.2.1" },
-  { id: "from-0.3.0", version: "0.3.0" },
-  { id: "recovery-0.2.1", version: "0.2.1", kind: "recovery" },
-  { id: "unused-0.2.1", version: "0.2.1", kind: "unused" },
-];
-export function selectReleasedUpgradeCases(caseId) {
-  if (caseId === undefined) return releaseCases;
-  const selected = releaseCases.find((entry) => entry.id === caseId);
-  assert.ok(selected, `unknown released-upgrade case: ${caseId}`);
-  return [selected];
+export function selectLatestReleasedVersion(releases, candidateVersion) {
+  const previous = releases
+    .filter((release) => release.draft === false && release.prerelease === false && release.tag_name !== `v${candidateVersion}`)
+    .sort((left, right) => Date.parse(right.published_at) - Date.parse(left.published_at))[0];
+  assert.ok(previous, "no previous published stable release is available for upgrade verification");
+  const tag = previous.tag_name;
+  if (typeof tag !== "string" || !/^v[0-9]+\.[0-9]+\.[0-9]+$/.test(tag) || tag.trim() !== tag) {
+    throw new Error("stable release tag must be v<major>.<minor>.<patch>");
+  }
+  assert.ok(Number.isFinite(Date.parse(previous.published_at)), "stable release publication date is invalid");
+  return tag.slice(1);
 }
 const json = async (file) => JSON.parse(await readFile(file, "utf8"));
 const hash = async (file) => {
@@ -70,7 +69,7 @@ async function releaseFiles(directory, trust) {
   return { directory, descriptor, manifest, archive, installer };
 }
 
-async function historicalRelease(version, cache, trust, env) {
+async function releasedVersion(version, cache, trust, env) {
   const directory = path.join(cache, `v${version}`);
   await mkdir(directory, { recursive: true, mode: 0o700 });
   for (const name of ["release-descriptor.json", "release-descriptor.json.sig", "manifest.json", "jobctrl-installer", `jobctrl-${version}-darwin-arm64.zip`]) {
@@ -112,7 +111,7 @@ async function formulaCache(release, prefix, payload) {
   return path.join(root, "jobctrl");
 }
 
-async function scenario(old, candidate, root, preexistingRelease = null, roundTrip = false) {
+async function scenario(old, candidate, root) {
   const runtime = path.join(root, "runtime"), state = path.join(root, "state"), home = path.join(root, "home"), prefix = path.join(root, "formula");
   const bin = path.join(root, "bin");
   for (const directory of [root, home, state, bin]) await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -139,21 +138,6 @@ async function scenario(old, candidate, root, preexistingRelease = null, roundTr
     await command(selector, ["stop"], env);
     const seed = "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute(\"INSERT INTO jobs(tenant_id,job_id,url,title) VALUES('local','019ed290-3340-7000-8000-000000000891','https://jobs.example/upgrade-qa','Preserved released-binary QA job')\"); c.commit(); print(c.execute('PRAGMA user_version').fetchone()[0]); c.close()";
     const oldSchema = Number((await command(python, ["-I", "-B", "-c", seed, path.join(state, "jobctrl.db")], env)).output.trim());
-    if (preexistingRelease) {
-      console.log(`${old.descriptor.appVersion}: reproducing an already-failed 0.3.0 update`);
-      await command(old.installer, installArgs(preexistingRelease, runtime, true), env);
-      const brokenPayload = path.join(runtime, "releases", preexistingRelease.descriptor.buildId, "payload");
-      await formulaCache(preexistingRelease, prefix, brokenPayload);
-      const failed = await command(selector, ["update"], env, { allowFailure: true });
-      assert.notEqual(failed.code, 0);
-      assert.equal((await json(path.join(runtime, "transition.json"))).state, "rollback_restoring");
-      await command(candidate.installer, installArgs(candidate, runtime, true), env);
-      const fixedPayload = path.join(runtime, "releases", candidate.descriptor.buildId, "payload");
-      const fixedFrontend = await formulaCache(candidate, prefix, fixedPayload);
-      await command(fixedFrontend, ["rollback"], env);
-      assert.equal((await json(path.join(runtime, "active.json"))).receipt.buildId, old.descriptor.buildId);
-      checked.push("recovered-preexisting-0.3.0-failure-through-new-formula");
-    }
     await command(old.installer, installArgs(candidate, runtime, true), env);
     const payload = path.join(runtime, "releases", candidate.descriptor.buildId, "payload");
     const frontend = await formulaCache(candidate, prefix, payload);
@@ -172,12 +156,11 @@ async function scenario(old, candidate, root, preexistingRelease = null, roundTr
     };
     console.log(`${old.descriptor.appVersion}: upgrading the real services`);
     await command(selector, ["update"], env);
-    checked.push(preexistingRelease ? "corrected-controller-successful-promotion" : "historical-updater-successful-promotion");
+    checked.push("latest-stable-updater-successful-promotion");
     assert.equal((await json(path.join(runtime, "active.json"))).receipt.buildId, candidate.descriptor.buildId);
     await assertData(14);
-    checked.push("update-from-retained-historical-payload", "real-services-ready", "source-job-preserved", "temporal-workflow-history-preserved", "verified-paired-backup");
+    checked.push("update-from-latest-stable-payload", "real-services-ready", "source-job-preserved", "temporal-workflow-history-preserved", "verified-paired-backup");
     const result = { sourceVersion: old.descriptor.appVersion, sourceBuildId: old.descriptor.buildId, sourceArtifactSha256: old.descriptor.artifact.sha256, sourceSchema: oldSchema, targetBuildId: candidate.descriptor.buildId, status: "passed", checks: checked };
-    if (!roundTrip) return result;
     await command(selector, ["rollback", "--to", old.descriptor.buildId], env);
     await assertData(oldSchema);
     assert.equal((await json(path.join(runtime, "active.json"))).selectorBuildId, candidate.descriptor.buildId);
@@ -197,41 +180,8 @@ async function scenario(old, candidate, root, preexistingRelease = null, roundTr
   }
 }
 
-async function unusedScenario(old, candidate, root) {
-  const runtime=path.join(root,"runtime"), state=path.join(root,"state"), home=path.join(root,"home");
-  for (const directory of [root,state,home]) await mkdir(directory,{recursive:true,mode:0o700});
-  const env={HOME:home,JOBCTRL_RUNTIME_HOME:runtime,JOBCTRL_DIR:state,PATH:"/usr/bin:/bin:/usr/sbin:/sbin"};
-  const selector=path.join(runtime,"bin","jobctrl");
-  try {
-    console.log(`${old.descriptor.appVersion}: upgrading an installation that has never been started`);
-    await command(old.installer,installArgs(old,runtime),env);
-    for (const name of ["jobctrl.db","temporal.db"]) await assert.rejects(access(path.join(state,name)),{code:"ENOENT"});
-    const sentinel=path.join(state,"unrelated-user-file.txt");
-    await writeFile(sentinel,"preserved user file",{mode:0o600});
-    await command(candidate.installer,installArgs(candidate,runtime),env);
-    assert.equal((await json(path.join(runtime,"active.json"))).receipt.buildId,candidate.descriptor.buildId);
-    assert.equal(JSON.parse((await command(selector,["status","--json"],env)).output).status,"running");
-    const journal=await json(path.join(runtime,"transition.json"));
-    const pair=await json(path.join(state,"backups",journal.backupId,"pair.json"));
-    assert.equal(pair.releaseReceipt.buildId,old.descriptor.buildId);
-    assert.deepEqual(pair.files.map(file=>file.name).sort(),["jobctrl.db","temporal.db"]);
-    for(const file of pair.files) assert.equal(await hash(path.join(state,"backups",pair.id,file.name)),file.sha256);
-    const oldSchema=pair.files.find(file=>file.name==="jobctrl.db").sqliteUserVersion;
-    await command(selector,["rollback","--to",old.descriptor.buildId],env);
-    const active=await json(path.join(runtime,"active.json"));
-    assert.equal(active.receipt.buildId,old.descriptor.buildId);
-    assert.equal(active.selectorBuildId,candidate.descriptor.buildId);
-    assert.equal(await readFile(sentinel,"utf8"),"preserved user file");
-    const python=path.join(runtime,"releases",old.descriptor.buildId,"payload","python","bin","python3");
-    const query="import sqlite3,sys,json; c=sqlite3.connect(sys.argv[1]); print(json.dumps([c.execute('PRAGMA user_version').fetchone()[0],c.execute('SELECT count(*) FROM jobs').fetchone()[0]])); c.close()";
-    assert.deepEqual(JSON.parse((await command(python,["-I","-B","-c",query,path.join(state,"jobctrl.db")],env)).output),[oldSchema,0]);
-    return {sourceVersion:old.descriptor.appVersion,sourceBuildId:old.descriptor.buildId,sourceArtifactSha256:old.descriptor.artifact.sha256,sourceSchema:oldSchema,targetBuildId:candidate.descriptor.buildId,unusedInstallation:true,status:"passed",checks:["unused-installation-upgrade","verified-paired-backup","explicit-rollback-to-released-payload","unrelated-file-preserved"]};
-  } finally { await command(selector,["stop"],env,{allowFailure:true}); }
-}
-
-export async function runReleasedUpgradeSmoke({ releaseDirectory, cacheDirectory, output, publicKeyBase64, keyId, caseId }) {
+export async function runReleasedUpgradeSmoke({ releaseDirectory, cacheDirectory, output, publicKeyBase64, keyId }) {
   const started = performance.now();
-  const selected = selectReleasedUpgradeCases(caseId);
   assert.equal(process.platform, "darwin"); assert.equal(process.arch, "arm64");
   const raw = Buffer.from(publicKeyBase64 ?? "", "base64"); assert.equal(raw.length, 32);
   assert.match(keyId ?? "", /^[A-Za-z0-9._-]+$/);
@@ -240,30 +190,24 @@ export async function runReleasedUpgradeSmoke({ releaseDirectory, cacheDirectory
   const candidate = await releaseFiles(releaseDirectory, trust);
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "jobctrl-released-upgrades-")));
   const cache = cacheDirectory ?? path.join(root, "cache");
-  const results = [];
-  for (const entry of selected) {
-    const old = await historicalRelease(entry.version, cache, trust, { PATH: "/usr/bin:/bin" });
-    const workspace = path.join(root, entry.id);
-    let result;
-    if (entry.kind === "unused") result = await unusedScenario(old, candidate, workspace);
-    else {
-      const broken = entry.kind === "recovery" ? await historicalRelease("0.3.0", cache, trust, { PATH: "/usr/bin:/bin" }) : null;
-      result = await scenario(old, candidate, workspace, broken, entry.roundTrip === true);
-    }
-    results.push(result);
-    console.log(`Released JobCtrl case ${entry.id} passed`);
-  }
-  const report = { schemaVersion: 1, status: "passed", candidateBuildId: candidate.descriptor.buildId, acquisitionBoundary: "signed-formula-cache-adapter", executables: "actual-released-sources-and-signed-candidate", ...(caseId ? { caseId, elapsedMs: Math.max(1, Math.round(performance.now() - started)) } : {}), results };
+  const response = await fetch("https://api.github.com/repos/ebarti/JobCtrl/releases?per_page=100", { signal: AbortSignal.timeout(30_000) });
+  assert.ok(response.ok, `cannot resolve the latest stable release: HTTP ${response.status}`);
+  const version = selectLatestReleasedVersion(await response.json(), candidate.descriptor.appVersion);
+  const old = await releasedVersion(version, cache, trust, { PATH: "/usr/bin:/bin" });
+  assert.ok(old.descriptor.sequence < candidate.descriptor.sequence, "upgrade source must precede the signed candidate");
+  const result = await scenario(old, candidate, path.join(root, "latest-stable"));
+  console.log(`Released JobCtrl ${version} upgrade, rollback and re-upgrade passed`);
+  const report = { schemaVersion: 1, status: "passed", candidateBuildId: candidate.descriptor.buildId, acquisitionBoundary: "signed-formula-cache-adapter", executables: "actual-latest-stable-and-signed-candidate", elapsedMs: Math.max(1, Math.round(performance.now() - started)), results: [result] };
   await writeFile(output, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
   return report;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const options = new Map();
-  const allowed = new Set(["--release-dir", "--cache", "--output", "--case"]);
+  const allowed = new Set(["--release-dir", "--cache", "--output"]);
   for (let index = 2; index < process.argv.length; index += 2) {
     assert.ok(allowed.has(process.argv[index]) && !options.has(process.argv[index]) && process.argv[index + 1], "invalid or duplicate released-upgrade argument");
     options.set(process.argv[index], process.argv[index + 1]);
   }
-  await runReleasedUpgradeSmoke({ releaseDirectory: options.get("--release-dir"), cacheDirectory: options.get("--cache"), output: options.get("--output"), caseId: options.get("--case"), publicKeyBase64: process.env.JOBCTRL_RELEASE_PUBLIC_KEY, keyId: process.env.JOBCTRL_RELEASE_KEY_ID });
+  await runReleasedUpgradeSmoke({ releaseDirectory: options.get("--release-dir"), cacheDirectory: options.get("--cache"), output: options.get("--output"), publicKeyBase64: process.env.JOBCTRL_RELEASE_PUBLIC_KEY, keyId: process.env.JOBCTRL_RELEASE_KEY_ID });
 }
