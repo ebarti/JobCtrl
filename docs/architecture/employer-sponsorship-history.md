@@ -4,15 +4,15 @@ description: "Future design for optional, official US and Canadian employer fili
 
 # Employer Sponsorship History
 
-This is the owning investigation and **future design, not an implemented
-capability**, for [issue #1012](https://github.com/ebarti/JobCtrl/issues/1012).
+This is a **future design, not an implemented capability**, for optional
+official employer filing-history evidence.
 Official historical filings could help a person investigate a vague posting.
 They cannot establish that a current vacancy offers sponsorship, that an employer
 will sponsor a particular person, or that the person is eligible.
 
 The proposed capability is optional and explicitly initiated for a selected
-jurisdiction and official resource. This delivery changes documentation only.
-It adds no provider, command, API, schema, scheduler or eligibility behavior.
+jurisdiction and official resource. No filing-history provider, command, API,
+schema, scheduler or eligibility override is currently available.
 
 ## Current implementation
 
@@ -29,42 +29,21 @@ provider.
 | Job identity | Discovery owns canonical UUID-backed JobId and its locators, source observations and duplicate relationships. The [`SqliteJobIdentityResolver`][identity] reads JobId and posting-URL locators. A name or employer-history link cannot replace that identity or merge jobs. See [Application URL Authority](application-url-authority.md). |
 | Optional company context | [Company briefings](../user/company-briefings.md) are Materials-owned. Explicit JobId-to-company URL confirmation, bounded public pages and persisted determinations supply passive shared reads. Equal names do not link companies; failed refreshes preserve accepted content. The company key is a hash of a reviewed URL, **not a legal-employer identifier**. |
 
-### Related work and superseded assumptions
+### Existing ownership
 
-Inspected the merged changes and public PR bodies for
-[#1094](https://github.com/ebarti/JobCtrl/pull/1094),
-[#761](https://github.com/ebarti/JobCtrl/pull/761) and
-[#208](https://github.com/ebarti/JobCtrl/pull/208), alongside the retained
-[company-briefing design](../plans/company-briefings.md).
+Company briefings provide useful patterns for explicit identity links,
+immutable attempts, source-bound determinations and transactional acceptance.
+They are not dataset importers, and a reviewed company URL is not a legal
+employer identifier. Candidate qualifications and eligibility remain separate;
+the [semantic determination decision](../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations)
+owns judgments about meaning. Historical filing counts must not create lexical
+sponsorship heuristics or eligibility overrides.
 
-- #1094 (`795825a45`) implements optional company briefings for #1016. Its
-  explicit links, immutable attempts, determination binding and transactional
-  acceptance are useful patterns, not a dataset importer. Its bounded-text
-  hashes do not satisfy a complete dataset-byte hash contract.
-- #761 (`dc3f2fc52`) separates resume qualifications from eligibility,
-  logistics and employer conditions. That ownership boundary remains relevant;
-  later source-bound requirement interpretation owns the semantic scope.
-- #208 (`4211fdd4a`) changed period-aware compensation and remote-work handling
-  in an earlier scorer while retaining the existing sponsorship gate unchanged.
-  Those lexical decisions are historical, not the
-  current architecture. The issue's `7c432089` eligibility excerpt also predates
-  the current simple typed-verdict reader. Do not restore those heuristics.
+## Official source formats and limits
 
-The [semantic determination decision](../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations)
-now owns semantic authority. A public GitHub PR search for `repo:ebarti/JobCtrl
-is:pr 1012` returned zero results, and local history/document searches found no
-issue-specific implementation or retained owning design. This is a bounded
-search result, not proof that no other discussion exists. The earlier PRs'
-reported test totals are historical reports, not measurements for this delivery.
-
-## Official-source investigation
-
-Anonymous public probes on 2026-10-19 retained request inputs, full returned
-bodies, sanitized response metadata, UTC start/finish times and SHA-256 values.
-No signed redirect query was retained. Hashes below cover the complete decoded
-resource body saved by HTTPX, before parsing; HTTP compression lengths are not
-resource-byte lengths. Neither observation clocks nor HTTP modification headers
-establish publication dates or completeness.
+The resource samples below describe formats and limitations as of 2026-10-19.
+Observation, publication and coverage dates have distinct meanings. A successful
+download does not establish completeness or a supported automatic update path.
 
 ### United States: historical H-1B petitions
 
@@ -78,7 +57,7 @@ there is no demonstrated automated current-hub acquisition contract.
 | Observed FY2023 sample | Evidence and limit |
 | --- | --- |
 | Official resource | [USCIS FY2023 CSV][us-csv], linked as “FY 2023 H-1B Employer Data” by the archived page |
-| Fetch | HTTP 200; completed `2026-10-19T16:46:11.330036Z`; 2,202,574 decoded bytes |
+| Resource size | 2,202,574 decoded bytes in the FY2023 sample |
 | SHA-256 | `96f42309393249a7368bd418b2b2c5111b45acc7ccec487a0f024dfa07d71931` |
 | Shape | 33,332 parsed data records, each with 11 fields; all observed fiscal-year cells are `2023` |
 | Period and publication | FY2023 is source-labeled. Within-year cutoff and full-year completeness are unknown. Publication date was not established. HTTP `Last-Modified: Wed, 31 May 2023 17:40:18 GMT` and the archive page's July 1, 2025 review date are separate observations, not dataset publication evidence. |
@@ -106,7 +85,7 @@ ID remain canonical; an expiring signed redirect is not an identity.
 
 | Observed 2026Q1 sample | Evidence and limit |
 | --- | --- |
-| Fetch | HTTP 200; completed `2026-10-19T16:47:02.515884Z`; 529,510 bytes |
+| Resource size | 529,510 bytes in the 2026Q1 sample |
 | SHA-256 | `2f48cb522180ff82e6768a68b679bed4d4c89efa28d1c5aca7bc1604c99a044e` |
 | Publication | Resource metadata `date_published` explicitly says `2026-07-21`. Its `created`/`metadata_modified` dates are July 22; HTTP modification time is July 21. These fields retain their distinct meanings. |
 | Coverage | Resource title and workbook A1 say January–March 2026. Package-level coverage fields still say October–December 2025. Retain this metadata conflict with both citations; do not silently substitute the package dates or infer coverage from the filename. |
@@ -142,54 +121,10 @@ The issue links public source at fixed revisions:
   identity, publication dates, multiline-CSV safety or current export support.
   They are reference limitations, not reproduced JobCtrl production defects.
 
-Full public source was fetched at the issue's exact revisions and retained with
-content hashes. It was inspected as data, not executed. No external framework
-or matching algorithm is adopted.
-
-## Synthetic evidence
-
-At the inspected revision, the locked Python 3.12.13 project environment ran:
-
-```text
-.venv/bin/python -m pytest tests/test_company_briefings.py tests/test_scoring_determinations.py --junitxml=<owned-report> --basetemp=<owned-synthetic-directory>
-```
-
-The command ran from `workers/automation` (using the interpreter's absolute
-path). **37 tests passed: 34 company-briefing cases and 3 scoring cases; zero
-failures, errors or skips.** Retained `focused-worker.xml`, full stdout/stderr,
-command, source/lock hashes and UTC timestamps establish this measurement.
-
-The existing cases exercise explicit identity configuration, cross-job reuse,
-ambiguous identity without lexical fallback, opposite model claim kinds,
-provider/spend/JSON/schema/source/quote/exact-value failures, stale clocks,
-configuration races, rollback during acceptance, concurrent refreshes and
-corrupt binding rejection. Scoring cases prove opposite typed blockers control
-downstream gating, provider failure preserves the accepted score, and selection
-limits use recency rather than text similarity.
-
-These are synthetic tests of existing owners. They do **not** implement or test
-an official dataset provider, a legal-employer resolver, current interactive
-exports, process-crash recovery or restart of a dataset importer. Public sample
-inspection is separate from these tests; it is not parser certification.
-
-### Retained evidence identity
-
-The controller-allocated evidence bundle for run
-`run-ebe8982a-0500-4717-b0be-6ac13c45a22a` is
-`role-artifacts/authoring/implement/f50760b8b17427d8fcceedafe66a5a9ace0e30fab2caebbad4af0bc392791b8a/`.
-It retains `probe.py`, `followup.py`, `inspect_sources.py`,
-`inspect_workbook.py`, `run_checks.py`, their inputs/outputs and an evidence
-manifest. This is retained delivery evidence outside feature source, not a
-required local product directory. The source manifest pins inspected code and
-lockfiles to the revision above.
-
-Intake reported successful downloads with the same two byte lengths. Its
-original download artifacts, hashes and precise timestamps were absent from
-the copied implementation handoff. The hashes and times above are fresh
-measurements; equality with the unavailable intake hashes is not claimed.
-Two initially guessed USCIS `…-data` page routes returned 404; the subsequent
-canonical `…-files` route resolved to the archived page. Those attempts remain
-in the evidence, not as claims that the dataset is unavailable.
+The references describe external implementation choices, not adopted JobCtrl
+behavior. Current company-briefing and scoring tests cover their own identity,
+acceptance and preservation boundaries; they do not prove a dataset provider,
+legal-employer matching or live sponsorship support.
 
 ## Future architecture, not implemented
 
