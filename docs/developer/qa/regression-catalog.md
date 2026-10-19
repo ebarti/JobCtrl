@@ -1239,6 +1239,14 @@ anchor/binding IDs, also without a prior PDF. During save, undo to the old setti
 and deliver canonical refresh before/after success or a lost acknowledgement;
 preserve the undo, reject obsolete query snapshots and require reconciliation
 before approval when the outcome is uncertain.
+Seed current resume PDF/text and cover text alongside older literal aliases with
+equal timestamps and higher-sorting IDs. A cover-only save must neither select an
+older resume nor refuse an unchanged cover source. Repeat saves and committed
+retries, then read warm projections and reopen the database. Exercise both alias
+directions, all resume text aliases and same-generation row-order ties. Preserve
+original rows, bytes, anchors and bindings; only the changed cover acceptance
+stales prior authorization. Keep a no-alias control and the insert-time drift
+rollback regressions.
 Populate artifact projections before saving, then download the new accepted PDF
 without restarting. Acceptance must commit its existing `PdfRendered` event
 atomically; fail the event insert to prove full rollback, and retry a committed

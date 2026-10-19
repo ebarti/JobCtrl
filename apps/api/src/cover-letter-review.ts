@@ -187,9 +187,19 @@ export async function renderCoverLetterPreview(db: SqliteDatabase, appDir: strin
  */
 export function copyMaterialSlots(db: SqliteDatabase, jobId: string, targetGeneration: number, excluded: readonly string[]): void {
   const rows = allRows<ArtifactRow>(db, `SELECT * FROM (
-    SELECT *, row_number() OVER (PARTITION BY artifact_type ORDER BY generation DESC) AS rank
+    SELECT *, rowid AS source_rowid, dense_rank() OVER (
+      PARTITION BY CASE
+        WHEN artifact_type IN ('tailored_resume','tailored_resume_txt','resume_txt') THEN 'tailored_resume'
+        WHEN artifact_type IN ('resume_pdf','tailored_resume_pdf') THEN 'resume_pdf'
+        WHEN artifact_type IN ('cover_letter','cover_letter_txt') THEN 'cover_letter'
+        ELSE artifact_type END
+      ORDER BY generation DESC) AS rank
     FROM job_materials_artifacts WHERE tenant_id=? AND job_id=? AND generation<? AND status='approved' AND superseded_at IS NULL
-  ) WHERE rank=1`, [TENANT, jobId, targetGeneration]);
+  ) WHERE rank=1 ORDER BY source_rowid`, [TENANT, jobId, targetGeneration]);
+  // Aliases share a logical slot: never promote an older alias alongside its
+  // current generation. Keep all aliases already in that generation, in their
+  // original row order, so both canonical and projected tie precedence survive.
+  // Historical occurrences and their provenance remain untouched.
   for (const row of rows) {
     if (excluded.includes(row.artifact_type)) continue;
     db.prepare(`INSERT INTO job_materials_artifacts
