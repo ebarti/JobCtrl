@@ -205,7 +205,7 @@ snapshot table for exact source and release identities.
 
 | Alternative | Inspected offering | How it compares with JobCtrl |
 | --- | --- | --- |
-| **[ApplyPilot][applypilot-readme]** — Pickle-Pixel project | A Python discovery → enrichment → scoring → tailoring → PDF → browser application pipeline. The [launcher][applypilot-launcher] supports dry runs and autonomous submission. | The closest volume-oriented local automation alternative in this set. SQLite statuses and retries are useful, but the inspected launcher does not evidence JobCtrl's exact-approved artifact/send-intent model. This is the public repository, distinct from unrelated services using the same name. |
+| **[ApplyPilot][applypilot-readme]** — original public project | A Python discovery → enrichment → scoring → tailoring → PDF → browser application pipeline. The [launcher][applypilot-launcher] supports dry runs and autonomous submission. | The closest volume-oriented local automation alternative in this set. SQLite statuses and retries are useful, but the inspected launcher does not evidence JobCtrl's exact-approved artifact/send-intent model. This is the public repository, distinct from unrelated services using the same name. |
 | **[JobSync][jobsync-readme]** | A self-hosted tracker with scheduled ATS discovery, resume review and job matching, cover letters, contacts, companies, interview questions, MCP tools, and backup/restore. It supports Ollama and cloud models. | A broader personal search organizer than the old watchlist description implied, with a local-inference option JobCtrl lacks. Its [cover-letter grounding prompt][jobsync-cover] and [discovery persistence][jobsync-persist] do not evidence the same source-bound material acceptance or guarded submission lifecycle. Configured cloud providers can receive data; self-hosting alone is not an offline guarantee. |
 | **[Proficiently skills][proficiently-readme]** | Public Claude skills for setup, search, tailoring, networking, browser apply, and a Telegram loop. The [apply instructions][proficiently-apply] propose field answers for approval; uploads can require manual handling. | A lighter agent-based route with useful network discovery. Prompt instructions are not a product-level enforcement guarantee. The separate [commercial service](https://proficiently.com/) markets managed search, applications, and hiring-manager outreach; its server implementation and advertised results were not verified. |
 
@@ -318,8 +318,8 @@ JavaScript-rendered public page was also read in the browser. This establishes
 visible descriptions, not the correctness of private services. No repository
 application was installed or executed, no candidate data was uploaded, and no
 job application or outreach message was sent. JobCtrl was assessed from current
-source and published release information, without rerunning its product workflows for this
-documentation-only change. Marketing outcome figures and ATS compatibility
+source and published release information, without rerunning its product workflows
+for this assessment. Marketing outcome figures and ATS compatibility
 claims are not independent measurements. The nineteen alternatives form the
 named comparison set, not an exhaustive inventory of the market.
 
