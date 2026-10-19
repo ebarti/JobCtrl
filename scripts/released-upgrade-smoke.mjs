@@ -17,9 +17,12 @@ export function selectLatestReleasedVersion(releases, candidateVersion) {
     .filter((release) => release.draft === false && release.prerelease === false && release.tag_name !== `v${candidateVersion}`)
     .sort((left, right) => Date.parse(right.published_at) - Date.parse(left.published_at))[0];
   assert.ok(previous, "no previous published stable release is available for upgrade verification");
-  assert.match(previous.tag_name, /^v\d+\.\d+\.\d+$/);
+  const tag = previous.tag_name;
+  if (typeof tag !== "string" || !/^v[0-9]+\.[0-9]+\.[0-9]+$/.test(tag) || tag.trim() !== tag) {
+    throw new Error("stable release tag must be v<major>.<minor>.<patch>");
+  }
   assert.ok(Number.isFinite(Date.parse(previous.published_at)), "stable release publication date is invalid");
-  return previous.tag_name.slice(1);
+  return tag.slice(1);
 }
 const json = async (file) => JSON.parse(await readFile(file, "utf8"));
 const hash = async (file) => {

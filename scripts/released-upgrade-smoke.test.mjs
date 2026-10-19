@@ -19,7 +19,9 @@ test("the upgrade source advances to the latest published stable release", () =>
 
 test("missing or malformed stable release metadata fails instead of using a historical fallback", () => {
   assert.throws(() => selectLatestReleasedVersion([published("0.3.1", "19")], "0.3.1"), /no previous/);
-  assert.throws(() => selectLatestReleasedVersion([published("invalid", "19")], "0.3.2"));
+  for (const tag of ["invalid", "0.3.1/../../bin/tool", "0.3.1;tool", "0.3.1\n"]) {
+    assert.throws(() => selectLatestReleasedVersion([published(tag, "19")], "0.3.2"), /stable release tag/);
+  }
   assert.throws(() => selectLatestReleasedVersion([published("0.3.1", "invalid")], "0.3.2"), /publication date/);
 });
 
