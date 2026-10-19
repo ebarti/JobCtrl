@@ -139,6 +139,11 @@ corrected tag; the failed run remains evidence for its original source. Remove
 an abandoned unpublished version tag only with the owner's authorization. A
 published or partially published candidate requires reconciling its existing
 immutable state rather than this unpublished-tag correction procedure.
+If the earlier attempt already emitted a signed descriptor, keep the application
+version but choose a sequence above that signed candidate as well as the current
+published pointer. Never sign a different build at an already signed sequence:
+clients that saw the first candidate retain its sequence-to-build binding even
+when publication was held. Retain the earlier run and tag object as evidence.
 
 For Apple HTTP 403 reporting a missing or expired agreement, stop retries until
 the Apple Developer Account Holder reviews and accepts the required agreement.
