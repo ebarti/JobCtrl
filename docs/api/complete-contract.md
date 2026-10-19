@@ -2488,6 +2488,51 @@ fail validation. Existing HTTP security rejection precedes provider dispatch.
 This changes no #954 JSON-RPC envelope policy or durable workflow result.
 See the [incremental migration recipe and synthetic test seams](../architecture/contracts-types-and-api-boundaries.md#incremental-endpoint-migration).
 
+## Selected-cohort demand and milestones
+
+`GET /v1/evidence-map/learning` returns `{ ok, preview: null, cohorts,
+milestones, truncated }` through `career_learning` RPC. Requests bind
+`tenantId`, `expectedAppDir`, `expectedDbPath` and an optional strict `command`.
+GET accepts no query parameters. POST accepts one of:
+
+- `{ action: "preview", jobIds }`: 1–30 canonical job UUIDs, including repeated
+  selections for disclosure. Returns `preview` with job/source snapshots,
+  `profileVersion`, `selectedCount`, `cohortSize`, `analyzedCount`,
+  `missingDescriptions`, `duplicateSelections`, `duplicateIdentities`,
+  `confirmedEvidenceCount`, `excludedEvidenceCount` and source `fingerprint`.
+  No model, journal or profile write occurs.
+- `{ action: "compare", cohortId?, expectedRevision, title, asOf, jobIds,
+  aspirations, expectedSnapshotFingerprint? }`: new cohorts require revision 0;
+  existing cohorts require their current revision. `asOf` is an ISO date and
+  labels selection. The browser always supplies the preview fingerprint.
+  Changed reviewed sources fail before spend. Description sources are bounded
+  to 64,000 characters each and 120,000 total source characters, with at most
+  200 usable confirmed achievements. No-description cohorts are previewable but
+  cannot be compared. A successful accepted revision contains immutable sources,
+  `snapshotFingerprint`, `determinationId`, the full determination envelope and
+  typed `comparison` (`demands`, `proposals`, `uncertainty`). Posting/candidate
+  citations retain `source_id`, verbatim `quote`, and `exact_values`.
+- `{ action: "choose", cohortId, expectedRevision, determinationId,
+  proposalId }`: requires a current accepted comparison and exact proposal;
+  repeated selection within the same cohort revision is idempotent. Creates a planned milestone with immutable
+  `origin`, `cohortRevision`, proposal/completion criterion and selection time.
+- `{ action: "update", milestoneId, expectedRevision, status,
+  completionEvidence }`: status is `planned`, `in_progress`, `completed` or
+  `abandoned`. Completed activity requires a nonblank completion statement.
+  Writes retain revision history, never update Profile, fit or readiness.
+
+Successful writes return the canonical read response. Cohorts expose
+`staleReasons` and `lastAttempt`; milestones expose `staleReasons`, immutable
+origin and activity `history`. Reads show at most 20 latest cohorts and 100 latest
+milestones (`truncated` discloses more retained entities), with 50 recent activity
+revisions each. Raw private `CareerLearningRecorded` events are suppressed from
+SSE. All cohorts and milestone revisions remain in the local journal.
+
+Invalid HTTP bodies return 400. Worker validation, stale revision/source and
+provider failures return 409 `career_learning_failed` with an allowlisted safe
+message; worker transport unavailable returns 503, invalid worker results 502.
+Accepted comparisons and milestone history survive every failed refresh.
+
 ## Actual Offer Terms And Decisions
 
 All routes use a canonical UUID `jobId`, local tenant and the normal local

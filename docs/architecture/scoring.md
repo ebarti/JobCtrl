@@ -133,3 +133,13 @@ used to rank people for hiring decisions, the architecture needs a separate
 governance layer for validation, bias audits, notices, adverse-impact review,
 and human-review procedures before production use.
 :::
+
+## Selected-cohort comparison stays outside scoring
+
+`domain/operations/career_learning.py` owns the strict
+`career_demand_comparison` determination. It groups posting requirements by
+model meaning and compares them only against confirmed Career Evidence Map
+achievement IDs. Code validates source membership, verbatim quotes, exact
+values and capability/proposal bindings; it counts distinct cited posting IDs.
+No lexical grouping, skill matching, readiness formula or score-policy effect
+is present. See the [user workflow](../user/scoring-and-employer-analysis.md#selected-job-demand-and-learning-milestones).

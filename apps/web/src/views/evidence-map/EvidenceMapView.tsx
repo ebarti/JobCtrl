@@ -9,6 +9,7 @@ import {
 import { useMemo, useState } from "react";
 
 import { EvidenceStatusBadge } from "../../contexts/operations/components/EvidenceStatusBadge.js";
+import { CareerLearningPanel } from "../../contexts/operations/components/CareerLearningPanel.js";
 import {
   useEvidenceMapEntryQuery,
   useEvidenceMapQuery,
@@ -633,6 +634,7 @@ export function EvidenceMapView() {
           evidenceMap.data ? `${filteredEntries.length} entries` : "loading"
         }
       />
+      <CareerLearningPanel />
       <section className="card full evidence-map-view">
         {errorMessage ? (
           <Alert className="evidence-map-error" variant="destructive">

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CareerLearningCommandSchema, CareerLearningParamsSchema, CareerLearningResponseSchema } from "./career-learning.js";
 import { AcceptedMaterialExportRequestSchema, AcceptedMaterialExportsSchema, ProviderStatusResponseSchema, ProviderModelCatalogResponseSchema, CodexVerifyResponseSchema, MaterialLocaleRequestSchema, MaterialLocaleHistorySchema } from "./schemas.js";
 import {
   InterviewCatalogQuerySchema,
@@ -583,7 +584,44 @@ const screeningFailure = (failure: EndpointDispatchFailure): EndpointFailureResp
 // These legacy routes ignore query/body input; tightening it would break compatibility.
 const ProviderOperationRequestSchema = z.unknown().optional();
 
+const CareerLearningReadSchema = z.object({}).strict().optional();
+const careerLearningFailure = (failure: EndpointDispatchFailure): EndpointFailureResponse => ({
+  status: failure.kind === "transport" ? 503 : failure.kind === "rpc" && failure.error.code === JsonRpcErrorCodes.InvalidParams ? 409 : 502,
+  error: "career_learning_failed",
+  message: failure.kind === "rpc" && /^(provider_unavailable|provider_error|budget_denied|malformed_json|schema_violation|foreign_source_id|non_verbatim_quote|mismatched_value|revision_conflict|sources_changed|invalid_cohort|invalid_command|job_not_found|no_posting_descriptions|cohort_source_budget_exceeded|completion_evidence_required|foreign_proposal_id|cohort_binding_invalid|milestone_binding_invalid|duplicate_source_id|foreign_posting_id|unconfirmed_evidence_id|missing_capability_evidence|foreign_demand_id|duplicate_result_id|inconsistent_verdict|source_schema_violation|cache_binding_invalid|cache_lock_unavailable|persistence_error)$/.test(failure.error.message)
+    ? failure.error.message : "Career comparison unavailable; saved comparisons and milestones are preserved.",
+});
+
 export const ENDPOINTS = {
+  careerLearning: defineEndpoint({
+    name: "careerLearning", method: "GET", path: "/v1/evidence-map/learning",
+    request: CareerLearningReadSchema, response: CareerLearningResponseSchema,
+    dispatch: {
+      rpcMethod: RpcMethods.CareerLearning,
+      params: (_input, context) => ({ tenantId: context.tenantId, expectedAppDir: context.appDir, expectedDbPath: context.dbPath }),
+      paramsSchema: CareerLearningParamsSchema, result: CareerLearningResponseSchema,
+      response: ({ result }) => result, error: careerLearningFailure,
+    } satisfies RpcEndpointDispatch<typeof CareerLearningReadSchema, never, "career_learning">,
+    demo: { class: "unavailable", reason: "Saved cohorts and milestones require the local audited workspace." },
+  }),
+  writeCareerLearning: defineEndpoint({
+    name: "writeCareerLearning", method: "POST", path: "/v1/evidence-map/learning",
+    request: CareerLearningCommandSchema, response: CareerLearningResponseSchema,
+    dispatch: {
+      rpcMethod: RpcMethods.CareerLearning,
+      params: ({ request }, context) => ({ tenantId: context.tenantId, expectedAppDir: context.appDir, expectedDbPath: context.dbPath, command: request }),
+      paramsSchema: CareerLearningParamsSchema, result: CareerLearningResponseSchema,
+      response: ({ request, result }) => request.action === "preview"
+        ? result.preview && JSON.stringify(result.preview.jobs.map((job) => job.jobId)) === JSON.stringify([...new Set(request.jobIds)].sort()) ? result : null
+        : request.action === "compare"
+        ? result.cohorts.some((cohort) => (!request.cohortId || cohort.cohortId === request.cohortId) && cohort.revision === request.expectedRevision + 1 && cohort.title === request.title && cohort.asOf === request.asOf && cohort.aspirations === request.aspirations && JSON.stringify(cohort.jobIds) === JSON.stringify(request.jobIds)) ? result : null
+        : request.action === "choose"
+          ? result.milestones.some((milestone) => milestone.cohortId === request.cohortId && milestone.cohortRevision === request.expectedRevision && milestone.determinationId === request.determinationId && milestone.proposal.proposal_id === request.proposalId) ? result : null
+          : result.milestones.some((milestone) => milestone.milestoneId === request.milestoneId && milestone.revision === request.expectedRevision + 1 && milestone.status === request.status && milestone.completionEvidence === request.completionEvidence) ? result : null,
+      error: careerLearningFailure,
+    } satisfies RpcEndpointDispatch<typeof CareerLearningCommandSchema, never, "career_learning">,
+    demo: { class: "unavailable", reason: "Source-bound comparisons require a configured model; milestone review requires saved local provenance." },
+  }),
   acceptedMaterialExports: defineEndpoint({
     name: "acceptedMaterialExports", method: "POST",
     path: defineEndpointPath({ route: "/v1/jobs/:jobId/material-exports", paramName: "jobId", paramSchema: z.string().uuid(), invalid: { status: 400, error: "invalid_job_id" }, build: (jobId: string) => `/v1/jobs/${encodeURIComponent(jobId)}/material-exports` }),

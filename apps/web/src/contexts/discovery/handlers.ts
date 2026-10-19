@@ -1,3 +1,4 @@
+import { evidenceMapKeys } from "../operations/evidenceMapKeys.js";
 import type {
   CanonicalJobIdentityResolved,
   DiscoveryFeedbackRecorded,
@@ -45,6 +46,7 @@ export const jobDiscoveredHandler = (event: JobDiscovered): readonly Invalidatio
 ];
 
 export const jobUpdatedHandler = (event: JobUpdated): readonly InvalidationItem[] => [
+  invalidate(evidenceMapKeys.learning(event.tenantId)),
   ...(Object.hasOwn(event.payload.changedFields, "companyBriefing") ? [invalidate(digestKeys.all(event.tenantId))] : []),
   invalidate(interviewKeys.history(event.tenantId, event.payload.jobId)),
   reconcileQuery(jobsKeys.lists(event.tenantId), (current, key) =>
@@ -56,6 +58,7 @@ export const jobUpdatedHandler = (event: JobUpdated): readonly InvalidationItem[
 ];
 
 export const jobDeletedHandler = (event: JobDeleted): readonly InvalidationItem[] => [
+  invalidate(evidenceMapKeys.learning(event.tenantId)),
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
@@ -63,6 +66,7 @@ export const jobDeletedHandler = (event: JobDeleted): readonly InvalidationItem[
 ];
 
 export const jobRestoredHandler = (event: JobRestored): readonly InvalidationItem[] => [
+  invalidate(evidenceMapKeys.learning(event.tenantId)),
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
@@ -119,6 +123,7 @@ export const discoveryRunFailedHandler = (
 export const canonicalJobIdentityResolvedHandler = (
   event: CanonicalJobIdentityResolved,
 ): readonly InvalidationItem[] => [
+  invalidate(evidenceMapKeys.learning(event.tenantId)),
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(discoveryKeys.sourceQuality(event.tenantId)),
@@ -127,6 +132,7 @@ export const canonicalJobIdentityResolvedHandler = (
 export const duplicateJobLinkedHandler = (
   event: DuplicateJobLinked,
 ): readonly InvalidationItem[] => [
+  invalidate(evidenceMapKeys.learning(event.tenantId)),
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.survivingJobId)),
   invalidate(discoveryKeys.sourceQuality(event.tenantId)),

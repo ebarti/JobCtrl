@@ -462,6 +462,17 @@ Exact-v14 screening answer revisions use existing indexed `job_events` entries w
 
 Materials stores immutable `company_briefing_config`, `company_briefing_link`, `company_briefing_accepted` and `company_briefing_attempt` records in the existing indexed exact-v14 `job_events` table. `entity_ref` is the explicit company URL hash or canonical JobId; tenant and event ID select the current revision. Accepted snapshots retain bounded public text and join their recorded `semantic_determinations` ID. Configuration and company history have no JobId foreign key and survive removal of the last linked job. Job link rows use the canonical JobId foreign key. No schema migration or separate store is introduced. See [Company Briefings](../user/company-briefings.md).
 
+## Career-learning snapshot ownership
+
+Selected-job cohorts, failed comparison attempts and user-chosen milestones use
+scoped `career_cohort`, `career_attempt` and `career_milestone` records in the
+existing exact-v14 `job_events` table. Semantic envelopes remain in
+`semantic_determinations`. A milestone retains its immutable origin and later
+activity revisions; user completion evidence never changes Candidate Profile
+rows. These private snapshots can retain posting text and confirmed achievement
+excerpts after a source changes or a job is deleted. Job-data purge preserves
+these records and discloses `career_learning_records` in retained-reference
+counts. There is no new schema migration or automatic retention cleanup.
 
 ## Private Offer Ledger
 

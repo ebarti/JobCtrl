@@ -625,6 +625,8 @@ function freshWorkerCount(db: SqliteDatabase, databasePath: string): number {
 
 function retainedReferenceRows(db: SqliteDatabase): Record<string, number> {
   return {
+    career_learning_records: countRows(db,
+      "SELECT COUNT(*) AS count FROM job_events WHERE tenant_id = ? AND entity_kind IN ('career_cohort','career_milestone','career_attempt')", [LOCAL_TENANT]),
     manual_capture_queue: countRows(
       db, "SELECT COUNT(*) AS count FROM manual_capture_queue WHERE tenant_id = ? AND job_id IS NULL", [LOCAL_TENANT],
     ),

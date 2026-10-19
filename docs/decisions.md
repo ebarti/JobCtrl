@@ -1609,6 +1609,16 @@ Cites: R9 streaming-pipeline-latency plan
 
 ## 2026-07-05: Career Evidence Map Is An Operations Read Model Over Existing Facts
 
+Amended 2026-10-18 for selected-job demand: the existing map remains derived.
+Operations separately owns explicit dated cohort snapshots, source-bound
+`career_demand_comparison` determinations and user-chosen learning/evidence
+milestones on the existing exact-v14 journal. A no-model source review precedes
+browser comparison; Profile-lane spend and strict citation/fingerprint checks
+precede acceptance. Milestone completion is user-attested activity with retained
+origin/history, never proof of capability, a readiness score or a Profile/fit
+write. Changed inputs mark historical records; failed refreshes preserve the
+last accepted comparison. See [the workflow](user/scoring-and-employer-analysis.md#selected-job-demand-and-learning-milestones).
+
 Status: accepted
 
 Decision: the Career Evidence Map is an Operations / Read-Side model that

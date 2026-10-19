@@ -401,6 +401,22 @@ prior bytes. See [Reviewed Locale Variants](locale-variants.md).
 
 Optional [company briefings](company-briefings.md) fetch only explicitly selected anonymous public pages and send bounded public text plus the reviewed company identity to the enrichment model. They send no profile, mail, resume or search query. The local database retains source snapshots, model receipts and accepted/failure history; shared company history survives removal of its linked jobs.
 
+## Selected-job comparison data
+
+Reviewing a selected-job cohort is local and makes no model call. Explicit
+comparison sends only the selected saved posting descriptions, their job
+identifiers/title/employer context, and usable confirmed achievement excerpts
+to your configured provider in the Profile lane. Personal contact fields,
+unconfirmed evidence, declared skill lists, aspirations and milestone activity
+are not comparison evidence inputs. No external learning-resource research runs.
+
+Cohort revisions and chosen milestones retain private source snapshots,
+comparison provenance and user completion statements in local SQLite. Historical
+origins remain after Profile/cohort changes and job deletion. The job-data purge
+preserves them and reports their retained `career_learning_records` count.
+They are not sent in general SSE events or converted into Profile skills,
+readiness, fit scores, application approvals or submission authority.
+
 ## Retained Source Proposal History
 
 The opt-in `source-proposals from-history` command checks source hostnames through

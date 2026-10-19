@@ -2,7 +2,10 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { JobCtrlApiClient } from "@jobctrl/api-client";
+import { ENDPOINTS } from "@jobctrl/contracts";
+import { describe, expect, expectTypeOf, it } from "vitest";
+import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
 import { DEMO_ARTIFACTS } from "./artifacts.js";
 import { DEMO_CAPABILITY_MANIFEST } from "./capabilities.js";
 import { materializeDemoSeed } from "./clock.js";
@@ -10,6 +13,7 @@ import { demoSeedDigest } from "./digest.js";
 import { assertDemoSeedInvariants } from "./invariants.js";
 import { scanDemoPrivacy } from "./privacy.js";
 import { DEMO_SEED } from "./seed.js";
+import { DEMO_CAPABILITY_CLASSES } from "./contracts.js";
 
 const CLOCK = { anchor: "2031-01-02T03:04:05.000Z" } as const;
 const CONTOSO_JOB_KEY = "job-contoso-reliability";
@@ -18,13 +22,111 @@ const CONTOSO_GENERATION_ONE_ARTIFACT_IDS = [
   "artifact-contoso-resume-pdf-g1",
 ] as const;
 
+// The shared client also exposes configuration and legacy methods outside this
+// browser port. A changed port/client boundary must update this exact typed set.
+const CLIENT_ONLY_MEMBERS = {
+  baseUrl: true,
+  scoringKeywords: true,
+  reviewResumeFeedbackSignal: true,
+} satisfies Record<Exclude<keyof JobCtrlApiClient, keyof ApiClientPort>, true>;
+
+function expectCompleteClassifiedManifest(
+  manifest: Readonly<
+    Record<string, { readonly class: string; readonly reason: string }>
+  >,
+) {
+  const client = new JobCtrlApiClient();
+  // TS-private transport helpers remain prototype methods at runtime.
+  const internalMembers = new Set([
+    "constructor",
+    "get",
+    "post",
+    "patch",
+    "delete",
+    "request",
+    ...Object.keys(CLIENT_ONLY_MEMBERS),
+  ]);
+  const methods = new Set(
+    [
+      ...Object.getOwnPropertyNames(JobCtrlApiClient.prototype),
+      ...Object.keys(client),
+    ].filter(
+      (name) =>
+        !internalMembers.has(name) &&
+        typeof Reflect.get(client, name) === "function",
+    ),
+  );
+  expect(Object.keys(manifest).toSorted()).toEqual([...methods].toSorted());
+  for (const [method, capability] of Object.entries(manifest)) {
+    expect(DEMO_CAPABILITY_CLASSES, method).toContain(capability.class);
+    expect(capability.reason.trim(), method).not.toBe("");
+  }
+  for (const endpoint of Object.values(ENDPOINTS)) {
+    expect(manifest[endpoint.name]?.class, endpoint.name).toBe(
+      endpoint.demo.class,
+    );
+  }
+}
+
 describe("canonical public demo seed", () => {
   it("has a complete classified API capability manifest", () => {
-    expect(Object.keys(DEMO_CAPABILITY_MANIFEST)).toHaveLength(155);
+    expectTypeOf<keyof typeof DEMO_CAPABILITY_MANIFEST>().toEqualTypeOf<
+      keyof ApiClientPort
+    >();
+    expectCompleteClassifiedManifest(DEMO_CAPABILITY_MANIFEST);
+  });
+
+  it.each(["health", "careerLearning", "writeCareerLearning"])(
+    "rejects a missing public capability: %s",
+    (method) => {
+      const incomplete: Record<string, { class: string; reason: string }> = {
+        ...DEMO_CAPABILITY_MANIFEST,
+      };
+      delete incomplete[method];
+      expect(() => expectCompleteClassifiedManifest(incomplete)).toThrow();
+    },
+  );
+
+  it("rejects extra capabilities, unknown classes and blank explanations", () => {
+    expect(() =>
+      expectCompleteClassifiedManifest({
+        ...DEMO_CAPABILITY_MANIFEST,
+        unregisteredOperation: {
+          class: "browser_local",
+          reason: "Unregistered",
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      expectCompleteClassifiedManifest({
+        ...DEMO_CAPABILITY_MANIFEST,
+        health: { class: "unclassified", reason: "Invalid class" },
+      }),
+    ).toThrow();
+    expect(() =>
+      expectCompleteClassifiedManifest({
+        ...DEMO_CAPABILITY_MANIFEST,
+        health: { class: "browser_local", reason: " " },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a registered endpoint with the wrong supported capability class", () => {
+    expect(() =>
+      expectCompleteClassifiedManifest({
+        ...DEMO_CAPABILITY_MANIFEST,
+        careerLearning: {
+          class: "browser_local",
+          reason: "Incorrect offline support",
+        },
+      }),
+    ).toThrow();
+  });
+
+  it("keeps private offer and compensation capabilities unavailable", () => {
     for (const capability of ["jobOffer", "saveOfferTerms", "recordOfferDecision", "postedCompensationFact", "marketCompensationEstimate"] as const) {
       expect(DEMO_CAPABILITY_MANIFEST[capability].class, capability).toBe("unavailable");
     }
-    expect(Object.values(DEMO_CAPABILITY_MANIFEST).every((entry) => entry.reason.length > 0)).toBe(true);
   });
 
   it("is deterministic, immutable by type, and covers the required lifecycle arms", () => {

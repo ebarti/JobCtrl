@@ -430,6 +430,18 @@ behavior; they do not prove SDK authentication, credential import, live model
 catalog access or model quality. The existing workflow fixtures described above
 use synthetic workflow handles and do not establish live Temporal recovery.
 
+## Career-learning contract
+
+`packages/contracts/src/career-learning.ts` owns strict cohort/preview,
+comparison and milestone wire DTOs. The Python Operations owner publishes the
+`career_demand_comparison` schema into the generated semantic-result registry.
+Endpoint-derived GET/POST `/v1/evidence-map/learning` methods dispatch through
+`career_learning` with exact runtime and tenant bindings. Reads and previews do
+not call a model. Preview fingerprints and expected revisions fence reviewed
+sources and concurrent writes. Only a successful strict, cited determination
+replaces a cohort; source-bound selections and activity have independent
+canonical histories. The demo classifies both endpoints as unavailable.
+
 ## Source proposal review boundary
 
 `SourceProposalEvidenceSchema` and the additive `SourceLocatorCandidateSummary.proposal`
