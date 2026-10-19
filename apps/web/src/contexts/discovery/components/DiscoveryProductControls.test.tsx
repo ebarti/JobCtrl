@@ -31,6 +31,44 @@ beforeEach(() => {
 });
 
 describe("DiscoveryProductControls", () => {
+  it.each([
+    { state: "disabled", reason: null },
+    { state: "active", reason: "Adapter configuration is required for this source." },
+  ])("shows saved origins and preserves the $state source review fence", async ({ state, reason }) => {
+    const promoteSourceLocatorCandidate = vi.fn();
+    renderWithProviders(<DiscoveryProductControls />, {
+      ports: buildTestPorts({ api: {
+        promoteSourceLocatorCandidate,
+        discoveryLocatorCandidates: async () => ({ ok: true, candidates: [{
+          candidateId: "history-1", candidateUrl: "https://jobs.lever.co/synthetic-acme",
+          sourceKind: "ats_api", confidence: 0, detectedAtsKind: "lever",
+          employerDomainMatched: false, manualActionReason: "ambiguous_career_system",
+          discoveredAt: "2026-10-18T09:00:00Z",
+          proposal: {
+            coordinateKey: "https://jobs.lever.co/synthetic-acme", sourceId: "lever:synthetic-acme",
+            atsKind: "lever", boardToken: "synthetic-acme", completeness: "unknown", promotionBlockedReason: reason,
+            overlaps: [{ sourceId: "lever:synthetic-acme", state, seedUrl: "https://jobs.lever.co/synthetic-acme" }],
+            evidence: [{
+              originJobId: "b0410000-0000-4000-8000-000000000001",
+              originPostingUrl: "https://jobs.lever.co/synthetic-acme/posting-1",
+              inputUrl: "https://jobs.lever.co/synthetic-acme/posting-1/apply", urlKind: "application_url",
+              observations: [{ observationId: "obs-1", sourceId: "manual_capture:extension", runId: "saved-capture-run", observedUrl: "https://jobs.lever.co/synthetic-acme/posting-1", observedAt: "2026-10-18T09:00:00Z" }],
+              extraction: { tier: "json_ld", enrichedAt: "2026-10-18T09:00:00Z", snapshotVersion: 3, descriptionSha256: "saved-description", snapshotSha256: "saved-snapshot" },
+              sample: { title: "Platform Engineer", company: "Synthetic Acme", descriptionExcerpt: "Build reliable synthetic systems." },
+            }],
+          },
+        }] }),
+      } }),
+    });
+    expect(await screen.findByText(/Board: lever:synthetic-acme.*Completeness unknown/)).toBeInTheDocument();
+    expect(screen.getByText(`Existing sources: lever:synthetic-acme (${state})`)).toBeInTheDocument();
+    if (reason) expect(screen.getByText(reason)).toBeInTheDocument();
+    expect(screen.getByText(/Platform Engineer.*Synthetic Acme.*Build reliable synthetic systems/)).toBeInTheDocument();
+    expect(screen.getByText(/Runs: saved-capture-run/)).toHaveTextContent("Extraction: json_ld · Snapshot: 3");
+    expect(screen.getByRole("button", { name: "Promote https://jobs.lever.co/synthetic-acme" })).toBeDisabled();
+    expect(promoteSourceLocatorCandidate).not.toHaveBeenCalled();
+  });
+
   it("saves URL-owned source filters with local source-table presentation", async () => {
     function SourceTableHarness() {
       const [filters, setFilters] = useState<

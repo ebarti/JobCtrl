@@ -105,6 +105,14 @@ source fields, input/output limits, model-use flags and error codes.
 | Review queues | locator candidates, quarantine, and manual-capture routes |
 | Feedback | discovery feedback and role-match decision routes |
 
+Source-locator reads are strictly read-only. The opt-in
+`source-proposals from-history` CLI path feeds the same queue and registry with
+saved origin/extraction receipts and unknown completeness. Explicit review
+records coordinate-scoped decisions; rejection persists until a CLI reset.
+Promotion preserves an existing active overlap and refuses held/disabled
+sources. See [Discovery](../user/discovery.md#propose-sources-from-saved-posting-history)
+and the [wire contract](complete-contract.md#discovery-controls).
+
 These controls decide where discovery may look and how proposed sources or jobs
 enter the system. They do not hold provider credentials or raw feed contents.
 

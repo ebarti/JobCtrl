@@ -781,20 +781,37 @@ type and policy metadata are visible as columns instead of compact badges:
 - `GET /v1/discovery/sources/:sourceId/preview` returns local preview leads
   from recent `JobSourceObserved` history for that source; it does not perform
   live scraping.
-- `GET /v1/discovery/locator-candidates`, `GET /v1/discovery/quarantine`, and
-  `GET /v1/discovery/manual-capture` expose the local review queues. Located
-  parseable source candidates are auto-promoted into the active source registry;
-  these queues are for blocked, ambiguous, unparseable, or compatibility pending
-  work.
-  Direct URLs returned by the JobStreaming broad-board adapter feed this same
-  loop: runnable ATS URLs are promoted into the source registry, while unknown
-  owner URLs or ATS URLs that still need adapter configuration remain visible
-  for review.
-- `POST /v1/discovery/locator-candidates/:candidateId/promote` promotes a
-  source locator candidate into an active source registry entry and emits
-  `SourceLocationCandidatePromoted`.
-- `POST /v1/discovery/locator-candidates/:candidateId/reject` removes a local
-  source locator candidate from the review queue.
+- `GET /v1/discovery/locator-candidates` is strictly read-only, including for
+  parseable ATS candidates. It returns `{ ok, candidates }`; existing candidate
+  fields are unchanged. History proposals add optional `proposal` with
+  `coordinateKey`, `sourceId`, nullable `atsKind`/`boardToken`,
+  `completeness: "unknown"`, optional nullable `promotionBlockedReason`, `overlaps[]` (`sourceId`, `state`, `seedUrl`) and
+  `evidence[]`. Each evidence receipt contains `originJobId`,
+  `originPostingUrl`, `inputUrl`, `urlKind` (`posting_url`, `canonical_url`,
+  `application_url`), `observations[]` (observation/source/run IDs, observed URL
+  and time), `extraction` (nullable tier/time/snapshot version and description/
+  snapshot hashes and optional `snapshotEvidence[]`) and `sample` (title, company, bounded description excerpt).
+  Reads join saved receipts by candidate ID and never fetch, learn or promote.
+- `GET /v1/discovery/quarantine` and `GET /v1/discovery/manual-capture` expose
+  their existing local review queues. Direct URLs from broad-board discovery
+  retain their normal learning path, fenced by pending history proposals,
+  durable rejection and disabled/quarantined source intent.
+- `POST /v1/discovery/locator-candidates/:candidateId/promote` explicitly promotes
+  the candidate, reusing a history proposal's active registry overlap without
+  changing its configuration. It records `SourceLocationCandidateReviewed`
+  (`decision: promote`) and `SourceLocationCandidatePromoted` atomically with
+  queue/registry writes. Public destination validation runs before the writer
+  transaction; a changed candidate requires review again. A disabled/non-active overlap returns `409
+  source_review_conflict`; malformed/private coordinates return `400
+  invalid_source_candidate`. The optional decision `reason` is retained.
+- `POST /v1/discovery/locator-candidates/:candidateId/reject` atomically records
+  `SourceLocationCandidateReviewed` (`decision: reject`, candidate ID,
+  `coordinateKey`, optional submitted reason and `decidedAt`) and removes
+  pending aliases for that coordinate. It never changes source state or
+  application data. Suppression survives retries/restarts until the explicit
+  `source-proposals reset CANDIDATE_ID` CLI command records `decision: reset`.
+  `source-proposals from-history` is the only history-scan trigger; no new
+  automatic import/apply hook or schedule is introduced.
 - `POST /v1/discovery/quarantine/:jobKey/decision` approves or rejects a
   quarantined lead and records feedback for source-quality aggregation.
 - `POST /v1/discovery/manual-capture/:itemId/import` records user-mediated

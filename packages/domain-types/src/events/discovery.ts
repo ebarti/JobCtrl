@@ -133,6 +133,22 @@ export function createSourceLocationCandidateDiscovered(
   return createDomainEvent("SourceLocationCandidateDiscovered", tenantId, payload);
 }
 
+export interface SourceLocationCandidateReviewedPayload {
+  readonly candidateId: string;
+  readonly coordinateKey: string;
+  readonly decision: "promote" | "reject" | "reset";
+  readonly reason: string;
+  readonly decidedAt: string;
+}
+
+export type SourceLocationCandidateReviewed = DomainEvent<"SourceLocationCandidateReviewed", SourceLocationCandidateReviewedPayload>;
+
+export function createSourceLocationCandidateReviewed(
+  tenantId: TenantId, payload: SourceLocationCandidateReviewedPayload,
+): SourceLocationCandidateReviewed {
+  return createDomainEvent("SourceLocationCandidateReviewed", tenantId, payload);
+}
+
 // -- SourceLocationCandidatePromoted ---------------------------------------
 
 export interface SourceLocationCandidatePromotedPayload {

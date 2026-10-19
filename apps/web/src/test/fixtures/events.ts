@@ -65,6 +65,7 @@ import {
   createScoreRescoreRequested,
   createSourceLocationCandidateDiscovered,
   createSourceLocationCandidatePromoted,
+  createSourceLocationCandidateReviewed,
   createSourceRegistryEntryCreated,
   createSourceRegistryEntryUpdated,
   createSourceStateChanged,
@@ -216,6 +217,10 @@ export const eventByType = {
     confidence: 0.82,
     evidenceRef: "evidence:candidate-1",
     discoveredAt: NOW,
+  }),
+  SourceLocationCandidateReviewed: createSourceLocationCandidateReviewed(LOCAL_TENANT, {
+    candidateId: "candidate-1", coordinateKey: "https://example.com/",
+    decision: "reject", reason: "User review", decidedAt: NOW,
   }),
   SourceLocationCandidatePromoted: createSourceLocationCandidatePromoted(LOCAL_TENANT, {
     candidateId: "candidate-1",

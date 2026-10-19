@@ -26,6 +26,9 @@ export {
   type SourceLocationCandidateDiscoveredPayload,
   type SourceLocationCandidateDiscovered,
   createSourceLocationCandidateDiscovered,
+  type SourceLocationCandidateReviewedPayload,
+  type SourceLocationCandidateReviewed,
+  createSourceLocationCandidateReviewed,
   type SourceLocationCandidatePromotedPayload,
   type SourceLocationCandidatePromoted,
   createSourceLocationCandidatePromoted,
@@ -405,6 +408,7 @@ import type {
   DiscoveryFeedbackRecorded,
   SourceLocationCandidateDiscovered,
   SourceLocationCandidatePromoted,
+  SourceLocationCandidateReviewed,
   SourceRegistryEntryCreated,
   SourceRegistryEntryUpdated,
   SourceStateChanged,
@@ -524,6 +528,7 @@ export type DomainEventUnion =
   | DiscoveryFeedbackRecorded
   | SourceLocationCandidateDiscovered
   | SourceLocationCandidatePromoted
+  | SourceLocationCandidateReviewed
   | SourceRegistryEntryCreated
   | SourceRegistryEntryUpdated
   | SourceStateChanged
@@ -633,6 +638,7 @@ export const DOMAIN_EVENT_TYPES = [
   "DuplicateJobLinkRejected",
   "DiscoveryFeedbackRecorded",
   "SourceLocationCandidateDiscovered",
+  "SourceLocationCandidateReviewed",
   "SourceLocationCandidatePromoted",
   "SourceRegistryEntryCreated",
   "SourceRegistryEntryUpdated",

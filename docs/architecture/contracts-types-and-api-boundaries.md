@@ -362,7 +362,6 @@ exposes persisted observation DTOs and calculated freshness without transport
 side effects. Python and TypeScript event registries, endpoint JSON Schema
 fixtures and RPC registration observations are updated together.
 
-
 ## Semantic Determination Authority
 
 Contracts owns the versioned semantic codes/labels and strict read envelopes. Worker determinations own meaning, with closed enums, extra-field rejection and canonical citations. API/web/extension consumers join IDs and read persisted verdicts; they never construct provenance or categories from text overlap. Interactive calls are sync RPC, activity calls remain outside Temporal replay.
@@ -431,6 +430,15 @@ behavior; they do not prove SDK authentication, credential import, live model
 catalog access or model quality. The existing workflow fixtures described above
 use synthetic workflow handles and do not establish live Temporal recovery.
 
+## Source proposal review boundary
+
+`SourceProposalEvidenceSchema` and the additive `SourceLocatorCandidateSummary.proposal`
+DTO live in `packages/contracts`. Python's explicit history CLI feeds the existing
+learner/locator queue; the API reads its recorded receipts without running that
+learner. Source-coordinate parsing is a literal URL contract in both runtimes,
+covered by matching structural URL cases. It does not infer employer identity,
+relevance or completeness. `SourceLocationCandidateReviewed` belongs to both
+domain event registries and invalidates the existing source controls over SSE.
 
 ## Offer Contract
 

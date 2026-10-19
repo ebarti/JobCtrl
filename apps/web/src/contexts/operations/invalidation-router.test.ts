@@ -113,6 +113,10 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     discoveryKeys.sourceLocator(LOCAL_TENANT),
     discoveryKeys.sourceRegistry(LOCAL_TENANT),
   ],
+  SourceLocationCandidateReviewed: [
+    discoveryKeys.sourceLocator(LOCAL_TENANT),
+    discoveryKeys.sourceRegistry(LOCAL_TENANT),
+  ],
   SourceLocationCandidatePromoted: [
     discoveryKeys.sourceLocator(LOCAL_TENANT),
     discoveryKeys.sourceRegistry(LOCAL_TENANT),

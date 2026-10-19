@@ -366,7 +366,7 @@ function candidateEvidence(candidate: LocatorCandidate): string {
     candidate.employerDomainMatched ? "Domain matched" : "Domain not verified",
     candidate.manualActionReason
       ? `Manual review: ${manualActionLabel(candidate.manualActionReason)}`
-      : "Ready to auto-approve",
+      : "Awaiting your review",
     `discovered ${new Date(candidate.discoveredAt).toLocaleDateString()}`,
   ].join(" · ");
 }
@@ -1074,13 +1074,31 @@ function SourceLocatorPanel({
             <span className="title-stack">
               <b data-typography="strong-body">{candidate.candidateUrl}</b>
               <span>
-                {label(candidate.sourceKind)} · confidence{" "}
-                {pct(candidate.confidence)} ·{" "}
+                {label(candidate.sourceKind)} · {candidate.proposal ? "Saved posting history · Review required" : `confidence ${pct(candidate.confidence)}`} ·{" "}
                 {candidate.detectedAtsKind
                   ? `${candidate.detectedAtsKind} detected`
                   : "ATS unknown"}
               </span>
               <span>{candidateEvidence(candidate)}</span>
+              {candidate.proposal ? (
+                <>
+                  <span>Board: {candidate.proposal.sourceId}{candidate.proposal.boardToken ? ` · ${candidate.proposal.boardToken}` : ""} · Completeness unknown</span>
+                  <span>{candidate.proposal.overlaps.length
+                    ? `Existing sources: ${candidate.proposal.overlaps.map((entry) => `${entry.sourceId} (${entry.state})`).join(", ")}`
+                    : "No existing source overlap"}</span>
+                  {candidate.proposal.promotionBlockedReason ? <span>{candidate.proposal.promotionBlockedReason}</span> : null}
+                  <span>{candidate.proposal.evidence.length} saved origin records · Up to 3 samples shown</span>
+                  {candidate.proposal.evidence.slice(0, 3).map((evidence, index) => (
+                    <span key={`${evidence.originJobId}:${evidence.urlKind}:${index}`}>
+                      {evidence.sample.title} · {evidence.sample.company} · {evidence.sample.descriptionExcerpt}
+                      <br />Origin posting: {evidence.originPostingUrl} · Job: {evidence.originJobId} · {evidence.urlKind}: {evidence.inputUrl}
+                      <br />Runs: {evidence.observations.map((observation) => observation.runId || "No recorded run").join(", ") || "No recorded run"}
+                      {` · Extraction: ${evidence.extraction.tier ?? "unknown"} · Snapshot: ${evidence.extraction.snapshotVersion ?? "unknown"}`}
+                      {evidence.extraction.snapshotEvidence?.length ? <><br />Saved extraction evidence: {evidence.extraction.snapshotEvidence.join(" · ")}</> : null}
+                    </span>
+                  ))}
+                </>
+              ) : null}
             </span>
             <div className="row-actions">
               <Button
@@ -1106,7 +1124,7 @@ function SourceLocatorPanel({
                 variant="ghost"
                 aria-label={`Promote ${candidate.candidateUrl}`}
                 title="Promote candidate"
-                disabled={promote.isPending || reject.isPending}
+                disabled={promote.isPending || reject.isPending || Boolean(candidate.proposal?.promotionBlockedReason) || candidate.proposal?.overlaps.some((entry) => entry.state !== "active")}
                 onClick={() =>
                   promote.mutate({
                     candidateId: candidate.candidateId,
