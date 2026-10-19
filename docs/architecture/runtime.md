@@ -107,6 +107,27 @@ locking; selector resolution holds a shared selection lock through supervisor
 readiness. Before a candidate is promoted, the old process tree is quiesced
 with the registry's PID/PGID identity checks and both `JOBCTRL_DIR/jobctrl.db`
 and `JOBCTRL_DIR/temporal.db` receive online, hash-verified paired backups.
+While a journal is unfinished, ordinary commands remain blocked. Internal
+`start --no-open` and its detached supervisor may proceed only from the exact
+payload authorized by the matching durable journal, executable transition state
+and immutable manifest. A compatible authenticated public selector may supervise
+that payload; arbitrary public commands and environment flags alone cannot grant
+this exception. Rollback retains this compatible controller while restoring the
+older payload and its exact database pair. The Homebrew frontend respects the
+completed rollback until an explicit update is requested. When a historical
+controller skipped migration using its own compiled schema target, the new
+candidate performs its target-owned sealed migration from that controller's
+verified paired backup before starting services.
+The signed `launcher/update-protocol.json` declaration distinguishes controllers
+that support journal-bound selector startup from historical selectors that would
+wait on their parent's selection lock. A new installer owns staged activation;
+it does not delegate migration control back to the older installed executable.
+For an already interrupted update, a new formula can stage its verified recovery
+controller without replacing the old/candidate journal or activating new data.
+If a selected installation has never created either database, the controller
+initializes and stops its verified predecessor before taking the normal paired
+backup. A partial pair, unsafe file or orphaned SQLite sidecar is refused before
+the update changes release selection.
 The current runtime admits only exact schema v14. A stopped v6 database retains
 the Temporal quiescence proof and private v7/v8/v9 intermediates; exact v7 and v8
 start at their next intermediate. Exact v9 transfers application URL authority

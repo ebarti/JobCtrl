@@ -799,7 +799,7 @@ exist only in the installed launcher.
 | `stop` / `status` / `open` | Stop the runtime, report its state (`--json`, or `--pipeline` for pipeline stats), or open the app. |
 | `logs [component]` | Show the last 200 lines of the `temporal`, `worker`, or `api` log, or of all three when no component is given. |
 | `version` | Print the installed version (`--json`). |
-| `update` / `rollback` / `uninstall` | Install a newer release, return to an earlier one (`--to <build-id>`), or remove JobCtrl. `uninstall --remove-data` also deletes your local data after you type a confirmation phrase. |
+| `update` / `rollback` / `uninstall` | Install a newer release, restore an earlier application and its saved database pair (`--to <build-id>`), or remove JobCtrl. Rollback keeps a compatible recovery launcher; Homebrew preserves the selection until an explicit update. `uninstall --remove-data` also deletes your local data after you type a confirmation phrase. |
 | `backup` | Snapshot `jobctrl.db` and `temporal.db` as a pair (`--output <directory>`); see [Back Up And Restore](data-and-safety.md#back-up-and-restore). |
 
 | Domain command | What it does |
