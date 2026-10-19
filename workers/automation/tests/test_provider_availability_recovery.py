@@ -76,6 +76,25 @@ def test_rate_failure_excludes_the_model_route_and_reset_retries_it(monkeypatch,
     assert provider_route_available("codex")
 
 
+@pytest.mark.asyncio
+async def test_analysis_leg_never_calls_a_previously_discarded_sdk_route():
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.infrastructure.analysis.ensemble import _draft_with_retry
+
+    class UnavailableDraft:
+        provider_id, model_id = "codex", "unavailable-model"
+
+        async def draft(self, *args):
+            raise AssertionError("Discarded SDK route must never be called")
+
+    assert record_provider_failure(
+        "codex", "unavailable-model", failure(code="response_too_many_failed_attempts", status=429),
+    )
+    with pytest.raises(DeterminationFailure, match="provider_error"):
+        await _draft_with_retry(UnavailableDraft(), system_prompt="synthetic", jd_snapshot="synthetic",
+                                max_retries=2, verify_prose=lambda _: None)
+
+
 @pytest.mark.parametrize("error", [ValueError("schema"), RuntimeError("semantic result"), json.JSONDecodeError("invalid", "", 0)])
 def test_response_failures_do_not_discard_a_provider(error):
     assert not record_provider_failure("codex", "model", error)

@@ -497,6 +497,21 @@ class _StubSynthesizer:
 
 
 class TestEnsemble:
+    @pytest.mark.parametrize("code", ["provider_error", "budget_denied", "cache_binding_invalid", "persistence_error"])
+    async def test_verifier_operational_failure_does_not_redraft_on_the_same_bound_attempt(self, code) -> None:
+        from jobctrl.domain.determinations import DeterminationFailure
+        from jobctrl.infrastructure.analysis.ensemble import _draft_with_retry
+
+        adapter = _StubDraftAdapter("synthetic", returns=_grounded_dict())
+
+        def unavailable(_analysis):
+            raise DeterminationFailure(code)
+
+        with pytest.raises(DeterminationFailure, match=code):
+            await _draft_with_retry(adapter, system_prompt="sys", jd_snapshot=JD,
+                                    max_retries=2, verify_prose=unavailable)
+        assert adapter.calls == 1
+
     async def test_all_legs_succeed_produces_full_outcome(self) -> None:
         adapters = (
             _StubDraftAdapter("claude-opus-4-8", returns=_grounded_dict("claude")),
@@ -554,6 +569,8 @@ class TestEnsemble:
         assert bad.prompts[0] == "sys"
         assert all('"ref_id": "r1"' in prompt and '"span": "ten years of Rust"' in prompt for prompt in bad.prompts[1:])
         assert all("untrusted data" in prompt for prompt in bad.prompts[1:])
+        assert all('"ideal_candidate_narrative":' in prompt for prompt in bad.prompts[1:])
+        assert all("untrusted candidate" in prompt for prompt in bad.prompts[1:])
         assert len(outcome.drafts) == 1
         assert outcome.failures[0].model_id == "gpt-5.4"
         # The grounding violation is captured as raw audit output.
@@ -634,6 +651,7 @@ class TestEnsemble:
             )
         assert synthesizer.prompts[0] == "synth-sys"
         assert '"span": "Rust async runtime"' in synthesizer.prompts[1]
+        assert '"ideal_candidate_narrative":' in synthesizer.prompts[1]
 
 
 class TestAgreement:

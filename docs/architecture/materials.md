@@ -70,8 +70,13 @@ otherwise verified canonical analysis.
 Code checks requirement/evidence ID membership and verbatim employer spans. Every draft and synthesis receives source-bound claim verification, including candidate facts and process narration. The separate model quality judge remains where used. There is no process-subject grammar, protected-class phrase screen or fabrication lexicon. Job interpretation records requirement scope and protected-class flags before consumers use the analysis. Invalid or unsupported output enters repair/failure without replacing accepted analysis.
 
 Grounding retries include the rejected span and its requirement/keyword reference
-as explicitly untrusted repair data. The same posting remains the authority;
+as explicitly untrusted repair data. Grounding and semantic-verification retries
+also receive the rejected typed analysis for targeted correction of the identified
+fields. The same posting remains the authority;
 the membership gate and retry bound stay unchanged for drafts and synthesis.
+An unavailable route is skipped before a direct SDK draft. Provider, budget,
+cache, persistence and invalid canonical-source failures leave the current bound
+attempt instead of causing another paid draft through this repair loop.
 
 ### Reuse And Lifecycle
 
