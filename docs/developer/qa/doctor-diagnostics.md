@@ -17,33 +17,13 @@ which integration needs further verification. For user setup, use
 [Getting Started](../../user/getting-started.md); for check selection, use
 [Reliability & QA](../../local-reliability-qa.md).
 
-## Assessment lineage (#898 / BK-007)
+## Test isolation
 
-The historical [BK-007 requirement](https://github.com/ebarti/JobCtrl/blob/a1526649a395b9febb4c20ef30dd946945014a21/docs/backlog.md#L73-L75)
-asked for OS credential support, browser/PDF/Temporal readiness, board
-dependencies and bounded live-smoke diagnostics. The
-[cutover disposition](https://github.com/ebarti/JobCtrl/blob/4b24421f339839963d5877d9cebdb06ec5c73b84/docs/developer/workflow-cutover.md)
-required revalidation rather than treating that list as current defects.
-This assessment rechecks the owners at source revision
-`f734ef8bf1d27e3219b2122aed089421f61b7ca8`; it does not add a production
-integration or change configuration ownership.
-
-| Earlier delivery | Evidence still applicable | Limit of that evidence |
-| --- | --- | --- |
-| [#979](https://github.com/ebarti/JobCtrl/pull/979), commit `d00c4df88ac356bdf910b5e8d6017eca85aa0484` | Introduced this inventory and controlled Typer cases; fixed HEAD 404 being reported as reachable. The current `doctor()` still accepts only 2xx/401/405. | Its commit message records 86 passing tests at `f3a09ee65a72796a54e27b2ab2eb7f253b702a45` with a temporary legacy-test guard. That is historical evidence, not a current suite result; the temporary guard was not shipped. |
-| [#977](https://github.com/ebarti/JobCtrl/pull/977), commit `06984080a22d6b456d0c9a6d661162190b1693f5` | Corrected source-mode missing-`npx` advice to Node.js 22.13+ and persisted Playwright-test isolation. The six CLI cases still cover source advice and executable/non-executable bundled wrappers. | Its six passing tests and review/QA receipts concern the earlier candidate `137797bde5537034583dfdcfc946f8ae940ea2aa`. They do not establish installed payload or MCP execution health. |
-
-Current revalidation reproduced the remaining **test-isolation** gap: the
-Temporal, Langfuse, Gmail and budget modules invoked unrelated host boundaries.
-A retained guard intercepted those attempts before reading credentials or
-starting processes; all 12 legacy cases failed the isolation assertion. The
-small maintenance change lives in the existing
-[worker fixtures](../../../workers/automation/tests/conftest.py): only those
-four modules receive synthetic unrelated inputs. Temporal still exercises its
-client factory with mocked `Client.connect`; Langfuse still owns HTTP and disable
-state; Gmail cases still own their diagnostic inputs; budget coverage still
-uses actual accounting in a disposable SQLite database. Production behavior
-and the zero-exit diagnostic contract are unchanged.
+Doctor tests use synthetic inputs for unrelated host boundaries. Temporal cases
+exercise the client factory with a mocked connection; Langfuse cases own their
+HTTP and disable state; Gmail cases own their diagnostic inputs; budget cases
+use actual accounting in a disposable SQLite database. These fixtures must not
+read host credentials or start unrelated processes.
 
 ## What the command observes
 
@@ -109,7 +89,7 @@ CAPTCHA solves or submission to obtain a green setup report. Provider auth/model
 availability, live boards, Gmail accounts and Langfuse trace ingestion remain
 unverified without separate authorized product-path evidence.
 
-## Controlled CLI evidence and remaining verification
+## Verification boundaries
 
 `test_doctor_diagnostics.py` invokes the real Typer `doctor` command with an
 owned temporary directory and synthetic credential, profile, browser, provider,
@@ -119,13 +99,6 @@ healthy local dependencies, source `npx` versus a bundled executable wrapper,
 and a Langfuse status matrix. In the pre-fix command, synthetic HEAD 404 produced
 `Langfuse OK reachable`; the same case now reports `MISSING` with status 404.
 All these cases retain diagnostic exit code zero.
-
-On 2026-10-19 the prepared locked Python environment executed the six selected
-doctor modules: diagnostics, Playwright, Temporal, Langfuse, Gmail and LLM budget.
-All 28 cases passed, with no skipped cases and no forbidden-boundary guard hits.
-The retained #898 measurement includes probe source, source/lock hashes, JUnit,
-captured CLI output, UTC start/finish times and the earlier blocked attempts.
-This establishes synthetic command classification and test isolation only.
 
 These controlled statuses verify classification and command wiring. They do not
 verify a live Keychain, Credential Manager, Secret Service, user database,
