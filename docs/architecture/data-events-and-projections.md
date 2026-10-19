@@ -358,3 +358,15 @@ recorded candidate ID and calculates registry overlap from exact coordinates;
 coverage remains unknown. The existing Discovery UI invalidates its locator and
 registry queries on the reviewed event. Application records, schedule settings
 and job identity are outside this writer's boundary.
+
+## Private Offer Revisions
+
+The scoped `offer` ledger in `job_events` is canonical private Outcomes state,
+like the existing screening revision ledger. Its `OfferRecordChanged` row
+contains confirmed terms or a decision; the event-stream adapter publishes
+only the corresponding revision/decision IDs and JobId. The complete private
+record is available only through the offer read. Broad activity/audit views
+show an update marker, not amounts, quotations or notes. The first saved offer
+also records one ordinary offer milestone; corrections preserve the milestone
+and change only the offer read model. Outreach keeps its own reviewed draft
+and source snapshot without gaining submission authority.

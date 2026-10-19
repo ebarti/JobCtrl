@@ -1,3 +1,5 @@
+import { OutreachGenerationError } from "./outreach-generation-errors.js";
+import { registerOfferRoutes } from "./offer-routes.js";
 import { readCompanyBriefing } from "./company-briefings.js";
 
 import { createProviderHandlers, dispatchProviderModelCatalog, providerOperationError } from "./provider-handlers.js";
@@ -1821,6 +1823,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       );
     },
   );
+
+  registerOfferRoutes(app, options.dbPath);
 
   app.get("/v1/outcomes", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => listApplicationOutcomes(db)),
@@ -3798,6 +3802,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
             contactId,
             jobId,
             ...(body.kind ? { kind: body.kind } : {}),
+            ...(body.offerRevisionId ? { offerRevisionId: body.offerRevisionId } : {}),
             ...(body.applicationRole ? { applicationRole: body.applicationRole } : {}),
             ...(body.llmModel ? { llmModel: body.llmModel } : {}),
           },
@@ -3826,6 +3831,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
             threadId,
             editedBodyText: body.editedBodyText,
             ...(body.kind ? { kind: body.kind } : {}),
+            ...(body.offerRevisionId ? { offerRevisionId: body.offerRevisionId } : {}),
             ...(body.applicationRole ? { applicationRole: body.applicationRole } : {}),
             ...(body.llmModel ? { llmModel: body.llmModel } : {}),
           },
@@ -4168,6 +4174,10 @@ function interviewCatalogError(reply: FastifyReply, error: unknown) {
 }
 
 function outreachTransitionError(reply: FastifyReply, error: unknown): { ok: false; error: string; message: string } {
+  if (error instanceof OutreachDraftGatesNotPassedError) {
+    void reply.code(409);
+    return { ok: false, error: "draft_gates_not_passed", message: error.message };
+  }
   if (error instanceof OutreachNotFoundError) {
     void reply.code(404);
     return { ok: false, error: "outreach_thread_not_found", message: error.message };
@@ -5029,6 +5039,10 @@ function withDb<T>(
         message: error.message,
       };
     }
+    if (error instanceof OutreachGenerationError) {
+      void reply.code(error.code === "budget_denied" ? 429 : error.code === "provider_unavailable" ? 503 : error.code.startsWith("offer_") ? 409 : 502);
+      return { ok: false, error: error.code, message: error.message };
+    }
     if (error instanceof SemanticStageError) {
       void reply.code(error.code === "provider_unavailable" ? 503 : error.code === "budget_denied" ? 429 : 502);
       return {ok:false,error:error.code,message:"Resume verification could not complete. Retry after resolving the reported status."};
@@ -5100,6 +5114,10 @@ async function withWritableDb<T>(
     db = openDatabase(dbPath);
     return await write(db);
   } catch (error) {
+    if (error instanceof OutreachGenerationError) {
+      void reply.code(error.code === "budget_denied" ? 429 : error.code === "provider_unavailable" ? 503 : error.code.startsWith("offer_") ? 409 : 502);
+      return { ok: false, error: error.code, message: error.message };
+    }
     if (error instanceof SemanticStageError) {
       void reply.code(error.code === "provider_unavailable" ? 503 : error.code === "budget_denied" ? 429 : 502);
       return {ok:false,error:error.code,message:"Resume verification could not complete. Retry after resolving the reported status."};

@@ -397,6 +397,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
     digestKeys.all(LOCAL_TENANT),
   ],
+  OfferRecordChanged: [outcomesKeys.detail(LOCAL_TENANT, JOB_ID), jobsKeys.detail(LOCAL_TENANT, JOB_ID), outreachKeys.threads(LOCAL_TENANT)],
   ApplicationOutcomeRecorded: [
     outcomesKeys.lists(LOCAL_TENANT),
     outcomesKeys.detail(LOCAL_TENANT, JOB_ID),

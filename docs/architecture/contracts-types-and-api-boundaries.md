@@ -362,7 +362,6 @@ exposes persisted observation DTOs and calculated freshness without transport
 side effects. Python and TypeScript event registries, endpoint JSON Schema
 fixtures and RPC registration observations are updated together.
 
-
 ## Semantic Determination Authority
 
 Contracts owns the versioned semantic codes/labels and strict read envelopes. Worker determinations own meaning, with closed enums, extra-field rejection and canonical citations. API/web/extension consumers join IDs and read persisted verdicts; they never construct provenance or categories from text overlap. Interactive calls are sync RPC, activity calls remain outside Temporal replay.
@@ -440,3 +439,16 @@ learner. Source-coordinate parsing is a literal URL contract in both runtimes,
 covered by matching structural URL cases. It does not infer employer identity,
 relevance or completeness. `SourceLocationCandidateReviewed` belongs to both
 domain event registries and invalidates the existing source controls over SSE.
+
+## Offer Contract
+
+`packages/contracts/src/offers.ts` owns strict user-attested offer term, source,
+expected-ID command and immutable history DTOs. `apps/api/src/offers.ts` owns
+transactional conflict/history semantics; `offer-routes.ts` is its HTTP adapter.
+The existing `generate_outreach_draft` RPC gains closed offer communication
+kinds and an optional canonical offer revision ID. Python reads these sources
+from the ledger; callers cannot supply a substitute offer or achievement pack.
+`OfferRecordChanged` public vocabulary contains references only. Private
+payloads are redacted by the SSE adapter before crossing the browser event
+boundary. Browser offer actions and compensation reads have explicit
+unavailable demo capabilities.

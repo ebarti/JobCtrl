@@ -159,3 +159,40 @@ and rollback are documented under
 | API implementation | Outcome routes and projections are composed in `apps/api/src/server.ts`, `apps/api/src/read-model.ts`, and `apps/api/src/projections.ts`. |
 | Web implementation | `apps/web/src/contexts/apply/components/ApplicationOutcomes.tsx`, Operations outcome hooks/keys, `views/dashboard/`, and `views/analytics/`. |
 | Deep architecture | [Apply Feedback & Projections](../architecture/read-model.md#apply-review-and-outcome-feedback) and its [sensitive projection boundaries](../architecture/read-model.md#evidence-analytics-and-compensation). |
+
+
+## Actual Offer Terms And Decisions
+
+In Job Detail → **Application outcomes**, **Offer terms and decisions** records
+actual terms from an employer letter, message or your attested conversation.
+For each cash component, enter the offered amount, a three-letter currency
+(or leave it unknown), and its time base. Equity, benefits and the decision
+deadline are optional: blank values remain **Unknown**. JobCtrl does not infer
+an equity valuation, exchange rate, annualization, total package or deadline.
+Paste the source reference and verbatim quotation, then explicitly confirm that
+it supports every entered term. No source is fetched automatically.
+
+Saving the first terms records one offer milestone if no reviewed offer milestone already exists. Later terms revisions
+require a reason and preserve the earlier source and values. **Record offer
+decision** stores your accepted or declined attestation against the exact
+current terms. A later decision requires a correction reason and the current
+decision ID; conflicting saves ask you to reload. Offer history retains both
+records. When terms change after a decision, the old decision stays visible
+with an explanation that it refers to earlier terms. Review the new terms
+before reconfirming. These actions need no interview-prep session and never
+submit an application or change a pipeline stage or Apply approval.
+
+**Compare with existing compensation evidence** displays the saved posting
+facts and market estimate separately, with their recorded currency, component,
+time base, source and confidence. Missing evidence stays missing. Comparisons
+do not fetch sources or turn estimates into actual offered terms.
+
+**Draft an offer communication** selects a linked contact and a negotiation,
+clarification, acceptance or decline purpose. Acceptance and decline drafts
+require your matching decision on the current terms. The existing
+[outreach workflow](contacts-and-outreach.md#offer-communications) verifies,
+reviews and approves every generated or edited message before copying.
+
+Terms, quotations and decision reasons are private canonical ledger data.
+General activity, curated job audit and event-stream invalidations expose only
+safe references; use the offer panel to inspect the private record.

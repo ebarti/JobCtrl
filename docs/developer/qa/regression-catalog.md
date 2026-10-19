@@ -530,6 +530,26 @@ sentence punctuation or separated by commas.
 
 For Discovery, save literal target settings and plan a run without an interpretation receipt or second approval. Inspect the actual JobStreaming query/location/remote parameters and each provider’s supported filters; capability warnings are not currently displayed in JobCtrl. Structurally valid fetched results must ingest without an extra model gate, even when they do not lexically resemble the query. Exact user-authored title exclusions retain durable filtered receipts. Exercise capture/ack interruption, lease fencing, retry idempotency and limits. Full-posting interpretation/scoring retain model authority and source provenance. Historical native cutovers preserve authored cells, canonical jobs, accepted files and raw captures.
 
+For actual offers, drive the per-job offer HTTP/client entry and rendered
+Application outcomes panel without interview prep. Verify null equity,
+benefits/deadlines and explicit unknown currency/time base, source confirmation,
+concurrent expected-ID conflicts, accepted-to-declined corrections, retained
+prior terms/decisions and unchanged stage/submit records. Read and refresh the
+ordinary projections after a correction; the offer reader must retain its
+current canonical revision. Inspect the real outreach prompt and persisted
+source context: actual terms, canonical achievements and bound compensation
+evidence have distinct authority. Opposing fake-model verdicts must control
+the gate for identical inputs. Malformed/provider/budget failures and a source
+change during generation preserve the last approved text. Stale bindings block
+approval, clipboard copy and send logging; general SSE/activity/audit reads must
+exclude every private quotation and reason. Browser QA covers recording terms,
+deciding/correcting, reload/history, a linked-contact draft entry and mobile
+layout, using owned synthetic data only. Run `offer-outcomes.spec.ts` in the
+production API/RPC browser gate (`JOBCTRL_E2E_ISOLATED=0`), which exercises
+supporting history reads as well. CI names it explicitly in that step; the
+isolated fixture skips it because it denies those Python RPCs. An isolated
+skip is not offer product-path proof.
+
 For interview preparation, inspect each actual drafting prompt with a supported
 question and explicitly empty selections. Only that question's selected evidence
 may appear. Drive unsupported/accepted outcomes with verifier verdicts; the

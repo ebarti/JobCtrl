@@ -292,3 +292,21 @@ stored authority and never retranslates. See the
 ## Optional company context
 
 `GET /v1/jobs/:jobId` includes `companyBriefing` when a company link has been explicitly confirmed. This read joins canonical company records and the stored determination; it never refreshes public sources. Job Detail and Interviews render this same snapshot. See [the wire contract](complete-contract.md#company-briefings) and [user controls](../user/company-briefings.md).
+
+
+## Actual Offers
+
+`GET /v1/jobs/:jobId/offer` reads the private current terms, current decision
+and immutable histories. `POST .../offer/terms` saves a user-confirmed source
+and typed cash/equity/benefit/deadline terms with `expectedRevisionId`.
+`POST .../offer/decisions` records accepted/declined attestations against the
+current `termsRevisionId` with `expectedDecisionId`. Revisions/corrections
+require reasons; stale or conflicting writes return `409 offer_conflict`.
+Neither command needs interview prep or changes submission/pipeline authority.
+See the [field-level offer contract](complete-contract.md#actual-offer-terms-and-decisions).
+
+Outreach generation/revision also accepts the closed offer-specific `kind`
+values and `offerRevisionId`. The worker loads canonical sources, applies the
+existing claim/quality gates and fences source changes at persistence. Stale
+offer bindings return `409 draft_gates_not_passed` on approval/send logging.
+Provider, spend and structural failures retain the last approved message.

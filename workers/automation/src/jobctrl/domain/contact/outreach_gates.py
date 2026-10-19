@@ -26,6 +26,7 @@ class OutreachClaimProvenance:
     contact_fact_ids: tuple[str, ...] = field(default_factory=tuple)
     profile_grounded: bool = False
     rationale: str = ""
+    source_citations: tuple[dict[str, Any], ...] = ()
 
     def to_read_model(self) -> dict[str, Any]:
         return {
@@ -35,6 +36,7 @@ class OutreachClaimProvenance:
             "contactFactIds": list(self.contact_fact_ids),
             "profileGrounded": self.profile_grounded,
             "rationale": self.rationale,
+            **({"sourceCitations": list(self.source_citations)} if self.source_citations else {}),
         }
 
     @classmethod
@@ -48,6 +50,7 @@ class OutreachClaimProvenance:
             ),
             profile_grounded=bool(data.get("profileGrounded") or data.get("profile_grounded")),
             rationale=str(data.get("rationale") or ""),
+            source_citations=tuple(data.get("sourceCitations") or ()),
         )
 
 
@@ -68,6 +71,7 @@ class DraftGateResults:
     computed_against: str = COMPUTED_AGAINST_DRAFT
     determination_ids: tuple[str, ...] = ()
     line_anchors: tuple[dict[str, Any], ...] = ()
+    source_context: dict[str, Any] | None = None
 
     @property
     def passed(self) -> bool:
@@ -89,6 +93,7 @@ class DraftGateResults:
             "computedAgainst": self.computed_against,
             "determinationIds": list(self.determination_ids),
             "lineAnchors": list(self.line_anchors),
+            "sourceContext": self.source_context,
             "fabrications": [dict(finding) for finding in self.fabrications],
             "validation": {
                 "passed": self.validation.passed,
@@ -128,4 +133,5 @@ class DraftGateResults:
             computed_against=str(data.get("computedAgainst") or COMPUTED_AGAINST_DRAFT),
             determination_ids=tuple(data.get("determinationIds") or ()),
             line_anchors=tuple(data.get("lineAnchors") or ()),
+            source_context=data.get("sourceContext"),
         )

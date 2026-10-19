@@ -20,7 +20,10 @@ const CONTOSO_GENERATION_ONE_ARTIFACT_IDS = [
 
 describe("canonical public demo seed", () => {
   it("has a complete classified API capability manifest", () => {
-    expect(Object.keys(DEMO_CAPABILITY_MANIFEST)).toHaveLength(150);
+    expect(Object.keys(DEMO_CAPABILITY_MANIFEST)).toHaveLength(155);
+    for (const capability of ["jobOffer", "saveOfferTerms", "recordOfferDecision", "postedCompensationFact", "marketCompensationEstimate"] as const) {
+      expect(DEMO_CAPABILITY_MANIFEST[capability].class, capability).toBe("unavailable");
+    }
     expect(Object.values(DEMO_CAPABILITY_MANIFEST).every((entry) => entry.reason.length > 0)).toBe(true);
   });
 

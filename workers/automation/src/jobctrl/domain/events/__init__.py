@@ -266,6 +266,7 @@ DOMAIN_EVENT_TYPES: tuple[str, ...] = (
     "ApplicationFailed",
     "ApplyReviewDecisionRecorded",
     "ApplicationOutcomeRecorded",
+    "OfferRecordChanged",
     "OutcomeSuggestionDecided",
     "StageStarted",
     "StageCompleted",
