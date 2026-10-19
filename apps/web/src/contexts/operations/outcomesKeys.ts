@@ -3,6 +3,7 @@ import type { TenantId } from "@jobctrl/domain-types";
 import type { JobId } from "./types.js";
 
 export const outcomesKeys = {
+  offer: (tenantId: TenantId, jobId: JobId) => [...outcomesKeys.detail(tenantId, jobId), "offer"] as const,
   all: (tenantId: TenantId) => ["tenant", tenantId, "outcomes"] as const,
   lists: (tenantId: TenantId) => [...outcomesKeys.all(tenantId), "list"] as const,
   list: (tenantId: TenantId) => [...outcomesKeys.lists(tenantId), "global"] as const,

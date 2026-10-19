@@ -430,3 +430,17 @@ a browser request. These tests prove mapping, parsing, transport and security
 behavior; they do not prove SDK authentication, credential import, live model
 catalog access or model quality. The existing workflow fixtures described above
 use synthetic workflow handles and do not establish live Temporal recovery.
+
+
+## Offer Contract
+
+`packages/contracts/src/offers.ts` owns strict user-attested offer term, source,
+expected-ID command and immutable history DTOs. `apps/api/src/offers.ts` owns
+transactional conflict/history semantics; `offer-routes.ts` is its HTTP adapter.
+The existing `generate_outreach_draft` RPC gains closed offer communication
+kinds and an optional canonical offer revision ID. Python reads these sources
+from the ledger; callers cannot supply a substitute offer or achievement pack.
+`OfferRecordChanged` public vocabulary contains references only. Private
+payloads are redacted by the SSE adapter before crossing the browser event
+boundary. Browser offer actions and compensation reads have explicit
+unavailable demo capabilities.

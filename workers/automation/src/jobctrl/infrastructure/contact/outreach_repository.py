@@ -53,9 +53,10 @@ logger = logging.getLogger(__name__)
 class SqliteOutreachThreadRepository:
     """SQLite-backed implementation of ``OutreachThreadRepository``."""
 
-    def __init__(self, conn: sqlite3.Connection, *, publisher: EventPublisher) -> None:
+    def __init__(self, conn: sqlite3.Connection, *, publisher: EventPublisher, before_save=None) -> None:
         self._conn = conn
         self._publisher = publisher
+        self._before_save = before_save
 
     # ------------------------------------------------------------------ load
 
@@ -193,6 +194,10 @@ class SqliteOutreachThreadRepository:
         tenant = str(tenant_id)
         thread_id = str(thread.thread_id)
         with self._conn:
+            if self._before_save is not None:
+                if not self._conn.in_transaction:
+                    self._conn.execute("BEGIN IMMEDIATE")
+                self._before_save()
             self._conn.execute(
                 """
                 INSERT INTO outreach_threads (

@@ -1,3 +1,4 @@
+import { OfferPanel } from "./OfferPanel.js";
 import {
   APPLICATION_OUTCOME_KINDS,
   ManualApplicationOutcomeRequestSchema,
@@ -163,6 +164,7 @@ export function JobOutcomePanel({ jobId }: JobOutcomePanelProps) {
       {data ? (
         <>
           {data.interpretationStatus?.status === "unavailable" ? <div className="banner inline" role="status">Email outcome interpretation unavailable: {data.interpretationStatus.failureCode}. Retry feedback sync after resolving the model or budget failure.</div> : null}
+          <OfferPanel key={jobId} jobId={jobId} />
           <ManualOutcomeForm jobId={jobId} />
           <OutcomeTimeline outcomes={data.outcomes} />
           <OutcomeSuggestionsPanel suggestions={pendingSuggestions} />

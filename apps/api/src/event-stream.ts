@@ -1,3 +1,4 @@
+import { offerEventReferences } from "./offers.js";
 import { screeningEventReferences } from "./screening-answers.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
@@ -306,6 +307,10 @@ function canonicalSseEnvelope(row: EventRow): Record<string, unknown> | null {
   }
   if (!isRecord(payload)) {
     return null;
+  }
+  if (row.event_type === "OfferRecordChanged") {
+    payload = offerEventReferences(payload);
+    if (!isRecord(payload)) return null;
   }
   if (row.event_type === "CompanyBriefingRecorded") return null;
   if (row.event_type === "ScreeningAnswerRecorded") {

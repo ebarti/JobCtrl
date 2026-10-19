@@ -2470,3 +2470,65 @@ fail validation. Existing HTTP security rejection precedes provider dispatch.
 
 This changes no #954 JSON-RPC envelope policy or durable workflow result.
 See the [incremental migration recipe and synthetic test seams](../architecture/contracts-types-and-api-boundaries.md#incremental-endpoint-migration).
+
+## Actual Offer Terms And Decisions
+
+All routes use a canonical UUID `jobId`, local tenant and the normal local
+mutation-origin boundary. No endpoint sends mail or changes pipeline/submit
+approval. Reads need no worker; only outreach generation/revision uses one.
+
+| Route | Request | Response |
+| --- | --- | --- |
+| `GET /v1/jobs/:jobId/offer` | None | `OfferReadResponse`: `ok`, `jobId`, `currentTerms`, `currentDecision`, `termsHistory`, `decisions` |
+| `POST /v1/jobs/:jobId/offer/terms` | `expectedRevisionId: UUID or null`, `terms`, optional `correctionReason` | Complete `OfferReadResponse` |
+| `POST /v1/jobs/:jobId/offer/decisions` | `expectedDecisionId: UUID or null`, current `termsRevisionId`, `decision: accepted or declined`, `occurredAt`, `source`, optional `correctionReason` | Complete `OfferReadResponse` |
+
+`OfferSource` is strict: `reference` (1–1000 characters), `quote` (1–8000),
+`capturedAt` (canonical ISO timestamp) and `userConfirmed: true`. This is a
+human attestation, not a parser's semantic finding. `terms.source` records the
+overall offer; every known term carries its own source as well. The web form
+uses one explicitly reconfirmed source for all entered terms in a revision.
+
+`terms.cash` contains at most 20 strict entries with `component` (`base_salary`,
+`bonus`, `signing_bonus`, `commission`, `other`), finite nonnegative `amount`
+(up to 1e12), three-uppercase-letter `currency` or null, `period` (`year`,
+`month`, `week`, `hour`, `one_off`, `unknown`) and `source`. `equity` and
+`benefits` are `{ value: 1–4000 characters, source }` or null;
+`decisionDeadline` is `{ value: ISO timestamp, source }` or null. Null and
+unknown remain unknown; no conversion, annualization, equity valuation or
+implicit total is performed.
+
+Terms history adds `revisionId` and `recordedAt`; decisions add `decisionId`
+and `recordedAt`. Expected IDs must match the current record. Every terms
+revision after the first and every decision correction requires a nonempty
+reason (up to 1000 characters). A decision must reference current terms.
+A later terms revision leaves the prior decision attached to its original
+revision; it does not silently reconfirm it. History arrays retain commit order.
+The first terms write atomically adds one `offer` milestone with no prep link when none already exists.
+
+Invalid schema/JobId returns `400 invalid_offer`/`invalid_job_id`; absent jobs
+return `404 not_found`; stale expected IDs, missing correction reasons and
+noncurrent decision terms return `409 offer_conflict`. Failure preserves the
+last committed record.
+
+Outreach request `kind` additionally accepts `offer_negotiation`,
+`offer_clarification`, `offer_acceptance`, `offer_decline`; `offerRevisionId`
+optionally fences the current revision. These kinds require an existing offer
+for the linked job. Acceptance/decline require a matching current user decision.
+The worker assembles canonical sources; request bodies cannot inject sources.
+Generated and edited drafts pass the existing claim and independent quality
+gates. `gateResults.sourceContext` contains `{ binding: { jobId,
+termsRevisionId, decisionId }, fingerprint, sources: [{ source_id, text }] }`.
+The offer detail remains the canonical user-facing terms record.
+
+A draft read includes `offerSourcesCurrent` for offer kinds. Terms/decision
+changes prevent approval and send logging with `409 draft_gates_not_passed`;
+copying rechecks this current binding. Draft bodies/history remain readable.
+Generation failures expose safe `provider_unavailable` (503), `budget_denied`
+(429), `offer_*` source/decision conflicts (409), or structural verification
+codes (502); they do not forward source or provider prose. The previous
+approved message survives every failed replacement. No send transport exists.
+
+`OfferRecordChanged` SSE carries only `{ jobId, revisionId, decisionId }` and
+the ordinary tenant/time envelope. Private terms, quotations and correction
+reasons never enter this public payload, activity summaries or curated audit.

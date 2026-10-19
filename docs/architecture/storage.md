@@ -460,3 +460,21 @@ Exact-v14 screening answer revisions use existing indexed `job_events` entries w
 ## Company Briefing Ledger
 
 Materials stores immutable `company_briefing_config`, `company_briefing_link`, `company_briefing_accepted` and `company_briefing_attempt` records in the existing indexed exact-v14 `job_events` table. `entity_ref` is the explicit company URL hash or canonical JobId; tenant and event ID select the current revision. Accepted snapshots retain bounded public text and join their recorded `semantic_determinations` ID. Configuration and company history have no JobId foreign key and survive removal of the last linked job. Job link rows use the canonical JobId foreign key. No schema migration or separate store is introduced. See [Company Briefings](../user/company-briefings.md).
+
+
+## Private Offer Ledger
+
+Actual offer terms and accepted/declined corrections use immutable
+`job_events` rows with `entity_kind = offer`, `entity_ref = JobId` and
+`event_type = OfferRecordChanged` on the existing exact-v14 schema. Payloads
+contain a `termsRevision` or `decision`, including user-confirmed source
+reference/quotation and recorded timestamps. These scoped rows are canonical
+private state, following the existing screening ledger pattern; they are not
+public event payloads. SSE strips the private payload to reference IDs before
+publication. Job deletion follows the existing tenant/JobId foreign key.
+
+`outreach_drafts.gate_results_json.sourceContext` retains the offer binding,
+source snapshot and fingerprint used for review; semantic determinations remain
+in their existing canonical tables. No new database, profile copy, file store
+or runtime migration is introduced. Offer writes are transactional and retain
+all prior revisions and decisions.

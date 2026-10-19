@@ -333,3 +333,16 @@ never calls Discovery's policy-deletion routine and cannot emit `JobDeleted`.
 ## Company briefing reads
 
 The optional briefing ledger is read directly by Operations through exact tenant/company/job identities and its persisted determination ID. It adds no projection family. Accepted snapshots and failed attempts remain separate immutable records. Source bodies stay out of SSE; reference-only `JobUpdated` notifications invalidate each linked Job Detail and the existing digest. The [storage owner](storage.md#company-briefing-ledger) defines physical retention.
+
+
+## Private Offer Revisions
+
+The scoped `offer` ledger in `job_events` is canonical private Outcomes state,
+like the existing screening revision ledger. Its `OfferRecordChanged` row
+contains confirmed terms or a decision; the event-stream adapter publishes
+only the corresponding revision/decision IDs and JobId. The complete private
+record is available only through the offer read. Broad activity/audit views
+show an update marker, not amounts, quotations or notes. The first saved offer
+also records one ordinary offer milestone; corrections preserve the milestone
+and change only the offer read model. Outreach keeps its own reviewed draft
+and source snapshot without gaining submission authority.

@@ -1,3 +1,4 @@
+import type { OfferReadResponse, SaveOfferTerms, RecordOfferDecision } from "@jobctrl/contracts";
 import type {
   ActionRunResponse,
   ActivityEventResponse,
@@ -619,6 +620,18 @@ export class JobCtrlApiClient {
       `/v1/jobs/${encodeURIComponent(jobKey)}/resume-template/ensure-current`,
       body,
     );
+  }
+
+  jobOffer(jobId: string): Promise<OfferReadResponse> {
+    return this.get(`/v1/jobs/${encodeURIComponent(jobId)}/offer`);
+  }
+
+  saveOfferTerms(jobId: string, body: SaveOfferTerms): Promise<OfferReadResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobId)}/offer/terms`, body);
+  }
+
+  recordOfferDecision(jobId: string, body: RecordOfferDecision): Promise<OfferReadResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobId)}/offer/decisions`, body);
   }
 
   applicationOutcomes(): Promise<ApplicationOutcomeListResponse> {

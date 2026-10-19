@@ -463,3 +463,8 @@ strict `material-exports` endpoint and runtime-bound Python RPC. Registered DOCX
 downloads verify owned paths and output hashes. See [Jobs & Materials](api/jobs-and-materials.md#artifacts-and-resume-templates)
 and the [complete contract](api/complete-contract.md#accepted-material-docx-exports)
 for request fields, source fences and errors.
+
+Actual offer terms and accepted/declined decisions use the private per-job
+`/v1/jobs/:jobId/offer` route family; [Jobs & Materials API → Actual Offers](api/jobs-and-materials.md#actual-offers)
+owns its source, expected-revision and correction semantics. Offer communication
+uses the existing reviewed outreach routes and manual-send boundary.
