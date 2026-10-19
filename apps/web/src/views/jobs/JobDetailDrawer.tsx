@@ -1,3 +1,5 @@
+import { OfferCommunication } from "../../contexts/outreach/index.js";
+import { useOfferQuery } from "../../contexts/operations/hooks/useOfferQuery.js";
 import { CompanyBriefingPanel } from "../../contexts/materials/components/CompanyBriefingPanel.js";
 import { ScreeningAnswerLibrary } from "../../contexts/materials/components/ScreeningAnswerLibrary.js";
 import { JobCtrlApiError } from "@jobctrl/api-client";
@@ -198,6 +200,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   const jumpTarget = useRef<string | null>(null);
   const { data: detail, error: detailError } = useJobDetailQuery(jobId);
+  const offer = useOfferQuery(jobId);
   const evidenceMap = useEvidenceMapQuery();
   const evidenceEntriesById = useMemo(() => {
     const entries = new Map<string, EvidenceMapEntry>();
@@ -338,7 +341,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
       id: "outcomes",
       title: "Application outcomes",
       description: "Recorded follow-up outcomes",
-      content: <Section title="Application outcomes" help="Manually recorded or suggested follow-up outcomes for this job. Suggested outcomes need review before acceptance, and an empty timeline means none are recorded here."><JobOutcomePanel jobId={detail.job.jobKey} /></Section>,
+      content: <Section title="Application outcomes" help="Manually recorded or suggested follow-up outcomes for this job. Suggested outcomes need review before acceptance, and an empty timeline means none are recorded here."><JobOutcomePanel jobId={detail.job.jobKey} />{offer.data?.currentTerms ? <OfferCommunication key={`${jobId}:${offer.data.currentTerms.revisionId}`} jobId={jobId} revisionId={offer.data.currentTerms.revisionId} /> : null}</Section>,
     },
     {
       id: "contacts",

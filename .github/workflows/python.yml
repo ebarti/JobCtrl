@@ -94,6 +94,6 @@ jobs:
       - name: Install Chromium for guarded availability regression
         run: uv --project workers/automation run --locked --all-extras playwright install --with-deps chromium
       - name: Test
-        run: uv --project workers/automation run --locked --all-extras pytest workers/automation/tests -q --durations=25
+        run: uv --project workers/automation run --locked --all-extras pytest workers/automation/tests -q -n 2 --dist=loadfile --max-worker-restart=0 --durations=25
       - name: Build package
         run: uv --project workers/automation run --locked --all-extras python -m build --no-isolation workers/automation

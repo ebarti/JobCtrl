@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it } from "vitest";
 
 import { jobsSearchSchema } from "../../routes/-jobs.search.js";

@@ -1,3 +1,5 @@
+import "./msw/defaults.js";
+
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,

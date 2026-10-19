@@ -15,8 +15,11 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from functools import partial
 
 import asyncio
+import os
+from pathlib import Path
 
 from temporalio.testing import WorkflowEnvironment
 
@@ -53,11 +56,27 @@ async def _bounded_env(
             pass
 
 
+def _configured_executable(variable: str) -> str | None:
+    configured = os.environ.get(variable)
+    if configured is None:
+        return None
+    path = Path(configured)
+    if not path.is_absolute() or not path.is_file() or not os.access(path, os.X_OK):
+        raise ValueError(f"{variable} must name an absolute executable file")
+    return str(path)
+
+
 def time_skipping_env() -> AbstractAsyncContextManager[WorkflowEnvironment]:
     """Time-skipping environment with a bounded, retried lifecycle."""
-    return _bounded_env(WorkflowEnvironment.start_time_skipping, "time-skipping")
+    start = WorkflowEnvironment.start_time_skipping
+    if path := _configured_executable("JOBCTRL_TEMPORAL_TEST_SERVER_PATH"):
+        start = partial(start, test_server_existing_path=path)
+    return _bounded_env(start, "time-skipping")
 
 
 def local_env() -> AbstractAsyncContextManager[WorkflowEnvironment]:
     """Local dev-server environment with a bounded, retried lifecycle."""
-    return _bounded_env(WorkflowEnvironment.start_local, "local dev-server")
+    start = WorkflowEnvironment.start_local
+    if path := _configured_executable("JOBCTRL_TEMPORAL_CLI_PATH"):
+        start = partial(start, dev_server_existing_path=path)
+    return _bounded_env(start, "local dev-server")

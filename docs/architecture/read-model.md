@@ -352,3 +352,27 @@ Job detail assembles an allow-listed timeline from lifecycle events and
 append-only review/outcome records. It is an audit explanation, not a debug log:
 raw event payloads, debug messages, local paths, raw notes, email bodies, and
 contact values are excluded.
+
+
+## Offer Read Model
+
+Outcomes owns immutable private `entity_kind = offer` ledger entries in
+`job_events`, keyed by tenant and JobId. `readOffer` folds event order into
+current terms/decision plus separate immutable histories; it does not infer
+meaning or write on GET. Each correction names the prior revision/decision,
+and writes use `BEGIN IMMEDIATE` plus expected-ID comparisons. If no reviewed offer already exists, the first terms
+write and one ordinary `offer` outcome commit atomically. Later decisions do
+not rewrite milestone counts, Apply approvals, submit evidence or stage rows.
+
+Operations queries invalidate on `OfferRecordChanged`. Its SSE envelope is
+redacted to JobId/revision/decision references; general activity and curated
+audit never expose terms, quotations or correction prose. Offer-specific UI
+reads the private ledger directly, so an unrelated projection refresh cannot
+replace a corrected decision with older cached state.
+
+Outreach owns all offer communication generations, claim and quality receipts,
+source snapshots, approval and manual-send attestations. A persisted offer
+source context binds the exact terms revision and decision IDs. Read responses
+mark stale drafts; approval, copy revalidation and send logging refuse them.
+The prior accepted message remains inspectable after a source correction or
+failed replacement. No interview-prep artifact participates in offer decisions.

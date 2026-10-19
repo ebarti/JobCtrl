@@ -1,3 +1,4 @@
+import { postingSourceCoordinate, recordSourceProposalReview, sourceProposalReviews, sourceCoordinateOverlaps } from "./posting-source-proposals.js";
 import { readDetermination } from "./semantic-determinations.js";
 import crypto from "node:crypto";
 
@@ -56,6 +57,9 @@ import { refreshProjections } from "./projections.js";
 import { InputError, resolveJobId } from "./write-model.js";
 
 export class RoleMatchFeedbackDecisionConflictError extends Error {}
+export class SourceLocatorReviewError extends Error {
+  constructor(message: string, readonly status: 400 | 409) { super(message); }
+}
 
 const DEFAULT_TENANT = "local";
 export const EXTENSION_MANUAL_CAPTURE_SOURCE_ID = "manual_capture:extension";
@@ -707,17 +711,10 @@ export function listSourceLocatorCandidates(db: SqliteDatabase): SourceLocatorLi
      ORDER BY confidence DESC, discovered_at DESC`,
     [DEFAULT_TENANT],
   );
-  const pendingRows: SourceLocatorCandidateRow[] = [];
-  for (const row of rows) {
-    if (shouldAutoPromoteParseableLocatorCandidate(row)) {
-      promoteSourceLocatorCandidate(db, row.candidate_id);
-      continue;
-    }
-    pendingRows.push(row);
-  }
+  const proposals = sourceProposalReviews(db);
   return {
     ok: true,
-    candidates: pendingRows.map((row) => ({
+    candidates: rows.map((row) => ({
       candidateId: row.candidate_id,
       candidateUrl: row.candidate_url,
       sourceKind: sourceKind(row.source_kind),
@@ -726,55 +723,80 @@ export function listSourceLocatorCandidates(db: SqliteDatabase): SourceLocatorLi
       employerDomainMatched: Boolean(row.employer_domain_matched),
       manualActionReason: manualActionReason(row.manual_action_reason),
       discoveredAt: row.discovered_at,
+      ...(proposals.has(row.candidate_id) ? { proposal: proposals.get(row.candidate_id)! } : {}),
     })),
   };
-}
-
-function shouldAutoPromoteParseableLocatorCandidate(row: SourceLocatorCandidateRow): boolean {
-  return Number(row.confidence ?? 0) >= 0.4 && manualActionReason(row.manual_action_reason) === null;
 }
 
 export function promoteSourceLocatorCandidate(
   db: SqliteDatabase,
   candidateId: string,
+  reason = "",
+  expectedUrl?: string,
 ): SourceLocatorDecisionResponse {
-  const candidate = getSourceLocatorCandidateRow(db, candidateId);
-  if (!candidate) {
-    throw new InputError(`Source locator candidate ${candidateId} was not found.`);
-  }
+  return db.transaction((): SourceLocatorDecisionResponse => {
+    const candidate = getSourceLocatorCandidateRow(db, candidateId);
+    if (!candidate) {
+      throw new InputError(`Source locator candidate ${candidateId} was not found.`);
+    }
 
-  const now = new Date().toISOString();
-  const kind = sourceKind(candidate.source_kind);
-  const sourceId = sourceIdFromLocatorCandidate(candidate);
-  const source = upsertSourceRegistryEntry(db, {
-    sourceId,
-    kind,
-    displayName: sourceDisplayNameFromUrl(candidate.candidate_url),
-    priority: defaultPriority(kind),
-    state: "active",
-    seedUrl: candidate.candidate_url,
-  });
-  deleteSourceLocatorCandidate(db, candidateId);
-  recordEvent(db, {
-    eventType: "SourceLocationCandidatePromoted",
-    message: "Source locator candidate promoted.",
-    payload: { candidateId, sourceId, promotedAt: now },
-  });
+    if (expectedUrl !== undefined && candidate.candidate_url !== expectedUrl) {
+      throw new SourceLocatorReviewError("The source candidate changed during public URL validation. Review it again.", 409);
+    }
+    const coordinate = postingSourceCoordinate(candidate.candidate_url);
+    if (!coordinate) throw new SourceLocatorReviewError("Source candidate URL is malformed or private.", 400);
+    const proposal = sourceProposalReviews(db).get(candidateId);
+    if (proposal?.promotionBlockedReason) {
+      throw new SourceLocatorReviewError(proposal.promotionBlockedReason, 409);
+    }
+    const now = new Date().toISOString();
+    const kind = sourceKind(candidate.source_kind);
+    const sourceId = proposal?.sourceId ?? sourceIdFromLocatorCandidate(candidate);
+    const overlaps = proposal?.overlaps ?? sourceCoordinateOverlaps(db, coordinate.coordinateKey, coordinate.sourceId);
+    if (overlaps.some((entry) => entry.state === "disabled" || entry.state === "quarantined" || (proposal && entry.state !== "active"))) {
+      throw new SourceLocatorReviewError("This source is disabled or held for review. Change its registry state explicitly first.", 409);
+    }
+    const overlap = proposal?.overlaps[0];
+    const existing = overlap ? getSourceRegistryRow(db, overlap.sourceId) : undefined;
+    const source = existing
+      ? rowToSourceSummary(existing, sourceQualityById(db).get(existing.source_id), politenessOutcomesBySource(db).get(existing.source_id))
+      : upsertSourceRegistryEntry(db, {
+          sourceId, kind, displayName: sourceDisplayNameFromUrl(candidate.candidate_url),
+          priority: defaultPriority(kind), state: "active", seedUrl: candidate.candidate_url,
+        });
+    recordSourceProposalReview(db, candidate, "promote", reason);
+    deleteSourceLocatorCandidate(db, candidateId);
+    recordEvent(db, {
+      eventType: "SourceLocationCandidatePromoted",
+      message: "Source locator candidate promoted.",
+      payload: { candidateId, sourceId: source.sourceId, promotedAt: now },
+    });
 
-  return { ok: true, candidateId, decision: "promote", source, decidedAt: now };
+    return { ok: true, candidateId, decision: "promote", source, decidedAt: now };
+  }).immediate();
 }
 
 export function rejectSourceLocatorCandidate(
   db: SqliteDatabase,
   candidateId: string,
+  reason = "",
 ): SourceLocatorDecisionResponse {
-  const candidate = getSourceLocatorCandidateRow(db, candidateId);
-  if (!candidate) {
-    throw new InputError(`Source locator candidate ${candidateId} was not found.`);
-  }
-  const now = new Date().toISOString();
-  deleteSourceLocatorCandidate(db, candidateId);
-  return { ok: true, candidateId, decision: "reject", source: null, decidedAt: now };
+  return db.transaction((): SourceLocatorDecisionResponse => {
+    const candidate = getSourceLocatorCandidateRow(db, candidateId);
+    if (!candidate) {
+      throw new InputError(`Source locator candidate ${candidateId} was not found.`);
+    }
+    const now = new Date().toISOString();
+    recordSourceProposalReview(db, candidate, "reject", reason);
+    // Suppress all pending posting aliases for the reviewed source coordinate.
+    const coordinate = postingSourceCoordinate(candidate.candidate_url);
+    for (const row of listSourceLocatorCandidates(db).candidates) {
+      if (row.candidateId === candidateId || (coordinate && postingSourceCoordinate(row.candidateUrl)?.coordinateKey === coordinate.coordinateKey)) {
+        deleteSourceLocatorCandidate(db, row.candidateId);
+      }
+    }
+    return { ok: true, candidateId, decision: "reject", source: null, decidedAt: now };
+  }).immediate();
 }
 
 export function listQuarantine(db: SqliteDatabase): QuarantineListResponse {

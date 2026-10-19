@@ -16,6 +16,7 @@ For field-level schemas and every route variant, use the
 | `POST /v1/jobs/import-url` | Fetch and import one public posting immediately, or return a typed Manual Capture fallback without creating a placeholder job. |
 | `GET /v1/scoring/keywords` | Current projected score-version keyword aggregation with canonical normalized keys. |
 | `GET /v1/evidence-map` | Canonical career evidence used by scoring and materials. |
+| `GET/POST /v1/evidence-map/learning` | Read retained selected-job comparisons; preview sources, compare an explicit dated cohort, choose proposals and record milestone activity. |
 | `POST /v1/jobs/:key/score-correction` | A new score version plus explicit correction rationale. |
 | Job hide/restore/delete routes | Reversible lifecycle commands, plus a separate permanent-delete boundary. |
 
@@ -305,3 +306,32 @@ Submit-approval requests with a cover source must supply `coverLetterAcceptedVer
 the API and Apply worker check the recorded source/PDF binding. See the
 [complete contract](complete-contract.md#cover-letter-pdf-review) for limits and
 failure behavior.
+
+## Selected-job learning commands
+
+`GET /v1/evidence-map/learning` reads saved cohort comparisons and chosen
+milestones through the registered local `career_learning` RPC. It does not
+refresh sources or call a model. POST uses a strict `action` union: `preview`
+selects explicit job IDs without writing; `compare` creates or revision-fences a
+dated cohort; `choose` accepts one proposal from the exact current comparison;
+`update` saves revision-fenced milestone activity with a required completion
+statement for completed work. Provider or binding failure preserves accepted
+records. See the [complete contract](complete-contract.md#selected-cohort-demand-and-milestones)
+and [user workflow](../user/scoring-and-employer-analysis.md#selected-job-demand-and-learning-milestones).
+
+## Actual Offers
+
+`GET /v1/jobs/:jobId/offer` reads the private current terms, current decision
+and immutable histories. `POST .../offer/terms` saves a user-confirmed source
+and typed cash/equity/benefit/deadline terms with `expectedRevisionId`.
+`POST .../offer/decisions` records accepted/declined attestations against the
+current `termsRevisionId` with `expectedDecisionId`. Revisions/corrections
+require reasons; stale or conflicting writes return `409 offer_conflict`.
+Neither command needs interview prep or changes submission/pipeline authority.
+See the [field-level offer contract](complete-contract.md#actual-offer-terms-and-decisions).
+
+Outreach generation/revision also accepts the closed offer-specific `kind`
+values and `offerRevisionId`. The worker loads canonical sources, applies the
+existing claim/quality gates and fences source changes at persistence. Stale
+offer bindings return `409 draft_gates_not_passed` on approval/send logging.
+Provider, spend and structural failures retain the last approved message.

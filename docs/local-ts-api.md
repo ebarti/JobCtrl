@@ -36,6 +36,7 @@ when implementing or debugging a specific endpoint.
 | Boundary | Representative routes | Response model |
 | --- | --- | --- |
 | Profile and configuration | `/v1/profile`, `/v1/settings`, `/v1/credentials`, `/v1/providers/models`, `/v1/discovery/settings`, `/v1/browser-capabilities`, `/v1/extension/pairing-token`, `/v1/discovery/browser-extension/status` | Synchronous reads, validated patches, and live extension readiness |
+| Career learning | `/v1/evidence-map/learning` | Local recorded reads, no-model cohort preview and explicitly requested comparison/milestone commands |
 | Jobs and evidence | `/v1/jobs`, `/v1/jobs/:jobKey`, `/v1/evidence-map`, `/v1/artifacts` | Projection-backed reads |
 | Interviews | `/v1/interviews/catalog`, `/v1/interviews/questions/:questionId`, per-job prep history and interview notes | Asset-backed public reads; tenant/job-scoped prep and revisioned private notes |
 | Scoring keywords and feedback learning | `/v1/scoring/keywords`, `/v1/learning/recommendations`, `/v1/learning/policies/materials` | Current score-version aggregation plus explicit review and versioned policy history |
@@ -190,6 +191,10 @@ See [Operations & Events](api/operations-and-events.md#pipeline-operations-snaps
 Source registry, quarantine, locator candidates, manual capture, schedules, and
 role-match feedback are covered in
 [Profile & Settings](api/profile-and-settings.md#discovery-controls).
+Source-locator GET uses a read-only database connection and never promotes.
+History proposals join saved source-control receipts and registry overlaps;
+review writes and durable coordinate decisions commit atomically. The history
+scan and explicit suppression reset are CLI-owned.
 
 `POST /v1/jobs/import-url` accepts `{ "url": "https://…" }` and awaits the
 worker-owned `JobUrlImportWorkflow`. It returns either the canonical imported
@@ -463,3 +468,8 @@ strict `material-exports` endpoint and runtime-bound Python RPC. Registered DOCX
 downloads verify owned paths and output hashes. See [Jobs & Materials](api/jobs-and-materials.md#artifacts-and-resume-templates)
 and the [complete contract](api/complete-contract.md#accepted-material-docx-exports)
 for request fields, source fences and errors.
+
+Actual offer terms and accepted/declined decisions use the private per-job
+`/v1/jobs/:jobId/offer` route family; [Jobs & Materials API → Actual Offers](api/jobs-and-materials.md#actual-offers)
+owns its source, expected-revision and correction semantics. Offer communication
+uses the existing reviewed outreach routes and manual-send boundary.

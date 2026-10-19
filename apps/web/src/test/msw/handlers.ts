@@ -323,6 +323,7 @@ export const handlers = [
     });
   }),
   http.get("*/v1/evidence-map", () => HttpResponse.json(sampleEvidenceMapResponse)),
+  http.get("*/v1/evidence-map/learning", () => HttpResponse.json({ ok: true, preview: null, cohorts: [], milestones: [], truncated: false })),
   http.get("*/v1/debug/activity", () =>
     HttpResponse.json(makeActivityPage(sampleDashboardSummary.activity)),
   ),
@@ -641,6 +642,7 @@ export const handlers = [
       },
     });
   }),
+  http.get("*/v1/jobs/:jobId/offer", ({ params }) => HttpResponse.json({ ok: true, jobId: params["jobId"], termsHistory: [], decisions: [], currentTerms: null, currentDecision: null })),
   http.get("*/v1/outcomes", () => HttpResponse.json(sampleApplicationOutcomes)),
   http.get("*/v1/jobs/:jobKey/outcomes", ({ params }) =>
     HttpResponse.json({

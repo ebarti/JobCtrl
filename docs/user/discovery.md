@@ -58,6 +58,55 @@ Parallel families are capped at four and should not exceed the worker's active
 activity slots. See
 [Concurrency & Fan-out](../architecture/pipeline/concurrency.md).
 
+### Propose sources from saved posting history
+
+Run `jobctrl source-proposals from-history` (optionally `--job-id JOB_ID` for one
+saved job) to opt into proposals from saved
+current posting URLs, canonical posting identities and current enrichment
+application URLs. This is an explicit command; importing, capturing, applying,
+opening Discovery or listing candidates does not trigger the history scan.
+Historical application aliases are lookup evidence, not current targets, and
+are excluded. The command checks public destinations through DNS but never
+fetches a page, invokes a model or starts a Discover run.
+
+Proposals enter the existing **Source controls → Source locator** review queue.
+URLs for one recognized ATS board share a candidate coordinate, including
+posting/API/apply URL forms. Literal board tokens, regional Lever hosts and
+Workday site names retain distinct source identities; display slugs do not
+merge them. Ordinary learning reuses a reviewed coordinate. Unknown hosts are proposed at host scope with no
+verified board identity. Malformed, credential-bearing, local/private and
+unresolvable destinations are not proposed. Public network policy still
+applies when a reviewed source is later acquired.
+
+Each proposal retains the original JobId and posting URL, the exact input URL
+and its authority, recorded source-observation/run IDs, extraction tier and
+time, snapshot version, hashes and recorded extraction evidence, and a bounded
+saved-content sample. The
+review panel shows board coordinates, existing registry overlaps, saved origin
+samples and **Completeness unknown**: saved postings do not prove board
+coverage or source availability. `jobctrl source-proposals list` reads all saved
+receipts and decisions as JSON without writing or making network requests.
+
+The proposal command and all review reads leave source enablement, schedules,
+job identity, application targets and application records unchanged. Promotion
+requires the existing explicit review control and rechecks the public
+destination before enabling a source. An overlapping active registry
+entry is reused with its reviewed configuration intact. A disabled or
+quarantined overlap must be changed explicitly in the registry first; a proposal
+cannot enable it. Normal worker reconciliation also preserves disabled sources. New Workday
+coordinates require the employer/site to be configured first; regional Lever
+coordinates remain review-only while the adapter supports global boards. The
+queue explains these promotion limits without hiding their evidence.
+
+Rejecting a candidate records durable suppression for its source coordinate,
+including alternate posting URLs and ordinary automatic learning. Run
+`jobctrl source-proposals reset CANDIDATE_ID` to explicitly clear that rejection,
+then run `from-history` again if desired. Reset never enables a source or creates
+a schedule. Pending, rejected and reset history coordinates cannot be promoted by normal
+worker learning. Retries reuse unchanged evidence; failed persistence rolls back
+the scan and retains the prior queue and receipts. Proposal evidence and review
+decisions remain local source-control history, including after job-data purge.
+
 ### Runtime setting reference
 
 The help control beside each Runtime setting opens a short explanation and a

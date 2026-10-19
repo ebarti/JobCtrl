@@ -26,6 +26,9 @@ export {
   type SourceLocationCandidateDiscoveredPayload,
   type SourceLocationCandidateDiscovered,
   createSourceLocationCandidateDiscovered,
+  type SourceLocationCandidateReviewedPayload,
+  type SourceLocationCandidateReviewed,
+  createSourceLocationCandidateReviewed,
   type SourceLocationCandidatePromotedPayload,
   type SourceLocationCandidatePromoted,
   createSourceLocationCandidatePromoted,
@@ -214,6 +217,8 @@ export {
   createApplyReviewDecisionRecorded,
   type ApplicationOutcomeKindValue,
   type ApplicationOutcomeSourceValue,
+  type OfferRecordChanged,
+  createOfferRecordChanged,
   type ApplicationOutcomeRecordedPayload,
   type ApplicationOutcomeRecorded,
   createApplicationOutcomeRecorded,
@@ -403,6 +408,7 @@ import type {
   DiscoveryFeedbackRecorded,
   SourceLocationCandidateDiscovered,
   SourceLocationCandidatePromoted,
+  SourceLocationCandidateReviewed,
   SourceRegistryEntryCreated,
   SourceRegistryEntryUpdated,
   SourceStateChanged,
@@ -452,6 +458,7 @@ import type {
   ApplySubmitIntended,
   ApplyReviewDecisionRecorded,
   ApplicationOutcomeRecorded,
+  OfferRecordChanged,
   OutcomeSuggestionDecided,
 } from "./apply.js";
 import type {
@@ -521,6 +528,7 @@ export type DomainEventUnion =
   | DiscoveryFeedbackRecorded
   | SourceLocationCandidateDiscovered
   | SourceLocationCandidatePromoted
+  | SourceLocationCandidateReviewed
   | SourceRegistryEntryCreated
   | SourceRegistryEntryUpdated
   | SourceStateChanged
@@ -566,6 +574,7 @@ export type DomainEventUnion =
   | ApplicationFailed
   | ApplyReviewDecisionRecorded
   | ApplicationOutcomeRecorded
+  | OfferRecordChanged
   | OutcomeSuggestionDecided
   | StageStarted
   | StageCompleted
@@ -629,6 +638,7 @@ export const DOMAIN_EVENT_TYPES = [
   "DuplicateJobLinkRejected",
   "DiscoveryFeedbackRecorded",
   "SourceLocationCandidateDiscovered",
+  "SourceLocationCandidateReviewed",
   "SourceLocationCandidatePromoted",
   "SourceRegistryEntryCreated",
   "SourceRegistryEntryUpdated",
@@ -675,6 +685,7 @@ export const DOMAIN_EVENT_TYPES = [
   "ApplicationFailed",
   "ApplyReviewDecisionRecorded",
   "ApplicationOutcomeRecorded",
+  "OfferRecordChanged",
   "OutcomeSuggestionDecided",
   "StageStarted",
   "StageCompleted",

@@ -41,6 +41,9 @@ export function DraftClaimProvenanceList({
               <dd>{claim.rationale}</dd>
             </div>
           </dl>
+          {claim.sourceCitations?.length ? <ul aria-label="Recorded source citations">{claim.sourceCitations.map((citation, index) => <li key={index}>
+            <p className="mono">{citation.sourceId}</p><blockquote className="whitespace-pre-wrap break-words">{citation.quote}</blockquote>
+          </li>)}</ul> : <p>No recorded source citations.</p>}
         </li>
       ))}
     </ul>

@@ -62,7 +62,7 @@ const v14SchemaPath = fileURLToPath(
 
 // The frozen v7 schema plus v8-v14 DDL form the exact runtime schema. The
 // seeding hooks across this suite call this helper once per test, so build it
-// once per worker process and copy the closed single-file database instead.
+// once per isolated test module and copy the closed single-file database instead.
 let templatePath: string | undefined;
 
 function schemaTemplate(): string {
@@ -74,16 +74,23 @@ function schemaTemplate(): string {
   );
   const template = path.join(templateDir, "schema-current.db");
   const db = new Database(template);
-  db.exec(fs.readFileSync(path.resolve(v7SchemaPath), "utf8"));
-  db.exec(fs.readFileSync(path.resolve(v8SchemaPath), "utf8"));
-  db.exec(fs.readFileSync(path.resolve(v9SchemaPath), "utf8"));
-  db.exec(fs.readFileSync(path.resolve(v10SchemaPath), "utf8"));
-  db.exec(fs.readFileSync(path.resolve(v11SchemaPath), "utf8"));
-  db.exec(fs.readFileSync(path.resolve(v12SchemaPath), "utf8"));
-  db.exec(fs.readFileSync(path.resolve(v13SchemaPath), "utf8"));
-  db.exec(fs.readFileSync(path.resolve(v14SchemaPath), "utf8"));
-  db.pragma(`user_version = ${SUPPORTED_SCHEMA_VERSION}`);
-  db.close();
+  try {
+    // No test consumes intermediate DDL states. One durable commit preserves
+    // the exact schema without syncing every statement to disk separately.
+    db.transaction(() => {
+      db.exec(fs.readFileSync(path.resolve(v7SchemaPath), "utf8"));
+      db.exec(fs.readFileSync(path.resolve(v8SchemaPath), "utf8"));
+      db.exec(fs.readFileSync(path.resolve(v9SchemaPath), "utf8"));
+      db.exec(fs.readFileSync(path.resolve(v10SchemaPath), "utf8"));
+      db.exec(fs.readFileSync(path.resolve(v11SchemaPath), "utf8"));
+      db.exec(fs.readFileSync(path.resolve(v12SchemaPath), "utf8"));
+      db.exec(fs.readFileSync(path.resolve(v13SchemaPath), "utf8"));
+      db.exec(fs.readFileSync(path.resolve(v14SchemaPath), "utf8"));
+      db.pragma(`user_version = ${SUPPORTED_SCHEMA_VERSION}`);
+    })();
+  } finally {
+    db.close();
+  }
   process.on("exit", () => {
     fs.rmSync(templateDir, { force: true, recursive: true });
   });

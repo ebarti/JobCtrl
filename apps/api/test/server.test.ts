@@ -869,6 +869,8 @@ describe("local TypeScript API", () => {
         sources: [{ text: "company-briefing-source-canary" }],
       }),
     );
+    insertEvent.run("local", null, null, "CareerLearningRecorded", occurredAt,
+      JSON.stringify({ tenantId: "local", completionEvidence: "career-learning-private-source-canary" }));
     const outcomeOccurredAt = "2026-04-01T09:00:00+00:00";
     insertEvent.run(
       "local",
@@ -950,6 +952,8 @@ describe("local TypeScript API", () => {
     expect(streamed).not.toContain("legacy-timestamp");
     expect(streamed).not.toContain("CompanyBriefingRecorded");
     expect(streamed).not.toContain("company-briefing-source-canary");
+    expect(streamed).not.toContain("CareerLearningRecorded");
+    expect(streamed).not.toContain("career-learning-private-source-canary");
     await reader.cancel();
     db.close();
     await app.close();
@@ -11045,7 +11049,11 @@ describe("local TypeScript API", () => {
 
   it("coalesces simultaneous genuine profile revisions into the newest durable continuation", async () => {
     const dispatched = deferred<ActionDispatchResult>();
-    const dispatch = vi.fn<ActionDispatcher>(() => dispatched.promise);
+    const dispatchStarted = deferred<void>();
+    const dispatch = vi.fn<ActionDispatcher>(() => {
+      dispatchStarted.resolve();
+      return dispatched.promise;
+    });
     const app = buildApp({ ...options, actionDispatcher: dispatch });
 
     const responses = Promise.all([
@@ -11061,7 +11069,10 @@ describe("local TypeScript API", () => {
       }),
     ]);
 
-    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1));
+    // Synchronize on the callback under the test's existing deadline. API
+    // startup and SQLite work on a loaded runner have no one-second SLA.
+    await dispatchStarted.promise;
+    expect(dispatch).toHaveBeenCalledTimes(1);
     const pendingDb = new Database(options.dbPath, { readonly: true });
     const events = pendingDb.prepare(
       "SELECT event_id FROM job_events WHERE event_type = 'ProfileUpdated' ORDER BY event_id",
@@ -13192,114 +13203,120 @@ function seedDatabase(dbPath: string): void {
 
   initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
-  seedBuiltInResumeTemplate(db);
+  try {
+    // Publish the complete fixture before the app opens its own connection.
+    db.transaction(() => {
+      seedBuiltInResumeTemplate(db);
 
-  insertJob(db, {
-    url: "https://example.com/jobs/ready",
-    title: "Platform Engineer",
-    site: "ExampleCo",
-    company: "ExampleCo",
-    fitScore: 9,
-    tailoredPath: artifactPath,
-  });
-  insertJob(db, {
-    url: "https://example.com/jobs/failed-score",
-    title: "Backend Engineer",
-    site: "ExampleCo",
-    company: "ExampleCo",
-    fitScore: 8,
-  });
-  insertJob(db, {
-    url: "https://example.com/jobs/blocked-tailor",
-    title: "Frontend Engineer",
-    site: "Acme",
-    company: "Acme",
-    fitScore: 6,
-  });
-  insertScore(db, "https://example.com/jobs/ready", 1, 9);
-  insertScore(db, "https://example.com/jobs/failed-score", 1, 8);
-  insertScore(db, "https://example.com/jobs/blocked-tailor", 1, 6);
+      insertJob(db, {
+        url: "https://example.com/jobs/ready",
+        title: "Platform Engineer",
+        site: "ExampleCo",
+        company: "ExampleCo",
+        fitScore: 9,
+        tailoredPath: artifactPath,
+      });
+      insertJob(db, {
+        url: "https://example.com/jobs/failed-score",
+        title: "Backend Engineer",
+        site: "ExampleCo",
+        company: "ExampleCo",
+        fitScore: 8,
+      });
+      insertJob(db, {
+        url: "https://example.com/jobs/blocked-tailor",
+        title: "Frontend Engineer",
+        site: "Acme",
+        company: "Acme",
+        fitScore: 6,
+      });
+      insertScore(db, "https://example.com/jobs/ready", 1, 9);
+      insertScore(db, "https://example.com/jobs/failed-score", 1, 8);
+      insertScore(db, "https://example.com/jobs/blocked-tailor", 1, 6);
 
-  for (const stage of ["discover", "enrich", "score", "tailor", "cover"]) {
-    insertStage(db, "https://example.com/jobs/ready", stage, "succeeded");
+      for (const stage of ["discover", "enrich", "score", "tailor", "cover"]) {
+        insertStage(db, "https://example.com/jobs/ready", stage, "succeeded");
+      }
+      insertStage(db, "https://example.com/jobs/ready", "apply", "pending");
+      insertStage(db, "https://example.com/jobs/failed-score", "discover", "succeeded");
+      insertStage(db, "https://example.com/jobs/failed-score", "enrich", "succeeded");
+      insertStage(db, "https://example.com/jobs/failed-score", "score", "failed", "LLM_ERROR");
+      insertStage(db, "https://example.com/jobs/blocked-tailor", "discover", "succeeded");
+      insertStage(db, "https://example.com/jobs/blocked-tailor", "enrich", "succeeded");
+      insertStage(db, "https://example.com/jobs/blocked-tailor", "score", "succeeded");
+      insertStage(db, "https://example.com/jobs/blocked-tailor", "tailor", "blocked", "MIN_SCORE");
+
+      db.prepare(
+        "INSERT INTO job_artifacts (tenant_id, job_id, stage, artifact_type, status, path, created_at, size_bytes) VALUES ('local', ?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        jobIdFor("https://example.com/jobs/ready"),
+        "tailor",
+        "tailored_resume_txt",
+        "active",
+        artifactPath,
+        "2026-04-29T10:05:00+00:00",
+        12,
+      );
+      db.prepare(
+        "INSERT INTO job_artifacts (tenant_id, job_id, stage, artifact_type, status, path, created_at, size_bytes) VALUES ('local', ?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        jobIdFor("https://example.com/jobs/ready"),
+        "tailor",
+        "tailored_resume_pdf",
+        "active",
+        artifactPath,
+        "2026-04-29T10:05:00+00:00",
+        12,
+      );
+      db.prepare(
+        "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at) VALUES ('local', ?, 1, ?, ?, ?, ?, ?)",
+      ).run(
+        jobIdFor("https://example.com/jobs/failed-score"),
+        "score",
+        "ActionFailed",
+        "error",
+        "Score failed",
+        "2026-04-29T10:10:00+00:00",
+      );
+      db.prepare(
+        "INSERT INTO apply_run_projections (run_id, job_id, job_title, job_employer, status, result, dry_run, started_at, events_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        "run-1",
+        jobIdFor("https://example.com/jobs/ready"),
+        "Platform Engineer",
+        "ExampleCo",
+        "finished",
+        "succeeded",
+        1,
+        "2026-04-29T10:15:00+00:00",
+        JSON.stringify([
+          {
+            event_type: "ApplyRunStarted",
+            level: "info",
+            occurred_at: "2026-04-29T10:15:00+00:00",
+            message: "Apply agent acquired job",
+            payload: { run_id: "run-1" },
+          },
+        ]),
+      );
+      // The unified Workflow Runs list reads `workflow_run_projections` (all
+      // workflow types); apply runs are enriched with job context via the LEFT
+      // JOIN to `apply_run_projections`. Seed the matching workflow row so the
+      // apply run surfaces in the list with its job title/company/dry-run.
+      db.prepare(
+        "INSERT INTO workflow_run_projections (workflow_id, workflow_type, status, started_at, finished_at, temporal_run_id) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run(
+        "run-1",
+        "ApplyWorkflow",
+        "succeeded",
+        "2026-04-29T10:15:00+00:00",
+        "2026-04-29T10:20:00+00:00",
+        "temporal-run-1",
+      );
+    })();
+  } finally {
+    db.close();
   }
-  insertStage(db, "https://example.com/jobs/ready", "apply", "pending");
-  insertStage(db, "https://example.com/jobs/failed-score", "discover", "succeeded");
-  insertStage(db, "https://example.com/jobs/failed-score", "enrich", "succeeded");
-  insertStage(db, "https://example.com/jobs/failed-score", "score", "failed", "LLM_ERROR");
-  insertStage(db, "https://example.com/jobs/blocked-tailor", "discover", "succeeded");
-  insertStage(db, "https://example.com/jobs/blocked-tailor", "enrich", "succeeded");
-  insertStage(db, "https://example.com/jobs/blocked-tailor", "score", "succeeded");
-  insertStage(db, "https://example.com/jobs/blocked-tailor", "tailor", "blocked", "MIN_SCORE");
-
-  db.prepare(
-    "INSERT INTO job_artifacts (tenant_id, job_id, stage, artifact_type, status, path, created_at, size_bytes) VALUES ('local', ?, ?, ?, ?, ?, ?, ?)",
-  ).run(
-    jobIdFor("https://example.com/jobs/ready"),
-    "tailor",
-    "tailored_resume_txt",
-    "active",
-    artifactPath,
-    "2026-04-29T10:05:00+00:00",
-    12,
-  );
-  db.prepare(
-    "INSERT INTO job_artifacts (tenant_id, job_id, stage, artifact_type, status, path, created_at, size_bytes) VALUES ('local', ?, ?, ?, ?, ?, ?, ?)",
-  ).run(
-    jobIdFor("https://example.com/jobs/ready"),
-    "tailor",
-    "tailored_resume_pdf",
-    "active",
-    artifactPath,
-    "2026-04-29T10:05:00+00:00",
-    12,
-  );
-  db.prepare(
-    "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at) VALUES ('local', ?, 1, ?, ?, ?, ?, ?)",
-  ).run(
-    jobIdFor("https://example.com/jobs/failed-score"),
-    "score",
-    "ActionFailed",
-    "error",
-    "Score failed",
-    "2026-04-29T10:10:00+00:00",
-  );
-  db.prepare(
-    "INSERT INTO apply_run_projections (run_id, job_id, job_title, job_employer, status, result, dry_run, started_at, events_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  ).run(
-    "run-1",
-    jobIdFor("https://example.com/jobs/ready"),
-    "Platform Engineer",
-    "ExampleCo",
-    "finished",
-    "succeeded",
-    1,
-    "2026-04-29T10:15:00+00:00",
-    JSON.stringify([
-      {
-        event_type: "ApplyRunStarted",
-        level: "info",
-        occurred_at: "2026-04-29T10:15:00+00:00",
-        message: "Apply agent acquired job",
-        payload: { run_id: "run-1" },
-      },
-    ]),
-  );
-  // The unified Workflow Runs list reads `workflow_run_projections` (all
-  // workflow types); apply runs are enriched with job context via the LEFT
-  // JOIN to `apply_run_projections`. Seed the matching workflow row so the
-  // apply run surfaces in the list with its job title/company/dry-run.
-  db.prepare(
-    "INSERT INTO workflow_run_projections (workflow_id, workflow_type, status, started_at, finished_at, temporal_run_id) VALUES (?, ?, ?, ?, ?, ?)",
-  ).run(
-    "run-1",
-    "ApplyWorkflow",
-    "succeeded",
-    "2026-04-29T10:15:00+00:00",
-    "2026-04-29T10:20:00+00:00",
-    "temporal-run-1",
-  );
-  db.close();
 }
 
 const DISCOVER_OLD_START = "2026-07-04T07:57:11.751+00:00";

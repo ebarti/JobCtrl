@@ -8,6 +8,7 @@ import { CoverLetterSettingsSchema, COVER_LETTER_RENDERER_VERSION } from "./cove
  * worker over the local subprocess transport (target §6.5).
  */
 import { z } from "zod";
+import { CareerLearningParamsSchema, CareerLearningResponseSchema } from "./career-learning.js";
 import { AcceptedMaterialExportRequestSchema, AcceptedMaterialExportsSchema, MaterialLocaleRequestSchema } from "./schemas.js";
 import { GenerateInterviewPrepRequestSchema, refineInterviewEvidenceSelection } from "./interview.js";
 
@@ -78,6 +79,7 @@ export type JsonRpcResponse = z.infer<typeof JsonRpcResponseSchema>;
 /* ------------------------------------------------------------------ methods */
 
 export const RpcMethods = {
+  CareerLearning: "career_learning",
   ResetEnrichment: "reset_enrichment",
   MaterialLocaleVariants: "material_locale_variants",
   AcceptedMaterialExports: "accepted_material_exports",
@@ -530,7 +532,8 @@ export const GenerateOutreachDraftParamsSchema = z
     threadId: z.string().trim().min(1).max(200),
     contactId: z.string().trim().min(1).max(200).optional(),
     jobId: z.string().trim().min(1).max(2000).nullish(),
-    kind: z.enum(["intro_request", "follow_up"]).default("intro_request"),
+    kind: z.enum(["intro_request", "follow_up", "offer_negotiation", "offer_clarification", "offer_acceptance", "offer_decline"]).optional(),
+    offerRevisionId: z.uuid().optional(),
     editedBodyText: z.string().trim().min(1).max(8000).optional(),
     applicationRole: z.string().trim().max(200).optional(),
     llmModel: z.string().trim().min(1).max(120).optional(),
@@ -959,6 +962,7 @@ export const ReviewResumeEditParamsSchema = RuntimeBindingSchema.extend({
  * consuming a response. Python default handler registration owns the inventory.
  */
 export const RpcContracts = {
+  [RpcMethods.CareerLearning]: { params: CareerLearningParamsSchema, result: CareerLearningResponseSchema },
   [RpcMethods.AcceptedMaterialExports]: { params: AcceptedMaterialExportParamsSchema, result: AcceptedMaterialExportsSchema },
   [RpcMethods.ResetEnrichment]: { params: ResetEnrichmentParamsSchema, result: ResetEnrichmentResultSchema },
   [RpcMethods.ProviderStatus]: { params: z.object({ provider: z.enum(["codex", "claude", "google"]).optional() }).strict(), result: ProviderStatusResultSchema },

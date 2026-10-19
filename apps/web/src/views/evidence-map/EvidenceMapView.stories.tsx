@@ -9,11 +9,13 @@ import {
 } from "@tanstack/react-router";
 import { http, HttpResponse } from "msw";
 import { useMemo } from "react";
+import { userEvent, within } from "storybook/test";
 
 import { artifactsSearchSchema } from "../../routes/-artifacts.search.js";
 import { evidenceMapSearchSchema } from "../../routes/-evidence-map.search.js";
 import { jobsSearchSchema } from "../../routes/-jobs.search.js";
 import { sampleEvidenceMapResponse } from "../../test/fixtures/projections.js";
+import { careerLearningFixture } from "../../test/fixtures/career-learning.js";
 import { EvidenceMapView } from "./EvidenceMapView.js";
 
 const meta = {
@@ -69,6 +71,16 @@ function EvidenceMapViewHost({ initialEntry = "/evidence-map" }: { readonly init
 
 export const Populated: Story = {
   render: () => <EvidenceMapViewHost />,
+};
+
+export const CohortLearning: Story = {
+  tags: ["cohort-learning"],
+  parameters: { msw: { handlers: [http.get("*/v1/evidence-map/learning", () => HttpResponse.json(careerLearningFixture()))] } },
+  render: () => <EvidenceMapViewHost />,
+  play: async ({ canvasElement }) => {
+    await userEvent.click(await within(canvasElement).findByText("Selected-job demand and learning milestones"));
+    await within(canvasElement).findByRole("article", { name: "Comparison Owned cohort" });
+  },
 };
 
 export const JobFiltered: Story = {

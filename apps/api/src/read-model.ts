@@ -2095,6 +2095,9 @@ function jobEventToAuditEntry(
           ["Reason", payloadBoolean(payload, "reasonPresent", "reason_present") ? "Provided" : ""],
         ),
       });
+    case "OfferRecordChanged":
+      return makeAuditEntry({ ...base, category: "outcome", tone: "info",
+        title: "Offer record updated", description: "User-confirmed terms or an offer decision were recorded. Private terms and sources are available in Application outcomes.", actor: "user", details: [] });
     case "ApplicationOutcomeRecorded":
       return makeAuditEntry({
         ...base,

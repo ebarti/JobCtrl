@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it, vi } from "vitest";
 
 import { createJobUpdated, LOCAL_TENANT } from "@jobctrl/domain-types";
