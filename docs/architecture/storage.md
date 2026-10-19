@@ -474,6 +474,9 @@ slots, layout boxes and source-bound records are retained. Failed acceptance
 never deletes a preview or previously accepted files. A committed receipt permits
 retry/reload reconciliation after a lost response. These local generated files
 are private material and must not be committed.
+The final source/PDF/manifest fence runs inside the promotion transaction after
+its last insert. A mismatch rolls back the new rows without restoring externally
+changed source files or changing prior accepted PDF files and authorization rows.
 
 Unchanged slots reuse their artifact IDs across generations. Readers that need
 an exact source, including DOCX export, bind both ID and generation. Artifact

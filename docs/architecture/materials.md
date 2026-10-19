@@ -323,6 +323,11 @@ provenance from the accepted text. Resume draft promotion also carries unchanged
 cover slots forward. Historical rows and PDFs remain intact. The immediate save
 transaction revalidates the full source and preview hashes plus accepted version;
 concurrent writers cannot promote a superseded snapshot.
+After the last promotion write, it checks the final source/PDF binding and
+submitted manifest before commit. Drift rolls back the material generation,
+provenance copies and event, retaining prior accepted bytes and decision rows.
+A newer canonical source file survives that rollback and correctly stales the
+older PDF until the new source is rendered and explicitly accepted.
 
 Carried slots retain artifact IDs in each complete generation. DOCX exports
 select the exact artifact/generation pair; artifact projections select one

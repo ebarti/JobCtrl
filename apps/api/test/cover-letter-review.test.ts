@@ -261,6 +261,74 @@ describe("exact cover-letter review", () => {
     expect(fs.readFileSync(path.join(directory, "old.pdf"))).toEqual(pdf);
   });
 
+  it.each([
+    ["materials", "source"], ["materials", "pdf"],
+    ["artifact", "source"], ["artifact", "pdf"],
+    ["event", "source"], ["event", "pdf"],
+    ["event", "manifest"], ["event", "source-id"],
+  ] as const)("rolls back %s promotion when %s changes before commit", async (stage, change) => {
+    const authority = recordModelDecision(db, "claim_verification", jobId, {
+      verdict: "pass", lines: [{ line_id: "line-1", verdict: "pass", served_requirements: [], source_evidence: [], claims: [], findings: [] }],
+      rationale: "Explicit synthetic source authority",
+    });
+    bindDecision(db, "artifact", "cover-text", "1", "claim_verification", authority);
+    db.prepare("INSERT INTO artifact_line_anchors VALUES ('local','cover_letter','cover-text',1,'line-1','[]','[]','verbatim','Synthetic source',?)").run(authority);
+    const initial = await renderCoverLetterPreview(db, directory, jobId, request(), render);
+    const previous = acceptCoverLetterPreview(db, directory, jobId, {
+      previewId: initial.preview.previewId, expectedAcceptedVersion: initial.preview.expectedAcceptedVersion,
+    }).accepted;
+    recordApplyReviewDecision(db, jobId, { decision: "approve_dry_run", decidedBy: "synthetic" });
+    expect(requireCoverLetterApproval(db, jobId)).toEqual(previous);
+    const decisionEvent = db.prepare("SELECT payload_json FROM job_events WHERE event_type='ApplyReviewDecisionRecorded'").get() as { payload_json: string };
+    expect(JSON.parse(decisionEvent.payload_json).coverLetterBinding).toEqual(previous);
+    const next = await renderCoverLetterPreview(db, directory, jobId,
+      { ...request(), settings: { ...previous.settings, fontSizePt: 13 } }, async input => {
+        fs.writeFileSync(input.pdfPath, "%PDF-1.4\nnext synthetic preview\n%%EOF");
+      });
+    const attempt = path.join(directory, "generated", "cover-letter-previews", next.preview.previewId);
+    const previousPdf = path.join(directory, "generated", "cover-letter-previews", initial.preview.previewId, "letter.pdf");
+    const newerSource = fs.readFileSync(textPath, "utf8") + "\nNew source must survive a refused promotion.";
+    const tables = ["job_materials", "job_materials_artifacts", "job_events", "application_review_decisions",
+      "artifact_line_anchors", "semantic_entity_bindings", "job_material_layout_boxes", "job_bullet_provenance"];
+    const snapshot = () => tables.map(table => db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
+    const before = snapshot();
+    db.function("drift_cover_files", () => {
+      if (change === "source") fs.writeFileSync(textPath, newerSource);
+      if (change === "pdf") fs.writeFileSync(path.join(attempt, "letter.pdf"), "%PDF-1.4\nreplaced during promotion\n%%EOF");
+      if (change === "manifest") fs.writeFileSync(path.join(attempt, "preview.json"),
+        JSON.stringify({ ...next.preview, settings: { ...next.preview.settings, fontSizePt: 9 } }));
+      return 1;
+    });
+    const target = stage === "materials" ? "job_materials" : stage === "artifact" ? "job_materials_artifacts" : "job_events";
+    const condition = stage === "materials" ? "NEW.generation=3" : stage === "artifact"
+      ? "NEW.generation=3 AND NEW.artifact_type='cover_letter_pdf'" : "NEW.event_type='PdfRendered'";
+    db.exec(`CREATE TEMP TRIGGER drift_cover AFTER INSERT ON ${target} WHEN ${condition} BEGIN
+      ${change === "source-id"
+        ? "UPDATE job_materials_artifacts SET artifact_id='replacement-source' WHERE generation=3 AND artifact_type='cover_letter';"
+        : "SELECT drift_cover_files();"} END`);
+    expect(() => acceptCoverLetterPreview(db, directory, jobId, {
+      previewId: next.preview.previewId, expectedAcceptedVersion: next.preview.expectedAcceptedVersion,
+    })).toThrow("cover_letter_version_conflict");
+    db.exec("DROP TRIGGER drift_cover");
+    // Roll back only this transaction. Never restore a source file written by
+    // another producer, and never delete or overwrite the prior accepted PDF.
+    expect(snapshot()).toEqual(before);
+    expect(fs.readFileSync(previousPdf)).toEqual(pdf);
+    if (change === "source") {
+      expect(fs.readFileSync(textPath, "utf8")).toBe(newerSource);
+      expect(coverLetterAccepted(db, jobId)?.pdfArtifactId).toBe(previous.pdfArtifactId);
+      expect(coverLetterAccepted(db, jobId)?.settings).toEqual(previous.settings);
+      expect(() => requireCoverLetterApproval(db, jobId)).toThrow("approval_stale_materials");
+    } else {
+      expect(coverLetterAccepted(db, jobId)).toEqual(previous);
+      expect(requireCoverLetterApproval(db, jobId)).toEqual(previous);
+    }
+    const retry = await renderCoverLetterPreview(db, directory, jobId, request(), render);
+    expect(acceptCoverLetterPreview(db, directory, jobId, {
+      previewId: retry.preview.previewId, expectedAcceptedVersion: retry.preview.expectedAcceptedVersion,
+    }).accepted.pdfSourceCurrent).toBe(true);
+  });
+
   it("rejects a source changed while rendering and removes only that losing attempt", async () => {
     const before = acceptedRows();
     await expect(renderCoverLetterPreview(db, directory, jobId, request(), async input => {

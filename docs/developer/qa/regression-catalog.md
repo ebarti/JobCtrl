@@ -1243,6 +1243,14 @@ Populate artifact projections before saving, then download the new accepted PDF
 without restarting. Acceptance must commit its existing `PdfRendered` event
 atomically; fail the event insert to prove full rollback, and retry a committed
 preview to prove that neither the generation nor event is duplicated.
+Start with a current accepted PDF and an existing authorization, then change the
+canonical source or attempt PDF during material, artifact and event inserts.
+Revalidate the submitted source, PDF, settings, renderer and manifest before
+commit; any mismatch must roll back the entire promotion and its event. Preserve
+prior material/provenance/decision rows and accepted PDF bytes. A source file
+written by another producer must survive rollback; its changed hash must stale
+the older PDF rather than being restored. Include source-ID and manifest changes
+and a successful fresh render/save after refusal.
 
 Prepare owned outside-root synthetic files and replace the generated directory,
 preview root, UUID directory, manifest, PDF and canonical source with symlinks.
@@ -1269,6 +1277,10 @@ paper and text geometry, font sizes, line/paragraph deltas, every-page PNGs and
 viewer screenshots. Inspect every page; passing interactions alone cannot prove
 visual acceptance. Keep controlled-response race scenarios separate from these
 real render measurements.
+Persist viewer captures for every preview and reloaded accepted page using
+`testInfo.outputPath`, then attach file paths. Retain the viewer-page hash manifests
+and competing-save, uncertain-authorization and reload receipts in that same
+owned tree. Buffer-only attachments are insufficient evidence retention.
 
 Run materials before shipped-fit lifecycle browser cases in the same owned
 workspace. Formatting saves carry resume slots into later material generations;

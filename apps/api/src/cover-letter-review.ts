@@ -221,6 +221,11 @@ function copyArtifactProvenance(db: SqliteDatabase, jobId: string, row: Artifact
     WHERE tenant_id=? AND entity_kind='artifact' AND entity_id=? AND entity_version=?`)
     .run(artifactId, String(targetGeneration), TENANT, row.artifact_id, String(row.generation));
 }
+function matchesPreview(accepted: CoverLetterAccepted | null, preview: CoverLetterPreview): accepted is CoverLetterAccepted {
+  return Boolean(accepted?.pdfSourceCurrent && accepted.pdfArtifactId === `cover_pdf_${preview.previewId}`
+    && JSON.stringify(accepted.source) === JSON.stringify(preview.source) && accepted.pdfSha256 === preview.pdfSha256
+    && JSON.stringify(accepted.settings) === JSON.stringify(preview.settings) && accepted.rendererVersion === preview.rendererVersion);
+}
 export function acceptCoverLetterPreview(db: SqliteDatabase, appDir: string, jobId: string,
   request: { previewId: string; expectedAcceptedVersion: string }): { ok: true; accepted: CoverLetterAccepted } {
   const preview = readPreview(appDir, jobId, request.previewId);
@@ -231,10 +236,8 @@ export function acceptCoverLetterPreview(db: SqliteDatabase, appDir: string, job
     const currentPdf = approved(db, jobId, ["cover_letter_pdf"]);
     const saved = metadata(currentPdf?.metadata_json ?? null)["cover_letter_review"] as CoverLetterPreview | undefined;
     if (saved?.previewId === preview.previewId) {
-      const accepted = coverLetterAccepted(db, jobId, appDir)!;
-      if (accepted.pdfSourceCurrent && JSON.stringify(accepted.source) === JSON.stringify(preview.source) && accepted.pdfSha256 === preview.pdfSha256
-        && JSON.stringify(accepted.settings) === JSON.stringify(preview.settings)
-        && accepted.rendererVersion === preview.rendererVersion) return { ok: true as const, accepted };
+      const accepted = coverLetterAccepted(db, jobId, appDir);
+      if (matchesPreview(accepted, preview)) return { ok: true as const, accepted };
     }
     requireSnapshot(db, appDir, jobId, request.expectedAcceptedVersion, preview.source);
     const bytes = coverLetterPreviewBytes(appDir, jobId, preview.previewId);
@@ -267,6 +270,15 @@ export function acceptCoverLetterPreview(db: SqliteDatabase, appDir: string, job
       (tenant_id,job_id,identity_version,stage,event_type,level,message,occurred_at,payload_json)
       VALUES (?,?,1,'pdf','PdfRendered','info','Accepted cover-letter PDF',?,?)`)
       .run(TENANT, jobId, now, JSON.stringify({tenantId:TENANT,jobId,artifactType:"cover_letter_pdf",artifactId,renderedAt:now}));
-    return { ok: true as const, accepted: coverLetterAccepted(db, jobId, appDir)! };
+    // Files are outside SQLite's transaction. Recheck the submitted receipt and
+    // the final canonical source/PDF binding after every promotion write, before
+    // committing either materials or their event. A refused promotion rolls back
+    // its rows, never a newer source file produced by another writer.
+    const accepted = coverLetterAccepted(db, jobId, appDir);
+    if (!matchesPreview(accepted, preview)
+      || JSON.stringify(readPreview(appDir, jobId, preview.previewId)) !== JSON.stringify(preview)) {
+      throw new CoverLetterReviewError("cover_letter_version_conflict", 409);
+    }
+    return { ok: true as const, accepted };
   }).immediate();
 }

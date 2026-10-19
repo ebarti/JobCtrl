@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Locator, type TestInfo } from "@playwright/test";
 import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -20,6 +20,36 @@ const fullCoverText = Array.from({ length: 18 }, (_, index) => [
   `Literal <b>tags</b> & "quotes" stay visible.`,
   `Full accepted source line ${index + 1}; end of paragraph.`,
 ].join("\n")).join("\n\n") + "\n\nEND OF COMPLETE SYNTHETIC LETTER";
+
+async function retainJson(testInfo: TestInfo, name: string, value: unknown): Promise<void> {
+  const file = testInfo.outputPath("cover-evidence", name);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(value, null, 2));
+  await testInfo.attach(name, { path: file, contentType: "application/json" });
+}
+
+async function retainViewerPages(surface: Locator, testInfo: TestInfo, stage: string, pdfSha256: string): Promise<number> {
+  const page = surface.page();
+  const viewport = page.viewportSize()!;
+  // Keep the real viewer at its normal width, with enough vertical room for a
+  // complete paper page and the sticky navigation above it during capture.
+  await page.setViewportSize({ ...viewport, height: Math.max(viewport.height, 1600) });
+  try {
+    const pages = surface.locator(".pdf-preview-page");
+    const count = await pages.count();
+    expect(count).toBeGreaterThan(0);
+    const captures = [];
+    for (let index = 0; index < count; index++) {
+      const file = testInfo.outputPath("cover-evidence", `viewer-${stage}-page-${index + 1}.png`);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const bytes = await pages.nth(index).screenshot({ path: file });
+      await testInfo.attach(`cover-${stage}-page-${index + 1}`, { path: file, contentType: "image/png" });
+      captures.push({ page: index + 1, file: path.basename(file), sha256: createHash("sha256").update(bytes).digest("hex") });
+    }
+    await retainJson(testInfo, `viewer-${stage}.json`, { pdfSha256, viewport: page.viewportSize(), captures });
+    return count;
+  } finally { await page.setViewportSize(viewport); }
+}
 
 function seedFullCoverText(): void {
   const dbPath = loadE2eDbPath(); // asserts the isolated workspace ownership
@@ -71,10 +101,10 @@ for (const fontFamily of ["georgia", "times", "arial"] as const) for (const sett
   expect(preview.ok()).toBe(true);
   const bytes = await preview.body();
   const digest = createHash("sha256").update(bytes).digest("hex");
-  await testInfo.attach(`cover-preview-${settings.paper}`, { body: bytes, contentType: "application/pdf" });
   const evidenceDir = testInfo.outputPath("cover-evidence");
   fs.mkdirSync(evidenceDir, { recursive: true });
   fs.writeFileSync(path.join(evidenceDir, "preview.pdf"), bytes);
+  await testInfo.attach(`cover-preview-${settings.paper}`, { path: path.join(evidenceDir, "preview.pdf"), contentType: "application/pdf" });
   fs.writeFileSync(path.join(evidenceDir, "source.txt"), fullCoverText);
   fs.writeFileSync(path.join(evidenceDir, "settings.json"), JSON.stringify(renderReceipt.preview.settings));
   // This measures actual HTTP/RPC/Chromium bytes. Keep its inputs and outputs
@@ -87,10 +117,8 @@ for (const fontFamily of ["georgia", "times", "arial"] as const) for (const sett
   fs.writeFileSync(path.join(evidenceDir, "measurement.stdout"), measurement.stdout ?? "");
   fs.writeFileSync(path.join(evidenceDir, "measurement.stderr"), measurement.stderr ?? String(measurement.error ?? ""));
   expect(measurement.status, measurement.stderr).toBe(0);
-  const previewPages = surface.locator(".pdf-preview-page");
-  for (let index = 0; index < await previewPages.count(); index++) {
-    await testInfo.attach(`cover-preview-page-${index + 1}`, { body: await previewPages.nth(index).screenshot(), contentType: "image/png" });
-  }
+  const measured = JSON.parse(fs.readFileSync(path.join(evidenceDir, "measurements.json"), "utf8")) as { pages: unknown[] };
+  expect(await retainViewerPages(surface, testInfo, "preview", digest)).toBe(measured.pages.length);
   const unchanged = await page.request.get("/v1/apply/review-queue");
   expect((await unchanged.json() as ApplyReviewQueueResponse).items.find(row => row.jobKey === QA_PLATFORM_JOB_ID)!.materialsPreview.coverLetter).toEqual(originalCover);
   const saveResponse = page.waitForResponse(response => response.url().endsWith("/cover-letter/accept") && response.request().method() === "POST");
@@ -103,6 +131,7 @@ for (const fontFamily of ["georgia", "times", "arial"] as const) for (const sett
   expect(downloaded.ok()).toBe(true);
   expect(await downloaded.body()).toEqual(bytes);
   fs.writeFileSync(path.join(evidenceDir, "accepted.pdf"), await downloaded.body());
+  await testInfo.attach("cover-accepted.pdf", { path: path.join(evidenceDir, "accepted.pdf"), contentType: "application/pdf" });
   fs.writeFileSync(path.join(evidenceDir, "identities.json"), JSON.stringify({ original: originalCover, renderReceipt, accepted,
     previewDownloadSha256: digest, acceptedDownloadSha256: createHash("sha256").update(await downloaded.body()).digest("hex"),
     sourceSha256: createHash("sha256").update(fullCoverText).digest("hex") }, null, 2));
@@ -115,11 +144,8 @@ for (const fontFamily of ["georgia", "times", "arial"] as const) for (const sett
   expect(await (await page.request.get(`/v1/artifacts/${accepted.pdfArtifactId}/preview.pdf`)).body()).toEqual(bytes);
   expect(reloaded.materialsPreview.resumePdfArtifactId).toBe(original.materialsPreview.resumePdfArtifactId);
   expect(reloaded.materialsPreview.resumeTextArtifactId).toBe(original.materialsPreview.resumeTextArtifactId);
-  const pages = surface.locator(".pdf-preview-page");
   await expect(surface.locator(".pdf-preview-toolbar .toolbar-status")).toHaveText(/^\d+ pages?$/);
-  for (let index = 0; index < await pages.count(); index++) {
-    await testInfo.attach(`cover-accepted-page-${index + 1}`, { body: await pages.nth(index).screenshot(), contentType: "image/png" });
-  }
+  expect(await retainViewerPages(surface, testInfo, "accepted", digest)).toBe(measured.pages.length);
 });
 
 test("cover-letter competing saves accept one snapshot and preserve its displayed bytes", async ({ page, baseURL }, testInfo) => {
@@ -140,6 +166,8 @@ test("cover-letter competing saves accept one snapshot and preserve its displaye
     headers,
     data: { previewId: preview.previewId, expectedAcceptedVersion: preview.expectedAcceptedVersion },
   })));
+  const receipts = { previews, statuses: results.map(response => response.status()), responses: await Promise.all(results.map(response => response.json())) };
+  await retainJson(testInfo, "competing-save-receipts.json", receipts);
   expect(results.map(response => response.status()).sort()).toEqual([200, 409]);
   const winner = results.findIndex(response => response.status() === 200);
   const accepted = (await results[winner]!.json()).accepted;
@@ -149,8 +177,12 @@ test("cover-letter competing saves accept one snapshot and preserve its displaye
   const surface = page.getByRole("region", { name: "Cover-letter PDF formatting" });
   await expect(surface.getByLabel("Font size (pt)")).toHaveValue(String(accepted.settings.fontSizePt));
   await expect(surface.locator(".pdf-preview-toolbar .toolbar-status")).toHaveText(/^\d+ pages?$/, { timeout: 60_000 });
-  await testInfo.attach("competing-save-receipts.json", { body: JSON.stringify({ previews, statuses: results.map(response => response.status()), accepted }), contentType: "application/json" });
-  await testInfo.attach("competing-save-accepted.pdf", { body: previewBytes, contentType: "application/pdf" });
+  const pdfFile = testInfo.outputPath("cover-evidence", "competing-save-accepted.pdf");
+  fs.writeFileSync(pdfFile, previewBytes);
+  await testInfo.attach("competing-save-accepted.pdf", { path: pdfFile, contentType: "application/pdf" });
+  const digest = createHash("sha256").update(previewBytes).digest("hex");
+  expect(accepted.pdfSha256).toBe(digest);
+  await retainJson(testInfo, "competing-save-identities.json", { accepted, pdfSha256: digest });
 });
 
 // The API/RPC render and acceptance remain real. Only delivery of the committed
@@ -173,6 +205,7 @@ test("cover-letter lost save acknowledgement reconciles on reload without accept
     const response = await route.fetch();
     expect(response.ok()).toBe(true);
     committed = await response.json();
+    await retainJson(testInfo, "lost-ack-committed-receipt.json", { status: response.status(), committed });
     await surface.getByLabel("Font size (pt)").fill("9");
     await route.abort("failed");
   });
@@ -184,13 +217,19 @@ test("cover-letter lost save acknowledgement reconciles on reload without accept
   await expect(authorization.getByRole("button", { name: "Authorize live submit for Director of Platform Engineering", exact: true })).toBeDisabled();
   await expect(authorization.getByRole("button", { name: "Authorize dry run for Director of Platform Engineering", exact: true }))
     .toHaveAttribute("title", "Reload to reconcile the cover-letter save before approval.");
-  await testInfo.attach("lost-ack-committed-receipt.json", { body: JSON.stringify(committed), contentType: "application/json" });
+  await retainJson(testInfo, "lost-ack-uncertain-authority.json", {
+    localFontSizePt: await surface.getByLabel("Font size (pt)").inputValue(),
+    dryRunDisabled: await authorization.getByRole("button", { name: "Authorize dry run for Director of Platform Engineering", exact: true }).isDisabled(),
+    submitDisabled: await authorization.getByRole("button", { name: "Authorize live submit for Director of Platform Engineering", exact: true }).isDisabled(),
+    reason: await authorization.getByRole("button", { name: "Authorize dry run for Director of Platform Engineering", exact: true }).getAttribute("title"),
+  });
   await page.unroute("**/cover-letter/accept");
   await page.unroute("**/v1/apply/review-queue");
   await page.reload();
   await expect(surface.getByLabel("Font size (pt)")).toHaveValue("12");
   const queue = await (await page.request.get("/v1/apply/review-queue")).json() as ApplyReviewQueueResponse;
   expect(queue.items.find(row => row.jobKey === QA_PLATFORM_JOB_ID)!.materialsPreview.coverLetter).toEqual((committed as { accepted: unknown }).accepted);
+  await retainJson(testInfo, "lost-ack-reloaded-receipt.json", queue.items.find(row => row.jobKey === QA_PLATFORM_JOB_ID)!.materialsPreview.coverLetter);
 });
 
 // The seeded worker heartbeat is written once at global-setup; the suite runs
