@@ -482,10 +482,12 @@ Unchanged slots reuse their artifact IDs across generations. Readers that need
 an exact source, including DOCX export, bind both ID and generation. Artifact
 projections use the newest canonical occurrence with only that generation's
 layout and provenance rows; retained copies are history, not additional lines.
-Carry-forward chooses the latest approved generation per logical alias family
-(resume text, resume PDF and cover text), retaining same-generation row order.
-Older aliases stay in their historical generation rather than becoming current
-because an unrelated cover-format or resume save copied them.
+Cover-only carry-forward binds both selected resume IDs to their original
+coherent generation, using the same selector as Apply Review. It never combines
+a newer partial resume generation with another PDF/text version. Cover aliases
+retain same-generation row order. Older aliases and partial generations remain
+historical. Cover-text display reads the canonical source ID and checks its hash;
+unreadable or changed source bytes cannot substitute another alias.
 
 The persisted review PDF digest remains authoritative if a file disappears or
 changes. Default generated cover PDFs store source-text and PDF digests in their

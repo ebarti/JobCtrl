@@ -334,10 +334,14 @@ select the exact artifact/generation pair; artifact projections select one
 canonical occurrence and its matching layout/provenance generation. Copies do
 not concatenate audit rows. A new PDF takes metadata, anchors and determination
 bindings from the accepted text, including when there was no earlier PDF.
-Carry-forward groups resume-text, resume-PDF and cover-text aliases by logical
-slot. Only the latest approved generation of each slot is copied; older aliases
-remain historical. Aliases already sharing that generation keep their original
-row order and timestamps, preserving canonical and projected selection ties.
+Cover-only acceptance reuses Apply Review's resume selector and copies the exact
+selected text/PDF pair and its aggregate metadata. Newer text-only or PDF-only
+generations remain historical rather than being combined with another version.
+Legacy and review-required selections keep their existing authority. Cover-text
+aliases retain their current generation and row order; displayed cover text joins
+the canonical source ID and verifies its full-text hash instead of choosing an
+alias independently from projections. An unreadable canonical source never falls
+back to a different alias.
 The cover accepted-version hash includes source, PDF bytes/ID, normalized settings
 and renderer identity; rejected material attempts affect generation allocation
 only.

@@ -11,6 +11,9 @@ import type { ApplyReviewQueueResponse } from "@jobctrl/contracts";
 import { loadE2eDbPath, QA_PLATFORM_JOB_ID } from "../fixtures/e2e-state.js";
 
 const repoRoot = fileURLToPath(new URL("../../../..", import.meta.url));
+// Reload performs the same full PDF.js page rendering as the initial preview.
+// Use its existing one-minute readiness budget for both, below the test budget.
+const viewerReadyTimeout = 60_000;
 const { assertPdfMeasurementTools } = createRequire(import.meta.url)("../fixtures/pdf-measurement-tools.cjs") as {
   assertPdfMeasurementTools(): void;
 };
@@ -95,7 +98,7 @@ for (const fontFamily of ["georgia", "times", "arial"] as const) for (const sett
   const rendered = await renderResponse;
   expect(rendered.ok()).toBe(true);
   const renderReceipt = await rendered.json();
-  await expect(surface.locator(".pdf-preview-toolbar .toolbar-status")).toHaveText(/^\d+ pages?$/, { timeout: 60_000 });
+  await expect(surface.locator(".pdf-preview-toolbar .toolbar-status")).toHaveText(/^\d+ pages?$/, { timeout: viewerReadyTimeout });
   const previewUrl = await surface.getByRole("link", { name: "Download displayed cover-letter PDF" }).getAttribute("href");
   const preview = await page.request.get(previewUrl!);
   expect(preview.ok()).toBe(true);
@@ -144,7 +147,7 @@ for (const fontFamily of ["georgia", "times", "arial"] as const) for (const sett
   expect(await (await page.request.get(`/v1/artifacts/${accepted.pdfArtifactId}/preview.pdf`)).body()).toEqual(bytes);
   expect(reloaded.materialsPreview.resumePdfArtifactId).toBe(original.materialsPreview.resumePdfArtifactId);
   expect(reloaded.materialsPreview.resumeTextArtifactId).toBe(original.materialsPreview.resumeTextArtifactId);
-  await expect(surface.locator(".pdf-preview-toolbar .toolbar-status")).toHaveText(/^\d+ pages?$/);
+  await expect(surface.locator(".pdf-preview-toolbar .toolbar-status")).toHaveText(/^\d+ pages?$/, { timeout: viewerReadyTimeout });
   expect(await retainViewerPages(surface, testInfo, "accepted", digest)).toBe(measured.pages.length);
 });
 
@@ -176,7 +179,7 @@ test("cover-letter competing saves accept one snapshot and preserve its displaye
   await page.goto(`/apply-review?jobKey=${QA_PLATFORM_JOB_ID}`);
   const surface = page.getByRole("region", { name: "Cover-letter PDF formatting" });
   await expect(surface.getByLabel("Font size (pt)")).toHaveValue(String(accepted.settings.fontSizePt));
-  await expect(surface.locator(".pdf-preview-toolbar .toolbar-status")).toHaveText(/^\d+ pages?$/, { timeout: 60_000 });
+  await expect(surface.locator(".pdf-preview-toolbar .toolbar-status")).toHaveText(/^\d+ pages?$/, { timeout: viewerReadyTimeout });
   const pdfFile = testInfo.outputPath("cover-evidence", "competing-save-accepted.pdf");
   fs.writeFileSync(pdfFile, previewBytes);
   await testInfo.attach("competing-save-accepted.pdf", { path: pdfFile, contentType: "application/pdf" });

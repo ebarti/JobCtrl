@@ -2493,6 +2493,12 @@ establish their identity. Generation equality alone is insufficient. An
 unreadable canonical source blocks rendering, saving and approval. A saved
 receipt keeps its last accepted source identity, settings and PDF viewable;
 `pdfSourceCurrent` is false until the canonical source is readable again.
+`materialsPreview.coverLetterText` reads that canonical source ID and verifies
+its full-file hash. Projection ordering cannot select a different cover alias;
+an unreadable bound source exposes the source error instead of substitute text.
+Cover-only saves carry the coherent resume text/PDF selection already displayed
+in Apply Review, preserving its metadata and recorded provenance even when a
+newer partial resume generation exists.
 
 `acceptedVersion` binds the accepted source/PDF identities, bytes, settings and
 renderer. A rejected attempt does not change it. Generation allocation still

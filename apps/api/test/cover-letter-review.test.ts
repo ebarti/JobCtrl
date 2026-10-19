@@ -14,6 +14,7 @@ import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { createOrLoadResumeReviewDraft, saveResumeReviewDraftRevision } from "../src/resume-review-drafts.js";
 import { bindDecision, recordModelDecision } from "./semantic-fixtures.js";
 import { readArtifactLineAnchors } from "../src/semantic-determinations.js";
+import { selectResumeMaterial } from "../src/material-preview-selection.js";
 
 const jobId = "00000000-0000-4000-8000-000000001042";
 const otherJob = "00000000-0000-4000-8000-000000001043";
@@ -338,6 +339,86 @@ describe("exact cover-letter review", () => {
       expect(db.prepare("SELECT count(*) n FROM job_events WHERE event_type='PdfRendered'").get()).toEqual({ n: 2 });
     },
   );
+
+  it.each(["control", "newer-text", "newer-pdf"] as const)("keeps the selected coherent resume pair with %s", async mode => {
+    db.prepare(`INSERT INTO job_material_layout_boxes (tenant_id,job_id,generation,artifact_id,box_index,semantic_id,page_number,text_excerpt,left_pct,top_pct,width_pct,height_pct,created_at)
+      VALUES ('local',?,1,'resume-pdf',0,'selected-line',1,'Synthetic resume',10,10,80,2,?)`).run(jobId, now);
+    db.prepare(`INSERT INTO job_bullet_provenance (tenant_id,job_id,generation,bullet_id,artifact_id,section,transform_type,control,generated_text,created_at)
+      VALUES ('local',?,1,'selected-line','resume-text','experience','verbatim','required','Synthetic resume',?)`).run(jobId, now);
+    db.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,updated_at) VALUES ('local',?,'apply','pending',?)").run(jobId, now);
+    db.prepare("INSERT INTO job_materials (tenant_id,job_id,generation,status,created_at,updated_at,metadata_json) VALUES ('local',?,2,'complete',?,?,?)")
+      .run(jobId, now, now, JSON.stringify({ provenance: "unselected partial resume" }));
+    if (mode !== "control") {
+      const file = path.join(directory, mode === "newer-text" ? "newer.txt" : "newer.pdf");
+      fs.writeFileSync(file, mode === "newer-text" ? "Unrelated newer resume text" : "%PDF-1.4\nunrelated newer resume PDF\n%%EOF");
+      db.prepare(`INSERT INTO job_materials_artifacts (tenant_id,job_id,generation,artifact_type,artifact_id,status,path,render_format,size_bytes,metadata_json,created_at)
+        VALUES ('local',?,2,?,?,'approved',?,'text',?,'{}',?)`).run(jobId, mode === "newer-text" ? "tailored_resume" : "resume_pdf", mode, file, fs.statSync(file).size, now);
+    }
+    const read = (connection = db) => listApplyReviewQueue(connection, directory).items.find(item => item.jobKey === jobId)!.materialsPreview;
+    const before = read();
+    expect(before.resumeTextArtifactId).toBe("resume-text");
+    expect(before.resumePdfArtifactId).toBe("resume-pdf");
+    const history = acceptedRows();
+    const resumeBytes = fs.readFileSync(path.join(directory, "resume.pdf"));
+    for (const fontSizePt of [12, 13]) {
+      const { preview } = await renderCoverLetterPreview(db, directory, jobId, { ...request(), settings: { ...request().settings, fontSizePt } }, render);
+      const saved = acceptCoverLetterPreview(db, directory, jobId, { previewId: preview.previewId, expectedAcceptedVersion: preview.expectedAcceptedVersion });
+      expect(acceptCoverLetterPreview(db, directory, jobId, { previewId: preview.previewId, expectedAcceptedVersion: preview.expectedAcceptedVersion })).toEqual(saved);
+      const after = read();
+      expect(after.resumeTextArtifactId).toBe(before.resumeTextArtifactId);
+      expect(after.resumePdfArtifactId).toBe(before.resumePdfArtifactId);
+      expect(after.resumeText).toBe(before.resumeText);
+      expect(after.resumeTemplate).toEqual(before.resumeTemplate);
+      expect(after.resumePdfLayoutBoxes).toEqual(before.resumePdfLayoutBoxes);
+      expect(db.prepare("SELECT bullet_id,generated_text FROM job_bullet_provenance WHERE generation=?").all(after.materialsGeneration))
+        .toEqual([{ bullet_id: "selected-line", generated_text: "Synthetic resume" }]);
+      expect(acceptedRows().filter(row => (row as { generation: number }).generation <= 2)).toEqual(history);
+      expect(fs.readFileSync(path.join(directory, "resume.pdf"))).toEqual(resumeBytes);
+      const meta = db.prepare("SELECT metadata_json FROM job_materials WHERE generation=?").get(after.materialsGeneration) as { metadata_json: string };
+      expect(JSON.parse(meta.metadata_json).provenance).toBe("retained");
+      const reopened = new Database(path.join(directory, "jobs.db"));
+      try { expect(read(reopened)).toEqual(after); } finally { reopened.close(); }
+    }
+    expect(db.prepare("SELECT count(*) n FROM job_materials").get()).toEqual({ n: 4 });
+    expect(db.prepare("SELECT count(*) n FROM job_events WHERE event_type='PdfRendered'").get()).toEqual({ n: 2 });
+  });
+
+  it("selects the same resume IDs before projections are built and after reload", async () => {
+    db.prepare(`INSERT INTO job_materials_artifacts SELECT tenant_id,job_id,generation,'tailored_resume_pdf','aa-later-pdf',status,path,render_format,size_bytes,metadata_json,created_at,superseded_at
+      FROM job_materials_artifacts WHERE artifact_id='resume-pdf'`).run();
+    expect(selectResumeMaterial(db, jobId).pdf?.artifactId).toBe("resume-pdf");
+    db.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,updated_at) VALUES ('local',?,'apply','pending',?)").run(jobId, now);
+    const read = () => listApplyReviewQueue(db, directory).items.find(item => item.jobKey === jobId)!.materialsPreview;
+    expect(read().resumePdfArtifactId).toBe("resume-pdf");
+    const { preview } = await renderCoverLetterPreview(db, directory, jobId, request(), render);
+    acceptCoverLetterPreview(db, directory, jobId, { previewId: preview.previewId, expectedAcceptedVersion: preview.expectedAcceptedVersion });
+    expect(read().resumePdfArtifactId).toBe("resume-pdf");
+  });
+
+  it.each(["aa-last-cover", "zz-last-cover"])("displays the canonical source when the last alias is %s", async artifactId => {
+    db.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,updated_at) VALUES ('local',?,'apply','pending',?)").run(jobId, now);
+    const text = "Last canonical alias, distinct from the first text. END OF FULL LETTER";
+    const file = path.join(directory, "last-cover.txt"); fs.writeFileSync(file, text);
+    db.prepare(`INSERT INTO job_materials_artifacts (tenant_id,job_id,generation,artifact_type,artifact_id,status,path,render_format,size_bytes,metadata_json,created_at)
+      VALUES ('local',?,1,'cover_letter_txt',?,'approved',?,'text',?,'{}',?)`).run(jobId, artifactId, file, Buffer.byteLength(text), now);
+    const read = (connection = db) => listApplyReviewQueue(connection, directory).items.find(item => item.jobKey === jobId)!.materialsPreview;
+    expect(coverLetterAccepted(db, jobId)!.source.artifactId).toBe(artifactId);
+    expect(read().coverLetterText).toBe(text);
+    const { preview } = await renderCoverLetterPreview(db, directory, jobId, request(), async input => {
+      expect(fs.readFileSync(input.sourcePath, "utf8")).toBe(text); fs.writeFileSync(input.pdfPath, pdf);
+    });
+    const { accepted } = acceptCoverLetterPreview(db, directory, jobId, { previewId: preview.previewId, expectedAcceptedVersion: preview.expectedAcceptedVersion });
+    expect(accepted.pdfSourceCurrent).toBe(true);
+    expect(accepted.source.textSha256).toBe(createHash("sha256").update(text).digest("hex"));
+    expect(read().coverLetterText).toBe(text);
+    const reopened = new Database(path.join(directory, "jobs.db"));
+    try { expect(read(reopened)).toEqual(read()); } finally { reopened.close(); }
+    fs.rmSync(file);
+    const unavailable = read();
+    expect(unavailable.coverLetterText).toBeNull();
+    expect(unavailable.coverLetterPdfError).toBeTruthy();
+    expect(unavailable.coverLetter).toEqual({ ...accepted, pdfSourceCurrent: false });
+  });
 
   it("fences concurrent saves and source hash changes in the same generation", async () => {
     const snapshot = request();

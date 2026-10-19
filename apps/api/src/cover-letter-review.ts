@@ -8,6 +8,7 @@ import {
 import { allRows, getRow, type SqliteDatabase } from "./db.js";
 import { InputError, resolveJobId } from "./write-model.js";
 import { CoverLetterPathError, createCoverLetterAttempt, ownedCoverLetterPath, readOwnedCoverLetterFile, removeCoverLetterAttempt, writeOwnedCoverLetterFile } from "./cover-letter-files.js";
+import { selectResumeMaterial, RESUME_TEXT_ARTIFACT_TYPES, RESUME_PDF_ARTIFACT_TYPES, type ResumeMaterialSelection } from "./material-preview-selection.js";
 
 const TENANT = "local";
 const MAX_SOURCE_BYTES = 512_000;
@@ -37,6 +38,18 @@ export function coverLetterSourceBytes(appDir: string, file: string): Buffer {
     if (error instanceof CoverLetterPathError) throw new CoverLetterReviewError("cover_letter_path_forbidden", 403);
     throw new CoverLetterReviewError("cover_letter_source_unreadable_or_oversized", 422);
   }
+}
+/** Read only the source recorded by the canonical cover identity, never an alias fallback. */
+export function coverLetterTextForSource(db: SqliteDatabase, appDir: string, source: CoverLetterAccepted["source"]): string {
+  const row = getRow<ArtifactRow>(db, `SELECT * FROM job_materials_artifacts
+    WHERE tenant_id=? AND job_id=? AND artifact_id=? AND generation>=?
+      AND artifact_type IN ('cover_letter','cover_letter_txt') AND status='approved' AND superseded_at IS NULL
+    ORDER BY generation DESC, created_at DESC, rowid DESC LIMIT 1`,
+  [source.tenantId, source.jobId, source.artifactId, source.generation]);
+  if (!row) throw new CoverLetterReviewError("cover_letter_version_conflict", 409);
+  const bytes = coverLetterSourceBytes(appDir, row.path);
+  if (hash(bytes) !== source.textSha256) throw new CoverLetterReviewError("cover_letter_version_conflict", 409);
+  return bytes.toString("utf8");
 }
 function pdfBytes(appDir: string, file: string): Buffer {
   try {
@@ -185,21 +198,34 @@ export async function renderCoverLetterPreview(db: SqliteDatabase, appDir: strin
 /** Copy unchanged material slots and their source-bound records, retaining IDs.
  * History is append-only; neither files nor previous-generation rows are edited.
  */
-export function copyMaterialSlots(db: SqliteDatabase, jobId: string, targetGeneration: number, excluded: readonly string[]): void {
+export function copyMaterialSlots(db: SqliteDatabase, jobId: string, targetGeneration: number, excluded: readonly string[], selectedResume?: ResumeMaterialSelection): void {
   const rows = allRows<ArtifactRow>(db, `SELECT * FROM (
     SELECT *, rowid AS source_rowid, dense_rank() OVER (
       PARTITION BY CASE
-        WHEN artifact_type IN ('tailored_resume','tailored_resume_txt','resume_txt') THEN 'tailored_resume'
-        WHEN artifact_type IN ('resume_pdf','tailored_resume_pdf') THEN 'resume_pdf'
         WHEN artifact_type IN ('cover_letter','cover_letter_txt') THEN 'cover_letter'
         ELSE artifact_type END
       ORDER BY generation DESC) AS rank
     FROM job_materials_artifacts WHERE tenant_id=? AND job_id=? AND generation<? AND status='approved' AND superseded_at IS NULL
+      AND artifact_type NOT IN ('tailored_resume','tailored_resume_txt','resume_txt','resume_pdf','tailored_resume_pdf')
   ) WHERE rank=1 ORDER BY source_rowid`, [TENANT, jobId, targetGeneration]);
-  // Aliases share a logical slot: never promote an older alias alongside its
-  // current generation. Keep all aliases already in that generation, in their
-  // original row order, so both canonical and projected tie precedence survive.
-  // Historical occurrences and their provenance remain untouched.
+  const resumeTypes = [...RESUME_TEXT_ARTIFACT_TYPES, ...RESUME_PDF_ARTIFACT_TYPES];
+  if (!resumeTypes.every(type => excluded.includes(type))) {
+    const selection = selectedResume ?? selectResumeMaterial(db, jobId);
+    for (const [candidate, types] of [[selection.text?.candidate, RESUME_TEXT_ARTIFACT_TYPES], [selection.pdf, RESUME_PDF_ARTIFACT_TYPES]] as const) {
+      // Legacy/unaccepted selections remain in their existing stores. Do not
+      // turn a review-required candidate into accepted material by copying it.
+      if (!candidate?.artifactId || candidate.generation === null || candidate.reviewRequired) continue;
+      const row = getRow<ArtifactRow>(db, `SELECT *, rowid AS source_rowid FROM job_materials_artifacts
+        WHERE tenant_id=? AND job_id=? AND artifact_id=? AND generation=? AND generation<?
+          AND status='approved' AND superseded_at IS NULL
+          AND artifact_type IN (${types.map(() => "?").join(",")})`,
+      [TENANT, jobId, candidate.artifactId, candidate.generation, targetGeneration, ...types]);
+      if (row) rows.push(row);
+    }
+  }
+  // Copy the exact coherent resume selection, never combine newer partial text
+  // and PDF generations. Cover aliases retain their current generation/order.
+  rows.sort((a, b) => Number(a["source_rowid"]) - Number(b["source_rowid"]));
   for (const row of rows) {
     if (excluded.includes(row.artifact_type)) continue;
     db.prepare(`INSERT INTO job_materials_artifacts
@@ -253,7 +279,8 @@ export function acceptCoverLetterPreview(db: SqliteDatabase, appDir: string, job
     const bytes = coverLetterPreviewBytes(appDir, jobId, preview.previewId);
     const previousGeneration = generation(db, jobId);
     const next = previousGeneration + 1;
-    const baseGeneration = approved(db, jobId, ["tailored_resume", "tailored_resume_txt", "resume_txt", "resume_pdf", "tailored_resume_pdf"])?.generation ?? previousGeneration;
+    const selectedResume = selectResumeMaterial(db, jobId);
+    const baseGeneration = selectedResume.text?.candidate.generation ?? selectedResume.pdf?.generation ?? previousGeneration;
     const base = getRow<{ metadata_json: string | null }>(db, "SELECT metadata_json FROM job_materials WHERE tenant_id=? AND job_id=? AND generation=?", [TENANT, jobId, baseGeneration]);
     const now = new Date().toISOString();
     const meta = { ...metadata(base?.metadata_json ?? null), __jobctrl_materials_lineage_id: crypto.randomUUID().replaceAll("-", ""), cover_letter_review: preview };
@@ -262,7 +289,7 @@ export function acceptCoverLetterPreview(db: SqliteDatabase, appDir: string, job
       SELECT tenant_id, job_id, ?, status, ?, ?, last_validation_json, last_verdict_json, ?
       FROM job_materials WHERE tenant_id=? AND job_id=? AND generation=?`)
       .run(next, now, now, JSON.stringify(meta), TENANT, jobId, baseGeneration);
-    copyMaterialSlots(db, jobId, next, ["cover_letter_pdf"]);
+    copyMaterialSlots(db, jobId, next, ["cover_letter_pdf"], selectedResume);
     const artifactId = `cover_pdf_${preview.previewId}`;
     const text = approved(db, jobId, ["cover_letter", "cover_letter_txt"])!;
     db.prepare(`INSERT INTO job_materials_artifacts

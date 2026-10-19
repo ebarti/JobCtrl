@@ -1247,6 +1247,13 @@ directions, all resume text aliases and same-generation row-order ties. Preserve
 original rows, bytes, anchors and bindings; only the changed cover acceptance
 stales prior authorization. Keep a no-alias control and the insert-time drift
 rollback regressions.
+Also seed a selected complete resume pair with a newer text-only generation, and
+the reciprocal newer-PDF case. Save, retry and reload twice: preserve the selected
+pair, its aggregate metadata, layout and provenance rather than forming a mixed
+pair. Check cold and warm projection selection. For cover aliases, oppose ID
+ordering and insertion order at equal timestamps; displayed text must equal the
+canonical rendered source before/after save and reload, with no alias fallback
+when that canonical source becomes unreadable.
 Populate artifact projections before saving, then download the new accepted PDF
 without restarting. Acceptance must commit its existing `PdfRendered` event
 atomically; fail the event insert to prove full rollback, and retry a committed
@@ -1285,6 +1292,10 @@ paper and text geometry, font sizes, line/paragraph deltas, every-page PNGs and
 viewer screenshots. Inspect every page; passing interactions alone cannot prove
 visual acceptance. Keep controlled-response race scenarios separate from these
 real render measurements.
+Use the same bounded full-render readiness wait for initial and reloaded viewers:
+PDF.js reports progress for each page before reporting completion. Progress such
+as `Rendering page 4 of 4` is not readiness. Keep measured page-count comparisons,
+all nine formatting combinations and every-page captures after the ready state.
 Persist viewer captures for every preview and reloaded accepted page using
 `testInfo.outputPath`, then attach file paths. Retain the viewer-page hash manifests
 and competing-save, uncertain-authorization and reload receipts in that same
