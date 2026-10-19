@@ -462,6 +462,7 @@ class _StubDraftAdapter:
         self._returns = returns
         self._raises = raises
         self.calls = 0
+        self.prompts: list[str] = []
 
     @property
     def model_id(self) -> str:
@@ -469,6 +470,7 @@ class _StubDraftAdapter:
 
     async def draft(self, system_prompt: str, jd_snapshot: str) -> JobAnalysisDraft:
         self.calls += 1
+        self.prompts.append(system_prompt)
         if self._raises is not None:
             raise self._raises
         analysis = JobAnalysis.model_validate(self._returns)
@@ -479,11 +481,13 @@ class _StubSynthesizer:
     def __init__(self, *, returns: dict | None = None) -> None:
         self._returns = returns or _grounded_dict()
         self.received_drafts: tuple[JobAnalysisDraft, ...] = ()
+        self.prompts: list[str] = []
 
     async def reconcile(
         self, system_prompt: str, *, drafts: tuple[JobAnalysisDraft, ...], jd_snapshot: str
     ) -> JobAnalysis:
         self.received_drafts = drafts
+        self.prompts.append(system_prompt)
         return JobAnalysis.model_validate(self._returns)
 
 
@@ -547,6 +551,9 @@ class TestEnsemble:
             max_leg_retries=2,
         )
         assert bad.calls == 3  # initial + 2 retries before giving up
+        assert bad.prompts[0] == "sys"
+        assert all('"ref_id": "r1"' in prompt and '"span": "ten years of Rust"' in prompt for prompt in bad.prompts[1:])
+        assert all("untrusted data" in prompt for prompt in bad.prompts[1:])
         assert len(outcome.drafts) == 1
         assert outcome.failures[0].model_id == "gpt-5.4"
         # The grounding violation is captured as raw audit output.
@@ -615,15 +622,18 @@ class TestEnsemble:
         # Synthesizer fabricates a span -> ensemble re-asks then propagates.
         fabricated = _grounded_dict()
         fabricated["keywords"][0]["evidence_span"] = "Rust async runtime"  # not in JD
+        synthesizer = _StubSynthesizer(returns=fabricated)
         with pytest.raises(Exception):  # GroundingError after retries
             await run_ensemble(
                 "sys",
                 JD,
                 adapters=(_StubDraftAdapter("claude-opus-4-8", returns=_grounded_dict()),),
-                synthesizer=_StubSynthesizer(returns=fabricated),
+                synthesizer=synthesizer,
                 synthesizer_system_prompt="synth-sys",
                 max_leg_retries=1,
             )
+        assert synthesizer.prompts[0] == "synth-sys"
+        assert '"span": "Rust async runtime"' in synthesizer.prompts[1]
 
 
 class TestAgreement:

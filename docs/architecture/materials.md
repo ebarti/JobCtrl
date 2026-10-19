@@ -69,6 +69,10 @@ otherwise verified canonical analysis.
 
 Code checks requirement/evidence ID membership and verbatim employer spans. Every draft and synthesis receives source-bound claim verification, including candidate facts and process narration. The separate model quality judge remains where used. There is no process-subject grammar, protected-class phrase screen or fabrication lexicon. Job interpretation records requirement scope and protected-class flags before consumers use the analysis. Invalid or unsupported output enters repair/failure without replacing accepted analysis.
 
+Grounding retries include the rejected span and its requirement/keyword reference
+as explicitly untrusted repair data. The same posting remains the authority;
+the membership gate and retry bound stay unchanged for drafts and synthesis.
+
 ### Reuse And Lifecycle
 
 Analysis is cached by posting snapshot, prompt version, and SDK-set version.
