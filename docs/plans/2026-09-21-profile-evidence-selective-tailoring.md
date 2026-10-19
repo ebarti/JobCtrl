@@ -39,33 +39,30 @@ choosing configurable defaults. It does not
 run interviews, rewrite existing profiles, re-tailor accepted artifacts, or
 ship the planned product behavior.
 
-## 2. Reconciled Baseline And Acceptance Map (#1013)
+## 2. Current Foundations And Acceptance Map
 
-Inspected on 2026-10-19 against the owned checkout of `main` at
+Current code paths and test names refer to source revision
 [`f734ef8bf1d27e3219b2122aed089421f61b7ca8`](https://github.com/ebarti/JobCtrl/tree/f734ef8bf1d27e3219b2122aed089421f61b7ca8).
-All current code paths and test names below refer to that pin. Historical PR
-records establish design lineage; their checks do not validate this candidate.
-No real profile, workspace, database or provider account was inspected.
 
-### 2.1 Reused, superseded, and missing
+### 2.1 Existing foundations and missing behavior
 
-The retained local merge commits and the earlier integrated design establish:
+- Versioned profile saves, expected-version conflicts and immutable snapshots
+  already exist. They do not provide a draft promotion ledger.
+- Reviewed target-search proposals start unselected and preserve user edits,
+  rejection and version checks. They do not review imported evidence conflicts.
+- Resume extraction returns a noncanonical draft with verbatim field spans,
+  source-bound determinations and pending confirmation. Import-local ordinal IDs
+  do not establish canonical evidence identity or durable item review.
+- Achievement ownership and exact numeric source binding prohibit borrowing a
+  metric from another role or achievement. Generated artifacts never become
+  canonical facts by implication.
+- The Materials lifecycle already preserves accepted artifacts across failed or
+  cancelled refreshes. Multi-source intake must preserve those boundaries.
 
-| Foundation and pinned evidence | Reuse | Superseded or still missing |
-| --- | --- | --- |
-| [#955, `0aa939cde`](https://github.com/ebarti/JobCtrl/commit/0aa939cde09b46af331178fb660ebc9a2ac90ee8), this plan's original sections 3–4 | Noncanonical draft, exact human acceptance, provenance, versioned promotion and stable evidence identity remain the design owner. | Its baseline was `6a82c233`; “no browser profile version / no expected-version check” is obsolete. Its comparative evaluation/cohort prescription is superseded by the semantic-determination decision. No draft repository, multi-source reconciliation or promotion endpoint shipped with this design. |
-| [#956, `06017c591`](https://github.com/ebarti/JobCtrl/commit/06017c59136be2ea95a33adc3d33577f89ebf7f2), `apps/api/src/profile-store.ts`, `packages/contracts/src/schemas.ts` | `profileVersion` reads, optional `expectedProfileVersion` writes, typed stale conflicts and snapshot-bound role references are existing foundations. | Its partial deterministic role-suggestion fallback is historical; #1064 replaces semantic heuristics. A version-fenced profile save is not a draft promotion ledger. |
-| [#978, `97b4fd5c3`](https://github.com/ebarti/JobCtrl/commit/97b4fd5c34a4851150e4252002b04b5191801602), `apps/web/src/contexts/profile/forms/profile-form.tsx` | Initially unselected proposals, explicit selection, editing/rejection, ordinary version-fenced save, draft preservation and rebase behavior provide a review precedent. | This reviews target search proposals from saved facts, not conflicting imported evidence. Historical location/work-model evidence is not present-day consent. |
-| [#1064, `0b61aef78`](https://github.com/ebarti/JobCtrl/commit/0b61aef78b03d6d198e34c561c69ae0eec921969), `domain/profile/resume_extraction.py`, `domain/determinations.py` under `workers/automation/src/jobctrl/` | Strict field-span extraction, pending interpretations, persisted determination envelopes, source/version binding, profile lane and spend preflight; readers join recorded IDs. | Replaces lexical meaning checks and inferred strength/seniority facts. Extraction still returns a whole-profile draft with import-local ordinal entry IDs; it does not reconcile canonical identities or retain item-level review decisions. |
-| [#830, `4644f0a8e`](https://github.com/ebarti/JobCtrl/commit/4644f0a8e0c3d6bd9de474dfdeebea6a4e520936) | Achievement ownership and exact numeric source binding remain constraints; no metric borrowing between roles/achievements. | Historical lexical fabrication gates are superseded by #1064's claim determinations. No authority to promote generated text follows from artifact validation. |
-| [#868, `85415c7f6`](https://github.com/ebarti/JobCtrl/commit/85415c7f641e090bf330f0e7ae9333694055391a) and [#869, `7fd68570d`](https://github.com/ebarti/JobCtrl/commit/7fd68570da18d82677864fb045bb743b1660bf16) | One Materials batch/candidate lifecycle, retained evaluated candidate evidence, cancellation/ownership fences and preservation of accepted artifacts. The [retained delivery record](implemented/2026-09-06-simplification-stack.md#completion-record) records historical checks and corrections. | Those historical results are not fresh intake proof. New intake adds no Materials retry or artifact writer; selective composition and residual Tailor dispositions remain separate future work. |
-
-Current import still marks all imported experience, education and skill
-categories required (`profile_import.py:profile_from_extraction`). Empty
-required **entry/category** lists still fall back to all entries
-(`domain/profile/aggregate.py:required_experience_ids`, `required_education_ids`,
-`required_skill_category_ids`). This does not imply every bullet is a hard pin.
-The proposed `legacy_all`/`selective_v1` policy fields do not exist today.
+Current import marks imported experience, education and skill categories
+required. Empty required entry/category lists fall back to all entries; that
+rule does not pin every bullet. The proposed `legacy_all`/`selective_v1` fields
+are not implemented.
 
 ### 2.2 Current entry → handoff → save → recovery
 
@@ -80,7 +77,7 @@ The proposed `legacy_all`/`selective_v1` policy fields do not exist today.
 | Commit → continuation → restart; `profile-events.ts`, startup/dispatch in `server.ts` | After commit, durable intent/dispatch/acknowledgement recovers from pending `ProfileUpdated` events. Identical saves coalesce; pending newer revisions coalesce while already-intended older work reattaches first. Follow-up failure cannot undo the save. | Server tests `recovers an unacknowledged profile continuation on API startup`, `does not launch startup continuations before the health-only database exists`, and `reattaches an intended older profile continuation before dispatching a newer revision`; dispatcher doubles, not live scoring/tailoring. |
 | Canonical snapshot → downstream consumers; `domain/profile/snapshot.py` | Immutable deep-copy snapshots bind work to a profile version; imported drafts are not inputs to scoring, Materials, Discovery, Evidence Map or Apply. Historical snapshots and accepted artifacts must survive later changes/failures. | `test_profile_snapshot.py` tests deep-copy and metadata behavior. End-to-end downstream refresh and accepted-file preservation were not exercised by these focused checks. |
 
-### 2.3 Remaining acceptance and delivery boundary
+### 2.3 Remaining product work
 
 Section 4 defines the missing Profile-owned draft/source/review/promotion
 contract. Section 8 maps each current measurement and prospective scenario to
@@ -90,18 +87,7 @@ idempotent promotion remain **unimplemented**, including browser draft handoff.
 No framework, migration, production endpoint or selective-tailoring change is
 authorized by this investigation.
 
-The #1013 delivery path is this documentation checkpoint → controller-owned
-single early unmerged PR → independent review and QA plus concurrent CI where
-permitted → batch repair/recheck → controller settlement at the unmerged PR.
-Delivery readiness and settlement require retained passing evidence for the
-candidate's mandatory `checks.diff`, `checks.docs`, independent review/QA and
-applicable required PR CI, including Docs Site / Build's dead-link gate and
-rendered docs runtime check. The controller may publish the early unmerged PR
-before review/QA and required PR CI complete, then run review and CI concurrently
-where permitted. Changed documents invalidate affected evidence; unchanged
-source-bound measurements may be reused with explicit limits. Actual start/finish times
-belong in retained runtime records. This design records no future gate outcome
-and authorizes no merge, release, deployment, statistics reset or other intake.
+
 
 ## 3. Invariants
 
@@ -473,62 +459,16 @@ artifact comparison without deriving a more favorable explanation later.
 - The API and UI report whether a warning affected repair, remained on the
   selected candidate, or appeared after acceptance.
 
-## 8. Current Measurements And Prospective Validation
+## 8. Validation Requirements
 
-### 8.1 Observed current contracts
+### 8.1 Existing contract coverage
 
-On the section 2 source pin, owned synthetic checks produced the following
-results on 2026-10-19. Production source/tests and lockfiles were unchanged.
-These are investigation measurements, not proof of multi-source intake or the
-edited documentation candidate's required publication gates.
-
-| Measurement | UTC start → finish | Actual outcome and scope |
-| --- | --- | --- |
-| Locked worker pytest, seven files listed below | 15:26:57.509075 → 15:27:13.782428 | 58 passed, zero skipped/errors/failures; synthetic PDF, normalized SQLite, snapshot copying, local Temporal activity harness with importer double, and fake-model authority/binding/failure checks. No live provider. |
-| API `candidate-confirmation.test.ts`, `profile-events-v7.test.ts` | 15:26:57.509377 → 15:27:00.962409 | 4 passed, zero skipped/errors/failures; unchanged confirmation, stale confirmation preservation, version-scoped status, canonical event/approved-resume lookup. |
-| API selected `server.test.ts` cases from section 2 and below | 15:27:00.964445 → 15:27:11.667966 | 10 passed, zero selected cases skipped/failed. JUnit includes 314 unrelated cases excluded by the explicit name selector; this is not a full server-suite pass. Injected import/dispatch adapters, actual HTTP/SQLite. |
-
-The worker command uses the controller-prepared Python 3.12.13 environment:
-`uv --project workers/automation run --locked --all-extras --python <prepared-python> pytest`
-with the explicit paths under `workers/automation/tests/`:
-`test_profile_import.py`, `test_activity_profile_import.py`,
-`test_profile_use_cases.py`, `test_profile_determinations.py`,
-`test_sqlite_profile_repository.py`, `test_profile_snapshot.py`,
-`test_semantic_determinations.py`, plus `-q --junitxml=<owned-report-path>`.
-API commands use the recorded Node 22.21.1/Corepack environment and
-`corepack pnpm --filter @jobctrl/api exec vitest run`, explicit test paths,
-`--reporter=junit --outputFile=<owned-report-path>`. The server command selects
-these exact inspected names with `-t` (joined by `|`):
-
-- `imports resume PDFs through an injected profile importer without running Python in tests`
-- `rejects malformed resume import payloads before importer dispatch`
-- `atomically rejects stale suggestion saves without a profile event`
-- `does not redispatch preparation when a form resubmits the unchanged profile`
-- `rolls back the profile mutation when its durable continuation event cannot commit`
-- `coalesces concurrent identical profile saves into one version and continuation`
-- `coalesces simultaneous genuine profile revisions into the newest durable continuation`
-- `recovers an unacknowledged profile continuation on API startup`
-- `does not launch startup continuations before the health-only database exists`
-- `reattaches an intended older profile continuation before dispatching a newer revision`
-
-The controller-allocated retained implementation evidence contains `probe.py`,
-exact argv/environment, stdout/stderr, UTC records, source/lock hashes,
-`source-bindings.json`, the documentation diff and JUnit reports. Report hashes
-bind these observations independently of a host path:
-
-| Retained report | SHA-256 |
-| --- | --- |
-| `worker-contracts.xml` | `2d8c55d11b834018568140be2ea8a3e53ce15b6509289d6230bbbef5ca8f96ce` |
-| `api-confirmation-events.xml` | `36290aa62597696a22a656a62ba15feb5c917c57e377b0936003aa063bbf90a9` |
-| `api-entry-recovery.xml` | `3db67f62c9c1a11e16e45c0dfb3cbab549eb2d30b21927c749b170faa3e2f8e2` |
-
-The copied preparation receipt (SHA-256
-`04501b02093824aba634bf92bdd1d552200aebe6e5405183a0f8b40fbee3f1a0`)
-contains baseline dependency/native preparation and a baseline diff check,
-not prior browser or feature proof. There are no prior-iteration feature
-measurements in that handoff. Historical #955/#956/#978/#1064 commit records and
-#868/#869 retained delivery evidence were inspected locally; remote PR checks
-were not refreshed. No claim of semantic accuracy follows from model doubles.
+Worker tests own profile import, activity handoff, profile use cases, persisted
+model determinations, SQLite profile storage and immutable snapshots. API tests
+own candidate confirmation, profile events, stale saves, transaction rollback
+and continuation recovery. Model doubles establish authority and failure
+handling, not semantic accuracy. These existing tests do not implement or prove
+multi-source review, promotion or browser draft handoff.
 
 ### 8.2 Required scenario map for a future implementation
 
@@ -641,11 +581,10 @@ separate authorization and must not ship around an unaccepted contract.
 - Exit: applicable Tier 3 review and QA pass on the exact candidate with no
   unresolved Blocker or High finding.
 
-## 10. #902 Shipped Aid And Retained Prerequisite
+## 10. Existing Role Suggestions
 
-The optional aid shipped through #956/#978 and its semantic authority changed
-with #1064. The prerequisite remains a boundary for that aid, independent of
-the unimplemented evidence-interview flow:
+Optional role suggestions use the following boundaries independently of the
+unimplemented evidence-interview flow:
 
 - load the canonical saved `ProfileSnapshot`; never use raw browser form state;
 - bind the transient suggestion set to `profileVersion`;

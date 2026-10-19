@@ -60,7 +60,7 @@ establish a saved change.
 
 Reviewed multi-source intake, duplicate/conflict reconciliation and item-level
 fact promotion are **proposed, not implemented**. The [owning intake design and
-current-path assessment](../plans/2026-09-21-profile-evidence-selective-tailoring.md#2-reconciled-baseline-and-acceptance-map-1013)
+current-path assessment](../plans/2026-09-21-profile-evidence-selective-tailoring.md#2-current-foundations-and-acceptance-map)
 preserve explicit acceptance, unknown facts and canonical ownership. They do
 not change the current import flow or authorize generated facts.
 

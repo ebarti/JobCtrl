@@ -40,7 +40,7 @@ has a [reviewable integrated proposal](2026-09-21-profile-evidence-selective-tai
 for draft evidence capture, explicit canonical promotion, opt-in selective
 composition, rendered-artifact audit, and dependent delivery slices. The plan
 is unshipped and awaits explicit user approval before implementation. Its
-[#1013 intake investigation](2026-09-21-profile-evidence-selective-tailoring.md#2-reconciled-baseline-and-acceptance-map-1013)
+[#1013 intake investigation](2026-09-21-profile-evidence-selective-tailoring.md#2-current-foundations-and-acceptance-map)
 reconciles shipped versioned-save/model foundations with the missing browser
 draft handoff and proposed multi-source review/promotion contract. This remains
 one docs-only issue delivery, not implementation of the program.
