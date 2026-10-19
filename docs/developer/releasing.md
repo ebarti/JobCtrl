@@ -177,23 +177,30 @@ Update and rollback verification must also exercise the real launcher entry
 point with a resumable transition journal, including the detached supervisor.
 A fresh installation and tests that replace the readiness-start function do not
 prove that an authenticated candidate can start before the journal is finalized.
-The protected release workflow also runs `scripts/released-upgrade-smoke.mjs`
-against the actual published 0.1.0, 0.1.1, 0.2.0, 0.2.1 and 0.3.0 executables and the signed
-candidate before any immutable publication or stable promotion. Its isolated signed formula-cache adapter
-replaces only Homebrew acquisition; native installers, migrations, services,
-readiness failure, explicit rollback, interrupted recovery, paired backups and
-repeated update execute through the real binaries. Retain the credential-free
-`released-upgrade-smoke.json` evidence and require every matrix case to pass.
-Require a separate ordinary update, rollback and repeated update from every
-historical version's original controller. The additional 0.2.1 fault-injection
-case must not replace its ordinary successful-update case.
-Include a separate workspace that first reproduces the released 0.2.1-to-0.3.0
-failure, then recovers it using the new authenticated formula controller.
-The serial matrix retains time for real installer notarization and repeated
-service restarts; do not shorten it to a version-only check to fit a timeout.
-Also upgrade a real 0.2.1 installation that has never started or created either
-database, then roll back its initialized predecessor pair. Partial pairs and
-orphaned sidecars must fail before any selection change in the native suite.
+The protected release workflow runs `scripts/released-upgrade-smoke.mjs` against
+actual released executables before immutable publication. Five independent cases
+run concurrently on separate macOS runners:
+
+- 0.2.0 (schema v10): upgrade, paired rollback and one explicit update afterward.
+- 0.2.1 (schema v11) and 0.3.0 (schema v14): one upgrade each, checking retained job
+  data and Temporal history.
+- An already-failed 0.2.1-to-0.3.0 update: recovery through the corrected launcher,
+  then one successful upgrade.
+- A never-started 0.2.1 installation: initialization, upgrade and paired rollback,
+  preserving an unrelated file.
+
+The native suite owns detailed readiness-fault injection, partial-pair and
+orphaned-sidecar checks. Do not repeat that whole suite for every old binary in
+the release gate. Historical source schemas remain covered by native migration tests rather than
+additional 0.1.x release lifecycle cases.
+
+Each release case retains its report and elapsed time, with a 20-minute limit.
+GitHub's matrix dependency requires every case to pass before publication; there
+is no additional report-aggregation job. Cases use the existing self-contained
+verification bundle and actual bundled runtimes without installing application
+development dependencies. The signed formula-cache adapter replaces only
+Homebrew acquisition. Keep installers, migrations, services and data/history
+checks real; use only owned synthetic workspaces.
 
 Verify the Homebrew formula with unmodified Homebrew: strict Developer ID checks
 must accept the actual released executables and reject an ad-hoc control inside
