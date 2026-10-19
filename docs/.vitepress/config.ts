@@ -246,6 +246,7 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
         collapsed: true,
         items: [
           { text: "Scoring Policy", link: "/architecture/scoring" },
+          { text: "Employer Sponsorship History (future design)", link: "/architecture/employer-sponsorship-history" },
           { text: "Employer Analysis & Materials Audit", link: "/architecture/materials" },
           { text: "Reviewed Screening Answers", link: "/architecture/reviewed-screening-answers" },
           { text: "Tailoring Contract", link: "/architecture/tailoring" },
