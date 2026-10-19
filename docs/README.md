@@ -30,8 +30,9 @@ has one defining page; other pages summarize it briefly and link to that owner.
 ### Start Here
 
 - [`index.md`](index.md): documentation homepage and product entry points.
-- [`comparison.md`](comparison.md): evidence-backed comparison with Career-Ops,
-  JobOps, AI Job Search, and adjacent job-search tools.
+- [`comparison.md`](comparison.md): dated, evidence-backed comparison with 19
+  alternatives, including source-reviewed workflows and commercial job-search,
+  resume, application, and career tools.
 - [`user/product-tour.md`](user/product-tour.md): visual product tour.
 - [`user/getting-started.md`](user/getting-started.md): install, first-run setup,
   provider readiness, first workflow, update, rollback, and removal.

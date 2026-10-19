@@ -1,21 +1,28 @@
 ---
 pageClass: jh-visual-doc jh-comparison-page
-description: "Compare JobCtrl's local-first, auditable workflow with Career-Ops, JobOps, and AI Job Search across discovery, tailoring, safety, and operations."
+description: "JobCtrl compared with 19 job-search alternatives, reviewed on 2026-10-19: local control, evidence, recovery, application assistance, career tools, and practical tradeoffs."
 ---
 
 # How JobCtrl Compares
 
-JobCtrl, [Career-Ops](https://github.com/santifer/career-ops),
-[JobOps](https://github.com/DaKheera47/job-ops), and
-[AI Job Search](https://github.com/MadsLorentzen/ai-job-search) address the same
-broad problem through four different operating models. Across the capabilities
-reviewed here, JobCtrl is the only option that combines a supported graphical
-product, durable workflows, source-bound claim-verification determinations, and
-guarded submission paths. The competitor snapshots were last reverified on
-**2026-08-12**. JobCtrl's reviewed snapshot was advanced on **2026-08-15**
-during conflict resolution to incorporate the shipped missing-salary
-intelligence shown below. The [snapshot method](#snapshot-and-delta-method)
-pins every open-source claim to an immutable commit.
+**Assessment date: 2026-10-19 (Europe/Madrid).** JobCtrl is a strong fit for
+people who want a local, inspectable workflow from discovery through reviewed
+materials and application decisions. Its clearest distinction is the combination
+of durable execution, versioned evidence, preserved accepted artifacts, and
+approvals bound to exact inputs. That is an architectural assessment, not evidence
+of a higher interview or offer rate.
+
+This review covers **19 alternatives**: six public repositories and thirteen
+commercial products. The detailed matrix compares the three closest previously
+reviewed workflows; the wider market tables cover the other sixteen. Repository
+claims use [immutable source snapshots](#snapshot-and-delta-method). Commercial
+rows describe current official product or help pages, with their implementation
+and outcome claims explicitly unverified.
+
+JobCtrl's latest published release at review time is
+[v0.3.1](https://github.com/ebarti/JobCtrl/releases/tag/v0.3.1), published on
+2026-10-19. The source review and the published release are recorded separately
+below.
 
 ## Four operating models
 
@@ -28,11 +35,11 @@ pins every open-source claim to an immutable commit.
     </div>
     <p>A React control plane backed by a local API, Python worker, Temporal workflows, and a supporting CLI.</p>
     <ul>
-      <li>SQLite, generated files, and browser state stay local.</li>
-      <li>Long-running work has durable history, retries, and visible recovery.</li>
-      <li>Dry runs and review-bound approvals guard live submission.</li>
+      <li>Scores and generated claims retain source bindings and model determinations.</li>
+      <li>Durable work and accepted-artifact history support recovery.</li>
+      <li>Browser forms are completed and submitted manually; owned Gmail sends need exact approval.</li>
     </ul>
-    <p class="jh-compare-card__verdict"><strong>Why JobCtrl leads:</strong> it is the only reviewed option with a supported web UI, durable workflow execution, and guarded live-submission paths in one product.</p>
+    <p class="jh-compare-card__verdict"><strong>Why JobCtrl leads:</strong> its strongest case in this source comparison is the integrated evidence, recovery, and approval model. The bundled release requires an Apple-silicon Mac.</p>
     <a href="./user/product-tour">Explore the product tour →</a>
   </article>
 
@@ -42,13 +49,13 @@ pins every open-source claim to an immutable commit.
       <h3>Career-Ops</h3>
       <span class="jh-compare-badge jh-compare-badge--partial">Web UI: opt-in alpha</span>
     </div>
-    <p>Human-readable Markdown, YAML, and TSV files drive modes run through several AI coding CLIs.</p>
+    <p>Human-readable files and AI coding CLIs provide a broad research, application, and coaching toolkit.</p>
     <ul>
-      <li>A terminal dashboard is established; the optional Next.js UI remains alpha.</li>
-      <li>Freshness, company exclusions, spend tiers, and a candidate fact gate now strengthen the file-first workflow.</li>
-      <li>Application autofill stops before the user clicks Submit.</li>
+      <li>Public ATS scanning, liveness checks, local-model options, and optional scheduled web scans.</li>
+      <li>Interview practice, debriefs, contact research, and offer preparation.</li>
+      <li>Autofill leaves final submission to the user; the Next.js UI still labels itself alpha.</li>
     </ul>
-    <p class="jh-compare-card__verdict"><strong>Gap versus JobCtrl:</strong> the operator experience remains file- and CLI-first, the optional web UI is alpha, and interrupted work has no durable workflow engine.</p>
+    <p class="jh-compare-card__verdict"><strong>Gap versus JobCtrl:</strong> file and batch recovery does not provide Temporal-style execution history. Its fact gate covers selected claim types rather than proving every reformulation; its coaching breadth is a strength.</p>
     <a href="#appendix-evidence-backed-capability-matrix">Open the evidence matrix →</a>
   </article>
 
@@ -58,13 +65,13 @@ pins every open-source claim to an immutable commit.
       <h3>JobOps</h3>
       <span class="jh-compare-badge">Supported web UI</span>
     </div>
-    <p>A React and Express application backed by SQLite, packaged for Docker self-hosting with an optional hosted service.</p>
+    <p>A Docker-oriented React and Express application with SQLite, an onboarding wizard, and an optional hosted service.</p>
     <ul>
-      <li>Searches multiple boards, scores roles, tailors structured resumes, renders PDFs, and tracks applications.</li>
-      <li>High-confidence Gmail matches update the timeline automatically; uncertain matches go to review.</li>
-      <li>Applications remain manual, and running pipelines do not survive a server restart.</li>
+      <li>Multi-board search, fit scoring, resume tailoring, PDF export, and Gmail tracking.</li>
+      <li>Official sponsorship registers and OpenAI-compatible local-model endpoints.</li>
+      <li>The user applies manually; running and paused pipelines remain process-local.</li>
     </ul>
-    <p class="jh-compare-card__verdict"><strong>Gap versus JobCtrl:</strong> no candidate source-to-claim verification, durable workflow history, or exact-approval submission path was evidenced in the reviewed snapshot.</p>
+    <p class="jh-compare-card__verdict"><strong>Gap versus JobCtrl:</strong> the inspected tailoring path relies on prompt constraints, and active pipeline execution does not survive restart. Docker deployment, provider choice, and sponsorship research are strengths.</p>
     <a href="#appendix-evidence-backed-capability-matrix">Open the evidence matrix →</a>
   </article>
 
@@ -74,13 +81,13 @@ pins every open-source claim to an immutable commit.
       <h3>AI Job Search</h3>
       <span class="jh-compare-badge jh-compare-badge--partial">Generated HTML dashboard</span>
     </div>
-    <p>Claude Code commands and skills coordinate local utilities and a LaTeX-first application workflow.</p>
+    <p>Commands and skills coordinate portal utilities, a file-based tracker, and a document drafting and review workflow.</p>
     <ul>
-      <li>The drafter-reviewer path produces CV, cover-letter, and PDF artifacts.</li>
-      <li>Optional Gmail and Notion sync commands extend its local tracker.</li>
-      <li>Submission remains a user handoff after document preparation.</li>
+      <li>Batch ranking, company research, profile expansion, and skill-gap plans.</li>
+      <li>A separate reviewer, PDF inspection, and optional Gmail and Notion sync.</li>
+      <li>Submission is a user handoff; LaTeX is the default with custom toolchains supported.</li>
     </ul>
-    <p class="jh-compare-card__verdict"><strong>Gap versus JobCtrl:</strong> no stateful graphical product, browser-form assistance, or checkpointed apply recovery was evidenced in the reviewed snapshot.</p>
+    <p class="jh-compare-card__verdict"><strong>Gap versus JobCtrl:</strong> the generated dashboard is not a stateful operator app, and interrupted drafting has no evidenced durable execution engine. Adaptable templates and the review workflow are strengths.</p>
     <a href="#appendix-evidence-backed-capability-matrix">Open the evidence matrix →</a>
   </article>
 </div>
@@ -89,7 +96,7 @@ pins every open-source claim to an immutable commit.
 
 <div class="jh-compare-table-wrap" role="region" aria-label="At-a-glance comparison table" tabindex="0">
   <table class="jh-compare-summary">
-    <caption>Selected differences between the four reviewed job-search tools</caption>
+    <caption>Selected differences between four source-reviewed workflows, 2026-10-19</caption>
     <thead>
       <tr>
         <th scope="col">Capability</th>
@@ -102,132 +109,257 @@ pins every open-source claim to an immutable commit.
     <tbody>
       <tr>
         <th scope="row">Primary surface</th>
-        <td>Web app + local API/worker; supporting CLI</td>
-        <td>Files + AI coding CLIs; terminal dashboard</td>
-        <td>Self-hosted web app + local API and SQLite</td>
-        <td>Claude Code commands/skills + local utilities</td>
+        <td>Local web app; signed macOS bundle; CLI</td>
+        <td>Files and coding CLIs; TUI; optional alpha web UI</td>
+        <td>Docker web app; optional hosted instance</td>
+        <td>Claude Code skills; generated offline dashboard</td>
       </tr>
       <tr>
-        <th scope="row">Graphical UI</th>
-        <td><strong>Supported product surface</strong></td>
-        <td><strong>Partial:</strong> optional Next.js alpha</td>
-        <td><strong>Supported product surface</strong></td>
-        <td><strong>Partial:</strong> generated offline HTML dashboard</td>
-      </tr>
-      <tr>
-        <th scope="row">Tailored documents</th>
-        <td>Resume, cover letter, HTML, and PDF</td>
-        <td>CV/HTML/PDF and cover letter</td>
-        <td>Structured resume tailoring and PDF</td>
-        <td>LaTeX CV, cover letter, and PDF</td>
+        <th scope="row">Grounding mechanism</th>
+        <td>Persisted model determinations, source IDs, quotes, and line anchors</td>
+        <td>Source-aware prompts plus selected fact and PDF gates</td>
+        <td>Prompt constraints and structured resume transforms</td>
+        <td>Source-aware drafter and reviewer instructions; PDF checks</td>
       </tr>
       <tr>
         <th scope="row">Submission boundary</th>
-        <td>Dry run + guarded browser/Gmail paths; approval on by default</td>
-        <td>Form autofill; the user clicks Submit</td>
-        <td>Prepared materials; the user applies manually</td>
-        <td>Reviewed documents; the user submits</td>
+        <td>Browser inspection only; manual forms; exact-approved Gmail send</td>
+        <td>Assisted autofill; user submits</td>
+        <td>Prepared materials; user applies</td>
+        <td>Reviewed documents; user submits</td>
       </tr>
       <tr>
         <th scope="row">Interrupted work</th>
-        <td>Temporal history, retries, and stable workflow identities</td>
-        <td>File integrity + resumable batch flags; no workflow engine</td>
-        <td>Persisted run records; active run state is in memory</td>
-        <td>No checkpointed apply resumption evidenced</td>
+        <td>Temporal history, retries, and workflow identities</td>
+        <td>Canonical files, locks, checkpoints, and resumable batch flags</td>
+        <td>Stored run records; active execution is in memory</td>
+        <td>Saved artifacts; no durable apply resumption evidenced</td>
       </tr>
       <tr>
-        <th scope="row">Application-level cost control</th>
-        <td>Daily estimated-spend ceiling</td>
-        <td>Spend tiers, batch pre-screen/cap, dry run, and resume controls</td>
-        <td>Hosted action quotas; no self-hosted spend ceiling evidenced</td>
-        <td>Token-efficiency instructions; no app-level budget evidenced</td>
+        <th scope="row">Model and cost options</th>
+        <td>Codex, Claude, Google; daily estimated-spend and lane controls</td>
+        <td>Multiple CLIs, local models, spend tiers, caps, and run estimates</td>
+        <td>Many providers and local endpoints; hosted action quotas</td>
+        <td>Claude Code; no application-wide dollar ceiling evidenced</td>
+      </tr>
+      <tr>
+        <th scope="row">Beyond documents</th>
+        <td>Availability rechecks, screening answers, locale variants, offers, evidence milestones; interview prep in Beta</td>
+        <td>Interview practice and debriefs, offer prep, research, and networking</td>
+        <td>Gmail outcome inbox and sponsorship-register research</td>
+        <td>Interview prep, outcomes, learning plans, and optional sync</td>
       </tr>
     </tbody>
   </table>
 </div>
 
-The compact view highlights operating-model differences. The
-[full evidence matrix](#appendix-evidence-backed-capability-matrix) preserves
-the qualifications, issue evidence, and source links behind every row.
+These differences concern inspected mechanisms. A source check or a model
+verdict cannot guarantee that an application is accurate or will succeed. The
+[evidence matrix](#appendix-evidence-backed-capability-matrix) gives the supporting
+paths and limitations.
 
-## What changed since 2026-07-20
+## What changed since the August comparison
 
-All three previously reviewed projects moved materially, and JobOps now belongs
-in the main matrix as a closer graphical alternative. These are changes between
-exact Git snapshots, not deductions from mutable marketing pages.
-
-| Project | Verified additions | Effect on this comparison |
+| Project | Current evidence | Effect on the assessment |
 | --- | --- | --- |
-| **JobCtrl** | Across [246 commits](https://github.com/ebarti/JobCtrl/compare/446056bb623df813365a302df35c6e04412c2446...b4063e1a3227d31eebacbc7d2c620ae5236f744b), it activated the exact-v8 data model through a sealed v7 transition, added canonical job identity, repeat-application prevention, reviewed learning recommendations and tailoring-policy rollback, more durable preparation recovery, richer workflow cancellation/progress, browser-profile selection, and automatic lineage-preserving compensation benchmarks. | The supported graphical, auditability, durable-recovery, and missing-salary intelligence assessments are stronger. The product still requires Apple-silicon macOS for its public bundled installation. |
-| **Career-Ops** | Across [413 commits](https://github.com/santifer/career-ops/compare/16367add3f7291add757fc672a530294ae231bab...03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182), it expanded to 74 provider modules, added outcome archives, follow-up and reply tooling, offer-stage support, application-email drafts, more languages, context-budget controls, and a fact gate that now covers selected employers, titles, tools, and metric-like claims. | Discovery and post-application support are substantially stronger. Grounding remains **Partial** because the gate still does not prove every generated claim, and [full faithfulness](https://github.com/santifer/career-ops/issues/1411) plus [final rendered keyword coverage](https://github.com/santifer/career-ops/issues/1285) remain open. |
-| **JobOps** | The newly added [2026-08-12 snapshot](https://github.com/DaKheera47/job-ops/tree/c834c6502bf4685904b6abc3d5a008294b8b7020) provides a supported React/Express UI, multi-board discovery, AI scoring, structured resume tailoring, PDF generation, a Gmail outcome inbox, and Docker self-hosting. | JobOps is the closest reviewed graphical alternative. It narrows JobCtrl's UI advantage, but its active pipeline state is process-local, candidate grounding is prompt-based, and its AGPLv3 distribution carries the additional Commons Clause restriction. |
-| **AI Job Search** | Across [76 commits](https://github.com/MadsLorentzen/ai-job-search/compare/faa479973aeaa7b8a1463112d088fdefff202961...670d30ae7e9709bbf624deb2d9962ba5733331f5), it added work-authorization and language gates, optional application-form artifacts, posting archives, follow-up drafting, portal-health safeguards, custom-portal hardening, and release-aware fork update tooling. | Evaluation and post-application continuity are stronger. The generated-dashboard, manual-submission, interruption-recovery, and application-level cost-control assessments do not change. |
+| **JobCtrl** | The [published v0.3.1 notes](https://github.com/ebarti/JobCtrl/releases/tag/v0.3.1) cover accepted DOCX export, company briefings, offer records and communications, posting-history source proposals, and evidence milestones. Current source also includes saved-posting revalidation, model-owned semantic determinations, reviewed screening answers, and locale variants. | Several old breadth gaps have narrowed. The case for JobCtrl now includes lifecycle continuity and inspectable evidence across more tasks, while platform and browser-entry limits remain. See the [source delta](https://github.com/ebarti/JobCtrl/compare/b4063e1a3227d31eebacbc7d2c620ae5236f744b...198d399d33d2bb527c8cd49cc43dd27e3203b36b). |
+| **Career-Ops** | The repository now lives under `career-ops-hq`. Its [web README][career-web] still says alpha but documents scheduled scans, assisted apply, editing, and analytics. Current [modes][career-readme] include interview practice/debriefs and contract/offer preparation. | Describing it as merely a prompt scaffold or terminal viewer understates its breadth. Its current fact gate and file-based recovery still differ from JobCtrl's determination and workflow model. [Source delta](https://github.com/career-ops-hq/career-ops/compare/03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182...0b35a138fffa5335340070c2d13e0c8d1b804a2b). |
+| **JobOps** | Current source documents [sponsorship registers][jobops-sponsors], broader provider routes, and the [Gmail review workflow][jobops-tracking], alongside its application UI. | A close graphical alternative with useful deployment and provider flexibility. The source remains newer than its latest published release; the snapshot table keeps that distinction. [Source delta](https://github.com/DaKheera47/job-ops/compare/c834c6502bf4685904b6abc3d5a008294b8b7020...4a5e52b76a729aa2f57e4e9171216cf9621140a0). |
+| **AI Job Search** | The current [apply command][ai-apply] defines a separate reviewer with restricted tools and verify-before-use research. Its [command set][ai-readme] includes ranking, profile expansion, gap plans, outcomes, and optional sync; v1.7.3 was published today. | Stronger preparation and continuity than the older comparison suggested; still a CLI and files workflow with a manual submission handoff. [Source delta](https://github.com/MadsLorentzen/ai-job-search/compare/670d30ae7e9709bbf624deb2d9962ba5733331f5...d621ebe63549dffb291edea7f7621cd00e67ddb1). |
 
-### Adjacent market watch
+## Where competitors have the stronger offering
 
-[JobSync](https://github.com/Gsync/jobsync/compare/1a8647bdb0108b26481b509323d503d0ab433184...8212d02bea35cdff15137b1432c9466bf9cb9a5c)
-also moved materially across 178 commits, adding automated discovery, resume
-review and job-match tools, cover-letter generation, and an in-product agent
-chat. It remains on the adjacent watchlist because its primary product is a
-self-hosted application tracker and career assistant rather than the same
-guarded, durable end-to-end execution model. Commercial tools are excluded from
-this source-level delta because they do not expose equivalent immutable code
-snapshots.
+- **Convenience and reach.** Simplify offers browser autofill and an iOS flow;
+  AIApply offers mobile auto-apply management; JobOps and JobSync offer Docker
+  deployment. JobCtrl's public bundled installer is early access for
+  Apple-silicon macOS 15+, and its browser path leaves form entry and final
+  submission to the user. See [Getting Started](user/getting-started.md) and
+  [Apply](user/apply.md).
+- **Local inference.** Career-Ops can use CLI-supported local models, JobOps
+  accepts OpenAI-compatible endpoints, and JobSync supports Ollama. JobCtrl
+  supports Codex, Claude, and Google routes; [local/custom endpoints remain
+  unavailable](user/configuration.md#llm-providers). Local
+  storage does not mean offline processing, and JobCtrl's database and generated
+  artifacts are [not encrypted](user/security.md#what-stays-on-your-machine).
+- **Career memory and relationship context.** Teal Pro markets a persistent
+  career vault and a Google contacts/calendar graph. Applyd markets proof-backed
+  skills and a story bank. JobCtrl has a versioned profile, contacts, an Evidence
+  Map, and [selected-job demand and reviewed milestones](user/scoring-and-employer-analysis.md#selected-job-demand-and-learning-milestones);
+  these do not amount to the same integrated relationship graph. Milestone
+  activity is user-attested and never proves a skill or readiness score.
+- **Interview practice.** Career-Ops provides practice and debrief modes, and
+  commercial products market spoken mock interviews and delivery feedback.
+  JobCtrl provides a local question library and source-bound job preparation
+  **in Beta**; its guidance remains a research draft, and it does not provide
+  live interview assistance or validated rehearsal grading. See
+  [Interview Preparation](user/materials-and-tailoring.md#interview-preparation).
+
+The competitor sources for these comparisons appear in the tables below. No
+shared trial of setup time, generation quality, cost per application, ATS parsing,
+or hiring outcomes was run, so this page does not rank those results.
+
+## Other source-reviewed alternatives
+
+The same 2026-10-19 review date applies to these three repositories. Read the
+snapshot table for exact source and release identities.
+
+| Alternative | Inspected offering | How it compares with JobCtrl |
+| --- | --- | --- |
+| **[ApplyPilot][applypilot-readme]** — Pickle-Pixel project | A Python discovery → enrichment → scoring → tailoring → PDF → browser application pipeline. The [launcher][applypilot-launcher] supports dry runs and autonomous submission. | The closest volume-oriented local automation alternative in this set. SQLite statuses and retries are useful, but the inspected launcher does not evidence JobCtrl's exact-approved artifact/send-intent model. This is the public repository, distinct from unrelated services using the same name. |
+| **[JobSync][jobsync-readme]** | A self-hosted tracker with scheduled ATS discovery, resume review and job matching, cover letters, contacts, companies, interview questions, MCP tools, and backup/restore. It supports Ollama and cloud models. | A broader personal search organizer than the old watchlist description implied, with a local-inference option JobCtrl lacks. Its [cover-letter grounding prompt][jobsync-cover] and [discovery persistence][jobsync-persist] do not evidence the same source-bound material acceptance or guarded submission lifecycle. Configured cloud providers can receive data; self-hosting alone is not an offline guarantee. |
+| **[Proficiently skills][proficiently-readme]** | Public Claude skills for setup, search, tailoring, networking, browser apply, and a Telegram loop. The [apply instructions][proficiently-apply] propose field answers for approval; uploads can require manual handling. | A lighter agent-based route with useful network discovery. Prompt instructions are not a product-level enforcement guarantee. The separate [commercial service](https://proficiently.com/) markets managed search, applications, and hiring-manager outreach; its server implementation and advertised results were not verified. |
+
+## Commercial alternatives
+
+**Evidence label for every row: vendor documentation, reviewed 2026-10-19.**
+These pages establish what is currently offered or claimed. No paid account,
+private backend, live application, or interview session was tested. Missing
+source evidence for a guarantee means **unknown**, not absent. Free tiers,
+subscriptions, credits, supported sites, and availability can change.
+
+| Product | Current official offering | Implication for JobCtrl |
+| --- | --- | --- |
+| **[Simplify / Copilot](https://simplify.jobs/copilot)** | Browser autofill, tailoring, and automatic tracking. Its paid [Autopilot](https://help.simplify.jobs/articles/1784339-getting-started-with-autopilot) completes and submits selected supported jobs **without a final review step**; Copilot leaves Submit to the user. The [iOS app](https://help.simplify.jobs/help/articles/3745882-getting-started-with-the-simplify-ios-app) supports both flows. | Strong browser/mobile convenience. It can no longer be described as autofill-only. JobCtrl instead exposes manual browser completion and exact-approved Gmail sends; choose according to the control boundary you want. |
+| **[Huntr](https://huntr.co/)** | Resume tailoring, a job/contact tracker, and browser clipping/autofill. Its [Application Packets](https://help.huntr.co/en/articles/14367332-application-hub-and-packets) bundle a tailored resume, cover letter, and follow-up template for each job. | A direct organization and application-materials alternative. Bundled materials and a usable tracker are shared capabilities; JobCtrl's comparison should focus on recorded source authority, acceptance history, and recovery. |
+| **[Teal / Teal Pro](https://www.tealhq.com/pro)** | Alongside Teal's resume/tracker tools, Pro markets career memory, opportunity fit, resume/prep, a people graph from optional Google contacts/calendar access, follow-up guidance, and an iPhone app. | Competitive pressure extends beyond resume optimization into continuing career support. JobCtrl's evidence and contact records overlap, while that connected relationship and mobile workflow remains a gap. |
+| **[Jobscan](https://www.jobscan.co/)** | ATS matching, a tracker, discovery, and auto-apply advertised with review before sending. Its [AI Resume Coach](https://www.jobscan.co/ai-resume) asks about experience, offers editable suggestions, and exports PDF/DOCX. | Review, evidence-oriented writing, and Word export are not unique to JobCtrl. Jobscan's ATS score is not the same measure as JobCtrl's requirement-evidence fit assessment; no hiring-outcome comparison was run. |
+| **[LoopCV](https://www.loopcv.pro/)** | Continuous search, automated applications and recruiter emails, analytics, company/source filters, and optional manual review. The vendor offers free and paid tiers. | A stronger offering for someone seeking hosted, ongoing application automation. Optional review exists; that alone does not establish exact-artifact approval, send deduplication, or the same recovery guarantees. |
+| **[LazyApply](https://lazyapply.com/)** | Browser-based automated applications and referrals, application analytics, and resume/cover-letter tools. | Primarily competes on application throughput and convenience. Advertised volumes and success claims were not tested; the public page does not establish equivalent evidence and submission guarantees. |
+| **[Sonara](https://www.sonara.ai/)** | A current BOLD-branded site with signup, a public job catalogue, and managed matching/auto-apply. It states that its system checks jobs daily and that employers can close postings between updates. | Treat it as a current marketed alternative, not simply a historical shutdown. The live public surface does not prove submission quality or continuous revalidation of every saved job; JobCtrl exposes persisted availability and uncertainty. |
+| **[JobCopilot](https://jobcopilot.com/automate-job-applications/)** | Hosted discovery and applications, with a tracker and application modes. [Personalized AI Apply](https://jobcopilot.com/ai-apply/) markets writing-style controls and learning from edits; adjacent tools cover interviews and negotiation. | More emphasis on delegated application work. Edit learning and review claims overlap with parts of JobCtrl's lifecycle, but their provenance, effectiveness, and exact submission guarantees remain unverified. |
+| **[AIApply](https://support.aiapply.co/en/articles/14216708-how-auto-apply-works)** | Auto submits matches automatically; Hybrid auto-submits above its stated fit threshold and holds others; Review requires approval per suggestion. The [iPhone app](https://support.aiapply.co/en/articles/16764354-getting-started-with-the-aiapply-app) manages modes, history, and an employer-reply inbox. | A broader mobile and hosted submission offering. Review is a real documented mode; the threshold and vendor match ratings are not equivalent to JobCtrl's evidence model or an independent quality measure. |
+| **[Applyd](https://applyd.io/)** | The rendered public page markets ATS checks, source-constrained resume copies, PDF/Word export, a tracker, proof-backed skill mapping, round-specific text/voice mock interviews, a story bank, and an optional public profile. | A direct challenge to a generic “truthful resume plus career evidence” pitch. Its no-fabrication and skill-proof claims are vendor claims, not independently verified equivalents of JobCtrl's recorded determinations. |
+| **[Offerd](https://www.offerd.ai/)** | ATS scanning, AI video interviews, answer feedback, document generation, a tracker, and voice-profile claims. | More interview-practice functionality is advertised than JobCtrl currently ships. Interview scoring accuracy and advertised callback improvements were not verified. |
+| **[Final Round AI](https://www.finalroundai.com/)** | Desktop live interview assistance, spoken practice, automatic debriefs, and screen help, organized around job-specific goals and materials. | Compare its practice and debrief offering with JobCtrl's Beta preparation. Hidden real-time assistance is a different operating model that JobCtrl does not offer; invisibility and outcome claims were not tested. |
+| **[Kickresume](https://www.kickresume.com/en/)** | Resume/cover-letter creation, tailoring and translation, templates, career mapping, interview-question tools, mobile apps, and a [job tracker](https://www.kickresume.com/en/job-application-tracker/). | A broader document-design and career-tool offering than a resume builder alone. JobCtrl overlaps on tailoring and translation, with separate locale reviews and accepted source/version identity in the surrounding workflow. |
+
+Human review, honest-writing claims, trackers, DOCX, and career tools are now
+common competitive features. JobCtrl's defensible distinction in this review
+is how those decisions bind to stored evidence and recoverable work. Public
+commercial evidence is insufficient to claim that competitors cannot provide
+similar controls internally.
 
 ## JobCtrl's UI is part of the product
 
-JobCtrl's web app is the supported operator surface, not an optional viewer. It
-can start work, edit and approve materials, show requirement-level evidence,
-and follow durable runs as server-side changes arrive.
+The web app starts work, edits and approves materials, displays requirement
+evidence, and follows durable runs. Its current lifecycle also includes reviewed
+[screening answers](user/screening-answers.md),
+[locale variants](user/locale-variants.md),
+[offer records](user/outcomes-and-feedback.md#actual-offer-terms-and-decisions),
+and [editable DOCX exports](user/materials-and-tailoring.md#editable-docx-export).
 
 [![JobCtrl dashboard showing pipeline progress, job counts, source health, and apply runs](assets/screenshots/dashboard.png)](user/product-tour.md)
 
 <ComparisonScreenshotCarousel />
 
-All screenshots use synthetic sample data. Open the [Product Tour](user/product-tour.md)
-for the complete Profile → Discovery → Pipeline → Jobs → Apply Review → Runs
-workflow, including job-detail evidence and resume editing.
+All screenshots use synthetic sample data. They illustrate the operator
+experience, not the results of a competitor usability trial. Open the
+[Product Tour](user/product-tour.md) for the complete workflow.
 
 ## Semantic Determination Authority
 
-JobCtrl uses source-bound model determinations for semantic support and quality. Code verifies canonical IDs, verbatim spans and exact values; generation-time anchors make explanations inspectable by line ID. There is no deterministic lexical fabrication gate or read-time similarity reconstruction.
-
-See [the decision](decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+JobCtrl uses source-bound model determinations for meaning, claim support, and
+quality. Code validates canonical IDs, verbatim quotes, exact values, and
+versions; readers join the recorded line anchors. Failed refreshes preserve
+accepted artifacts. The model can still be wrong: provenance makes a judgment
+inspectable, not infallible. See the
+[semantic authority decision](decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations)
+and [Tailoring Contract](architecture/tailoring.md).
 
 ## Appendix: evidence-backed capability matrix
 
+**Present** means an inspected command, runtime path, or documented product
+surface exists. **Partial** states the narrower mechanism. **Not evidenced**
+applies to the inspected paths and is not proof of universal absence. Source
+inspection was not an installed-product or model-quality certification.
+
 | Capability | JobCtrl | Career-Ops | JobOps | AI Job Search |
 | --- | --- | --- | --- | --- |
-| **Primary experience** | **Present.** A local product composed of a React client, TypeScript API, Python worker, Temporal workflows, and a supporting CLI. See [Runtime & Processes](architecture/runtime.md). | **Present.** A file-first system whose Markdown modes run through several AI coding CLIs. Agent-driven modes remain the broadest path, with standalone scripts for scanning, evaluation, tailoring, PDF generation, and tracking. [Architecture](https://github.com/santifer/career-ops/blob/03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182/ARCHITECTURE.md) | **Present.** A React/Vite client and Express API backed by SQLite, packaged for Docker self-hosting and also offered as a hosted instance. [Architecture](https://github.com/DaKheera47/job-ops/blob/c834c6502bf4685904b6abc3d5a008294b8b7020/orchestrator/README.md) | **Present, intentionally narrow.** A Claude Code command-and-skill framework with Python/Bun utilities and LaTeX output. PDF/LaTeX remains the verified first-class document path. [Source](https://github.com/MadsLorentzen/ai-job-search/blob/670d30ae7e9709bbf624deb2d9962ba5733331f5/README.md) |
-| **Graphical user interface** | **Present — supported product surface.** The React/Vite SPA is the main control plane, not an optional viewer. It provides Profile, Discovery, Pipelines, Dashboard, Jobs and job-detail audit, Apply Review with rich-text resume editing, Runs, Artifacts, Evidence, Analytics, Outreach, Preferences, and Debug views, with API mutations and SSE-driven refresh. See the screenshot-backed [Product Tour](user/product-tour.md) and [Frontend Architecture](architecture/frontend/index.md). | **Partial — alpha.** The established UI is a Go terminal dashboard. The optional Next.js web UI reads and writes the same local files, but its own README remains alpha and an open defect can resolve a tracker row to the wrong report ([issue #1623](https://github.com/santifer/career-ops/issues/1623)). [Alpha README](https://github.com/santifer/career-ops/blob/03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182/web/README.md) | **Present — supported product surface.** The primary Orchestrator UI manages discovery, tailoring, PDFs, application states, notes, and post-application handoff. [Orchestrator](https://github.com/DaKheera47/job-ops/blob/c834c6502bf4685904b6abc3d5a008294b8b7020/docs-site/docs/features/orchestrator.md) | **Partial — generated report.** `/html-report` creates a self-contained offline HTML dashboard with stat cards, charts, and a filterable application table. It is regenerated output rather than a stateful application surface. [Command](https://github.com/MadsLorentzen/ai-job-search/blob/670d30ae7e9709bbf624deb2d9962ba5733331f5/.claude/commands/html-report.md) |
-| **Job discovery** | **Present.** Configured sources feed a durable discovery and preparation pipeline; optional scheduling is off until enabled, and manual browser capture is also supported. See [Pipeline Operations](architecture/pipeline/operations.md) and [Daily Workflow](user/normal-flows.md#configure-discovery). | **Present.** A zero-token scanner reads open, no-auth ATS and board sources through 74 provider modules, with liveness, freshness, deduplication, health, and blacklist controls. [Providers](https://github.com/santifer/career-ops/blob/03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182/providers/README.md), [scanner](https://github.com/santifer/career-ops/blob/03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182/scan.mjs) | **Present.** The application searches LinkedIn, Indeed, Glassdoor, and more than ten other boards, then imports results into its pipeline. [Supported boards](https://github.com/DaKheera47/job-ops/blob/c834c6502bf4685904b6abc3d5a008294b8b7020/README.md#supported-job-boards) | **Present.** `/scrape` searches and deduplicates through market-specific portal skills; shipped portals are Denmark-centered, with broader Freehire and LinkedIn starting points plus a custom-portal generator. [Source](https://github.com/MadsLorentzen/ai-job-search/blob/670d30ae7e9709bbf624deb2d9962ba5733331f5/README.md#job-search-tools) |
-| **Missing-salary intelligence** | **Present — auditable numeric range.** JobCtrl preserves employer-posted, direct-market, and extrapolated benchmarks as separate authorities. Discover automatically refreshes missing or seven-day-old role-family, level, and country slices. A missing country can use official price levels and evidence-weighted same-company cross-country ratios; the UI exposes the exact anchor, inputs, raw factor, freshness, confidence, and review bounds. See [Compensation Evidence](user/compensation-evidence.md). | **No automatic missing-range estimate.** Career-Ops performs bounded salary research during evaluation, but if the posting lacks an advertised number it explicitly collapses the compensation output and skips detailed market rows; machine state records `advertised_comp` as `null` rather than substituting research. [Evaluation boundary](https://github.com/santifer/career-ops/blob/03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182/modes/oferta.md#L121-L156), [machine-summary rule](https://github.com/santifer/career-ops/blob/03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182/modes/oferta.md#L608) | **Advertised values only.** Its job record stores crawler-provided salary text and JobSpy range fields; deduplication retains the first non-null values, but the snapshot does not evidence automatic benchmark discovery or geographic extrapolation. [Job fields](https://github.com/DaKheera47/job-ops/blob/c834c6502bf4685904b6abc3d5a008294b8b7020/shared/src/types/jobs.ts#L174-L197), [merge behavior](https://github.com/DaKheera47/job-ops/blob/c834c6502bf4685904b6abc3d5a008294b8b7020/shared/src/job-matching.ts#L220-L247) | **BYO data only.** Its optional salary lookup reads a user-supplied dataset and the apply workflow skips salary benchmarking when none is configured; the reviewed snapshot does not evidence automatic missing-range discovery or geographic extrapolation. [Salary benchmark tool](https://github.com/MadsLorentzen/ai-job-search/blob/670d30ae7e9709bbf624deb2d9962ba5733331f5/tools/README_SALARY_TOOL.md#L1-L16) |
-| **Fit evaluation** | **Present.** An LLM-produced 1–10 fit score is governed by a versioned rubric; the stored result includes criteria, requirement-level evidence, gaps, blockers, confidence, and model/prompt trace metadata. See [Scoring](architecture/scoring.md#scoring-fit-assessment). | **Present.** The AI produces a structured 1–5 evaluation; the per-job workflow maps requirements to exact CV lines, records gaps, and saves the result as a report. [Scoring](https://github.com/santifer/career-ops/blob/03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182/modes/_shared.md), [evaluation](https://github.com/santifer/career-ops/blob/03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182/modes/oferta.md) | **Present.** The AI produces a 0–100 suitability score and reason from the candidate profile, listing, and configurable scoring instructions; job-fact corrections require exact listing evidence. [Scoring prompt](https://github.com/DaKheera47/job-ops/blob/c834c6502bf4685904b6abc3d5a008294b8b7020/shared/src/prompt-template-definitions.ts), [fact review](https://github.com/DaKheera47/job-ops/blob/c834c6502bf4685904b6abc3d5a008294b8b7020/orchestrator/src/server/services/scorer.ts) | **Present.** The AI scores technical skills, experience, behavioral fit, and career alignment with fixed weights, while location, language, and work authorization can act as gates; strengths and gaps accompany the score. [Source](https://github.com/MadsLorentzen/ai-job-search/blob/670d30ae7e9709bbf624deb2d9962ba5733331f5/.claude/skills/job-application-assistant/04-job-evaluation.md) |
-| **Tailored documents** | **Present.** JobCtrl generates reviewable resume, cover-letter, HTML, and PDF artifacts for a selected job. See [Tailoring Contract](architecture/tailoring.md). | **Present.** Career-Ops generates tailored CV/HTML/PDF, cover-letter, and application-email drafts through agent-driven modes or standalone paths, with custom templates supported. [Features](https://github.com/santifer/career-ops/blob/03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182/README.md#features) | **Present.** JobOps tailors a structured resume's headline, summary, skills, and selected projects, then renders a PDF through its configured local or Reactive Resume path. [Prompt](https://github.com/DaKheera47/job-ops/blob/c834c6502bf4685904b6abc3d5a008294b8b7020/shared/src/prompt-template-definitions.ts), [tailoring transform](https://github.com/DaKheera47/job-ops/blob/c834c6502bf4685904b6abc3d5a008294b8b7020/orchestrator/src/server/services/rxresume/tailoring.ts) | **Present.** `/apply` drafts a LaTeX CV and cover letter, sends both through a second-agent review, and compiles and inspects both PDFs; custom templates can be registered. [Source](https://github.com/MadsLorentzen/ai-job-search/blob/670d30ae7e9709bbf624deb2d9962ba5733331f5/README.md) |
-| **Grounding and output validation** | **Present.** Resume bullets carry source provenance; model claim verification with mechanical source-binding checks can reject a candidate; requirement coverage comes from verifier findings bound to rendered line IDs. See [Tailoring Contract](architecture/tailoring.md). | **Partial, strengthened.** A zero-LLM gap check separates supported requirements from genuine gaps, and a hard pre-PDF gate rejects selected employer, title, tool, and metric-like claims absent from configured sources. It remains narrower than full source-to-claim faithfulness, and rendered keyword coverage is not fail-closed ([issues #1411](https://github.com/santifer/career-ops/issues/1411) and [#1285](https://github.com/santifer/career-ops/issues/1285)). [Fact gate](https://github.com/santifer/career-ops/blob/03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182/verify-cv-facts.mjs) | **Partial.** The tailoring prompt says not to invent experience and constrains project selection to stored projects, but the snapshot does not evidence a deterministic source-to-claim validator or per-claim provenance for generated candidate text. [Tailoring prompt](https://github.com/DaKheera47/job-ops/blob/c834c6502bf4685904b6abc3d5a008294b8b7020/shared/src/prompt-template-definitions.ts), [project selection](https://github.com/DaKheera47/job-ops/blob/c834c6502bf4685904b6abc3d5a008294b8b7020/orchestrator/src/server/services/projectSelection.ts) | **Partial, strengthened.** The drafter and reviewer audit dates, roles, metrics, and claims against profile sources, while the compiled PDF's ATS text and truthful requirement coverage are checked. These remain agent instructions and document checks rather than a deterministic source-to-claim provenance gate. [Workflow](https://github.com/MadsLorentzen/ai-job-search/blob/670d30ae7e9709bbf624deb2d9962ba5733331f5/.claude/commands/apply.md) |
-| **Local data and external processing** | **Present.** The database, configuration, generated files, logs, and browser state are local. Selected workflows send necessary content to configured LLMs, job sources, Gmail, CAPTCHA, Maps, or telemetry services. Local data is not encrypted. See [Data, Privacy & Safety](user/data-and-safety.md#local-data) and [What Leaves Your Machine](user/security.md#what-leaves-your-machine). | **Present.** Human-readable Markdown/YAML/TSV files are canonical and SQLite is a derived index; no hosted account is required. AI content goes to the provider chosen through the user's CLI, and local-model paths are available. [Architecture](https://github.com/santifer/career-ops/blob/03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182/ARCHITECTURE.md) | **Present, with hosted and integration paths.** Self-hosted state uses local SQLite and generated files. Configured LLMs, job boards, Gmail, optional Reactive Resume, anonymous analytics, or the optional hosted service can cross that boundary. [Architecture](https://github.com/DaKheera47/job-ops/blob/c834c6502bf4685904b6abc3d5a008294b8b7020/orchestrator/README.md), [service and analytics disclosures](https://github.com/DaKheera47/job-ops/blob/c834c6502bf4685904b6abc3d5a008294b8b7020/README.md) | **Present, with optional publishing.** Profile sources, generated LaTeX/PDFs, a CSV tracker, and application archives live in the user's fork. `/notion-sync` publishes selected tracker metadata; `/gmail-sync` reads Gmail and proposes local changes after review. [Commands](https://github.com/MadsLorentzen/ai-job-search/blob/670d30ae7e9709bbf624deb2d9962ba5733331f5/README.md) |
-| **Application assistance and submission boundary** | **Present.** The browser path runs transport-locked rehearsals and leaves final browser submit to the user. The owned Gmail path can send only an exact-approved recipient/attachment candidate, with submit intent recorded immediately before the send. See [Approval And Control Gates](user/security.md#approval-and-control-gates). | **Present.** The apply assistant can fill supported ATS fields, but the user reviews the form and clicks Submit; the project states that it never submits, sends, or clicks on the user's behalf. [Boundary](https://github.com/santifer/career-ops/blob/03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182/docs/APPLY_AUTOFILL.md) | **Partial.** JobOps prepares tailored materials and opens the application target, but states that the user applies manually; no form-filling or owned submission path was evidenced. [Source](https://github.com/DaKheera47/job-ops/blob/c834c6502bf4685904b6abc3d5a008294b8b7020/README.md) | **Partial.** `/apply` prepares reviewed CV and cover-letter files, then hands submission to the user; browser-form filling or submission is not evidenced. [Source](https://github.com/MadsLorentzen/ai-job-search/blob/670d30ae7e9709bbf624deb2d9962ba5733331f5/.claude/commands/apply.md) |
-| **Post-application and coaching** | **Present.** JobCtrl records outcomes and supports grounded, stored interview preparation **in Beta**, contact research, outreach drafts, and follow-up reminders; it is not a live interview assistant and does not send outreach. See [Daily Workflow](user/normal-flows.md) and [Responsible Use Boundaries](user/data-and-safety.md#responsible-use-boundaries). | **Present, expanded.** Outcome archives, follow-up and reply tooling, interview preparation, company and compensation analysis, contact research, offer-stage support, and negotiation scripts are shipped. The broader closed learning loop remains open ([issue #1724](https://github.com/santifer/career-ops/issues/1724)). [Outcome mode](https://github.com/santifer/career-ops/blob/03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182/modes/outcome.md), [features](https://github.com/santifer/career-ops/blob/03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182/README.md#features) | **Present.** Gmail messages are matched to jobs; high-confidence matches update timelines automatically, while uncertain matches enter a review queue. [Tracking Inbox](https://github.com/DaKheera47/job-ops/blob/c834c6502bf4685904b6abc3d5a008294b8b7020/docs-site/docs/features/post-application-tracking.md) | **Present.** `/outcome` archives results and feeds calibration; `/interview` prepares for stages; `/upskill` creates a gap plan; `/gmail-sync` proposes status changes for approval. [Commands](https://github.com/MadsLorentzen/ai-job-search/blob/670d30ae7e9709bbf624deb2d9962ba5733331f5/README.md) |
-| **Interruption and recovery** | **Present.** Long-running work uses Temporal histories, retries, heartbeats, and stable workflow identities; ambiguous owned-send results park for human verification instead of risking a duplicate. See [Runtime & Processes](architecture/runtime.md) and [Browser Final Submit Is Not Delegated](user/security.md#browser-final-submit-is-not-delegated). | **Partial.** Canonical files, integrity tools, locks, and resumable batch flags preserve some progress, but there is no durable workflow engine. [Architecture](https://github.com/santifer/career-ops/blob/03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182/ARCHITECTURE.md), [batch recovery](https://github.com/santifer/career-ops/blob/03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182/docs/RUNNING_ON_A_BUDGET.md) | **Partial.** Run records and job states persist in SQLite, but active, paused, and cancellation state is process-local; the source explicitly says a server restart kills a running or paused pipeline. [Pipeline state](https://github.com/DaKheera47/job-ops/blob/c834c6502bf4685904b6abc3d5a008294b8b7020/orchestrator/src/server/pipeline/orchestrator.ts) | **Not evidenced.** Commands write final artifacts, sync state, and outcome history, but the snapshot does not document checkpointed resumption or durable retry for an interrupted `/apply` run. [Workflow](https://github.com/MadsLorentzen/ai-job-search/blob/670d30ae7e9709bbf624deb2d9962ba5733331f5/.claude/commands/apply.md) |
-| **LLM cost controls** | **Present.** A configurable daily estimated-spend ceiling runs a preflight before spendful workflows and exposes the estimate in health status; it is not provider billing truth. See [Daily LLM Spend Ceiling](user/security.md#daily-llm-spend-ceiling). | **Partial, expanded.** Users can choose hosted or local models, select spend tiers, pre-screen batches, cap/dry-run/resume work, and compress lower-priority context. There is still no application-wide dollar ledger or ceiling. [Budget guide](https://github.com/santifer/career-ops/blob/03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182/docs/RUNNING_ON_A_BUDGET.md), [context budget](https://github.com/santifer/career-ops/blob/03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182/lib/context-budget.mjs) | **Partial.** Hosted instances can enforce monthly action quotas, but no self-hosted estimated-spend ledger or ceiling was evidenced. [Hosted quotas](https://github.com/DaKheera47/job-ops/blob/c834c6502bf4685904b6abc3d5a008294b8b7020/README.md#cloud) | **Not evidenced.** The workflow includes token-efficiency instructions but no application-level budget or spend ledger. [Source](https://github.com/MadsLorentzen/ai-job-search/blob/670d30ae7e9709bbf624deb2d9962ba5733331f5/README.md) |
-| **Source license** | **Open source.** [AGPL-3.0-only](https://github.com/ebarti/JobCtrl/blob/b4063e1a3227d31eebacbc7d2c620ae5236f744b/LICENSE). | **Open source.** [MIT](https://github.com/santifer/career-ops/blob/03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182/LICENSE). | **Source available with an additional restriction.** The repository combines AGPLv3 with the Commons Clause, which restricts selling the software or a service whose value derives substantially from it. [License](https://github.com/DaKheera47/job-ops/blob/c834c6502bf4685904b6abc3d5a008294b8b7020/LICENSE). | **Open source.** [MIT](https://github.com/MadsLorentzen/ai-job-search/blob/670d30ae7e9709bbf624deb2d9962ba5733331f5/LICENSE). |
+| **Application surface and deployment** | **Present.** Supported local React app, API, worker, CLI, and signed Apple-silicon macOS 15+ release. [Setup](user/getting-started.md), [runtime](architecture/runtime.md). | **Present; web alpha.** Canonical files, coding CLIs, Go TUI, and an opt-in Next.js UI with actions and scheduled scans. [Architecture][career-architecture], [web][career-web]. | **Present.** React/Express/SQLite app, Docker self-hosting, and optional hosted instances. [Product and providers][jobops-readme]. | **Partial graphical surface.** CLI/skills and local files, with a generated offline HTML report. [Commands][ai-readme], [report command][ai-report]. |
+| **Discovery and posting availability** | **Present.** Configured discovery plus bounded saved-posting checks while the worker runs; last success, latest attempt, unknown, and overdue remain distinct. This is not continuous universal monitoring. [Availability](user/enrichment-and-extraction.md#saved-posting-availability). | **Present.** Public ATS/board providers, pre-evaluation liveness checks, and explicit tracker rechecks; scheduled scans are optional. [Providers][career-providers], [liveness][career-liveness], [web][career-web]. | **Present discovery.** Multi-board search and detail import. Recurring revalidation of all saved postings was not evidenced in the inspected pipeline. [Boards][jobops-readme], [pipeline][jobops-pipeline]. | **Present discovery.** Portal utilities and `/rank` fetch and assess postings; deadline/expiry handling does not establish recurring saved-job monitoring. [Ranking][ai-rank]. |
+| **Fit assessment** | **Present.** Models classify requirement fit with source citations; code resolves accepted typed verdicts to a versioned 1–10 score. Confidence and blockers remain inspectable. [Scoring](architecture/scoring.md#deterministic-score-resolution). | **Present.** Structured evaluations, requirement importance/evidence, gaps, and an agent-assigned fit score. [Evaluation][career-evaluation]. | **Present.** Profile/listing-based 0–100 suitability scoring and a reason. [Prompt definitions][jobops-prompts]. | **Present.** A profile-based evaluation framework and batch ranking with strengths, gaps, and deal-breakers. [Evaluation][ai-evaluation], [ranking][ai-readme]. |
+| **Missing salary and actual offers** | **Present.** Posted facts, market benchmarks, and extrapolations retain separate authorities. Actual offer terms and accepted/declined attestations retain corrections; missing terms stay unknown. [Compensation](user/compensation-evidence.md), [offers](user/outcomes-and-feedback.md#actual-offer-terms-and-decisions). | **Partial overlap.** Evaluation skips detailed compensation rows if no salary is advertised; separate desired/advertised/actual observations and offer-prep modes provide useful later-stage support. [Evaluation][career-evaluation], [salary analyzer][career-salary], [offer prep][career-offer]. | **Partial.** Stores advertised salary/ranges and offers sponsor-register research. An automatic missing-range benchmark or JobCtrl-style actual-offer ledger was not evidenced in these paths. [Job fields][jobops-job-fields], [sponsors][jobops-sponsors]. | **Partial.** Optional salary lookup uses a user-supplied dataset; missing data skips benchmarking. Outcomes record offer stages. [Salary tool][ai-salary], [commands][ai-readme]. |
+| **Documents and reuse** | **Present.** Reviewed resume/cover-letter snapshots, HTML/PDF and accepted DOCX export, separately reviewed locale variants, and source-bound screening answers. [Materials](user/materials-and-tailoring.md), [locales](user/locale-variants.md), [answers](user/screening-answers.md). | **Present documents.** Tailored CV, cover letter, PDF, and application-email drafts; templates and multiple language modes. Equivalent locale acceptance/reuse fences were not established. [Commands][career-readme], [PDF generation][career-pdf]. | **Present documents.** Structured resume tailoring and PDF rendering with local/Reactive Resume paths. [Prompts][jobops-prompts], [tailoring][jobops-tailoring]. | **Present documents.** CV and cover-letter drafting, a separate reviewer, and PDF compile/inspection. LaTeX defaults can be replaced with a registered custom toolchain. [Apply][ai-apply], [templates][ai-readme]. |
+| **Claim grounding and accepted history** | **Present.** Persisted model findings bind final lines to canonical evidence; literal binding checks and a separate quality judge gate acceptance. Failed refreshes preserve accepted material. [Claim verifier][jobctrl-verifier], [tailoring](architecture/tailoring.md). | **Partial.** Source-aware prompts plus selected fact checks before generated PDFs. The gate's regex/phrase/fact checks are not semantic proof of every reformulation. [Fact gate][career-facts], [PDF generator][career-pdf]. | **Partial.** Prompt says not to invent experience and the transform constrains structured output; the inspected path does not evidence equivalent persisted line-level support determinations. [Prompts][jobops-prompts], [transform][jobops-tailoring]. | **Partial.** Drafter and reviewer are instructed to audit dates, employers, titles, and metrics against profile sources; compiled PDFs are inspected. These instructions are not the same persisted determination/acceptance mechanism. [Apply][ai-apply], [reviewer][ai-reviewer]. |
+| **Browser and email submission** | **Present, bounded.** Model browser work is transport-locked inspection; the user fills and submits forms. Owned Gmail sends require exact recipient/attachment approval and durable send intent. [Submission boundary](user/security.md#approval-and-control-gates). | **Present assistance.** Autofill/preparation leaves final submit to the user; application emails are drafts. [Autofill][career-autofill]. | **Manual application.** Materials and the application link are prepared for the user. [Boundary][jobops-readme]. | **Manual application.** `/apply` prepares documents and hands them to the user. [Workflow][ai-apply]. |
+| **Recovery** | **Present durable execution.** Temporal histories, activity retries, workflow identities, and ambiguous-send verification. [Runtime](architecture/runtime.md), [at-most-once guide](guides/at-most-once-job-application-submission.md). | **Partial.** Canonical files, integrity checks, locks, scan checkpoints, and resumable batches retain progress; not equivalent to replayable activity histories. [Architecture][career-architecture], [budget/batches][career-budget]. | **Partial.** Run summaries persist, but the code explicitly states that restart kills running or paused pipeline execution. [Pipeline][jobops-pipeline]. | **Partial artifact retention.** Archives, tracker state, and sync commands retain completed work; durable resumption of interrupted drafting was not evidenced. [Workflow][ai-apply]. |
+| **LLM boundary and cost** | **Present controls.** Daily estimated-spend preflight and per-lane controls; provider accounting is still an estimate. Local/custom model endpoints are unavailable. [Configuration](user/configuration.md), [spend ceiling](user/security.md#daily-llm-spend-ceiling). | **Partial cost overlap; broader routing.** Spend tiers, local-model paths, batch caps/resume, and recent-run estimates. An application-wide dollar ceiling was not evidenced in these controls. [Budget][career-budget], [run estimates][career-cost]. | **Broader routing.** Local/OpenAI-compatible endpoints and many cloud providers; hosted action quotas. The inspected configuration does not establish a self-hosted daily spend ledger/ceiling. [Providers and quotas][jobops-readme]. | **CLI-managed cost.** Claude Code usage and token-efficiency instructions; no application-wide spend ceiling evidenced. [Apply][ai-apply]. |
+| **Career and post-application support** | **Present, with limits.** Reviewed email outcome suggestions, source-cited company briefings, outreach drafts, actual offers, selected-cohort evidence milestones, and interview preparation in Beta. [Outcomes](user/outcomes-and-feedback.md), [briefings](user/company-briefings.md), [career demand](user/scoring-and-employer-analysis.md#selected-job-demand-and-learning-milestones). | **Present, broad toolkit.** Outcomes, follow-ups, contact/company research, story bank, interview practice/debriefs, and offer/negotiation modes. [Commands][career-readme], [interview modes][career-interview]. | **Present tracking.** High-confidence Gmail matches update timelines automatically; uncertain matches enter a review inbox. This differs from JobCtrl's reviewed suggestions. [Tracking][jobops-tracking]. | **Present, agent-driven.** Outcome archives, job/stage-specific preparation, optional mock interviews, gap plans, and approval-based Gmail-sync proposals. [Commands][ai-readme]. |
+| **Source and local storage** | **AGPL-3.0-only.** Local SQLite/files and no hosted account; configured workflows send necessary data to providers and integrations. [License][jobctrl-license], [data boundaries](user/data-and-safety.md). | **MIT.** Canonical local files with a derived SQLite index; selected CLI/model and plugin calls can cross the local boundary. [Architecture][career-architecture], [license][career-license]. | **Source available with Commons Clause.** AGPLv3 text plus an additional selling restriction. Local self-hosted state; optional hosted/integration/provider paths. [License][jobops-license], [product][jobops-readme]. | **MIT.** Local fork, tracker, and artifacts; chosen model and optional Gmail/Notion integrations make external calls. [Commands][ai-readme], [license][ai-license]. |
 
 ## Snapshot and delta method
 
-Repository claims were rechecked against default-branch source and documentation
-at these immutable commits:
+All rows were reviewed on **2026-10-19**. Competitor repository heads were
+resolved at approximately **20:13 UTC (22:13 Europe/Madrid)**, with JobCtrl
+reviewed at the PR base shown below. These are frozen source observations, not a
+promise that upstream branches will stay at these commits.
 
-| Project | Previous reviewed snapshot | Reviewed snapshot | Reviewed on |
+| Project | Reviewed default-branch source | Latest published release observed | Review date |
 | --- | --- | --- | --- |
-| JobCtrl | [`446056b`](https://github.com/ebarti/JobCtrl/tree/446056bb623df813365a302df35c6e04412c2446) | [`b4063e1`](https://github.com/ebarti/JobCtrl/tree/b4063e1a3227d31eebacbc7d2c620ae5236f744b) | 2026-08-15 |
-| Career-Ops | [`16367ad`](https://github.com/santifer/career-ops/tree/16367add3f7291add757fc672a530294ae231bab) | [`03fc92b`](https://github.com/santifer/career-ops/tree/03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182) | 2026-08-12 |
-| JobOps | Not previously included | [`c834c65`](https://github.com/DaKheera47/job-ops/tree/c834c6502bf4685904b6abc3d5a008294b8b7020) | 2026-08-12 |
-| AI Job Search | [`faa4799`](https://github.com/MadsLorentzen/ai-job-search/tree/faa479973aeaa7b8a1463112d088fdefff202961) | [`670d30a`](https://github.com/MadsLorentzen/ai-job-search/tree/670d30ae7e9709bbf624deb2d9962ba5733331f5) | 2026-08-12 |
+| JobCtrl | [`198d399`](https://github.com/ebarti/JobCtrl/tree/198d399d33d2bb527c8cd49cc43dd27e3203b36b) | [v0.3.1](https://github.com/ebarti/JobCtrl/releases/tag/v0.3.1), published 2026-10-19; tag source [`dfa5a3e`](https://github.com/ebarti/JobCtrl/tree/dfa5a3e8e56a01ed54a6035f777aa9cb00dbea5e) | 2026-10-19 |
+| Career-Ops | [`0b35a13`](https://github.com/career-ops-hq/career-ops/tree/0b35a138fffa5335340070c2d13e0c8d1b804a2b) | [career-ops-v1.37.0](https://github.com/career-ops-hq/career-ops/releases/tag/career-ops-v1.37.0), published 2026-10-16 | 2026-10-19 |
+| JobOps | [`4a5e52b`](https://github.com/DaKheera47/job-ops/tree/4a5e52b76a729aa2f57e4e9171216cf9621140a0) | [v0.13.1](https://github.com/DaKheera47/job-ops/releases/tag/v0.13.1), published 2026-09-17 | 2026-10-19 |
+| AI Job Search | [`d621ebe`](https://github.com/MadsLorentzen/ai-job-search/tree/d621ebe63549dffb291edea7f7621cd00e67ddb1) | [v1.7.3](https://github.com/MadsLorentzen/ai-job-search/releases/tag/v1.7.3), published 2026-10-19 | 2026-10-19 |
+| ApplyPilot | [`4a8d521`](https://github.com/Pickle-Pixel/ApplyPilot/tree/4a8d521f67f5139811c0a910ef37410f8e6d836a) | [v0.3.0](https://github.com/Pickle-Pixel/ApplyPilot/releases/tag/v0.3.0), published 2026-02-21 | 2026-10-19 |
+| JobSync | [`2bd2284`](https://github.com/Gsync/jobsync/tree/2bd2284879d2037883cbd21ee3283cf27138a671) | [v1.1.22](https://github.com/Gsync/jobsync/releases/tag/v1.1.22), published 2026-10-11 | 2026-10-19 |
+| Proficiently skills | [`9bc1f6f`](https://github.com/proficientlyjobs/proficiently-claude-skills/tree/9bc1f6fd7af532fe0cd4a1843e06ab2b474d0d53) | [v1.2.0](https://github.com/proficientlyjobs/proficiently-claude-skills/releases/tag/v1.2.0), published 2026-03-12 | 2026-10-19 |
 
-The dates above are per-project review dates, not claims that every upstream
-default branch was current on the other projects' review dates. A feature
-counts as present only when its reviewed snapshot contains an implemented
-command, product surface, runtime path, or documented generated artifact. Open
-issues qualify limitations; they do not count as shipped roadmap features.
-Commercial tools remain outside the snapshot matrix because they do not expose
-equivalent immutable source evidence.
+For public repositories, the review read current documentation and the owning
+implementation or command instructions. Links above pin those files to the
+resolved source. The JobCtrl capability review includes source newer than the
+published tag; the intervening main-branch changes update release CI and its
+runbook without adding a product capability. Competitor default-branch features
+may likewise be newer than their published packages. A release timestamp is not a
+feature launch date, and an open issue or proposal does not count as implemented
+functionality.
+
+Commercial evidence uses the official pages linked in each row. Applyd's
+JavaScript-rendered public page was also read in the browser. This establishes
+visible descriptions, not the correctness of private services. No repository
+application was installed or executed, no candidate data was uploaded, and no
+job application or outreach message was sent. JobCtrl was assessed from current
+source and published release information, without rerunning its product workflows for this
+documentation-only change. Marketing outcome figures and ATS compatibility
+claims are not independent measurements. The nineteen alternatives form the
+named comparison set, not an exhaustive inventory of the market.
+
+[career-readme]: https://github.com/career-ops-hq/career-ops/blob/0b35a138fffa5335340070c2d13e0c8d1b804a2b/README.md
+[career-architecture]: https://github.com/career-ops-hq/career-ops/blob/0b35a138fffa5335340070c2d13e0c8d1b804a2b/ARCHITECTURE.md
+[career-web]: https://github.com/career-ops-hq/career-ops/blob/0b35a138fffa5335340070c2d13e0c8d1b804a2b/web/README.md
+[career-providers]: https://github.com/career-ops-hq/career-ops/blob/0b35a138fffa5335340070c2d13e0c8d1b804a2b/providers/README.md
+[career-liveness]: https://github.com/career-ops-hq/career-ops/blob/0b35a138fffa5335340070c2d13e0c8d1b804a2b/check-liveness.mjs
+[career-evaluation]: https://github.com/career-ops-hq/career-ops/blob/0b35a138fffa5335340070c2d13e0c8d1b804a2b/modes/oferta.md
+[career-facts]: https://github.com/career-ops-hq/career-ops/blob/0b35a138fffa5335340070c2d13e0c8d1b804a2b/verify-cv-facts.mjs
+[career-pdf]: https://github.com/career-ops-hq/career-ops/blob/0b35a138fffa5335340070c2d13e0c8d1b804a2b/generate-pdf.mjs
+[career-autofill]: https://github.com/career-ops-hq/career-ops/blob/0b35a138fffa5335340070c2d13e0c8d1b804a2b/docs/APPLY_AUTOFILL.md
+[career-budget]: https://github.com/career-ops-hq/career-ops/blob/0b35a138fffa5335340070c2d13e0c8d1b804a2b/docs/RUNNING_ON_A_BUDGET.md
+[career-cost]: https://github.com/career-ops-hq/career-ops/blob/0b35a138fffa5335340070c2d13e0c8d1b804a2b/web/src/lib/run-cost-estimate.mjs
+[career-salary]: https://github.com/career-ops-hq/career-ops/blob/0b35a138fffa5335340070c2d13e0c8d1b804a2b/salary-gap.mjs
+[career-offer]: https://github.com/career-ops-hq/career-ops/blob/0b35a138fffa5335340070c2d13e0c8d1b804a2b/modes/offer-prep.md
+[career-interview]: https://github.com/career-ops-hq/career-ops/tree/0b35a138fffa5335340070c2d13e0c8d1b804a2b/modes/interview
+[career-license]: https://github.com/career-ops-hq/career-ops/blob/0b35a138fffa5335340070c2d13e0c8d1b804a2b/LICENSE
+[jobops-readme]: https://github.com/DaKheera47/job-ops/blob/4a5e52b76a729aa2f57e4e9171216cf9621140a0/README.md
+[jobops-tracking]: https://github.com/DaKheera47/job-ops/blob/4a5e52b76a729aa2f57e4e9171216cf9621140a0/docs-site/docs/features/post-application-tracking.md
+[jobops-prompts]: https://github.com/DaKheera47/job-ops/blob/4a5e52b76a729aa2f57e4e9171216cf9621140a0/shared/src/prompt-template-definitions.ts
+[jobops-pipeline]: https://github.com/DaKheera47/job-ops/blob/4a5e52b76a729aa2f57e4e9171216cf9621140a0/orchestrator/src/server/pipeline/orchestrator.ts
+[jobops-tailoring]: https://github.com/DaKheera47/job-ops/blob/4a5e52b76a729aa2f57e4e9171216cf9621140a0/orchestrator/src/server/services/rxresume/tailoring.ts
+[jobops-sponsors]: https://github.com/DaKheera47/job-ops/blob/4a5e52b76a729aa2f57e4e9171216cf9621140a0/docs-site/docs/features/visa-sponsors.md
+[jobops-job-fields]: https://github.com/DaKheera47/job-ops/blob/4a5e52b76a729aa2f57e4e9171216cf9621140a0/shared/src/types/jobs.ts
+[jobops-license]: https://github.com/DaKheera47/job-ops/blob/4a5e52b76a729aa2f57e4e9171216cf9621140a0/LICENSE
+[ai-readme]: https://github.com/MadsLorentzen/ai-job-search/blob/d621ebe63549dffb291edea7f7621cd00e67ddb1/README.md
+[ai-apply]: https://github.com/MadsLorentzen/ai-job-search/blob/d621ebe63549dffb291edea7f7621cd00e67ddb1/.claude/commands/apply.md
+[ai-reviewer]: https://github.com/MadsLorentzen/ai-job-search/blob/d621ebe63549dffb291edea7f7621cd00e67ddb1/.claude/agents/application-reviewer.md
+[ai-report]: https://github.com/MadsLorentzen/ai-job-search/blob/d621ebe63549dffb291edea7f7621cd00e67ddb1/.claude/commands/html-report.md
+[ai-rank]: https://github.com/MadsLorentzen/ai-job-search/blob/d621ebe63549dffb291edea7f7621cd00e67ddb1/.claude/commands/rank.md
+[ai-evaluation]: https://github.com/MadsLorentzen/ai-job-search/blob/d621ebe63549dffb291edea7f7621cd00e67ddb1/.claude/skills/job-application-assistant/04-job-evaluation.md
+[ai-salary]: https://github.com/MadsLorentzen/ai-job-search/blob/d621ebe63549dffb291edea7f7621cd00e67ddb1/tools/README_SALARY_TOOL.md
+[ai-license]: https://github.com/MadsLorentzen/ai-job-search/blob/d621ebe63549dffb291edea7f7621cd00e67ddb1/LICENSE
+[applypilot-readme]: https://github.com/Pickle-Pixel/ApplyPilot/blob/4a8d521f67f5139811c0a910ef37410f8e6d836a/README.md
+[applypilot-launcher]: https://github.com/Pickle-Pixel/ApplyPilot/blob/4a8d521f67f5139811c0a910ef37410f8e6d836a/src/applypilot/apply/launcher.py
+[jobsync-readme]: https://github.com/Gsync/jobsync/blob/2bd2284879d2037883cbd21ee3283cf27138a671/README.md
+[jobsync-cover]: https://github.com/Gsync/jobsync/blob/2bd2284879d2037883cbd21ee3283cf27138a671/src/lib/ai/prompts/cover-letter/system.ts
+[jobsync-persist]: https://github.com/Gsync/jobsync/blob/2bd2284879d2037883cbd21ee3283cf27138a671/src/lib/scraper/automation-run/persist.ts
+[proficiently-readme]: https://github.com/proficientlyjobs/proficiently-claude-skills/blob/9bc1f6fd7af532fe0cd4a1843e06ab2b474d0d53/README.md
+[proficiently-apply]: https://github.com/proficientlyjobs/proficiently-claude-skills/blob/9bc1f6fd7af532fe0cd4a1843e06ab2b474d0d53/skills/apply/SKILL.md
+[jobctrl-verifier]: https://github.com/ebarti/JobCtrl/blob/198d399d33d2bb527c8cd49cc43dd27e3203b36b/workers/automation/src/jobctrl/domain/materials/claim_verification.py
+[jobctrl-license]: https://github.com/ebarti/JobCtrl/blob/198d399d33d2bb527c8cd49cc43dd27e3203b36b/LICENSE
