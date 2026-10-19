@@ -68,6 +68,34 @@ describe("worker runtime telemetry", () => {
     });
   });
 
+  it("reports saved-posting checks alongside scoring instead of an unexplained occupied slot", () => {
+    const fixture = createFixture();
+    const now = new Date("2026-07-14T10:00:30.000Z");
+    const availability = {
+      ...activeDetails(1, 1)[0],
+      activityType: "check_saved_posting_availability",
+      operationalRef: { kind: "saved-posting-availability", opaqueId: `op_${"1".repeat(24)}` },
+      workflowRef: null,
+    };
+    insertHeartbeat(fixture, {
+      workerId: "worker-a",
+      lastSeenAt: "2026-07-14T10:00:20.000Z",
+      configuredSlots: 4,
+      activeSlots: 2,
+      executorThreads: 6,
+      details: [...activeDetails(1, 0), availability],
+      counts: { score_job: 1, check_saved_posting_availability: 1 },
+      queueObservation: availableObservation("2026-07-14T10:00:19.000Z", 0, 1),
+    });
+    expect(readWorkerRuntimeTelemetry(fixture.dbPath, { now })).toMatchObject({
+      status: "available",
+      activeSlots: 2,
+      activeDetailsTotal: 2,
+      activeDetails: [expect.objectContaining({ activityType: "score_job" }), availability],
+      activeCountsByType: { score_job: 1, check_saved_posting_availability: 1 },
+    });
+  });
+
   it("includes non-allowlisted activities in mixed-worker slot occupancy only", () => {
     const fixture = createFixture();
     const now = new Date("2026-07-14T10:00:30.000Z");

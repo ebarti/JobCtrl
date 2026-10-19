@@ -1563,55 +1563,60 @@ export function ProfileForm({
             {(styleField) => (
               <>
                 {section === "target-search" ? (
-                  <TargetRoleSuggestions
-                    formBaseVersion={formBaseVersion}
-                    profileVersion={initial.profileVersion}
-                    onRebase={rebaseOntoSavedProfile}
-                    onResolveWithoutAcceptance={resolveSuggestionReviewWithoutAcceptance}
-                    onAccept={(titles, preferences, expectedProfileVersion, determinationId) => {
-                      acceptedCandidateInterpretationRef.current = determinationId;
-                      const rolesBefore = targetRoles(profileField.state.value);
-                      const preferencesBefore = targetPreferenceRows(profileField.state.value);
-                      const nextProfile = appendTargetPreferences(
-                        appendTargetRoles(profileField.state.value, titles),
-                        preferences,
-                      );
-                      const beforeKeys = new Set(rolesBefore.map((title) => title.toLowerCase()));
-                      const beforePreferenceKeys = new Set(preferencesBefore.map(preferenceRowKey));
-                      const addedTitles = targetRoles(nextProfile).filter(
-                        (title) => !beforeKeys.has(title.toLowerCase()),
-                      );
-                      const addedPreferences = targetPreferenceRows(nextProfile).filter(
-                        (row) => !beforePreferenceKeys.has(preferenceRowKey(row)),
-                      );
-                      suggestionAddedRolesRef.current = [
-                        ...suggestionAddedRolesRef.current,
-                        ...addedTitles
-                          .filter((title) => !suggestionAddedRolesRef.current.some(
-                            (existing) => existing.title.toLowerCase() === title.toLowerCase(),
-                          ))
-                          .map((title) => ({ profileVersion: expectedProfileVersion, title })),
-                      ];
-                      suggestionAddedPreferencesRef.current = [
-                        ...suggestionAddedPreferencesRef.current,
-                        ...addedPreferences
-                          .filter((row) => !suggestionAddedPreferencesRef.current.some(
-                            (existing) => preferenceRowKey(existing) === preferenceRowKey(row),
-                          ))
-                          .map((row) => ({ ...row, profileVersion: expectedProfileVersion })),
-                      ];
-                      clearTransientStatus();
-                      profileField.handleChange(nextProfile);
-                      if (suggestionAddedRolesRef.current.length > 0 || suggestionAddedPreferencesRef.current.length > 0) {
-                        suggestionReviewRequiredRef.current = false;
-                        suggestionReviewResolvedVersionRef.current = undefined;
-                        expectedProfileVersionRef.current = expectedProfileVersion;
-                        setSuggestionDerivedDraft(true);
-                      } else {
-                        resolveSuggestionReviewWithoutAcceptance(expectedProfileVersion);
-                      }
-                    }}
-                  />
+                  <form.Subscribe selector={(state) => state.isSubmitting}>
+                    {(isSaving) => (
+                      <TargetRoleSuggestions
+                        formBaseVersion={formBaseVersion}
+                        profileVersion={initial.profileVersion}
+                        isSaving={isSaving}
+                        onRebase={rebaseOntoSavedProfile}
+                        onResolveWithoutAcceptance={resolveSuggestionReviewWithoutAcceptance}
+                        onAccept={(titles, preferences, expectedProfileVersion, determinationId) => {
+                          acceptedCandidateInterpretationRef.current = determinationId;
+                          const rolesBefore = targetRoles(profileField.state.value);
+                          const preferencesBefore = targetPreferenceRows(profileField.state.value);
+                          const nextProfile = appendTargetPreferences(
+                            appendTargetRoles(profileField.state.value, titles),
+                            preferences,
+                          );
+                          const beforeKeys = new Set(rolesBefore.map((title) => title.toLowerCase()));
+                          const beforePreferenceKeys = new Set(preferencesBefore.map(preferenceRowKey));
+                          const addedTitles = targetRoles(nextProfile).filter(
+                            (title) => !beforeKeys.has(title.toLowerCase()),
+                          );
+                          const addedPreferences = targetPreferenceRows(nextProfile).filter(
+                            (row) => !beforePreferenceKeys.has(preferenceRowKey(row)),
+                          );
+                          suggestionAddedRolesRef.current = [
+                            ...suggestionAddedRolesRef.current,
+                            ...addedTitles
+                              .filter((title) => !suggestionAddedRolesRef.current.some(
+                                (existing) => existing.title.toLowerCase() === title.toLowerCase(),
+                              ))
+                              .map((title) => ({ profileVersion: expectedProfileVersion, title })),
+                          ];
+                          suggestionAddedPreferencesRef.current = [
+                            ...suggestionAddedPreferencesRef.current,
+                            ...addedPreferences
+                              .filter((row) => !suggestionAddedPreferencesRef.current.some(
+                                (existing) => preferenceRowKey(existing) === preferenceRowKey(row),
+                              ))
+                              .map((row) => ({ ...row, profileVersion: expectedProfileVersion })),
+                          ];
+                          clearTransientStatus();
+                          profileField.handleChange(nextProfile);
+                          if (suggestionAddedRolesRef.current.length > 0 || suggestionAddedPreferencesRef.current.length > 0) {
+                            suggestionReviewRequiredRef.current = false;
+                            suggestionReviewResolvedVersionRef.current = undefined;
+                            expectedProfileVersionRef.current = expectedProfileVersion;
+                            setSuggestionDerivedDraft(true);
+                          } else {
+                            resolveSuggestionReviewWithoutAcceptance(expectedProfileVersion);
+                          }
+                        }}
+                      />
+                    )}
+                  </form.Subscribe>
                 ) : null}
                 <StructuredProfileEditor
                   mode={section}

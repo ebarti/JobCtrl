@@ -241,7 +241,11 @@ saved version remains the same. An edit made afterward keeps a unique Required
 pin with its bullet; ambiguous duplicate text must be resolved before saving.
 If a newer saved profile arrives while you have a draft, use
 **Rebase edits onto saved profile** to carry non-overlapping edits forward;
-resolve overlapping fields manually before saving.
+resolve overlapping fields manually before saving. In Discovery Target search,
+this action is labeled **Update draft with saved changes**. A normal save can
+update the form and its saved-profile query in either order. That brief delay
+shows saving or refresh status, rather than asking you to combine your own save
+with itself. Suggestions stay bound to a matching saved profile version.
 
 While an accepted cleanup is saving, another Save waits. If you edit that same
 bullet, its Required pin follows a unique edited text; duplicate text must be

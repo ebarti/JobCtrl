@@ -701,8 +701,10 @@ planning/families, reconciliation/fan-out, backlog sweep, and PDF. Per-job
 `job_stage_states` remains authoritative for enrich/score/tailor/cover.
 
 The activity telemetry interceptor never reads activity arguments. It counts
-every active slot, but retains details only for allowlisted activity kinds;
-unsafe identifiers become non-reversible local opaque hashes and only validated
+every active slot, but retains details only for allowlisted activity kinds,
+including saved-posting availability checks that can occupy shared capacity
+after a Discover run closes. Unsafe identifiers become non-reversible local
+opaque hashes and only validated
 safe workflow/run references remain readable. URLs, job/profile content,
 prompts, provider output, artifact paths, payloads, credentials, and exception
 text are excluded. Telemetry failure is caught so it cannot change business

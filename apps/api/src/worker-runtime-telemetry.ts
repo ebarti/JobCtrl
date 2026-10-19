@@ -22,6 +22,7 @@ const OPERATIONAL_ACTIVITY_KINDS = {
   cover_letter: "job-cover-letter",
   render_pdf: "job-pdf-render",
   derive_preparation_targets: "preparation-targets",
+  check_saved_posting_availability: "saved-posting-availability",
 } as const;
 
 type OperationalActivityType = keyof typeof OPERATIONAL_ACTIVITY_KINDS;

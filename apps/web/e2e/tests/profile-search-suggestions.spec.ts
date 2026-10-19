@@ -149,9 +149,9 @@ test("Discovery Target search reviews persisted model decisions and saves only e
     releaseSave();
     if (!page.isClosed()) await page.unroute("**/v1/profile", pauseProfileSave);
   }
-  await expect(page.getByText(/saved profile changed/i).first()).toBeVisible();
+  await expect(page.getByText(/A newer profile was saved while you were editing/i)).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Target roles 3", exact: true })).toHaveValue("Model proposal A");
-  await page.getByRole("button", { name: "Rebase edits onto saved profile" }).click();
+  await page.getByRole("button", { name: "Update draft with saved changes" }).click();
   await expect(page.getByText(/Draft rebased and stale suggestions removed/)).toBeVisible();
   await page.getByRole("button", { name: "Suggest roles" }).click();
   await page.getByRole("button", { name: "Reject Model proposal A" }).click();

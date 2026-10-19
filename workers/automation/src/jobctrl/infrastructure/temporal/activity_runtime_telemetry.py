@@ -47,6 +47,7 @@ OPERATIONAL_ACTIVITY_KINDS: Final[Mapping[str, str]] = MappingProxyType(
         "cover_letter": "job-cover-letter",
         "render_pdf": "job-pdf-render",
         "derive_preparation_targets": "preparation-targets",
+        "check_saved_posting_availability": "saved-posting-availability",
     }
 )
 

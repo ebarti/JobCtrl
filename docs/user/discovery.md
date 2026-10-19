@@ -303,11 +303,15 @@ bounded active-work inventory show whether the operational facts are current.
 Exact selected-run stage tracking is durable. New executions record their
 membership and stage lineage natively. For an execution created by an older
 JobCtrl version, worker startup and heartbeats rebuild the same lineage from the
-exact Temporal workflow/run history. During that bounded check, Pipelines shows
-**Checking previous run records**, keeps fresh shared-worker and queue facts
-visible, and hides selected-run counts and ETAs until the recovered key sets have
-been verified. The check finishes automatically and needs no restart. Partial
-rows or live-worker telemetry never become a false completion claim.
+exact Temporal workflow/run history. Pipelines identifies whether it is checking
+the current or previous run, shows how many linked jobs and stage records have
+been stored, and reports the last record update time. Unknown totals and a missing
+update time stay explicit. These record counts describe tracking coverage rather
+than completed job tasks. While a check or retry is pending, the visible page
+refreshes every 15 seconds, including before execution details are available.
+Fresh shared-worker and queue facts remain visible; selected-run completion
+counts and ETAs appear only after the exact record sets have been verified.
+Partial rows or live-worker telemetry never become a false completion claim.
 
 ### Stop Or Recover A Discover Run
 
@@ -319,8 +323,16 @@ already-admitted work is not presented as stoppable.
 When an execution fails, Pipelines reports whether the runtime inventory shows
 active work before suggesting another run. A positive total tells you to review
 that work first; unavailable inventory is reported as unknown, never as idle.
+The disabled Discover action reports the occupied worker-slot count and known
+active stages, and links to Runs to inspect progress or cancel work. Saved-posting
+checks appear in the active-work inventory alongside pipeline stages. These
+checks use shared worker slots even when the selected Discover run has already
+ended. The selected closed run's end time distinguishes its historical outcomes
+from today's active work. The action refreshes automatically and becomes
+available when fresh runtime observations confirm idle capacity; this does not
+promise a finish time for running work.
 If an authoritative history read is temporarily unavailable or cannot yet be
-mapped unambiguously, JobCtrl says that the previous-run check will retry
+mapped unambiguously, JobCtrl says that the run record check will retry
 automatically.
 It does not present permanent missing tracking, infer completion from partial
 rows, or require a manual retry. Reconnecting to the exact history restores that

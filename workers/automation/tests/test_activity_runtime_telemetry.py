@@ -153,6 +153,26 @@ def test_inventory_returns_exact_total_with_bounded_longest_running_safe_details
     )
 
 
+def test_saved_posting_checks_are_visible_without_exposing_job_identity():
+    inventory = ActiveActivityInventory()
+    token = inventory.start(
+        activity_type="check_saved_posting_availability",
+        activity_id="private-job-url",
+        workflow_id="availability-local-private-job-id",
+        workflow_run_id="00000000-0000-4000-8000-000000000001",
+        attempt=1,
+        started_at=datetime(2026, 7, 14, 9, 0, tzinfo=UTC),
+    )
+    snapshot = inventory.snapshot()
+    assert snapshot.active_activity_count == snapshot.active_details_total == 1
+    assert snapshot.counts_by_type == {"check_saved_posting_availability": 1}
+    assert snapshot.active_details[0].operational_ref.kind == "saved-posting-availability"
+    assert snapshot.active_details[0].workflow_ref is None
+    assert "private-job" not in json.dumps(snapshot.details_json_list())
+    inventory.finish(token)
+    assert inventory.snapshot().active_activity_count == 0
+
+
 def test_inventory_counts_non_allowlisted_slot_without_exposing_metadata():
     inventory = ActiveActivityInventory()
     canary = "private-provider-activity-type-secret"

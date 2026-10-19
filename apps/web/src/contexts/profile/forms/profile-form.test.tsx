@@ -737,6 +737,58 @@ describe("<ProfileForm>", () => {
     expect(updateProfile).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["query-first", "response-first"] as const)(
+    "does not treat its own target-search save as a conflict when updates arrive %s",
+    async (order) => {
+      const user = userEvent.setup();
+      let resolveSave!: (response: typeof sampleProfileResponse) => void;
+      const updateProfile = vi.fn()
+        .mockImplementationOnce(() => new Promise<typeof sampleProfileResponse>((resolve) => {
+          resolveSave = resolve;
+        }))
+        .mockImplementationOnce(async (request: ProfileUpdateRequest) => ({
+          ...sampleProfileResponse,
+          profileVersion: 5,
+          profile: JSON.parse(request.profileText!),
+        }));
+      const { rerender } = renderWithProviders(
+        <ProfileForm initial={sampleProfileResponse} section="target-search" />,
+        { ports: buildTestPorts({ api: { updateProfile } }) },
+      );
+      fireEvent.change(screen.getByLabelText("Target roles 1"), {
+        target: { value: "Synthetic Director" },
+      });
+      await user.click(screen.getByRole("button", { name: "Save changes" }));
+      await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+      const saved = {
+        ...sampleProfileResponse,
+        profileVersion: 4,
+        profile: JSON.parse(updateProfile.mock.calls[0]![0].profileText),
+      };
+      const conflictAction = /Rebase edits onto saved profile|Update draft with saved changes/;
+      if (order === "query-first") {
+        rerender(<ProfileForm initial={saved} section="target-search" />);
+        expect(screen.queryByRole("button", { name: conflictAction })).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Suggest roles" })).toBeDisabled();
+      }
+      await act(async () => resolveSave(saved));
+      expect(await screen.findByText("Discovery settings saved")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: conflictAction })).not.toBeInTheDocument();
+      if (order === "response-first") {
+        expect(screen.getByRole("button", { name: "Suggest roles" })).toBeDisabled();
+        rerender(<ProfileForm initial={saved} section="target-search" />);
+      }
+      expect(screen.getByRole("button", { name: "Suggest roles" })).toBeEnabled();
+      fireEvent.change(screen.getByLabelText("Target roles 1"), {
+        target: { value: "Synthetic VP" },
+      });
+      await user.click(screen.getByRole("button", { name: "Save changes" }));
+      await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(2));
+      expect(updateProfile.mock.calls[1]![0].expectedProfileVersion).toBe(4);
+      expect(screen.getByLabelText("Target roles 1")).toHaveValue("Synthetic VP");
+    },
+  );
+
   it("autosaves edited target search settings after five seconds", async () => {
     vi.useFakeTimers();
     const updateProfile = vi.fn(async (request) => ({
@@ -945,7 +997,7 @@ describe("<ProfileForm>", () => {
     });
     expect(updateProfile).not.toHaveBeenCalled();
     expect(screen.getByText(/Rebase your manual edits before saving/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Rebase edits onto saved profile" }));
+    fireEvent.click(screen.getByRole("button", { name: "Update draft with saved changes" }));
     expect(screen.getByLabelText("Target roles 1")).toHaveValue("Director of Engineering");
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
@@ -1381,7 +1433,7 @@ describe("<ProfileForm>", () => {
     await user.clear(acceptedRole);
     await user.type(acceptedRole, "Manual Architect");
     rerender(<ProfileForm initial={initialV4} section="target-search" />);
-    await user.click(screen.getByRole("button", { name: "Rebase edits onto saved profile" }));
+    await user.click(screen.getByRole("button", { name: "Update draft with saved changes" }));
 
     expect(screen.getByText(/accepted suggestion was edited in this stale draft/i)).toBeInTheDocument();
     expect(screen.getByLabelText("Target roles 1")).toHaveValue("Manual Architect");
@@ -1439,8 +1491,8 @@ describe("<ProfileForm>", () => {
 
     const suggestRoles = screen.getByRole("button", { name: "Suggest roles" });
     expect(suggestRoles).toBeDisabled();
-    expect(screen.getByText(/saved profile changed while this form has unsaved edits/i)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Rebase edits onto saved profile" }));
+    expect(screen.getByText(/A newer profile was saved while you were editing/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Update draft with saved changes" }));
     await waitFor(() => expect(suggestRoles).toBeEnabled());
     expect(screen.getByText(/Draft rebased and stale suggestions removed/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
@@ -1529,7 +1581,7 @@ describe("<ProfileForm>", () => {
     expect(await screen.findByText("The saved profile changed. Refresh and try again.")).toBeInTheDocument();
 
     rerender(<ProfileForm initial={initialV4} section="target-search" />);
-    await user.click(screen.getByRole("button", { name: "Rebase edits onto saved profile" }));
+    await user.click(screen.getByRole("button", { name: "Update draft with saved changes" }));
     expect(screen.getByDisplayValue("VP Engineering")).toBeInTheDocument();
     expect(screen.queryByDisplayValue("Head of Platform")).not.toBeInTheDocument();
     expect(screen.getByDisplayValue("Manual Architect")).toBeInTheDocument();
