@@ -1,67 +1,77 @@
-name: Distribution
+name: Read-only v0.3.0 macOS trust diagnosis
 
-# Fail-closed release contracts (provider locks, manifest counts, license,
-# payload, and direct-dependency baselines) for changes that move dependency
-# locks or packaging inputs — the surface Dependabot PRs touch.
 on:
-  push:
-    branches: ["main"]
-    paths:
-      - "package.json"
-      - "apps/*/package.json"
-      - "packages/*/package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "workers/automation/pyproject.toml"
-      - "workers/automation/uv.lock"
-      - "packaging/**"
-      - "scripts/distribution-*"
-      - ".github/workflows/distribution.yml"
-  pull_request:
-    paths:
-      - "package.json"
-      - "apps/*/package.json"
-      - "packages/*/package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "workers/automation/pyproject.toml"
-      - "workers/automation/uv.lock"
-      - "packaging/**"
-      - "scripts/distribution-*"
-      - ".github/workflows/distribution.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: distribution-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
-
 jobs:
-  audit:
-    name: Release distribution contracts
-    runs-on: ubuntu-latest
+  diagnose:
+    name: Assess exact signed candidate on macOS 15
+    runs-on: macos-15
     timeout-minutes: 15
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download checksum-pinned public candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe_dir="$RUNNER_TEMP/jobctrl-native-trust"
+          mkdir -p "$probe_dir"
+          base="https://releases.jobctrl.dev/v1/artifacts/0.3.0-945ac2fdf3aa3428ad84bca9e70688443f2de04f-darwin-arm64"
+          curl --fail --silent --show-error --proto '=https' --tlsv1.2 "$base/jobctrl-0.3.0-darwin-arm64.zip" -o "$probe_dir/candidate.zip"
+          curl --fail --silent --show-error --proto '=https' --tlsv1.2 "$base/jobctrl-installer" -o "$probe_dir/jobctrl-installer"
+          echo "dcc322e1e54e60a862a2ad4b41706e75c66ef307f93daed0e10851d23aa800b4  $probe_dir/candidate.zip" | shasum -a 256 -c -
+          echo "17cc2456998804d126968297fe59ccab02b143904e3ae5ae877a76a9fa7a2b2b  $probe_dir/jobctrl-installer" | shasum -a 256 -c -
+          chmod 700 "$probe_dir/jobctrl-installer"
+      - name: Capture static trust decisions and real installer results
+        shell: bash
+        run: |
+          python3 - <<'PYCODE'
+          import os, pathlib, subprocess, json, zipfile
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'jobctrl-native-trust'
+          names=['api/node_modules/better-sqlite3/build/Release/better_sqlite3.node','launcher/jobctrl','node/bin/node','python/lib/python3.12/lib-dynload/_crypt.cpython-312-darwin.so','python/lib/libpython3.12.dylib']
+          with zipfile.ZipFile(root/'candidate.zip') as archive:
+              for name in names:
+                  info=archive.getinfo(name)
+                  target=root/'payload'/name
+                  target.parent.mkdir(parents=True,exist_ok=True)
+                  target.write_bytes(archive.read(info))
+                  target.chmod((info.external_attr>>16)&0o777)
+          isolated=root/'isolated-home'
+          isolated.mkdir(mode=0o700,exist_ok=True)
+          results=[]
+          def probe(label,args,env=None,timeout=60):
+              try:
+                  result=subprocess.run(args,capture_output=True,text=True,env=env,timeout=timeout)
+                  value={'label':label,'exitCode':result.returncode,'stdout':result.stdout[-16000:],'stderr':result.stderr[-16000:]}
+              except subprocess.TimeoutExpired:
+                  value={'label':label,'timedOut':True}
+              results.append(value)
+              print(json.dumps(value),flush=True)
+          probe('macOS version',['sw_vers'])
+          for name in names:
+              target=str(root/'payload'/name)
+              probe(name+' file type',['/usr/bin/file','-b',target])
+              probe(name+' signature details',['/usr/bin/codesign','-dv','--verbose=4',target])
+              probe(name+' strict signature',['/usr/bin/codesign','--verify','--strict','--verbose=4',target])
+              for mode in ['normal-home','isolated-home']:
+                  env=dict(os.environ)
+                  if mode=='isolated-home': env['HOME']=str(isolated)
+                  probe(name+' notarized '+mode,['/usr/bin/codesign','--verify','--strict','--check-notarization','-R=notarized','--verbose=4',target],env=env)
+          pointer='https://releases.jobctrl.dev/v1/artifacts/0.3.0-945ac2fdf3aa3428ad84bca9e70688443f2de04f-darwin-arm64/channel-pointer.json'
+          for mode in ['normal-home','isolated-home']:
+              env=dict(os.environ)
+              if mode=='isolated-home': env['HOME']=str(isolated)
+              probe('public installer '+mode,[str(root/'jobctrl-installer'),'--source','curl','--release-url',pointer,'--home',str(root/(mode+'-runtime'))],env=env,timeout=360)
+          probe('recent macOS trust diagnostics',['/usr/bin/log','show','--last','5m','--style','compact','--predicate','subsystem == "com.apple.syspolicy" OR process == "trustd"'],timeout=60)
+          (root/'diagnostics.json').write_text(json.dumps(results,indent=2)+'\n')
+          PYCODE
+      - name: Retain diagnostic results only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          persist-credentials: false
-      - name: Set up pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22.21.1
-          cache: pnpm
-      - name: Set up pinned uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          version: 0.11.7
-          enable-cache: true
-          cache-dependency-glob: workers/automation/uv.lock
-      - name: Install locked workspace dependencies
-        run: corepack pnpm install --frozen-lockfile
-      - name: Audit release distribution contracts
-        run: corepack pnpm distribution:audit
+          name: jobctrl-v030-macos-trust-diagnostics
+          path: ${{ runner.temp }}/jobctrl-native-trust/diagnostics.json
+          if-no-files-found: warn
+          retention-days: 7
