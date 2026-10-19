@@ -258,6 +258,10 @@ def determine(
                 "malformed_json", "schema_violation", "foreign_source_id",
                 "non_verbatim_quote", "mismatched_value", "field_binding_invalid",
                 "incomplete_posting_extraction",
+                "claim_line_binding_invalid", "requirement_binding_invalid", "finding_line_binding_invalid",
+                "foreign_or_missing_line_id", "foreign_or_missing_requirement_id", "duplicate_requirement_id",
+                "missing_evidence_citation", "missing_compensation_citation", "invalid_numeric_range",
+                "inconsistent_verdict",
             }
             for attempt in range(3):
                 raw = None

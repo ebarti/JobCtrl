@@ -266,6 +266,33 @@ def test_provider_failure_is_not_reasked_as_a_response_repair():
     assert len(model.calls) == 1
 
 
+@pytest.mark.parametrize("code", ["claim_line_binding_invalid", "missing_compensation_citation", "inconsistent_verdict"])
+def test_domain_structural_binding_failure_receives_bounded_response_repair(code):
+    model = Model(response())
+    checked = []
+
+    def validate(result):
+        checked.append(result)
+        if len(checked) == 1:
+            raise DeterminationFailure(code)
+
+    result, _ = call(model, Repository(), validate=validate)
+    assert result.verdict == "accept"
+    assert len(model.calls) == 2
+    assert code in model.calls[1][0][-1].content
+
+
+def test_valid_semantic_rejection_is_not_reasked_as_a_binding_repair():
+    model = Model(response("reject"))
+
+    def validate(result):
+        raise DeterminationFailure("claim_verification_failed")
+
+    with pytest.raises(DeterminationFailure, match="claim_verification_failed"):
+        call(model, Repository(), validate=validate)
+    assert len(model.calls) == 1
+
+
 def test_evidence_repairs_are_bounded_and_preserve_an_accepted_result():
     repository = Repository()
     accepted = call(Model(response()), repository)[1]

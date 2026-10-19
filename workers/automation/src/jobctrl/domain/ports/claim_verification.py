@@ -22,14 +22,19 @@ class ArtifactLine(DeterminationModel):
 class VerifiedClaim(DeterminationModel):
     kind: Literal["candidate_fact", "hypothetical", "target_role", "employer_statement", "advice"]
     support: Literal["supported", "unsupported", "not_factual", "uncertain"]
-    text: Citation
-    evidence: list[Citation] = Field(max_length=32)
+    text: Citation = Field(
+        description="Cite the final text being verified: source_id must be exactly line:<the containing LineVerification.line_id>, and quote must be a verbatim span of that line. This slot never cites evidence or a requirement.",
+    )
+    evidence: list[Citation] = Field(
+        max_length=32,
+        description="Supporting source citations. For candidate_fact, use only this line's allowed_evidence_ids; other claim kinds may also use its allowed_requirement_ids. Never cite a final line as supporting evidence.",
+    )
     rationale: StrictStr = Field(min_length=1, max_length=1000)
 
 
 class ServedRequirement(DeterminationModel):
     requirement_id: StrictStr = Field(min_length=1, max_length=240)
-    citation: Citation
+    citation: Citation = Field(description="Cite the requirement source whose source_id exactly equals this entry's requirement_id.")
     rationale: StrictStr = Field(min_length=1, max_length=1000)
 
 
@@ -45,7 +50,10 @@ class LineVerification(DeterminationModel):
     def served_requirement_ids(self) -> list[str]:
         return [row.requirement_id for row in self.served_requirements]
 
-    source_evidence: list[Citation] = Field(max_length=400)
+    source_evidence: list[Citation] = Field(
+        max_length=400,
+        description="Only candidate evidence IDs in this line's allowed_evidence_ids. When allowed_evidence_ids is empty, return []. Requirements/posting citations belong in claims.evidence or served_requirements, never in this list.",
+    )
     claims: list[VerifiedClaim] = Field(max_length=40)
     findings: list["VerificationFinding"] = Field(max_length=20)
 
@@ -55,7 +63,7 @@ class VerificationFinding(DeterminationModel):
         "unsupported_claim", "prohibited_claim", "voice", "self_talk", "negotiation_guidance", "process_narration"
     ]
     rationale: StrictStr = Field(min_length=1, max_length=1000)
-    citation: Citation
+    citation: Citation = Field(description="Cite the affected final line: source_id is line:<the containing LineVerification.line_id>, with a verbatim span from that line.")
 
 
 class ClaimVerification(DeterminationModel):

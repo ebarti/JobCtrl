@@ -108,8 +108,10 @@ failed or forced generation never destroys the previous accepted rows.
 A strict model determination extracts each final proposition, classifies candidate fact/hypothetical/target-role/employer/advice, and judges support from allowed evidence. Findings cite exact line IDs and verbatim spans. Code verifies IDs, quotes and exact values; it does not classify English. Generators record anchors and the verifier affirms source contributions. Resume, cover letter, outreach, interview and analysis use the shared port, with separate artifact quality review. Failed refreshes preserve accepted artifacts. See [Tailoring Contract](tailoring.md#validation-layers).
 
 The shared determination owner permits at most two correction calls after a
-mechanical response failure, including invalid citation spans or copied field
-bindings. Each call repeats lane/spend admission and all existing validation.
+mechanical response failure, including invalid citation spans, line/requirement
+bindings, missing stated-pay citations or inconsistent aggregate verdicts. Each
+call repeats lane/spend admission and all existing validation. A valid semantic
+rejection remains a rejection and goes back to the generator for revision.
 Corrections receive the immediately rejected response as explicitly untrusted
 data so they can repair individual bindings against the original source inputs.
 Provider, budget, cache and persistence failures do not enter this response
