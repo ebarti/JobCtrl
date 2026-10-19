@@ -23,7 +23,7 @@ this record; they do not rewrite it to suit a job.
 JobCtrl does not let a generated resume or an import silently become truth. The
 profile boundary works in this order:
 
-1. **The import API returns a draft.** Resume-PDF import returns extracted
+1. **Import creates a draft.** Resume-PDF import returns extracted
    profile data and inferred style without changing saved facts. The current
    browser confirmation returns to the saved Profile without staging that
    returned draft into the editor; see the import limitation below.
