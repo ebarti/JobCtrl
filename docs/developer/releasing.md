@@ -178,9 +178,18 @@ repeated update execute through the real binaries. Retain the credential-free
 `released-upgrade-smoke.json` evidence and require every matrix case to pass.
 Include a separate workspace that first reproduces the released 0.2.1-to-0.3.0
 failure, then recovers it using the new authenticated formula controller.
+The serial matrix retains time for real installer notarization and repeated
+service restarts; do not shorten it to a version-only check to fit a timeout.
 Also upgrade a real 0.2.1 installation that has never started or created either
 database, then roll back its initialized predecessor pair. Partial pairs and
 orphaned sidecars must fail before any selection change in the native suite.
+
+Verify the Homebrew formula with unmodified Homebrew: strict Developer ID checks
+must accept the actual released executables and reject an ad-hoc control inside
+the build sandbox. Live notarization belongs to the normal-user bootstrap before
+installer execution and to the full-payload installer before activation. Inject
+failures for both bootstrap executables and require that the installer never
+runs. Do not add a global Mach-service exception or disable Homebrew's sandbox.
 
 Report the release URL, version, exact source SHA, run result, channel sequence,
 registry verification, upgrade consequences, and any unresolved limitation.
