@@ -21,6 +21,9 @@ stable Python package. A source version or pushed tag alone is not a release.
    guides rather than treating every commit title or design document as a shipped
    feature. Inspect exact-source CI, known blockers, and the applicable release,
    data, migration, and product evidence in [Reliability & QA](../local-reliability-qa.md).
+   Respect the owner's requested release scope. An upgrade or rollback repair
+   does not require a minor-version bump; its signed security sequence advances
+   independently of the application version.
 3. Check for an existing release run before starting another:
 
    ```bash
@@ -139,6 +142,11 @@ corrected tag; the failed run remains evidence for its original source. Remove
 an abandoned unpublished version tag only with the owner's authorization. A
 published or partially published candidate requires reconciling its existing
 immutable state rather than this unpublished-tag correction procedure.
+If the earlier attempt already emitted a signed descriptor, keep the application
+version but choose a sequence above that signed candidate as well as the current
+published pointer. Never sign a different build at an already signed sequence:
+clients that saw the first candidate retain its sequence-to-build binding even
+when publication was held. Retain the earlier run and tag object as evidence.
 
 For Apple HTTP 403 reporting a missing or expired agreement, stop retries until
 the Apple Developer Account Holder reviews and accepts the required agreement.
@@ -176,11 +184,23 @@ replaces only Homebrew acquisition; native installers, migrations, services,
 readiness failure, explicit rollback, interrupted recovery, paired backups and
 repeated update execute through the real binaries. Retain the credential-free
 `released-upgrade-smoke.json` evidence and require every matrix case to pass.
+Require a separate ordinary update, rollback and repeated update from every
+historical version's original controller. The additional 0.2.1 fault-injection
+case must not replace its ordinary successful-update case.
 Include a separate workspace that first reproduces the released 0.2.1-to-0.3.0
 failure, then recovers it using the new authenticated formula controller.
+The serial matrix retains time for real installer notarization and repeated
+service restarts; do not shorten it to a version-only check to fit a timeout.
 Also upgrade a real 0.2.1 installation that has never started or created either
 database, then roll back its initialized predecessor pair. Partial pairs and
 orphaned sidecars must fail before any selection change in the native suite.
+
+Verify the Homebrew formula with unmodified Homebrew: strict Developer ID checks
+must accept the actual released executables and reject an ad-hoc control inside
+the build sandbox. Live notarization belongs to the normal-user bootstrap before
+installer execution and to the full-payload installer before activation. Inject
+failures for both bootstrap executables and require that the installer never
+runs. Do not add a global Mach-service exception or disable Homebrew's sandbox.
 
 Report the release URL, version, exact source SHA, run result, channel sequence,
 registry verification, upgrade consequences, and any unresolved limitation.

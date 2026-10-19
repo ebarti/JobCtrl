@@ -123,7 +123,7 @@ async function injectReadinessFailure(runtime, stateDirectory, candidate, child,
   throw new Error(`candidate readiness fault was not exercised (updater PID ${child.pid})`);
 }
 
-async function scenario(old, candidate, root, preexistingRelease = null) {
+async function scenario(old, candidate, root, preexistingRelease = null, exerciseReadinessFault = false) {
   const runtime = path.join(root, "runtime"), state = path.join(root, "state"), home = path.join(root, "home"), prefix = path.join(root, "formula");
   const bin = path.join(root, "bin");
   for (const directory of [root, home, state, bin]) await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -168,7 +168,7 @@ async function scenario(old, candidate, root, preexistingRelease = null) {
     await command(old.installer, installArgs(candidate, runtime, true), env);
     const payload = path.join(runtime, "releases", candidate.descriptor.buildId, "payload");
     const frontend = await formulaCache(candidate, prefix, payload);
-    const thorough = old.descriptor.appVersion === "0.2.1" && !preexistingRelease;
+    const thorough = exerciseReadinessFault && old.descriptor.appVersion === "0.2.1" && !preexistingRelease;
     const inject = (child, finished) => injectReadinessFailure(runtime, state, candidate.descriptor.buildId, child, finished);
     const assertData = async (expectedSchema) => {
       const query = "import sqlite3,sys,json; c=sqlite3.connect(sys.argv[1]); print(json.dumps([c.execute('PRAGMA user_version').fetchone()[0],c.execute(\"SELECT title FROM jobs WHERE url='https://jobs.example/upgrade-qa'\").fetchone()[0]])); c.close()";
@@ -284,10 +284,14 @@ export async function runReleasedUpgradeSmoke({ releaseDirectory, cacheDirectory
   if (candidate.descriptor.appVersion !== "0.3.0") {
     const old = await historicalRelease("0.2.1", cache, trust, { PATH: "/usr/bin:/bin" });
     const broken = await historicalRelease("0.3.0", cache, trust, { PATH: "/usr/bin:/bin" });
+    results.push(await scenario(old, candidate, path.join(root, "0.2.1-readiness-failure"), null, true));
     results.push(await scenario(old, candidate, path.join(root, "preexisting-0.3.0-failure"), broken));
     results.push(await unusedScenario(old,candidate,path.join(root,"unused-0.2.1-installation")));
   }
   assert.ok(results.some((result) => result.sourceVersion === "0.2.0") && results.some((result) => result.sourceVersion === "0.2.1"));
+  for (const version of versions.filter((version) => version !== candidate.descriptor.appVersion)) {
+    assert.ok(results.some((result) => result.sourceVersion === version && result.checks.includes("historical-updater-successful-promotion")), `ordinary released updater was not exercised for ${version}`);
+  }
   const report = { schemaVersion: 1, status: "passed", candidateBuildId: candidate.descriptor.buildId, acquisitionBoundary: "signed-formula-cache-adapter", executables: "actual-released-sources-and-signed-candidate", results };
   await writeFile(output, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
   return report;

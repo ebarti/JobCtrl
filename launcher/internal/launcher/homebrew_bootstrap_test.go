@@ -275,6 +275,12 @@ func setSignedHomebrewTrust(t *testing.T, public ed25519.PublicKey) {
 	t.Helper()
 	previousChannel, previousKey := releaseChannel, releaseTrustKeyBase64
 	t.Cleanup(func() { releaseChannel, releaseTrustKeyBase64 = previousChannel, previousKey })
+	// These fixtures use shell stand-ins. The dedicated boundary test checks the
+	// actual notarization arguments and failure ordering; the release gate runs
+	// the real signed binaries against Apple's verifier.
+	previousCodeSign := homebrewCodeSignCommand
+	t.Cleanup(func() { homebrewCodeSignCommand = previousCodeSign })
+	homebrewCodeSignCommand = func(_ string, _ ...string) (string, error) { return "", nil }
 	releaseChannel = "stable"
 	releaseTrustKeyBase64 = base64.StdEncoding.EncodeToString(public)
 	if policy, err := AcquisitionBuildPolicy(); err != nil || policy.ExpectedChannel != "stable" || policy.AllowUnsignedLocal || !policy.AllowNetwork {

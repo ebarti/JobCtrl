@@ -133,6 +133,9 @@ func homebrewBootstrap(executable string, args, inheritedEnv []string, stdout, s
 	if info, err := os.Lstat(installer); err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 		return true, errors.New("Homebrew bootstrap installer is not a regular executable")
 	}
+	if err := verifyHomebrewBootstrapNotarization(root); err != nil {
+		return true, err
+	}
 	installerArgs := []string{
 		"--source", "homebrew", "--stage-only", "--home", store.Home,
 		"--descriptor-url", config.DescriptorURL,

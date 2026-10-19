@@ -581,7 +581,7 @@ jobs:
     name: Verify released upgrades and rollback before publication
     needs: [resolve, sign, package-signed-candidate]
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 75
     permissions:
       actions: read
       contents: read

@@ -96,6 +96,16 @@ reused PID. The P6 workflow now makes Developer ID signing, notarization, and
 authenticated publication mandatory for promotion. Public artifacts pass those
 gates before the stable release pointer or Homebrew formula can reference them.
 
+Homebrew caches only prefix-owned release resources. Its build sandbox verifies
+strict Developer ID certificate-chain requirements for the launcher, installer
+and managed headless shell without contacting Apple's live syspolicy service.
+Before a cached release's installer can execute, the normal-user bootstrap
+requires strict notarization checks on both bootstrap executables. The installer
+then checks every payload executable's signature and notarization, and assesses
+outer application bundles through Gatekeeper, before selecting the payload.
+This preserves the pre-activation trust boundary without changing Homebrew's
+sandbox permissions or treating ad-hoc signatures as Developer ID signatures.
+
 The P5 lifecycle store is user-owned (`JOBCTRL_RUNTIME_HOME`), not a package
 manager Cellar. `active.json` atomically records the selected payload, the
 compatible immutable selector build, and the current acquisition adapter;
