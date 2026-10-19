@@ -5,18 +5,22 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { selectReleasedUpgradeCases } from "./released-upgrade-smoke.mjs";
+import { selectLatestReleasedVersion } from "./released-upgrade-smoke.mjs";
 
-test("release cases cover distinct source schemas and reported recovery states with one full round trip", () => {
-  const cases = selectReleasedUpgradeCases();
-  assert.deepEqual(cases.map((entry) => entry.id), ["from-0.2.0", "from-0.2.1", "from-0.3.0", "recovery-0.2.1", "unused-0.2.1"]);
-  assert.deepEqual(cases.filter((entry) => entry.roundTrip).map((entry) => entry.id), ["from-0.2.0"]);
-  assert.equal(selectReleasedUpgradeCases("from-0.2.1").length, 1);
-  assert.equal(selectReleasedUpgradeCases("recovery-0.2.1")[0].kind, "recovery");
+const published = (version, day, extra = {}) => ({ tag_name: `v${version}`, published_at: `2026-10-${day}T10:00:00Z`, draft: false, prerelease: false, ...extra });
+
+test("the upgrade source advances to the latest published stable release", () => {
+  const releases = [published("0.3.0", "18"), published("0.3.1", "19"), published("0.4.0", "20", { draft: true }), published("0.4.0-rc.1", "20", { prerelease: true })];
+  assert.equal(selectLatestReleasedVersion(releases, "0.3.2"), "0.3.1");
+  releases.push(published("0.3.2", "20"));
+  assert.equal(selectLatestReleasedVersion(releases, "0.3.3"), "0.3.2");
+  assert.equal(selectLatestReleasedVersion(releases, "0.3.2"), "0.3.1", "a published-candidate rerun must still exercise its predecessor");
 });
 
-test("a mistyped matrix selector fails instead of running the complete serial suite", () => {
-  assert.throws(() => selectReleasedUpgradeCases("from-0.2.2"), /unknown/);
+test("missing or malformed stable release metadata fails instead of using a historical fallback", () => {
+  assert.throws(() => selectLatestReleasedVersion([published("0.3.1", "19")], "0.3.1"), /no previous/);
+  assert.throws(() => selectLatestReleasedVersion([published("invalid", "19")], "0.3.2"));
+  assert.throws(() => selectLatestReleasedVersion([published("0.3.1", "invalid")], "0.3.2"), /publication date/);
 });
 
 test("verification modules load without installing application development dependencies", async (context) => {

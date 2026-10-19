@@ -578,15 +578,10 @@ jobs:
           retention-days: 14
 
   verify-released-upgrades:
-    name: Verify released upgrade (${{ matrix.case }})
+    name: Verify upgrade from the latest stable release
     needs: [resolve, sign, package-signed-candidate]
     runs-on: macos-15
     timeout-minutes: 20
-    strategy:
-      fail-fast: true
-      max-parallel: 5
-      matrix:
-        case: ${{ fromJSON(inputs.channel == 'stable' && '["from-0.2.0","from-0.2.1","from-0.3.0","recovery-0.2.1","unused-0.2.1"]' || '["not-required"]') }}
     permissions:
       actions: read
       contents: read
@@ -613,7 +608,7 @@ jobs:
           cd "$RUNNER_TEMP/release"
           shasum -a 256 -c SHA256SUMS
 
-      - name: Verify real released upgrades, failed readiness, and paired rollback
+      - name: Verify the latest stable upgrade and paired rollback
         if: ${{ inputs.channel == 'stable' }}
         env:
           JOBCTRL_RELEASE_PUBLIC_KEY: ${{ needs.resolve.outputs.release_public_key }}
@@ -621,15 +616,14 @@ jobs:
         run: |
           node scripts/released-upgrade-smoke.mjs \
             --release-dir "$RUNNER_TEMP/release" \
-            --case "${{ matrix.case }}" \
-            --output "$RUNNER_TEMP/${{ matrix.case }}.json"
+            --output "$RUNNER_TEMP/released-upgrade-smoke.json"
 
       - name: Retain credential-free released-binary proof
         if: ${{ inputs.channel == 'stable' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: jobctrl-released-upgrade-evidence-${{ github.run_id }}-${{ matrix.case }}
-          path: ${{ runner.temp }}/${{ matrix.case }}.json
+          name: jobctrl-released-upgrade-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/released-upgrade-smoke.json
           if-no-files-found: error
           retention-days: 14
 
