@@ -227,7 +227,7 @@ def test_build_resume_document_reuses_tailoring_policy_helpers() -> None:
         {"kind": "phone", "label": "+1-555-0100", "href": "tel:+15550100"},
         {"kind": "email", "label": "jane@example.com", "href": "mailto:jane@example.com"},
         {"kind": "website", "label": "janedoe.dev", "href": "https://janedoe.dev"},
-        {"kind": "linkedin", "label": "janedoe", "href": "https://www.linkedin.com/in/janedoe"},
+        {"kind": "linkedin", "label": "www.linkedin.com/in/janedoe", "href": "https://www.linkedin.com/in/janedoe"},
     ]
     assert document["summary"] == "Tailored summary."
     assert document["experience"][0]["title"] == "Senior SWE"
@@ -268,7 +268,7 @@ def test_build_resume_html_matches_moderncv_contact_and_experience_layout() -> N
         in html
     )
     assert (
-        '<span class="resume-contact-item resume-contact-linkedin"><a href="https://www.linkedin.com/in/janedoe">janedoe</a></span>'
+        '<span class="resume-contact-item resume-contact-linkedin"><a href="https://www.linkedin.com/in/janedoe">www.linkedin.com/in/janedoe</a></span>'
         in html
     )
     dom = BeautifulSoup(html, "html.parser")
@@ -287,6 +287,32 @@ def test_build_resume_html_matches_moderncv_contact_and_experience_layout() -> N
     assert "Owned the distributed systems mandate." in html
     assert html.index("experience:acme_swe:heading") < html.index("experience:acme_swe:summary")
     assert html.index("experience:acme_swe:summary") < html.index("experience:acme_swe#0")
+
+
+def test_shared_handle_destinations_remain_distinct_in_text_audit_and_html() -> None:
+    from jobctrl.domain.materials.provenance_builder import rendered_lines
+    from jobctrl.domain.materials.resume_document import contact_items_from_text, contact_items_text
+
+    profile = _profile()
+    profile["personal"]["github_url"] = "https://github.com/janedoe"
+    document = build_resume_document(_payload(), profile)
+    items = document["personal"]["contact_items"]
+    professional = [row for row in items if row["kind"] in {"linkedin", "github"}]
+    assert len({row["label"] for row in professional}) == 2
+    assert [row["href"] for row in professional] == [
+        "https://www.linkedin.com/in/janedoe", "https://github.com/janedoe",
+    ]
+    contact = contact_items_text(items)
+    assert "www.linkedin.com/in/janedoe" in contact and "github.com/janedoe" in contact
+    assert contact in ResumeAssembler().assemble_resume_text(_payload(), profile)
+    audited = next(row[3] for row in rendered_lines(profile, _payload()) if row[0] == "personal:contact")
+    assert audited == contact
+    restored = [row for row in contact_items_from_text(contact) if row["kind"] in {"linkedin", "github"}]
+    assert restored == professional
+    html = BeautifulSoup(build_resume_html(document), "html.parser")
+    assert [(row["href"], row.get_text()) for row in html.select(".resume-contact-linkedin a, .resume-contact-github a")] == [
+        (row["href"], row["label"]) for row in professional
+    ]
 
 
 def test_resume_preserves_profile_experience_order_and_places_education_degree_below_institution() -> None:

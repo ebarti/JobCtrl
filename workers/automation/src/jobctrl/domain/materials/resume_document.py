@@ -96,14 +96,12 @@ def contact_items_from_personal(personal: dict[str, Any]) -> list[ContactItem]:
             items.append(item)
     linkedin = str(personal.get("linkedin_url", "")).strip()
     if linkedin:
-        label = _link_label(linkedin).rsplit("/", 1)[-1] or _link_label(linkedin)
-        item = _contact_url_item("linkedin", linkedin, label=label)
+        item = _contact_url_item("linkedin", linkedin)
         if item:
             items.append(item)
     github = str(personal.get("github_url", "")).strip()
     if github:
-        label = _link_label(github).rsplit("/", 1)[-1] or _link_label(github)
-        item = _contact_url_item("github", github, label=label)
+        item = _contact_url_item("github", github)
         if item:
             items.append(item)
     return order_contact_items(items)
@@ -131,11 +129,9 @@ def contact_items_from_text(contact_text: str) -> list[ContactItem]:
         if "@" in part and not lower.startswith(("http://", "https://")):
             item = _contact_item("email", part, f"mailto:{part}")
         elif "linkedin.com" in lower:
-            label = _link_label(part).rsplit("/", 1)[-1] or _link_label(part)
-            item = _contact_url_item("linkedin", part, label=label)
+            item = _contact_url_item("linkedin", part)
         elif "github.com" in lower:
-            label = _link_label(part).rsplit("/", 1)[-1] or _link_label(part)
-            item = _contact_url_item("github", part, label=label)
+            item = _contact_url_item("github", part)
         elif lower.startswith(("http://", "https://")) or "." in part:
             item = _contact_url_item("website", part)
         elif re.search(r"\d", part):

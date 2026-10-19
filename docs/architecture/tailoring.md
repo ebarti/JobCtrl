@@ -91,6 +91,11 @@ untrusted data, with the current source and coverage allowlists remaining author
 
 ## Validation Layers
 
+The canonical contact formatter keeps professional-link destination hosts and
+paths visible in both text and PDF labels. Two platforms may use the same
+handle; display text must still distinguish the saved links while preserving
+their exact hyperlink targets. Generated edits do not change contact facts.
+
 ### 1. Structured Output Schema
 
 Strict schemas reject extra fields, unknown enums and missing inventory items.
