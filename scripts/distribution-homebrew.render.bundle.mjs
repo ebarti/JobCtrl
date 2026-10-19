@@ -10165,6 +10165,8 @@ async function writeGeneratedComponents(payloadRoot, root, contracts, sourceDate
   await chmod2(path3.join(launcherRoot, "jobctrl-installer"), 493);
   await copyFile(path3.join(root, "launcher", "runtime-manifest.json"), path3.join(launcherRoot, "runtime-manifest.json"));
   await chmod2(path3.join(launcherRoot, "runtime-manifest.json"), 420);
+  await copyFile(path3.join(root, "launcher", "update-protocol.json"), path3.join(launcherRoot, "update-protocol.json"));
+  await chmod2(path3.join(launcherRoot, "update-protocol.json"), 420);
   const pdfjsRoot = componentRoot(payloadRoot, contracts, "pdfjs-renderer");
   await mkdir2(pdfjsRoot, { recursive: true, mode: 493 });
   await writeJson(path3.join(pdfjsRoot, "renderer.json"), {
