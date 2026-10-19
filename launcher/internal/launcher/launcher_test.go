@@ -24,6 +24,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/ebarti/jobctrl/launcher/internal/release"
 )
 
 const validRuntimeManifest = `{
@@ -802,6 +804,36 @@ func main() {
 	}
 	if output, err := runLauncherCommand(t, "jobctrl", otherCWD, environment, "stop"); err != nil {
 		t.Fatalf("final fixture stop: %v\n%s", err, output)
+	}
+
+	store, err := release.Open(instanceRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestDigest, err := sha256Path(filepath.Join(payloadRoot, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := release.Receipt{SchemaVersion: 1, BuildID: manifest.BuildID, Channel: "local", Sequence: 1,
+		ArtifactSHA256: strings.Repeat("a", 64), ManifestSHA256: manifestDigest,
+		DescriptorSHA256: strings.Repeat("b", 64), DescriptorURL: "local-fixture", InstalledAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	journal, err := store.Begin("update", &receipt, &receipt, receipt.DescriptorSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Advance(&journal, release.CandidateStarting, nil); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = store.Advance(&journal, release.Promoted, nil)
+		_, _ = runLauncherCommand(t, "jobctrl", otherCWD, environment, "stop")
+	}()
+	transitionEnv := append(append([]string{}, environment...), "JOBCTRL_TRANSITION_JOURNAL="+journal.ID)
+	if output, err := runLauncherCommand(t, "jobctrl", otherCWD, transitionEnv, "start", "--no-open"); err != nil {
+		t.Fatalf("authenticated transition start and detached supervisor failed: %v\n%s", err, output)
+	}
+	if output, err := runLauncherCommand(t, "jobctrl", otherCWD, transitionEnv, "status", "--json"); err == nil || !strings.Contains(output, "unfinished update transition") {
+		t.Fatalf("ordinary command bypassed the in-progress transition: %v\n%s", err, output)
 	}
 }
 

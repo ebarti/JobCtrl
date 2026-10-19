@@ -296,7 +296,7 @@ func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Write
 	}
 	defer func() { _ = ctx.selection.Close() }()
 	if store, storeErr := release.Open(ctx.Instance.RuntimeHome); storeErr == nil {
-		if journal, journalErr := store.ReadJournal(); journalErr == nil && journal.Resumable() && !transitionRecoveryCommand(args) {
+		if journal, journalErr := store.ReadJournal(); journalErr == nil && journal.Resumable() && !transitionRecoveryCommand(args) && !authenticatedTransitionStartup(ctx, args) {
 			return fmt.Errorf("unfinished %s transition at %s; run `jobctrl rollback` to recover before starting or dispatching commands", journal.Operation, journal.State)
 		} else if journalErr != nil && !errors.Is(journalErr, os.ErrNotExist) {
 			return fmt.Errorf("read release transition journal: %w", journalErr)
@@ -310,6 +310,22 @@ func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Write
 
 func transitionRecoveryCommand(args []string) bool {
 	return len(args) > 0 && (args[0] == "rollback" || args[0] == "uninstall")
+}
+
+func authenticatedTransitionStartup(ctx launchContext, args []string) bool {
+	executable, err := filepath.EvalSymlinks(ctx.Executable)
+	if err != nil || executable != filepath.Join(ctx.PayloadRoot, "launcher", "jobctrl") {
+		return false
+	}
+	starting := len(args) == 2 && args[0] == "start" && args[1] == "--no-open"
+	supervising := len(args) == 1 && args[0] == "__supervise"
+	if !starting && !supervising {
+		return false
+	}
+	// Internal readiness starts are the work that completes the journal. Bind
+	// the exception to its current state, release and immutable manifest again;
+	// neither a public selector nor an environment flag alone grants access.
+	return verifyDirectTransitionExecution(ctx.PayloadRoot, ctx.Distribution, ctx.Environment) == nil
 }
 
 // dispatchCommand keeps the one-release dev compatibility alias on the exact

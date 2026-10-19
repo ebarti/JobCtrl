@@ -165,6 +165,11 @@ Wait for the complete workflow, including PyPI, to succeed. Independently read b
   and cross-runtime migration evidence as well. Do not update or migrate a personal workspace
   merely to test a release.
 
+Update and rollback verification must also exercise the real launcher entry
+point with a resumable transition journal, including the detached supervisor.
+A fresh installation and tests that replace the readiness-start function do not
+prove that an authenticated candidate can start before the journal is finalized.
+
 Report the release URL, version, exact source SHA, run result, channel sequence,
 registry verification, upgrade consequences, and any unresolved limitation.
 Signing success or one published channel is not completion. This repository
