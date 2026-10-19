@@ -178,6 +178,9 @@ repeated update execute through the real binaries. Retain the credential-free
 `released-upgrade-smoke.json` evidence and require every matrix case to pass.
 Include a separate workspace that first reproduces the released 0.2.1-to-0.3.0
 failure, then recovers it using the new authenticated formula controller.
+Also upgrade a real 0.2.1 installation that has never started or created either
+database, then roll back its initialized predecessor pair. Partial pairs and
+orphaned sidecars must fail before any selection change in the native suite.
 
 Report the release URL, version, exact source SHA, run result, channel sequence,
 registry verification, upgrade consequences, and any unresolved limitation.

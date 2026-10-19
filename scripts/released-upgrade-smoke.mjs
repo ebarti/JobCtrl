@@ -232,6 +232,38 @@ async function scenario(old, candidate, root, preexistingRelease = null) {
   }
 }
 
+async function unusedScenario(old, candidate, root) {
+  const runtime=path.join(root,"runtime"), state=path.join(root,"state"), home=path.join(root,"home");
+  for (const directory of [root,state,home]) await mkdir(directory,{recursive:true,mode:0o700});
+  const env={HOME:home,JOBCTRL_RUNTIME_HOME:runtime,JOBCTRL_DIR:state,PATH:"/usr/bin:/bin:/usr/sbin:/sbin"};
+  const selector=path.join(runtime,"bin","jobctrl");
+  try {
+    console.log(`${old.descriptor.appVersion}: upgrading an installation that has never been started`);
+    await command(old.installer,installArgs(old,runtime),env);
+    for (const name of ["jobctrl.db","temporal.db"]) await assert.rejects(access(path.join(state,name)),{code:"ENOENT"});
+    const sentinel=path.join(state,"unrelated-user-file.txt");
+    await writeFile(sentinel,"preserved user file",{mode:0o600});
+    await command(candidate.installer,installArgs(candidate,runtime),env);
+    assert.equal((await json(path.join(runtime,"active.json"))).receipt.buildId,candidate.descriptor.buildId);
+    assert.equal(JSON.parse((await command(selector,["status","--json"],env)).output).status,"running");
+    const journal=await json(path.join(runtime,"transition.json"));
+    const pair=await json(path.join(state,"backups",journal.backupId,"pair.json"));
+    assert.equal(pair.releaseReceipt.buildId,old.descriptor.buildId);
+    assert.deepEqual(pair.files.map(file=>file.name).sort(),["jobctrl.db","temporal.db"]);
+    for(const file of pair.files) assert.equal(await hash(path.join(state,"backups",pair.id,file.name)),file.sha256);
+    const oldSchema=pair.files.find(file=>file.name==="jobctrl.db").sqliteUserVersion;
+    await command(selector,["rollback","--to",old.descriptor.buildId],env);
+    const active=await json(path.join(runtime,"active.json"));
+    assert.equal(active.receipt.buildId,old.descriptor.buildId);
+    assert.equal(active.selectorBuildId,candidate.descriptor.buildId);
+    assert.equal(await readFile(sentinel,"utf8"),"preserved user file");
+    const python=path.join(runtime,"releases",old.descriptor.buildId,"payload","python","bin","python3");
+    const query="import sqlite3,sys,json; c=sqlite3.connect(sys.argv[1]); print(json.dumps([c.execute('PRAGMA user_version').fetchone()[0],c.execute('SELECT count(*) FROM jobs').fetchone()[0]])); c.close()";
+    assert.deepEqual(JSON.parse((await command(python,["-I","-B","-c",query,path.join(state,"jobctrl.db")],env)).output),[oldSchema,0]);
+    return {sourceVersion:old.descriptor.appVersion,sourceBuildId:old.descriptor.buildId,sourceArtifactSha256:old.descriptor.artifact.sha256,sourceSchema:oldSchema,targetBuildId:candidate.descriptor.buildId,unusedInstallation:true,status:"passed",checks:["unused-installation-upgrade","verified-paired-backup","explicit-rollback-to-released-payload","unrelated-file-preserved"]};
+  } finally { await command(selector,["stop"],env,{allowFailure:true}); }
+}
+
 export async function runReleasedUpgradeSmoke({ releaseDirectory, cacheDirectory, output, publicKeyBase64, keyId }) {
   assert.equal(process.platform, "darwin"); assert.equal(process.arch, "arm64");
   const raw = Buffer.from(publicKeyBase64 ?? "", "base64"); assert.equal(raw.length, 32);
@@ -253,6 +285,7 @@ export async function runReleasedUpgradeSmoke({ releaseDirectory, cacheDirectory
     const old = await historicalRelease("0.2.1", cache, trust, { PATH: "/usr/bin:/bin" });
     const broken = await historicalRelease("0.3.0", cache, trust, { PATH: "/usr/bin:/bin" });
     results.push(await scenario(old, candidate, path.join(root, "preexisting-0.3.0-failure"), broken));
+    results.push(await unusedScenario(old,candidate,path.join(root,"unused-0.2.1-installation")));
   }
   assert.ok(results.some((result) => result.sourceVersion === "0.2.0") && results.some((result) => result.sourceVersion === "0.2.1"));
   const report = { schemaVersion: 1, status: "passed", candidateBuildId: candidate.descriptor.buildId, acquisitionBoundary: "signed-formula-cache-adapter", executables: "actual-released-sources-and-signed-candidate", results };

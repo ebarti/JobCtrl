@@ -1087,6 +1087,10 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 			return fmt.Errorf("candidate launcher protocol %d cannot supervise both active and candidate payloads; stage an explicit compatible bridge release", candidateProtocol)
 		}
 	}
+	unused, err := unusedDatabasePair(ctx.Instance.StateDir)
+	if err != nil {
+		return err
+	}
 	journal, err := store.Begin(operation, &active.Receipt, &candidate, candidate.DescriptorSHA256)
 	if err != nil {
 		return err
@@ -1133,6 +1137,23 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 		}
 		_ = store.Advance(&journal, release.RolledBack, cause)
 		return cause
+	}
+	if unused {
+		if err := advance(store, &journal, release.RollbackRestoring); err != nil {
+			return err
+		}
+		if err := startReleaseCommand(ctx, active.Receipt, journal.ID); err != nil {
+			return fmt.Errorf("initialize unused predecessor before paired backup: %w; run `jobctrl rollback` to recover", err)
+		}
+		if err := stop(ctx); err != nil {
+			return fmt.Errorf("quiesce initialized predecessor: %w", err)
+		}
+		if stillUnused, err := unusedDatabasePair(ctx.Instance.StateDir); err != nil || stillUnused {
+			return errors.New("predecessor did not initialize a complete database pair; preserve the journal for recovery")
+		}
+		if err := advance(store, &journal, release.Quiescing); err != nil {
+			return err
+		}
 	}
 	databaseVersion, err := jobCtrlSchemaVersion(activeRuntime)
 	if err != nil {

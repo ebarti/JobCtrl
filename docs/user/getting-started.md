@@ -248,6 +248,9 @@ application. Homebrew commands preserve that selection until you explicitly run
 `jobctrl update` again. If an older updater reports a failed candidate and cannot
 restart its previous release, run `jobctrl rollback` through the corrected
 launcher to restore the saved database pair and restart the previous application.
+The corrected installer and formula also handle an installation you have never
+started. If an existing database/history pair is incomplete, updating refuses
+to replace it; preserve those files and recover the pair before retrying.
 
 
 ## Semantic Determination Authority

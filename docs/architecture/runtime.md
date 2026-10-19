@@ -124,6 +124,10 @@ wait on their parent's selection lock. A new installer owns staged activation;
 it does not delegate migration control back to the older installed executable.
 For an already interrupted update, a new formula can stage its verified recovery
 controller without replacing the old/candidate journal or activating new data.
+If a selected installation has never created either database, the controller
+initializes and stops its verified predecessor before taking the normal paired
+backup. A partial pair, unsafe file or orphaned SQLite sidecar is refused before
+the update changes release selection.
 The current runtime admits only exact schema v14. A stopped v6 database retains
 the Temporal quiescence proof and private v7/v8/v9 intermediates; exact v7 and v8
 start at their next intermediate. Exact v9 transfers application URL authority
