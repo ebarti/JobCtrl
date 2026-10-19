@@ -407,6 +407,7 @@ export const ApplyReviewDecisionRequestSchema = z
     reason: z.string().trim().max(400).optional(),
     decidedBy: z.string().trim().min(1).max(120).default("user"),
     materialsGeneration: z.number().int().nonnegative().nullable().optional(),
+    coverLetterAcceptedVersion: z.string().regex(/^[a-f0-9]{64}$/).nullable().optional(),
     profileVersion: z.number().int().positive().nullable().optional(),
     applicationUrl: z.string().trim().min(1).max(2048).nullable().optional(),
     partialOverrideRunId: z.string().trim().min(1).max(120).optional(),
@@ -561,6 +562,8 @@ export interface ApplyReviewRequirementLedAudit {
 }
 
 export interface ApplyReviewMaterialsPreview {
+  coverLetter?: import("./cover-letter.js").CoverLetterAccepted | null;
+  coverLetterPdfError?: string | null;
   materialsGeneration: number | null;
   resumeText: string | null;
   resumeTextArtifactId: string | null;

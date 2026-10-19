@@ -2937,6 +2937,7 @@ class ProjectionBuilder:
                        size_bytes, generation, metadata_json
                 FROM job_materials_artifacts
                 WHERE tenant_id = ? AND job_id = ?
+                ORDER BY generation DESC
                 """,
                 (str(self._tenant_id), job_id),
             ).fetchall():
@@ -3005,6 +3006,10 @@ class ProjectionBuilder:
                        text_excerpt, left_pct, top_pct, width_pct, height_pct
                 FROM job_material_layout_boxes
                 WHERE tenant_id = ? AND job_id = ?
+                  AND generation = (SELECT MAX(a.generation) FROM job_materials_artifacts a
+                    WHERE a.tenant_id = job_material_layout_boxes.tenant_id
+                      AND a.job_id = job_material_layout_boxes.job_id
+                      AND a.artifact_id = job_material_layout_boxes.artifact_id)
                 ORDER BY artifact_id, page_number, box_index
                 """,
                 (str(self._tenant_id), job_id),

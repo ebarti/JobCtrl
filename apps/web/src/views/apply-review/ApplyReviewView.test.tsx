@@ -1139,6 +1139,10 @@ describe("<ApplyReviewView>", () => {
     expect(
       await screen.findByRole("heading", { name: "Principal Platform Engineer" }),
     ).toBeInTheDocument();
+    const coverText = screen.getByRole("region", { name: "Cover letter" });
+    expect(coverText).toHaveAttribute("tabindex", "0");
+    coverText.focus();
+    expect(coverText).toHaveFocus();
     const selectedHeader = document.querySelector(".apply-review-selected-head");
     expect(selectedHeader).toBeInstanceOf(HTMLElement);
     const header = within(selectedHeader as HTMLElement);
@@ -3998,6 +4002,10 @@ describe("<ApplyReviewView>", () => {
     });
 
     expect(await screen.findByRole("heading", { name: "Email application" })).toBeInTheDocument();
+    const emailBody = screen.getByRole("region", { name: "Email application body" });
+    expect(emailBody).toHaveAttribute("tabindex", "0");
+    emailBody.focus();
+    expect(emailBody).toHaveFocus();
     expect(screen.getAllByText("apply@example.com").length).toBeGreaterThan(0);
     expect(screen.getByText("Jordan_Resume.pdf")).toBeInTheDocument();
 

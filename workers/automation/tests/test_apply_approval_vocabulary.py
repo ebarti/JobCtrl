@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
 
 from jobctrl.apply import launcher
 from jobctrl.domain.apply.value_objects import APPROVAL_GATE_REFUSAL_REASONS
+from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
 
 _FIXTURE = (
     Path(__file__).resolve().parents[3]
@@ -18,6 +20,16 @@ _FIXTURE = (
 
 def _fixture() -> dict[str, list[str]]:
     return json.loads(_FIXTURE.read_text(encoding="utf-8"))
+
+
+@pytest.fixture
+def approval_connection():
+    # The vocabulary branches have no cover letter. Exercise the real cover
+    # guard against an exact-schema empty workspace instead of object().
+    connection = sqlite3.connect(":memory:")
+    create_exact_v14_schema(connection)
+    yield connection
+    connection.close()
 
 
 def test_refusal_reasons_match_shared_fixture() -> None:
@@ -44,6 +56,7 @@ def test_refusal_reason_branches_emit_only_shared_contract_values(
     monkeypatch: pytest.MonkeyPatch,
     scenario: str,
     expected: str | None,
+    approval_connection: sqlite3.Connection,
 ) -> None:
     decision: dict[str, object] | None = {
         "decision": "approve_submit",
@@ -97,7 +110,7 @@ def test_refusal_reason_branches_emit_only_shared_contract_values(
     )
 
     reason = launcher._approval_refusal_reason(
-        object(),
+        approval_connection,
         tenant_id="local",
         job_id="job-1",
         materials_generation=materials_generation,

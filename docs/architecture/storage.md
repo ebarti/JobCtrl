@@ -462,6 +462,42 @@ Exact-v14 screening answer revisions use existing indexed `job_events` entries w
 
 Materials stores immutable `company_briefing_config`, `company_briefing_link`, `company_briefing_accepted` and `company_briefing_attempt` records in the existing indexed exact-v14 `job_events` table. `entity_ref` is the explicit company URL hash or canonical JobId; tenant and event ID select the current revision. Accepted snapshots retain bounded public text and join their recorded `semantic_determinations` ID. Configuration and company history have no JobId foreign key and survive removal of the last linked job. Job link rows use the canonical JobId foreign key. No schema migration or separate store is introduced. See [Company Briefings](../user/company-briefings.md).
 
+## Cover-Letter Review Previews
+
+Cover-letter review previews live under
+`generated/cover-letter-previews/<preview UUID>/` with a full source snapshot,
+`letter.pdf` and a private identity/settings manifest. Preview files are separate
+from registered accepted Materials. Explicit acceptance registers that same PDF
+path in a new `job_materials_artifacts` generation and persists the print identity
+in `metadata_json.cover_letter_review`; the aggregate metadata retains the same
+receipt. This uses the existing exact schema. Historical generations, resume
+slots, layout boxes and source-bound records are retained. Failed acceptance
+never deletes a preview or previously accepted files. A committed receipt permits
+retry/reload reconciliation after a lost response. These local generated files
+are private material and must not be committed.
+The final source/PDF/manifest fence runs inside the promotion transaction after
+its last insert. A mismatch rolls back the new rows without restoring externally
+changed source files or changing prior accepted PDF files and authorization rows.
+
+Unchanged slots reuse their artifact IDs across generations. Readers that need
+an exact source, including DOCX export, bind both ID and generation. Artifact
+projections use the newest canonical occurrence with only that generation's
+layout and provenance rows; retained copies are history, not additional lines.
+Cover-only carry-forward binds both selected resume IDs to their original
+coherent generation, using the same selector as Apply Review. It never combines
+a newer partial resume generation with another PDF/text version. Cover aliases
+retain same-generation row order. Older aliases and partial generations remain
+historical. Cover-text display reads the canonical source ID and checks its hash;
+unreadable or changed source bytes cannot substitute another alias.
+
+The persisted review PDF digest remains authoritative if a file disappears or
+changes. Default generated cover PDFs store source-text and PDF digests in their
+artifact metadata with the source ID/generation, print settings and renderer.
+Unbound historical PDFs are never inferred current from generation alone.
+Owned source/preview/PDF I/O rejects symlink components, hard-linked files and
+nonregular or oversized inputs. RPC render output is a new exclusive file in its
+UUID attempt; failed cleanup removes only the original owned attempt directory.
+
 ## Career-learning snapshot ownership
 
 Selected-job cohorts, failed comparison attempts and user-chosen milestones use

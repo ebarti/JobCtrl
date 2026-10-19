@@ -1008,6 +1008,10 @@ export class JobCtrlApiClient {
     return this.baseUrl ? url.href : `${url.pathname}${url.search}`;
   }
 
+  coverLetterPreviewPdfUrl(jobId: string, previewId: string): string {
+    return `${this.baseUrl}/v1/jobs/${encodeURIComponent(jobId)}/cover-letter/previews/${encodeURIComponent(previewId)}.pdf`;
+  }
+
   artifactPreviewHtmlUrl(artifactId: string, cacheKey?: QueryValue): string {
     const path = `/v1/artifacts/${encodeURIComponent(artifactId)}/preview.html`;
     const url = new URL(

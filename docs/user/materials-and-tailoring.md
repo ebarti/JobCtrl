@@ -484,3 +484,20 @@ original and prior accepted material. See [Reviewed Locale Variants](locale-vari
 ## Screening Answer Library
 
 Materials also owns source-bound [screening-answer drafts and reusable reviewed revisions](screening-answers.md). Application-specific question versions, review and manual-use history remain owned by Apply. Failed refreshes retain accepted answers and material bytes.
+
+## Cover-Letter Formatting And Accepted History
+
+The [Apply Review PDF controls](apply.md#cover-letter-pdf-review) print the full
+accepted letter through the existing Chromium cover-letter renderer. Previewing
+creates a separate render, without replacing accepted materials. An explicit
+save accepts those exact bytes and settings in a new material generation while
+retaining the resume, source provenance and previous PDF history. Stale sources,
+conflicting saves and rendering or persistence failures preserve the accepted
+version. A saved version survives reload; an acknowledgement for an earlier
+snapshot never accepts newer local edits.
+Unchanged resume and cover-letter sources remain available for DOCX export by
+their displayed generation after repeated formatting saves.
+New generated cover PDFs record both the full source-text hash and PDF byte hash,
+along with their source artifact, settings and renderer identity. Historical PDFs
+without a verifiable source binding need an explicit preview/save before Apply
+approval. Files changed outside JobCtrl never silently become accepted materials.

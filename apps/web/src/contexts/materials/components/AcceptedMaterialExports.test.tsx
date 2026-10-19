@@ -19,6 +19,20 @@ import {
 
 const route = `*/v1/jobs/${exportJobId}/material-exports`;
 describe("accepted original DOCX UI", () => {
+  it("exports each carried source using its displayed generation", () => {
+    const history = sampleMaterialExports();
+    const source = history.sources[0]!;
+    history.sources = [source, { ...source, generation: 2 }, { ...source, generation: 3 }];
+    const onExport = vi.fn();
+    const view = render(<AcceptedMaterialExportPanel history={history} pending={false} onExport={onExport} onDownload={vi.fn()} />);
+    for (const [index, button] of screen.getAllByRole("button", {name:"Export resume DOCX"}).entries()) {
+      fireEvent.click(button);
+      expect(onExport).toHaveBeenLastCalledWith(expect.objectContaining({sourceArtifactId:source.artifactId,expectedGeneration:index+1}));
+    }
+    view.rerender(<AcceptedMaterialExportPanel history={{...history,sources:history.sources.slice(1)}} pending={false} onExport={onExport} onDownload={vi.fn()} />);
+    fireEvent.click(screen.getAllByRole("button", {name:"Export resume DOCX"})[0]!);
+    expect(onExport).toHaveBeenLastCalledWith(expect.objectContaining({expectedGeneration:2}));
+  });
   it("sends the selected paper and exact accepted source/version/digests", () => {
     const onExport = vi.fn();
     render(

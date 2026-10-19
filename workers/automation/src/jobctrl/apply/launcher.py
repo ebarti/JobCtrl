@@ -193,7 +193,7 @@ def _latest_apply_review_decision(conn, *, tenant_id: str, job_id: str) -> dict[
     row = conn.execute(
         """
         SELECT decision, materials_generation, profile_version, application_url,
-               partial_override_run_id, email_recipient, email_attachment_artifact_id, decided_at
+               partial_override_run_id, email_recipient, email_attachment_artifact_id, decided_at, decision_id
         FROM application_review_decisions
         WHERE tenant_id = ? AND job_id = ?
         ORDER BY decided_at DESC, decision_id DESC
@@ -215,6 +215,7 @@ def _latest_apply_review_decision(conn, *, tenant_id: str, job_id: str) -> dict[
             "email_recipient": row[5],
             "email_attachment_artifact_id": row[6],
             "decided_at": row[7],
+            "decision_id": row[8],
         }
     )
 
@@ -571,6 +572,10 @@ def _approval_refusal_reason_unchecked(
     except (TypeError, ValueError):
         return "approval_stale_materials"
     if decision_materials_generation != current_materials_generation:
+        return "approval_stale_materials"
+    from jobctrl.apply.cover_letter_binding import cover_letter_approval_current
+
+    if not cover_letter_approval_current(conn, tenant_id, job_id, str(decision.get("decision_id") or ""), app_dir=config.APP_DIR):
         return "approval_stale_materials"
     try:
         decision_profile_version = int(decision.get("profile_version"))

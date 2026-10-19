@@ -38,6 +38,10 @@ const RUN_KEY = createHash("sha256")
   .update(path.resolve(E2E_DIR))
   .digest("hex")
   .slice(0, 12);
+// Keep successful-run attachments beside the owned JUnit report. A broker
+// collecting that report's directory must retain PDFs and every-page images,
+// not just Playwright's .last-run.json in the checkout.
+const junitOutput = process.env["PLAYWRIGHT_JUNIT_OUTPUT_FILE"];
 // A listener does not prove which database it serves. Every mode owns both servers.
 const DOCS_SERVICE_ENVIRONMENT =
   process.env["JOBCTRL_DOCS_SCREENSHOTS"] === "1"
@@ -58,12 +62,12 @@ const DOCS_SERVICE_ENVIRONMENT =
 
 export default defineConfig({
   testDir: "./tests",
-  outputDir: path.join(repoRoot, "dist", "playwright-report", RUN_KEY),
+  outputDir: junitOutput ? `${path.resolve(junitOutput)}.artifacts` : path.join(repoRoot, "dist", "playwright-report", RUN_KEY),
   fullyParallel: false,
   forbidOnly: Boolean(process.env["CI"]),
   retries: process.env["CI"] ? 2 : 0,
   workers: 1,
-  reporter: process.env["CI"] ? "github" : "list",
+  reporter: junitOutput ? [[process.env["CI"] ? "github" : "list"], ["junit"]] : process.env["CI"] ? "github" : "list",
   globalSetup: "./fixtures/global-setup.ts",
   globalTeardown: "./fixtures/global-teardown.ts",
   use: {

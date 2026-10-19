@@ -13,6 +13,7 @@
     "test:coverage": "vitest run --coverage",
     "test-d": "vitest run --config vitest.types.config.ts",
     "e2e": "playwright test --config=e2e/playwright.config.ts",
+    "e2e:check-pdf-tools": "node e2e/fixtures/pdf-measurement-tools.cjs",
     "e2e:demo-workspace": "playwright test --config=e2e/demo-workspace.playwright.config.ts",
     "e2e:headed": "playwright test --config=e2e/playwright.config.ts --headed",
     "storybook": "storybook dev -p 6006",

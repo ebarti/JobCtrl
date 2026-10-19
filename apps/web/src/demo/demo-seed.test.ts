@@ -76,6 +76,14 @@ describe("canonical public demo seed", () => {
     expectCompleteClassifiedManifest(DEMO_CAPABILITY_MANIFEST);
   });
 
+  it("keeps cover-letter rendering unavailable and existing review classifications intact", () => {
+    for (const method of ["renderCoverLetterPreview", "acceptCoverLetterPreview", "coverLetterPreviewPdfUrl"] as const) {
+      expect(DEMO_CAPABILITY_MANIFEST[method]).toMatchObject({ class: "unavailable" });
+    }
+    expect(DEMO_CAPABILITY_MANIFEST.applyReviewQueue.class).toBe("browser_local");
+    expect(DEMO_CAPABILITY_MANIFEST.openArtifact.class).toBe("rehearsed_external");
+  });
+
   it.each(["health", "careerLearning", "writeCareerLearning"])(
     "rejects a missing public capability: %s",
     (method) => {

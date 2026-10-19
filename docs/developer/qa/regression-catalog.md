@@ -1244,6 +1244,110 @@ Use an owned exact-v14 synthetic workspace. Exercise explicit identity/source co
 
 Run `test_company_briefings.py` and API `company-briefings.test.ts` to read real Python-written receipts through TypeScript and HTTP. Render Job Detail, Interviews and the existing digest through `company-briefings.spec.ts` on desktop and mobile; expand source excerpts and check critical/serious accessibility findings. These fixtures inject explicit model decisions and public transport, not recorded-output replay or judgment-quality evaluations. Report live provider/public transport evidence separately.
 
+## Cover-Letter PDF Review (#1042)
+
+Use an owned synthetic workspace. Pair API persistence and frontend race tests
+with real API → registered RPC → Chromium → PDF-viewer QA. Render full long text,
+HTML-sensitive characters, A4/Letter and all settings bounds. Compare the bytes
+and SHA-256 of preview and accepted download, measure paper dimensions and inspect
+every rendered page. Retain PDFs, page images, measurements and source hashes
+privately. Controlled renderer or browser responses prove boundary behavior only;
+they do not prove actual Chromium output or persistence.
+
+Exercise preview-only reads, explicit save, two previews saving concurrently,
+source replacement at the same generation, newer generations, tenant/job switches,
+rapid edits, edits during saves, reversed responses, unmount, missing/corrupt PDFs,
+renderer/RPC/validation/persistence failures, retries, reload, restart and a lost
+save acknowledgement. Failures retain accepted settings, provenance, bytes and
+approval bindings. Successful saves retain complete material history and resume
+behavior while requiring renewed approval for the new generation. Verify email
+bindings, resume draft rendering/comments, manual decisions/outcomes and jobs
+without a cover as preservation controls. The materials browser spec contains a
+real render/save/reload path; independent candidate-bound review/product gates
+remain governed by the reliability workflow.
+
+Repeat formatting saves and export both carried text sources as DOCX from each
+displayed generation. Inspect one set of resume layout/provenance rows in both
+projection writers, not concatenated copies. Seed a higher rejected generation:
+the accepted cover identity must remain unchanged while the next allocation
+exceeds it. Replace stale PDF provenance with current text metadata and recorded
+anchor/binding IDs, also without a prior PDF. During save, undo to the old settings
+and deliver canonical refresh before/after success or a lost acknowledgement;
+preserve the undo, reject obsolete query snapshots and require reconciliation
+before approval when the outcome is uncertain.
+Seed current resume PDF/text and cover text alongside older literal aliases with
+equal timestamps and higher-sorting IDs. A cover-only save must neither select an
+older resume nor refuse an unchanged cover source. Repeat saves and committed
+retries, then read warm projections and reopen the database. Exercise both alias
+directions, all resume text aliases and same-generation row-order ties. Preserve
+original rows, bytes, anchors and bindings; only the changed cover acceptance
+stales prior authorization. Keep a no-alias control and the insert-time drift
+rollback regressions.
+Also seed a selected complete resume pair with a newer text-only generation, and
+the reciprocal newer-PDF case. Save, retry and reload twice: preserve the selected
+pair, its aggregate metadata, layout and provenance rather than forming a mixed
+pair. Check cold and warm projection selection. For cover aliases, oppose ID
+ordering and insertion order at equal timestamps; displayed text must equal the
+canonical rendered source before/after save and reload, with no alias fallback
+when that canonical source becomes unreadable.
+Populate artifact projections before saving, then download the new accepted PDF
+without restarting. Acceptance must commit its existing `PdfRendered` event
+atomically; fail the event insert to prove full rollback, and retry a committed
+preview to prove that neither the generation nor event is duplicated.
+Start with a current accepted PDF and an existing authorization, then change the
+canonical source or attempt PDF during material, artifact and event inserts.
+Revalidate the submitted source, PDF, settings, renderer and manifest before
+commit; any mismatch must roll back the entire promotion and its event. Preserve
+prior material/provenance/decision rows and accepted PDF bytes. A source file
+written by another producer must survive rollback; its changed hash must stale
+the older PDF rather than being restored. Include source-ID and manifest changes
+and a successful fresh render/save after refusal.
+
+Prepare owned outside-root synthetic files and replace the generated directory,
+preview root, UUID directory, manifest, PDF and canonical source with symlinks.
+Neither preview, download, rendering nor acceptance may follow them. Exercise
+literal traversal, direct outside paths, existing output files and hard links;
+failed cleanup must preserve replaced directories and outside bytes. Repeat at
+the registered worker RPC boundary before its renderer runs.
+
+Replace an accepted PDF with corrupt bytes that retain `%PDF-`/`%%EOF` markers.
+Its persisted identity must remain unchanged and approval/download must fail.
+Replace text at the same generation and prove the older PDF is noncurrent even
+with no review receipt. New default-generated PDFs must carry both hashes and
+their source occurrence; missing or invalid identity metadata cannot grant
+approval. Keep `test_apply_approval_vocabulary.py`'s refusal assertions on an
+exact-schema no-cover connection, exercising the real cover guard.
+
+For retained browser evidence, set an owned `PLAYWRIGHT_JUNIT_OUTPUT_FILE` and
+retain its complete sibling `<report path>.artifacts` directory, including
+successful attachments. `materials.spec.ts` measures long Unicode/HTML-sensitive
+source at defaults and bounds for each font through
+`workers/automation/tests/cover_letter_pdf_probe.py` with the prepared worker
+interpreter. It requires Poppler on PATH, records source/settings/PDF identities,
+paper and text geometry, font sizes, line/paragraph deltas, every-page PNGs and
+viewer screenshots. Inspect every page; passing interactions alone cannot prove
+visual acceptance. Keep controlled-response race scenarios separate from these
+real render measurements.
+Use the same bounded full-render readiness wait for initial and reloaded viewers:
+PDF.js reports progress for each page before reporting completion. Progress such
+as `Rendering page 4 of 4` is not readiness. Keep measured page-count comparisons,
+all nine formatting combinations and every-page captures after the ready state.
+Persist viewer captures for every preview and reloaded accepted page using
+`testInfo.outputPath`, then attach file paths. Retain the viewer-page hash manifests
+and competing-save, uncertain-authorization and reload receipts in that same
+owned tree. Buffer-only attachments are insufficient evidence retention.
+
+Run materials before shipped-fit lifecycle browser cases in the same owned
+workspace. Formatting saves carry resume slots into later material generations;
+the lifecycle fixture must change and restore the currently accepted audit,
+preserving generation-one history and the exact legacy coverage assertions.
+Direct browser-test mutation requests must send the configured first-party
+Origin; absent or foreign Origins must still receive 403. For a committed save
+whose acknowledgement is lost, inspect the job-qualified authorization buttons:
+both must remain disabled with the reconciliation reason until canonical state
+is recovered. Check keyboard focus/scroll access to long cover-letter and email
+text, and retain the existing critical/serious axe checks.
+
 ## Posting-history Source Proposals (#1041)
 
 Use owned exact-schema synthetic workspaces. Exercise the real

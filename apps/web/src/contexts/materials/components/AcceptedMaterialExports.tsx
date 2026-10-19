@@ -186,7 +186,7 @@ export function AcceptedMaterialExportPanel({
           </FieldGroup>
           {history.sources.map((source) => (
             <div
-              key={source.artifactId}
+              key={`${source.artifactId}:${source.generation}`}
               className="flex flex-wrap items-center justify-between gap-3"
             >
               <div>

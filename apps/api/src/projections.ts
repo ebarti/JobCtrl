@@ -1590,6 +1590,9 @@ function loadBulletProvenanceByArtifact(
     db,
     `SELECT * FROM job_bullet_provenance
       WHERE tenant_id = ? AND job_id = ?
+        AND generation = (SELECT MAX(a.generation) FROM job_materials_artifacts a
+          WHERE a.tenant_id = job_bullet_provenance.tenant_id AND a.job_id = job_bullet_provenance.job_id
+            AND a.artifact_id = job_bullet_provenance.artifact_id)
       ORDER BY generation, position, bullet_id`,
     [tenantId, jobId],
   );
@@ -1640,6 +1643,9 @@ function loadProvenanceAuxByArtifact(
     db,
     `SELECT artifact_id, coverage_json, voice_json FROM job_bullet_provenance
       WHERE tenant_id = ? AND job_id = ?
+        AND generation = (SELECT MAX(a.generation) FROM job_materials_artifacts a
+          WHERE a.tenant_id = job_bullet_provenance.tenant_id AND a.job_id = job_bullet_provenance.job_id
+            AND a.artifact_id = job_bullet_provenance.artifact_id)
       ORDER BY generation, position, bullet_id`,
     [tenantId, jobId],
   );
@@ -3012,6 +3018,9 @@ function loadLayoutBoxesByArtifact(
             left_pct, top_pct, width_pct, height_pct
        FROM job_material_layout_boxes
       WHERE tenant_id = ? AND job_id = ?
+        AND generation = (SELECT MAX(a.generation) FROM job_materials_artifacts a
+          WHERE a.tenant_id = job_material_layout_boxes.tenant_id AND a.job_id = job_material_layout_boxes.job_id
+            AND a.artifact_id = job_material_layout_boxes.artifact_id)
       ORDER BY artifact_id, page_number, box_index`,
     [tenantId, jobId],
   );
@@ -3330,7 +3339,7 @@ function collectArtifacts(
     }>(
       db,
       `SELECT artifact_id, artifact_type, status, path, created_at, size_bytes, generation, metadata_json
-       FROM job_materials_artifacts WHERE tenant_id = ? AND job_id = ?`,
+       FROM job_materials_artifacts WHERE tenant_id = ? AND job_id = ? ORDER BY generation DESC`,
       [tenantId, jobId],
     );
     for (const row of rows) {

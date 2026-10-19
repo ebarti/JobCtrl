@@ -3,6 +3,7 @@ import { registerOfferRoutes } from "./offer-routes.js";
 import { readCompanyBriefing } from "./company-briefings.js";
 
 import { createProviderHandlers, dispatchProviderModelCatalog, providerOperationError } from "./provider-handlers.js";
+import { acceptCoverLetterPreview, coverLetterArtifactPdfBytes, coverLetterJobId, coverLetterPreviewBytes, CoverLetterReviewError, renderCoverLetterPreview, type CoverLetterPdfRenderer } from "./cover-letter-review.js";
 import { callRpc, RpcContractError } from "./json-rpc-adapter.js";
 import { readTargetRoleProposal } from "./candidate-interpretations.js";
 import { resetJobStageWithEnrichmentOwner, retryFailedJobsWithEnrichmentOwner } from "./enrichment-retry.js";
@@ -443,6 +444,7 @@ const DISCOVERY_EXTENSION_VERSION_HEADER = "x-jobctrl-extension-version";
 const SEC_FETCH_HEADER_NAMES = ["sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest", "sec-fetch-user"] as const;
 
 export interface BuildAppOptions {
+  coverLetterPdfRenderer?: CoverLetterPdfRenderer;
   appDir?: string;
   dbPath: string;
   configPath: string;
@@ -1083,6 +1085,22 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         withDb(reply, options.dbPath, (db) =>
           listLearningRecommendations(db, request!),
         ),
+      renderCoverLetterPreview: ({ request, pathParam: locator }, reply) =>
+        withWritableDb(reply, options.dbPath, async (db) => {
+          const jobId = coverLetterJobId(db, locator);
+          return renderCoverLetterPreview(db, appDir, jobId, request, options.coverLetterPdfRenderer ?? (async (input) => {
+            try {
+              const response = await callRpc(providerDispatcher, RpcMethods.RenderCoverLetterPdf, input);
+              if (response.error || response.result?.pdfPath !== input.pdfPath) throw new Error();
+            } catch { throw new CoverLetterReviewError("cover_letter_render_failed", 502); }
+          }));
+        }),
+      acceptCoverLetterPreview: ({ request, pathParam: locator }, reply) =>
+        withWritableDb(reply, options.dbPath, (db) => {
+          const result = acceptCoverLetterPreview(db, appDir, coverLetterJobId(db, locator), request);
+          refreshProjections(db);
+          return result;
+        }),
       renderResumeReviewDraft: ({ request, pathParam: draftId }, reply) =>
         withWritableDb(reply, options.dbPath, async (db) => {
           const result = await renderResumeReviewDraft(
@@ -1178,7 +1196,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     withDb(reply, options.dbPath, (db) => {
       const discoverySettings = readDiscoverySettings(db).settings;
       return buildDigest(db, {
-        applyReviewQueue: listApplyReviewQueue(db),
+        applyReviewQueue: listApplyReviewQueue(db, appDir),
         budget: readLlmSpendHealth(options.dbPath, options.configPath),
         minFitScore: discoverySettings.minFitScore,
       });
@@ -1636,7 +1654,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   });
 
   app.get("/v1/apply/review-queue", async (_request, reply) =>
-    withDb(reply, options.dbPath, (db) => listApplyReviewQueue(db)),
+    withDb(reply, options.dbPath, (db) => listApplyReviewQueue(db, appDir)),
   );
 
   app.get("/v1/resume-templates", async (_request, reply) =>
@@ -2024,7 +2042,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         return undefined;
       }
       return withWritableDb(reply, options.dbPath, (db) =>
-        recordApplyReviewDecision(db, decodeRouteParam(request.params.jobKey), body),
+        recordApplyReviewDecision(db, decodeRouteParam(request.params.jobKey), body, appDir),
       );
     },
   );
@@ -2827,6 +2845,18 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
   });
 
+  app.get<{ Params: { jobKey: string; previewId: string } }>("/v1/jobs/:jobKey/cover-letter/previews/:previewId.pdf", (request, reply) =>
+    withReadOnlyDb(reply, options.dbPath, (db) => {
+      try {
+        const bytes = coverLetterPreviewBytes(appDir, coverLetterJobId(db, request.params.jobKey), request.params.previewId);
+        return reply.type("application/pdf").header("cache-control", "no-store")
+          .header("content-disposition", 'inline; filename="cover-letter.pdf"').send(bytes);
+      } catch (error) {
+        if (error instanceof CoverLetterReviewError) return reply.code(error.status).send({ ok: false, error: error.code });
+        throw error;
+      }
+    }));
+
   app.get<{ Params: { artifactId: string } }>("/v1/artifacts/:artifactId/preview.pdf", async (request, reply) => {
     const detail = withDb(reply, options.dbPath, (db) => getArtifactDetail(db, decodeRouteParam(request.params.artifactId)));
     if (!detail) {
@@ -2839,6 +2869,19 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!isPdfArtifact(detail.artifact.type, detail.artifact.localPath)) {
       void reply.code(415);
       return { ok: false, error: "artifact_preview_unsupported" };
+    }
+    if (detail.artifact.type === "cover_letter_pdf") {
+      return withReadOnlyDb(reply, options.dbPath, db => {
+        try {
+          const bytes = coverLetterArtifactPdfBytes(db, appDir, detail.artifact.artifactId);
+          return reply.type("application/pdf").header("cache-control", "no-store")
+            .header("content-disposition", 'inline; filename="cover-letter.pdf"')
+            .send(bytes);
+        } catch (error) {
+          if (error instanceof CoverLetterReviewError) return reply.code(error.status).send({ok:false,error:error.code});
+          throw error;
+        }
+      });
     }
     if (!fs.existsSync(detail.artifact.localPath) || !fs.statSync(detail.artifact.localPath).isFile()) {
       void reply.code(404);
@@ -5145,6 +5188,10 @@ async function withWritableDb<T>(
         error: "invalid_tailoring_feedback_review",
         message: error.message,
       };
+    }
+    if (error instanceof CoverLetterReviewError) {
+      void reply.code(error.status);
+      return { ok: false, error: error.code, message: error.code };
     }
     if (error instanceof DraftRenderConflictError) {
       void reply.code(409);

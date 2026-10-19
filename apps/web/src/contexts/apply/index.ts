@@ -1,4 +1,5 @@
 export { applyKeys } from "./queryKeys.js";
+export { CoverLetterReviewSurface } from "./components/CoverLetterReviewSurface.js";
 
 export { useApplyJobMutation } from "./hooks/useApplyJobMutation.js";
 export {

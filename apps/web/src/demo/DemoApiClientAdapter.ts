@@ -487,6 +487,9 @@ export class DemoApiClientAdapter implements ApiClientPort {
   artifactPreviewPdfUrl(artifactId: string, cacheKey?: CacheKey): string {
     return artifactPreviewUrl(this.workspace, artifactId, "pdf", cacheKey);
   }
+  coverLetterPreviewPdfUrl(): string {
+    throw new Error("Cover-letter rendering requires the local renderer.");
+  }
 
   async downloadMaterialDocx(_artifactId: string): Promise<Blob> {
     throw new DemoCapabilityError("acceptedMaterialExports");

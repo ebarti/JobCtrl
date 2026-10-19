@@ -294,6 +294,19 @@ stored authority and never retranslates. See the
 
 `GET /v1/jobs/:jobId` includes `companyBriefing` when a company link has been explicitly confirmed. This read joins canonical company records and the stored determination; it never refreshes public sources. Job Detail and Interviews render this same snapshot. See [the wire contract](complete-contract.md#company-briefings) and [user controls](../user/company-briefings.md).
 
+## Cover-Letter PDF Review
+
+`materialsPreview.coverLetter` identifies the canonical accepted cover source,
+current accepted PDF, normalized print settings, renderer and accepted version.
+`POST /v1/jobs/:jobKey/cover-letter/preview` renders a fenced full-text snapshot;
+`POST /v1/jobs/:jobKey/cover-letter/accept` explicitly accepts its exact bytes.
+The preview PDF route and accepted artifact route serve the same file after
+acceptance. Preview requests do not advance Materials or approval bindings.
+Submit-approval requests with a cover source must supply `coverLetterAcceptedVersion`;
+the API and Apply worker check the recorded source/PDF binding. See the
+[complete contract](complete-contract.md#cover-letter-pdf-review) for limits and
+failure behavior.
+
 ## Selected-job learning commands
 
 `GET /v1/evidence-map/learning` reads saved cohort comparisons and chosen

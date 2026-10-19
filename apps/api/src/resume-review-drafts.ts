@@ -1,3 +1,4 @@
+import { copyMaterialSlots } from "./cover-letter-review.js";
 import { EditIntentResultSchema } from "@jobctrl/contracts";
 import crypto from "node:crypto";
 import { ClaimVerificationDeterminationSchema, type ResumeEditIntentReview, type ResumeEditReview } from "@jobctrl/contracts";
@@ -262,7 +263,6 @@ export async function createOrLoadResumeReviewDraft(
      WHERE tenant_id = ?
        AND job_id = ?
        AND state = 'active'
-       AND base_generation = ?
        AND base_resume_text_artifact_id IS ?
        AND base_resume_pdf_artifact_id IS ?
      ORDER BY updated_at DESC, draft_id DESC
@@ -270,7 +270,6 @@ export async function createOrLoadResumeReviewDraft(
     [
       DEFAULT_TENANT,
       jobId,
-      base.generation,
       base.resumeTextArtifactId,
       base.resumePdfArtifactId,
     ],
@@ -1283,6 +1282,7 @@ function insertRenderedDraftArtifacts(
     now,
   );
   replaceLayoutBoxes(db, draft.job_id, generation, resumePdfArtifactId, layoutBoxes, now);
+  copyMaterialSlots(db, draft.job_id, generation, ["tailored_resume", "tailored_resume_txt", "resume_txt", "resume_pdf", "tailored_resume_pdf"]);
 }
 
 function persistEditedAnchors(db:SqliteDatabase,draft:ResumeReviewDraftRow,revision:ResumeReviewDraftRevisionRow,rendered:RenderedDraftArtifactFiles,review:ResumeEditReview):void {
