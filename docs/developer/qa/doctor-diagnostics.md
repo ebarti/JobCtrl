@@ -17,6 +17,34 @@ which integration needs further verification. For user setup, use
 [Getting Started](../../user/getting-started.md); for check selection, use
 [Reliability & QA](../../local-reliability-qa.md).
 
+## Assessment lineage (#898 / BK-007)
+
+The historical [BK-007 requirement](https://github.com/ebarti/JobCtrl/blob/a1526649a395b9febb4c20ef30dd946945014a21/docs/backlog.md#L73-L75)
+asked for OS credential support, browser/PDF/Temporal readiness, board
+dependencies and bounded live-smoke diagnostics. The
+[cutover disposition](https://github.com/ebarti/JobCtrl/blob/4b24421f339839963d5877d9cebdb06ec5c73b84/docs/developer/workflow-cutover.md)
+required revalidation rather than treating that list as current defects.
+This assessment rechecks the owners at source revision
+`f734ef8bf1d27e3219b2122aed089421f61b7ca8`; it does not add a production
+integration or change configuration ownership.
+
+| Earlier delivery | Evidence still applicable | Limit of that evidence |
+| --- | --- | --- |
+| [#979](https://github.com/ebarti/JobCtrl/pull/979), commit `d00c4df88ac356bdf910b5e8d6017eca85aa0484` | Introduced this inventory and controlled Typer cases; fixed HEAD 404 being reported as reachable. The current `doctor()` still accepts only 2xx/401/405. | Its commit message records 86 passing tests at `f3a09ee65a72796a54e27b2ab2eb7f253b702a45` with a temporary legacy-test guard. That is historical evidence, not a current suite result; the temporary guard was not shipped. |
+| [#977](https://github.com/ebarti/JobCtrl/pull/977), commit `06984080a22d6b456d0c9a6d661162190b1693f5` | Corrected source-mode missing-`npx` advice to Node.js 22.13+ and persisted Playwright-test isolation. The six CLI cases still cover source advice and executable/non-executable bundled wrappers. | Its six passing tests and review/QA receipts concern the earlier candidate `137797bde5537034583dfdcfc946f8ae940ea2aa`. They do not establish installed payload or MCP execution health. |
+
+Current revalidation reproduced the remaining **test-isolation** gap: the
+Temporal, Langfuse, Gmail and budget modules invoked unrelated host boundaries.
+A retained guard intercepted those attempts before reading credentials or
+starting processes; all 12 legacy cases failed the isolation assertion. The
+small maintenance change lives in the existing
+[worker fixtures](../../../workers/automation/tests/conftest.py): only those
+four modules receive synthetic unrelated inputs. Temporal still exercises its
+client factory with mocked `Client.connect`; Langfuse still owns HTTP and disable
+state; Gmail cases still own their diagnostic inputs; budget coverage still
+uses actual accounting in a disposable SQLite database. Production behavior
+and the zero-exit diagnostic contract are unchanged.
+
 ## What the command observes
 
 | Surface | Local check and possible report | Boundary the report does not cross |
@@ -39,6 +67,48 @@ which integration needs further verification. For user setup, use
 | LLM spend | Reads local global estimated USD and each lane's recorded token total versus configured thresholds; exceeded limits are `WARN`. Accounting read failure is `WARN`. | Prior observations are not a reservation for an in-flight call and do not validate a provider invoice. |
 | Tier summary | `get_tier()` separately checks whether a core LLM provider is ready and whether Claude apply plus an enabled auto-apply browser are present. | It is not a whole-system readiness verdict; `MISSING` rows can coexist with any tier. |
 
+## Residual integration proof
+
+These are missing proofs and their owning layers, not newly implemented checks.
+The table above remains the command's status contract.
+
+| Residual | Current source and existing evidence | Missing proof / safe validation method |
+| --- | --- | --- |
+| OS credential support | [Native credentials](../../../workers/automation/src/jobctrl/native_credentials.py) owns Darwin/Windows/Linux selection, unsupported-platform handling and bounded store operations; `config.load_env()` owns environment precedence. [Adapter tests](../../../workers/automation/tests/test_native_credentials.py) and the doctor credential-source row distinguish local detection from auth. | Synthetic CLI inputs do not prove a real OS store is available, unlocked or accessible. First test supported/unsupported/unavailable adapters with synthetic runners; a real per-OS store check requires separate consent and disposable entries, including cleanup. Never infer provider authentication from presence or change Settings' credential ownership. |
+| Source versus bundled dependencies | [Runtime policy](../../../workers/automation/src/jobctrl/runtime.py), [setup probes](../../../workers/automation/src/jobctrl/infrastructure/setup_probes.py) and `doctor()` own runtime selection. [Playwright CLI tests](../../../workers/automation/tests/test_doctor_playwright.py) cover missing source `npx`, bundled executable presence and rejection of non-executable wrappers. | PATH presence does not verify Node version; a wrapper file does not prove MCP starts or negotiates. Validate a separately built payload and a source checkout using synthetic local inputs and the existing distribution smoke path. Do not replace the payload wrapper with host `npx` or treat source results as installed-product evidence. |
+| Browser / PDF readiness | [Browser capabilities](../../../workers/automation/src/jobctrl/browser_capabilities.py) delegates core readiness to [launch/close preflight](../../../workers/automation/src/jobctrl/infrastructure/preflight.py). Disabled optional capabilities stay disabled. [PDF ports](../../../workers/automation/tests/test_pdf_renderer_ports.py) own rendering proof. | A launched browser proves neither navigation nor PDF output/layout; mocked preflight proves classification only. Use managed Chromium with an in-memory synthetic page and synthetic resume/letter through the owning renderers, inspect output, and clean up. No user browser/profile adoption, authentication or real site access is implied. |
+| Temporal connection versus worker execution | [Client factory](../../../workers/automation/src/jobctrl/infrastructure/temporal/client.py) owns address/namespace; `doctor()` waits up to three seconds for a client. [Temporal CLI cases](../../../workers/automation/tests/test_doctor_temporal.py) retain that factory and synthetic reachable/unreachable outcomes. | Connection says nothing about polling, task queue, workflow completion, restart or history compatibility. Use a disposable local namespace/queue and existing synthetic workflow tests; retain exact workflow/run IDs through restart and cleanup. The [pipeline owner](../../architecture/pipeline/index.md) owns execution/recovery, not doctor. No live worker or recovery result is established here. |
+| Board dependencies | `doctor()` imports JobStreaming and reads settings; the [gateway](../../../workers/automation/src/jobctrl/infrastructure/discovery/jobstreaming_gateway.py) and [gateway tests](../../../workers/automation/tests/test_jobstreaming_gateway.py) own adapter behavior. `config.resolve_jobspy_boards()` retains `boards` with the legacy `sites` alias and canonical `jobspy:` source IDs. | An import/version row proves no board availability, transport, pacing, result correctness or checkpoint recovery. Exercise adapter calls/events with owned synthetic responses first. Any later public-board smoke needs explicit destination/request scope and separate authorization; never rename stored IDs, manufacture a source identity, or use real search/profile data for this inventory. |
+| Bounded smoke diagnostics | `doctor()` has a three-second Temporal wait and two-second Langfuse HEAD request; setup's Codex login-status call has a ten-second subprocess timeout and binary-version calls use five seconds. [Langfuse CLI cases](../../../workers/automation/tests/test_doctor_langfuse.py) and the status matrix below cover disabled/missing/transport outcomes. | There is no integrated smoke mode or overall doctor deadline. Browser preflight passes no explicit launch timeout. HEAD does not authenticate or ingest; local Gmail/CapSolver/provider checks do not execute those services. A future smoke must bound each permitted operation, prove cancellation/cleanup and label each result's limits. Do not add such a framework or change delivery budgets as part of this assessment. |
+
+### Future smoke validation design (not implemented)
+
+Keep smoke separate from default doctor. Before execution, obtain explicit
+scope for destinations, accounts, credentials, operations and any spend; show
+which operations are local reads, process launches or network requests.
+Start with owned synthetic fixtures and a disposable workspace/config/database.
+An absent permission, unavailable dependency or unknown identity remains an
+explicit unverified result; a successful local row cannot authorize a request.
+
+The smallest local browser smoke would render fixed synthetic HTML with network
+blocked, inspect the PDF through the existing renderer checks, then close every
+page/browser and remove its generated files in `finally`. Optional capabilities
+must remain off unless explicitly enabled; never copy an existing host profile.
+The smallest Temporal execution smoke would use the existing test environment
+and synthetic workflow, record namespace/queue/workflow/run identity, prove
+terminal completion and a separately scoped restart/resume case, then terminate
+only owned work and stop only its own server. Neither design is a new CLI mode.
+
+Preserve the existing two-/three-/five-/ten-second probe bounds above when testing
+their owners. Any additional operation needs an explicit operation bound and
+cleanup assertion in its future owning check; current doctor has no aggregate
+deadline. Negative tests should prove missing dependencies, timeout, cancellation
+and disabled behavior without reaching a host service. Do not perform external
+provider calls, account login/refresh, board discovery, ingestion, message sends,
+CAPTCHA solves or submission to obtain a green setup report. Provider auth/model
+availability, live boards, Gmail accounts and Langfuse trace ingestion remain
+unverified without separate authorized product-path evidence.
+
 ## Controlled CLI evidence and remaining verification
 
 `test_doctor_diagnostics.py` invokes the real Typer `doctor` command with an
@@ -49,6 +119,13 @@ healthy local dependencies, source `npx` versus a bundled executable wrapper,
 and a Langfuse status matrix. In the pre-fix command, synthetic HEAD 404 produced
 `Langfuse OK reachable`; the same case now reports `MISSING` with status 404.
 All these cases retain diagnostic exit code zero.
+
+On 2026-10-19 the prepared locked Python environment executed the six selected
+doctor modules: diagnostics, Playwright, Temporal, Langfuse, Gmail and LLM budget.
+All 28 cases passed, with no skipped cases and no forbidden-boundary guard hits.
+The retained #898 measurement includes probe source, source/lock hashes, JUnit,
+captured CLI output, UTC start/finish times and the earlier blocked attempts.
+This establishes synthetic command classification and test isolation only.
 
 These controlled statuses verify classification and command wiring. They do not
 verify a live Keychain, Credential Manager, Secret Service, user database,
