@@ -1,3 +1,5 @@
+import { OutreachGenerationError } from "./outreach-generation-errors.js";
+import { registerOfferRoutes } from "./offer-routes.js";
 import { readCompanyBriefing } from "./company-briefings.js";
 
 import { createProviderHandlers, dispatchProviderModelCatalog, providerOperationError } from "./provider-handlers.js";
@@ -189,7 +191,7 @@ import {
   DISCOVERY_BROWSER_EXTENSION_UNAVAILABLE,
   commandForResolvedBlockCondition,
 } from "./blocked-condition-recovery.js";
-import { createRetainedDatabase, databaseExists, openDatabase, openReadOnlyDatabase } from "./db.js";
+import { createRetainedDatabase, databaseExists, getRow, openDatabase, openReadOnlyDatabase } from "./db.js";
 import { ConfigFileInputError } from "./config-file.js";
 import { getMarketCompensationEstimate } from "./market-compensation-estimates.js";
 import { getPostedCompensationFact } from "./posted-compensation-facts.js";
@@ -209,6 +211,7 @@ import {
   recordDiscoveryFeedback,
   rejectSourceLocatorCandidate,
   RoleMatchFeedbackDecisionConflictError,
+  SourceLocatorReviewError,
   seedExtensionManualCapture,
   upsertSourceRegistryEntry,
   writeDiscoverySettings,
@@ -1297,7 +1300,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   );
 
   app.get("/v1/discovery/locator-candidates", async (_request, reply) =>
-    withDb(reply, options.dbPath, (db) => listSourceLocatorCandidates(db)),
+    withReadOnlyDb(reply, options.dbPath, (db) => listSourceLocatorCandidates(db)),
   );
 
   app.post<{ Params: { candidateId: string } }>(
@@ -1307,8 +1310,20 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (!body) {
         return undefined;
       }
+      const candidateId = decodeRouteParam(request.params.candidateId);
+      const selected = withReadOnlyDb(reply, options.dbPath, (db) => getRow<{ candidate_url: string } & Record<string, unknown>>(
+        db, "SELECT candidate_url FROM source_locator_candidates WHERE tenant_id = 'local' AND candidate_id = ?", [candidateId],
+      ) ?? null);
+      if (selected && "error" in selected) return selected;
+      if (!selected) return reply.code(404).send({ ok: false, error: "not_found", message: "Source locator candidate was not found." });
+      {
+        const decision = await jobUrlValidator(selected.candidate_url);
+        if (!decision.allowed) {
+          return reply.code(400).send({ ok: false, error: "invalid_source_candidate", message: decision.reason ?? "Source URL must resolve to a public HTTP(S) destination." });
+        }
+      }
       return withWritableDb(reply, options.dbPath, (db) =>
-        promoteSourceLocatorCandidate(db, decodeRouteParam(request.params.candidateId)),
+        promoteSourceLocatorCandidate(db, candidateId, body.reason, selected.candidate_url),
       );
     },
   );
@@ -1321,7 +1336,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         return undefined;
       }
       return withWritableDb(reply, options.dbPath, (db) =>
-        rejectSourceLocatorCandidate(db, decodeRouteParam(request.params.candidateId)),
+        rejectSourceLocatorCandidate(db, decodeRouteParam(request.params.candidateId), body.reason),
       );
     },
   );
@@ -1808,6 +1823,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       );
     },
   );
+
+  registerOfferRoutes(app, options.dbPath);
 
   app.get("/v1/outcomes", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => listApplicationOutcomes(db)),
@@ -3785,6 +3802,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
             contactId,
             jobId,
             ...(body.kind ? { kind: body.kind } : {}),
+            ...(body.offerRevisionId ? { offerRevisionId: body.offerRevisionId } : {}),
             ...(body.applicationRole ? { applicationRole: body.applicationRole } : {}),
             ...(body.llmModel ? { llmModel: body.llmModel } : {}),
           },
@@ -3813,6 +3831,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
             threadId,
             editedBodyText: body.editedBodyText,
             ...(body.kind ? { kind: body.kind } : {}),
+            ...(body.offerRevisionId ? { offerRevisionId: body.offerRevisionId } : {}),
             ...(body.applicationRole ? { applicationRole: body.applicationRole } : {}),
             ...(body.llmModel ? { llmModel: body.llmModel } : {}),
           },
@@ -4155,6 +4174,10 @@ function interviewCatalogError(reply: FastifyReply, error: unknown) {
 }
 
 function outreachTransitionError(reply: FastifyReply, error: unknown): { ok: false; error: string; message: string } {
+  if (error instanceof OutreachDraftGatesNotPassedError) {
+    void reply.code(409);
+    return { ok: false, error: "draft_gates_not_passed", message: error.message };
+  }
   if (error instanceof OutreachNotFoundError) {
     void reply.code(404);
     return { ok: false, error: "outreach_thread_not_found", message: error.message };
@@ -5016,6 +5039,10 @@ function withDb<T>(
         message: error.message,
       };
     }
+    if (error instanceof OutreachGenerationError) {
+      void reply.code(error.code === "budget_denied" ? 429 : error.code === "provider_unavailable" ? 503 : error.code.startsWith("offer_") ? 409 : 502);
+      return { ok: false, error: error.code, message: error.message };
+    }
     if (error instanceof SemanticStageError) {
       void reply.code(error.code === "provider_unavailable" ? 503 : error.code === "budget_denied" ? 429 : 502);
       return {ok:false,error:error.code,message:"Resume verification could not complete. Retry after resolving the reported status."};
@@ -5087,6 +5114,10 @@ async function withWritableDb<T>(
     db = openDatabase(dbPath);
     return await write(db);
   } catch (error) {
+    if (error instanceof OutreachGenerationError) {
+      void reply.code(error.code === "budget_denied" ? 429 : error.code === "provider_unavailable" ? 503 : error.code.startsWith("offer_") ? 409 : 502);
+      return { ok: false, error: error.code, message: error.message };
+    }
     if (error instanceof SemanticStageError) {
       void reply.code(error.code === "provider_unavailable" ? 503 : error.code === "budget_denied" ? 429 : 502);
       return {ok:false,error:error.code,message:"Resume verification could not complete. Retry after resolving the reported status."};
@@ -5094,6 +5125,10 @@ async function withWritableDb<T>(
     if (error instanceof ResumeTemplateInputError) {
       void reply.code(400);
       return { ok: false, error: "invalid_resume_template", message: error.message };
+    }
+    if (error instanceof SourceLocatorReviewError) {
+      void reply.code(error.status);
+      return { ok: false, error: error.status === 409 ? "source_review_conflict" : "invalid_source_candidate", message: error.message };
     }
     if (error instanceof RoleMatchFeedbackDecisionConflictError) {
       void reply.code(409);

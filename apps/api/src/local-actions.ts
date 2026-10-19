@@ -1,3 +1,4 @@
+import { outreachWorkerError } from "./outreach-generation-errors.js";
 import { callRpc } from "./json-rpc-adapter.js";
 /**
  * Local action dispatchers — JSON-RPC backed (Phase 9 / S-34).
@@ -280,6 +281,7 @@ export interface OutreachDraftGeneratorInput {
   jobId?: string | null;
   kind?: NonNullable<RpcParams<"generate_outreach_draft">["kind"]>;
   editedBodyText?: string;
+  offerRevisionId?: string;
   applicationRole?: string;
   llmModel?: string;
 }
@@ -319,12 +321,13 @@ export function createOutreachDraftGenerator(
       ...(input.contactId ? { contactId: input.contactId } : {}),
       ...(input.jobId ? { jobId: input.jobId } : {}),
       ...(input.kind ? { kind: input.kind } : {}),
+      ...(input.offerRevisionId ? { offerRevisionId: input.offerRevisionId } : {}),
       ...(input.editedBodyText ? { editedBodyText: input.editedBodyText } : {}),
       ...(input.applicationRole ? { applicationRole: input.applicationRole } : {}),
       llmModel: input.llmModel ?? DEFAULT_PIPELINE_LLM_MODEL,
     });
     if (response.error) {
-      throw new Error(response.error.message);
+      throw outreachWorkerError(response.error.data);
     }
     return parseOutreachDraftResult(response.result);
   };

@@ -72,6 +72,10 @@ class OutreachDraftKind(str, Enum):
 
     INTRO_REQUEST = "intro_request"
     FOLLOW_UP = "follow_up"
+    OFFER_NEGOTIATION = "offer_negotiation"
+    OFFER_CLARIFICATION = "offer_clarification"
+    OFFER_ACCEPTANCE = "offer_acceptance"
+    OFFER_DECLINE = "offer_decline"
 
 
 OUTREACH_SEND_CHANNELS: frozenset[str] = frozenset(

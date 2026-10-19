@@ -354,3 +354,40 @@ fingerprint, typed result and citations. General SSE suppresses the private
 the tenant-scoped career-learning read key; successful mutations install the
 canonical response, and failed optimistic activity updates restore the accepted
 cache. Source changes mark historical records rather than reinterpreting them.
+
+## Saved-history source proposals
+
+The explicit `source-proposals from-history` command reads current posting
+locators/canonical identities and canonical enrichment application targets,
+then calls the existing learner in proposal-only mode. It writes only the
+existing source-locator queue and source-control events. Proposal receipts use
+`SourceLocationCandidateDiscovered` with `proposalOnly`, a normalized
+`coordinateKey`, candidate ID and immutable origin/extraction/sample evidence.
+They have null `job_id` so source review authority survives job removal.
+The normalized coordinate is also the event `entity_ref` under `discovery`,
+using the existing entity index for per-source learning fences.
+
+`SourceLocationCandidateReviewed` records candidate ID, coordinate, decision
+(`promote`, `reject`, `reset`), reason and decision time. The latest recorded
+review/proposal state fences ordinary learning by coordinate, including other
+posting URLs from the same recognized board. Rejection and queue deletion,
+and promotion and registry/queue updates, use one immediate transaction.
+Public-destination DNS checks precede the history scan's writer transaction.
+
+API and CLI reads never learn or promote. The API joins proposal receipts by
+recorded candidate ID and calculates registry overlap from exact coordinates;
+coverage remains unknown. The existing Discovery UI invalidates its locator and
+registry queries on the reviewed event. Application records, schedule settings
+and job identity are outside this writer's boundary.
+
+## Private Offer Revisions
+
+The scoped `offer` ledger in `job_events` is canonical private Outcomes state,
+like the existing screening revision ledger. Its `OfferRecordChanged` row
+contains confirmed terms or a decision; the event-stream adapter publishes
+only the corresponding revision/decision IDs and JobId. The complete private
+record is available only through the offer read. Broad activity/audit views
+show an update marker, not amounts, quotations or notes. The first saved offer
+also records one ordinary offer milestone; corrections preserve the milestone
+and change only the offer read model. Outreach keeps its own reviewed draft
+and source snapshot without gaining submission authority.

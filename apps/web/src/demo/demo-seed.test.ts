@@ -27,8 +27,6 @@ const CONTOSO_GENERATION_ONE_ARTIFACT_IDS = [
 const CLIENT_ONLY_MEMBERS = {
   baseUrl: true,
   scoringKeywords: true,
-  postedCompensationFact: true,
-  marketCompensationEstimate: true,
   reviewResumeFeedbackSignal: true,
 } satisfies Record<Exclude<keyof JobCtrlApiClient, keyof ApiClientPort>, true>;
 
@@ -123,6 +121,12 @@ describe("canonical public demo seed", () => {
         },
       }),
     ).toThrow();
+  });
+
+  it("keeps private offer and compensation capabilities unavailable", () => {
+    for (const capability of ["jobOffer", "saveOfferTerms", "recordOfferDecision", "postedCompensationFact", "marketCompensationEstimate"] as const) {
+      expect(DEMO_CAPABILITY_MANIFEST[capability].class, capability).toBe("unavailable");
+    }
   });
 
   it("is deterministic, immutable by type, and covers the required lifecycle arms", () => {

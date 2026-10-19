@@ -1,3 +1,4 @@
+import { readOffer } from "./offers.js";
 /**
  * Contact & Outreach (ninth context) — outreach-thread read model + the
  * approve/reject write transitions (R6 Phase 3).
@@ -106,6 +107,7 @@ export function approveOutreachDraft(
   }
   // INV-5: the persisted gate outcome is the only approval authority. A draft
   // whose gate record does not confirm ``passed`` can never be approved.
+  assertCurrentOfferDraft(db, thread.job_id, draft);
   if (!gateResultsPassed(draft.gate_results_json)) {
     throw new OutreachDraftGatesNotPassedError(
       `Outreach draft ${draftId} did not pass the truthfulness gate stack`,
@@ -225,6 +227,7 @@ export function logOutreachSend(
     throw new OutreachNotFoundError(`Outreach draft ${draftId} not found`);
   }
   // INV-1: a thread can only be "sent" over a draft the user actually approved.
+  assertCurrentOfferDraft(db, thread.job_id, draft);
   if (String(draft.status) !== "approved") {
     throw new OutreachInputError(
       `Outreach draft ${draftId} must be approved before a send can be logged`,
@@ -689,7 +692,9 @@ function loadDrafts(db: SqliteDatabase, threadId: string): OutreachDraftDto[] {
      ORDER BY generation ASC, draft_id ASC`,
     [TENANT_ID, threadId],
   );
+  const jobId = loadThreadRow(db, threadId)?.job_id ?? null;
   return rows.map((row) => ({
+    ...(String(row.kind).startsWith("offer_") ? { offerSourcesCurrent: offerDraftCurrent(db, jobId, row) } : {}),
     draftId: String(row.draft_id),
     threadId: String(row.thread_id),
     generation: Number(row.generation ?? 0),
@@ -797,4 +802,18 @@ function canonicalJobId(value: string | null | undefined): string | null {
     throw new OutreachInputError("jobId must be a canonical UUID");
   }
   return value;
+}
+
+function assertCurrentOfferDraft(db: SqliteDatabase, jobId: string | null, draft: DraftRow): void {
+  if (!String(draft.kind).startsWith("offer_")) return;
+  const binding = parseGateResults(draft.gate_results_json).sourceContext?.binding;
+  if (!jobId || !binding || binding.jobId !== jobId) throw new OutreachDraftGatesNotPassedError("Offer draft has no recorded source binding.");
+  const current = readOffer(db, jobId);
+  if (binding.termsRevisionId !== current.currentTerms?.revisionId || binding.decisionId !== (current.currentDecision?.decisionId ?? null)) {
+    throw new OutreachDraftGatesNotPassedError("Offer terms or decision changed. Generate and review a new draft.");
+  }
+}
+
+function offerDraftCurrent(db: SqliteDatabase, jobId: string | null, draft: DraftRow): boolean {
+  try { assertCurrentOfferDraft(db, jobId, draft); return true; } catch { return false; }
 }

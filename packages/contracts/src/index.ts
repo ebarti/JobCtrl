@@ -34,3 +34,4 @@ export { isCurrentDeterminationVersion, validDeterminationResult } from "./seman
 
 export * from "./company-briefings.js";
 export * from "./career-learning.js";
+export * from "./offers.js";

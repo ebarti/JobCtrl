@@ -546,6 +546,26 @@ sentence punctuation or separated by commas.
 
 For Discovery, save literal target settings and plan a run without an interpretation receipt or second approval. Inspect the actual JobStreaming query/location/remote parameters and each provider’s supported filters; capability warnings are not currently displayed in JobCtrl. Structurally valid fetched results must ingest without an extra model gate, even when they do not lexically resemble the query. Exact user-authored title exclusions retain durable filtered receipts. Exercise capture/ack interruption, lease fencing, retry idempotency and limits. Full-posting interpretation/scoring retain model authority and source provenance. Historical native cutovers preserve authored cells, canonical jobs, accepted files and raw captures.
 
+For actual offers, drive the per-job offer HTTP/client entry and rendered
+Application outcomes panel without interview prep. Verify null equity,
+benefits/deadlines and explicit unknown currency/time base, source confirmation,
+concurrent expected-ID conflicts, accepted-to-declined corrections, retained
+prior terms/decisions and unchanged stage/submit records. Read and refresh the
+ordinary projections after a correction; the offer reader must retain its
+current canonical revision. Inspect the real outreach prompt and persisted
+source context: actual terms, canonical achievements and bound compensation
+evidence have distinct authority. Opposing fake-model verdicts must control
+the gate for identical inputs. Malformed/provider/budget failures and a source
+change during generation preserve the last approved text. Stale bindings block
+approval, clipboard copy and send logging; general SSE/activity/audit reads must
+exclude every private quotation and reason. Browser QA covers recording terms,
+deciding/correcting, reload/history, a linked-contact draft entry and mobile
+layout, using owned synthetic data only. Run `offer-outcomes.spec.ts` in the
+production API/RPC browser gate (`JOBCTRL_E2E_ISOLATED=0`), which exercises
+supporting history reads as well. CI names it explicitly in that step; the
+isolated fixture skips it because it denies those Python RPCs. An isolated
+skip is not offer product-path proof.
+
 For interview preparation, inspect each actual drafting prompt with a supported
 question and explicitly empty selections. Only that question's selected evidence
 may appear. Drive unsupported/accepted outcomes with verifier verdicts; the
@@ -1223,3 +1243,20 @@ deterministic; production claims/classifier/dispatch/persistence remain real.
 Use an owned exact-v14 synthetic workspace. Exercise explicit identity/source confirmation, cross-job reuse, unchanged-input zero-call reuse, concurrent refreshes and a configuration change during generation. Opposing valid model kinds and identity verdicts must control output without lexical fallback. Provider/budget/JSON/schema/foreign-ID/non-verbatim/exact-value failures and failed acceptance commits preserve the accepted snapshot and original clock. Check bounded body/redirect/request behavior, public destination checks, no credentials or personal context, and failed gateway transaction release.
 
 Run `test_company_briefings.py` and API `company-briefings.test.ts` to read real Python-written receipts through TypeScript and HTTP. Render Job Detail, Interviews and the existing digest through `company-briefings.spec.ts` on desktop and mobile; expand source excerpts and check critical/serious accessibility findings. These fixtures inject explicit model decisions and public transport, not recorded-output replay or judgment-quality evaluations. Report live provider/public transport evidence separately.
+
+## Posting-history Source Proposals (#1041)
+
+Use owned exact-schema synthetic workspaces. Exercise the real
+`source-proposals from-history`, `list` and `reset` CLI entry points and existing
+HTTP locator GET/promote/reject routes. Require deduplicated board/API/posting
+coordinates, exact origin JobId/URL/run and extraction receipts, saved samples,
+existing source overlaps and unknown completeness. Repeated reads must preserve
+database content; repeated scans reuse unchanged receipts. Reject malformed,
+credential-bearing, private-address and private-DNS destinations before queue
+writes. Retain canonical posting/application authorities and schedule/source
+state during proposal generation. Rejection must fence alternate URLs and
+ordinary worker learning across restart; only explicit reset permits reproposal.
+Disabled sources survive worker seed reconciliation and cannot be enabled by
+proposal review. Failed receipt persistence rolls back the decision/queue or
+scan and preserves prior history. Pair worker/API checks with rendered source
+review and event invalidation tests, frontend boundary checks and web/docs builds.

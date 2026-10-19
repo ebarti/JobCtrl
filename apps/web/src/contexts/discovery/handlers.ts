@@ -16,6 +16,7 @@ import type {
   JobUpdated,
   SourceLocationCandidateDiscovered,
   SourceLocationCandidatePromoted,
+  SourceLocationCandidateReviewed,
   SourceRegistryEntryCreated,
   SourceRegistryEntryUpdated,
   SourceStateChanged,
@@ -148,6 +149,13 @@ export const duplicateJobLinkRejectedHandler = (
 
 export const sourceLocationCandidateDiscoveredHandler = (
   event: SourceLocationCandidateDiscovered,
+): readonly InvalidationItem[] => [
+  invalidate(discoveryKeys.sourceLocator(event.tenantId)),
+  invalidate(discoveryKeys.sourceRegistry(event.tenantId)),
+];
+
+export const sourceLocationCandidateReviewedHandler = (
+  event: SourceLocationCandidateReviewed,
 ): readonly InvalidationItem[] => [
   invalidate(discoveryKeys.sourceLocator(event.tenantId)),
   invalidate(discoveryKeys.sourceRegistry(event.tenantId)),

@@ -196,3 +196,27 @@ scoring or Apply decisions.
 Outreach generation and user edits receive source-bound claim verification using only confirmed contact facts and canonical profile sources, plus separate model quality review. Findings and source anchors are persisted by line ID. Provider and validation failures block approval and preserve the accepted draft; stock-phrase and technology word lists do not decide support. Sending still requires the user's separate explicit action.
 
 See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+
+
+## Offer Communications
+
+Job Detail → Application outcomes → **Draft an offer communication** reuses
+Outreach for negotiation, clarification, acceptance and decline messages.
+Choose a contact already linked to the job. The worker reads the saved actual
+offer revision, any user-attested decision, canonical candidate achievements
+and existing recorded compensation evidence. Employer/posting evidence and
+market estimates retain their separate authority and uncertainty.
+
+The claim verifier and independent quality reviewer must both pass. Unknown
+equity, benefits, currency, time base and deadlines remain unknown; a draft may
+ask for clarification. Unsupported ROI, competing offers, employer leverage
+or invented deadlines are prohibited. Acceptance and decline require the
+matching user-attested decision against these terms. Inspect the recorded
+source snapshot in the draft's gate results before approval.
+
+A terms or decision correction makes an earlier message stale for approval,
+copying and send logging, while its body and original review remain readable.
+Generate and review a replacement. An edit reruns the same gates. Provider,
+budget, invalid-output or concurrent-source failures preserve the previous
+approved message. Copying rechecks the current offer binding; JobCtrl never
+sends the message. After sending yourself, log the send in Outreach.

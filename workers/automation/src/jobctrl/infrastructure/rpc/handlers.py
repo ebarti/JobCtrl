@@ -914,9 +914,23 @@ def generate_outreach_draft(params: dict[str, Any]) -> dict[str, Any]:
     model = params.get("llmModel") or None
     try:
         kind = OutreachDraftKind(str(params.get("kind") or "intro_request"))
-    except ValueError:
-        kind = OutreachDraftKind.INTRO_REQUEST
+    except ValueError as exc:
+        raise invalid_params("Invalid outreach kind") from exc
 
+    from jobctrl.infrastructure.contact.offer_sources import OFFER_KINDS
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.infrastructure.runtime_identity import RuntimeIdentityMismatch
+
+    def check_offer_runtime(resolved_kind):
+        if resolved_kind.value in OFFER_KINDS and (not params.get("expectedAppDir") or not params.get("expectedDbPath")):
+            raise DeterminationFailure("offer_runtime_binding_required")
+        if params.get("expectedAppDir") or params.get("expectedDbPath"):
+            try:
+                assert_expected_runtime(expected_app_dir=params.get("expectedAppDir"), expected_db_path=params.get("expectedDbPath"))
+            except RuntimeIdentityMismatch:
+                raise DeterminationFailure("offer_runtime_mismatch") from None
+
+    check_offer_runtime(kind)
     conn = get_connection()
     try:
         profile = get_profile_repository().load_snapshot(tenant).as_dict()
@@ -926,6 +940,24 @@ def generate_outreach_draft(params: dict[str, Any]) -> dict[str, Any]:
     publisher = get_default_publisher()
     contact_repo = SqliteContactRepository(conn, publisher=publisher)
     thread_repo = SqliteOutreachThreadRepository(conn, publisher=publisher)
+    from jobctrl.infrastructure.contact.offer_sources import load_offer_context, context_sources, OFFER_RUBRIC
+
+    existing = thread_repo.load(tenant, thread_id)
+    if edited_body and existing and not params.get("kind") and existing.latest_draft:
+        kind = existing.latest_draft.kind
+    check_offer_runtime(kind)
+    job_id = str(existing.job_id) if edited_body and existing and existing.job_id else params.get("jobId")
+    offer_context = load_offer_context(conn, tenant, job_id, kind.value, params.get("offerRevisionId"))
+    if offer_context:
+        def fence_offer_sources():
+            fresh = load_offer_context(conn, tenant, job_id, kind.value)
+            if fresh != offer_context:
+                raise DeterminationFailure("offer_sources_changed")
+            fresh_profile = get_profile_repository().load_snapshot(tenant).as_dict()
+            if fresh_profile != profile:
+                raise DeterminationFailure("offer_profile_changed")
+        thread_repo = SqliteOutreachThreadRepository(conn, publisher=publisher, before_save=fence_offer_sources)
+
     llm = get_llm_adapter()
     from jobctrl.infrastructure.determinations import determination_dependencies
     from jobctrl.domain.materials.claim_verification import ModelClaimVerifier
@@ -943,6 +975,8 @@ def generate_outreach_draft(params: dict[str, Any]) -> dict[str, Any]:
                 claim_verifier=ModelClaimVerifier(**determination_deps),
                 quality_judge=ModelArtifactQualityJudge(**determination_deps),
                 preflight=determination_deps["preflight"],
+                source_context=offer_context, supplemental_sources=tuple(context_sources(offer_context)),
+                supplemental_rubric=OFFER_RUBRIC if offer_context else "",
                 new_id=new_id,
             ).execute(
                 tenant,
@@ -967,6 +1001,8 @@ def generate_outreach_draft(params: dict[str, Any]) -> dict[str, Any]:
                 claim_verifier=ModelClaimVerifier(**determination_deps),
                 quality_judge=ModelArtifactQualityJudge(**determination_deps),
                 preflight=determination_deps["preflight"],
+                source_context=offer_context, supplemental_sources=tuple(context_sources(offer_context)),
+                supplemental_rubric=OFFER_RUBRIC if offer_context else "",
                 new_id=new_id,
             ).execute(
                 tenant,

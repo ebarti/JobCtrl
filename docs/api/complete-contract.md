@@ -781,20 +781,37 @@ type and policy metadata are visible as columns instead of compact badges:
 - `GET /v1/discovery/sources/:sourceId/preview` returns local preview leads
   from recent `JobSourceObserved` history for that source; it does not perform
   live scraping.
-- `GET /v1/discovery/locator-candidates`, `GET /v1/discovery/quarantine`, and
-  `GET /v1/discovery/manual-capture` expose the local review queues. Located
-  parseable source candidates are auto-promoted into the active source registry;
-  these queues are for blocked, ambiguous, unparseable, or compatibility pending
-  work.
-  Direct URLs returned by the JobStreaming broad-board adapter feed this same
-  loop: runnable ATS URLs are promoted into the source registry, while unknown
-  owner URLs or ATS URLs that still need adapter configuration remain visible
-  for review.
-- `POST /v1/discovery/locator-candidates/:candidateId/promote` promotes a
-  source locator candidate into an active source registry entry and emits
-  `SourceLocationCandidatePromoted`.
-- `POST /v1/discovery/locator-candidates/:candidateId/reject` removes a local
-  source locator candidate from the review queue.
+- `GET /v1/discovery/locator-candidates` is strictly read-only, including for
+  parseable ATS candidates. It returns `{ ok, candidates }`; existing candidate
+  fields are unchanged. History proposals add optional `proposal` with
+  `coordinateKey`, `sourceId`, nullable `atsKind`/`boardToken`,
+  `completeness: "unknown"`, optional nullable `promotionBlockedReason`, `overlaps[]` (`sourceId`, `state`, `seedUrl`) and
+  `evidence[]`. Each evidence receipt contains `originJobId`,
+  `originPostingUrl`, `inputUrl`, `urlKind` (`posting_url`, `canonical_url`,
+  `application_url`), `observations[]` (observation/source/run IDs, observed URL
+  and time), `extraction` (nullable tier/time/snapshot version and description/
+  snapshot hashes and optional `snapshotEvidence[]`) and `sample` (title, company, bounded description excerpt).
+  Reads join saved receipts by candidate ID and never fetch, learn or promote.
+- `GET /v1/discovery/quarantine` and `GET /v1/discovery/manual-capture` expose
+  their existing local review queues. Direct URLs from broad-board discovery
+  retain their normal learning path, fenced by pending history proposals,
+  durable rejection and disabled/quarantined source intent.
+- `POST /v1/discovery/locator-candidates/:candidateId/promote` explicitly promotes
+  the candidate, reusing a history proposal's active registry overlap without
+  changing its configuration. It records `SourceLocationCandidateReviewed`
+  (`decision: promote`) and `SourceLocationCandidatePromoted` atomically with
+  queue/registry writes. Public destination validation runs before the writer
+  transaction; a changed candidate requires review again. A disabled/non-active overlap returns `409
+  source_review_conflict`; malformed/private coordinates return `400
+  invalid_source_candidate`. The optional decision `reason` is retained.
+- `POST /v1/discovery/locator-candidates/:candidateId/reject` atomically records
+  `SourceLocationCandidateReviewed` (`decision: reject`, candidate ID,
+  `coordinateKey`, optional submitted reason and `decidedAt`) and removes
+  pending aliases for that coordinate. It never changes source state or
+  application data. Suppression survives retries/restarts until the explicit
+  `source-proposals reset CANDIDATE_ID` CLI command records `decision: reset`.
+  `source-proposals from-history` is the only history-scan trigger; no new
+  automatic import/apply hook or schedule is introduced.
 - `POST /v1/discovery/quarantine/:jobKey/decision` approves or rejects a
   quarantined lead and records feedback for source-quality aggregation.
 - `POST /v1/discovery/manual-capture/:itemId/import` records user-mediated
@@ -2515,3 +2532,65 @@ Invalid HTTP bodies return 400. Worker validation, stale revision/source and
 provider failures return 409 `career_learning_failed` with an allowlisted safe
 message; worker transport unavailable returns 503, invalid worker results 502.
 Accepted comparisons and milestone history survive every failed refresh.
+
+## Actual Offer Terms And Decisions
+
+All routes use a canonical UUID `jobId`, local tenant and the normal local
+mutation-origin boundary. No endpoint sends mail or changes pipeline/submit
+approval. Reads need no worker; only outreach generation/revision uses one.
+
+| Route | Request | Response |
+| --- | --- | --- |
+| `GET /v1/jobs/:jobId/offer` | None | `OfferReadResponse`: `ok`, `jobId`, `currentTerms`, `currentDecision`, `termsHistory`, `decisions` |
+| `POST /v1/jobs/:jobId/offer/terms` | `expectedRevisionId: UUID or null`, `terms`, optional `correctionReason` | Complete `OfferReadResponse` |
+| `POST /v1/jobs/:jobId/offer/decisions` | `expectedDecisionId: UUID or null`, current `termsRevisionId`, `decision: accepted or declined`, `occurredAt`, `source`, optional `correctionReason` | Complete `OfferReadResponse` |
+
+`OfferSource` is strict: `reference` (1–1000 characters), `quote` (1–8000),
+`capturedAt` (canonical ISO timestamp) and `userConfirmed: true`. This is a
+human attestation, not a parser's semantic finding. `terms.source` records the
+overall offer; every known term carries its own source as well. The web form
+uses one explicitly reconfirmed source for all entered terms in a revision.
+
+`terms.cash` contains at most 20 strict entries with `component` (`base_salary`,
+`bonus`, `signing_bonus`, `commission`, `other`), finite nonnegative `amount`
+(up to 1e12), three-uppercase-letter `currency` or null, `period` (`year`,
+`month`, `week`, `hour`, `one_off`, `unknown`) and `source`. `equity` and
+`benefits` are `{ value: 1–4000 characters, source }` or null;
+`decisionDeadline` is `{ value: ISO timestamp, source }` or null. Null and
+unknown remain unknown; no conversion, annualization, equity valuation or
+implicit total is performed.
+
+Terms history adds `revisionId` and `recordedAt`; decisions add `decisionId`
+and `recordedAt`. Expected IDs must match the current record. Every terms
+revision after the first and every decision correction requires a nonempty
+reason (up to 1000 characters). A decision must reference current terms.
+A later terms revision leaves the prior decision attached to its original
+revision; it does not silently reconfirm it. History arrays retain commit order.
+The first terms write atomically adds one `offer` milestone with no prep link when none already exists.
+
+Invalid schema/JobId returns `400 invalid_offer`/`invalid_job_id`; absent jobs
+return `404 not_found`; stale expected IDs, missing correction reasons and
+noncurrent decision terms return `409 offer_conflict`. Failure preserves the
+last committed record.
+
+Outreach request `kind` additionally accepts `offer_negotiation`,
+`offer_clarification`, `offer_acceptance`, `offer_decline`; `offerRevisionId`
+optionally fences the current revision. These kinds require an existing offer
+for the linked job. Acceptance/decline require a matching current user decision.
+The worker assembles canonical sources; request bodies cannot inject sources.
+Generated and edited drafts pass the existing claim and independent quality
+gates. `gateResults.sourceContext` contains `{ binding: { jobId,
+termsRevisionId, decisionId }, fingerprint, sources: [{ source_id, text }] }`.
+The offer detail remains the canonical user-facing terms record.
+
+A draft read includes `offerSourcesCurrent` for offer kinds. Terms/decision
+changes prevent approval and send logging with `409 draft_gates_not_passed`;
+copying rechecks this current binding. Draft bodies/history remain readable.
+Generation failures expose safe `provider_unavailable` (503), `budget_denied`
+(429), `offer_*` source/decision conflicts (409), or structural verification
+codes (502); they do not forward source or provider prose. The previous
+approved message survives every failed replacement. No send transport exists.
+
+`OfferRecordChanged` SSE carries only `{ jobId, revisionId, decisionId }` and
+the ordinary tenant/time envelope. Private terms, quotations and correction
+reasons never enter this public payload, activity summaries or curated audit.

@@ -26,6 +26,14 @@ export function DraftGateResultsPanel({ gateResults }: DraftGateResultsPanelProp
         Computed against <span className="mono">{computedAgainst}</span>
       </p>
 
+      {gateResults.sourceContext ? <details>
+        <summary>Recorded offer and compensation sources</summary>
+        <p>Terms revision: {gateResults.sourceContext.binding.termsRevisionId}</p>
+        <p>Decision: {gateResults.sourceContext.binding.decisionId ?? "Not recorded"}</p>
+        <ul>{gateResults.sourceContext.sources.map((source) => <li key={source.source_id}>
+          <p className="mono">{source.source_id}</p><pre className="whitespace-pre-wrap break-words">{source.text}</pre>
+        </li>)}</ul>
+      </details> : null}
       <div className="draft-gate-block">
         <p className="draft-gate-block-title">Deterministic never-fabricate findings</p>
         {fabrications.length === 0 ? (

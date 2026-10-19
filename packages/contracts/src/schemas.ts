@@ -5535,6 +5535,35 @@ export const MANUAL_CAPTURE_MODE_VALUES = [
 ] as const;
 export type ManualCaptureModeValue = (typeof MANUAL_CAPTURE_MODE_VALUES)[number];
 
+export const SourceProposalEvidenceSchema = z.object({
+  originJobId: z.string(),
+  originPostingUrl: z.string(),
+  inputUrl: z.string(),
+  urlKind: z.enum(["posting_url", "canonical_url", "application_url"]),
+  observations: z.array(z.object({
+    observationId: z.string(), sourceId: z.string(), runId: z.string(),
+    observedUrl: z.string(), observedAt: z.string(),
+  })),
+  extraction: z.object({
+    tier: z.string().nullable(), enrichedAt: z.string().nullable(), snapshotVersion: z.number().nullable(),
+    descriptionSha256: z.string().nullable(), snapshotSha256: z.string().nullable(),
+    snapshotEvidence: z.array(z.string()).optional(),
+  }),
+  sample: z.object({ title: z.string(), company: z.string(), descriptionExcerpt: z.string() }),
+});
+export type SourceProposalEvidence = z.infer<typeof SourceProposalEvidenceSchema>;
+
+export interface SourceProposalReview {
+  coordinateKey: string;
+  sourceId: string;
+  atsKind: string | null;
+  boardToken: string | null;
+  completeness: "unknown";
+  promotionBlockedReason?: string | null;
+  evidence: SourceProposalEvidence[];
+  overlaps: { sourceId: string; state: string; seedUrl: string | null }[];
+}
+
 export interface SourceLocatorCandidateSummary {
   candidateId: string;
   candidateUrl: string;
@@ -5544,6 +5573,7 @@ export interface SourceLocatorCandidateSummary {
   employerDomainMatched: boolean;
   manualActionReason: ManualActionReasonValue | null;
   discoveredAt: string;
+  proposal?: SourceProposalReview;
 }
 
 export interface SourceLocatorListResponse {
@@ -6765,8 +6795,8 @@ export interface ConfirmContactCandidateResponse {
 // an approved draft is copied out via the browser clipboard, never sent.
 // ---------------------------------------------------------------------------
 
-export const OUTREACH_DRAFT_KINDS = ["intro_request", "follow_up"] as const;
-export const OutreachDraftKindSchema = z.enum(OUTREACH_DRAFT_KINDS).catch("intro_request");
+export const OUTREACH_DRAFT_KINDS = ["intro_request", "follow_up", "offer_negotiation", "offer_clarification", "offer_acceptance", "offer_decline"] as const;
+export const OutreachDraftKindSchema = z.enum(OUTREACH_DRAFT_KINDS);
 export type OutreachDraftKind = (typeof OUTREACH_DRAFT_KINDS)[number];
 
 export const OUTREACH_DRAFT_STATUSES = [
@@ -6804,6 +6834,7 @@ export interface OutreachGateJudge {
 export interface OutreachDraftGateResults {
   passed: boolean;
   computedAgainst: string;
+  sourceContext?: { binding: { jobId: string; termsRevisionId: string; decisionId: string | null }; fingerprint: string; sources: { source_id: string; text: string }[] } | null;
   fabrications: OutreachGateFabrication[];
   validation: OutreachGateValidation;
   judge: OutreachGateJudge | null;
@@ -6811,6 +6842,7 @@ export interface OutreachDraftGateResults {
 
 /** One claim in a draft bound to the confirmed fact(s) it rests on (INV-2). */
 export interface OutreachClaimProvenanceDto {
+  sourceCitations?: { sourceId: string; quote: string }[];
   claimId: string;
   section: string;
   generatedText: string;
@@ -6820,6 +6852,7 @@ export interface OutreachClaimProvenanceDto {
 }
 
 export interface OutreachDraftDto {
+  offerSourcesCurrent?: boolean;
   draftId: string;
   threadId: string;
   generation: number;
@@ -6861,6 +6894,7 @@ export const GenerateOutreachDraftRequestSchema = z
   .object({
     jobId: outreachJobIdField,
     kind: OutreachDraftKindSchema.optional(),
+    offerRevisionId: z.uuid().optional(),
     applicationRole: z.string().trim().max(200).optional(),
     llmModel: z.string().trim().min(1).max(120).optional(),
   })
@@ -6871,6 +6905,7 @@ export const ReviseOutreachDraftRequestSchema = z
   .object({
     editedBodyText: z.string().trim().min(1).max(8000),
     kind: OutreachDraftKindSchema.optional(),
+    offerRevisionId: z.uuid().optional(),
     applicationRole: z.string().trim().max(200).optional(),
     llmModel: z.string().trim().min(1).max(120).optional(),
   })

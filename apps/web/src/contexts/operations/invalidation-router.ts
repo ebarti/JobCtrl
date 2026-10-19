@@ -1,3 +1,6 @@
+import { outreachKeys } from "../outreach/queryKeys.js";
+import { jobsKeys } from "./jobsKeys.js";
+import { outcomesKeys } from "./outcomesKeys.js";
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 
 import type { ApplyRunEventRecorded, TenantId } from "@jobctrl/domain-types";
@@ -33,6 +36,7 @@ import {
   jobUnhiddenHandler,
   sourceLocationCandidateDiscoveredHandler,
   sourceLocationCandidatePromotedHandler,
+  sourceLocationCandidateReviewedHandler,
   sourceRegistryEntryCreatedHandler,
   sourceRegistryEntryUpdatedHandler,
   sourceStateChangedHandler,
@@ -217,6 +221,7 @@ export const handlers: HandlerMap = {
   DiscoveryFeedbackRecorded: discoveryFeedbackRecordedHandler,
   SourceLocationCandidateDiscovered: sourceLocationCandidateDiscoveredHandler,
   SourceLocationCandidatePromoted: sourceLocationCandidatePromotedHandler,
+  SourceLocationCandidateReviewed: sourceLocationCandidateReviewedHandler,
   SourceRegistryEntryCreated: sourceRegistryEntryCreatedHandler,
   SourceRegistryEntryUpdated: sourceRegistryEntryUpdatedHandler,
   SourceStateChanged: sourceStateChangedHandler,
@@ -267,6 +272,11 @@ export const handlers: HandlerMap = {
   ApplicationFailed: applicationFailedHandler,
   ApplyReviewDecisionRecorded: applyReviewDecisionRecordedHandler,
   ApplicationOutcomeRecorded: applicationOutcomeRecordedHandler,
+  OfferRecordChanged: (event) => [
+    invalidate(outcomesKeys.detail(event.tenantId, event.payload.jobId)),
+    invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+    invalidate(outreachKeys.threads(event.tenantId)),
+  ],
   OutcomeSuggestionDecided: outcomeSuggestionDecidedHandler,
   StageStarted: stageStartedHandler,
   StageCompleted: stageCompletedHandler,

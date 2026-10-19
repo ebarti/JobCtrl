@@ -2699,3 +2699,26 @@ Capability ports, context-owned API/query/store usage, dependency direction and
 barrel resolution remain independent enforced boundaries. Remaining capability
 and dependency exemptions still require scoped reasons and fail when stale.
 See [frontend type ownership](architecture/frontend/state-and-ports.md#_6-5-canonical-dtos-and-frontend-input-refinements).
+
+
+## 2026-10-18: Actual Offers Belong To Outcomes; Communications Reuse Outreach
+
+Status: accepted
+
+Store user-confirmed actual offer terms and accepted/declined decisions as
+immutable private revisions on the existing exact-v14 ledger. Terms preserve
+currency/time-base clarity and explicit unknowns. A correction names the prior
+ID, supplies a reason and retains all history. The first terms write records
+one offer milestone when needed; later decisions/corrections never grant submit authority,
+change pipeline state or require an interview-prep session.
+
+Reuse Outreach's contact lane, spend preflight, strict claim determination,
+independent quality judgment, human approval, clipboard and manual-send log.
+Offer communications read canonical terms, achievements and recorded
+compensation evidence. Unknown terms, unsupported ROI or employer leverage
+cannot be invented. Persist the actual source snapshot and terms/decision
+binding, fence changes before saving, and refuse stale approval/copy/send
+logging while retaining the previous approved text. General events/projections
+expose safe references only. No new CRM context, send transport or lexical
+semantic fallback is introduced. See [Outcomes](user/outcomes-and-feedback.md#actual-offer-terms-and-decisions)
+and [offer read model](architecture/read-model.md#offer-read-model).

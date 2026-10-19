@@ -642,6 +642,7 @@ export const handlers = [
       },
     });
   }),
+  http.get("*/v1/jobs/:jobId/offer", ({ params }) => HttpResponse.json({ ok: true, jobId: params["jobId"], termsHistory: [], decisions: [], currentTerms: null, currentDecision: null })),
   http.get("*/v1/outcomes", () => HttpResponse.json(sampleApplicationOutcomes)),
   http.get("*/v1/jobs/:jobKey/outcomes", ({ params }) =>
     HttpResponse.json({

@@ -124,7 +124,8 @@ jobs, runs, or feedback signals:
 | Retained rows | Remaining references or effect |
 | --- | --- |
 | `manual_capture_queue` with `job_id IS NULL` | Includes pending Discovery captures and their `retry_context_json`; they can still appear as required on the Discovery page. Job-linked captures cascade with their Job. |
-| `source_locator_candidates` | Retains discovered source URLs and manual-action reasons. |
+| `source_locator_candidates` | Retains discovered source URLs and manual-action reasons, including deduplicated history proposals. |
+| Source-control `job_events` with null `job_id` | History-proposal `SourceLocationCandidateDiscovered` receipts retain origin JobIds/URLs, source-observation/run IDs, extraction/snapshot hashes and saved samples. `SourceLocationCandidateReviewed` retains coordinate-scoped promotion/rejection/reset decisions. These are retained source-control authorities, not job-owned rows; suppression survives Job deletion and job-data purge. |
 | `learning_recommendation_jobs`, `learning_recommendation_evidence_jobs` | Immutable learning provenance retains historical JobIds. |
 | `learning_recommendation_evidence`, `tailoring_feedback_signal_reviews`, `tailoring_feedback_signal_contradictions` | Append-only evidence/reviews retain signal/review references and historical JobIds even after source signals cascade away. |
 | `learning_recommendation_tombstones` | Append-only tombstones retain `affected_signal_id` after a Job-owned source signal cascades away. |
@@ -472,3 +473,20 @@ rows. These private snapshots can retain posting text and confirmed achievement
 excerpts after a source changes or a job is deleted. Job-data purge preserves
 these records and discloses `career_learning_records` in retained-reference
 counts. There is no new schema migration or automatic retention cleanup.
+
+## Private Offer Ledger
+
+Actual offer terms and accepted/declined corrections use immutable
+`job_events` rows with `entity_kind = offer`, `entity_ref = JobId` and
+`event_type = OfferRecordChanged` on the existing exact-v14 schema. Payloads
+contain a `termsRevision` or `decision`, including user-confirmed source
+reference/quotation and recorded timestamps. These scoped rows are canonical
+private state, following the existing screening ledger pattern; they are not
+public event payloads. SSE strips the private payload to reference IDs before
+publication. Job deletion follows the existing tenant/JobId foreign key.
+
+`outreach_drafts.gate_results_json.sourceContext` retains the offer binding,
+source snapshot and fingerprint used for review; semantic determinations remain
+in their existing canonical tables. No new database, profile copy, file store
+or runtime migration is introduced. Offer writes are transactional and retain
+all prior revisions and decisions.
