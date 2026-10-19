@@ -1,9 +1,12 @@
 """Cited persona judgments remain separate from the resume quality judge."""
 
-from typing import Literal
+from typing import ClassVar, Literal
 from pydantic import Field, StrictStr
 from jobctrl.domain.determinations import Citation, DeterminationModel
 from jobctrl.domain.ports.artifact_quality import QualityFinding
+
+RESUME_ADVERSARIAL_SCHEMA_VERSION = "1"
+RESUME_ADVERSARIAL_PROMPT_VERSION = "resume-adversarial-v2"
 
 
 Persona = Literal[
@@ -26,6 +29,7 @@ class PersonaJudgment(DeterminationModel):
 
 
 class ResumeAdversarialReview(DeterminationModel):
+    compatible_prompt_versions: ClassVar[tuple[str, ...]] = ("resume-adversarial-v1", "resume-adversarial-v2")
     verdict: Literal["pass", "fail"]
     score: float = Field(ge=0, le=1)
     rationale: StrictStr = Field(min_length=1, max_length=1500)

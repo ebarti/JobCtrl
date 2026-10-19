@@ -1,11 +1,14 @@
 """Quality judgment remains separate from factual claim verification."""
 
-from typing import Literal, Protocol
+from typing import ClassVar, Literal, Protocol
 
 from pydantic import Field, StrictStr
 
 from jobctrl.domain.determinations import Citation, DeterminationEnvelope, DeterminationModel, Source
 from jobctrl.domain.ports.claim_verification import ArtifactKind, ArtifactLine
+
+ARTIFACT_QUALITY_SCHEMA_VERSION = "2"
+ARTIFACT_QUALITY_PROMPT_VERSION = "artifact-quality-v3"
 
 
 class QualityFinding(DeterminationModel):
@@ -22,6 +25,8 @@ class QualityFinding(DeterminationModel):
 
 
 class ArtifactQuality(DeterminationModel):
+    # These prompt revisions share result semantics and the same strict schema.
+    compatible_prompt_versions: ClassVar[tuple[str, ...]] = ("artifact-quality-v2", "artifact-quality-v3")
     verdict: Literal["pass", "fail"]
     score: float = Field(ge=0, le=1)
     findings: list[QualityFinding] = Field(max_length=100)

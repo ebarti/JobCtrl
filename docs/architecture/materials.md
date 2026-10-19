@@ -137,6 +137,11 @@ Quality/persona findings bind to rendered line citations; saved-evidence repairs
 use the separate candidate-evidence slot. Both namespaces are explicit in the
 prompt/schema, and malformed findings receive exact slot feedback within the
 same bounded correction loop.
+The typed owners list known compatible historical quality/persona prompt
+versions. Readers validate those recorded receipts against the same strict
+schema, entity, lane and verdict bindings; current-only reads still require the
+current prompt version. Unknown versions are refused rather than treated as
+compatible by default.
 Provider, budget, cache and persistence failures do not enter this response
 repair loop. A failed repair never replaces the accepted envelope or artifact.
 

@@ -83,4 +83,10 @@ identity, and labels a changed text as an unverified user statement. It never
 promotes that text into the library, writes profile facts, grants Apply approval,
 performs browser form entry or records an application-submitted outcome.
 
+Quality receipt versions come from the typed quality owner. Known compatible
+historical prompts remain readable with their original recorded IDs and exact
+result schema; a new current prompt does not withdraw accepted answer history.
+Unknown prompt/schema versions, foreign entities/lanes and failed verdicts
+remain refused.
+
 The user workflow is defined in [Screening Answers](../user/screening-answers.md).

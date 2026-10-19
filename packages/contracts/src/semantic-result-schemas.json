@@ -232,6 +232,10 @@
     "schemaVersion": "1"
   },
   "artifact_quality": {
+    "compatiblePromptVersions": [
+      "artifact-quality-v2",
+      "artifact-quality-v3"
+    ],
     "promptVersion": "artifact-quality-v3",
     "schema": {
       "$defs": {
@@ -3839,6 +3843,10 @@
     "schemaVersion": "1"
   },
   "resume_adversarial": {
+    "compatiblePromptVersions": [
+      "resume-adversarial-v1",
+      "resume-adversarial-v2"
+    ],
     "promptVersion": "resume-adversarial-v2",
     "schema": {
       "$defs": {
