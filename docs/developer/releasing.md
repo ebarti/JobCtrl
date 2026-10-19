@@ -21,6 +21,9 @@ stable Python package. A source version or pushed tag alone is not a release.
    guides rather than treating every commit title or design document as a shipped
    feature. Inspect exact-source CI, known blockers, and the applicable release,
    data, migration, and product evidence in [Reliability & QA](../local-reliability-qa.md).
+   Respect the owner's requested release scope. An upgrade or rollback repair
+   does not require a minor-version bump; its signed security sequence advances
+   independently of the application version.
 3. Check for an existing release run before starting another:
 
    ```bash
