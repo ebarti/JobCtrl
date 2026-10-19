@@ -184,6 +184,9 @@ replaces only Homebrew acquisition; native installers, migrations, services,
 readiness failure, explicit rollback, interrupted recovery, paired backups and
 repeated update execute through the real binaries. Retain the credential-free
 `released-upgrade-smoke.json` evidence and require every matrix case to pass.
+Require a separate ordinary update, rollback and repeated update from every
+historical version's original controller. The additional 0.2.1 fault-injection
+case must not replace its ordinary successful-update case.
 Include a separate workspace that first reproduces the released 0.2.1-to-0.3.0
 failure, then recovers it using the new authenticated formula controller.
 The serial matrix retains time for real installer notarization and repeated
