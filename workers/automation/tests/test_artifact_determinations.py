@@ -344,3 +344,34 @@ def test_supported_candidate_citation_must_be_in_its_declared_contributions(kind
     )
     assert result.verdict == "pass"
     assert model.calls == expected_calls
+
+
+@pytest.mark.parametrize("persona", [False, True])
+def test_quality_and_persona_finding_slots_repair_without_overriding_a_failed_verdict(persona):
+    class FindingModel(Model):
+        def chat_json(self, messages, *, response_schema, **kwargs):
+            result = super().chat_json(messages, response_schema=response_schema, **kwargs)
+            data = json.loads(messages[1].content)
+            assert data["context"]["line_ids"] == ["owned:line"]
+            result["verdict"] = "fail"
+            target = result["personas"][0] if persona else result
+            target["verdict"] = "fail"
+            target["findings"] = [{
+                "line_id": "owned:line", "category": "clarity",
+                "citation": {"source_id": "source:1" if len(self.calls) == 1 else "line:owned:line",
+                             "quote": "Synthetic text", "exact_values": []},
+                "rationale": "Synthetic model rejection", "repair_instruction": "Synthetic repair",
+            }]
+            return result
+
+    conn, model = connection(), FindingModel()
+    _, judge = ports(conn, model)
+    kwargs = dict(entity_id="owned", lines=[ArtifactLine(
+        line_id="owned:line", text="Synthetic text", allowed_evidence_ids=["source:1"], allowed_requirement_ids=[],
+    )], sources=[Source(source_id="source:1", text="Synthetic text")], rubric={})
+    result, _ = judge.review_adversarial(**kwargs) if persona else judge.judge(artifact_kind="resume", **kwargs)
+    assert result.verdict == "fail"
+    assert len(model.calls) == 2
+    feedback = json.loads(model.calls[1][2][-1].content.split("\n", 1)[1])["binding_failure"]
+    assert feedback["finding"]["citation"]["source_id"] == "source:1"
+    assert feedback["expected_citation_source_id"] == "line:owned:line"

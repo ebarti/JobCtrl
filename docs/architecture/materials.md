@@ -130,6 +130,13 @@ Exact citation/value failures also identify the rejected citation or compensatio
 row in request-local correction data; exception text and persisted failure state
 remain code-only. Rejected resume reports retain only verifier-affirmed anchors,
 while preserving the failed gate, original candidate and missing-ID findings.
+Numeric binding accepts complete comma-grouped amounts with an attached
+three-letter prefix, without deciding the prefix's meaning or matching a fragment
+inside a larger token. The model still determines whether the amount is pay.
+Quality/persona findings bind to rendered line citations; saved-evidence repairs
+use the separate candidate-evidence slot. Both namespaces are explicit in the
+prompt/schema, and malformed findings receive exact slot feedback within the
+same bounded correction loop.
 Provider, budget, cache and persistence failures do not enter this response
 repair loop. A failed repair never replaces the accepted envelope or artifact.
 

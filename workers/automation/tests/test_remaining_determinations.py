@@ -74,7 +74,7 @@ def interpretation():
     )
 
 
-@pytest.mark.parametrize("fault", ["missing_currency", "mismatched_amount"])
+@pytest.mark.parametrize("fault", ["missing_currency", "mismatched_amount", "prefixed_amount"])
 def test_compensation_response_repair_identifies_the_exact_structural_defect(fault):
     from jobctrl.domain.determinations import Source
     from jobctrl.domain.enrichment.interpretation import ModelJobInterpreter
@@ -82,8 +82,9 @@ def test_compensation_response_repair_identifies_the_exact_structural_defect(fau
     class CorrectingModel(Model):
         def chat_json(self, messages, **kwargs):
             output = interpretation().model_dump()
+            quote = "pay USD10" if fault == "prefixed_amount" else "pay 10 USD"
             row = dict(state="stated", lower="10", upper=None, currency="USD", period="year",
-                       component="base_salary", citations=[citation("posting", "pay 10 USD")],
+                       component="base_salary", citations=[citation("posting", quote)],
                        rationale="Synthetic source amount")
             if not self.calls:
                 row["currency" if fault == "missing_currency" else "lower"] = None if fault == "missing_currency" else "11"
@@ -93,7 +94,8 @@ def test_compensation_response_repair_identifies_the_exact_structural_defect(fau
 
     model = CorrectingModel(None)
     interpreter = ModelJobInterpreter(**dependencies(storage(), model, "enrichment"))
-    result, _ = interpreter.interpret(entity_id="synthetic", posting=Source(source_id="posting", text="Synthetic pay 10 USD"), fields=[], requirements=[])
+    text = "Synthetic pay USD10" if fault == "prefixed_amount" else "Synthetic pay 10 USD"
+    result, _ = interpreter.interpret(entity_id="synthetic", posting=Source(source_id="posting", text=text), fields=[], requirements=[])
     assert result.compensation[0].lower == "10"
     assert len(model.calls) == 2
     feedback = json.loads(model.calls[1][0][-1].content.split("\n", 1)[1])["binding_failure"]

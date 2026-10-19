@@ -232,7 +232,7 @@
     "schemaVersion": "1"
   },
   "artifact_quality": {
-    "promptVersion": "artifact-quality-v2",
+    "promptVersion": "artifact-quality-v3",
     "schema": {
       "$defs": {
         "Citation": {
@@ -285,9 +285,11 @@
               "type": "string"
             },
             "citation": {
-              "$ref": "#/$defs/Citation"
+              "$ref": "#/$defs/Citation",
+              "description": "Cite this rendered line: source_id must equal 'line:' + line_id and quote must be verbatim text from that line. Saved candidate evidence belongs in evidence_corrections instead."
             },
             "line_id": {
+              "description": "An exact unprefixed rendered line ID from context.line_ids, never a candidate evidence or requirement ID.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Line Id",
@@ -320,6 +322,7 @@
       "additionalProperties": false,
       "properties": {
         "evidence_corrections": {
+          "description": "Only saved candidate evidence IDs that support a proposed repair, never rendered line IDs or posting/requirement IDs. Findings cite rendered lines separately.",
           "items": {
             "$ref": "#/$defs/Citation"
           },
@@ -3836,7 +3839,7 @@
     "schemaVersion": "1"
   },
   "resume_adversarial": {
-    "promptVersion": "resume-adversarial-v1",
+    "promptVersion": "resume-adversarial-v2",
     "schema": {
       "$defs": {
         "Citation": {
@@ -3953,9 +3956,11 @@
               "type": "string"
             },
             "citation": {
-              "$ref": "#/$defs/Citation"
+              "$ref": "#/$defs/Citation",
+              "description": "Cite this rendered line: source_id must equal 'line:' + line_id and quote must be verbatim text from that line. Saved candidate evidence belongs in evidence_corrections instead."
             },
             "line_id": {
+              "description": "An exact unprefixed rendered line ID from context.line_ids, never a candidate evidence or requirement ID.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Line Id",
