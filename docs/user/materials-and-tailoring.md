@@ -368,7 +368,10 @@ persisted as `skipped` with the `MIN_SCORE` code and the exact score/threshold
 pair. They do not remain `pending`, because no automatic work owns them.
 Lowering the threshold or recording a qualifying current score restores only
 these threshold-owned skips. The per-job **Tailor this job** action is an
-explicit low-fit override and does not weaken score hard blockers.
+explicit low-fit override for the requested resume, cover letter and their PDF
+exports. The same exception follows the request through Tailor and Cover; it
+does not change the recorded score or global threshold, and does not weaken
+score hard blockers or material validation and quality review.
 
 Tailor failures also own their downstream state. If Tailor is retryably failed
 or has exhausted its durable attempt budget, Cover and Apply show `blocked`

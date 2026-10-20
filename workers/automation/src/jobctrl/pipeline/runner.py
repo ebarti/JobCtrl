@@ -2141,6 +2141,7 @@ def _run_cover(
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     cancel_event: threading.Event | None = None,
     workflow_id: str | None = None,
+    allow_low_fit_override: bool = False,
 ) -> dict:
     """Stage: Cover letter generation."""
     if cancel_event is not None and cancel_event.is_set():
@@ -2151,7 +2152,7 @@ def _run_cover(
     jobs = get_jobs_by_stage(
         conn=get_connection(),
         stage="pending_cover",
-        min_score=min_score,
+        min_score=0 if allow_low_fit_override else min_score,
         limit=limit,
     )
     generated = 0
@@ -2166,6 +2167,7 @@ def _run_cover(
             validation_mode=validation_mode,
             llm_model=llm_model,
             workflow_id=workflow_id,
+            allow_low_fit_override=allow_low_fit_override,
         )
         status = str(result.get("status") or "error")
         if status in {"ok", "already_done"}:

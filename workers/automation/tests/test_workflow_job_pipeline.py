@@ -143,6 +143,26 @@ def test_model_stage_deadline_covers_full_model_sequence(stage: str) -> None:
     assert _activity_timeout(payload, stage=stage) == timedelta(hours=6)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("allow_override", [False, True])
+async def test_pipeline_cover_preserves_the_explicit_low_fit_policy(allow_override: bool) -> None:
+    from jobctrl.pipeline.workflow import _execute_stage
+
+    with (
+        patch("jobctrl.pipeline.workflow.workflow.info", return_value=SimpleNamespace(workflow_id="synthetic", run_id="synthetic-run")),
+        patch("jobctrl.pipeline.workflow.workflow.execute_activity", new_callable=AsyncMock) as execute,
+    ):
+        await _execute_stage(
+            "cover", JobPipelineWorkflowInput(
+                tenant_id="local", stages=["tailor", "cover"], min_score=7,
+                allow_low_fit_override=allow_override,
+            ),
+        )
+    payload = execute.call_args.args[1]
+    assert payload.min_score == 7
+    assert payload.allow_low_fit_override is allow_override
+
+
 @pytest.mark.parametrize(
     ("stage", "queue_stage", "retailor"),
     [

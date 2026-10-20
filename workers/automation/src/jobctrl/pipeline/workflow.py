@@ -517,6 +517,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 llm_model=payload.llm_model,
                 workflow_id=activity_owner,
                 recovery_workflow_id=workflow_id if payload.automatic_recovery else None,
+                allow_low_fit_override=payload.allow_low_fit_override,
             ),
             start_to_close_timeout=_activity_timeout(payload, stage=stage),
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,

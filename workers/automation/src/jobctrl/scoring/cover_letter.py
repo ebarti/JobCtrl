@@ -198,6 +198,7 @@ def cover_letter_by_id(
     workflow_id: str | None = None,
     cancel_event: threading.Event | None = None,
     recovery_workflow_id: str | None = None,
+    allow_low_fit_override: bool = False,
 ) -> dict:
     """Generate exactly one eligible cover letter by tenant-scoped JobId."""
     stable_job_id = canonical_job_id(str(job_id))
@@ -213,7 +214,7 @@ def cover_letter_by_id(
             conn,
             unit_of_work=material_unit_of_work,
         )
-    min_score = effective_tailoring_min_score(min_score)
+    min_score = 0 if allow_low_fit_override else effective_tailoring_min_score(min_score)
 
     eligibility_reason = _cover_eligibility_reason(
         conn,

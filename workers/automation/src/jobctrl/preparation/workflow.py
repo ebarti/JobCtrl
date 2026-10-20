@@ -301,6 +301,7 @@ async def _execute_step(step: str, payload: JobPreparationInput) -> Any:
                 min_score=payload.min_score,
                 validation_mode=payload.validation_mode,
                 llm_model=payload.llm_model,
+                allow_low_fit_override=payload.allow_low_fit_override,
             ),
             start_to_close_timeout=_MODEL_ACTIVITY_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,

@@ -39,6 +39,14 @@ overrides into the frozen `TailoringLlmPolicy` before constructing
 configuration. Saved profile controls and versioned policy history remain
 canonical inputs, with the existing profile/policy fence at generation commit.
 
+An explicit manual materials request carries its existing low-fit exception
+through both Tailor and Cover activity payloads to their canonical per-job
+admission checks. Default and legacy payloads keep the ordinary score floor.
+The exception changes only the numeric threshold for that request; hard
+eligibility blockers, current-score and posting checks, artifact ownership,
+attempt limits, claim verification and quality review still apply. PDF exports
+consume the accepted materials without changing the score or global policy.
+
 Selected Tailor and Cover cohorts isolate typed per-job prerequisite failures
 that occur before a stage claim. Missing inputs skip that member, and temporary
 source unavailability remains a bounded item error while healthy peers finish.
