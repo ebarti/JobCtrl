@@ -238,6 +238,11 @@ def _build_use_case(
     from jobctrl.domain.materials.claim_verification import ModelClaimVerifier
 
     deps = determination_dependencies(conn, tenant_id=tenant_id, lane="tailoring", adapter=llm_port)
+    review_deps = deps
+    if (claim_verifier is None or quality_judge is None) and llm_policy.effective_judge_model != DEFAULT_PIPELINE_LLM_MODEL_SPEC:
+        review_deps = determination_dependencies(
+            conn, tenant_id=tenant_id, lane="tailoring", model_spec=llm_policy.effective_judge_model,
+        )
     from jobctrl.domain.materials.artifact_quality import ModelArtifactQualityJudge
     from jobctrl.infrastructure.enrichment.interpretation import PersistedJobInterpreter
 
@@ -245,13 +250,13 @@ def _build_use_case(
         repository=repository,
         llm=llm_port,
         validator=validator,
-        claim_verifier=claim_verifier if claim_verifier is not None else ModelClaimVerifier(**deps),
+        claim_verifier=claim_verifier if claim_verifier is not None else ModelClaimVerifier(**review_deps),
         preflight=preflight if preflight is not None else deps["preflight"],
         assembler=assembler,
         job_interpreter=job_interpreter
         if job_interpreter is not None
         else PersistedJobInterpreter(conn, tenant_id=tenant_id),
-        quality_judge=quality_judge if quality_judge is not None else ModelArtifactQualityJudge(**deps),
+        quality_judge=quality_judge if quality_judge is not None else ModelArtifactQualityJudge(**review_deps),
         publisher=publisher,
         llm_policy=llm_policy,
         artifact_writer=artifact_writer if artifact_writer is not None else LocalArtifactTextWriter(),

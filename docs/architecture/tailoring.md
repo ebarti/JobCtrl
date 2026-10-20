@@ -39,6 +39,13 @@ overrides into the frozen `TailoringLlmPolicy` before constructing
 configuration. Saved profile controls and versioned policy history remain
 canonical inputs, with the existing profile/policy fence at generation commit.
 
+The effective judge model binds the claim-verification and quality/persona
+adapters, independently of the generator model pool. Default review shares the
+operation's default adapter. An explicit reviewer selection binds that route
+and records its actual provider/model; unavailability fails visibly without
+substituting the generator adapter. Explicitly injected review ports retain
+their own authority and are not replaced by composition.
+
 The same composition root injects `ArtifactTextWriter`, implemented locally by
 `LocalArtifactTextWriter`. This small capability creates directories, writes exact
 UTF-8 text and reports its byte size. The use case retains candidate selection,
