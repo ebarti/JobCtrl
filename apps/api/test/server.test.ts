@@ -11146,6 +11146,86 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("records a terminal failed profile continuation once and permits newer revisions", async () => {
+    const db = new Database(options.dbPath);
+    const insert = db.prepare(
+      `INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json)
+       VALUES ('local', NULL, 1, NULL, 'ProfileUpdated', 'info', 'Synthetic profile update', ?, ?)`,
+    );
+    const firstId = Number(insert.run("2026-08-04T20:00:00.000Z", JSON.stringify({ changedSections: ["profile"] })).lastInsertRowid);
+    const secondId = Number(insert.run("2026-08-04T20:00:01.000Z", JSON.stringify({ changedSections: ["profile"] })).lastInsertRowid);
+    db.prepare(
+      `INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json, idempotency_key)
+       VALUES ('local', NULL, 1, NULL, 'ProfileContinuationDispatchIntended', 'info', 'Synthetic intent', ?, ?, ?)`,
+    ).run("2026-08-04T20:00:00.500Z", JSON.stringify({ sourceEventId: firstId }), `profile-continuation-dispatch-intended:${firstId}`);
+    db.close();
+    const rpc: JsonRpcDispatcher = {
+      call: vi.fn(async (_method, params) => ({
+        jsonrpc: "2.0" as const, id: 1,
+        result: params.reason === `profile_updated:${firstId}`
+          ? { runId: "run-failed", workflowId: "profile-failed", result: { stages_completed: ["score"], stages_failed: ["tailor"], failure: "Private synthetic failure", error_code: "missing_input" } }
+          : { runId: "run-newer", workflowId: "profile-newer", result: { stages_completed: ["score", "tailor", "cover"], stages_failed: [], failure: null, error_code: null } },
+      })),
+      close: vi.fn(async () => undefined),
+    };
+    const providerDispatcher: JsonRpcDispatcher = {
+      call: vi.fn(async () => ({ jsonrpc: "2.0" as const, id: 1, result: { capabilities: [], detectedBrowsers: [] } })),
+      close: vi.fn(async () => undefined),
+    };
+    const dispatch = createActionDispatcher(rpc);
+    const app = buildApp({ ...options, providerDispatcher, actionDispatcher: dispatch });
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    await vi.waitFor(() => {
+      const read = new Database(options.dbPath, { readonly: true });
+      try {
+        const failed = read.prepare("SELECT payload_json FROM job_events WHERE event_type = 'ProfileContinuationFailed'").all() as Array<{ payload_json: string }>;
+        expect(failed).toHaveLength(1);
+        expect(JSON.parse(failed[0]!.payload_json)).toEqual({ sourceEventId: firstId, status: "failed", runId: "run-failed", workflowId: "profile-failed", errorCode: "missing_input" });
+        const handled = read.prepare("SELECT json_extract(payload_json, '$.sourceEventId') AS source_id FROM job_events WHERE event_type = 'ProfileContinuationHandled'").all();
+        expect(handled).toEqual([{ source_id: secondId }]);
+      } finally { read.close(); }
+    });
+    expect(rpc.call).toHaveBeenCalledTimes(2);
+    await app.close();
+
+    const restarted = buildApp({ ...options, providerDispatcher, actionDispatcher: dispatch });
+    await restarted.listen({ host: "127.0.0.1", port: 0 });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(rpc.call).toHaveBeenCalledTimes(2);
+    await restarted.close();
+  });
+
+  it("keeps an uncertain failed profile dispatch pending for startup reattachment", async () => {
+    const db = new Database(options.dbPath);
+    const inserted = db.prepare(
+      `INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json)
+       VALUES ('local', NULL, 1, NULL, 'ProfileUpdated', 'info', 'Synthetic profile update', ?, ?)`,
+    ).run("2026-08-04T20:00:00.000Z", JSON.stringify({ changedSections: ["profile"] }));
+    db.close();
+    const dispatch = vi.fn<ActionDispatcher>()
+      .mockResolvedValueOnce({ status: "failed", message: "Synthetic transport failure" })
+      .mockResolvedValue({ status: "queued", runId: "reattached" });
+    const providerDispatcher: JsonRpcDispatcher = {
+      call: vi.fn(async () => ({ jsonrpc: "2.0" as const, id: 1, result: { capabilities: [], detectedBrowsers: [] } })),
+      close: vi.fn(async () => undefined),
+    };
+    const app = buildApp({ ...options, providerDispatcher, actionDispatcher: dispatch });
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1));
+    const read = new Database(options.dbPath, { readonly: true });
+    expect(read.prepare("SELECT COUNT(*) AS n FROM job_events WHERE event_type IN ('ProfileContinuationHandled', 'ProfileContinuationFailed')").get()).toEqual({ n: 0 });
+    read.close();
+    await app.close();
+    const restarted = buildApp({ ...options, providerDispatcher, actionDispatcher: dispatch });
+    await restarted.listen({ host: "127.0.0.1", port: 0 });
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(2));
+    expect(dispatch.mock.calls.map(([command]) => command.reason)).toEqual([
+      `profile_updated:${Number(inserted.lastInsertRowid)}`, `profile_updated:${Number(inserted.lastInsertRowid)}`,
+    ]);
+    await restarted.close();
+  });
+
   it("does not launch startup continuations before the health-only database exists", async () => {
     fs.rmSync(options.dbPath, { force: true });
     const providerCall = vi.fn<JsonRpcDispatcher["call"]>(async () => ({
@@ -14110,7 +14190,7 @@ describe("enforcing route to registered worker handoffs", () => {
     } finally { fixture.mode("success"); fixture.retain("profile-serialization", observations); await app.close(); await fixture.adapter.close(); }
   });
 
-  it.each(["start_failure", "wait_failure", "invalid_result", "wrong_result_family", "invalid_ack", "invalid_envelope", "transport_failure", "stage_failure", "stage_failure_without_message"])("keeps %s pending and startup reattaches the deterministic identity", async (mode) => {
+  it.each(["start_failure", "wait_failure", "invalid_result", "wrong_result_family", "invalid_ack", "invalid_envelope", "transport_failure"])("keeps %s pending and startup reattaches the deterministic identity", async (mode) => {
     const fixture = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
     fixture.mode(mode === "transport_failure" ? "hold" : mode);
     const controls = rpcPreservationControls(true);
@@ -14123,7 +14203,7 @@ describe("enforcing route to registered worker handoffs", () => {
       await vi.waitFor(() => expect(fixture.rows().some(row => row.kind === "start")).toBe(true), { timeout: 10000 });
       const firstStart = fixture.rows().find(row => row.kind === "start");
       if (mode === "transport_failure") await fixture.adapter.close();
-      if (mode === "start_failure" || mode === "wait_failure" || mode.startsWith("stage_failure")) await expect(dispatch.mock.results[0]!.value).resolves.toMatchObject({ status: "failed" });
+      if (mode === "start_failure" || mode === "wait_failure") await expect(dispatch.mock.results[0]!.value).resolves.toMatchObject({ status: "failed" });
       else await expect(dispatch.mock.results[0]!.value).rejects.toThrow();
       expect(rpcContinuationMarkers()).toEqual([]);
       const saved = (await app.inject({ method: "GET", url: "/v1/profile" })).json();
@@ -14154,6 +14234,45 @@ describe("enforcing route to registered worker handoffs", () => {
         observations.push({ restartedStart: starts.at(-1), settledMarkers: rpcContinuationMarkers(), preservation: controls });
       } finally { restarted.mode("success"); await restarted.adapter.close(); }
     } finally { fixture.retain("profile-restart-" + mode, observations); await app.close(); await fixture.adapter.close(); }
+  });
+
+  it.each(["stage_failure", "stage_failure_without_message"])("retains %s as a terminal failure without replaying it on startup", async (mode) => {
+    const fixture = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
+    fixture.mode(mode);
+    const controls = rpcPreservationControls(true);
+    const dispatch = vi.fn(createActionDispatcher(fixture.adapter));
+    let app = buildApp({ ...options, actionDispatcher: dispatch });
+    const failures = () => {
+      const db = new Database(options.dbPath, { readonly: true });
+      try {
+        return db.prepare("SELECT payload_json FROM job_events WHERE event_type = 'ProfileContinuationFailed'").all() as Array<{ payload_json: string }>;
+      } finally { db.close(); }
+    };
+    try {
+      const response = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: validProfileFixture("Saved Through Terminal Failure") } });
+      expect(response.statusCode, response.body).toBe(200);
+      await vi.waitFor(() => expect(failures()).toHaveLength(1), { timeout: 10000 });
+      await expect(dispatch.mock.results[0]!.value).resolves.toMatchObject({ status: "failed", completedWorkflowFailure: { errorCode: mode === "stage_failure" ? "synthetic" : "workflow_stage_failed" } });
+      const firstFailure = failures();
+      const failed = JSON.parse(firstFailure[0]!.payload_json);
+      expect(failed).toMatchObject({ status: "failed", workflowId: fixture.rows().find(row => row.kind === "start")?.workflowId });
+      expect(rpcContinuationMarkers()).toEqual([]);
+      expect(rpcPreservationControls()).toEqual(controls);
+      await app.close();
+      await fixture.adapter.close();
+      const restarted = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
+      const priorRequests = restarted.rows().filter(row => row.kind === "request").length;
+      app = buildApp({ ...options, actionDispatcher: createActionDispatcher(restarted.adapter) });
+      try {
+        await app.listen({ host: "127.0.0.1", port: 0 });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(restarted.rows().filter(row => row.kind === "request")).toHaveLength(priorRequests);
+        expect(failures()).toEqual(firstFailure);
+        expect(rpcContinuationMarkers()).toEqual([]);
+        expect(rpcPreservationControls()).toEqual(controls);
+      } finally { await restarted.adapter.close(); }
+    } finally { fixture.retain("profile-terminal-" + mode, failures()); await app.close(); await fixture.adapter.close(); }
   });
 });
 

@@ -381,6 +381,7 @@ import {
   claimNextProfileContinuationEvent,
   handleProfileUpdatedEvent,
   markProfileContinuationEventsHandled,
+  markProfileContinuationFailed,
   persistProfileUpdate,
 } from "./profile-events.js";
 import { dbFileIdentity, readLlmSpendHealth, readWorkerHealth } from "./worker-health.js";
@@ -4265,11 +4266,15 @@ async function dispatchPendingProfileContinuations(
     // The JSON-RPC adapter waits for this deterministic workflow to finish.
     // That serializes genuine profile revisions; a restart attaches to the
     // same Temporal execution before writing the handled marker.
-    await handleProfileUpdatedEvent(eventId, actionDispatcher, actionContext);
+    const outcome = await handleProfileUpdatedEvent(eventId, actionDispatcher, actionContext);
 
     const handledDb = openDatabase(dbPath);
     try {
-      markProfileContinuationEventsHandled(handledDb, [eventId], eventId);
+      if (outcome.completedWorkflowFailure) {
+        markProfileContinuationFailed(handledDb, eventId, outcome.completedWorkflowFailure);
+      } else {
+        markProfileContinuationEventsHandled(handledDb, [eventId], eventId);
+      }
     } finally {
       handledDb.close();
     }

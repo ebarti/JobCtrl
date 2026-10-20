@@ -247,7 +247,12 @@ Profile continuation keeps its `profile_updated:<eventId>` reason through the
 registered handler and deterministic workflow identity. The enforcing action
 dispatcher awaits completion before the server records a handled marker;
 structural, start, wait or transport failure leaves the durable intent available
-for startup reattachment. A failed pipeline completion also leaves it pending.
+for startup reattachment. A validated terminal failed completion records one
+`ProfileContinuationFailed` event with its source event, execution identity and
+bounded error code. It receives no successful handled marker and is excluded
+from pending dispatch, allowing newer profile revisions to proceed. Its original
+workflow and failed job stages remain inspectable and retain their retry policy;
+reattachment never reruns a completed failed workflow or claims it succeeded.
 The route integration tests in `apps/api/test/server.test.ts` use exact-schema
 owned workspaces and the registered Python handlers through the real adapter.
 Their synthetic WorkflowStarter and completion handle expose workflow input and

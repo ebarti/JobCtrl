@@ -39,6 +39,13 @@ overrides into the frozen `TailoringLlmPolicy` before constructing
 configuration. Saved profile controls and versioned policy history remain
 canonical inputs, with the existing profile/policy fence at generation commit.
 
+Selected Tailor and Cover cohorts isolate typed per-job prerequisite failures
+that occur before a stage claim. Missing inputs skip that member, and temporary
+source unavailability remains a bounded item error while healthy peers finish.
+This boundary does not claim or terminalize an unowned stage. Cancellation,
+spend-budget failures and unclassified exceptions still propagate; accepted
+artifacts and the existing ownership fences remain authoritative.
+
 The effective judge model binds the claim-verification and quality/persona
 adapters, independently of the generator model pool. Default review shares the
 operation's default adapter. An explicit reviewer selection binds that route

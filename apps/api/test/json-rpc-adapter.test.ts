@@ -1288,10 +1288,17 @@ describe("shared enforcing RPC boundary", () => {
     await expect(createActionDispatcher(fake)({ action: "run_stage", jobKey: "pipeline", stage: "score", reason: "profile_updated:42" }, { appDir: "/synthetic", dbPath: "/synthetic/jobs.db" })).rejects.toMatchObject({ phase: "result" });
   });
 
-  it("keeps a structurally valid failed completion from settling a profile continuation", async () => {
+  it("distinguishes a terminal failed profile completion from uncertain dispatch", async () => {
     const fake = new FakeDispatcher();
     fake.setResponse({ jsonrpc: "2.0", id: 1, result: { runId: "failed", result: { stages_completed: [], stages_failed: ["score"], failure: "Synthetic stage failure", error_code: "synthetic" } } });
-    await expect(createActionDispatcher(fake)({ action: "run_stage", jobKey: "pipeline", stage: "score", reason: "profile_updated:42" }, { appDir: "/synthetic", dbPath: "/synthetic/jobs.db" })).resolves.toMatchObject({ status: "failed" });
+    await expect(createActionDispatcher(fake)({ action: "run_stage", jobKey: "pipeline", stage: "score", reason: "profile_updated:42" }, { appDir: "/synthetic", dbPath: "/synthetic/jobs.db" })).resolves.toMatchObject({
+      status: "failed",
+      completedWorkflowFailure: { runId: "failed", errorCode: "synthetic" },
+    });
+    fake.setResponse({ jsonrpc: "2.0", id: 1, error: { code: -32603, message: "Synthetic transport failure" } });
+    const uncertain = await createActionDispatcher(fake)({ action: "run_stage", jobKey: "pipeline", stage: "score", reason: "profile_updated:42" }, { appDir: "/synthetic", dbPath: "/synthetic/jobs.db" });
+    expect(uncertain.status).toBe("failed");
+    expect(uncertain).not.toHaveProperty("completedWorkflowFailure");
   });
 });
 

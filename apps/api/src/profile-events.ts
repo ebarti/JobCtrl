@@ -14,7 +14,7 @@ import {
   type ProfileUpdateRequest,
 } from "./contracts.js";
 import { getRow, type SqliteDatabase } from "./db.js";
-import type { ActionDispatchContext, ActionDispatcher } from "./local-actions.js";
+import type { ActionDispatchContext, ActionDispatcher, ActionDispatchResult } from "./local-actions.js";
 import { readProfileConfig, writeProfileConfig } from "./profile-store.js";
 import {
   DEFAULT_JOBCTRL_SETTINGS,
@@ -105,7 +105,7 @@ export async function handleProfileUpdatedEvent(
   eventId: number,
   actionDispatcher: ActionDispatcher,
   actionContext: ActionDispatchContext,
-): Promise<void> {
+): Promise<ActionDispatchResult> {
   const workers = actionContext.configPath
     ? readJobCtrlSettings(actionContext.configPath).settings.pipelineInternalConcurrency
     : DEFAULT_JOBCTRL_SETTINGS.pipelineInternalConcurrency;
@@ -123,9 +123,10 @@ export async function handleProfileUpdatedEvent(
     reason: `profile_updated:${eventId}`,
   };
   const result = await actionDispatcher(command, actionContext);
-  if (result.status === "failed" || result.status === "unsupported") {
+  if (result.status === "unsupported" || (result.status === "failed" && !result.completedWorkflowFailure)) {
     throw new Error(result.message || `Profile continuation dispatch ended ${result.status}.`);
   }
+  return result;
 }
 
 export function pendingProfileContinuationEventIds(db: SqliteDatabase): number[] {
@@ -142,7 +143,10 @@ export function pendingProfileContinuationEventIds(db: SqliteDatabase): number[]
         AND NOT EXISTS (
           SELECT 1
             FROM job_events AS handled
-           WHERE handled.idempotency_key = 'profile-continuation-handled:' || updated.event_id
+           WHERE handled.idempotency_key IN (
+             'profile-continuation-handled:' || updated.event_id,
+             'profile-continuation-failed:' || updated.event_id
+           )
         )
       ORDER BY updated.event_id`,
   ).all(LOCAL_TENANT) as Array<{ event_id: number }>).map((row) => Number(row.event_id));
@@ -199,6 +203,26 @@ export function markProfileContinuationEventsHandled(
   db.transaction(() => {
     insertProfileContinuationHandledEvents(db, eventIds, dispatchedEventId, occurredAt);
   })();
+}
+
+export function markProfileContinuationFailed(
+  db: SqliteDatabase,
+  eventId: number,
+  failure: NonNullable<ActionDispatchResult["completedWorkflowFailure"]>,
+  occurredAt = new Date().toISOString(),
+): void {
+  db.prepare(
+    `INSERT OR IGNORE INTO job_events (
+       tenant_id, job_id, identity_version, stage, event_type, level,
+       message, occurred_at, payload_json, idempotency_key
+     ) VALUES (?, NULL, 1, NULL, 'ProfileContinuationFailed', 'error', ?, ?, ?, ?)`,
+  ).run(
+    LOCAL_TENANT,
+    "Profile preparation failed. Review the failed job stages and retry them.",
+    occurredAt,
+    JSON.stringify({ sourceEventId: eventId, status: "failed", ...failure }),
+    `profile-continuation-failed:${eventId}`,
+  );
 }
 
 function insertProfileContinuationHandledEvents(

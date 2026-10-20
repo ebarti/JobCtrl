@@ -385,7 +385,10 @@ subprocess. Method-specific calls use the shared contract boundary described in
 [Contracts, Types & API Boundaries](contracts-types-and-api-boundaries.md#typescript-to-python-json-rpc):
 parameters validate before transport and results validate before consumption.
 Awaited profile continuations require completed pipeline results before a
-handled marker is persisted. Workflow-mode handlers return a workflow spec that the RPC server
+handled marker is persisted. Confirmed terminal failures receive a separate,
+idempotent `ProfileContinuationFailed` event instead, so restarting does not
+replay an immutable failed result or block later profile revisions. Uncertain
+dispatches remain pending for reattachment. Workflow-mode handlers return a workflow spec that the RPC server
 starts on Temporal (`run_stage`,
 `rescore_job`, `rescore_jobs_not_on_current_scoring_policy`, `tailor_job`,
 `retailor_job`, `retailor_current_policy`, `refresh_compensation`, `apply`,

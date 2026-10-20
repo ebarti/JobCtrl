@@ -40,7 +40,10 @@ profile boundary works in this order:
 5. **Propagation remains explicit and recoverable.** A profile-content change
    may queue replacement tailoring when eligible accepted resumes exist and the
    worker is healthy. The save itself does not depend on that follow-up, and a
-   failed replacement does not remove the last accepted material. An Apply
+   failed replacement does not remove the last accepted material. A completed
+   failed continuation remains visible as a failure, while newer profile
+   revisions can proceed; restarting does not retry that completed workflow.
+   Uncertain dispatches reattach to their existing workflow. An Apply
    approval bound to an older profile version becomes stale rather than being
    reused against changed evidence.
 

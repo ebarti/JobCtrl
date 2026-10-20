@@ -17,6 +17,9 @@ availability remains unknown. Confirmed unavailable postings stop new work;
 failed checks preserve accepted materials and approvals. Use Job
 Detail’s **Check availability** to retry; see
 [saved posting availability](enrichment-and-extraction.md#saved-posting-availability).
+When a posting becomes unavailable after batch selection, that member is skipped
+while the other selected jobs continue. A temporarily unavailable source remains
+a reported item error; it does not prevent its peers from finishing.
 
 ## How JobCtrl Chooses A Resume
 
