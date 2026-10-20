@@ -58,6 +58,30 @@ def test_warm_acquisition_rebinds_after_effort_edit(configured_route, monkeypatc
     assert second.reasoning_effort == "max"
 
 
+@pytest.mark.parametrize("primary", ["codex:gpt-6.1-sol", "claude:synthetic-primary"])
+def test_warm_acquisition_rebinds_after_cached_fallback_effort_edit(configured_route, monkeypatch, primary):
+    def make_backend(provider, model):
+        effort = criteria_provider.read_codex_reasoning_effort(model) if provider == "codex" else None
+        return SimpleNamespace(
+            provider_id=provider, model=model, reasoning_effort=effort,
+            chat_json=lambda *_args, **_kwargs: {"observed_effort": effort},
+        )
+
+    monkeypatch.setattr(llm_client, "_make_backend", make_backend)
+    configured_route["default_llm_model"] = primary
+    configured_route["codex_reasoning_efforts"] = {"gpt-6-astra": "low"}
+    messages = [LlmMessage(role="user", content="Synthetic routing probe")]
+    options = {"model": "codex:gpt-6-astra", "response_schema": {"type": "object"}}
+    first = llm_client.get_llm_adapter()
+    assert first.chat_json(messages, **options) == {"observed_effort": "low"}
+    configured_route["codex_reasoning_efforts"]["gpt-6-astra"] = "max"
+    second = llm_client.get_llm_adapter()
+    assert second is not first
+    assert second.chat_json(messages, **options) == {"observed_effort": "max"}
+    assert first.chat_json(messages, **options) == {"observed_effort": "low"}
+    assert llm_client.get_llm_adapter() is second
+
+
 def test_saved_pin_does_not_fail_over_when_route_is_unavailable(configured_route):
     llm_client.get_llm_adapter()
     record_provider_failure("codex", "gpt-6.1-sol", ProviderCallError(ProviderFailureEnvelope(

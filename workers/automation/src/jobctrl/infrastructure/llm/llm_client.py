@@ -930,7 +930,11 @@ def get_llm_adapter() -> LlmAdapter:
             )
             from jobctrl.infrastructure.scoring.criteria_provider import read_codex_reasoning_effort
 
-            effort_changed = _singleton.provider_id == "codex" and _singleton.reasoning_effort != read_codex_reasoning_effort(_singleton.model)
+            effort_changed = any(
+                getattr(backend, "provider_id", None) == "codex"
+                and getattr(backend, "reasoning_effort", None) != read_codex_reasoning_effort(backend.model)
+                for backend in tuple(_singleton._clients.values())
+            )
             if selection != _singleton._default_selection or effort_changed:
                 _singleton = LlmAdapter(_resolved_default=selection)
                 _singleton_default_provider = selection[0]
