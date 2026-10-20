@@ -490,6 +490,7 @@ class CodexSdkBackend:
             try:
                 async with factory() as codex:
                     thread = await codex.thread_start(
+                        ephemeral=True,
                         approval_mode=approval(),
                         model=self.model,
                         config={"model_reasoning_effort": effort},

@@ -24,9 +24,12 @@ pinned to ``high`` (D-18). Cancellation = cancel the wrapping asyncio task.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
-from collections.abc import Callable
+import tempfile
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -60,9 +63,7 @@ _CODEX_SCOPE = "jobctrl.analysis.codex"
 
 # Disable Codex plugins/apps and force prompt-driven commands into a minimal
 # read-only permissions profile. The profile is supplied as a TOML CLI override
-# because openai-codex==0.1.0b3 exposes only legacy Sandbox presets in its
-# public Python wrapper, while the pinned app-server runtime supports
-# default_permissions profiles.
+# to keep the named filesystem policy bound to the pinned app-server runtime.
 _CODEX_PERMISSION_PROFILE = "jobctrl-analysis-readonly"
 _CODEX_STATIC_CONFIG_OVERRIDES = (
     "features.plugins=false",
@@ -177,16 +178,64 @@ def _codex_config_overrides(codex_binary: Path) -> tuple[str, ...]:
     return (*_CODEX_STATIC_CONFIG_OVERRIDES, _codex_permission_profile_override(codex_binary))
 
 
-def _codex_config_kwargs(dirs: _CodexHomeDirs) -> dict[str, Any]:
+def _codex_config_kwargs(dirs: _CodexHomeDirs, runtime_root: Path) -> dict[str, Any]:
     """Build one SDK configuration bound to the exact sandbox-permitted binary."""
 
     codex_binary = _canonical_codex_binary()
     return {
         "cwd": str(dirs.workdir),
         "env": _isolated_codex_env(dirs.codex_home, dirs.process_home),
-        "config_overrides": _codex_config_overrides(codex_binary),
+        "config_overrides": (
+            *_codex_config_overrides(codex_binary),
+            f"sqlite_home={json.dumps(str(runtime_root / 'sqlite'))}",
+            f"log_dir={json.dumps(str(runtime_root / 'logs'))}",
+        ),
         "codex_bin": str(codex_binary),
     }
+
+
+@asynccontextmanager
+async def _codex_client_context(
+    async_codex: Any, codex_config: Any, *, ensure_auth: bool
+) -> AsyncIterator[Any]:
+    """Keep auth stable while tying provider databases/logs to client lifetime.
+
+    Close the app server before removing its private runtime directory, including
+    on failed startup, provider errors and cancellation. Never clean up the
+    credential home or any pre-existing provider state.
+    """
+
+    dirs = _prepare_isolated_codex_home(ensure_auth=ensure_auth)
+    with tempfile.TemporaryDirectory(prefix="jobctrl-codex-runtime-") as runtime_dir:
+        runtime_root = Path(runtime_dir).resolve()
+        client = async_codex(config=codex_config(**_codex_config_kwargs(dirs, runtime_root)))
+        # The pinned SDK offloads process creation to a worker thread. Joining
+        # just that operation prevents close() racing an unpublished process,
+        # while the subsequent local initialize handshake remains cancellable.
+        startup = asyncio.create_task(client._client.start())
+        try:
+            await asyncio.shield(startup)
+            await client.__aenter__()
+            yield client
+        finally:
+            async def stop() -> None:
+                try:
+                    await startup
+                finally:
+                    await client.close()
+
+            shutdown = asyncio.create_task(stop())
+            interrupted = False
+            while True:
+                try:
+                    await asyncio.shield(shutdown)
+                    break
+                except asyncio.CancelledError:
+                    if shutdown.cancelled():
+                        raise
+                    interrupted = True
+            if interrupted:
+                raise asyncio.CancelledError()
 
 
 def _load_async_codex_factory() -> AsyncCodexFactory:
@@ -203,8 +252,7 @@ def _load_async_codex_factory() -> AsyncCodexFactory:
     from openai_codex import AsyncCodex, CodexConfig  # type: ignore[import-untyped]
 
     def _make() -> Any:
-        dirs = _prepare_isolated_codex_home()
-        return AsyncCodex(config=CodexConfig(**_codex_config_kwargs(dirs)))
+        return _codex_client_context(AsyncCodex, CodexConfig, ensure_auth=True)
 
     return _make
 
@@ -226,8 +274,7 @@ def _load_catalog_async_codex_factory() -> AsyncCodexFactory:
     from openai_codex import AsyncCodex, CodexConfig  # type: ignore[import-untyped]
 
     def _make() -> Any:
-        dirs = _prepare_isolated_codex_home(ensure_auth=False)
-        return AsyncCodex(config=CodexConfig(**_codex_config_kwargs(dirs)))
+        return _codex_client_context(AsyncCodex, CodexConfig, ensure_auth=False)
 
     return _make
 
@@ -273,6 +320,7 @@ class CodexAnalysisAdapter:
             try:
                 async with factory() as codex:  # reuses existing Codex login (D-04)
                     thread = await codex.thread_start(
+                        ephemeral=True,
                         # Analysis has no local-tool use case. Never auto-review or
                         # approve an escalation even if a future runtime exposes a
                         # tool despite the locked-down feature configuration.
