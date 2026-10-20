@@ -164,7 +164,7 @@ function recoveryStateLabel(snapshot: PipelineOperationsSnapshot): string {
     ? snapshot.execution.workflowStatus === "in_progress"
       ? "Checking current run"
       : "Checking previous run"
-    : "Checking Discover run";
+    : "Checking pipeline activity";
   return snapshot.projectionCoverage?.status === "incomplete"
     ? "Previous run incomplete"
     : snapshot.projectionCoverage?.status === "retrying"
@@ -993,6 +993,7 @@ function humanStageLabel(
 function activeStageSummary(snapshot: PipelineOperationsSnapshot): string {
   if (snapshot.activeStageCounts === null) return "Stage breakdown unavailable";
   if (snapshot.activeStageCounts.length === 0) {
+    if (snapshot.activeItemsTotal === null) return "Stage breakdown unavailable";
     return snapshot.activeItemsTotal && snapshot.activeItemsTotal > 0
       ? `${snapshot.activeItemsTotal} unclassified runtime ${
           snapshot.activeItemsTotal === 1 ? "activity" : "activities"
@@ -1040,6 +1041,21 @@ function ProjectionCoverageNotice({
 }) {
   const coverage = recoveryCoverage(snapshot);
   if (!coverage) return null;
+  if (snapshot.execution === null) {
+    return (
+      <Alert className="pipeline-coverage-alert">
+        <IconAlertTriangle aria-hidden="true" />
+        <AlertTitle>Discover run not identified</AlertTitle>
+        <AlertDescription>
+          JobCtrl has not identified a Discover run for this activity. Standalone
+          job preparation may still be running. Selected-run completion counts and
+          estimates are unavailable until a run is identified and its records are
+          verified. This page checks for updates every 15 seconds while visible.
+          Current worker, queue, and activity counts remain visible below.
+        </AlertDescription>
+      </Alert>
+    );
+  }
   const isRetrying = coverage.status === "retrying";
   const isIncomplete = coverage.status === "incomplete";
   const currentRun = snapshot.execution?.workflowStatus === "in_progress";
@@ -1690,7 +1706,13 @@ function PipelineInspector({
             ))}
           </ol>
         ) : (
-          <Empty title="No active work is visible in the current runtime inventory." />
+          <Empty
+            title={snapshot.activeItemsTotal === null
+              ? "Active work details are unavailable."
+              : snapshot.activeItemsTotal > 0
+                ? "No details were returned for the active work."
+                : "No active work is visible in the current runtime inventory."}
+          />
         )}
       </DisclosureSection>
     </div>

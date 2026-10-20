@@ -466,10 +466,17 @@ describe("PipelinesView", () => {
     expect(activeWork).toHaveTextContent("tailor-runtime-3");
   });
 
-  it("keeps unknown recovery totals and update time explicit before execution metadata is available", async () => {
+  it.each([
+    { label: "known stage counts", counts: [{ stage: "score" as const, count: 4 }], summary: "Score 4" },
+    { label: "unknown stage details", counts: [], summary: "Stage breakdown unavailable" },
+  ])("does not invent a Discover run or idle inventory with $label", async ({ counts, summary }) => {
     await renderPipelineOperations({
       ...pipelinesRecoveringProjectionSnapshot,
       execution: null,
+      activeItems: [],
+      activeItemsTotal: null,
+      activeItemsTruncated: null,
+      activeStageCounts: counts,
       projectionCoverage: {
         status: "recovering",
         mode: null,
@@ -484,16 +491,20 @@ describe("PipelinesView", () => {
     });
 
     const coverageAlert = screen.getByRole("alert");
-    expect(coverageAlert).toHaveTextContent("Checking Discover run records");
-    expect(coverageAlert).toHaveTextContent("0 linked jobs recorded so far; 0 stage records stored so far");
-    expect(coverageAlert).toHaveTextContent("The total record count is not available yet");
-    expect(coverageAlert).toHaveTextContent("No record update has been reported yet");
+    expect(coverageAlert).toHaveTextContent("Discover run not identified");
+    expect(coverageAlert).toHaveTextContent("Standalone job preparation may still be running");
+    expect(coverageAlert).toHaveTextContent("Selected-run completion counts and estimates are unavailable");
     expect(coverageAlert).toHaveTextContent("updates every 15 seconds while visible");
+    expect(coverageAlert).not.toHaveTextContent("JobCtrl is verifying");
+    expect(coverageAlert).not.toHaveTextContent("linked jobs recorded");
     expect(coverageAlert).not.toHaveTextContent("previous Discover run");
     expect(coverageAlert).not.toHaveTextContent("0 of 0");
     expect(coverageAlert.querySelector("time")).not.toBeInTheDocument();
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     expect(screen.queryByText("No work remaining")).not.toBeInTheDocument();
+    expect(getLivePipelineMetric("Active work")).toHaveTextContent(`Active workUnknown${summary}`);
+    expect(screen.getByText("Active work details are unavailable.")).toBeInTheDocument();
+    expect(screen.queryByText("No active work is visible in the current runtime inventory.")).not.toBeInTheDocument();
   });
 
   it("retries the run record check automatically without hiding live telemetry", async () => {

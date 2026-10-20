@@ -827,6 +827,11 @@ The pipeline package (`jobctrl/pipeline/`) is split into `runner.py`
 Temporal batch orchestrator). The deleted in-process `run_pipeline` engine is
 not re-exported; every CLI, API, and local-action entry point starts a workflow.
 
+Preparation cancellation during `check_spend_budget` records a canceled
+outcome, including when Temporal wraps cancellation in an `ActivityError`.
+No preparation step runs after that canceled preflight; real budget failures
+retain their failure code.
+
 All workflows that can spend LLM tokens run `check_spend_budget` with an
 explicit product lane before their heavy activity. Provider and retry
 boundaries repeat the same check. Usage is recorded in `llm_spend` by UTC day

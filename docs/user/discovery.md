@@ -312,6 +312,10 @@ refreshes every 15 seconds, including before execution details are available.
 Fresh shared-worker and queue facts remain visible; selected-run completion
 counts and ETAs appear only after the exact record sets have been verified.
 Partial rows or live-worker telemetry never become a false completion claim.
+If no Discover execution has been identified, Pipelines says so instead of
+claiming that a run is being verified. Standalone preparation of imported jobs
+may still occupy workers. Current activity counts remain visible, and a missing
+activity-detail inventory stays unavailable rather than becoming zero work.
 
 ### Stop Or Recover A Discover Run
 

@@ -12,7 +12,7 @@ import pytest
 from temporalio import activity
 from temporalio.client import WorkflowFailureError
 from temporalio.common import RetryPolicy, WorkflowIDConflictPolicy
-from temporalio.exceptions import ActivityError, ApplicationError
+from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
 from .temporal_env import time_skipping_env
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
@@ -25,6 +25,7 @@ from jobctrl.preparation import workflow as prep_workflow_mod
 from jobctrl.preparation.workflow import JobPreparationInput, JobPreparationWorkflow
 from jobctrl.scoring.activities import score_job_activity
 from jobctrl.llm import SpendBudgetStatus
+from jobctrl.infrastructure.temporal.finalize import WorkflowOutcomeInput
 
 
 _JOB_ID = JobId("10000000-0000-4000-8000-000000000001")
@@ -406,6 +407,54 @@ async def test_duplicate_preparation_workflow_start_attaches_without_duplicate_s
             assert (await second.result()).steps_completed == ["score", "tailor", "cover", "pdf"]
 
     assert calls == ["score", "tailor", "cover", "pdf"]
+
+
+@pytest.mark.asyncio
+async def test_preparation_preflight_cancellation_records_canceled_without_running_steps() -> None:
+    queue = f"prep-cancel-preflight-{uuid.uuid4()}"
+    check_started = asyncio.Event()
+    outcomes: list[WorkflowOutcomeInput] = []
+    calls: list[str] = []
+
+    @activity.defn(name="record_workflow_started")
+    async def record_started(_payload) -> None:
+        return None
+
+    @activity.defn(name="record_workflow_outcome")
+    async def record_outcome(payload: WorkflowOutcomeInput) -> None:
+        outcomes.append(payload)
+
+    @activity.defn(name="check_spend_budget")
+    async def pending_budget(_payload) -> None:
+        check_started.set()
+        await asyncio.Event().wait()
+
+    @activity.defn(name="score_job")
+    async def score_job(_payload) -> dict[str, str]:
+        calls.append("score")
+        return {"status": "ok"}
+
+    payload = JobPreparationInput(
+        tenant_id="local", job_id=_JOB_ID, steps=["score"], target_version="1",
+        idempotency_key=f"preparation:{uuid.uuid4().hex}",
+    )
+    async with time_skipping_env() as env:
+        async with Worker(
+            env.client, task_queue=queue, workflows=[JobPreparationWorkflow],
+            activities=[record_started, record_outcome, pending_budget, score_job],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            handle = await env.client.start_workflow(
+                JobPreparationWorkflow.run, payload, id=f"prep-{uuid.uuid4()}", task_queue=queue,
+            )
+            await asyncio.wait_for(check_started.wait(), timeout=5)
+            await handle.cancel()
+            with pytest.raises(WorkflowFailureError) as error:
+                await handle.result()
+            assert isinstance(error.value.cause, CancelledError)
+
+    assert calls == []
+    assert [(item.status, item.error_code) for item in outcomes] == [("canceled", "workflow_canceled")]
 
 
 @pytest.mark.asyncio

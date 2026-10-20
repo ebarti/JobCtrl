@@ -119,7 +119,7 @@ test("Discover explains occupied slots and unlocks automatically after the runti
   expect(errors).toEqual([]);
 });
 
-test("pending Discover records show progress and become ready on the next automatic refresh", async ({ page }, testInfo) => {
+test("Discover progress waits for a run identity and becomes ready through automatic refresh", async ({ page }, testInfo) => {
   test.setTimeout(60_000);
   await page.setViewportSize({ width: 1216, height: 1228 });
   const errors: string[] = [];
@@ -127,16 +127,30 @@ test("pending Discover records show progress and become ready on the next automa
   page.on("console", (message) => {
     if (message.type() === "error" || message.type() === "warning") errors.push(message.text());
   });
-  const pending: PipelineOperationsSnapshot = {
+  const unselected: PipelineOperationsSnapshot = {
     ...pipelinesRecoveringProjectionSnapshot,
     execution: null,
+    activeItems: [],
+    activeItemsTotal: null,
+    activeItemsTruncated: null,
+    activeStageCounts: [{ stage: "score", count: 4 }],
   };
-  let recordsReady = false;
+  const pending = pipelinesRecoveringProjectionSnapshot;
+  let phase: "unselected" | "recovering" | "ready" = "unselected";
   await page.route("**/v1/pipeline/operations", (route) => route.fulfill({
-    json: recordsReady ? pipelinesDiscoveringSnapshot : pending,
+    json: phase === "ready" ? pipelinesDiscoveringSnapshot : phase === "recovering" ? pending : unselected,
   }));
   await page.goto("/pipelines");
-  const alert = page.getByRole("alert").filter({ hasText: "Checking Discover run records" });
+  const unidentified = page.getByRole("alert").filter({ hasText: "Discover run not identified" });
+  await expect(unidentified).toBeVisible();
+  await expect(unidentified).not.toContainText("JobCtrl is verifying");
+  await expect(unidentified).not.toContainText("linked jobs recorded");
+  await expect(page.getByText("Active work details are unavailable.")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Live pipeline", exact: true })).toContainText("Score 4");
+  await page.screenshot({ path: testInfo.outputPath("discover-identity-unavailable.png") });
+  phase = "recovering";
+  const alert = page.getByRole("alert").filter({ hasText: "Checking current run records" });
+  await expect(alert).toBeVisible({ timeout: 20_000 });
   await expect(alert).toBeVisible();
   await expect(alert).toContainText("15 of 72 linked jobs recorded");
   await expect(alert).toContainText("3 of 8 stage records stored");
@@ -146,7 +160,7 @@ test("pending Discover records show progress and become ready on the next automa
   await expect(page.getByRole("region", { name: "Live pipeline", exact: true })).not.toContainText("previous run");
   await expect(page.getByRole("region", { name: "Plan sources stage" })).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("discover-record-check-progress.png") });
-  recordsReady = true;
+  phase = "ready";
   await expect(alert).toHaveCount(0, { timeout: 20_000 });
   await expect(page.getByRole("region", { name: "Plan sources stage" })).toBeVisible();
   await expect(page.locator("vite-error-overlay")).toHaveCount(0);

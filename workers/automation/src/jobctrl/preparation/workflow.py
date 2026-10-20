@@ -111,29 +111,22 @@ class JobPreparationWorkflow:
             if _preparation_spends(payload):
                 await _check_spend(payload)
             result = await self._execute_steps(payload)
-        except CancelledError:
-            await emit_workflow_outcome(
-                tenant_id=payload.tenant_id,
-                workflow_type="JobPreparationWorkflow",
-                status="canceled",
-                started_at=started_at,
-                error_code="workflow_canceled",
-                error_message="Workflow canceled by request.",
-                expected_app_dir=payload.expected_app_dir,
-                expected_db_path=payload.expected_db_path,
-            )
-            raise
         except Exception as exc:  # noqa: BLE001
+            canceled = isinstance(exc, CancelledError) or (
+                isinstance(exc, ActivityError) and _activity_error_was_cancelled(exc)
+            )
             await emit_workflow_outcome(
                 tenant_id=payload.tenant_id,
                 workflow_type="JobPreparationWorkflow",
-                status="failed",
+                status="canceled" if canceled else "failed",
                 started_at=started_at,
-                error_code=_exception_error_code(exc) or "workflow_error",
-                error_message=str(exc),
+                error_code="workflow_canceled" if canceled else _exception_error_code(exc) or "workflow_error",
+                error_message="Workflow canceled by request." if canceled else str(exc),
                 expected_app_dir=payload.expected_app_dir,
                 expected_db_path=payload.expected_db_path,
             )
+            if canceled and not isinstance(exc, CancelledError):
+                raise CancelledError("Workflow canceled by request.") from exc
             raise
 
         if result.failure:
