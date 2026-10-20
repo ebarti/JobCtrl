@@ -388,6 +388,21 @@ test("Jobs compensation source-conflict evidence stays product-visible without u
   await expect(drawer).toBeVisible({ timeout: 10_000 });
   await drawer.getByRole("button", { name: "Sections" }).click();
   await page.getByRole("button", { name: "Expand all" }).click();
+  for (const width of [2288, 390]) {
+    await page.setViewportSize({ width, height: 860 });
+    const descriptionWidth = await drawer.locator(".job-detail-description .description-text").evaluate((element) => {
+      const parent = element.parentElement!;
+      const style = getComputedStyle(parent);
+      return {
+        actual: element.getBoundingClientRect().width,
+        available: parent.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+        documentWidth: document.documentElement.clientWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+      };
+    });
+    expect(Math.abs(descriptionWidth.actual - descriptionWidth.available), `description fills its section at ${width}px`).toBeLessThanOrEqual(1);
+    expect(descriptionWidth.scrollWidth, `description wraps at ${width}px`).toBeLessThanOrEqual(descriptionWidth.documentWidth + 1);
+  }
 
   const compensation = drawer.getByRole("region", {
     name: "Compensation evidence",

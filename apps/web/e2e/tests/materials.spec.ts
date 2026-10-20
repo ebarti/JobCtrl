@@ -334,6 +334,7 @@ test("Generate materials: button enabled → dispatch queued → ResumeApproved 
   // Expand the audit history disclosure and assert the approval surfaced. The
   // disclosure summary is the stable target (the body may briefly render the
   // empty state before the injected event arrives via SSE).
+  await drawer.getByRole("button", { name: /· Audit history/ }).click();
   const auditDetails = drawer.locator("details.job-audit-disclosure");
   await auditDetails.locator("summary", { hasText: "Technical details" }).click();
   await expect(auditDetails.getByText(/resume approved/i)).toBeVisible({ timeout: 30_000 });

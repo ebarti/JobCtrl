@@ -5,7 +5,7 @@ import { ResetStaleScoresButton } from "../../contexts/scoring/components/ResetS
 import { ScoreCorrectionControl } from "../../contexts/scoring/components/ScoreCorrectionControl.js";
 import { ScoreStalenessBadge } from "../../contexts/scoring/components/ScoreStalenessBadge.js";
 import { ContextHelp } from "../../shared/ui/context-help.js";
-import { fitScoreHelp } from "./fit-score-help.js";
+import { fitScoreHelp, requirementFitScoreContext } from "./fit-score-help.js";
 
 const metricHelp = {
   "Fit score": "The latest stored candidate fit score, on a 1–10 scale. It may come from policy scoring or a saved manual correction; inspect the score record before relying on it.",
@@ -51,7 +51,7 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
           <dl className="job-audit-metrics" aria-label="Ranking summary">
             <Metric
               label="Fit score"
-              help={fitScoreHelp(job)}
+              help={fitScoreHelp(job, requirementFitScoreContext(detail))}
               value={
                 job.fitScore === null ? "Not scored" : `${job.fitScore}/10`
               }

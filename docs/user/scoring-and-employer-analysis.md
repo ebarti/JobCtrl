@@ -81,6 +81,12 @@ shows the persisted assessment, evidence links, and contribution for every
 row. Resolved profile evidence is the support you can audit; an unavailable
 reference is not proof of a match.
 
+Job Detail also shows the saved weighted coverage beside the score, including
+the recorded blocking requirements and the formula's cap when applicable. This
+context remains visible while the detail sections are collapsed. It appears
+only for the matching job and score version; a manual correction keeps its own
+explanation instead of being attributed to the earlier requirement report.
+
 ### When Requirement Rows Are Unavailable
 
 The requirement-led formula runs only when the scorer returns at least one

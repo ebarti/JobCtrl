@@ -87,6 +87,7 @@ test("Interview prep: explicit generation queues and accepted prep surfaces with
 
   const drawer = page.getByRole("article", { name: "Job details" });
   await expect(drawer).toBeVisible({ timeout: 10_000 });
+  await drawer.getByRole("button", { name: /· Interview prep/ }).click();
 
   const generateButton = drawer.getByRole("button", { name: /generate interview prep/i });
   await expect(generateButton).toBeEnabled();

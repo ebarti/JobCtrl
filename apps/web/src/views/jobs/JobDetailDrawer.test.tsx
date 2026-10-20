@@ -23,6 +23,7 @@ import { jobsSearchSchema } from "../../routes/-jobs.search.js";
 import { server } from "../../test/msw/server.js";
 import { buildProviderHarness } from "../../test/render.js";
 import {
+  blockedRequirementFitReport,
   populatedEmployerAnalysis,
   populatedRequirementFitReport,
 } from "../../test/fixtures/materials-inspector.js";
@@ -88,6 +89,23 @@ async function expandDetailSections() {
 }
 
 describe("<JobDetailDrawer>", () => {
+  it("shows requirement coverage and the recorded blocker beside a capped score with sections collapsed", async () => {
+    server.use(http.get("*/v1/jobs/:jobKey", () => HttpResponse.json(makeJobDetail(
+      { ...sampleJob, jobKey: "job-1", scoreVersion: 4, fitScore: 4 },
+      { requirementFitReport: blockedRequirementFitReport },
+    ))));
+    const user = userEvent.setup();
+    renderJobDetailDrawer("job-1");
+    const context = await screen.findByRole("note", { name: "Requirement score context" });
+    expect(context).toBeVisible();
+    expect(context).toHaveTextContent("80% weighted requirement coverage");
+    expect(context).toHaveTextContent("The posting requires a current clearance.");
+    expect(context).toHaveTextContent("caps scores with blocked requirements at 4/10");
+    expect(screen.getByRole("button", { name: /01 · Description/ })).toHaveAttribute("aria-expanded", "false");
+    await user.click(screen.getByRole("button", { name: "Help for Fit score" }));
+    expect(await screen.findByRole("dialog", { name: "Fit score explanation" })).toHaveTextContent(context.textContent!);
+  });
+
   it("keeps a score-correction draft mounted across collapse and detail refetch", async () => {
     const user = userEvent.setup();
     const { queryClient } = renderJobDetailDrawer("job-1");
