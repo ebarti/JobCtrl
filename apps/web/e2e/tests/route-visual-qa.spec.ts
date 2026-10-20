@@ -2508,6 +2508,8 @@ test("Job Detail requirement-fit card has visual regression coverage", async ({
   );
   const drawer = page.getByRole("article", { name: "Job details" });
   await expect(drawer).toBeVisible({ timeout: 30_000 });
+  await drawer.getByRole("button", { name: "Sections", exact: true }).click();
+  await page.getByRole("button", { name: "Expand all", exact: true }).click();
 
   const drawerRequirement = drawer
     .locator(".employer-analysis-requirement")

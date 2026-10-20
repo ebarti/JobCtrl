@@ -386,6 +386,8 @@ test("Jobs compensation source-conflict evidence stays product-visible without u
 
   const drawer = page.getByRole("article", { name: "Job details" });
   await expect(drawer).toBeVisible({ timeout: 10_000 });
+  await drawer.getByRole("button", { name: "Sections" }).click();
+  await page.getByRole("button", { name: "Expand all" }).click();
 
   const compensation = drawer.getByRole("region", {
     name: "Compensation evidence",
@@ -393,11 +395,7 @@ test("Jobs compensation source-conflict evidence stays product-visible without u
   const triage = drawer.getByRole("region", { name: "Job audit triage" });
   const description = drawer.locator("section.job-detail-description");
   await expectRegionBefore(triage, compensation, "triage before compensation");
-  await expectRegionBefore(
-    compensation,
-    description,
-    "compensation before description",
-  );
+  await expectRegionBefore(description, triage, "description before triage");
 
   await expect(
     compensation.getByRole("heading", { name: "Compensation" }),
@@ -490,6 +488,12 @@ test("Job detail: keyboard activation opens requirement fit, stages, and artifac
   await expect(page).toHaveURL(/\/jobs\/.+/);
   const drawer = page.getByRole("article", { name: "Job details" });
   await expect(drawer).toBeVisible({ timeout: 10_000 });
+  const initialTriggers = drawer.locator(".job-detail-major-section > .configuration-section__header [data-slot='collapsible-trigger']");
+  await expect(initialTriggers.first()).toHaveText(/01 · Description/);
+  await expect(initialTriggers).toHaveCount(13);
+  await expect(drawer.locator(".job-detail-major-section > .configuration-section__header [aria-expanded='true']")).toHaveCount(0);
+  await drawer.getByRole("button", { name: "Sections" }).click();
+  await page.getByRole("button", { name: "Expand all" }).click();
   await expect(
     drawer.getByRole("heading", { name: "Preparation diagnostics", exact: true }),
   ).toBeVisible();
@@ -558,6 +562,7 @@ test("Job detail: keyboard activation opens requirement fit, stages, and artifac
     timeout: 30_000,
   });
   await expect(page).toHaveURL(/sort=fit_score/);
+  await expect(drawer.locator(".job-detail-major-section > .configuration-section__header [aria-expanded='true']")).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
   const mobileArtifacts = page.locator("#job-detail-artifacts");
   await mobileArtifacts.scrollIntoViewIfNeeded();
