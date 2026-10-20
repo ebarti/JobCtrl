@@ -1,9 +1,10 @@
 # Recruiting Intermediaries
 
 JobCtrl records a posting source and a reported employer. It does not separately
-record a publishing intermediary and its claimed client. The proposed extension is an optional, posting-specific relationship
-observation. This page defines that future design; the relationship feature is
-not implemented.
+record a publishing intermediary and its claimed client. The proposed extension
+in [issue #953](https://github.com/ebarti/JobCtrl/issues/953) is an optional,
+posting-specific relationship observation. This page defines that future design;
+the relationship feature is not implemented.
 
 **Read this if** you need to distinguish recruiting agencies from hiring employers
 without changing job identity, unknown facts or supervised action ownership.
@@ -38,6 +39,16 @@ All source links in this section pin the inspected revision.
 
 ### Existing ownership
 
+The [Jobs columns](https://github.com/ebarti/JobCtrl/blob/f734ef8bf1d27e3219b2122aed089421f61b7ca8/apps/web/src/views/jobs/columns.tsx)
+render Company separately from posting/discovery Sources. Company filters use
+the reported company; source filters use acquisition-source fields. The
+[API query index](https://github.com/ebarti/JobCtrl/blob/f734ef8bf1d27e3219b2122aed089421f61b7ca8/apps/api/src/job-list-query.ts)
+applies literal substring filters, not organization or relationship resolution.
+The [job detail drawer](https://github.com/ebarti/JobCtrl/blob/f734ef8bf1d27e3219b2122aed089421f61b7ca8/apps/web/src/views/jobs/JobDetailDrawer.tsx)
+composes employer analysis, the independent company briefing and job-linked
+contacts, passing the reported company to the contact panel. These readers do
+not provide a separate publisher/client relationship view or confirmation action.
+
 Discovery keeps the reported company separate from the source board. Its exact
 content identity rules do not establish an agency/client relationship, and the
 scorer does not own a separate repost-equivalence decision. The Materials-owned
@@ -45,7 +56,26 @@ company briefing requires its own reviewed company identity. A posting-specific
 relationship must preserve these boundaries rather than rewriting the company,
 merging jobs or changing an eligibility decision.
 
-## Synthetic boundary examples
+Cross-source content identity introduced in
+[PR #212](https://github.com/ebarti/JobCtrl/pull/212) remains distinct from
+relationship evidence. Its shingle matching and the former title/location
+repost-score selection are superseded by the exact-identity and source-bound
+determination rules in [PR #1064](https://github.com/ebarti/JobCtrl/pull/1064).
+Neither historical mechanism establishes an intermediary's client.
+
+## Synthetic evidence
+
+A representative synthetic posting on `board.example` states: “Synthetic Agency
+is recruiting for an undisclosed client. The hiring employer is not disclosed.”
+Here the host is the acquisition location, Synthetic Agency is the stated
+recruiting intermediary, and the hiring employer remains unknown. These roles
+come from the authored source statement, not a name/domain heuristic. When its
+JSON-LD names Synthetic Agency as `hiringOrganization`, current manual capture
+preserves that label as the reported employer without creating a client field.
+With that organization field absent, capture uses `Unknown`; persistence keeps
+the company null and hydrates it as `Unknown`, never substituting the source
+host or the recruiter named in prose. Neither case implements relationship
+extraction or independently verifies the source's claim.
 
 The current identity functions have the following behavior for synthetic source
 observations with distinct posting URLs and native IDs. These examples describe
