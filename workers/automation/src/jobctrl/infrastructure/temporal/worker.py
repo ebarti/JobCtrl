@@ -19,6 +19,7 @@ from jobctrl.infrastructure.temporal.activity_runtime_telemetry import (
     ActivityRuntimeTelemetryInterceptor,
 )
 from jobctrl.infrastructure.temporal.concurrency import (
+    LOCAL_LIFECYCLE_ACTIVITY_SLOTS,
     activity_executor_max_workers,
     resolve_max_concurrent_activities,
 )
@@ -91,6 +92,7 @@ def build_worker(
         activities=activity_list,
         activity_executor=activity_executor,
         max_concurrent_activities=active_max_concurrent_activities,
+        max_concurrent_local_activities=LOCAL_LIFECYCLE_ACTIVITY_SLOTS,
         workflow_runner=SandboxedWorkflowRunner(
             restrictions=_PASSTHROUGH_RESTRICTIONS,
         ),

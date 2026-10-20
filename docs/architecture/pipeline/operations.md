@@ -678,6 +678,10 @@ defensive dashboard read keep them truthful on existing databases:
 - **Nothing stays "running" forever.** Finalize records the terminal outcome on
   every normal/cancel path; the describe-based reconciler backstops killed
   workers, timeouts, and dev-server history loss.
+  Short lifecycle writes use bounded local capacity independent of the remote
+  model-work pool, so completed intake can acknowledge its result while scoring
+  remains busy. Exact execution/event keys make those writes safe to repeat;
+  versioned replay retains the old remote lifecycle history.
 
 ## Recurring Saved Posting Checks
 

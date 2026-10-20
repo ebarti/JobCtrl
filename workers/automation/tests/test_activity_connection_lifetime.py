@@ -13,6 +13,31 @@ from jobctrl.infrastructure.temporal.run_in_activity import ActivityThreadPoolEx
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("is_local", [False, True])
+@pytest.mark.parametrize("fails", [False, True])
+async def test_local_work_never_heartbeats_while_remote_work_keeps_start_and_cleanup(monkeypatch, is_local, fails):
+    from jobctrl.infrastructure.temporal import run_in_activity
+
+    heartbeats = []
+    monkeypatch.setattr(run_in_activity, "_ACTIVITY_EXECUTOR", None)
+    monkeypatch.setattr("temporalio.activity.in_activity", lambda: True)
+    monkeypatch.setattr("temporalio.activity.info", lambda: SimpleNamespace(activity_type="synthetic", is_local=is_local))
+    monkeypatch.setattr("temporalio.activity.heartbeat", lambda message: heartbeats.append(message))
+
+    def run():
+        if fails:
+            raise RuntimeError("synthetic failure")
+        return "saved"
+
+    if fails:
+        with pytest.raises(RuntimeError, match="synthetic failure"):
+            await run_in_activity.run_blocking_with_heartbeat(run, starting_message="start")
+    else:
+        assert await run_in_activity.run_blocking_with_heartbeat(run, starting_message="start") == "saved"
+    assert heartbeats == ([] if is_local else ["start", "done"])
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("outcome", ["failure", "unfinished_success", "committed_success"])
 async def test_default_blocking_executor_releases_activity_writer(tmp_path, monkeypatch, outcome):
     from jobctrl.infrastructure.temporal import run_in_activity
@@ -112,7 +137,7 @@ def test_lifecycle_failure_releases_writer_before_activity_retry(tmp_path, monke
     peer = sqlite3.connect(path, timeout=0.1)
     try:
         with pytest.raises(RuntimeError, match="synthetic lifecycle failure"):
-            finalize._emit(None, None, SimpleNamespace(event_type="WorkflowFailed", payload={}))
+            finalize._emit(None, None, SimpleNamespace(event_type="WorkflowFailed", tenant_id="local", payload={}))
         peer.execute("INSERT INTO proof VALUES ('independent heartbeat')")
         peer.commit()
         expected = ["accepted artifact"]

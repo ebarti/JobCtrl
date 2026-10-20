@@ -173,7 +173,9 @@ async def run_blocking_with_heartbeat(
     Mirrors the pattern ``apply_activity`` uses, lifted into a reusable
     helper so the non-apply activities stop blocking the event loop.
     """
-    activity.heartbeat(starting_message)
+    heartbeat_supported = not (activity.in_activity() and activity.info().is_local)
+    if heartbeat_supported:
+        activity.heartbeat(starting_message)
     loop = asyncio.get_running_loop()
     blocking_executor = _activity_executor()
     # ``run_in_executor`` does not carry this coroutine's context into the
@@ -193,7 +195,8 @@ async def run_blocking_with_heartbeat(
             if task in done:
                 return await task
             else:
-                activity.heartbeat(progress_message)
+                if heartbeat_supported:
+                    activity.heartbeat(progress_message)
     except asyncio.CancelledError:
         if on_cancel is not None:
             on_cancel()
@@ -228,7 +231,8 @@ async def run_blocking_with_heartbeat(
         # Final heartbeat so a future post-loop delay regression doesn't
         # surface as a phantom dead activity. Never raise from cleanup.
         try:
-            activity.heartbeat("done")
+            if heartbeat_supported:
+                activity.heartbeat("done")
         except Exception:  # noqa: BLE001 — heartbeat outside activity ctx is fine
             pass
 

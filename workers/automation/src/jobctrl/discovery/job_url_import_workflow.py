@@ -16,7 +16,7 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
+from temporalio.exceptions import ActivityError, ApplicationError, CancelledError, is_cancelled_exception
 
 with workflow.unsafe.imports_passed_through():
     from jobctrl.infrastructure.temporal.finalize import (
@@ -1328,19 +1328,20 @@ class JobUrlImportWorkflow:
                 start_to_close_timeout=_DEFAULT_TIMEOUT,
                 retry_policy=_IMPORT_RETRY,
             )
-        except CancelledError:
-            await emit_workflow_outcome(
-                tenant_id=payload.tenant_id,
-                workflow_type="JobUrlImportWorkflow",
-                status="canceled",
-                started_at=started_at,
-                error_code="workflow_canceled",
-                error_message="Workflow canceled by request.",
-                expected_app_dir=payload.expected_app_dir,
-                expected_db_path=payload.expected_db_path,
-            )
-            raise
-        except ActivityError as exc:
+        except (CancelledError, ActivityError) as exc:
+            if is_cancelled_exception(exc):
+                await emit_workflow_outcome(
+                    tenant_id=payload.tenant_id,
+                    workflow_type="JobUrlImportWorkflow",
+                    status="canceled",
+                    started_at=started_at,
+                    error_code="workflow_canceled",
+                    error_message="Workflow canceled by request.",
+                    expected_app_dir=payload.expected_app_dir,
+                    expected_db_path=payload.expected_db_path,
+                )
+                raise CancelledError("Workflow canceled by request.") from exc
+            assert isinstance(exc, ActivityError)
             error_code = _activity_error_code(exc) or "job_url_import_failed"
             message = (
                 "Job URL import failed on the worker."

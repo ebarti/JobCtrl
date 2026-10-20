@@ -3,7 +3,7 @@
 Where parallelism actually lives in the pipeline, what bounds it, and which
 knobs are real. The short version: the normal local stack starts one Python
 worker, all matching workers share one Temporal (the workflow engine) task
-queue, activity slots are the execution-capacity boundary, and workflows fan
+queue, remote activity slots bound long-running execution, and workflows fan
 out primarily for isolation.
 
 **Read this if** you are tuning worker capacity, wondering why two stages are not
@@ -41,13 +41,17 @@ flowchart LR
 The normal local stack runs one long-lived worker process (`jobctrl worker`) on
 the `jobctrl-default` task queue. If more matching workers are running, Temporal
 may dispatch activities to any of them and the Operations read model aggregates
-their fresh capacity. Two numbers define each worker's capacity, both fixed at
+their fresh remote capacity. These limits are fixed at
 worker startup in
 `infrastructure/temporal/worker.py`:
 
-- **Activity slots** — the `worker_activity_slots` Setting in `config.json`
-  (default `4`): the maximum number of Temporal activities running at once,
+- **Remote activity slots** — the `worker_activity_slots` Setting in `config.json`
+  (default `4`): the maximum number of server-dispatched activities running at once,
   across all workflows.
+- **Local lifecycle slots** — two independent SDK slots for short workflow
+  start/outcome writes. They bypass the remote queue, so finalization does not
+  wait behind long model work. The existing two reserve executor threads serve
+  those writes. Remote activity-slot telemetry excludes this separate pool.
 - **Executor threads** — separate worker-owned Temporal-sync and blocking-stage
   `ThreadPoolExecutor` pools, each sized `slots + 2`, so blocking stage work
   never spills into the process default executor or starves Temporal's own
@@ -67,6 +71,10 @@ result, preserves the newer state, and leaves downstream preparation blocked.
 Workflow lifecycle activities also offload SQLite writes and close their
 connection on every exit. A failed projection refresh retains its committed
 canonical event for the next refresh.
+Lifecycle events have exact tenant/workflow/run/event-type idempotency keys,
+including across retries after a committed write. New histories use versioned
+[local activities](https://github.com/temporalio/documentation/blob/main/docs/design-patterns/local-activities.mdx);
+existing remote lifecycle histories retain their replay path.
 
 The worker heartbeat records the activity slots and configured executor width.
 `GET /v1/health` exposes the health

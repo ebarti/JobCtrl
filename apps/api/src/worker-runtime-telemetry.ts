@@ -100,7 +100,7 @@ export interface WorkerRuntimeTelemetrySnapshot {
   staleWorkerCount: number;
   invalidWorkerCount: number;
   configuredSlots: number;
-  /** Exact occupied slots across all executing Temporal activities. */
+  /** Exact occupied remote slots; local lifecycle writes use a separate pool. */
   activeSlots: number;
   availableSlots: number;
   executorThreads: number;

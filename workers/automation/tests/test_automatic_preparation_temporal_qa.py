@@ -238,11 +238,18 @@ async def wait_idle(client):
 
 async def history_types(client, workflow_id):
     history = await client.get_workflow_handle(workflow_id).fetch_history()
-    return [
-        event.activity_task_scheduled_event_attributes.activity_type.name
-        for event in history.events
-        if event.HasField("activity_task_scheduled_event_attributes")
-    ]
+    kinds = []
+    for event in history.events:
+        if event.HasField("activity_task_scheduled_event_attributes"):
+            kinds.append(event.activity_task_scheduled_event_attributes.activity_type.name)
+        elif event.HasField("marker_recorded_event_attributes"):
+            marker = event.marker_recorded_event_attributes
+            if marker.marker_name == "core_local_activity":
+                assert len(marker.details["data"].payloads) == 1
+                recorded = json.loads(marker.details["data"].payloads[0].data)
+                assert recorded["activity_type"] in {"record_workflow_started", "record_workflow_outcome"}
+                kinds.append(recorded["activity_type"])
+    return kinds
 
 
 @pytest.mark.asyncio
