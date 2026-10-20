@@ -59,6 +59,9 @@ last accepted resume.
 4. **Repair bounded failures.** Model findings and recorded fit gaps guide
    repairs under the configured attempt budget. A failed or unavailable
    determination blocks acceptance with an actionable failure status.
+   Cover-letter drafts also use that budget to correct malformed structure or
+   source IDs. Corrected drafts still pass factual and quality review before
+   acceptance; provider failures do not become content-repair attempts.
 5. **Persist accepted output.** Accepted text, PDF lineage, determinations,
    anchors and coverage are recorded together. Any optional voice rewrite
    receives fresh claim verification and quality review on the final text.

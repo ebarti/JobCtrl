@@ -126,6 +126,12 @@ source contributions. An inconsistent inventory is repaired as a structural
 binding failure; code never infers contribution from wording.
 Corrections receive the immediately rejected response as explicitly untrusted
 data so they can repair individual bindings against the original source inputs.
+Cover-letter generation also supplies its exact candidate-evidence allowlist and
+the single `posting` requirement ID. Draft schema, duplicate-line and foreign-ID
+failures consume the existing generation retry budget and return the rejected
+draft plus exact invalid IDs for correction. Every new call repeats lane/spend
+admission; provider and budget failures leave the loop. Code never remaps invented
+IDs, and repaired drafts still require independent claim and quality review.
 Exact citation/value failures also identify the rejected citation or compensation
 row in request-local correction data; exception text and persisted failure state
 remain code-only. Rejected resume reports retain only verifier-affirmed anchors,
