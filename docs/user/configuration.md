@@ -244,9 +244,13 @@ for every workflow until a real SDK call reports an availability failure.
 Authentication rejection excludes that provider from subsequent automatic
 attempts in the same process. Rate limits, transport failures and service
 outages exclude the failed model route. A durable retry acquires a fresh
-adapter through another ready route, so its recorded provider/model identify
-the call that actually ran. Existing adapters and accepted determinations are
-never relabeled. Explicit model pins remain bound and fail visibly when their
+adapter through another ready route. Claude SDK query and message-collection
+exceptions are classified at that execution boundary, including otherwise
+untyped SDK exceptions; the current analysis leg stops after that failure.
+Parsing and reviewing returned content remain outside this boundary. The
+retry's recorded provider/model identify the call that actually ran. Existing
+adapters and accepted determinations are never relabeled. Explicit model pins
+remain bound and fail visibly when their
 route is unavailable. Response/schema/citation failures and spend denial do
 not discard a provider. Restart or an explicit adapter reset clears observed
 availability failures; credential changes retain their restart requirement.

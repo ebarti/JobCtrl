@@ -162,6 +162,15 @@ does not retain or fall back to an earlier path.
 Each supplied non-null ID must be in the current catalog for a ready provider;
 `null` clears a choice even when that provider is unavailable. The setting
 contains provider and model IDs only, never credentials or account metadata.
+The same readiness and exact catalog membership checks apply to explicit
+`tailoringGeneratorModels` and `tailoringJudgeModel` choices. Provider-qualified
+IDs use that provider's catalog; legacy bare IDs must be uniquely offered by a
+ready provider and are saved with that provider prefix. Unoffered or ambiguous
+choices return `400 invalid_tailoring_model`, unavailable
+providers return `409 provider_not_ready`, and a failed live catalog returns
+`503 provider_models_failed`. Validation precedes every settings write, so an
+invalid model cannot partially save other changes. `null` and provider-neutral
+`default` material selections remain available without a catalog request.
 The settings and discovery responses also include effective-source and
 activation metadata for managed controls.
 

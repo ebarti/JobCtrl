@@ -11762,7 +11762,10 @@ describe("local TypeScript API", () => {
   });
 
   it("persists editable runtime settings", async () => {
-    const app = buildApp(options);
+    const app = buildApp({ ...options, providerDispatcher: {
+      call: vi.fn(async () => ({ jsonrpc: "2.0" as const, id: 1, result: providerModelsResult })),
+      close: vi.fn(async () => undefined),
+    } });
     const response = await app.inject({
       method: "PATCH",
       url: "/v1/settings",
@@ -11773,8 +11776,8 @@ describe("local TypeScript API", () => {
         dailyBudgetUsd: 19.75,
         laneTokenLimits: { scoring: 2500, tailoring: 5000 },
         analysisLegs: ["claude", "google"],
-        tailoringGeneratorModels: ["claude:sonnet", "codex:gpt-5.5"],
-        tailoringJudgeModel: "claude:opus",
+        tailoringGeneratorModels: ["codex:synthetic-model"],
+        tailoringJudgeModel: "default",
         applyMaxBudgetUsd: 7.5,
         applyTimeoutSeconds: 1200,
         scoreCriteria: "Prioritize platform security, DevSecOps, and leadership scope.",
@@ -11801,8 +11804,8 @@ describe("local TypeScript API", () => {
       daily_budget_usd: 19.75,
       lane_token_limits: { scoring: 2500, tailoring: 5000 },
       analysis_legs: ["claude", "google"],
-      tailoring_generator_models: ["claude:sonnet", "codex:gpt-5.5"],
-      tailoring_judge_model: "claude:opus",
+      tailoring_generator_models: ["codex:synthetic-model"],
+      tailoring_judge_model: "default",
       apply_max_budget_usd: 7.5,
       apply_timeout_seconds: 1200,
       score_criteria: "Prioritize platform security, DevSecOps, and leadership scope.",
@@ -12655,6 +12658,83 @@ describe("local TypeScript API", () => {
     expect(response.json().settings.preferredModels).toEqual({});
     expect(JSON.parse(fs.readFileSync(options.configPath, "utf8")).preferred_models).toEqual({});
     expect(call).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it.each([
+    { patch: { tailoringGeneratorModels: ["codex:synthetic-model", "codex:unoffered"] }, status: 400, error: "invalid_tailoring_model" },
+    { patch: { tailoringJudgeModel: "codex:unoffered", preferredModels: { codex: "synthetic-model" } }, status: 400, error: "invalid_tailoring_model" },
+    { patch: { tailoringGeneratorModels: ["claude:unoffered"] }, status: 409, error: "provider_not_ready" },
+    { patch: { tailoringJudgeModel: "claude:default" }, status: 409, error: "provider_not_ready" },
+    { patch: { tailoringJudgeModel: "unknown:unoffered" }, status: 400, error: "invalid_tailoring_model" },
+    { patch: { tailoringGeneratorModels: ["unoffered"] }, status: 400, error: "invalid_tailoring_model" },
+  ])("rejects unsupported material model choices atomically: $patch", async ({ patch, status, error }) => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({ jsonrpc: "2.0", id: 1, result: providerModelsResult }));
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const before = fs.readFileSync(options.configPath, "utf8");
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: { ...patch, dailyBudgetUsd: 17 } });
+    expect(response.statusCode, response.body).toBe(status);
+    expect(response.json().error).toBe(error);
+    expect(fs.readFileSync(options.configPath, "utf8")).toBe(before);
+    await app.close();
+  });
+
+  it("validates material and preferred choices against one current provider catalog", async () => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({ jsonrpc: "2.0", id: 1, result: providerModelsResult }));
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: {
+      tailoringGeneratorModels: ["default", "codex:synthetic-model"], tailoringJudgeModel: "codex:synthetic-model",
+      preferredModels: { codex: "synthetic-model" },
+    } });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().settings).toMatchObject({ tailoringGeneratorModels: ["default", "codex:synthetic-model"], tailoringJudgeModel: "codex:synthetic-model" });
+    expect(call).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it("permits offline clearing and default material model selection", async () => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => { throw new Error("offline catalog"); });
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    for (const patch of [{ tailoringGeneratorModels: ["default"], tailoringJudgeModel: null }, { tailoringGeneratorModels: null, tailoringJudgeModel: "default" }]) {
+      const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: patch });
+      expect(response.statusCode, response.body).toBe(200);
+    }
+    expect(call).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it.each([false, true])("binds a legacy bare material model only to a unique ready provider (ambiguous=%s)", async (ambiguous) => {
+    const app = buildApp({ ...options, providerDispatcher: {
+      call: vi.fn(async () => ({ jsonrpc: "2.0" as const, id: 1, result: {
+        providers: providerModelsResult.providers.map(provider => ambiguous && provider.provider === "google"
+          ? { ...provider, configured: true, ready: true, models: [{ id: "synthetic-model", displayName: "Synthetic model" }] } : provider),
+      } })),
+      close: vi.fn(async () => undefined),
+    } });
+    const before = fs.readFileSync(options.configPath, "utf8");
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: {
+      tailoringGeneratorModels: ["synthetic-model"], tailoringJudgeModel: "synthetic-model",
+    } });
+    expect(response.statusCode, response.body).toBe(ambiguous ? 400 : 200);
+    if (ambiguous) {
+      expect(response.json().error).toBe("invalid_tailoring_model");
+      expect(fs.readFileSync(options.configPath, "utf8")).toBe(before);
+    } else {
+      expect(response.json().settings).toMatchObject({ tailoringGeneratorModels: ["codex:synthetic-model"], tailoringJudgeModel: "codex:synthetic-model" });
+    }
+    await app.close();
+  });
+
+  it.each(["tailoringGeneratorModels", "tailoringJudgeModel", "bare"])("preserves settings when the %s live catalog fails", async (field) => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({ jsonrpc: "2.0", id: 1, result: {
+      providers: providerModelsResult.providers.map(provider => provider.provider === "codex" ? { ...provider, models: [], message: "private catalog failure" } : provider),
+    } }));
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const before = fs.readFileSync(options.configPath, "utf8");
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: field === "bare" ? { tailoringJudgeModel: "synthetic-model" } : { [field]: field === "tailoringGeneratorModels" ? ["codex:synthetic-model"] : "codex:synthetic-model" } });
+    expect(response.statusCode, response.body).toBe(503);
+    expect(response.body).not.toContain("private catalog failure");
+    expect(fs.readFileSync(options.configPath, "utf8")).toBe(before);
     await app.close();
   });
 

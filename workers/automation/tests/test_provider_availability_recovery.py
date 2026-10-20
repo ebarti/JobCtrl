@@ -12,6 +12,14 @@ from jobctrl.infrastructure.llm.provider_errors import ProviderCallError, Provid
 _ROUTED_CHAT_JSON = llm_client.LlmAdapter.chat_json
 
 
+@pytest.fixture
+def sdk_lane():
+    from jobctrl.llm_lanes import bind_llm_lane
+
+    with bind_llm_lane("tailoring"):
+        yield
+
+
 @pytest.fixture(autouse=True)
 def isolated_routes():
     llm_client.reset_llm_adapter()
@@ -160,3 +168,116 @@ def test_optional_voice_skips_a_known_unavailable_provider(monkeypatch, tmp_path
     assert _build_voice_port().model_id == "voice-model"
     assert record_provider_failure("claude", "voice-model", failure())
     assert _build_voice_port() is None
+
+
+@pytest.mark.parametrize("phase", ["start", "await", "iterate"])
+def test_untyped_claude_sdk_failure_rebinds_next_default_route(monkeypatch, tmp_path, phase, sdk_lane):
+    from types import SimpleNamespace
+
+    path = tmp_path / "config.json"
+    path.write_text('{"preferred_models":{"claude":"model-a","codex":"model-b"}}')
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(path))
+    monkeypatch.setattr("jobctrl.infrastructure.setup_probes.ready_llm_providers", lambda: ("claude", "codex"))
+    calls = []
+
+    async def messages():
+        raise Exception("private provider detail")
+        yield  # pragma: no cover - establish the SDK's asynchronous iterator shape
+
+    async def awaited():
+        raise Exception("private provider detail")
+
+    def query(**kwargs):
+        calls.append("claude")
+        if phase == "start":
+            raise Exception("private provider detail")
+        return awaited() if phase == "await" else messages()
+
+    class HealthyBackend:
+        provider_id, model = "codex", "model-b"
+
+        def chat_json(self, messages, **kwargs):
+            calls.append("codex")
+            return {"accepted": True}
+
+    def backend(provider, model):
+        if provider == "claude":
+            return llm_client.ClaudeSdkBackend(model=model, query_fn=query, options_factory=SimpleNamespace)
+        return HealthyBackend()
+
+    monkeypatch.setattr(llm_client, "_make_backend", backend)
+    monkeypatch.setattr(llm_client.LlmAdapter, "chat_json", _ROUTED_CHAT_JSON)
+    first = llm_client.get_llm_adapter()
+    with pytest.raises(ProviderCallError) as raised:
+        first.chat_json([], response_schema={"type": "object"})
+    assert raised.value.envelope.code == "provider_unavailable"
+    assert "private provider detail" not in str(raised.value) + json.dumps(raised.value.envelope.to_dict())
+    assert not provider_route_available("claude", "model-a")
+    assert provider_route_available("claude", "another-model")
+    second = llm_client.get_llm_adapter()
+    assert (second.provider_id, second.model) == ("codex", "model-b")
+    assert (first.provider_id, first.model) == ("claude", "model-a")
+    assert second.chat_json([], response_schema={"type": "object"}) == {"accepted": True}
+    assert calls == ["claude", "codex"]
+
+
+@pytest.mark.asyncio
+async def test_untyped_claude_sdk_failure_stops_ensemble_leg_after_one_call(sdk_lane):
+    from types import SimpleNamespace
+    from jobctrl.infrastructure.analysis.claude_analysis_adapter import ClaudeAnalysisAdapter
+    from jobctrl.infrastructure.analysis.ensemble import _draft_with_retry
+
+    calls = []
+
+    async def query(**kwargs):
+        calls.append("query")
+        raise Exception("private SDK detail")
+        yield  # pragma: no cover - SDK iterator
+
+    adapter = ClaudeAnalysisAdapter(model="model-a", query_fn=query, options_factory=SimpleNamespace)
+    with pytest.raises(ProviderCallError, match="provider_unavailable"):
+        await _draft_with_retry(adapter, system_prompt="synthetic", jd_snapshot="synthetic", max_retries=2, verify_prose=lambda _: None)
+    assert calls == ["query"]
+    assert not provider_route_available("claude", "model-a")
+
+
+@pytest.mark.parametrize("failure_kind", ["budget", "determination", "cancellation", "authentication"])
+def test_claude_sdk_boundary_preserves_non_execution_failures(failure_kind, sdk_lane):
+    import asyncio
+    from types import SimpleNamespace
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.domain.errors import BudgetExceededError
+
+    errors = {
+        "budget": BudgetExceededError("synthetic budget"),
+        "determination": DeterminationFailure("schema_violation"),
+        "cancellation": asyncio.CancelledError("synthetic cancellation"),
+        "authentication": type("AuthenticationError", (Exception,), {})("synthetic auth"),
+    }
+    failure = errors[failure_kind]
+
+    async def query(**kwargs):
+        raise failure
+        yield  # pragma: no cover - SDK iterator
+
+    backend = llm_client.ClaudeSdkBackend(model="model-a", query_fn=query, options_factory=SimpleNamespace)
+    with pytest.raises(type(failure)) as raised:
+        backend.chat_json([], response_schema={"type": "object"})
+    assert raised.value is failure
+
+
+def test_claude_returned_structure_failure_does_not_exclude_route(sdk_lane):
+    from types import SimpleNamespace
+
+    result_type = type("ResultMessage", (), {})
+    message = result_type()
+    message.is_error, message.subtype, message.structured_output = False, "success", None
+
+    async def query(**kwargs):
+        yield message
+
+    backend = llm_client.ClaudeSdkBackend(model="model-a", query_fn=query, options_factory=SimpleNamespace)
+    with pytest.raises(RuntimeError) as raised:
+        backend.chat_json([], response_schema={"type": "object"})
+    assert not record_provider_failure("claude", "model-a", raised.value)
+    assert provider_route_available("claude", "model-a")

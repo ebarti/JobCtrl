@@ -343,7 +343,7 @@ class ClaudeSdkBackend:
         thinking_budget: int | None,
     ) -> str | dict:
         from jobctrl.infrastructure.analysis.claude_analysis_adapter import (
-            _aiter,
+            _collect_sdk_messages,
             _load_options_factory,
             _load_sdk_query,
             _structured_output_from_messages,
@@ -388,8 +388,10 @@ class ClaudeSdkBackend:
             },
             scope_name="jobctrl.llm.claude",
         ) as record:
-            iterator = await _aiter(query_fn(prompt=prompt, options=options_factory(**kwargs)))
-            sdk_messages = [message async for message in iterator]
+            sdk_messages = await _collect_sdk_messages(
+                query_fn, prompt=prompt, options=options_factory(**kwargs), model=self.model,
+                operation="chat_json" if response_schema else "chat",
+            )
             input_tokens, output_tokens = _usage_from_messages(sdk_messages)
             record("", input_tokens=input_tokens, output_tokens=output_tokens)
             raise_on_claude_execution_failure(

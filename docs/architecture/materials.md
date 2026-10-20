@@ -51,6 +51,12 @@ provider's saved preferred model, as synthesis does. The effective draft/model
 set and synthesis model participate in cache identity. A typed SDK availability
 failure stops retries of that failed leg and excludes its route from the next
 automatic attempt; a failed semantic or structural judgment does not.
+Claude SDK query and iteration exceptions receive a safe availability envelope
+before response parsing. A generic SDK execution exception therefore leaves
+the bound leg after one call. Returned structure, semantic verdicts, budget
+errors and cancellation retain their own behavior; provider text never enters
+the availability envelope. Neutral core calls and optional voice use the same
+collection boundary.
 
 The canonical, generation-versioned analysis stores:
 

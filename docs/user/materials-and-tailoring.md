@@ -78,6 +78,12 @@ resume was accepted.
 
 ## What You Can See And Control
 
+Settings validates explicit generator and judge choices against each ready
+provider's current model list before saving. A model available in another
+account or the desktop chat may be unavailable to JobCtrl's provider account.
+Unsupported choices fail the save without changing the other settings; clear
+the selection or choose `default` to remove an explicit override.
+
 Eligible jobs receive materials during Discover preparation. You can also
 generate first-time materials for one job, re-tailor a job with the current
 policy, or run bounded re-tailoring from the Jobs toolbar.

@@ -25,6 +25,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any
 
 from jobctrl.domain.materials.voice import VoicePayload, VoiceRequest, VoiceResult
+from jobctrl.infrastructure.analysis.claude_analysis_adapter import _collect_sdk_messages
 from jobctrl.infrastructure.materials.voice_prompts import build_voice_user_prompt
 from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
 from jobctrl.llm_lanes import lane_bound
@@ -64,14 +65,6 @@ def _load_options_factory() -> OptionsFactory:
     from claude_agent_sdk import ClaudeAgentOptions  # type: ignore[import-untyped]
 
     return ClaudeAgentOptions
-
-
-async def _aiter(result: AsyncIterator[Any] | Awaitable[AsyncIterator[Any]]) -> AsyncIterator[Any]:
-    """Normalise sync/awaitable query return shapes into an async iterator."""
-    if hasattr(result, "__aiter__"):
-        return result  # type: ignore[return-value]
-    awaited = await result  # type: ignore[misc]
-    return awaited
 
 
 def _structured_output_from_messages(messages: list[Any]) -> dict[str, Any]:
@@ -180,9 +173,9 @@ class ClaudeVoiceAdapter:
             scope_name=_VOICE_SCOPE,
         ) as record:
             try:
-                raw = query_fn(prompt=user_prompt, options=options)
-                iterator = await _aiter(raw)
-                messages = [message async for message in iterator]
+                messages = await _collect_sdk_messages(
+                    query_fn, prompt=user_prompt, options=options, model=self._model, operation="voice",
+                )
                 input_tokens, output_tokens = _usage_from_messages(messages)
                 record("", input_tokens=input_tokens, output_tokens=output_tokens)
                 raise_on_claude_execution_failure(messages, model=self._model, operation="voice")

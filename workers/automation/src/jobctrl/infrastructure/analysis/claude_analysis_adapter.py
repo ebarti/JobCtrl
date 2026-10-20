@@ -25,10 +25,17 @@ from jobctrl.domain.materials.analysis import (
     JobAnalysis,
     JobAnalysisDraft,
 )
+from jobctrl.domain.determinations import DeterminationFailure
+from jobctrl.domain.errors import JobCtrlError
+from jobctrl.domain.ports.llm import LlmFailure
 from jobctrl.infrastructure.analysis.prompts import build_synthesizer_user_prompt
 from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
 from jobctrl.llm_lanes import lane_bound
-from jobctrl.infrastructure.llm.provider_errors import raise_on_claude_execution_failure
+from jobctrl.infrastructure.llm.provider_errors import (
+    ProviderCallError,
+    ProviderFailureEnvelope,
+    raise_on_claude_execution_failure,
+)
 from jobctrl.infrastructure.setup_probes import bundled_claude_sdk_options
 from jobctrl.runtime import activate_provider_pack, is_bundled_runtime
 
@@ -73,6 +80,33 @@ async def _aiter(result: AsyncIterator[Any] | Awaitable[AsyncIterator[Any]]) -> 
         return result  # type: ignore[return-value]
     awaited = await result  # type: ignore[misc]
     return awaited
+
+
+async def _collect_sdk_messages(
+    query_fn: QueryFn,
+    *,
+    prompt: str,
+    options: Any,
+    model: str,
+    operation: str,
+) -> list[Any]:
+    """Type SDK execution failures before response parsing or semantic review."""
+    try:
+        iterator = await _aiter(query_fn(prompt=prompt, options=options))
+        return [message async for message in iterator]
+    except (JobCtrlError, DeterminationFailure, LlmFailure):
+        raise
+    except Exception as error:
+        # Preserve known authentication types for provider-wide exclusion.
+        # Cancellation inherits BaseException and never enters this catch.
+        if type(error).__name__ in {"AuthenticationError", "PermissionDeniedError"}:
+            raise
+        raise ProviderCallError(ProviderFailureEnvelope(
+            provider="claude", model=model, operation=operation,
+            category="provider_transport", error_type="claude_sdk_execution_error",
+            code="provider_unavailable", retryable=True,
+            http_status=getattr(error, "status_code", None),
+        )) from error
 
 
 def _structured_output_from_messages(messages: list[Any]) -> dict[str, Any]:
@@ -182,9 +216,9 @@ class _ClaudeStructuredCaller:
             params={},
             scope_name=self._scope_name,
         ) as record:
-            raw = query_fn(prompt=user_prompt, options=options)
-            iterator = await _aiter(raw)
-            messages = [message async for message in iterator]
+            messages = await _collect_sdk_messages(
+                query_fn, prompt=user_prompt, options=options, model=self._model, operation="analysis",
+            )
             input_tokens, output_tokens = _usage_from_messages(messages)
             record("", input_tokens=input_tokens, output_tokens=output_tokens)
             raise_on_claude_execution_failure(messages, model=self._model, operation="analysis")

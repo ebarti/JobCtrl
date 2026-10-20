@@ -3373,7 +3373,12 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     const selectedModels = Object.entries(body.preferredModels ?? {}).filter(
       (entry): entry is ["codex" | "claude" | "google", string] => entry[1] !== null,
     );
-    if (selectedModels.length > 0) {
+    const materialModels = [
+      ...(body.tailoringGeneratorModels ?? []),
+      ...(body.tailoringJudgeModel ? [body.tailoringJudgeModel] : []),
+    ].filter((model) => model.toLowerCase() !== "default");
+    const materialModelBindings = new Map<string, string>();
+    if (selectedModels.length > 0 || materialModels.length > 0) {
       let catalog: { providers: ProviderModelCatalogItem[] };
       try {
         catalog = await dispatchProviderModelCatalog(providerDispatcher);
@@ -3410,6 +3415,54 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           };
         }
       }
+      for (const spec of materialModels) {
+        const separator = spec.indexOf(":");
+        const rawProvider = separator >= 0 ? spec.slice(0, separator).trim().toLowerCase() : null;
+        const provider = rawProvider === "gemini" ? "google" : rawProvider;
+        const model = separator >= 0 ? spec.slice(separator + 1).trim() : spec;
+        const invalidChoice = () => {
+          void reply.code(400);
+          return {
+            ok: false as const,
+            error: "invalid_tailoring_model",
+            message: "Select a material model offered by a ready provider.",
+          };
+        };
+        if (provider === null) {
+          // Bind a legacy bare ID to its unique offered route so the runtime
+          // cannot send a valid model name to a different default provider.
+          const offeredBy = catalog.providers.filter((item) => item.ready && item.models.some((candidate) => candidate.id === model));
+          if (offeredBy.length === 0 && catalog.providers.some((item) => item.ready && item.source === "live" && item.models.length === 0 && item.message)) {
+            void reply.code(503);
+            return providerOperationError("provider_models_failed", "Provider models are temporarily unavailable.");
+          }
+          if (offeredBy.length !== 1) return invalidChoice();
+          materialModelBindings.set(spec, `${offeredBy[0]!.provider}:${model}`);
+          continue;
+        }
+        if (!["claude", "codex", "google"].includes(provider)) return invalidChoice();
+        const item = catalog.providers.find((candidate) => candidate.provider === provider);
+        if (!item?.ready) {
+          void reply.code(409);
+          return {
+            ok: false as const,
+            error: "provider_not_ready",
+            message: `${provider} must be ready before selecting a material model.`,
+          };
+        }
+        if (model === "" || model.toLowerCase() === "default") continue;
+        if (item.source === "live" && item.models.length === 0 && item.message) {
+          void reply.code(503);
+          return providerOperationError("provider_models_failed", "Provider models are temporarily unavailable.");
+        }
+        if (!item.models.some((candidate) => candidate.id === model)) return invalidChoice();
+      }
+    }
+    if (body.tailoringGeneratorModels) {
+      body.tailoringGeneratorModels = body.tailoringGeneratorModels.map((model) => materialModelBindings.get(model) ?? model);
+    }
+    if (body.tailoringJudgeModel) {
+      body.tailoringJudgeModel = materialModelBindings.get(body.tailoringJudgeModel) ?? body.tailoringJudgeModel;
     }
     try {
       return writeSettingsConfig(
