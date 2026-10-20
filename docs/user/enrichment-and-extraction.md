@@ -76,6 +76,26 @@ redirect validation, credential stripping, timeouts and read-only request
 restrictions apply to both limits. An oversized resource remains an acquisition
 failure and cannot establish a posting or availability verdict.
 
+Direct URL imports interpret the complete visible page capture, including
+posting details and current controls outside its main-content panel. For the
+description, the model selects a recorded source and contiguous line range;
+the application copies that span exactly and saves the selection, copied text
+and citation in the extraction receipt. Capture includes up to eight visible
+public embedded pages, such as an employer's hosted application frame. Each
+source keeps its observed URL in the receipt, and relative links resolve against
+that source. Short fields retain verbatim-value and citation validation.
+
+A retryable subresource timeout or DNS failure can retain readable posting
+content for interpretation and quality review. Its availability evidence is
+explicitly incomplete, so the saved availability remains **unknown** with the
+acquisition reason. Main-document failures, unsafe destinations and resource
+size violations still prevent this partial capture from being accepted.
+Missing or incomplete embedded-page evidence also keeps availability unknown.
+Public structured posting data can also feed extraction and quality review
+when the model identifies the individual posting but cannot verify visual
+access. Its unknown access and availability remain in the audit. Explicit
+login/challenge pages and unidentified postings continue to require capture.
+
 While the worker is running, unfinished enrichment and retryable failures are
 picked up automatically without a new discovery search. Recovery waits for
 existing preparation to finish, keeps each job's attempt history, and retries

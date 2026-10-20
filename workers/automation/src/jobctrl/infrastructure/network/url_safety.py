@@ -152,13 +152,23 @@ class PublicHttpUrlRouteGuard:
         self.blocked_url: str | None = None
         self.blocked_reason: str | None = None
         self.failure_kind: PublicFetchFailureKind | None = None
+        self.failure_resource_type: str | None = None
 
-    def _record_failure(self, url: str, reason: str, kind: PublicFetchFailureKind) -> None:
-        if self.failure_kind is not None and self.failure_kind.priority >= kind.priority:
-            return
+    def _record_failure(
+        self, url: str, reason: str, kind: PublicFetchFailureKind, *, resource_type: str | None = None,
+    ) -> None:
+        if self.failure_kind is not None:
+            if self.failure_kind.priority > kind.priority:
+                return
+            if self.failure_kind.priority == kind.priority and (
+                self.failure_resource_type in {None, "document", "iframe"}
+                or resource_type not in {None, "document", "iframe"}
+            ):
+                return
         self.blocked_url = url
         self.blocked_reason = reason
         self.failure_kind = kind
+        self.failure_resource_type = resource_type
 
     @property
     def blocked(self) -> bool:
@@ -171,6 +181,7 @@ class PublicHttpUrlRouteGuard:
 
         def handler(playwright_route: Any, request: Any) -> None:
             request_url = str(getattr(request, "url", ""))
+            resource_type = str(getattr(request, "resource_type", "")) or None
             try:
                 request_scheme = urlsplit(request_url).scheme.lower()
             except ValueError:
@@ -182,20 +193,8 @@ class PublicHttpUrlRouteGuard:
                 # remote posting as a fatal unsafe redirect.
                 playwright_route.abort("blockedbyclient")
                 return
-            decision = validate_public_http_url(request_url, resolver=self._resolver)
-            if not decision.allowed:
-                self._record_failure(
-                    request_url,
-                    decision.reason or "URL is not a public HTTP(S) destination",
-                    decision.failure_kind or PublicFetchFailureKind.UNSAFE_DESTINATION,
-                )
-                playwright_route.abort("blockedbyclient")
-                return
-            if not self._fetch_public_requests:
-                playwright_route.continue_()
-                return
             method = str(getattr(request, "method", "GET") or "GET").upper()
-            if method not in {"GET", "HEAD"}:
+            if self._fetch_public_requests and method not in {"GET", "HEAD"}:
                 # Public pages commonly emit analytics, telemetry, or API
                 # writes while loading. We deliberately do not replay those
                 # side-effecting requests through the pinned fetcher, but
@@ -208,12 +207,25 @@ class PublicHttpUrlRouteGuard:
                 }:
                     self._record_failure(
                         request_url, f"browser_resource_method_{method}", PublicFetchFailureKind.FETCH_ERROR,
+                        resource_type=resource_type,
                     )
                 playwright_route.abort("blockedbyclient")
                 return
+            decision = validate_public_http_url(request_url, resolver=self._resolver)
+            if not decision.allowed:
+                self._record_failure(
+                    request_url,
+                    decision.reason or "URL is not a public HTTP(S) destination",
+                    decision.failure_kind or PublicFetchFailureKind.UNSAFE_DESTINATION,
+                    resource_type=resource_type,
+                )
+                playwright_route.abort("blockedbyclient")
+                return
+            if not self._fetch_public_requests:
+                playwright_route.continue_()
+                return
             headers = getattr(request, "headers", {}) or {}
             headers = dict(headers)
-            resource_type = str(getattr(request, "resource_type", ""))
             if resource_type:
                 # Playwright routing may omit Sec-Fetch-Dest. Its native
                 # resource type still distinguishes passive assets from data.
@@ -227,6 +239,7 @@ class PublicHttpUrlRouteGuard:
                 self._record_failure(
                     getattr(exc, "destination_url", None) or request_url,
                     str(exc) or "Public route fetch failed", classify_public_fetch_failure(exc),
+                    resource_type=resource_type,
                 )
                 playwright_route.abort("blockedbyclient")
                 return

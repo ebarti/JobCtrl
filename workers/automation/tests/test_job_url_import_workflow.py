@@ -131,6 +131,127 @@ def test_url_import_honors_model_failure_retryability(tmp_path, monkeypatch, cod
     assert raised.value.non_retryable is non_retryable
 
 
+def test_url_import_uses_full_visible_capture_when_main_is_a_legal_panel():
+    page = replace(
+        _job_page(),
+        html="<main>Unrelated legal panel</main>",
+        status_html="<body><main>Unrelated legal panel</main><section>Canonical role details</section>"
+        "<div hidden>Hidden stale control</div><div>Current posting status</div></body>",
+    )
+    rendered = job_url_import._rendered_page_text(page)
+    assert "Canonical role details" in rendered
+    assert "Current posting status" in rendered
+    assert "Unrelated legal panel" in rendered
+    assert "Hidden stale control" not in rendered
+
+
+def test_incomplete_status_capture_uses_retained_main_content():
+    page = replace(_job_page(), status_html="<head>Truncated status capture</head>", status_evidence_complete=False)
+    assert _DESCRIPTION in job_url_import._rendered_page_text(page)
+
+
+def test_embedded_public_posting_preserves_its_sources_and_relative_application_link(tmp_path: Path, semantic_workflow_models):
+    from tests.page_fakes import PageModel
+
+    semantic_workflow_models.page = PageModel(availability="unknown", access="unknown")
+    semantic_workflow_models.fields = {
+        "title": "Staff Platform Engineer", "employer": "Example Labs", "description": _DESCRIPTION,
+        "location": "", "salary": "", "application_url": "https://ats.example/jobs/role/application",
+    }
+    parent_url = "https://example.com/careers/apply?job_id=role"
+    frame_url = "https://ats.example/jobs/role/"
+    posting = {**_job_page().json_ld[0], "url": frame_url}
+    frame = replace(
+        _job_page(), url=frame_url, final_url=frame_url, json_ld=(posting,),
+        html=f"<main>{_DESCRIPTION}<a href='application'>Apply</a></main>",
+    )
+    page = replace(
+        _job_page(), url=parent_url, final_url=parent_url, html="<main>Embedded job board</main>",
+        json_ld=(), embedded_pages=(frame,),
+    )
+    conn = init_db(tmp_path / "embedded.db")
+    result = execute_job_url_import(_payload(parent_url), conn=conn, fetcher=_Fetcher(page), url_validator=_allow_public_url)
+    assert result.outcome == "imported"
+    row = conn.execute("SELECT full_description,application_url FROM job_enrichments WHERE job_id=?", (result.job_id,)).fetchone()
+    assert tuple(row) == (_DESCRIPTION, "https://ats.example/jobs/role/application")
+    receipt = json.loads(conn.execute("SELECT envelope_json FROM semantic_determinations WHERE kind='posting_extraction'").fetchone()[0])
+    selected_source = receipt["result"]["description"]["source_id"]
+    assert selected_source.startswith("embedded:0:")
+    origins = {row["source_id"]: row["url"] for row in receipt["result"]["source_origins"]}
+    assert origins[selected_source] == frame_url
+    assert origins["embedded:0:link:0:url"] == frame_url
+    assert any(source["source_id"] == "embedded:0:rendered_page" for source in semantic_workflow_models.page.calls[0]["sources"])
+
+
+def test_private_embedded_source_is_rejected_before_model_work(tmp_path: Path, semantic_workflow_models):
+    private = replace(_job_page(), url="http://127.0.0.1/private", final_url="http://127.0.0.1/private")
+    page = replace(_job_page(), embedded_pages=(private,))
+    conn = init_db(tmp_path / "private-frame.db")
+    with pytest.raises(ApplicationError) as error:
+        execute_job_url_import(
+            _payload(), conn=conn, fetcher=_Fetcher(page),
+            url_validator=lambda url: PublicUrlDecision(url == _URL),
+        )
+    assert error.value.type == "invalid_url"
+    assert semantic_workflow_models.calls == []
+    assert conn.execute("SELECT count(*) FROM jobs").fetchone()[0] == 0
+
+
+def test_url_import_retains_trustworthy_content_with_incomplete_availability(tmp_path: Path):
+    conn = init_db(tmp_path / "partial.db")
+    page = replace(_job_page(), status_evidence_complete=False, status_evidence_reason="public_resource_timeout")
+    result = execute_job_url_import(_payload(), conn=conn, fetcher=_Fetcher(page), url_validator=_allow_public_url)
+
+    assert result.outcome == "imported"
+    enrichment = conn.execute("SELECT current_status,full_description FROM job_enrichments WHERE job_id=?", (result.job_id,)).fetchone()
+    assert tuple(enrichment) == ("enriched", _DESCRIPTION)
+    active_state = conn.execute("SELECT latest_active_state FROM posting_snapshot_sets WHERE job_id=?", (result.job_id,)).fetchone()[0]
+    assert active_state == ActiveState.UNKNOWN.value
+
+
+def test_url_import_keeps_structured_description_across_known_tracking_parameters(tmp_path: Path):
+    conn = init_db(tmp_path / "tracking.db")
+    tracked = _URL + "?utm_source=board&utm_medium=feed"
+    page = replace(_job_page(), url=tracked, final_url=tracked)
+    result = execute_job_url_import(_payload(tracked), conn=conn, fetcher=_Fetcher(page), url_validator=_allow_public_url)
+    assert result.outcome == "imported"
+    assert conn.execute("SELECT full_description FROM job_enrichments WHERE job_id=?", (result.job_id,)).fetchone()[0] == _DESCRIPTION
+
+
+def test_identified_structured_posting_can_import_with_unknown_visual_access(tmp_path: Path, semantic_workflow_models):
+    from tests.page_fakes import PageModel
+
+    semantic_workflow_models.page = PageModel(availability="unknown", access="unknown")
+    conn = init_db(tmp_path / "structured-unknown.db")
+    page = replace(_job_page(), html="<main>Site boilerplate</main>")
+    result = execute_job_url_import(_payload(), conn=conn, fetcher=_Fetcher(page), url_validator=_allow_public_url)
+    assert result.outcome == "imported"
+    assert conn.execute("SELECT full_description FROM job_enrichments WHERE job_id=?", (result.job_id,)).fetchone()[0] == _DESCRIPTION
+    assert conn.execute("SELECT latest_active_state FROM posting_snapshot_sets WHERE job_id=?", (result.job_id,)).fetchone()[0] == "unknown"
+
+
+@pytest.mark.parametrize("access,kind", [("unknown", "unknown"), ("login_required", "posting"), ("challenge", "posting")])
+def test_unknown_posting_or_explicit_access_barrier_still_prevents_import(tmp_path: Path, semantic_workflow_models, access, kind):
+    from tests.page_fakes import PageModel
+
+    semantic_workflow_models.page = PageModel(availability="unknown", access=access, page_kind=kind)
+    conn = init_db(tmp_path / "blocked.db")
+    result = execute_job_url_import(_payload(), conn=conn, fetcher=_Fetcher(_job_page()), url_validator=_allow_public_url)
+    assert result.outcome == "manual_capture_required"
+    assert conn.execute("SELECT count(*) FROM jobs").fetchone()[0] == 0
+    assert not any(title == "PostingSelectionExtraction" for title, _data in semantic_workflow_models.calls)
+
+
+def test_url_import_cannot_reuse_structured_fields_from_a_different_identity_query(tmp_path: Path):
+    conn = init_db(tmp_path / "foreign-query.db")
+    url = _URL + "?job_id=requested&utm_source=board"
+    posting = {**_job_page().json_ld[0], "url": _URL + "?job_id=foreign"}
+    page = replace(_job_page(), url=url, final_url=url, json_ld=(posting,))
+    with pytest.raises(ApplicationError):
+        execute_job_url_import(_payload(url), conn=conn, fetcher=_Fetcher(page), url_validator=_allow_public_url)
+    assert conn.execute("SELECT count(*) FROM jobs").fetchone()[0] == 0
+
+
 def test_url_import_fetches_and_persists_real_posting_content(tmp_path: Path) -> None:
     conn = init_db(tmp_path / "jobctrl.db")
     fetcher = _Fetcher(_job_page())

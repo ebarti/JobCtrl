@@ -1,7 +1,7 @@
 """Temporal orchestration for importing one explicit job-posting URL."""
 
 from __future__ import annotations
-from jobctrl.domain.enrichment.snapshot_services import ActiveStateVerifier
+from jobctrl.domain.enrichment.snapshot_services import ActiveStateVerifier, same_posting_url
 
 import hashlib
 import math
@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 from temporalio import activity, workflow
@@ -306,6 +306,11 @@ def execute_job_url_import(
         raise ApplicationError(
             "Only public HTTP or HTTPS job URLs can be imported.", type="invalid_url", non_retryable=True
         )
+    for frame in getattr(page, "embedded_pages", ()):
+        if not active_url_validator(frame.final_url or frame.url).allowed:
+            raise ApplicationError(
+                "The embedded posting source is not public HTTP or HTTPS.", type="invalid_url", non_retryable=True,
+            )
     redirected_existing = repository.resolve_by_posting_url(tenant_id, PostingUrl(value=final_url))
     if redirected_existing is not None and final_url != url:
         native_id = _manual_import_source_native_id(
@@ -344,6 +349,7 @@ def execute_job_url_import(
     )
     rendered = _rendered_page_text(page)
     try:
+        prepared_sources = _posting_page_sources(page, entity_id=url)
         page_result, _ = ModelPageInterpreter(**dependencies).interpret(
             entity_id=url,
             text=rendered,
@@ -351,10 +357,19 @@ def execute_job_url_import(
                 "url": url,
                 "final_url": str(getattr(page, "final_url", url)),
                 "http_status": getattr(page, "status", None),
+                "status_evidence_complete": getattr(page, "status_evidence_complete", True),
+                "status_evidence_reason": getattr(page, "status_evidence_reason", ""),
+                "visibility_verified": getattr(page, "status_visibility_verified", False),
+                "structured_postings": getattr(page, "json_ld", ()),
+                "embedded_pages": [{
+                    "url": frame.final_url or frame.url,
+                    "status_evidence_complete": frame.status_evidence_complete,
+                } for frame in getattr(page, "embedded_pages", ())],
             },
+            additional_sources=[source for source in prepared_sources[0] if source.source_id != "rendered_page"],
         )
         if (
-            page_result.access_state.value != "clear"
+            page_result.access_state.value in {"login_required", "challenge"}
             or page_result.page_kind.value != "posting"
             or page_result.availability.value in {"closed", "expired", "removed"}
         ):
@@ -367,7 +382,7 @@ def execute_job_url_import(
                 url=url,
                 reason=reasons.get(page_result.access_state.value, ManualActionReason.AMBIGUOUS_CAREER_SYSTEM),
             )
-        extracted = _extract_posting_page(page, dependencies=dependencies, entity_id=url)
+        extracted = _extract_posting_page(page, dependencies=dependencies, entity_id=url, prepared_sources=prepared_sources)
     except DeterminationFailure as error:
         raise ApplicationError(
             error.code, type="semantic_determination_" + error.code, non_retryable=not error.retryable,
@@ -1221,20 +1236,6 @@ def _find_job_postings(value: Any) -> tuple[dict[str, Any], ...]:
     return tuple(found)
 
 
-def _comparable_url(value: str) -> str:
-    text = value.strip()
-    if not text:
-        return ""
-    try:
-        parsed = urlsplit(text)
-    except ValueError:
-        return text
-    if not parsed.scheme or not parsed.netloc:
-        return text
-    path = parsed.path.rstrip("/") or "/"
-    return urlunsplit((parsed.scheme.casefold(), parsed.netloc.casefold(), path, parsed.query, ""))
-
-
 def _employer_name(posting: dict[str, Any] | None) -> str:
     if not posting:
         return ""
@@ -1402,47 +1403,64 @@ __all__ = [
 
 
 def _rendered_page_text(page):
-    soup = BeautifulSoup(str(getattr(page, "html", "") or ""), "html.parser")
-    for element in soup.select("script,style,template,[hidden],[aria-hidden='true']"):
+    status = getattr(page, "status_html", "")
+    captured = (
+        status if status and getattr(page, "status_evidence_complete", True)
+        else getattr(page, "html", "") or status or ""
+    )
+    soup = BeautifulSoup(str(captured), "html.parser")
+    for element in soup.select("script,style,noscript,template,[hidden],[inert],[aria-hidden='true']"):
+        if element.parent is None:
+            continue
         element.decompose()
     return str(getattr(page, "page_title", "") or "") + "\n" + soup.get_text("\n", strip=True)
 
 
-def _extract_posting_page(page, *, dependencies, entity_id):
-    from jobctrl.domain.enrichment.page_interpretation import ModelPagePostingExtractor
+def _posting_page_sources(page, *, entity_id):
     from jobctrl.domain.determinations import Source
 
-    sources = [
-        Source(source_id="rendered_page", text=_rendered_page_text(page)),
-        Source(source_id="page_url", text=str(getattr(page, "final_url", None) or entity_id)),
-    ]
-    # These are explicit structured fields. Formatting them is mechanical;
-    # selecting the posting and interpreting each field remains the model's
-    # determination. URL identity fences neighboring structured postings.
-    for index, posting in enumerate(_find_job_postings(getattr(page, "json_ld", ()) or ())):
-        posting_url = _text(posting.get("url"))
-        if posting_url and _comparable_url(posting_url) != _comparable_url(
-            str(getattr(page, "final_url", None) or entity_id)
-        ):
-            continue
-        sources.append(Source(source_id=f"posting:{index}:structured", text=json.dumps(posting, ensure_ascii=False)))
-        fields = {
-            "title": _text(posting.get("title")),
-            "employer": _employer_name(posting),
-            "description": _text(posting.get("description")),
-            "location": _location_text(posting),
-            "salary": _salary_text(posting),
-        }
-        sources.extend(
-            Source(source_id=f"posting:{index}:{name}", text=value) for name, value in fields.items() if value
-        )
-    soup = BeautifulSoup(getattr(page, "html", "") or "", "html.parser")
-    for index, link in enumerate(soup.find_all("a", href=True)[:100]):
-        sources.append(Source(source_id=f"link:{index}:url", text=urljoin(entity_id, str(link["href"]))))
-        label = link.get_text(" ", strip=True)
-        if label:
-            sources.append(Source(source_id=f"link:{index}:label", text=label))
-    result, _ = ModelPagePostingExtractor(**dependencies).extract(entity_id=entity_id, sources=sources)
+    sources, origins = [], {}
+    links_remaining = 100
+
+    def add(ident, text, origin):
+        sources.append(Source(source_id=ident, text=text))
+        origins[ident] = origin
+
+    components = [("", page), *((f"embedded:{index}:", frame) for index, frame in enumerate(getattr(page, "embedded_pages", ())))]
+    for prefix, component in components:
+        origin = str(getattr(component, "final_url", "") or getattr(component, "url", "") or entity_id)
+        add(prefix + "rendered_page", _rendered_page_text(component), origin)
+        add(prefix + "page_url", origin, origin)
+        # Interpret declared fields through the model; URL fences exclude neighbors.
+        for index, posting in enumerate(_find_job_postings(getattr(component, "json_ld", ()) or ())):
+            posting_url = _text(posting.get("url"))
+            if posting_url and not same_posting_url(posting_url, origin):
+                continue
+            add(f"{prefix}posting:{index}:structured", json.dumps(posting, ensure_ascii=False), origin)
+            fields = {
+                "title": _text(posting.get("title")), "employer": _employer_name(posting),
+                "description": _text(posting.get("description")), "location": _location_text(posting),
+                "salary": _salary_text(posting),
+            }
+            for name, value in fields.items():
+                if value:
+                    add(f"{prefix}posting:{index}:{name}", value, origin)
+        soup = BeautifulSoup(getattr(component, "html", "") or "", "html.parser")
+        links = soup.find_all("a", href=True)[:links_remaining]
+        links_remaining -= len(links)
+        for index, link in enumerate(links):
+            add(f"{prefix}link:{index}:url", urljoin(origin, str(link["href"])), origin)
+            label = link.get_text(" ", strip=True)
+            if label:
+                add(f"{prefix}link:{index}:label", label, origin)
+    return sources, origins
+
+
+def _extract_posting_page(page, *, dependencies, entity_id, prepared_sources=None):
+    from jobctrl.domain.enrichment.page_interpretation import ModelPagePostingExtractor
+
+    sources, origins = prepared_sources or _posting_page_sources(page, entity_id=entity_id)
+    result, _ = ModelPagePostingExtractor(**dependencies).extract(entity_id=entity_id, sources=sources, source_urls=origins)
     return {name: getattr(result, name).value for name in type(result).model_fields}
 
 

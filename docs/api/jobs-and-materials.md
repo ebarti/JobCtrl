@@ -40,6 +40,11 @@ alreadyExisted }`. A blocked, login-walled, rate-limited, or ambiguous page
 returns `{ ok, status: "manual_capture_required", itemId, reason }`; that
 outcome creates no Job row. Repeating an already-imported URL resolves the same
 canonical `JobId` without another fetch.
+An identified posting with public structured content may proceed through strict
+extraction and content-quality review when visual access is unknown. Unknown
+access and availability remain recorded; they are not promoted to clear or
+active. An unknown posting identity or explicit login/challenge still requires
+Manual Capture.
 This includes an exact originating URL whose accepted Manual Capture receipt
 already points to an existing job, even when the captured canonical URL differs.
 

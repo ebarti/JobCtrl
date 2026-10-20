@@ -11,6 +11,18 @@ different contexts concurrently. Selecting another context preserves in-flight
 requests and later calls on existing adapters; explicit registry reset closes
 all cached contexts. A context change must not revoke a service's live handle.
 
+Posting extraction schema 4 records the model's description source and first/
+last line IDs. Validation requires one ordered range inside that exact source;
+code copies its contiguous bytes, fills the derived value and citation, and
+persists them with the selector in the determination envelope. Cached reads
+recheck both the selector and derived fields against the same fingerprinted
+sources. The closed `source_origins` list records the observed URL for every
+source, including bounded visible public frame captures. Frame URLs pass the
+same public-destination validation before extraction. Capture identity includes
+the root and embedded raw-content hashes; incomplete frame capture cannot prove
+availability. Other fields keep their strict literal-value and citation checks;
+schema 3 receipts remain historical data.
+
 **Read this if** you are adding a field, event, route, JSON-RPC method, or typed
 client call and need to know which layer owns the contract.
 

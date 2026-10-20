@@ -281,6 +281,80 @@ def test_document_resource_type_overrides_asset_destination_header():
     assert calls == [{"sec-fetch-dest": "document"}]
 
 
+@pytest.mark.parametrize("document_first", [False, True])
+def test_document_transport_failure_cannot_be_hidden_by_subresource_failure(document_first):
+    from jobctrl.infrastructure.enrichment.playwright_fetcher import _partial_resource_failure
+
+    page = _RouteOnlyPage()
+
+    def timeout(*_args):
+        raise TimeoutError("owned timeout")
+
+    guard = PublicHttpUrlRouteGuard(
+        page, resolver=_resolver_for("93.184.216.34"), fetch_public_requests=True, request_fetcher=timeout,
+    ).install()
+    types = ["document", "script"] if document_first else ["script", "document"]
+    for resource_type in types:
+        page.handler(_FulfillRoute(), SimpleNamespace(
+            url=f"https://public.example/{resource_type}", method="GET", headers={}, resource_type=resource_type,
+        ))
+    assert guard.failure_resource_type == "document"
+    assert not _partial_resource_failure(guard)
+
+
+@pytest.mark.parametrize("failure", [TimeoutError("owned timeout"), socket.gaierror("owned DNS failure")])
+@pytest.mark.parametrize("resource_type", ["script", "ping"])
+def test_retryable_subresource_failure_retains_content_with_unknown_availability(monkeypatch, failure, resource_type):
+    import playwright.sync_api
+    from jobctrl.domain.enrichment import ActiveState
+    from jobctrl.domain.enrichment.snapshot_services import ActiveStateVerifier
+    from jobctrl.infrastructure.enrichment import playwright_fetcher
+    from jobctrl.infrastructure.network import url_safety
+
+    class Page(_RouteOnlyPage):
+        url = "https://public.example/role"
+
+        def goto(self, *_args, **_kwargs):
+            self.handler(_FulfillRoute(), SimpleNamespace(
+                url="https://public.example/dependency", method="GET", headers={}, resource_type=resource_type,
+            ))
+            return SimpleNamespace(status=200)
+
+        def wait_for_load_state(self, *_args, **_kwargs):
+            pass
+
+        def title(self):
+            return "Captured posting"
+
+    page = Page()
+    browser = SimpleNamespace(new_context=lambda **_kwargs: SimpleNamespace(new_page=lambda: page), close=lambda: None)
+
+    @contextmanager
+    def fake_playwright():
+        yield SimpleNamespace(chromium=SimpleNamespace(launch=lambda **_kwargs: browser))
+
+    def fetch(*_args):
+        raise failure
+
+    monkeypatch.setattr(socket, "getaddrinfo", _resolver_for("93.184.216.34"))
+    monkeypatch.setattr(url_safety, "_fetch_public_route_request", fetch)
+    monkeypatch.setattr(playwright.sync_api, "sync_playwright", fake_playwright)
+    monkeypatch.setattr(playwright_fetcher, "_collect_json_ld", lambda _page: [])
+    monkeypatch.setattr(playwright_fetcher, "_collect_main_content", lambda _page: "<main>Captured posting details</main>")
+    monkeypatch.setattr(playwright_fetcher, "_collect_status_html", lambda *_args, **_kwargs: ("<body>Captured controls</body>", True, "owned-hash"))
+
+    result = PlaywrightDetailPageFetcher(raise_on_unavailable=True)._fetch_page(page.url, "owned-time", user_agent="JobCtrl")
+
+    assert result.html == "<main>Captured posting details</main>"
+    assert not result.status_evidence_complete
+    assert result.status_evidence_reason in {"public_resource_timeout", "public_resource_dns_failure"}
+    signals = []
+    active, reason = ActiveStateVerifier(page_interpreter=object()).verify(result, signals=signals)
+    assert active is ActiveState.UNKNOWN
+    assert reason == result.status_evidence_reason
+    assert signals == [{"kind": "acquisition_failure", "value": reason}]
+
+
 @pytest.mark.parametrize("destination,size", [("document", 2_000_001), ("empty", 2_000_001), ("script", 16_000_001), ("style", 16_000_001)])
 def test_public_document_data_and_asset_limits_remain_enforced(monkeypatch, destination, size):
     from io import BytesIO
@@ -330,6 +404,26 @@ def test_public_route_guard_aborts_public_write_without_poisoning_page() -> None
     assert not guard.blocked
     assert guard.blocked_url is None
     assert guard.blocked_reason is None
+
+
+@pytest.mark.parametrize("strict_availability", [False, True])
+def test_forbidden_browser_write_performs_no_destination_resolution(strict_availability):
+    page, route = _RouteOnlyPage(), _FulfillRoute()
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("A forbidden write must not resolve or fetch any destination")
+
+    guard = PublicHttpUrlRouteGuard(
+        page, resolver=unexpected, fetch_public_requests=True, request_fetcher=unexpected,
+        include_resource_destination=strict_availability,
+    ).install()
+    page.handler(route, SimpleNamespace(
+        url="https://unresolvable.example/ping", method="POST", headers={}, resource_type="ping",
+    ))
+    assert route.aborted and route.fulfilled is None and not route.continued
+    assert guard.blocked is strict_availability
+    if strict_availability:
+        assert guard.blocked_reason == "browser_resource_method_POST"
 
 
 def test_public_route_guard_aborts_chrome_extension_without_poisoning_page() -> None:
