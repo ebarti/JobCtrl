@@ -907,6 +907,15 @@ Consequences:
 - local/custom-provider support requires a future explicit product contract
   before it can re-enter setup or runtime routing
 
+Amended 2026-10-20: Settings may persist one exact `default_llm_model` route.
+It takes precedence over automatic provider selection and provider-scoped model
+preferences for newly acquired core adapters, while explicit workflow models
+retain precedence. Its provider/model binding also owns the optional writing
+pass. Failed pinned routes never silently substitute another model. Model
+pickers contain only current authenticated runtime catalog options; saved IDs
+absent from the catalog remain visible solely as configuration status. SDK and
+CLI versions are upgraded together with their verified provider-pack metadata.
+
 ## 2026-06-09: Generated-Materials Audit Is Served From Canonical Provenance Rows
 
 Status: accepted

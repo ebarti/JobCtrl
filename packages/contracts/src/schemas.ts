@@ -2097,6 +2097,7 @@ export const SettingsUpdateRequestSchema = z
     dailyBudgetUsd: z.coerce.number().min(0).optional(),
     laneTokenLimits: laneTokenLimitsSchema.optional(),
     analysisLegs: z.array(z.enum(["codex", "claude", "google"])).min(1).optional(),
+    defaultLlmModel: z.string().trim().min(1).max(160).nullable().optional(),
     tailoringGeneratorModels: z.array(z.string().trim().min(1).max(160)).min(1).nullable().optional(),
     tailoringJudgeModel: z.string().trim().min(1).max(160).nullable().optional(),
     applyMaxBudgetUsd: z.coerce.number().min(0).optional(),
@@ -4656,6 +4657,7 @@ export interface JobCtrlSettings {
   dailyBudgetUsd: number;
   laneTokenLimits: Record<LlmLane, number>;
   analysisLegs: ProviderId[];
+  defaultLlmModel: string | null;
   tailoringGeneratorModels: string[] | null;
   tailoringJudgeModel: string | null;
   applyMaxBudgetUsd: number;
@@ -4701,6 +4703,7 @@ export interface EffectiveJobCtrlSettings {
   pipelineInternalConcurrency: EffectiveSetting<number>;
   workerActivitySlots: EffectiveSetting<number>;
   analysisLegs: EffectiveSetting<ProviderId[]>;
+  defaultLlmModel: EffectiveSetting<string | null>;
   tailoringGeneratorModels: EffectiveSetting<string[] | null>;
   tailoringJudgeModel: EffectiveSetting<string | null>;
   applyMaxBudgetUsd: EffectiveSetting<number>;
@@ -4720,6 +4723,7 @@ export const SettingsResponseSchema = z
         dailyBudgetUsd: z.number(),
         laneTokenLimits: laneTokenLimitsSchema.required(),
         analysisLegs: z.array(z.enum(ProviderIds)),
+        defaultLlmModel: z.string().nullable(),
         tailoringGeneratorModels: z.array(z.string()).nullable(),
         tailoringJudgeModel: z.string().nullable(),
         applyMaxBudgetUsd: z.number(),
@@ -4743,6 +4747,7 @@ export const SettingsResponseSchema = z
         pipelineInternalConcurrency: effectiveSettingSchema(z.number()),
         workerActivitySlots: effectiveSettingSchema(z.number()),
         analysisLegs: effectiveSettingSchema(z.array(z.enum(ProviderIds))),
+        defaultLlmModel: effectiveSettingSchema(z.string().nullable()),
         tailoringGeneratorModels: effectiveSettingSchema(z.array(z.string()).nullable()),
         tailoringJudgeModel: effectiveSettingSchema(z.string().nullable()),
         applyMaxBudgetUsd: effectiveSettingSchema(z.number()),

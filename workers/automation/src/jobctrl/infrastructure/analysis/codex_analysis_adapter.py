@@ -51,18 +51,16 @@ from jobctrl.runtime import is_bundled_runtime
 
 AsyncCodexFactory = Callable[[], Any]
 
-# Top current Codex model (gpt-5.5) + max reasoning effort (D-18). Matches
-# mestre's vendor-lane default for the Codex leg.
-CODEX_ANALYSIS_MODEL = "gpt-5.5"
+# Default for an unpinned Codex leg. Saved provider preferences take precedence.
+CODEX_ANALYSIS_MODEL = "gpt-6.1-sol"
 
 # OTel instrumentation scope for the Codex draft leg's generation span.
 _CODEX_SCOPE = "jobctrl.analysis.codex"
 
 # Disable Codex plugins/apps and force prompt-driven commands into a minimal
 # read-only permissions profile. The profile is supplied as a TOML CLI override
-# because openai-codex==0.1.0b3 exposes only legacy Sandbox presets in its
-# public Python wrapper, while the pinned app-server runtime supports
-# default_permissions profiles.
+# so catalog discovery and generation use the same minimal permissions profile
+# supported by the pinned app-server runtime.
 _CODEX_PERMISSION_PROFILE = "jobctrl-analysis-readonly"
 _CODEX_STATIC_CONFIG_OVERRIDES = (
     "features.plugins=false",

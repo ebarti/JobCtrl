@@ -161,7 +161,6 @@ function ProviderModelCard({
   const providerDefaultValue = `__${provider}-provider-default__`;
   const modelItems = [
     { label: "Provider default", value: providerDefaultValue },
-    ...(savedModelUnavailable && savedModel ? [{ label: `${savedModel} (no longer available)`, value: savedModel }] : []),
     ...models.map((model) => ({ label: `${modelOptionLabel(model.displayName, model.id)}${model.isDefault ? " · provider default" : ""}`, value: model.id })),
   ];
   const statusLabel = isDemo
@@ -244,7 +243,7 @@ function ProviderModelCard({
             <Select
               name={`preferred-model-${provider}`}
               items={modelItems}
-              value={draftModel || providerDefaultValue}
+              value={draftIsValid ? draftModel || providerDefaultValue : null}
               disabled={!canEdit}
               onValueChange={(nextValue) => {
                 if (nextValue === null) return;
@@ -253,12 +252,12 @@ function ProviderModelCard({
                 updateSettings.reset();
               }}
             >
-              <SelectTrigger id={`preferred-model-${provider}`} aria-label="Preferred model" aria-describedby={modelHintId} className="w-full"><SelectValue /></SelectTrigger>
-              <SelectContent><SelectGroup>{modelItems.map((item) => <SelectItem key={item.value} value={item.value} disabled={savedModelUnavailable && item.value === savedModel}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
+              <SelectTrigger id={`preferred-model-${provider}`} aria-label="Preferred model" aria-describedby={modelHintId} className="w-full"><SelectValue placeholder="Select a currently offered model" /></SelectTrigger>
+              <SelectContent><SelectGroup>{modelItems.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
             </Select>
             <FieldDescription className="field-hint" id={modelHintId}>
               {savedModel
-                ? `Saved: ${savedModel}`
+                ? `Saved: ${savedModel}${savedModelUnavailable ? " — not in the current provider catalog. Choose a currently offered model." : ""}`
                 : "No saved preference; the provider chooses its default."}
             </FieldDescription>
           </Field>

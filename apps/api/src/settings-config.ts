@@ -23,6 +23,7 @@ export const DEFAULT_JOBCTRL_SETTINGS: JobCtrlSettings = {
     compensation: 0,
   },
   analysisLegs: ["claude", "codex", "google"],
+  defaultLlmModel: null,
   tailoringGeneratorModels: null,
   tailoringJudgeModel: null,
   applyMaxBudgetUsd: 5,
@@ -73,6 +74,7 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
     "restart",
   );
   const analysisLegs = persistedAnalysisLegs(raw);
+  const defaultLlmModel = persistedNullableModel(raw, "default_llm_model");
   const tailoringGeneratorModels = persistedModels(raw, "tailoring_generator_models");
   const tailoringJudgeModel = persistedNullableModel(raw, "tailoring_judge_model");
   const applyMaxBudgetUsd = persistedNumber(
@@ -102,6 +104,7 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
       dailyBudgetUsd: dailyBudgetUsd.value,
       laneTokenLimits: laneTokenLimits.value,
       analysisLegs: analysisLegs.value,
+      defaultLlmModel: defaultLlmModel.value,
       tailoringGeneratorModels: tailoringGeneratorModels.value,
       tailoringJudgeModel: tailoringJudgeModel.value,
       applyMaxBudgetUsd: applyMaxBudgetUsd.value,
@@ -117,6 +120,7 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
       pipelineInternalConcurrency,
       workerActivitySlots,
       analysisLegs,
+      defaultLlmModel,
       tailoringGeneratorModels,
       tailoringJudgeModel,
       applyMaxBudgetUsd,

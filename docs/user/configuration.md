@@ -225,15 +225,29 @@ runtime model ID alongside a friendly name when they differ. Only provider and
 model IDs are written to `config.json`; credentials remain on the credential
 boundary. A model absent from the active runtime catalog is intentionally not
 selectable, even if that model exists in the provider's broader product lineup.
+The pickers refresh the catalog every minute while visible. A saved ID missing
+from that catalog is explained beside the control and is never added to its
+options. A pinned provider client can expose a different catalog from a newer
+installed client using the same account; check the active JobCtrl runtime before
+concluding the account lacks a model.
 
 A saved preference is scoped to its provider and cannot change which provider
 JobCtrl selects. Newly constructed adapters use this precedence:
 
 1. explicit non-default workflow model;
-2. saved preference for the selected ready provider;
-3. that provider's default.
+2. **Default model** saved under Settings → Model selection;
+3. saved preference for the selected ready provider;
+4. that provider's default.
 
-Provider selection itself keeps the default readiness order Claude, then
+The saved default is a provider-qualified route such as `codex:gpt-6.1-sol`.
+It also selects the optional writing pass's provider and model. Clear it to
+restore automatic provider selection. Employer-analysis perspectives and
+explicit generator/judge choices remain separate overrides; to use one model
+throughout analysis and materials, select only its provider perspective and set
+those roles to the same model. A pinned default fails visibly on provider
+failure rather than silently selecting a different model.
+
+Without a saved default, provider selection keeps the readiness order Claude, then
 Codex, then Google. Explicit `provider:model` workflow values select the named
 provider. Existing adapters and in-flight work keep their resolved model. Newly
 started work rechecks the effective selection when it acquires the shared

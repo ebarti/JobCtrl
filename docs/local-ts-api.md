@@ -360,9 +360,11 @@ the Python JSON-RPC boundary. `PATCH /v1/settings` accepts `preferredModels`,
 validates every non-null choice against that current catalog, and persists only
 the canonical `preferred_models` provider/model mapping; `null` clears one
 provider without requiring it to be ready.
-Explicit material generator and judge choices use the same catalog boundary
+The saved `defaultLlmModel` route and explicit material generator and judge choices use the same catalog boundary
 before any settings bytes change. Clearing them or selecting provider-neutral
 `default` does not require provider availability.
+`defaultLlmModel` persists as `default_llm_model`; it binds newly acquired core
+adapters and the optional writing pass without changing explicit workflow pins.
 
 `GET/PATCH /v1/settings` also carries effective-source and activation metadata
 for launch controls. Environment-owned fields are read-only. Discovery runtime

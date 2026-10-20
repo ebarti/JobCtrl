@@ -125,6 +125,17 @@ def read_apply_concurrency(
     return min(16, max(1, _int(value, default)))
 
 
+def read_default_llm_model(path: Path | str | None = None) -> str | None:
+    """Read the explicitly selected default route; no provider substitution."""
+
+    value = read_config_settings(path).get("default_llm_model")
+    if value is None:
+        return None
+    if not isinstance(value, str) or not 0 < len(value.strip()) <= 160:
+        raise ValueError("default_llm_model must be a model spec or null")
+    return value.strip()
+
+
 def read_preferred_model(
     provider: str,
     path: Path | str | None = None,

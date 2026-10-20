@@ -78,11 +78,15 @@ resume was accepted.
 
 ## What You Can See And Control
 
-Settings validates explicit generator and judge choices against each ready
-provider's current model list before saving. A model available in another
-account or the desktop chat may be unavailable to JobCtrl's provider account.
+Settings validates the default model and explicit generator and judge choices
+against each ready provider's current model list before saving. The active
+client version, sign-in and account determine that list. Pickers contain only
+current catalog models; an unlisted saved ID is explained outside the options.
 Unsupported choices fail the save without changing the other settings; clear
 the selection or choose `default` to remove an explicit override.
+The default route also controls the optional writing pass; explicit analysis
+perspectives and material roles retain their own choices. See
+[model configuration](configuration.md#llm-providers) for route precedence.
 
 Eligible jobs receive materials during Discover preparation. You can also
 generate first-time materials for one job, re-tailor a job with the current

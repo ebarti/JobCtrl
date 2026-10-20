@@ -157,15 +157,19 @@ def _build_analyze_use_case(
 
 
 def _build_voice_port():
-    """Construct the optional Claude voice pass only when provider auth is ready.
-
-    Mirrors ``_build_analyze_use_case``'s SDK wiring: the voice pass is a NEW AI
-    transform, so it runs through the Claude Agent SDK behind the ``VoicePort``
-    seam, not the legacy httpx client (the all-new-AI-via-SDK directive).
-    """
+    """Honor a saved core route; retain the legacy optional Claude default."""
     from jobctrl.infrastructure.setup_probes import probe_claude_auth
     from jobctrl.infrastructure.llm.provider_availability import provider_route_available
-    from jobctrl.infrastructure.scoring.criteria_provider import read_preferred_model
+    from jobctrl.infrastructure.scoring.criteria_provider import read_default_llm_model, read_preferred_model
+
+    if read_default_llm_model():
+        from jobctrl.infrastructure.llm import get_llm_adapter
+        from jobctrl.infrastructure.materials.voice_adapter import LlmVoiceAdapter
+
+        llm = get_llm_adapter()
+        if not provider_route_available(llm.provider_id, llm.model):
+            return None
+        return LlmVoiceAdapter(llm=llm, provider_id=llm.provider_id, model=llm.model)
 
     if not probe_claude_auth().ok:
         return None

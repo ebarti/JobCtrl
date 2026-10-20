@@ -3374,6 +3374,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       (entry): entry is ["codex" | "claude" | "google", string] => entry[1] !== null,
     );
     const materialModels = [
+      ...(body.defaultLlmModel ? [body.defaultLlmModel] : []),
       ...(body.tailoringGeneratorModels ?? []),
       ...(body.tailoringJudgeModel ? [body.tailoringJudgeModel] : []),
     ].filter((model) => model.toLowerCase() !== "default");
@@ -3424,8 +3425,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           void reply.code(400);
           return {
             ok: false as const,
-            error: "invalid_tailoring_model",
-            message: "Select a material model offered by a ready provider.",
+            error: spec === body.defaultLlmModel ? "invalid_default_model" : "invalid_tailoring_model",
+            message: "Select a model offered by a ready provider.",
           };
         };
         if (provider === null) {
@@ -3463,6 +3464,9 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     if (body.tailoringJudgeModel) {
       body.tailoringJudgeModel = materialModelBindings.get(body.tailoringJudgeModel) ?? body.tailoringJudgeModel;
+    }
+    if (body.defaultLlmModel) {
+      body.defaultLlmModel = materialModelBindings.get(body.defaultLlmModel) ?? body.defaultLlmModel;
     }
     try {
       return writeSettingsConfig(

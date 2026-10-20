@@ -37,6 +37,13 @@ flowchart TB
 The invariant is simple: the text audited for provenance and coverage is the
 same text rendered into the accepted artifact.
 
+When `default_llm_model` is configured, `LlmVoiceAdapter` uses the same resolved
+core route as other default calls, including its lane/spend admission and actual
+provider/model provenance. Without a saved default, the legacy optional Claude
+voice adapter remains available. A writing-pass failure retains the already
+verified candidate; every proposed rewrite still receives the existing final
+claim, quality and source-binding checks.
+
 ## Canonical Employer Analysis
 
 A parallel Claude, Codex, and Google analysis ensemble produces drafts; a

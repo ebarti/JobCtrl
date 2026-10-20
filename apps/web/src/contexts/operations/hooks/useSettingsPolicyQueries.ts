@@ -14,5 +14,5 @@ export function useSettingsPolicyQuery(): UseQueryResult<SettingsResponse> {
 export function useProviderModelCatalogQuery(): UseQueryResult<ProviderModelCatalogResponse> {
   const tenantId = useTenantId();
   const { api } = usePorts();
-  return useQuery({ queryKey: settingsKeys.providerModels(tenantId), queryFn: () => api.providerModels() });
+  return useQuery({ queryKey: settingsKeys.providerModels(tenantId), queryFn: () => api.providerModels(), refetchInterval: 60_000 });
 }

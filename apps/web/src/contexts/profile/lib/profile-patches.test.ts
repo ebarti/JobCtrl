@@ -6,6 +6,11 @@ import { sampleSettingsResponse } from "../../../test/fixtures/projections.js";
 import { patchSettingsResponse } from "./profile-patches.js";
 
 describe("patchSettingsResponse", () => {
+  it("patches and clears the default route with its effective source", () => {
+    const updated = patchSettingsResponse(sampleSettingsResponse, { defaultLlmModel: "codex:gpt-6.1-sol" });
+    expect(updated).toMatchObject({ settings: { defaultLlmModel: "codex:gpt-6.1-sol" }, effectiveSettings: { defaultLlmModel: { value: "codex:gpt-6.1-sol", source: "persisted" } } });
+    expect(patchSettingsResponse(updated, { defaultLlmModel: null })).toMatchObject({ settings: { defaultLlmModel: null }, effectiveSettings: { defaultLlmModel: { value: null, source: "persisted" } } });
+  });
   it("preserves an unknown cache value when the nested response contract is invalid", () => {
     const current = { ok: true, settings: {}, effectiveSettings: {} };
 

@@ -256,9 +256,14 @@ def _parse_model_spec(model: str | None) -> tuple[str | None, str | None, str]:
 
 
 def _resolve_default_model_spec(default_model: str | None) -> tuple[str | None, str | None, str]:
-    """Resolve an explicit workflow model or the provider-neutral default."""
+    """Resolve an explicit workflow choice before the saved default route."""
 
-    return _parse_model_spec(default_model)
+    parsed = _parse_model_spec(default_model)
+    if parsed[2] == "default" and _live_worker_smoke_provider_config() is None:
+        from jobctrl.infrastructure.scoring.criteria_provider import read_default_llm_model
+
+        return _parse_model_spec(read_default_llm_model())
+    return parsed
 
 
 def _run_sync(awaitable: Awaitable[Any]) -> Any:
@@ -910,8 +915,8 @@ def get_llm_adapter() -> LlmAdapter:
     global _singleton, _singleton_default_provider
     with _lock:
         if _singleton is None:
-            _singleton_default_provider = _default_provider()
-            _singleton = LlmAdapter(default_provider=_singleton_default_provider)
+            _singleton = LlmAdapter()
+            _singleton_default_provider = _singleton.provider_id
         elif not getattr(_singleton, "_injected", True):
             selection = _effective_default_selection(
                 default_provider=_singleton_default_provider,

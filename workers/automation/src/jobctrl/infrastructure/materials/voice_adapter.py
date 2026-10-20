@@ -20,11 +20,13 @@ wrapping asyncio task — matching the constraint "NO timeouts on the voice LLM 
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any
 
 from jobctrl.domain.materials.voice import VoicePayload, VoiceRequest, VoiceResult
+from jobctrl.domain.ports.llm import LlmMessage, LlmPort
 from jobctrl.infrastructure.analysis.claude_analysis_adapter import _collect_sdk_messages
 from jobctrl.infrastructure.materials.voice_prompts import build_voice_user_prompt
 from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
@@ -124,6 +126,30 @@ def _usage_from_messages(messages: list[Any]) -> tuple[int | None, int | None]:
     return None, None
 
 
+class LlmVoiceAdapter:
+    """Run the optional writing pass through the saved core model route."""
+
+    def __init__(self, *, llm: LlmPort, provider_id: str, model: str) -> None:
+        self._llm = llm
+        self._model_id = f"{provider_id}:{model}"
+
+    @property
+    def model_id(self) -> str:
+        return self._model_id
+
+    @lane_bound("tailoring")
+    async def rewrite(self, system_prompt: str, request: VoiceRequest) -> VoiceResult:
+        structured = await asyncio.to_thread(
+            self._llm.chat_json,
+            [
+                LlmMessage(role="system", content=system_prompt),
+                LlmMessage(role="user", content=build_voice_user_prompt(request)),
+            ],
+            response_schema=VoicePayload.model_json_schema(),
+        )
+        return VoiceResult.from_payload(VoicePayload.model_validate(structured))
+
+
 class ClaudeVoiceAdapter:
     """Claude Agent SDK voice pass (``VoicePort``)."""
 
@@ -188,6 +214,7 @@ class ClaudeVoiceAdapter:
 
 
 __all__ = [
+    "LlmVoiceAdapter",
     "CLAUDE_VOICE_MODEL",
     "ClaudeVoiceAdapter",
 ]

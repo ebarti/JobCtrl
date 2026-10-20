@@ -12662,6 +12662,8 @@ describe("local TypeScript API", () => {
   });
 
   it.each([
+    { patch: { defaultLlmModel: "codex:unoffered" }, status: 400, error: "invalid_default_model" },
+    { patch: { defaultLlmModel: "claude:synthetic-model" }, status: 409, error: "provider_not_ready" },
     { patch: { tailoringGeneratorModels: ["codex:synthetic-model", "codex:unoffered"] }, status: 400, error: "invalid_tailoring_model" },
     { patch: { tailoringJudgeModel: "codex:unoffered", preferredModels: { codex: "synthetic-model" } }, status: 400, error: "invalid_tailoring_model" },
     { patch: { tailoringGeneratorModels: ["claude:unoffered"] }, status: 409, error: "provider_not_ready" },
@@ -12683,10 +12685,14 @@ describe("local TypeScript API", () => {
     const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({ jsonrpc: "2.0", id: 1, result: providerModelsResult }));
     const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
     const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: {
+      defaultLlmModel: "synthetic-model",
       tailoringGeneratorModels: ["default", "codex:synthetic-model"], tailoringJudgeModel: "codex:synthetic-model",
       preferredModels: { codex: "synthetic-model" },
     } });
     expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().settings.defaultLlmModel).toBe("codex:synthetic-model");
+    expect(response.json().effectiveSettings.defaultLlmModel).toEqual({ value: "codex:synthetic-model", source: "persisted", activation: "next_workflow", editable: true });
+    expect(JSON.parse(fs.readFileSync(options.configPath, "utf8")).default_llm_model).toBe("codex:synthetic-model");
     expect(response.json().settings).toMatchObject({ tailoringGeneratorModels: ["default", "codex:synthetic-model"], tailoringJudgeModel: "codex:synthetic-model" });
     expect(call).toHaveBeenCalledTimes(1);
     await app.close();
@@ -12695,7 +12701,7 @@ describe("local TypeScript API", () => {
   it("permits offline clearing and default material model selection", async () => {
     const call = vi.fn<JsonRpcDispatcher["call"]>(async () => { throw new Error("offline catalog"); });
     const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
-    for (const patch of [{ tailoringGeneratorModels: ["default"], tailoringJudgeModel: null }, { tailoringGeneratorModels: null, tailoringJudgeModel: "default" }]) {
+    for (const patch of [{ defaultLlmModel: null, tailoringGeneratorModels: ["default"], tailoringJudgeModel: null }, { defaultLlmModel: "default", tailoringGeneratorModels: null, tailoringJudgeModel: "default" }]) {
       const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: patch });
       expect(response.statusCode, response.body).toBe(200);
     }
@@ -12725,7 +12731,7 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it.each(["tailoringGeneratorModels", "tailoringJudgeModel", "bare"])("preserves settings when the %s live catalog fails", async (field) => {
+  it.each(["defaultLlmModel", "tailoringGeneratorModels", "tailoringJudgeModel", "bare"])("preserves settings when the %s live catalog fails", async (field) => {
     const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({ jsonrpc: "2.0", id: 1, result: {
       providers: providerModelsResult.providers.map(provider => provider.provider === "codex" ? { ...provider, models: [], message: "private catalog failure" } : provider),
     } }));

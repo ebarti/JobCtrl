@@ -758,6 +758,7 @@ export function writeSettingsConfig(
     if (request.dailyBudgetUsd !== undefined) assign("daily_budget_usd", request.dailyBudgetUsd);
     if (request.laneTokenLimits !== undefined) assign("lane_token_limits", request.laneTokenLimits);
     if (request.analysisLegs !== undefined) assign("analysis_legs", request.analysisLegs);
+    if (request.defaultLlmModel !== undefined) assign("default_llm_model", request.defaultLlmModel);
     if (request.tailoringGeneratorModels !== undefined) assign("tailoring_generator_models", request.tailoringGeneratorModels);
     if (request.tailoringJudgeModel !== undefined) assign("tailoring_judge_model", request.tailoringJudgeModel);
     if (request.applyMaxBudgetUsd !== undefined) assign("apply_max_budget_usd", request.applyMaxBudgetUsd);
