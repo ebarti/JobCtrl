@@ -137,6 +137,12 @@ def test_selected_batch_timeout_scales_by_worker_waves_and_is_capped() -> None:
         patched.assert_called_once_with(_SELECTED_BATCH_TIMEOUT_PATCH)
 
 
+@pytest.mark.parametrize("stage", ["score", "tailor", "cover"])
+def test_model_stage_deadline_covers_full_model_sequence(stage: str) -> None:
+    payload = JobPipelineWorkflowInput(tenant_id="local", stages=[stage])
+    assert _activity_timeout(payload, stage=stage) == timedelta(hours=6)
+
+
 @pytest.mark.parametrize(
     ("stage", "queue_stage", "retailor"),
     [

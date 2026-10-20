@@ -276,11 +276,19 @@ stage — defeating heartbeats and starving every other activity on the worker.
   the old call cannot consume the capacity needed for Temporal retry and owner
   reconciliation.
 
-Explicitly selected pipeline batches use a replay-versioned activity deadline:
-30 minutes per bounded worker wave, capped at 6 hours. The separate 2-minute
-heartbeat timeout remains fixed, so more legitimate batch work does not delay
-dead-worker detection. Histories created before the Temporal patch marker retain
-their recorded 30-minute timer when replayed.
+Score, Tailor and Cover use a **6-hour operational activity deadline** in both
+per-job preparation and pipeline batches. A stage owns several sequential model
+calls, source verification and bounded correction passes; a healthy Max-effort
+sequence can exceed the old 30-minute stage deadline. This limit applies to the
+whole activity, without adding a separate provider-call timeout. PDF rendering
+retains its 30-minute deadline. Explicitly selected Enrich batches retain the
+replay-versioned 30-minute-per-worker-wave deadline, capped at 6 hours.
+
+The separate **2-minute heartbeat timeout** remains fixed, as do explicit
+cancellation, spend checks and bounded retry counts. A longer stage allowance
+does not delay dead-worker detection. Changing the scheduled duration does not
+rewrite the timer of an activity already recorded in Temporal history; regression
+tests replay both old and current scheduling budgets through the new workflow.
 
 This is why the discovery source-family and enrichment activities (and the apply
 activity) accept a `threading.Event` cancel token: the workflow-level cancel

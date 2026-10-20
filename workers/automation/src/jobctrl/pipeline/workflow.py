@@ -137,6 +137,10 @@ _COVER_RETRY = RetryPolicy(
     non_retryable_error_types=_NON_RETRYABLE_ERROR_TYPES,
 )
 _DEFAULT_TIMEOUT = timedelta(minutes=30)
+# Model stages own several sequential generation, verification, and bounded
+# correction calls. Give the whole stage the existing long-work ceiling;
+# worker-loss detection remains governed by the separate heartbeat timeout.
+_MODEL_ACTIVITY_TIMEOUT = timedelta(hours=6)
 _MAX_SELECTED_BATCH_TIMEOUT = timedelta(hours=6)
 _SELECTED_BATCH_TIMEOUT_PATCH = "pipeline-selected-batch-timeout-v1"
 # Discovery does long-running external crawls and owns source-level retry,
@@ -466,7 +470,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 workflow_id=activity_owner,
                 recovery_workflow_id=workflow_id if payload.automatic_recovery else None,
             ),
-            start_to_close_timeout=_activity_timeout(payload),
+            start_to_close_timeout=_activity_timeout(payload, stage=stage),
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=replace(_SCORE_RETRY, maximum_attempts=1) if payload.automatic_recovery else _SCORE_RETRY,
         )
@@ -493,7 +497,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 workflow_id=activity_owner,
                 recovery_workflow_id=workflow_id if payload.automatic_recovery else None,
             ),
-            start_to_close_timeout=_activity_timeout(payload),
+            start_to_close_timeout=_activity_timeout(payload, stage=stage),
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=replace(_TAILOR_RETRY, maximum_attempts=1) if payload.automatic_recovery else _TAILOR_RETRY,
         )
@@ -514,7 +518,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 workflow_id=activity_owner,
                 recovery_workflow_id=workflow_id if payload.automatic_recovery else None,
             ),
-            start_to_close_timeout=_activity_timeout(payload),
+            start_to_close_timeout=_activity_timeout(payload, stage=stage),
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=replace(_COVER_RETRY, maximum_attempts=1) if payload.automatic_recovery else _COVER_RETRY,
         )
@@ -562,7 +566,9 @@ async def _check_spend(payload: JobPipelineWorkflowInput) -> None:
         )
 
 
-def _activity_timeout(payload: JobPipelineWorkflowInput) -> timedelta:
+def _activity_timeout(payload: JobPipelineWorkflowInput, *, stage: str | None = None) -> timedelta:
+    if stage in {"score", "tailor", "cover"}:
+        return _MODEL_ACTIVITY_TIMEOUT
     if len(_selected_job_ids(payload)) <= 1:
         return _DEFAULT_TIMEOUT
     if not workflow.patched(_SELECTED_BATCH_TIMEOUT_PATCH):

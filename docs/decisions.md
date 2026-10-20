@@ -2746,3 +2746,21 @@ logging while retaining the previous approved text. General events/projections
 expose safe references only. No new CRM context, send transport or lexical
 semantic fallback is introduced. See [Outcomes](user/outcomes-and-feedback.md#actual-offer-terms-and-decisions)
 and [offer read model](architecture/read-model.md#offer-read-model).
+
+## 2026-10-21: Complete Model Stages Use The Long-Work Activity Budget
+
+Status: accepted
+
+Score, Tailor and Cover activities have a six-hour operational execution budget
+in per-job preparation and pipeline batches. A stage includes sequential model
+calls, verification and bounded correction; valid Max-effort work can exceed
+the former thirty-minute coarse deadline. PDF rendering keeps thirty minutes,
+and selected Enrich batches keep their existing worker-wave budget.
+
+The two-minute heartbeat timeout, explicit cancellation, spend preflight,
+bounded retry counts and acceptance gates remain enforced. This is a whole-stage
+Temporal deadline, not an additional provider-call limit. Existing scheduled
+timers remain recorded in history; synthetic regression runs prove a healthy
+stage crosses the old budget without retry, old histories replay under the new
+policy, and missing heartbeats and cancellation still stop work. See the
+[workflow envelope](architecture/pipeline/envelope.md#run_blocking_with_heartbeat).

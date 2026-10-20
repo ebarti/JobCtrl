@@ -33,6 +33,7 @@ with workflow.unsafe.imports_passed_through():
         _COVER_RETRY,
         _DEFAULT_HEARTBEAT_TIMEOUT,
         _DEFAULT_TIMEOUT,
+        _MODEL_ACTIVITY_TIMEOUT,
         _SCORE_RETRY,
         _TAILOR_RETRY,
     )
@@ -267,7 +268,7 @@ async def _execute_step(step: str, payload: JobPreparationInput) -> Any:
                 rescore=payload.rescore,
                 llm_model=payload.llm_model,
             ),
-            start_to_close_timeout=_DEFAULT_TIMEOUT,
+            start_to_close_timeout=_MODEL_ACTIVITY_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=_SCORE_RETRY,
         )
@@ -287,7 +288,7 @@ async def _execute_step(step: str, payload: JobPreparationInput) -> Any:
                 tailor_judge_model=payload.tailor_judge_model,
                 llm_model=payload.llm_model,
             ),
-            start_to_close_timeout=_DEFAULT_TIMEOUT,
+            start_to_close_timeout=_MODEL_ACTIVITY_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=_TAILOR_RETRY,
         )
@@ -301,7 +302,7 @@ async def _execute_step(step: str, payload: JobPreparationInput) -> Any:
                 validation_mode=payload.validation_mode,
                 llm_model=payload.llm_model,
             ),
-            start_to_close_timeout=_DEFAULT_TIMEOUT,
+            start_to_close_timeout=_MODEL_ACTIVITY_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=_COVER_RETRY,
         )
