@@ -342,8 +342,40 @@ def test_review_uses_current_coverage_and_only_admissible_revision_evidence():
     assert next(row for row in targets if row["evidence_id"] == "alternative")["coverage_edge_ids"] == ["alternative-edge"]
     assert "unlinked" not in {row["evidence_id"] for row in targets}
     assert _resume_review_evidence_ids(profile, plan, ()) == ["alternative", "selected"]
-    rendered = SimpleNamespace(evidence_ids=("unlinked", "foreign"), bullet_id="experience:entry#0", source_id="entry")
+    rendered = SimpleNamespace(evidence_ids=("unlinked", "foreign"), bullet_id="experience:entry#0", source_id="entry", section="experience")
     assert _resume_review_evidence_ids(profile, plan, (rendered,)) == ["alternative", "selected", "unlinked"]
+
+
+def test_review_declares_the_renderer_owned_skill_category_order():
+    from types import SimpleNamespace
+    from jobctrl.domain.materials.quality import TailoringPlan
+    from jobctrl.domain.materials.resume_document import build_resume_document
+    from jobctrl.domain.materials.provenance_builder import rendered_lines
+    from jobctrl.domain.materials.use_cases import _resume_review_rubric
+
+    profile = source_profile()
+    profile["resume"]["skill_categories"] = [
+        {"id": "first", "label": "First category", "items": ["First item"]},
+        {"id": "second", "label": "Second category", "items": ["Second item"]},
+    ]
+    profile["resume"]["tailoring_rules"]["required_skill_category_ids"] = ["first", "second"]
+    payload = {"skill_category_updates": [
+        {"id": "second", "items": ["Second item"]}, {"id": "first", "items": ["First item"]},
+    ]}
+    document = build_resume_document(payload, profile)
+    assert [row["id"] for row in document["skills"]] == ["first", "second"]
+    rows = tuple(
+        SimpleNamespace(bullet_id=ident, section=section, source_id=source, evidence_ids=())
+        for ident, section, source, _text in rendered_lines(profile, payload)
+    )
+    plan = TailoringPlan(
+        claim_mode="verified_only", auto_approvable_claim_modes=("verified_only",),
+        allow_adjacent_achievement_drafts=False, writing_style={}, target_seniority="senior",
+    )
+    permissions = json.loads(_resume_review_rubric(profile, plan, rows=rows)["generation_permissions"])
+    assert permissions["allow_layout_changes"] is False
+    assert permissions["allow_skill_category_reorder"] is False
+    assert permissions["fixed_skill_category_order"] == ["first", "second"]
 
 
 @pytest.mark.parametrize("mode", ["lenient", "normal", "strict"])

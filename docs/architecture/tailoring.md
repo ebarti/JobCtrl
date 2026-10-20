@@ -94,6 +94,9 @@ canonical sources already bound to the verified rendered candidate. The full
 profile remains available for factual review; its mere presence cannot grant a
 new coverage edge. An out-of-scope correction gets exact private ID feedback in
 the existing bounded repair, without changing the model's quality verdict.
+Review permissions also record renderer-owned layout and the exact fixed skill
+category order. Skill-item reordering never grants category or section-layout
+edits; those remain under the saved profile and template.
 Seniority does not imply direct reports, and omitted optional roles alone do not
 require a complete career inventory. Reviewers assess the truthful artifact;
 unsupported qualification gaps remain gaps rather than requests to invent proof.

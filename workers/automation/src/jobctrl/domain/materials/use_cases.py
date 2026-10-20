@@ -1681,6 +1681,9 @@ def _resume_review_rubric(profile, plan, *, rows=()):
             "required_experience_entry_ids": get_required_experience_entry_ids(profile),
             "required_skill_category_ids": get_required_skill_category_ids(profile),
             "max_bullets_per_experience": get_max_experience_bullets(profile),
+            "allow_layout_changes": False,
+            "allow_skill_category_reorder": False,
+            "fixed_skill_category_order": [row.source_id for row in rows if row.section == "skills"],
         }),
         "tailoring_plan": json.dumps(plan.to_prompt_dict(), ensure_ascii=False),
         "retry_evidence_targets": json.dumps([
@@ -1690,7 +1693,7 @@ def _resume_review_rubric(profile, plan, *, rows=()):
         "revision_authority": "The current coverage graph and required evidence pins constrain generation. The retry evidence targets are the canonical alternatives that a bounded revision may reconsider; they do not authorize new coverage edges or a larger artifact budget. A required role without active coverage or an explicit bullet pin permits exactly one positioning bullet, or no bullet when it has no achievement evidence. Assess the best truthful artifact within these constraints; do not require additional bullets or evidence that neither the active plan nor the revision targets permit. Source verification and your semantic pass/fail decision remain independent gates.",
         "role_scope": "Use the canonical posting's actual responsibilities. A seniority label alone does not establish people-management duties or direct reports.",
         "selection": "Required experience entries are a minimum; a complete career inventory is not required. An omitted optional role alone is not a completeness defect. Recommend additional saved evidence when it adds distinct role-relevant proof within the generation permissions.",
-        "fixed_structure": "Historical titles, employers, dates, locations, education and skill-category labels are source-controlled. Repairs must preserve them and stay within the permitted mutable fields.",
+        "fixed_structure": "Historical titles, employers, dates, locations, role summaries, education, contacts and skill-category labels are source-controlled. Section layout and skill-category order are fixed by the saved profile and template. Skill reorder permission applies to items within a category, not category order. Repairs must preserve these surfaces and stay within the permitted mutable fields.",
         "candidate_fit_boundary": "Judge whether the artifact presents available supported evidence clearly for this role. Do not demand unsupported qualifications or treat a known candidate qualification gap alone as a drafting defect.",
     }
 
