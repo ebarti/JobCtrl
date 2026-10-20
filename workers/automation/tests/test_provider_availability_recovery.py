@@ -13,9 +13,16 @@ _ROUTED_CHAT_JSON = llm_client.LlmAdapter.chat_json
 
 
 @pytest.fixture
-def sdk_lane():
+def sdk_lane(monkeypatch):
+    """Own SDK bootstrap as well as the fake query; never read host auth."""
     from jobctrl.llm_lanes import bind_llm_lane
 
+    def unexpected_auth_probe(*args, **kwargs):
+        raise AssertionError("Synthetic SDK tests must not inspect host credentials")
+
+    monkeypatch.setattr("jobctrl.infrastructure.setup_probes.probe_claude_auth", unexpected_auth_probe)
+    monkeypatch.setattr("jobctrl.infrastructure.setup_probes.bundled_claude_sdk_options", lambda: {})
+    monkeypatch.setattr("jobctrl.infrastructure.analysis.claude_analysis_adapter.bundled_claude_sdk_options", lambda: {})
     with bind_llm_lane("tailoring"):
         yield
 
