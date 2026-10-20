@@ -24,6 +24,7 @@ RouteRequestFetcher = Callable[[str, str, Mapping[str, str]], "RouteFulfillment"
 
 _ROUTE_FETCH_TIMEOUT_SECONDS = 20
 _ROUTE_FETCH_MAX_BYTES = 2_000_000
+_ROUTE_ASSET_MAX_BYTES = 16_000_000
 _UNSAFE_REQUEST_HEADERS = {
     "authorization",
     "cookie",
@@ -212,10 +213,11 @@ class PublicHttpUrlRouteGuard:
                 return
             headers = getattr(request, "headers", {}) or {}
             headers = dict(headers)
-            if self._include_resource_destination:
+            resource_type = str(getattr(request, "resource_type", ""))
+            if resource_type:
                 # Playwright routing may omit Sec-Fetch-Dest. Its native
                 # resource type still distinguishes passive assets from data.
-                resource_type = str(getattr(request, "resource_type", ""))
+                headers = {name: value for name, value in headers.items() if str(name).lower() != "sec-fetch-dest"}
                 headers["sec-fetch-dest"] = {
                     "stylesheet": "style", "media": "video", "xhr": "empty", "fetch": "empty",
                 }.get(resource_type, resource_type)
@@ -285,18 +287,20 @@ def _fetch_public_route_request(
         method=method,
         headers=_safe_request_headers(headers),
     )
+    destination = next((str(value) for name, value in headers.items() if str(name).lower() == "sec-fetch-dest"), "")
+    max_bytes = _ROUTE_ASSET_MAX_BYTES if destination in {"script", "style"} else _ROUTE_FETCH_MAX_BYTES
     try:
         with opener.open(request, timeout=_ROUTE_FETCH_TIMEOUT_SECONDS) as response:
             return RouteFulfillment(
                 status=int(getattr(response, "status", 200)),
                 headers=_response_headers(response.headers),
-                body=_read_limited(response),
+                body=_read_limited(response, max_bytes=max_bytes),
             )
     except urllib.error.HTTPError as exc:
         return RouteFulfillment(
             status=int(exc.code),
             headers=_response_headers(exc.headers),
-            body=_read_limited(exc),
+            body=_read_limited(exc, max_bytes=max_bytes),
         )
 
 
@@ -324,8 +328,8 @@ def _response_headers(headers: Message | Mapping[str, str]) -> dict[str, str]:
     return response_headers
 
 
-def _read_limited(response: Any) -> bytes:
-    body = response.read(_ROUTE_FETCH_MAX_BYTES + 1)
-    if len(body) > _ROUTE_FETCH_MAX_BYTES:
+def _read_limited(response: Any, *, max_bytes: int = _ROUTE_FETCH_MAX_BYTES) -> bytes:
+    body = response.read(max_bytes + 1)
+    if len(body) > max_bytes:
         raise PublicResponseLimitError("Public route response exceeded the maximum allowed size")
     return bytes(body)

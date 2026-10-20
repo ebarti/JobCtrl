@@ -69,6 +69,13 @@ applying its 50,000-character HTML limit, so removable markup does not crowd out
 posting text or application links. JSON-LD is collected separately; meaningful
 content beyond the HTML limit remains outside CSS and LLM extraction input.
 
+Anonymous browser acquisition bounds each public document or data response to
+2 MB. Browser-identified JavaScript and stylesheet dependencies have a separate
+16 MB limit so large career-site bundles can render. Public-address pinning,
+redirect validation, credential stripping, timeouts and read-only request
+restrictions apply to both limits. An oversized resource remains an acquisition
+failure and cannot establish a posting or availability verdict.
+
 While the worker is running, unfinished enrichment and retryable failures are
 picked up automatically without a new discovery search. Recovery waits for
 existing preparation to finish, keeps each job's attempt history, and retries

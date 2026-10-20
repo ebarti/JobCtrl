@@ -5,6 +5,12 @@ runtime implementation. That separation lets the web app and TypeScript API
 share precise types without turning HTTP DTOs, SQLite rows, or Python objects
 into competing domain models.
 
+The API caches Python JSON-RPC adapters by app directory, configuration path and
+runtime identity. Provider, import and other services may retain adapters for
+different contexts concurrently. Selecting another context preserves in-flight
+requests and later calls on existing adapters; explicit registry reset closes
+all cached contexts. A context change must not revoke a service's live handle.
+
 **Read this if** you are adding a field, event, route, JSON-RPC method, or typed
 client call and need to know which layer owns the contract.
 

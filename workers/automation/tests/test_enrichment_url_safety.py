@@ -225,6 +225,78 @@ def test_oversized_public_resource_remains_an_acquisition_limit():
     assert _route_block_error(guard).reason_code == "unsafe_redirect"
 
 
+@pytest.mark.parametrize("resource_type,destination", [("script", "script"), ("stylesheet", "style")])
+def test_public_asset_fetch_receives_browser_owned_resource_type(resource_type, destination):
+    page, route = _RouteOnlyPage(), _FulfillRoute()
+    calls = []
+
+    def fetcher(url, method, headers):
+        calls.append(headers)
+        return RouteFulfillment(200, {}, b"asset")
+
+    PublicHttpUrlRouteGuard(
+        page, resolver=_resolver_for("93.184.216.34"),
+        fetch_public_requests=True, request_fetcher=fetcher,
+    ).install()
+    page.handler(route, SimpleNamespace(
+        url="https://cdn.example/asset", method="GET", headers={}, resource_type=resource_type,
+    ))
+    assert calls[0]["sec-fetch-dest"] == destination
+    assert route.fulfilled["body"] == b"asset"
+
+
+@pytest.mark.parametrize("destination", ["script", "style"])
+def test_public_browser_assets_accept_bounded_large_bundles(monkeypatch, destination):
+    from io import BytesIO
+    from jobctrl.infrastructure.network import url_safety, public_http
+
+    body = b"x" * 4_305_305
+
+    class Response(BytesIO):
+        status = 200
+        headers = {}
+
+    opener = SimpleNamespace(open=lambda *_args, **_kwargs: Response(body))
+    monkeypatch.setattr(public_http, "build_public_http_opener", lambda **_kwargs: opener)
+    result = url_safety._fetch_public_route_request("https://cdn.example/asset", "GET", {"sec-fetch-dest": destination})
+    assert result.body == body
+
+
+def test_document_resource_type_overrides_asset_destination_header():
+    page, route = _RouteOnlyPage(), _FulfillRoute()
+    calls = []
+
+    def fetcher(url, method, headers):
+        calls.append(headers)
+        return RouteFulfillment(200, {}, b"document")
+
+    PublicHttpUrlRouteGuard(
+        page, resolver=_resolver_for("93.184.216.34"),
+        fetch_public_requests=True, request_fetcher=fetcher,
+    ).install()
+    page.handler(route, SimpleNamespace(
+        url="https://public.example/page", method="GET",
+        headers={"Sec-Fetch-Dest": "script"}, resource_type="document",
+    ))
+    assert calls == [{"sec-fetch-dest": "document"}]
+
+
+@pytest.mark.parametrize("destination,size", [("document", 2_000_001), ("empty", 2_000_001), ("script", 16_000_001), ("style", 16_000_001)])
+def test_public_document_data_and_asset_limits_remain_enforced(monkeypatch, destination, size):
+    from io import BytesIO
+    from jobctrl.infrastructure.network import url_safety, public_http
+    from jobctrl.infrastructure.network.fetch_failures import PublicResponseLimitError
+
+    class Response(BytesIO):
+        status = 200
+        headers = {}
+
+    opener = SimpleNamespace(open=lambda *_args, **_kwargs: Response(b"x" * size))
+    monkeypatch.setattr(public_http, "build_public_http_opener", lambda **_kwargs: opener)
+    with pytest.raises(PublicResponseLimitError):
+        url_safety._fetch_public_route_request("https://public.example/resource", "GET", {"sec-fetch-dest": destination})
+
+
 def test_public_route_guard_aborts_public_write_without_poisoning_page() -> None:
     page = _RouteOnlyPage()
     calls: list[tuple[str, str, dict[str, str]]] = []
