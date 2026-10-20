@@ -64,6 +64,19 @@ required. Empty required entry/category lists fall back to all entries; that
 rule does not pin every bullet. The proposed `legacy_all`/`selective_v1` fields
 are not implemented.
 
+The versioned-save prerequisite in the [capture design (#955)](https://github.com/ebarti/JobCtrl/commit/0aa939cde09b46af331178fb660ebc9a2ac90ee8)
+is satisfied by the [version fence (#956)](https://github.com/ebarti/JobCtrl/commit/06017c59136be2ea95a33adc3d33577f89ebf7f2)
+and [reviewed search proposals (#978)](https://github.com/ebarti/JobCtrl/commit/97b4fd5c34a4851150e4252002b04b5191801602).
+The original missing-version baseline is superseded; it does not justify a
+second save authority. [Source-bound determinations (#1064)](https://github.com/ebarti/JobCtrl/commit/0b61aef78b03d6d198e34c561c69ae0eec921969)
+supersede lexical semantic fallbacks, inferred evidence strength/seniority and
+comparative evaluation corpora. Intake follows that contract. Reuse
+[achievement fidelity (#830)](https://github.com/ebarti/JobCtrl/commit/4644f0a8e0c3d6bd9de474dfdeebea6a4e520936),
+[canonical batch ownership (#868)](https://github.com/ebarti/JobCtrl/commit/85415c7f641e090bf330f0e7ae9333694055391a)
+and [retained candidate evidence (#869)](https://github.com/ebarti/JobCtrl/commit/7fd68570da18d82677864fb045bb743b1660bf16).
+Those foundations do not supply the missing imported-draft handoff or
+multi-source reconciliation and promotion.
+
 ### 2.2 Current entry → handoff → save → recovery
 
 | Boundary / current owner at the pin above | Inspected behavior | Executed proof and limit |
@@ -212,6 +225,30 @@ source required to explain a committed acceptance or historical snapshot.
   deferred items remain in the draft, excluded from snapshots and downstream
   readers. Editing a value, target or supporting revision invalidates its old
   review. The review UI must show the normalized value actually being accepted.
+
+### 4.1.2 Acquisition and changed-source review
+
+Intake is limited to the finite set of local sources explicitly supplied by the
+user; it does not recursively scan directories or fetch repositories/accounts.
+Reuse current PDF byte/content checks. Before enabling any additional format,
+its parser must bound file size, extracted content and work, and the intake must
+bound total source count/content before extraction or model calls. Unsupported
+formats, unreadable sources and uncertain ownership remain explicit draft
+statuses; they cannot clear accepted facts or silently fall back to another
+parser. This proposal selects no new numeric limits or model/spend policy.
+
+A user-supplied project writeup or selected public-repository excerpt/export is
+source material under these same local boundaries. Repository metadata can
+suggest project context, but cannot prove individual ownership of an achievement.
+Any future network acquisition needs a separately authorized bounded contract.
+
+A changed document reopens only evidence whose support, value, ownership or
+canonical target is affected. Resolve affected items through recorded source
+references and source-bound determinations, not lexical similarity. Unaffected
+accepted facts keep their original source revision and acceptance; a new file
+digest alone does not withdraw them. Changed proposals need fresh source/version
+binding and explicit review. Failed extraction preserves all accepted facts and
+the prior inspectable sources.
 
 ### 4.2 Evidence sufficiency
 
@@ -481,7 +518,8 @@ labeled corpora, comparative baselines or recorded-output replay fixtures.
 | Scenario / owning boundary | Current measured coverage | Prospective acceptance proof |
 | --- | --- | --- |
 | Multiple local sources → review/editor | None; current browser handoff is missing by inspection. | PDF plus authored answer/excerpt reach the same durable draft with separate source revisions. Reload and unsaved editor changes survive; neither import nor navigation saves facts. |
-| Repeat source / revised source / duplicate wording / reorder | Ordinal `import:*` draft IDs inspected; no reconciliation coverage. | Same bytes/renamed file reuse the revision; changed bytes create a revision. Duplicate text in separate roles stays separate. Proposed duplicate links require human choice; confirmed links and canonical IDs survive reorder and wording edits. |
+| Local acquisition / unsupported formats / repository ownership | Current PDF size/content checks only; no multi-source acquisition. | Process only explicitly supplied local sources within per-source and aggregate bounds. Unsupported/unreadable inputs remain visible without fallback or fact deletion. Repository context cannot establish candidate ownership. |
+| Repeat source / revised source / duplicate wording / reorder | Ordinal `import:*` draft IDs inspected; no reconciliation coverage. | Same bytes/renamed file reuse the revision; changed bytes create a revision and reopen only affected evidence. Unaffected accepted facts retain original provenance. Duplicate text in separate roles stays separate. Proposed duplicate links require human choice; confirmed links and canonical IDs survive reorder and wording edits. |
 | Conflicting title/date/metric / ambiguous team ownership | Model authority tests only, no reconciler. | Show both sources and saved value; contradict/defer one item while accepting unrelated items. No majority, confidence or lexical rule overwrites a fact; ownership clarification retains its authored source. |
 | Missing values / unknown / absent section | Strict extraction null/list schema and no fabricated achievement; no reviewed merge. | Unknown stays unknown and absent input preserves known values. No defaults create dates, metrics, targets or attestations; required unknowns stay questions. |
 | Partial accept / reject / defer / edited proposal | Existing candidate confirmation is version-bound, not imported-item review. | Only exact reviewed normalized values/targets promote; other items remain draft. Changed value/source/target invalidates acceptance. Reopen review with each prior decision intact. |
