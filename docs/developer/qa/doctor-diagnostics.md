@@ -17,6 +17,12 @@ which integration needs further verification. For user setup, use
 [Getting Started](../../user/getting-started.md); for check selection, use
 [Reliability & QA](../../local-reliability-qa.md).
 
+Existing coverage includes the [diagnostic inventory, Langfuse response
+classification and controlled Typer cases](https://github.com/ebarti/JobCtrl/pull/979),
+and [source-mode Node.js 22.13+ guidance and bundled-wrapper
+checks](https://github.com/ebarti/JobCtrl/pull/977). The remaining gaps below concern
+integration proof beyond those local checks.
+
 ## Test isolation
 
 Doctor tests use synthetic inputs for unrelated host boundaries. Temporal cases
@@ -59,7 +65,7 @@ The table above remains the command's status contract.
 | Browser / PDF readiness | [Browser capabilities](../../../workers/automation/src/jobctrl/browser_capabilities.py) delegates core readiness to [launch/close preflight](../../../workers/automation/src/jobctrl/infrastructure/preflight.py). Disabled optional capabilities stay disabled. [PDF ports](../../../workers/automation/tests/test_pdf_renderer_ports.py) own rendering proof. | A launched browser proves neither navigation nor PDF output/layout; mocked preflight proves classification only. Use managed Chromium with an in-memory synthetic page and synthetic resume/letter through the owning renderers, inspect output, and clean up. No user browser/profile adoption, authentication or real site access is implied. |
 | Temporal connection versus worker execution | [Client factory](../../../workers/automation/src/jobctrl/infrastructure/temporal/client.py) owns address/namespace; `doctor()` waits up to three seconds for a client. [Temporal CLI cases](../../../workers/automation/tests/test_doctor_temporal.py) retain that factory and synthetic reachable/unreachable outcomes. | Connection says nothing about polling, task queue, workflow completion, restart or history compatibility. Use a disposable local namespace/queue and existing synthetic workflow tests; retain exact workflow/run IDs through restart and cleanup. The [pipeline owner](../../architecture/pipeline/index.md) owns execution/recovery, not doctor. No live worker or recovery result is established here. |
 | Board dependencies | `doctor()` imports JobStreaming and reads settings; the [gateway](../../../workers/automation/src/jobctrl/infrastructure/discovery/jobstreaming_gateway.py) and [gateway tests](../../../workers/automation/tests/test_jobstreaming_gateway.py) own adapter behavior. `config.resolve_jobspy_boards()` retains `boards` with the legacy `sites` alias and canonical `jobspy:` source IDs. | An import/version row proves no board availability, transport, pacing, result correctness or checkpoint recovery. Exercise adapter calls/events with owned synthetic responses first. Any later public-board smoke needs explicit destination/request scope and separate authorization; never rename stored IDs, manufacture a source identity, or use real search/profile data for this inventory. |
-| Bounded smoke diagnostics | `doctor()` has a three-second Temporal wait and two-second Langfuse HEAD request; setup's Codex login-status call has a ten-second subprocess timeout and binary-version calls use five seconds. [Langfuse CLI cases](../../../workers/automation/tests/test_doctor_langfuse.py) and the status matrix below cover disabled/missing/transport outcomes. | There is no integrated smoke mode or overall doctor deadline. Browser preflight passes no explicit launch timeout. HEAD does not authenticate or ingest; local Gmail/CapSolver/provider checks do not execute those services. A future smoke must bound each permitted operation, prove cancellation/cleanup and label each result's limits. Do not add such a framework or change delivery budgets as part of this assessment. |
+| Bounded smoke diagnostics | `doctor()` has a three-second Temporal wait and two-second Langfuse HEAD request; setup's Codex login-status call has a ten-second subprocess timeout and binary-version calls use five seconds. [Langfuse CLI cases](../../../workers/automation/tests/test_doctor_langfuse.py) and the status matrix below cover disabled/missing/transport outcomes. | There is no integrated smoke mode or overall doctor deadline. Browser preflight passes no explicit launch timeout. HEAD does not authenticate or ingest; local Gmail/CapSolver/provider checks do not execute those services. A future smoke must bound each permitted operation, prove cancellation/cleanup and label each result's limits. |
 
 ### Future smoke validation design (not implemented)
 
@@ -96,8 +102,8 @@ owned temporary directory and synthetic credential, profile, browser, provider,
 Temporal, and HTTP boundaries. It observes missing profile/browser/Temporal and
 disabled optional browsers, a disabled Langfuse export without HTTP, synthetic
 healthy local dependencies, source `npx` versus a bundled executable wrapper,
-and a Langfuse status matrix. In the pre-fix command, synthetic HEAD 404 produced
-`Langfuse OK reachable`; the same case now reports `MISSING` with status 404.
+and a Langfuse status matrix. Synthetic HEAD 404 reports `Langfuse MISSING`
+with status 404.
 All these cases retain diagnostic exit code zero.
 
 These controlled statuses verify classification and command wiring. They do not
