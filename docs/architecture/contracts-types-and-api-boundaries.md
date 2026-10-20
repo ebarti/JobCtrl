@@ -181,9 +181,10 @@ See [Runtime & Processes](runtime.md) and
 health behavior.
 
 The shared boundary fixture in `workers/automation/tests/fixtures/rpc_boundary.json`
-is exercised by the Python parser and registered stdin/stdout server. The
-Python test checks the live output against `rpc_boundary_python.json`; the
-TypeScript test validates that same observation snapshot with the actual Zod
+contains 21 cases and is exercised by the Python parser and registered
+stdin/stdout server. The Python test checks the live output against
+`rpc_boundary_python.json`; the TypeScript test validates that same observation
+snapshot with the actual Zod
 schemas. Together the tests compare the live default registration set with
 `RpcMethods` and check a synthetic `provider_models` synchronous result and
 `run_stage` workflow start. The TypeScript endpoint spec remains the source
@@ -271,6 +272,39 @@ explicit-null ID behavior before tightening either side. The default API
 adapter currently generates integer IDs; the explicit-null case is outside
 its normal call path. The TypeScript API's constructed
 outbound requests remain the supported caller path.
+
+#### Python RPC contract ownership
+
+Python's runtime registry and TypeScript's `RpcMethods`/`RpcContracts` remain
+the contract owners. Registration mode, caller parameters, workflow
+acknowledgments and awaited result families must agree across that boundary.
+HTTP endpoint declarations do not replace Python registration.
+
+For [#954](https://github.com/ebarti/JobCtrl/issues/954), the existing registry
+and parity guards are the smallest justified mechanism for the covered
+supported paths; a second Python endpoint-spec registry is not justified.
+The TypeScript endpoint declarations, derived clients and route shells from
+[#782](https://github.com/ebarti/JobCtrl/pull/782),
+[#783](https://github.com/ebarti/JobCtrl/pull/783) and
+[#784](https://github.com/ebarti/JobCtrl/pull/784) retain HTTP ownership.
+The shared Python dispatch/envelope guard from
+[#980](https://github.com/ebarti/JobCtrl/pull/980), reconciled schemas from
+[#1088](https://github.com/ebarti/JobCtrl/pull/1088) and checked callers from
+[#1090](https://github.com/ebarti/JobCtrl/pull/1090) supply representative
+dispatch, parameter, result, error and unknown-method coverage, including
+negative parity mutations. Provider adoption in
+[#1103](https://github.com/ebarti/JobCtrl/pull/1103) supplies the incremental
+HTTP migration pattern below without changing worker registration.
+
+The shared envelope fixture covers two methods. Inventory equality and selected
+feature tests do not establish exhaustive per-method parameter/result parity or
+live Temporal recovery. Handler-specific checks remain necessary when changing
+a supported call path. Existing canonical facts, accepted materials and approval
+bindings retain their current owners during transport or continuation failures.
+
+The separate wire-policy proposal above remains unimplemented. A future change
+to version handling, falsy parameters, extra keys or fractional/null IDs must
+first choose compatibility semantics and reproduce the affected caller path.
 
 ### Domain Events Over SSE
 
