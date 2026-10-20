@@ -20,6 +20,41 @@ individual regression to exact test files.
 | Provider/browser setup | Environment ownership and passive detection cannot silently become credential or browser adoption. Extension pairing-token presence remains distinct from one explicitly selected installation's fresh live heartbeat; another Chrome profile with the token cannot lease. Integrated Discovery and Enrich prefer the selected connected extension or choose guarded public HTTP/anonymous Playwright before acquisition. Offline status must not block eligible dispatch. Neither mode reads a copied profile; acquisition errors and cancellation never trigger a second transport. Anonymous provider initial/redirect/recreated/detail requests retain public URL/DNS/socket checks and reject proxy routing. Connected worker tasks must not carry browser-owned cookie/user-agent headers. Hanging/canceled tasks close their tabs, active leases remain live past 45 seconds, four-way admission uses backpressure, cross-origin redirects are blocked before dispatch, and UTF-8 byte bounds stop streaming early. | Worker/API bridge tests, two-installation contention and lease-liveness tests, extension persistent-context timeout/redirect E2E, Settings/Pipelines components, and a bounded live Discovery smoke. |
 | Retry preflight | Starting a retry cannot erase failure evidence before worker readiness is known. | API state-before/state-after regression plus route smoke. |
 
+## Bounded Combined Jobs Pages (#1003)
+
+The Operations helper must make one combined list request and return its server
+page unchanged. Exercise absent, empty, single, duplicate and multiple stages;
+explicit arrays override scalar stages. Forward all other filters, sort fields,
+directions, page and page size. Failed reads must surface their error without
+partial results or a scalar fallback. Keep tenant-first list keys, targeted
+invalidation and event patches compatible with combined deep pages.
+
+Use `jobsListQuery.test.ts`, `hooks/useJobsListQuery.test.ts`,
+`DemoApiClientAdapter.test.ts`, `jobStageFilters.test.ts` and
+`JobsView.test.tsx` for helper, query, demo and view regressions. The actual-router
+case must exercise production navigation, saved multi-stage hydration and the
+view query, so an extra ordinary-page prefetch cannot pass unnoticed. Exercise scalar
+links, selection changes resetting page, saved selection/remount, page-local
+filter bulk guards, all-matching stage membership, and server-clamped paging.
+
+At the browser gate run both `jobs-bulk.spec.ts` and
+`job-list-pagination.spec.ts` in the existing guarded isolation fixture. The
+pagination spec uses `loadE2eDbPath`, seeds 5,001 owned canonical synthetic jobs
+across Discover and Apply, then exercises the rendered grid and saved view.
+Require page 100/pageSize 50, exact ordered IDs, global totals and no more than
+50 jobs; record one combined list request with no preceding-page downloads.
+Also inspect ordinary, adjacent, clamped and empty states, page selection and
+all-matching selection. Cleanup may delete only the fixture's owned job rows
+and their dependent rows, preserving the pre-existing synthetic jobs.
+
+Retain JUnit, complete request/response observations, synthetic inputs,
+source/lock hashes, traces and page screenshots. Inspect the screenshots as
+well as assertions. Final API regressions, 100/1,000/10,000-job scale evidence,
+independent review/QA and publication/resume checks bind to their controller
+candidate; historical observations never certify a later stack tip. The
+[benchmark owner](../local-scale-benchmark.md#bounded-job-page-contract-and-supplied-comparisons)
+defines sampling and comparison limits.
+
 ## Ashby Listing And Location Admission
 
 The Ashby public posting adapter excludes only explicit boolean
@@ -426,7 +461,64 @@ reconciliation, independent review/QA, mandatory checks and publication at an
 unmerged verified head. After it records the summary, remove only the owned
 trial artifacts and processes; retain no generated candidate material in Git.
 
+## Accepted DOCX Export
+
+Run locked Ruff on the editable export domain model, infrastructure export
+modules, RPC handler, CLI and export tests, then run locked pytest for
+`test_accepted_docx_export.py`, `test_accepted_export_api.py` and the RPC boundary.
+Use only owned synthetic native-schema workspaces. The suite exercises the real
+CLI subprocess plus source ownership/generation/status fences, source drift,
+exclusive publication, corrupt output and persistence failure. Verify preserved
+accepted bytes, registered prior exports, review decisions and application state.
+
+The standard-library writer must round-trip through the independent `python-docx`
+development dependency: compare every paragraph, including blank lines, tabs,
+Unicode, contacts, dates and bullet markers, then edit/save/reopen it. Check
+heading styles, A4/Letter, locale, source identity and settings hashes. Inspect
+rendered synthetic resume and cover-letter pages for clipping or missing glyphs;
+exact PDF layout fidelity is outside the editable-export contract. No model
+evaluation set or replay fixture is involved. This owner is synchronous and
+does not dispatch a Temporal worker or contact a provider.
+
+Run `apps/api/test/accepted-material-exports.test.ts` against the prepared locked
+Python interpreter, plus RPC parity. Exercise history, export and binary download
+through the production HTTP routes and registered Python RPC. Reject foreign
+tenant/job bindings, unknown worker diagnostics, changed source bytes/metadata,
+missing files, symlinks and corrupted retained bytes. Read downloaded files with
+`python-docx` and prove approval/application/source preservation.
+
+Run the colocated accepted-export component/a11y tests, download-adapter tests,
+event invalidation parity, web lint/check/build and affected Storybook stories.
+Verify pending controls, A4/Letter selection, unavailable sources, demo refusal,
+and retained history across export/refresh/download failures. A retry of Download
+must not create another export.
+
+`e2e/tests/accepted-material-exports.spec.ts` runs in the production API/RPC
+browser gate (`JOBCTRL_E2E_ISOLATED=0`); the isolated no-subprocess gate deliberately
+defers it to that separate CI step. Use an owned synthetic workspace and isolated
+ports. Export both material kinds on both paper sizes, inspect each downloaded
+document, exercise an edit after selection and a missing-file download/retry,
+then prove unchanged approvals and no extra export rows. Inspect desktop/mobile
+screenshots, page identity, console health, overflow and critical/serious axe
+results. Skipping this production gate is not passing browser evidence.
+
 ## Auditability Checks
+
+For selected-job demand, run locked `pytest tests/test_career_learning.py` and
+API `vitest run test/career-learning.test.ts` through their package owners.
+Require a no-model, read-only preview including all-missing descriptions;
+source-fingerprint/pre-spend fences; exact duplicate and missing-description
+counts; confirmed-only evidence with exact IDs; opposite valid model outcomes;
+provider/spend/schema/foreign-ID/non-verbatim/exact-value failures; and unchanged
+accepted comparisons after failure. Race a profile save with the model call.
+Choose a proposal through HTTP/registered RPC/SQLite, record completion evidence,
+restart and read it back. Rejected/stale writes must preserve origin/history and
+Profile/fit rows. Browser and hook checks cover explicit selection, citations,
+review before spend, pending state, optimistic rollback, source invalidation,
+separate aspirations/capability/activity and the unavailable demo. Inspect the
+expanded surface for accessibility and desktop/mobile overflow. Synthetic model
+doubles prove authority and failure handling; a configured-provider call with
+owned synthetic sources separately establishes live model integration.
 
 Every displayed semantic judgment must trace to a persisted determination:
 kind, schema/prompt versions, provider/model, input fingerprint, canonical source
@@ -444,14 +536,35 @@ preserve the last accepted artifact. Do not create eval sets, labeled corpora,
 baseline comparisons, English sentence corpora or recorded-output replay fixtures.
 
 For version changes, seed an obsolete analysis projection with already-folded
-event cursors. Both builders must rebuild it from the current canonical version
-without a new event, or expose no current analysis if none exists. The native
+event cursors. The TypeScript detail owner must rebuild it from the current
+canonical version on startup or keyed detail read without a new event, or expose
+no current analysis if none exists. Python refresh must leave this family untouched. The native
 cutover removes the cached shape while preserving canonical history, cursors
 and accepted artifact bytes. Citation format checks must reject fragments of
 numbers and dotted identifiers while accepting complete values followed by
 sentence punctuation or separated by commas.
 
 For Discovery, save literal target settings and plan a run without an interpretation receipt or second approval. Inspect the actual JobStreaming query/location/remote parameters and each provider’s supported filters; capability warnings are not currently displayed in JobCtrl. Structurally valid fetched results must ingest without an extra model gate, even when they do not lexically resemble the query. Exact user-authored title exclusions retain durable filtered receipts. Exercise capture/ack interruption, lease fencing, retry idempotency and limits. Full-posting interpretation/scoring retain model authority and source provenance. Historical native cutovers preserve authored cells, canonical jobs, accepted files and raw captures.
+
+For actual offers, drive the per-job offer HTTP/client entry and rendered
+Application outcomes panel without interview prep. Verify null equity,
+benefits/deadlines and explicit unknown currency/time base, source confirmation,
+concurrent expected-ID conflicts, accepted-to-declined corrections, retained
+prior terms/decisions and unchanged stage/submit records. Read and refresh the
+ordinary projections after a correction; the offer reader must retain its
+current canonical revision. Inspect the real outreach prompt and persisted
+source context: actual terms, canonical achievements and bound compensation
+evidence have distinct authority. Opposing fake-model verdicts must control
+the gate for identical inputs. Malformed/provider/budget failures and a source
+change during generation preserve the last approved text. Stale bindings block
+approval, clipboard copy and send logging; general SSE/activity/audit reads must
+exclude every private quotation and reason. Browser QA covers recording terms,
+deciding/correcting, reload/history, a linked-contact draft entry and mobile
+layout, using owned synthetic data only. Run `offer-outcomes.spec.ts` in the
+production API/RPC browser gate (`JOBCTRL_E2E_ISOLATED=0`), which exercises
+supporting history reads as well. CI names it explicitly in that step; the
+isolated fixture skips it because it denies those Python RPCs. An isolated
+skip is not offer product-path proof.
 
 For interview preparation, inspect each actual drafting prompt with a supported
 question and explicitly empty selections. Only that question's selected evidence
@@ -1124,3 +1237,130 @@ before owned intent remains a retryable failure of the already-started Apply run
 Use 300,000 unrelated
 events and 500 unchecked jobs, without ANALYZE, to bound read and sweep work. No application is submitted during QA. External transports may be
 deterministic; production claims/classifier/dispatch/persistence remain real.
+
+## Optional Company Briefings
+
+Use an owned exact-v14 synthetic workspace. Exercise explicit identity/source confirmation, cross-job reuse, unchanged-input zero-call reuse, concurrent refreshes and a configuration change during generation. Opposing valid model kinds and identity verdicts must control output without lexical fallback. Provider/budget/JSON/schema/foreign-ID/non-verbatim/exact-value failures and failed acceptance commits preserve the accepted snapshot and original clock. Check bounded body/redirect/request behavior, public destination checks, no credentials or personal context, and failed gateway transaction release.
+
+Run `test_company_briefings.py` and API `company-briefings.test.ts` to read real Python-written receipts through TypeScript and HTTP. Render Job Detail, Interviews and the existing digest through `company-briefings.spec.ts` on desktop and mobile; expand source excerpts and check critical/serious accessibility findings. These fixtures inject explicit model decisions and public transport, not recorded-output replay or judgment-quality evaluations. Report live provider/public transport evidence separately.
+
+## Cover-Letter PDF Review (#1042)
+
+Use an owned synthetic workspace. Pair API persistence and frontend race tests
+with real API → registered RPC → Chromium → PDF-viewer QA. Render full long text,
+HTML-sensitive characters, A4/Letter and all settings bounds. Compare the bytes
+and SHA-256 of preview and accepted download, measure paper dimensions and inspect
+every rendered page. Retain PDFs, page images, measurements and source hashes
+privately. Controlled renderer or browser responses prove boundary behavior only;
+they do not prove actual Chromium output or persistence.
+
+Exercise preview-only reads, explicit save, two previews saving concurrently,
+source replacement at the same generation, newer generations, tenant/job switches,
+rapid edits, edits during saves, reversed responses, unmount, missing/corrupt PDFs,
+renderer/RPC/validation/persistence failures, retries, reload, restart and a lost
+save acknowledgement. Failures retain accepted settings, provenance, bytes and
+approval bindings. Successful saves retain complete material history and resume
+behavior while requiring renewed approval for the new generation. Verify email
+bindings, resume draft rendering/comments, manual decisions/outcomes and jobs
+without a cover as preservation controls. The materials browser spec contains a
+real render/save/reload path; independent candidate-bound review/product gates
+remain governed by the reliability workflow.
+
+Repeat formatting saves and export both carried text sources as DOCX from each
+displayed generation. Inspect one set of resume layout/provenance rows in both
+projection writers, not concatenated copies. Seed a higher rejected generation:
+the accepted cover identity must remain unchanged while the next allocation
+exceeds it. Replace stale PDF provenance with current text metadata and recorded
+anchor/binding IDs, also without a prior PDF. During save, undo to the old settings
+and deliver canonical refresh before/after success or a lost acknowledgement;
+preserve the undo, reject obsolete query snapshots and require reconciliation
+before approval when the outcome is uncertain.
+Seed current resume PDF/text and cover text alongside older literal aliases with
+equal timestamps and higher-sorting IDs. A cover-only save must neither select an
+older resume nor refuse an unchanged cover source. Repeat saves and committed
+retries, then read warm projections and reopen the database. Exercise both alias
+directions, all resume text aliases and same-generation row-order ties. Preserve
+original rows, bytes, anchors and bindings; only the changed cover acceptance
+stales prior authorization. Keep a no-alias control and the insert-time drift
+rollback regressions.
+Also seed a selected complete resume pair with a newer text-only generation, and
+the reciprocal newer-PDF case. Save, retry and reload twice: preserve the selected
+pair, its aggregate metadata, layout and provenance rather than forming a mixed
+pair. Check cold and warm projection selection. For cover aliases, oppose ID
+ordering and insertion order at equal timestamps; displayed text must equal the
+canonical rendered source before/after save and reload, with no alias fallback
+when that canonical source becomes unreadable.
+Populate artifact projections before saving, then download the new accepted PDF
+without restarting. Acceptance must commit its existing `PdfRendered` event
+atomically; fail the event insert to prove full rollback, and retry a committed
+preview to prove that neither the generation nor event is duplicated.
+Start with a current accepted PDF and an existing authorization, then change the
+canonical source or attempt PDF during material, artifact and event inserts.
+Revalidate the submitted source, PDF, settings, renderer and manifest before
+commit; any mismatch must roll back the entire promotion and its event. Preserve
+prior material/provenance/decision rows and accepted PDF bytes. A source file
+written by another producer must survive rollback; its changed hash must stale
+the older PDF rather than being restored. Include source-ID and manifest changes
+and a successful fresh render/save after refusal.
+
+Prepare owned outside-root synthetic files and replace the generated directory,
+preview root, UUID directory, manifest, PDF and canonical source with symlinks.
+Neither preview, download, rendering nor acceptance may follow them. Exercise
+literal traversal, direct outside paths, existing output files and hard links;
+failed cleanup must preserve replaced directories and outside bytes. Repeat at
+the registered worker RPC boundary before its renderer runs.
+
+Replace an accepted PDF with corrupt bytes that retain `%PDF-`/`%%EOF` markers.
+Its persisted identity must remain unchanged and approval/download must fail.
+Replace text at the same generation and prove the older PDF is noncurrent even
+with no review receipt. New default-generated PDFs must carry both hashes and
+their source occurrence; missing or invalid identity metadata cannot grant
+approval. Keep `test_apply_approval_vocabulary.py`'s refusal assertions on an
+exact-schema no-cover connection, exercising the real cover guard.
+
+For retained browser evidence, set an owned `PLAYWRIGHT_JUNIT_OUTPUT_FILE` and
+retain its complete sibling `<report path>.artifacts` directory, including
+successful attachments. `materials.spec.ts` measures long Unicode/HTML-sensitive
+source at defaults and bounds for each font through
+`workers/automation/tests/cover_letter_pdf_probe.py` with the prepared worker
+interpreter. It requires Poppler on PATH, records source/settings/PDF identities,
+paper and text geometry, font sizes, line/paragraph deltas, every-page PNGs and
+viewer screenshots. Inspect every page; passing interactions alone cannot prove
+visual acceptance. Keep controlled-response race scenarios separate from these
+real render measurements.
+Use the same bounded full-render readiness wait for initial and reloaded viewers:
+PDF.js reports progress for each page before reporting completion. Progress such
+as `Rendering page 4 of 4` is not readiness. Keep measured page-count comparisons,
+all nine formatting combinations and every-page captures after the ready state.
+Persist viewer captures for every preview and reloaded accepted page using
+`testInfo.outputPath`, then attach file paths. Retain the viewer-page hash manifests
+and competing-save, uncertain-authorization and reload receipts in that same
+owned tree. Buffer-only attachments are insufficient evidence retention.
+
+Run materials before shipped-fit lifecycle browser cases in the same owned
+workspace. Formatting saves carry resume slots into later material generations;
+the lifecycle fixture must change and restore the currently accepted audit,
+preserving generation-one history and the exact legacy coverage assertions.
+Direct browser-test mutation requests must send the configured first-party
+Origin; absent or foreign Origins must still receive 403. For a committed save
+whose acknowledgement is lost, inspect the job-qualified authorization buttons:
+both must remain disabled with the reconciliation reason until canonical state
+is recovered. Check keyboard focus/scroll access to long cover-letter and email
+text, and retain the existing critical/serious axe checks.
+
+## Posting-history Source Proposals (#1041)
+
+Use owned exact-schema synthetic workspaces. Exercise the real
+`source-proposals from-history`, `list` and `reset` CLI entry points and existing
+HTTP locator GET/promote/reject routes. Require deduplicated board/API/posting
+coordinates, exact origin JobId/URL/run and extraction receipts, saved samples,
+existing source overlaps and unknown completeness. Repeated reads must preserve
+database content; repeated scans reuse unchanged receipts. Reject malformed,
+credential-bearing, private-address and private-DNS destinations before queue
+writes. Retain canonical posting/application authorities and schedule/source
+state during proposal generation. Rejection must fence alternate URLs and
+ordinary worker learning across restart; only explicit reset permits reproposal.
+Disabled sources survive worker seed reconciliation and cannot be enabled by
+proposal review. Failed receipt persistence rolls back the decision/queue or
+scan and preserves prior history. Pair worker/API checks with rendered source
+review and event invalidation tests, frontend boundary checks and web/docs builds.

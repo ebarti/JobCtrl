@@ -1,4 +1,5 @@
 export { applyKeys } from "./queryKeys.js";
+export { CoverLetterReviewSurface } from "./components/CoverLetterReviewSurface.js";
 
 export { useApplyJobMutation } from "./hooks/useApplyJobMutation.js";
 export {
@@ -52,3 +53,5 @@ export {
   applyRunEventRecordedHandler,
   applyRunStartedHandler,
 } from "./handlers.js";
+
+export { useApplyReviewSession, type ApplyReviewSession } from "./hooks/useApplyReviewSession.js";

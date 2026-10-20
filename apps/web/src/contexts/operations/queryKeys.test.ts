@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import { describe, expect, it } from "vitest";
 
@@ -24,6 +26,13 @@ describe("operations queryKeys", () => {
       "list",
       { page: 2, deleted: "active" },
     ]);
+    const combined = { stages: ["discover", "apply"] as const, page: 100, pageSize: 50 };
+    expect(jobsKeys.list(LOCAL_TENANT, combined)).toEqual([
+      "tenant", LOCAL_TENANT, "jobs", "list", combined,
+    ]);
+    expect(jobsKeys.list(LOCAL_TENANT, combined)).not.toEqual(
+      jobsKeys.list(LOCAL_TENANT, { stage: "discover", page: 100, pageSize: 50 }),
+    );
     expect(jobsKeys.details(LOCAL_TENANT)).toEqual(["tenant", LOCAL_TENANT, "jobs", "detail"]);
     expect(jobsKeys.detail(LOCAL_TENANT, "job-1")).toEqual([
       "tenant",

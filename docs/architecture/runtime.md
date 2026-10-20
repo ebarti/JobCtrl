@@ -102,6 +102,16 @@ reused PID. The P6 workflow now makes Developer ID signing, notarization, and
 authenticated publication mandatory for promotion. Public artifacts pass those
 gates before the stable release pointer or Homebrew formula can reference them.
 
+Homebrew caches only prefix-owned release resources. Its build sandbox verifies
+strict Developer ID certificate-chain requirements for the launcher, installer
+and managed headless shell without contacting Apple's live syspolicy service.
+Before a cached release's installer can execute, the normal-user bootstrap
+requires strict notarization checks on both bootstrap executables. The installer
+then checks every payload executable's signature and notarization, and assesses
+outer application bundles through Gatekeeper, before selecting the payload.
+This preserves the pre-activation trust boundary without changing Homebrew's
+sandbox permissions or treating ad-hoc signatures as Developer ID signatures.
+
 The P5 lifecycle store is user-owned (`JOBCTRL_RUNTIME_HOME`), not a package
 manager Cellar. `active.json` atomically records the selected payload, the
 compatible immutable selector build, and the current acquisition adapter;
@@ -113,6 +123,27 @@ locking; selector resolution holds a shared selection lock through supervisor
 readiness. Before a candidate is promoted, the old process tree is quiesced
 with the registry's PID/PGID identity checks and both `JOBCTRL_DIR/jobctrl.db`
 and `JOBCTRL_DIR/temporal.db` receive online, hash-verified paired backups.
+While a journal is unfinished, ordinary commands remain blocked. Internal
+`start --no-open` and its detached supervisor may proceed only from the exact
+payload authorized by the matching durable journal, executable transition state
+and immutable manifest. A compatible authenticated public selector may supervise
+that payload; arbitrary public commands and environment flags alone cannot grant
+this exception. Rollback retains this compatible controller while restoring the
+older payload and its exact database pair. The Homebrew frontend respects the
+completed rollback until an explicit update is requested. When a historical
+controller skipped migration using its own compiled schema target, the new
+candidate performs its target-owned sealed migration from that controller's
+verified paired backup before starting services.
+The signed `launcher/update-protocol.json` declaration distinguishes controllers
+that support journal-bound selector startup from historical selectors that would
+wait on their parent's selection lock. A new installer owns staged activation;
+it does not delegate migration control back to the older installed executable.
+For an already interrupted update, a new formula can stage its verified recovery
+controller without replacing the old/candidate journal or activating new data.
+If a selected installation has never created either database, the controller
+initializes and stops its verified predecessor before taking the normal paired
+backup. A partial pair, unsafe file or orphaned SQLite sidecar is refused before
+the update changes release selection.
 The current runtime admits only exact schema v14. A stopped v6 database retains
 the Temporal quiescence proof and private v7/v8/v9 intermediates; exact v7 and v8
 start at their next intermediate. Exact v9 transfers application URL authority
@@ -356,7 +387,11 @@ execute inline in the TS process against shared `@jobctrl/domain-types`
 value objects; the full cancel action additionally fires `cancel_run` over
 JSON-RPC to signal the Temporal workflow. Complex commands and provider reads
 travel through `SubprocessJsonRpcAdapter` to the long-lived `jobctrl rpc`
-subprocess. Workflow-mode handlers return a workflow spec that the RPC server
+subprocess. Method-specific calls use the shared contract boundary described in
+[Contracts, Types & API Boundaries](contracts-types-and-api-boundaries.md#typescript-to-python-json-rpc):
+parameters validate before transport and results validate before consumption.
+Awaited profile continuations require completed pipeline results before a
+handled marker is persisted. Workflow-mode handlers return a workflow spec that the RPC server
 starts on Temporal (`run_stage`,
 `rescore_job`, `rescore_jobs_not_on_current_scoring_policy`, `tailor_job`,
 `retailor_job`, `retailor_current_policy`, `refresh_compensation`, `apply`,

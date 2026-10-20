@@ -1,3 +1,4 @@
+import type { CompanyBriefingView, CompanyBriefingSummary } from "./company-briefings.js";
 import type { InterviewPrep, InterviewSelectionInput } from "@jobctrl/domain-types";
 import { z } from "zod";
 import { type DeterminationEnvelope, type DeterminationCitation, DeterminationCitationSchema, DeterminationEnvelopeSchema, TrackCodeSchema, SeniorityCodeSchema, WorkModelCodeSchema } from "./semantic-determinations.js";
@@ -5,6 +6,25 @@ import { CONTACT_ROLES, CONTACT_SOURCE_KINDS } from "@jobctrl/domain-types";
 
 export const STAGES = ["discover", "enrich", "score", "tailor", "cover", "apply"] as const;
 export type Stage = (typeof STAGES)[number];
+/** Comma serialization and repeated query values share the JSON-array contract. */
+export const JobStagesFilterSchema = z.preprocess(
+  (value) => {
+    if (typeof value === "string") {
+      return value.trim() ? value.split(",", STAGES.length + 1).map((item) => item.trim()) : [];
+    }
+    if (Array.isArray(value)) {
+      if (value.length > STAGES.length) return value;
+      return value.flatMap((item: unknown) =>
+        typeof item === "string" ? item.split(",", STAGES.length + 1).map((stage) => stage.trim()) : [item],
+      );
+    }
+    return value;
+  },
+  z.array(z.enum(STAGES)).max(STAGES.length).transform((values) => Array.from(new Set(values))),
+);
+// Accept undefined before array preprocessing so typed optional filters retain
+// scalar fallback; malformed optional arrays use the same absence value.
+const OptionalJobStagesFilterSchema = z.union([z.undefined(), JobStagesFilterSchema]).catch(undefined).optional();
 export const PIPELINE_RUN_STAGES = ["discover", "score", "tailor", "cover", "apply"] as const;
 export type PipelineRunStage = (typeof PIPELINE_RUN_STAGES)[number];
 export const DEFAULT_PIPELINE_LLM_MODEL = "default" as const;
@@ -387,6 +407,7 @@ export const ApplyReviewDecisionRequestSchema = z
     reason: z.string().trim().max(400).optional(),
     decidedBy: z.string().trim().min(1).max(120).default("user"),
     materialsGeneration: z.number().int().nonnegative().nullable().optional(),
+    coverLetterAcceptedVersion: z.string().regex(/^[a-f0-9]{64}$/).nullable().optional(),
     profileVersion: z.number().int().positive().nullable().optional(),
     applicationUrl: z.string().trim().min(1).max(2048).nullable().optional(),
     partialOverrideRunId: z.string().trim().min(1).max(120).optional(),
@@ -541,6 +562,8 @@ export interface ApplyReviewRequirementLedAudit {
 }
 
 export interface ApplyReviewMaterialsPreview {
+  coverLetter?: import("./cover-letter.js").CoverLetterAccepted | null;
+  coverLetterPdfError?: string | null;
   materialsGeneration: number | null;
   resumeText: string | null;
   resumeTextArtifactId: string | null;
@@ -1534,12 +1557,14 @@ export const BulkJobMutationFilterSchema = z
   .object({
     q: optionalText,
     stage: z.enum(STAGES).optional().catch(undefined),
+    stages: OptionalJobStagesFilterSchema,
     state: z.enum(STAGE_STATES).optional().catch(undefined),
     deleted: z.enum(JOB_DELETED_FILTERS).default("active").catch("active"),
     jobStates: JobStatesFilterSchema.optional().catch(undefined),
     applyStatus: z.enum(JOB_APPLY_STATUS_FILTERS).default("all").catch("all"),
     source: optionalText,
     company: optionalText,
+    normalizedScoreKeyword: z.string().min(1).optional(),
     minFitScore: optionalNumber,
     maxFitScore: optionalNumber,
     discoveredSince: IsoTimestampSchema.optional().catch(undefined),
@@ -2296,6 +2321,7 @@ export const JobListQuerySchema = z
     dir: SortDirectionSchema,
     q: optionalText,
     stage: z.enum(STAGES).optional().catch(undefined),
+    stages: OptionalJobStagesFilterSchema,
     state: z.enum(STAGE_STATES).optional().catch(undefined),
     deleted: z.enum(JOB_DELETED_FILTERS).default("active").catch("active"),
     jobStates: JobStatesFilterSchema.optional().catch(undefined),
@@ -3980,6 +4006,7 @@ export interface DailyDigestBudget {
 }
 
 export interface DailyDigest {
+  companyBriefings?: CompanyBriefingSummary[];
   ok: true;
   generatedAt: string;
   since: string | null;
@@ -4135,6 +4162,7 @@ export interface EmployerAnalysis {
 }
 
 export interface JobDetail {
+  companyBriefing?: CompanyBriefingView | null;
   ok: true;
   job: JobSummary & {
     descriptionPreview: string;
@@ -5395,20 +5423,17 @@ export interface BrowserCapabilityErrorResponse {
   message: string;
 }
 
-export interface ProviderStatusResponse {
-  ok: true;
-  providers: ProviderStatusItem[];
-}
+export const ProviderStatusResponseSchema = ProviderStatusResultSchema.safeExtend({ ok: z.literal(true) });
+export type ProviderStatusResponse = z.infer<typeof ProviderStatusResponseSchema>;
 
-export interface ProviderModelCatalogResponse {
-  ok: true;
-  providers: ProviderModelCatalogItem[];
-}
+export const ProviderModelCatalogResponseSchema = ProviderModelCatalogResultSchema.safeExtend({ ok: z.literal(true) });
+export type ProviderModelCatalogResponse = z.infer<typeof ProviderModelCatalogResponseSchema>;
 
-export interface CodexVerifyResponse {
-  ok: true;
-  verification: z.infer<typeof CodexVerifyResultSchema>;
-}
+export const CodexVerifyResponseSchema = z.object({
+  ok: z.literal(true),
+  verification: CodexVerifyResultSchema,
+}).strict();
+export type CodexVerifyResponse = z.infer<typeof CodexVerifyResponseSchema>;
 
 export interface ProviderOperationErrorResponse {
   ok: false;
@@ -5513,6 +5538,35 @@ export const MANUAL_CAPTURE_MODE_VALUES = [
 ] as const;
 export type ManualCaptureModeValue = (typeof MANUAL_CAPTURE_MODE_VALUES)[number];
 
+export const SourceProposalEvidenceSchema = z.object({
+  originJobId: z.string(),
+  originPostingUrl: z.string(),
+  inputUrl: z.string(),
+  urlKind: z.enum(["posting_url", "canonical_url", "application_url"]),
+  observations: z.array(z.object({
+    observationId: z.string(), sourceId: z.string(), runId: z.string(),
+    observedUrl: z.string(), observedAt: z.string(),
+  })),
+  extraction: z.object({
+    tier: z.string().nullable(), enrichedAt: z.string().nullable(), snapshotVersion: z.number().nullable(),
+    descriptionSha256: z.string().nullable(), snapshotSha256: z.string().nullable(),
+    snapshotEvidence: z.array(z.string()).optional(),
+  }),
+  sample: z.object({ title: z.string(), company: z.string(), descriptionExcerpt: z.string() }),
+});
+export type SourceProposalEvidence = z.infer<typeof SourceProposalEvidenceSchema>;
+
+export interface SourceProposalReview {
+  coordinateKey: string;
+  sourceId: string;
+  atsKind: string | null;
+  boardToken: string | null;
+  completeness: "unknown";
+  promotionBlockedReason?: string | null;
+  evidence: SourceProposalEvidence[];
+  overlaps: { sourceId: string; state: string; seedUrl: string | null }[];
+}
+
 export interface SourceLocatorCandidateSummary {
   candidateId: string;
   candidateUrl: string;
@@ -5522,6 +5576,7 @@ export interface SourceLocatorCandidateSummary {
   employerDomainMatched: boolean;
   manualActionReason: ManualActionReasonValue | null;
   discoveredAt: string;
+  proposal?: SourceProposalReview;
 }
 
 export interface SourceLocatorListResponse {
@@ -6743,8 +6798,8 @@ export interface ConfirmContactCandidateResponse {
 // an approved draft is copied out via the browser clipboard, never sent.
 // ---------------------------------------------------------------------------
 
-export const OUTREACH_DRAFT_KINDS = ["intro_request", "follow_up"] as const;
-export const OutreachDraftKindSchema = z.enum(OUTREACH_DRAFT_KINDS).catch("intro_request");
+export const OUTREACH_DRAFT_KINDS = ["intro_request", "follow_up", "offer_negotiation", "offer_clarification", "offer_acceptance", "offer_decline"] as const;
+export const OutreachDraftKindSchema = z.enum(OUTREACH_DRAFT_KINDS);
 export type OutreachDraftKind = (typeof OUTREACH_DRAFT_KINDS)[number];
 
 export const OUTREACH_DRAFT_STATUSES = [
@@ -6782,6 +6837,7 @@ export interface OutreachGateJudge {
 export interface OutreachDraftGateResults {
   passed: boolean;
   computedAgainst: string;
+  sourceContext?: { binding: { jobId: string; termsRevisionId: string; decisionId: string | null }; fingerprint: string; sources: { source_id: string; text: string }[] } | null;
   fabrications: OutreachGateFabrication[];
   validation: OutreachGateValidation;
   judge: OutreachGateJudge | null;
@@ -6789,6 +6845,7 @@ export interface OutreachDraftGateResults {
 
 /** One claim in a draft bound to the confirmed fact(s) it rests on (INV-2). */
 export interface OutreachClaimProvenanceDto {
+  sourceCitations?: { sourceId: string; quote: string }[];
   claimId: string;
   section: string;
   generatedText: string;
@@ -6798,6 +6855,7 @@ export interface OutreachClaimProvenanceDto {
 }
 
 export interface OutreachDraftDto {
+  offerSourcesCurrent?: boolean;
   draftId: string;
   threadId: string;
   generation: number;
@@ -6839,6 +6897,7 @@ export const GenerateOutreachDraftRequestSchema = z
   .object({
     jobId: outreachJobIdField,
     kind: OutreachDraftKindSchema.optional(),
+    offerRevisionId: z.uuid().optional(),
     applicationRole: z.string().trim().max(200).optional(),
     llmModel: z.string().trim().min(1).max(120).optional(),
   })
@@ -6849,6 +6908,7 @@ export const ReviseOutreachDraftRequestSchema = z
   .object({
     editedBodyText: z.string().trim().min(1).max(8000),
     kind: OutreachDraftKindSchema.optional(),
+    offerRevisionId: z.uuid().optional(),
     applicationRole: z.string().trim().max(200).optional(),
     llmModel: z.string().trim().min(1).max(120).optional(),
   })
@@ -6956,6 +7016,38 @@ export const ScheduleFollowUpRequestSchema = z
   })
   .strict();
 export type ScheduleFollowUpRequest = z.infer<typeof ScheduleFollowUpRequestSchema>;
+
+// Original accepted-material exports keep source selection and receipts explicit.
+const MaterialExportDigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
+export const AcceptedMaterialExportSourceSchema = z.object({
+  artifactId: z.string().min(1).max(240), generation: z.number().int().positive(),
+  kind: z.enum(["tailored_resume", "cover_letter"]), locale: z.string().nullable(),
+  sha256: MaterialExportDigestSchema.nullable(), metadataSha256: MaterialExportDigestSchema.nullable(),
+  unavailableReason: z.string().nullable(),
+}).strict();
+export const AcceptedMaterialExportReceiptSchema = z.object({
+  contract: z.literal("accepted-material-docx-v1"), tenantId: z.string().min(1), jobId: z.string().uuid(),
+  artifactId: z.string().regex(/^[1-9][0-9]*$/), sourceArtifactId: z.string().min(1).max(240),
+  generation: z.number().int().positive(), kind: z.enum(["tailored_resume", "cover_letter"]),
+  sourceSha256: MaterialExportDigestSchema, sourceMetadataSha256: MaterialExportDigestSchema,
+  settings: z.object({ format: z.literal("docx"), layout: z.literal("semantic-v1"), paper: z.enum(["A4", "Letter"]), locale: z.string().min(1) }).strict(),
+  settingsSha256: MaterialExportDigestSchema, sha256: MaterialExportDigestSchema,
+  createdAt: z.string().min(1), warnings: z.array(z.string()),
+}).strict();
+export const AcceptedMaterialExportsSchema = z.object({
+  tenantId: z.string().min(1), jobId: z.string().uuid(), sources: z.array(AcceptedMaterialExportSourceSchema),
+  exports: z.array(AcceptedMaterialExportReceiptSchema), exportedArtifactId: z.string().nullable(),
+}).strict();
+export const AcceptedMaterialExportRequestSchema = z.discriminatedUnion("operation", [
+  z.object({ operation: z.literal("history") }).strict(),
+  z.object({ operation: z.literal("export"), sourceArtifactId: z.string().min(1).max(240),
+    expectedGeneration: z.number().int().positive(), expectedSourceSha256: MaterialExportDigestSchema,
+    expectedMetadataSha256: MaterialExportDigestSchema, paper: z.enum(["A4", "Letter"]),
+  }).strict(),
+]);
+export type AcceptedMaterialExports = z.infer<typeof AcceptedMaterialExportsSchema>;
+export type AcceptedMaterialExportReceipt = z.infer<typeof AcceptedMaterialExportReceiptSchema>;
+export type AcceptedMaterialExportRequest = z.infer<typeof AcceptedMaterialExportRequestSchema>;
 
 // Locale variants are a separately versioned Materials contract on schema 14.
 const LocaleCitationSchema = z.object({ source_id: z.string(), quote: z.string(), exact_values: z.array(z.string()) }).strict();

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import type { OutreachThreadResponse } from "@jobctrl/contracts";
 import { describe, expect, it } from "vitest";
 

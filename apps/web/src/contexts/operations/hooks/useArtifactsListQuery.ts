@@ -2,8 +2,9 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
-import { artifactsKeys } from "../artifactsKeys.js";
-import type { ArtifactsListInput, ArtifactSummary, PaginatedResponse } from "../types.js";
+import { artifactsListQuery } from "../readQueries.js";
+import type { ArtifactsListInput } from "../types.js";
+import type { ArtifactSummary, PaginatedResponse } from "@jobctrl/contracts";
 
 export interface UseArtifactsListQueryOptions {
   readonly enabled?: boolean;
@@ -16,8 +17,7 @@ export function useArtifactsListQuery(
   const tenantId = useTenantId();
   const { api } = usePorts();
   return useQuery({
-    queryKey: artifactsKeys.list(tenantId, input),
-    queryFn: () => api.artifacts(input),
+    ...artifactsListQuery({ tenantId, ports: { api } }, input),
     enabled: options.enabled ?? true,
     staleTime: 60_000,
   });

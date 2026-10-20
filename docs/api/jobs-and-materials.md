@@ -16,6 +16,7 @@ For field-level schemas and every route variant, use the
 | `POST /v1/jobs/import-url` | Fetch and import one public posting immediately, or return a typed Manual Capture fallback without creating a placeholder job. |
 | `GET /v1/scoring/keywords` | Current projected score-version keyword aggregation with canonical normalized keys. |
 | `GET /v1/evidence-map` | Canonical career evidence used by scoring and materials. |
+| `GET/POST /v1/evidence-map/learning` | Read retained selected-job comparisons; preview sources, compare an explicit dated cohort, choose proposals and record milestone activity. |
 | `POST /v1/jobs/:key/score-correction` | A new score version plus explicit correction rationale. |
 | Job hide/restore/delete routes | Reversible lifecycle commands, plus a separate permanent-delete boundary. |
 
@@ -70,6 +71,52 @@ precedence over the legacy `deleted` filter; when absent, legacy links keep the
 existing `active`, `closed`, `deleted`, `hidden`, and `all` behavior. The same
 optional filter is accepted by all-matching bulk job mutations.
 
+`GET /v1/jobs` and all-matching bulk filters also accept `stages`, an OR filter
+on the projected `currentStage`. JSON arrays, comma serialization
+(`stages=discover,apply`), repeated values, and repeated comma groups are
+accepted. Up to six values are validated before duplicates are removed;
+surrounding whitespace is trimmed. A valid `stages` value overrides scalar
+`stage`. An empty array (serialized as `stages=`) clears the stage restriction,
+including a supplied scalar. Invalid or oversized arrays are ignored as a whole,
+so the legacy scalar remains effective. Omission or an explicit TypeScript
+`stages: undefined` preserves scalar behavior.
+The current projection groups preparation substages under Discover or Apply;
+membership uses that public stage rather than `currentSubstage`.
+
+Stage membership and all other filters apply before the global total, sort,
+and page slice. Pages clamp to the last page; an empty result has page one and
+one page. All requests read the total and page from one SQLite snapshot.
+`discoveredSince` and `scoredSince` compare instants inclusively at JavaScript
+millisecond precision, so equivalent offsets and fractional notation match.
+Missing or invalid stored timestamps do not match their cutoff. When both
+cutoffs are supplied, either may match. Timestamp filters use precomputed
+milliseconds in the query index before totals, pagination, and all-matching bulk
+selection.
+Response `filter.stages` records the effective deduplicated membership (an empty
+array means unrestricted); `filter.stage` retains the requested legacy scalar
+for compatibility. Clients can request combined pages through the existing
+API client without assembling stage-local pages.
+
+Stage-state selection uses the same membership for SQL pages, searched lists,
+and all-matching bulk actions. `state=failed` includes stored `failed` and
+`exhausted` rows; the legacy `state=exhausted` selector includes only stored
+exhaustion. Both are presented as `currentState: "failed"`, with
+`failureReason: "attempt_budget_exhausted"` identifying exhaustion.
+State sorting uses that presented state, so exhausted and other failed jobs
+share the failed sort key. Text sorts lowercase their values and use locale
+comparison, matching the existing browser merger; equal keys keep ascending job
+IDs in both directions. Discovery sorting compares the original timestamp
+strings with locale comparison, preserving browser behavior across fractional
+and offset notation; it does not normalize them to instants. Missing values
+sort first ascending and last descending. All searches and sorts select IDs in
+SQLite before hydrating only the returned page. The app-owned, rebuildable
+[query index](../architecture/read-model.md#job-list-sqlite-selection) stores
+compatible search values and locale sort ordinals without changing exact v14.
+Source and company filters are literal substrings after
+Unicode lowercasing: `%`, `_`, and backslash have no wildcard or escape meaning.
+Source checks the displayed source, discovery source, posting source, and posting
+URL. These rules also apply to searched lists and all-matching bulk selection.
+
 ## Saved Posting Availability
 
 `POST /v1/jobs/:jobId/actions/check-availability` accepts `{}` with no additional
@@ -114,6 +161,8 @@ they cross the browser boundary.
 | Artifact list/detail | Read registered resume, cover-letter, PDF, and audit metadata. |
 | Artifact preview routes | Serve HTML, PDF, or a rendered PDF page. |
 | `POST /v1/artifacts/:artifactId/open` | Open a registered local artifact through the OS adapter. |
+| `POST /v1/jobs/:jobId/material-exports` | List original accepted text sources/retained exports or synchronously create a source-bound DOCX. |
+| `GET /v1/artifacts/:artifactId/download.docx` | Download an owned, hash-verified retained DOCX export as an attachment. |
 | `/v1/resume-templates` | Create, inspect, and select versioned resume templates. |
 
 The API serves registered artifacts, never an arbitrary filesystem path. The
@@ -122,6 +171,13 @@ and layout evidence. Artifact summaries include a nullable canonical
 `generation` when one was recorded; lifecycle `status` remains unchanged.
 An older generation can still be approved, so clients must not treat age alone
 as a superseded status.
+
+Original accepted-material exports reuse the CLI's deterministic DOCX service
+through runtime-bound Python RPC. The request binds the displayed source ID,
+generation, source hash and metadata hash; an intervening edit or acceptance
+change refuses export. History and export failures preserve accepted materials,
+review decisions and earlier exports. Download failures preserve the receipt and
+can be retried independently. See the [field-level DOCX contract](complete-contract.md#accepted-material-docx-exports).
 
 ## Interviews: Catalog, Preparation, And Notes
 
@@ -233,3 +289,49 @@ stored authority and never retranslates. See the
 ## Screening Answers
 
 `GET /v1/jobs/:jobId/screening-answers` reads private current questions, application-bound history, reviewed library revisions, available facts, source bindings/failures and persisted determination receipts. `POST` executes `capture`, `draft`, `edit`, `review`, `reuse` or `use` with `expectedRevision` and `idempotencyKey`. The [user command reference](../user/screening-answers.md#cli-and-local-api) describes action fields. API-derived tenant and mandatory workspace/database identity bind the registered `screening_answers` RPC; callers cannot supply runtime identity inside commands. Conflicts/source/model failures preserve accepted content. The public demo classifies both endpoints unavailable. These routes never enter/submit forms or create submitted outcomes.
+
+## Optional company context
+
+`GET /v1/jobs/:jobId` includes `companyBriefing` when a company link has been explicitly confirmed. This read joins canonical company records and the stored determination; it never refreshes public sources. Job Detail and Interviews render this same snapshot. See [the wire contract](complete-contract.md#company-briefings) and [user controls](../user/company-briefings.md).
+
+## Cover-Letter PDF Review
+
+`materialsPreview.coverLetter` identifies the canonical accepted cover source,
+current accepted PDF, normalized print settings, renderer and accepted version.
+`POST /v1/jobs/:jobKey/cover-letter/preview` renders a fenced full-text snapshot;
+`POST /v1/jobs/:jobKey/cover-letter/accept` explicitly accepts its exact bytes.
+The preview PDF route and accepted artifact route serve the same file after
+acceptance. Preview requests do not advance Materials or approval bindings.
+Submit-approval requests with a cover source must supply `coverLetterAcceptedVersion`;
+the API and Apply worker check the recorded source/PDF binding. See the
+[complete contract](complete-contract.md#cover-letter-pdf-review) for limits and
+failure behavior.
+
+## Selected-job learning commands
+
+`GET /v1/evidence-map/learning` reads saved cohort comparisons and chosen
+milestones through the registered local `career_learning` RPC. It does not
+refresh sources or call a model. POST uses a strict `action` union: `preview`
+selects explicit job IDs without writing; `compare` creates or revision-fences a
+dated cohort; `choose` accepts one proposal from the exact current comparison;
+`update` saves revision-fenced milestone activity with a required completion
+statement for completed work. Provider or binding failure preserves accepted
+records. See the [complete contract](complete-contract.md#selected-cohort-demand-and-milestones)
+and [user workflow](../user/scoring-and-employer-analysis.md#selected-job-demand-and-learning-milestones).
+
+## Actual Offers
+
+`GET /v1/jobs/:jobId/offer` reads the private current terms, current decision
+and immutable histories. `POST .../offer/terms` saves a user-confirmed source
+and typed cash/equity/benefit/deadline terms with `expectedRevisionId`.
+`POST .../offer/decisions` records accepted/declined attestations against the
+current `termsRevisionId` with `expectedDecisionId`. Revisions/corrections
+require reasons; stale or conflicting writes return `409 offer_conflict`.
+Neither command needs interview prep or changes submission/pipeline authority.
+See the [field-level offer contract](complete-contract.md#actual-offer-terms-and-decisions).
+
+Outreach generation/revision also accepts the closed offer-specific `kind`
+values and `offerRevisionId`. The worker loads canonical sources, applies the
+existing claim/quality gates and fences source changes at persistence. Stale
+offer bindings return `409 draft_gates_not_passed` on approval/send logging.
+Provider, spend and structural failures retain the last approved message.

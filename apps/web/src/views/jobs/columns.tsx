@@ -9,7 +9,7 @@ import { ScoreBadge } from "../../contexts/scoring/components/ScoreBadge.js";
 import { ScoreStalenessBadge } from "../../contexts/scoring/components/ScoreStalenessBadge.js";
 import { StageBadge } from "../../contexts/pipeline/components/StageBadge.js";
 import { UserFacingStageBadge } from "../../contexts/pipeline/components/UserFacingStageBadge.js";
-import type { JobState, JobSummary } from "../../contexts/operations/types.js";
+import type { JobState, JobSummary } from "@jobctrl/contracts";
 import type {
   DataGridColumn,
   DataGridCellContext,
@@ -856,6 +856,7 @@ export function jobColumns(
       sortable: true,
       getFilterValue: (row) => row.currentStage,
       filterValues: JOB_TABLE_STAGE_FILTERS,
+      filterText: false,
       render: (row) => (
         <span data-typography="label">
           <UserFacingStageBadge stage={row.currentStage} />

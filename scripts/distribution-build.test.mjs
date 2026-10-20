@@ -521,10 +521,9 @@ test("extracted runtime stack plan uses embedded binaries, persistent Temporal s
   });
   assert.equal(plan.environment.TEMPORAL_ADDRESS, "127.0.0.1:17233");
   assert.equal(plan.environment.JOBCTRL_DIR, "/tmp/extracted/state/home/.jobctrl");
-  assert.deepEqual(plan.worker, {
-    command: "/tmp/extracted/payload/python/bin/python3",
-    args: ["-I", "-B", "-m", "jobctrl", "worker"],
-  });
+  assert.equal(plan.worker.command, "/tmp/extracted/payload/python/bin/python3");
+  assert.deepEqual(plan.worker.args.slice(0, 3), ["-I", "-B", "-c"]);
+  assert.ok(plan.worker.args[3].includes('runpy.run_module("jobctrl", run_name="__main__")'));
   assert.equal(plan.api.command, "/tmp/extracted/payload/node/bin/node");
   assert.ok(plan.temporal.args.includes("--db-filename"));
   assert.ok(plan.temporal.args.includes(plan.temporalDbPath));

@@ -6,22 +6,10 @@ fixture (``packages/domain-types/test/fixtures/audit_projection_parity.json``),
 seed the SAME canonical rows, run their OWN projection builder, and assert the
 resulting projection columns equal the fixture.
 
-Two layers of assertion:
-
-* ``test_python_builder_projects_audit_rows_matching_shared_fixture`` — the
-  Phase 4 audit read shapes (``job_detail_projections.employer_analysis_json``
-  and ``artifact_list_projections.{bullet_provenance_json,coverage_audit_json,
-  voice_pass_json}``) match the fixture's ``expected`` block.
-
-* ``test_python_builder_projects_full_projection_columns_matching_shared_fixture``
-  — the FULL dual-written column set for ``job_list_projections``,
-  ``job_detail_projections`` and ``dashboard_projections`` matches the fixture's
-  ``expectedProjections`` block, key-for-key, PLUS a column-set guard: the set of
-  columns the builder emits must equal the fixture's expected keys plus the
-  wall-clock ``nonDeterministicColumns``. That guard fails if EITHER runtime's
-  writer/schema grows a column the other lacks — the exact drift class that let
-  the Python-omits-score-audit-columns bug ship, because the earlier parity test
-  asserted only 4 audit JSON columns and had no column-set guard.
+Python verifies artifact provenance/coverage/voice and all columns of the
+remaining shared list/dashboard families. TypeScript verifies the same fixture,
+including the exclusively owned job-detail family. The disposable mixed-runtime
+fixture also seeds these Python canonical rows and validates TypeScript detail.
 """
 
 from __future__ import annotations
@@ -128,6 +116,12 @@ def fixture() -> dict[str, Any]:
 def conn(fixture: dict[str, Any], tmp_path: Path) -> Iterator[sqlite3.Connection]:
     db_path = tmp_path / "jobs.db"
     connection = init_db(db_path)
+    _seed_job(connection, fixture)
+    yield connection
+    close_connection(db_path)
+
+
+def _seed_job(connection: sqlite3.Connection, fixture: dict[str, Any]) -> None:
     job = fixture["job"]
     job_id = _job_id(job["url"])
     connection.execute(
@@ -166,8 +160,6 @@ def conn(fixture: dict[str, Any], tmp_path: Path) -> Iterator[sqlite3.Connection
         ),
     )
     connection.commit()
-    yield connection
-    close_connection(db_path)
 
 
 def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
@@ -622,24 +614,10 @@ def test_python_builder_projects_audit_rows_matching_shared_fixture(
     _seed_rows(conn, fixture)
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
-    job_id = _job_id(fixture["job"]["url"])
     expected = _with_exact_v7_job_ids(copy.deepcopy(fixture["expected"]))
 
-    detail = conn.execute(
-        """
-        SELECT employer_analysis_json, interview_prep_json
-        FROM job_detail_projections
-        WHERE job_id = ?
-        """,
-        (job_id,),
-    ).fetchone()
-    assert detail is not None
-    assert json.loads(detail["employer_analysis_json"]) == expected["employerAnalysisJson"]
-    prep = json.loads(detail["interview_prep_json"])
-    assert prep == expected["interviewPrepJson"]
-    assert "promptText" not in json.dumps(prep)
-    assert "rawPrompt" not in json.dumps(prep)
-    assert "full_description" not in json.dumps(prep)
+    # Detail parity remains in the TypeScript suite after its authority cutover.
+    assert conn.execute("SELECT COUNT(*) FROM job_detail_projections").fetchone()[0] == 0
 
     # The text resume row carries the per-bullet provenance + coverage + voice.
     text_row = conn.execute(
@@ -653,6 +631,35 @@ def test_python_builder_projects_audit_rows_matching_shared_fixture(
     assert json.loads(text_row["bullet_provenance_json"]) == expected["bulletProvenanceJson"]
     assert json.loads(text_row["coverage_audit_json"]) == expected["coverageAuditJson"]
     assert json.loads(text_row["voice_pass_json"]) == expected["voicePassJson"]
+
+
+def test_carried_layout_and_provenance_project_one_generation(conn, fixture):
+    _seed_rows(conn, fixture)
+    job_id = _job_id(fixture["job"]["url"])
+    generation = fixture["job"]["generation"]
+    conn.execute("INSERT INTO job_material_layout_boxes "
+                 "(tenant_id,job_id,generation,artifact_id,box_index,semantic_id,page_number,"
+                 "text_excerpt,left_pct,top_pct,width_pct,height_pct,created_at) "
+                 "VALUES(?,?,?,'resume-1',0,'line-1',1,'Synthetic',10,10,80,2,'now')",
+                 (LOCAL_TENANT, job_id, generation))
+    for next_generation in (generation + 1, generation + 2):
+        conn.execute("INSERT INTO job_materials "
+                     "SELECT tenant_id,job_id,?,status,created_at,updated_at,last_validation_json,last_verdict_json,metadata_json "
+                     "FROM job_materials WHERE tenant_id=? AND job_id=? AND generation=?",
+                     (next_generation, LOCAL_TENANT, job_id, generation))
+        for table in ("job_materials_artifacts", "job_bullet_provenance", "job_material_layout_boxes"):
+            columns = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+            selected = ",".join("?" if c == "generation" else c for c in columns)
+            conn.execute(f"INSERT INTO {table} SELECT {selected} FROM {table} "
+                         "WHERE tenant_id=? AND job_id=? AND generation=?",
+                         (next_generation, LOCAL_TENANT, job_id, generation))
+    conn.commit()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+    row = conn.execute("SELECT generation,layout_boxes_json,bullet_provenance_json "
+                       "FROM artifact_list_projections WHERE artifact_id='resume-1'").fetchone()
+    assert row["generation"] == generation + 2
+    assert len(json.loads(row["layout_boxes_json"])) == 1
+    assert json.loads(row["bullet_provenance_json"]) == fixture["expected"]["bulletProvenanceJson"]
 
 
 def test_python_builder_projects_historical_artifact_generation_coverage_rows(
@@ -811,9 +818,6 @@ def test_python_builder_projects_full_projection_columns_matching_shared_fixture
     actual_rows = {
         "jobList": conn.execute(
             "SELECT * FROM job_list_projections WHERE job_id = ?", (job_id,)
-        ).fetchone(),
-        "jobDetail": conn.execute(
-            "SELECT * FROM job_detail_projections WHERE job_id = ?", (job_id,)
         ).fetchone(),
         "dashboard": conn.execute(
             "SELECT * FROM dashboard_projections WHERE tenant_id = 'local'"

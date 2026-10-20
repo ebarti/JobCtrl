@@ -1,7 +1,9 @@
 // Test-only process entry point. Assert ownership before importing/building the
 // API: buildApp normalizes its database immediately, before listen hooks run.
 import { createRequire } from "node:module";
-import { BrowserCapabilityIds, RpcMethods } from "@jobctrl/contracts";
+import { BrowserCapabilityIds, RpcMethods, RenderCoverLetterPdfParamsSchema } from "@jobctrl/contracts";
+import { SubprocessJsonRpcAdapter } from "../src/json-rpc-adapter.js";
+import { createSourcePythonRuntime } from "../src/python-runtime.js";
 import type { CredentialStore } from "../src/credentials.js";
 import type { JsonRpcDispatcher } from "../src/json-rpc-adapter.js";
 
@@ -15,6 +17,13 @@ const { e2eStubActionDispatcher, e2eStubProfileImporter } =
   await import("../src/e2e-dispatch.js");
 const { e2eProfilePreviewRenderer } = await import("./fixtures/e2e-profile-preview.js");
 const config = resolveApiConfig();
+// Only this formatting method reaches a real child in the isolated fixture.
+// It uses the prepared environment and owned workspace, with no dependency sync,
+// provider calls, browser-profile access or workflow dispatch.
+const coverRendererDispatcher = new SubprocessJsonRpcAdapter({
+  appDir: config.appDir, configPath: config.configPath, requestTimeoutMs: 120_000,
+  pythonRuntime: createSourcePythonRuntime({ environment: { ...process.env, UV_NO_SYNC: "1" } }),
+});
 const modelProfileSuggestions = process.env["JOBCTRL_E2E_PROFILE_SUGGESTIONS"] === "1";
 const { default: Database } = await import("better-sqlite3");
 const { recordCandidateProposal, recordModelDecision, bindDecision } = await import("./semantic-fixtures.js");
@@ -22,8 +31,14 @@ const unavailable = async () => {
   throw new Error("Operation is outside the isolated E2E fixture");
 };
 const providerDispatcher: JsonRpcDispatcher = {
-  call: async (method, params) =>
-    method === RpcMethods.ProfileRequiredBulletSuggestions
+  call: async (method, params: Record<string, unknown>) =>
+    method === RpcMethods.RenderCoverLetterPdf
+      ? (async () => {
+          await assertIsolatedE2eWorkspace();
+          assertExpectedWorkspace(config);
+          return coverRendererDispatcher.call(RpcMethods.RenderCoverLetterPdf, RenderCoverLetterPdfParamsSchema.parse(params));
+        })()
+      : method === RpcMethods.ProfileRequiredBulletSuggestions
       ? (() => {
           // Chosen model findings exercise the same persisted authority contract
           // as the worker, without judging the fixture's language.
@@ -76,7 +91,7 @@ const providerDispatcher: JsonRpcDispatcher = {
             message: "Method is outside the isolated E2E fixture",
           },
         },
-  close: async () => {},
+  close: async () => { await coverRendererDispatcher.close(); },
 };
 const credentialStore: CredentialStore = {
   list: async () => ({
@@ -120,6 +135,7 @@ const app = buildApp({
   requireHealthyWorkerForActions: true,
 });
 await assertIsolatedE2eWorkspace();
+app.addHook("onClose", () => coverRendererDispatcher.close());
 await app.listen({ host: config.host, port: config.port });
 for (const signal of ["SIGTERM", "SIGINT"] as const)
   process.once(signal, () => {

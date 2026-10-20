@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import type {
   ActivityEventSummary,
   PaginatedResponse,
-} from "../../contexts/operations/types.js";
+} from "@jobctrl/contracts";
 import { useIsMobile } from "../../shared/hooks/use-mobile.js";
 import {
   FilterableDataGrid,

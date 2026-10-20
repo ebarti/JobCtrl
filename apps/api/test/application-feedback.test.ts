@@ -2253,95 +2253,100 @@ function seedDatabase(dbPath: string): void {
   initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   db.pragma("foreign_keys = ON");
-  seedBuiltInResumeTemplate(db);
+  try {
+    db.transaction(() => {
+      seedBuiltInResumeTemplate(db);
 
-  insertJob(db, {
-    jobId: READY_JOB_ID,
-    url: READY_JOB,
-    title: "Principal Platform Engineer",
-    site: "ExampleCo",
-    fitScore: 9,
-    resumePath,
-    resumePdfPath,
-    rejectedResumePdfPath,
-    applyState: "pending",
-  });
-  insertJob(db, {
-    jobId: DRY_RUN_JOB_ID,
-    url: DRY_RUN_JOB,
-    title: "Staff Backend Engineer",
-    site: "ExampleCo",
-    fitScore: 8,
-    resumePath,
-    resumePdfPath,
-    rejectedResumePdfPath,
-    applyState: "pending",
-  });
-  insertJob(db, {
-    jobId: APPLIED_JOB_ID,
-    url: APPLIED_JOB,
-    title: "Already Applied Engineer",
-    site: "ExampleCo",
-    fitScore: 8,
-    resumePath,
-    resumePdfPath,
-    rejectedResumePdfPath,
-    applyState: "succeeded",
-    appliedAt: "2026-05-31T10:00:00.000Z",
-  });
-  db.prepare(
-    `INSERT INTO apply_run_projections (
-       run_id, job_id, job_title, job_employer, status, result, dry_run, started_at, finished_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    "dry-run-ready",
-    READY_JOB_ID,
-    "Principal Platform Engineer",
-    "ExampleCo",
-    "dry_run_complete",
-    "dry_run_complete",
-    1,
-    "2026-05-31T09:00:00.000Z",
-    "2026-05-31T09:01:00.000Z",
-  );
-  db.prepare(
-    `INSERT INTO job_events (
-       tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
-     ) VALUES ('local', ?, 1, 'apply', 'ApplyRunStarted', 'info', ?, ?, ?)`,
-  ).run(
-    READY_JOB_ID,
-    "Apply dry-run started",
-    "2026-05-31T09:00:00.000Z",
-    JSON.stringify({
-      run_id: "dry-run-ready",
-      dry_run: true,
-      materials_generation: 1,
-      application_url: READY_JOB,
-    }),
-  );
-  db.prepare(
-    `INSERT INTO job_events (
-       tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
-     ) VALUES ('local', ?, 1, 'apply', 'DryRunCompleted', 'info', ?, ?, ?)`,
-  ).run(
-    READY_JOB_ID,
-    "Dry run completed",
-    "2026-05-31T09:01:00.000Z",
-    JSON.stringify({
-      run_id: "dry-run-ready",
-      result: "dry_run_complete",
-      dry_run: true,
-      coverage: "full",
-      allowed_navigations: runBoundNavigation(READY_JOB),
-      materials_generation: 1,
-      application_url: READY_JOB,
-      finished_at: "2026-05-31T09:01:00.000Z",
-    }),
-  );
-  insertBulletProvenance(db);
-  recordArtifactAuthority(db);
-  insertCompensationRows(db, READY_JOB_ID, READY_JOB);
-  db.close();
+      insertJob(db, {
+        jobId: READY_JOB_ID,
+        url: READY_JOB,
+        title: "Principal Platform Engineer",
+        site: "ExampleCo",
+        fitScore: 9,
+        resumePath,
+        resumePdfPath,
+        rejectedResumePdfPath,
+        applyState: "pending",
+      });
+      insertJob(db, {
+        jobId: DRY_RUN_JOB_ID,
+        url: DRY_RUN_JOB,
+        title: "Staff Backend Engineer",
+        site: "ExampleCo",
+        fitScore: 8,
+        resumePath,
+        resumePdfPath,
+        rejectedResumePdfPath,
+        applyState: "pending",
+      });
+      insertJob(db, {
+        jobId: APPLIED_JOB_ID,
+        url: APPLIED_JOB,
+        title: "Already Applied Engineer",
+        site: "ExampleCo",
+        fitScore: 8,
+        resumePath,
+        resumePdfPath,
+        rejectedResumePdfPath,
+        applyState: "succeeded",
+        appliedAt: "2026-05-31T10:00:00.000Z",
+      });
+      db.prepare(
+        `INSERT INTO apply_run_projections (
+           run_id, job_id, job_title, job_employer, status, result, dry_run, started_at, finished_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "dry-run-ready",
+        READY_JOB_ID,
+        "Principal Platform Engineer",
+        "ExampleCo",
+        "dry_run_complete",
+        "dry_run_complete",
+        1,
+        "2026-05-31T09:00:00.000Z",
+        "2026-05-31T09:01:00.000Z",
+      );
+      db.prepare(
+        `INSERT INTO job_events (
+           tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+         ) VALUES ('local', ?, 1, 'apply', 'ApplyRunStarted', 'info', ?, ?, ?)`,
+      ).run(
+        READY_JOB_ID,
+        "Apply dry-run started",
+        "2026-05-31T09:00:00.000Z",
+        JSON.stringify({
+          run_id: "dry-run-ready",
+          dry_run: true,
+          materials_generation: 1,
+          application_url: READY_JOB,
+        }),
+      );
+      db.prepare(
+        `INSERT INTO job_events (
+           tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+         ) VALUES ('local', ?, 1, 'apply', 'DryRunCompleted', 'info', ?, ?, ?)`,
+      ).run(
+        READY_JOB_ID,
+        "Dry run completed",
+        "2026-05-31T09:01:00.000Z",
+        JSON.stringify({
+          run_id: "dry-run-ready",
+          result: "dry_run_complete",
+          dry_run: true,
+          coverage: "full",
+          allowed_navigations: runBoundNavigation(READY_JOB),
+          materials_generation: 1,
+          application_url: READY_JOB,
+          finished_at: "2026-05-31T09:01:00.000Z",
+        }),
+      );
+      insertBulletProvenance(db);
+      recordArtifactAuthority(db);
+      insertCompensationRows(db, READY_JOB_ID, READY_JOB);
+    })();
+  } finally {
+    db.close();
+  }
 }
 
 function seedBuiltInResumeTemplate(db: Database.Database): void {

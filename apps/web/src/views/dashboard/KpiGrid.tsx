@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 
-import type { DashboardSummary } from "../../contexts/operations/types.js";
+import type { DashboardSummary } from "@jobctrl/contracts";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
 import { StatCard, type StatTone } from "../../shared/ui/stat-card.js";
 

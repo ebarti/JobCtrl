@@ -340,6 +340,58 @@ and `scoredSince` are both present, the jobs list matches rows where either
 timestamp is at or after its threshold. Active filters and sort remain URL state
 in the web app. The same score and applied-outcome filters are accepted by
 all-matching bulk job mutations.
+Timestamp comparisons use JavaScript millisecond precision and normalize
+timezone offsets and fractional notation. Missing or invalid stored timestamps
+do not match their threshold. Lists and all-matching bulk mutations share this
+comparison before counting and pagination, using precomputed millisecond values
+in the rebuildable query index.
+The list and all-matching bulk filters accept optional `stages` membership on
+projected `currentStage`. Allowed values are `discover`, `enrich`, `score`,
+`tailor`, `cover`, and `apply`; they do not select `currentSubstage`. Current
+projections group preparation under Discover or Apply, so other stage values
+can legitimately match no rows. The JSON body form is an array. Query strings
+accept comma serialization, repeated values, or repeated comma groups:
+`stages=discover,apply` and `stages=discover&stages=apply` are equivalent.
+Whitespace is trimmed. At most six input values are accepted before
+deduplication; duplicate values retain their first occurrence. Invalid members,
+malformed values, and arrays longer than six are ignored as a whole, matching
+the existing optional-filter fallback convention. They fall back to scalar
+`stage`, if supplied. Valid `stages` overrides scalar `stage`; `[]` (query
+`stages=`) explicitly removes any stage restriction. Omission or explicit
+TypeScript `stages: undefined` preserves scalar behavior. Stage membership is
+ORed and then intersected with every other list filter before count, global
+sorting, and pagination. All-matching bulk selection
+uses the same membership and also accepts exact `normalizedScoreKeyword`.
+
+`pagination.total` is the globally filtered count, `pages` is
+`max(1, ceil(total / pageSize))`, and `page` is clamped to `pages`. Empty results
+return `items: []`, `total: 0`, `pages: 1`, and `page: 1`. Sort ties use ascending
+canonical job ID regardless of the requested direction. All searches and sorts
+use SQLite count/order/page selection over summary-equivalent scalar values.
+Index refresh, totals and the clamped page, including selected-summary joins,
+share one SQLite transaction. Only the returned IDs receive DTO hydration,
+availability and template reads. The app-owned TEMP query index stores Unicode
+search values and compatible sort ordinals, preserves exact-v14 admission, and
+rebuilds after connection close or database replacement. A failed refresh fails
+the request without publishing a fresh index marker. The
+[architecture reference](../architecture/read-model.md#job-list-sqlite-selection)
+owns lifecycle and source-snapshot details.
+Text sorting lowercases values before locale comparison, including searched
+lists; equal values retain ascending job IDs in either direction. State sorting
+uses the public `currentState`, so stored exhaustion shares the failed rank.
+Discovery sorting uses locale comparison of the original timestamp strings,
+matching the browser merger even with mixed fractional or offset notation;
+it does not compare normalized instants. Missing values sort first ascending
+and last descending, with ascending job-ID ties in either direction.
+Source/company filters use literal substring matching after Unicode lowercasing;
+percent, underscore, and backslash are ordinary characters. Source matches the
+rendered source, discovery source, posting source, or posting URL. Lists and
+all-matching bulk selection apply these same rules before counting or slicing.
+Response `filter.stages` is the effective deduplicated stage array, or `[]` for
+unrestricted membership. The legacy `filter.stage` still echoes scalar `stage`
+(or an empty string), even when overridden by `stages`. Other filter and sort
+metadata retain their existing meanings.
+
 `GET /v1/digest` returns the local daily digest read model for the dashboard and
 CLI. It composes projection-backed counts for new matches, blocked sources,
 apply-review materials, stale scores, pending approvals, derived follow-ups due,
@@ -405,6 +457,11 @@ to `pending`; non-failed selected jobs are ignored. A persisted legacy
 `exhausted` row is exposed as `state: "failed"` with
 `failureReason: "attempt_budget_exhausted"`, remains retryable, and has its
 attempt count reset atomically by this action.
+List and all-matching bulk `state=failed` filters include both persisted
+`failed` and `exhausted` rows. The legacy `state=exhausted` selector restricts
+membership to persisted exhaustion, including when combined with `q` or
+`stages`. Public summaries keep the failed-state presentation and failure
+reason above.
 
 `POST /v1/jobs/import-url` accepts the strict body `{ url: string }`. The URL
 must be public HTTP(S); credential-bearing, private, loopback, unresolved, and unsafe redirect
@@ -724,20 +781,37 @@ type and policy metadata are visible as columns instead of compact badges:
 - `GET /v1/discovery/sources/:sourceId/preview` returns local preview leads
   from recent `JobSourceObserved` history for that source; it does not perform
   live scraping.
-- `GET /v1/discovery/locator-candidates`, `GET /v1/discovery/quarantine`, and
-  `GET /v1/discovery/manual-capture` expose the local review queues. Located
-  parseable source candidates are auto-promoted into the active source registry;
-  these queues are for blocked, ambiguous, unparseable, or compatibility pending
-  work.
-  Direct URLs returned by the JobStreaming broad-board adapter feed this same
-  loop: runnable ATS URLs are promoted into the source registry, while unknown
-  owner URLs or ATS URLs that still need adapter configuration remain visible
-  for review.
-- `POST /v1/discovery/locator-candidates/:candidateId/promote` promotes a
-  source locator candidate into an active source registry entry and emits
-  `SourceLocationCandidatePromoted`.
-- `POST /v1/discovery/locator-candidates/:candidateId/reject` removes a local
-  source locator candidate from the review queue.
+- `GET /v1/discovery/locator-candidates` is strictly read-only, including for
+  parseable ATS candidates. It returns `{ ok, candidates }`; existing candidate
+  fields are unchanged. History proposals add optional `proposal` with
+  `coordinateKey`, `sourceId`, nullable `atsKind`/`boardToken`,
+  `completeness: "unknown"`, optional nullable `promotionBlockedReason`, `overlaps[]` (`sourceId`, `state`, `seedUrl`) and
+  `evidence[]`. Each evidence receipt contains `originJobId`,
+  `originPostingUrl`, `inputUrl`, `urlKind` (`posting_url`, `canonical_url`,
+  `application_url`), `observations[]` (observation/source/run IDs, observed URL
+  and time), `extraction` (nullable tier/time/snapshot version and description/
+  snapshot hashes and optional `snapshotEvidence[]`) and `sample` (title, company, bounded description excerpt).
+  Reads join saved receipts by candidate ID and never fetch, learn or promote.
+- `GET /v1/discovery/quarantine` and `GET /v1/discovery/manual-capture` expose
+  their existing local review queues. Direct URLs from broad-board discovery
+  retain their normal learning path, fenced by pending history proposals,
+  durable rejection and disabled/quarantined source intent.
+- `POST /v1/discovery/locator-candidates/:candidateId/promote` explicitly promotes
+  the candidate, reusing a history proposal's active registry overlap without
+  changing its configuration. It records `SourceLocationCandidateReviewed`
+  (`decision: promote`) and `SourceLocationCandidatePromoted` atomically with
+  queue/registry writes. Public destination validation runs before the writer
+  transaction; a changed candidate requires review again. A disabled/non-active overlap returns `409
+  source_review_conflict`; malformed/private coordinates return `400
+  invalid_source_candidate`. The optional decision `reason` is retained.
+- `POST /v1/discovery/locator-candidates/:candidateId/reject` atomically records
+  `SourceLocationCandidateReviewed` (`decision: reject`, candidate ID,
+  `coordinateKey`, optional submitted reason and `decidedAt`) and removes
+  pending aliases for that coordinate. It never changes source state or
+  application data. Suppression survives retries/restarts until the explicit
+  `source-proposals reset CANDIDATE_ID` CLI command records `decision: reset`.
+  `source-proposals from-history` is the only history-scan trigger; no new
+  automatic import/apply hook or schedule is introduced.
 - `POST /v1/discovery/quarantine/:jobKey/decision` approves or rejects a
   quarantined lead and records feedback for source-quality aggregation.
 - `POST /v1/discovery/manual-capture/:itemId/import` records user-mediated
@@ -1677,7 +1751,15 @@ Current-version preparation maintenance actions are separate endpoints:
   `503 { ok: false, error: "worker_runtime_unavailable", worker }`; the prior
   stage row, attempt/error metadata, and event history remain unchanged and no
   dispatcher call occurs. With `runAfter: false`, the route is an intentional
-  local-only reset and does not require a worker.
+  local-only reset and does not require a Temporal activity worker. Enrichment
+  resets require the local Python RPC runtime and return `200` only after the
+  reset commits. They preserve accepted enrichment content and attempt history,
+  clear terminal stage fields and execution ownership, and retain the stage
+  attempt count unless `resetAttempts` is true or the stage was exhausted.
+  An RPC or persistence failure returns an error rather than a successful reset;
+  a rejected persistence transaction leaves the previous state and events intact.
+  Mixed bulk cohorts containing Enrich commit through the same service; if a
+  selected row is no longer failed/exhausted, the complete cohort is rejected.
   For an already enriched LinkedIn job with no application URL, send
   `{ "stage": "enrich", "runAfter": true, "refreshApplyUrl": true }` to
   inspect only that posting through the live extension. This bounded action
@@ -2278,6 +2360,57 @@ accepted content, materials, decisions and outcomes remain intact.
 The [Enrichment guide](../user/enrichment-and-extraction.md#saved-posting-availability)
 owns the complete acquisition, cohort and retry policy.
 
+## Accepted Material DOCX Exports
+
+`POST /v1/jobs/:jobId/material-exports` requires a canonical UUID job owned by
+the local tenant. It accepts a strict operation union; extra fields are refused:
+
+| Operation | Request fields |
+| --- | --- |
+| `history` | `operation: "history"` |
+| `export` | `operation: "export"`, `sourceArtifactId` (1–240 characters), positive integer `expectedGeneration`, lowercase 64-character `expectedSourceSha256` and `expectedMetadataSha256`, and `paper: "A4" \| "Letter"` |
+
+Both return `200` with `tenantId`, `jobId`, `sources`, `exports` and
+`exportedArtifactId` (null for history, the new ID for export). Sources contain
+`artifactId`, `generation`, `kind` (`tailored_resume` or `cover_letter`), nullable
+`locale`, source `sha256`, `metadataSha256` and `unavailableReason`. Missing or
+invalid source files remain listed with an unavailable reason and null hashes;
+only approved, unsuperseded text sources are offered.
+
+Each export receipt has `contract: "accepted-material-docx-v1"`, `artifactId`,
+`tenantId`, `jobId`, `sourceArtifactId`, `generation`, `kind`, `sourceSha256`,
+`sourceMetadataSha256`, `settings`, `settingsSha256`, output `sha256`, `createdAt`
+and `warnings`. Settings contain `format: "docx"`, `layout: "semantic-v1"`,
+`paper` and the resolved source `locale` (`und` if unrecorded). No file paths,
+source prose or private source metadata cross this boundary. The UI does not
+request translation or override locale.
+
+Synchronous RPC `accepted_material_exports` takes exactly `tenantId`, `jobId`,
+`expectedAppDir`, `expectedDbPath` and `request`. Runtime identity is checked
+before opening the database. The API validates response tenant/job binding and,
+for export, the returned receipt's selected source, generation, hashes and paper.
+No provider, model or Temporal workflow is involved.
+
+Invalid requests return `400`; missing jobs return `404`; stale generation,
+source edits, lost acceptance and missing source bytes return `409`; unsupported
+source content/settings return `400` or `422`; forbidden paths return `403`.
+Transport, malformed results or unknown worker errors return safe `503` codes.
+Unknown exceptions never pass private worker diagnostics to the browser.
+
+`GET /v1/artifacts/:artifactId/download.docx` accepts a registered numeric export
+ID. It reads the local tenant's approved `material_docx` receipt from
+`job_artifacts`, checks tenant/job binding, refuses symlink/foreign paths, and
+verifies the file's SHA-256 before returning any bytes. It returns the DOCX media
+type, `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, and attachment
+filename `resume-gN-PAPER.docx` or `cover-letter-gN-PAPER.docx`. Missing IDs/files
+return `404`, forbidden paths `403`, and malformed receipts or changed bytes
+`409`. An export remains downloadable after its source is superseded. This read
+never changes an approval or registers another artifact.
+
+The endpoint and browser download are unavailable in the public demo. See
+[Editable DOCX Export](../user/materials-and-tailoring.md#editable-docx-export)
+for content preservation and layout limits.
+
 ## Material Locale Variants
 
 `POST /v1/jobs/:jobId/material-locales` uses a canonical UUID Job ID and a strict
@@ -2318,3 +2451,217 @@ For language capabilities, review flow and CLI examples, see
 ## Screening Answer Contract
 
 GET/POST `/v1/jobs/:jobId/screening-answers` use `ScreeningReadResponseSchema`, `ScreeningCommandSchema` and `ScreeningWriteResponseSchema` from shared contracts. Read responses retain `questions`, `history`, `library`, `facts`, nullable `sourceBinding`/`sourceFailure` persisted `determinations` and safe `failures`. Commands reject unknown fields, bound text to 16,000 characters and require expected revisions/idempotency keys; capture questions/context are each limited to 4,000 characters. The [owning route reference](jobs-and-materials.md#screening-answers) and [action fields](../user/screening-answers.md#cli-and-local-api) define behavior. Runtime identity comes from the API, never the request body. Transport failures return 503, invalid worker parameters 409, and malformed/foreign completions 502 with safe errors; body-schema failures return 400.
+
+## Company Briefings
+
+`GET /v1/jobs/:jobId` adds optional `companyBriefing: CompanyBriefingView | null`. Missing configuration is null. `status` is `current`, `stale`, `missing`, `needs_review` or `unavailable`. The view carries `company` (URL identity, name, selected sources, configuration time/revision), nullable `accepted` (company/configuration IDs, observed/accepted times, source snapshots with URL/final URL/text/hash, determination ID/provider/model/prompt version and typed result), nullable `lastAttempt` (start/finish/failure code/revision, nullable determination ID, and rejected-identity reason/source snapshots when recorded), and `staleReasons`. A provenance read failure returns `unavailable` with null content; it never rewrites stored state.
+
+The result contains `identity`, `identity_reason`, `identity_citations` and up to twelve claims. A claim has `kind: company_fact | reported_event | hypothesis`, `text`, `uncertainty`, nullable literal `event_date`, and one to three canonical `source_id`/verbatim `quote`/`exact_values` citations. Every source includes its observation date and the SHA-256 of its bounded captured text.
+
+`GET /v1/digest` adds optional `companyBriefings`, at most five distinct company summaries from the latest 100 explicit job links. Each includes `companyId`, `name`, canonical `jobId`, nullable `observedAt`, `status`, `staleReasons`, and nullable `failureCode`. No matching by name, source fetching or model call occurs on either GET. CLI commands own configuration/refresh; there are no new write routes or JSON-RPC methods.
+
+## Provider Transport And Error Details
+
+The provider routes retain their methods and paths under the shared endpoint
+specification. Requests ignore query/body values; the generated verification
+client sends an empty JSON object. Success responses are strict:
+
+- Status: `{ ok: true, providers }`, with each item restricted to `provider`,
+  `configured`, `ready`, nullable `mode` and optional bounded `message`.
+- Models: `{ ok: true, providers }`, exactly three entries in Codex, Claude,
+  Google order. Unready providers have empty model arrays.
+- Verification: `{ ok: true, verification: { provider: "codex", ok, status, message } }`;
+  inner `ok: false` with `not_configured`/`failed` remains HTTP 200.
+
+Status and verification map RPC errors or invalid results to 502 and transport
+failures to 503. Models maps all three failure classes to 503. Errors are
+`{ ok: false, error, message }` with the operation-specific code and fixed
+message from the [provider compatibility table](profile-and-settings.md#provider-endpoint-compatibility).
+Status RPC/transport failures say “Provider status is temporarily unavailable.”;
+invalid results say “Provider status returned an invalid response.” Models
+failures say “Provider models are temporarily unavailable.” Verification RPC
+errors say “Codex verification could not be completed.”, invalid results say
+“Codex verification returned an invalid response.”, and transport failures say
+“Codex verification is temporarily unavailable.” Extra/private result fields
+fail validation. Existing HTTP security rejection precedes provider dispatch.
+
+This changes no #954 JSON-RPC envelope policy or durable workflow result.
+See the [incremental migration recipe and synthetic test seams](../architecture/contracts-types-and-api-boundaries.md#incremental-endpoint-migration).
+
+## Cover-Letter PDF Review
+
+The registered checked-client methods `renderCoverLetterPreview(jobKey, body)`
+and `acceptCoverLetterPreview(jobKey, body)` use these synchronous routes:
+
+| Route | Request / result |
+| --- | --- |
+| `POST /v1/jobs/:jobKey/cover-letter/preview` | `{source, expectedAcceptedVersion, settings}` → `{ok:true, preview}` |
+| `GET /v1/jobs/:jobKey/cover-letter/previews/:previewId.pdf` | Tenant/job-owned immutable PDF bytes, `application/pdf`, `Cache-Control: no-store` |
+| `POST /v1/jobs/:jobKey/cover-letter/accept` | `{previewId, expectedAcceptedVersion}` → `{ok:true, accepted}` |
+
+`source` contains `tenantId`, canonical `jobId`, accepted text `artifactId`, its
+original `generation` and full-file `textSha256`. `preview` adds a UUID
+`previewId`, `expectedAcceptedVersion`, normalized `settings`, `rendererVersion`
+and `pdfSha256`. `accepted` contains `source`, `acceptedVersion`, `pdfArtifactId`,
+`pdfSha256`, `pdfSourceCurrent`, `settings` and `rendererVersion`. Historical
+unformatted PDFs use the existing defaults and a null renderer version, with
+`pdfSourceCurrent:false` unless recorded source/PDF hashes, settings and renderer
+establish their identity. Generation equality alone is insufficient. An
+unreadable canonical source blocks rendering, saving and approval. A saved
+receipt keeps its last accepted source identity, settings and PDF viewable;
+`pdfSourceCurrent` is false until the canonical source is readable again.
+`materialsPreview.coverLetterText` reads that canonical source ID and verifies
+its full-file hash. Projection ordering cannot select a different cover alias;
+an unreadable bound source exposes the source error instead of substitute text.
+Cover-only saves carry the coherent resume text/PDF selection already displayed
+in Apply Review, preserving its metadata and recorded provenance even when a
+newer partial resume generation exists.
+
+`acceptedVersion` binds the accepted source/PDF identities, bytes, settings and
+renderer. A rejected attempt does not change it. Generation allocation still
+advances beyond every attempt. Unchanged material slots retain IDs across
+generations; DOCX export requests select the exact ID/generation pair.
+
+Settings are strict objects with `paper: Letter|A4`,
+`fontFamily: georgia|times|arial`, `fontSizePt: 9..14`, `marginMm: 8..28`,
+`lineHeight: 1..2`, and `paragraphSpacingPx: 0..24`. Numeric values must be finite;
+CSS strings and extra keys are rejected. Defaults are Letter/georgia/11/17.78/1.6/14.
+Canonical sources must be nonempty readable UTF-8 and at most 512,000 bytes.
+The worker `render_cover_letter_pdf` checks the snapshot hash and renderer
+version before rendering with CSS paper-size preference enabled. Its `settings`
+must be an object; explicit null is an invalid JSON-RPC parameter, not defaults.
+The source and output must name `source.txt` and a new `letter.pdf` in the same
+owned UUID preview directory. Source, manifest and PDF reads reject symlinks and
+bound descriptor reads. Canonical source paths outside the workspace return 403;
+unowned preview IDs/manifests return 404.
+
+`pdfSha256` comes from persisted acceptance metadata. Actual bytes must match it
+for approval and accepted downloads; a mismatch returns 422 on download and
+marks the accepted source/PDF relationship noncurrent without adopting the new
+bytes. Normal generation persists both source-text and PDF hashes, settings,
+renderer and source occurrence; old unbound PDFs require explicit preview/save.
+
+Malformed requests return 400; stale source/version/save snapshots return 409
+`cover_letter_version_conflict`; renderer/transport failure returns 502
+`cover_letter_render_failed`; unreadable/oversized sources or missing/corrupt
+PDFs return 422. A preview is readable only by its owning tenant/job. Save
+rechecks source bytes, accepted version and preview PDF hash inside an immediate
+SQLite transaction, then appends a complete material generation. Preview and
+accepted download bytes are identical. Existing generations and files remain
+historical. A repeated save of the still-current preview reconciles an uncertain
+acknowledgement without creating another generation. A failed save retains the
+preview for retry and leaves accepted rows and files untouched.
+
+`POST /v1/jobs/:jobKey/apply-review/decision` with `approve_submit` and a cover
+source requires the current `coverLetterAcceptedVersion` alongside existing
+material/profile/URL/email bindings. The decision event retains the exact cover
+binding; API and worker approval checks reject later source, settings or PDF
+changes. Manual decisions and jobs without a cover retain their existing input
+contract. Preview-only activity and failures do not change accepted authorization.
+
+## Selected-cohort demand and milestones
+
+`GET /v1/evidence-map/learning` returns `{ ok, preview: null, cohorts,
+milestones, truncated }` through `career_learning` RPC. Requests bind
+`tenantId`, `expectedAppDir`, `expectedDbPath` and an optional strict `command`.
+GET accepts no query parameters. POST accepts one of:
+
+- `{ action: "preview", jobIds }`: 1–30 canonical job UUIDs, including repeated
+  selections for disclosure. Returns `preview` with job/source snapshots,
+  `profileVersion`, `selectedCount`, `cohortSize`, `analyzedCount`,
+  `missingDescriptions`, `duplicateSelections`, `duplicateIdentities`,
+  `confirmedEvidenceCount`, `excludedEvidenceCount` and source `fingerprint`.
+  No model, journal or profile write occurs.
+- `{ action: "compare", cohortId?, expectedRevision, title, asOf, jobIds,
+  aspirations, expectedSnapshotFingerprint? }`: new cohorts require revision 0;
+  existing cohorts require their current revision. `asOf` is an ISO date and
+  labels selection. The browser always supplies the preview fingerprint.
+  Changed reviewed sources fail before spend. Description sources are bounded
+  to 64,000 characters each and 120,000 total source characters, with at most
+  200 usable confirmed achievements. No-description cohorts are previewable but
+  cannot be compared. A successful accepted revision contains immutable sources,
+  `snapshotFingerprint`, `determinationId`, the full determination envelope and
+  typed `comparison` (`demands`, `proposals`, `uncertainty`). Posting/candidate
+  citations retain `source_id`, verbatim `quote`, and `exact_values`.
+- `{ action: "choose", cohortId, expectedRevision, determinationId,
+  proposalId }`: requires a current accepted comparison and exact proposal;
+  repeated selection within the same cohort revision is idempotent. Creates a planned milestone with immutable
+  `origin`, `cohortRevision`, proposal/completion criterion and selection time.
+- `{ action: "update", milestoneId, expectedRevision, status,
+  completionEvidence }`: status is `planned`, `in_progress`, `completed` or
+  `abandoned`. Completed activity requires a nonblank completion statement.
+  Writes retain revision history, never update Profile, fit or readiness.
+
+Successful writes return the canonical read response. Cohorts expose
+`staleReasons` and `lastAttempt`; milestones expose `staleReasons`, immutable
+origin and activity `history`. Reads show at most 20 latest cohorts and 100 latest
+milestones (`truncated` discloses more retained entities), with 50 recent activity
+revisions each. Raw private `CareerLearningRecorded` events are suppressed from
+SSE. All cohorts and milestone revisions remain in the local journal.
+
+Invalid HTTP bodies return 400. Worker validation, stale revision/source and
+provider failures return 409 `career_learning_failed` with an allowlisted safe
+message; worker transport unavailable returns 503, invalid worker results 502.
+Accepted comparisons and milestone history survive every failed refresh.
+
+## Actual Offer Terms And Decisions
+
+All routes use a canonical UUID `jobId`, local tenant and the normal local
+mutation-origin boundary. No endpoint sends mail or changes pipeline/submit
+approval. Reads need no worker; only outreach generation/revision uses one.
+
+| Route | Request | Response |
+| --- | --- | --- |
+| `GET /v1/jobs/:jobId/offer` | None | `OfferReadResponse`: `ok`, `jobId`, `currentTerms`, `currentDecision`, `termsHistory`, `decisions` |
+| `POST /v1/jobs/:jobId/offer/terms` | `expectedRevisionId: UUID or null`, `terms`, optional `correctionReason` | Complete `OfferReadResponse` |
+| `POST /v1/jobs/:jobId/offer/decisions` | `expectedDecisionId: UUID or null`, current `termsRevisionId`, `decision: accepted or declined`, `occurredAt`, `source`, optional `correctionReason` | Complete `OfferReadResponse` |
+
+`OfferSource` is strict: `reference` (1–1000 characters), `quote` (1–8000),
+`capturedAt` (canonical ISO timestamp) and `userConfirmed: true`. This is a
+human attestation, not a parser's semantic finding. `terms.source` records the
+overall offer; every known term carries its own source as well. The web form
+uses one explicitly reconfirmed source for all entered terms in a revision.
+
+`terms.cash` contains at most 20 strict entries with `component` (`base_salary`,
+`bonus`, `signing_bonus`, `commission`, `other`), finite nonnegative `amount`
+(up to 1e12), three-uppercase-letter `currency` or null, `period` (`year`,
+`month`, `week`, `hour`, `one_off`, `unknown`) and `source`. `equity` and
+`benefits` are `{ value: 1–4000 characters, source }` or null;
+`decisionDeadline` is `{ value: ISO timestamp, source }` or null. Null and
+unknown remain unknown; no conversion, annualization, equity valuation or
+implicit total is performed.
+
+Terms history adds `revisionId` and `recordedAt`; decisions add `decisionId`
+and `recordedAt`. Expected IDs must match the current record. Every terms
+revision after the first and every decision correction requires a nonempty
+reason (up to 1000 characters). A decision must reference current terms.
+A later terms revision leaves the prior decision attached to its original
+revision; it does not silently reconfirm it. History arrays retain commit order.
+The first terms write atomically adds one `offer` milestone with no prep link when none already exists.
+
+Invalid schema/JobId returns `400 invalid_offer`/`invalid_job_id`; absent jobs
+return `404 not_found`; stale expected IDs, missing correction reasons and
+noncurrent decision terms return `409 offer_conflict`. Failure preserves the
+last committed record.
+
+Outreach request `kind` additionally accepts `offer_negotiation`,
+`offer_clarification`, `offer_acceptance`, `offer_decline`; `offerRevisionId`
+optionally fences the current revision. These kinds require an existing offer
+for the linked job. Acceptance/decline require a matching current user decision.
+The worker assembles canonical sources; request bodies cannot inject sources.
+Generated and edited drafts pass the existing claim and independent quality
+gates. `gateResults.sourceContext` contains `{ binding: { jobId,
+termsRevisionId, decisionId }, fingerprint, sources: [{ source_id, text }] }`.
+The offer detail remains the canonical user-facing terms record.
+
+A draft read includes `offerSourcesCurrent` for offer kinds. Terms/decision
+changes prevent approval and send logging with `409 draft_gates_not_passed`;
+copying rechecks this current binding. Draft bodies/history remain readable.
+Generation failures expose safe `provider_unavailable` (503), `budget_denied`
+(429), `offer_*` source/decision conflicts (409), or structural verification
+codes (502); they do not forward source or provider prose. The previous
+approved message survives every failed replacement. No send transport exists.
+
+`OfferRecordChanged` SSE carries only `{ jobId, revisionId, decisionId }` and
+the ordinary tenant/time envelope. Private terms, quotations and correction
+reasons never enter this public payload, activity summaries or curated audit.

@@ -71,6 +71,7 @@ has one defining page; other pages summarize it briefly and link to that owner.
 - [`user/scoring-and-employer-analysis.md`](user/scoring-and-employer-analysis.md):
   fit evidence, requirement assessment, policy, corrections, and ranking; it
   consumes the employer analysis owned by Discovery.
+- [`user/company-briefings.md`](user/company-briefings.md): optional public-source company context, explicit identity links, bounded CLI refresh and shared job/interview/digest reads.
 - [`user/materials-and-tailoring.md`](user/materials-and-tailoring.md): generated
   materials, provenance, validation, review, and accepted-artifact history.
 - [`user/locale-variants.md`](user/locale-variants.md): source-linked translations,
@@ -108,6 +109,7 @@ has one defining page; other pages summarize it briefly and link to that owner.
 - [`developer/documentation-standards.md`](developer/documentation-standards.md):
   concept ownership, page structure, terminology, diagrams, and stable surfaces.
 - [`local-reliability-qa.md`](local-reliability-qa.md): validation-path chooser.
+- [`developer/releasing.md`](developer/releasing.md): version preparation, curated release notes, protected publication, and public-channel verification.
 - [`developer/local-scale-benchmark.md`](developer/local-scale-benchmark.md):
   reproducible synthetic production-path benchmark and measured local baseline.
 - [`developer/qa/regression-catalog.md`](developer/qa/regression-catalog.md):

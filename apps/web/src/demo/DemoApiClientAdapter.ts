@@ -14,6 +14,7 @@ import {
   WorkflowRunsListQuerySchema,
   compareJobs,
   compareValues,
+  effectiveJobStages,
   paginate,
   timestampAtOrAfter,
   timestampBefore,
@@ -50,17 +51,6 @@ import { DemoCapabilityError } from "./ports.js";
 import type { DemoWorkspaceRepository } from "./workspace/DemoWorkspaceRepository.js";
 
 type CacheKey = number | string | undefined;
-
-const IN_MEMORY_JOB_SORT_FIELDS = new Set([
-  "source",
-  "compensation_min_eur",
-  "compensation_max_eur",
-  "compensation_posted",
-  "compensation_market",
-  "compensation_confidence",
-  "compensation_warnings",
-  "apply_status",
-]);
 
 export class DemoResourceNotFoundError extends JobCtrlApiError {
   readonly code: string;
@@ -272,6 +262,12 @@ export class DemoApiClientAdapter implements ApiClientPort {
     );
   }
 
+  jobOffer = this.unsupported("jobOffer");
+  saveOfferTerms = this.unsupported("saveOfferTerms");
+  recordOfferDecision = this.unsupported("recordOfferDecision");
+  postedCompensationFact = this.unsupported("postedCompensationFact");
+  marketCompensationEstimate = this.unsupported("marketCompensationEstimate");
+
   applicationOutcomes() {
     return this.read((model) => model.analytics.outcomes);
   }
@@ -292,10 +288,7 @@ export class DemoApiClientAdapter implements ApiClientPort {
     const q = normalized.q.toLowerCase();
     const items = source.filter((job) => filterDemoJob(job, normalized, q));
     items.sort((left, right) =>
-      compareJobs(left, right, normalized.sort, normalized.dir, {
-        normalizeSqlText:
-          !normalized.q && !IN_MEMORY_JOB_SORT_FIELDS.has(normalized.sort),
-      }),
+      compareJobs(left, right, normalized.sort, normalized.dir),
     );
     return paginate(
       items,
@@ -306,6 +299,7 @@ export class DemoApiClientAdapter implements ApiClientPort {
       {
         q: normalized.q,
         stage: normalized.stage ?? "",
+        stages: effectiveJobStages(normalized),
         state: normalized.state ?? "",
         source: normalized.source,
         company: normalized.company,
@@ -492,6 +486,13 @@ export class DemoApiClientAdapter implements ApiClientPort {
 
   artifactPreviewPdfUrl(artifactId: string, cacheKey?: CacheKey): string {
     return artifactPreviewUrl(this.workspace, artifactId, "pdf", cacheKey);
+  }
+  coverLetterPreviewPdfUrl(): string {
+    throw new Error("Cover-letter rendering requires the local renderer.");
+  }
+
+  async downloadMaterialDocx(_artifactId: string): Promise<Blob> {
+    throw new DemoCapabilityError("acceptedMaterialExports");
   }
 
   artifactPreviewHtmlUrl(artifactId: string, cacheKey?: CacheKey): string {

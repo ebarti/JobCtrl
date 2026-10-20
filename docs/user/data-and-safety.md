@@ -139,7 +139,7 @@ Unless a row says otherwise, every path below is relative to JOBCTRL_DIR
 
 | Path | Contents |
 | --- | --- |
-| `jobctrl.db` plus `-wal` / `-shm` | Profile, jobs, discovery settings, events, projections, artifact metadata, review drafts, contacts, and workflows. Treat all three files as one database. |
+| `jobctrl.db` plus `-wal` / `-shm` | Profile, jobs, discovery settings, events, projections, artifact metadata, review drafts, contacts, private offer terms/decisions and sources, and workflows. Treat all three files as one database. |
 | `temporal.db` plus `-wal` / `-shm` | Bundled-runtime Temporal state. During a native bundled update or rollback, it is hash-snapshotted and restored only together with `jobctrl.db`; never restore just one member of that pair. |
 | `config.json` | Non-secret Settings values: general controls, provider configuration metadata, preferred model IDs, compensation source policy, and browser-adoption metadata. No API keys or feed contents. |
 | `.env` | Legacy/plaintext provider credentials used by remaining compatibility paths. Not encrypted at rest. |
@@ -242,8 +242,14 @@ Contact research is supervised:
 2. JobCtrl records the source attempt and proposes candidates;
 3. you confirm a candidate before it becomes a contact.
 
-Draft bodies, gate results, and claim provenance stay local. An approved draft
-can be copied/exported; JobCtrl has no outreach send transport. Logging a send
+Draft bodies, gate results, and claim provenance are stored locally. When you
+request a generated or edited outreach draft, its relevant profile/contact
+facts and actual text go to the configured provider for drafting and review.
+Offer communication additionally sends the confirmed offer terms, source
+quotations, decision attestation and existing compensation evidence. Recording
+or reading terms/decisions alone makes no provider request. Private offer
+ledger payloads stay out of general event-stream and activity/audit responses.
+An approved draft can be copied/exported; JobCtrl has no outreach send transport. Logging a send
 records something you did. Follow-ups are reminders and never act automatically.
 
 ### Interview Guidance, Preparation, And Notes
@@ -284,7 +290,7 @@ and live interview assistance are not shipped by this integration. See
 
 | Service | When used | Data involved |
 | --- | --- | --- |
-| LLM providers | Scoring, employer analysis, materials, contact extraction, stored interview prep, opted-in Required-bullet coaching | Posting text, relevant profile evidence, generated text, or opted-in fetched page text. Required-bullet coaching sends selected saved Required bullets, their role/company context and matching achievement evidence to your configured provider. Candidate interpretation and target-role suggestions send minimized saved profile sources to the configured Profile provider after spend preflight. Every suggestion cites source IDs and verbatim spans and needs your confirmation; provider or budget failure reports unavailable without a lexical substitute. |
+| LLM providers | Scoring, employer analysis, materials, contact extraction, stored interview prep, offer communication drafts, opted-in Required-bullet coaching | Posting text, relevant profile evidence, generated text, or opted-in fetched page text. Offer communication includes confirmed actual terms and quotations, the decision attestation and recorded compensation evidence; saving or reading an offer does not call a provider. Required-bullet coaching sends selected saved Required bullets, their role/company context and matching achievement evidence to your configured provider. Candidate interpretation and target-role suggestions send minimized saved profile sources to the configured Profile provider after spend preflight. Every suggestion cites source IDs and verbatim spans and needs your confirmation; provider or budget failure reports unavailable without a lexical substitute. |
 | Job boards, ATS APIs, posting pages | Discovery and Enrich prefer the connected paired extension; otherwise acquisition uses guarded public HTTP or anonymous Playwright | Both modes send search terms, URLs, and page/API requests. Connected Chrome may also send cookies or session state belonging to that site; its cookie values are never copied into worker tasks or results, and its user-agent string is returned as transport metadata. Anonymous acquisition uses no personal Chrome profile or ambient netrc credentials. |
 | Apply model and browser | Apply/dry-run work you start, or a standing loop you enable | The reviewed application URL and the page content observed during the transport-locked inspection. Profile fields, job-description prose, resume and cover-letter text, local artifact paths, and upload authority are excluded; see [Apply](apply.md#approval-and-automation-modes). |
 | Salary data sources | At the end of a Discover run, only for benchmark slices that are missing or past their seven-day freshness window; Levels.fyi or Glassdoor only when their Settings policy permits | Requests for public benchmark data from Euro Top Tech, ECB exchange rates when a currency conversion is needed, and Eurostat price levels when a slice has no direct benchmark. Levels.fyi public-page URLs name the role and location being benchmarked. |
@@ -396,3 +402,33 @@ prior bytes. See [Reviewed Locale Variants](locale-variants.md).
 ## Private Screening History
 
 [Screening answers](screening-answers.md), selected source facts and manual-use text are private local SQLite history. Only deliberate selected facts and exact saved question/posting context go to the configured Apply model lane. General activity and SSE carry safe references. Copying and manual-use attestation grant no form-entry or submission authority.
+
+Optional [company briefings](company-briefings.md) fetch only explicitly selected anonymous public pages and send bounded public text plus the reviewed company identity to the enrichment model. They send no profile, mail, resume or search query. The local database retains source snapshots, model receipts and accepted/failure history; shared company history survives removal of its linked jobs.
+
+## Selected-job comparison data
+
+Reviewing a selected-job cohort is local and makes no model call. Explicit
+comparison sends only the selected saved posting descriptions, their job
+identifiers/title/employer context, and usable confirmed achievement excerpts
+to your configured provider in the Profile lane. Personal contact fields,
+unconfirmed evidence, declared skill lists, aspirations and milestone activity
+are not comparison evidence inputs. No external learning-resource research runs.
+
+Cohort revisions and chosen milestones retain private source snapshots,
+comparison provenance and user completion statements in local SQLite. Historical
+origins remain after Profile/cohort changes and job deletion. The job-data purge
+preserves them and reports their retained `career_learning_records` count.
+They are not sent in general SSE events or converted into Profile skills,
+readiness, fit scores, application approvals or submission authority.
+
+## Retained Source Proposal History
+
+The opt-in `source-proposals from-history` command checks source hostnames through
+DNS; it sends no saved posting content to a model and fetches no remote page.
+Its local source-control receipts retain original posting/Job/run identifiers,
+input URLs, extraction hashes and bounded saved-content samples. These receipts
+and rejection/reset decisions survive job deletion and job-data purge, alongside
+the source registry and locator queue. `source-proposals list` reads that history
+without network access or mutations. See
+[Discovery](discovery.md#propose-sources-from-saved-posting-history) for review and
+explicit suppression reset.

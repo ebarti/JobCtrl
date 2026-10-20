@@ -40,6 +40,7 @@ from jobctrl.infrastructure.materials import (
     TailoringPolicyRevisionError,
 )
 from jobctrl.infrastructure.rpc.server import JsonRpcServer, invalid_params
+from jobctrl.infrastructure.rpc.enrichment_retry import reset_enrichment
 from jobctrl.infrastructure.rpc.workflow_starter import WorkflowCanceler
 from jobctrl.infrastructure.runtime_identity import assert_expected_runtime
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
@@ -913,9 +914,23 @@ def generate_outreach_draft(params: dict[str, Any]) -> dict[str, Any]:
     model = params.get("llmModel") or None
     try:
         kind = OutreachDraftKind(str(params.get("kind") or "intro_request"))
-    except ValueError:
-        kind = OutreachDraftKind.INTRO_REQUEST
+    except ValueError as exc:
+        raise invalid_params("Invalid outreach kind") from exc
 
+    from jobctrl.infrastructure.contact.offer_sources import OFFER_KINDS
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.infrastructure.runtime_identity import RuntimeIdentityMismatch
+
+    def check_offer_runtime(resolved_kind):
+        if resolved_kind.value in OFFER_KINDS and (not params.get("expectedAppDir") or not params.get("expectedDbPath")):
+            raise DeterminationFailure("offer_runtime_binding_required")
+        if params.get("expectedAppDir") or params.get("expectedDbPath"):
+            try:
+                assert_expected_runtime(expected_app_dir=params.get("expectedAppDir"), expected_db_path=params.get("expectedDbPath"))
+            except RuntimeIdentityMismatch:
+                raise DeterminationFailure("offer_runtime_mismatch") from None
+
+    check_offer_runtime(kind)
     conn = get_connection()
     try:
         profile = get_profile_repository().load_snapshot(tenant).as_dict()
@@ -925,6 +940,24 @@ def generate_outreach_draft(params: dict[str, Any]) -> dict[str, Any]:
     publisher = get_default_publisher()
     contact_repo = SqliteContactRepository(conn, publisher=publisher)
     thread_repo = SqliteOutreachThreadRepository(conn, publisher=publisher)
+    from jobctrl.infrastructure.contact.offer_sources import load_offer_context, context_sources, OFFER_RUBRIC
+
+    existing = thread_repo.load(tenant, thread_id)
+    if edited_body and existing and not params.get("kind") and existing.latest_draft:
+        kind = existing.latest_draft.kind
+    check_offer_runtime(kind)
+    job_id = str(existing.job_id) if edited_body and existing and existing.job_id else params.get("jobId")
+    offer_context = load_offer_context(conn, tenant, job_id, kind.value, params.get("offerRevisionId"))
+    if offer_context:
+        def fence_offer_sources():
+            fresh = load_offer_context(conn, tenant, job_id, kind.value)
+            if fresh != offer_context:
+                raise DeterminationFailure("offer_sources_changed")
+            fresh_profile = get_profile_repository().load_snapshot(tenant).as_dict()
+            if fresh_profile != profile:
+                raise DeterminationFailure("offer_profile_changed")
+        thread_repo = SqliteOutreachThreadRepository(conn, publisher=publisher, before_save=fence_offer_sources)
+
     llm = get_llm_adapter()
     from jobctrl.infrastructure.determinations import determination_dependencies
     from jobctrl.domain.materials.claim_verification import ModelClaimVerifier
@@ -942,6 +975,8 @@ def generate_outreach_draft(params: dict[str, Any]) -> dict[str, Any]:
                 claim_verifier=ModelClaimVerifier(**determination_deps),
                 quality_judge=ModelArtifactQualityJudge(**determination_deps),
                 preflight=determination_deps["preflight"],
+                source_context=offer_context, supplemental_sources=tuple(context_sources(offer_context)),
+                supplemental_rubric=OFFER_RUBRIC if offer_context else "",
                 new_id=new_id,
             ).execute(
                 tenant,
@@ -966,6 +1001,8 @@ def generate_outreach_draft(params: dict[str, Any]) -> dict[str, Any]:
                 claim_verifier=ModelClaimVerifier(**determination_deps),
                 quality_judge=ModelArtifactQualityJudge(**determination_deps),
                 preflight=determination_deps["preflight"],
+                source_context=offer_context, supplemental_sources=tuple(context_sources(offer_context)),
+                supplemental_rubric=OFFER_RUBRIC if offer_context else "",
                 new_id=new_id,
             ).execute(
                 tenant,
@@ -1047,6 +1084,57 @@ def make_cancel_run(canceler: WorkflowCanceler):
         return {"runId": run_id, "status": "canceling"}
 
     return cancel_run
+
+
+def render_cover_letter_pdf(params: dict[str, Any]) -> dict[str, Any]:
+    """Print the full source snapshot, never a browser-provided excerpt or HTML."""
+    import hashlib
+
+    from jobctrl.domain.materials.cover_letter_settings import (
+        MAX_SOURCE_BYTES, RENDERER_VERSION, validate_settings,
+    )
+    from jobctrl.infrastructure.materials.playwright_html_pdf import convert_cover_letter_text_to_pdf
+    from jobctrl.infrastructure.materials.cover_letter_files import read_owned_cover_file, require_cover_review_paths
+    from jobctrl import config
+
+    if set(params) != {"sourcePath", "pdfPath", "textSha256", "settings", "rendererVersion"}:
+        raise invalid_params("Invalid cover-letter render fields")
+    if params["rendererVersion"] != RENDERER_VERSION:
+        raise invalid_params("Unsupported cover-letter renderer")
+    try:
+        if not isinstance(params["settings"], dict):
+            raise ValueError("Cover-letter settings object required")
+        settings = validate_settings(params["settings"])
+        source = Path(params["sourcePath"])
+        output = Path(params["pdfPath"])
+        require_cover_review_paths(config.APP_DIR, source, output)
+        raw = read_owned_cover_file(config.APP_DIR, source, MAX_SOURCE_BYTES)
+        if len(raw) > MAX_SOURCE_BYTES or not raw.strip():
+            raise ValueError("Cover-letter source is empty or oversized")
+        if hashlib.sha256(raw).hexdigest() != params["textSha256"]:
+            raise ValueError("Cover-letter source changed")
+        text = raw.decode("utf-8", errors="strict")
+    except (OSError, ValueError, TypeError) as exc:
+        raise invalid_params("Cover-letter source or settings invalid") from exc
+    convert_cover_letter_text_to_pdf(text, params["pdfPath"], settings, workspace_root=config.APP_DIR)
+    # A successful subprocess acknowledgement must represent a readable PDF,
+    # not merely a file with PDF markers. No accepted state is written here.
+    from pypdf import PdfReader
+
+    from io import BytesIO
+
+    with BytesIO(read_owned_cover_file(config.APP_DIR, output, 32_000_000)) as stream:
+        document = PdfReader(stream, strict=True)
+        if document.is_encrypted or not document.pages:
+            raise ValueError("Cover-letter PDF output invalid")
+        for page in document.pages:
+            if page.mediabox.width <= 0 or page.mediabox.height <= 0:
+                raise ValueError("Cover-letter PDF output invalid")
+            # Resolve page content objects before acknowledging the render.
+            content = page.get_contents()
+            if content is not None:
+                content.get_data()
+    return {"status": "succeeded", "pdfPath": params["pdfPath"]}
 
 
 def render_resume_pdf(params: dict[str, Any]) -> dict[str, Any]:
@@ -1205,9 +1293,12 @@ def rollback_tailoring_policy(params: dict[str, Any]) -> dict[str, Any]:
 
 def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCanceler) -> None:
     """Wire the default JobCtrl method set onto *server*."""
+    server.register("career_learning", career_learning, mode="sync")
     server.register("material_locale_variants", material_locale_variants, mode="sync")
+    server.register("accepted_material_exports", accepted_material_exports, mode="sync")
 
     server.register("screening_answers", screening_answers, mode="sync")
+    server.register("reset_enrichment", reset_enrichment, mode="sync")
     server.register("map_extension_form", map_extension_form, mode="sync")
     server.register("review_resume_edit", review_resume_edit, mode="sync")
     server.register("prepare_repeat_application_determinations", prepare_repeat_application_determinations, mode="sync")
@@ -1253,6 +1344,7 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     )
     server.register("rollback_tailoring_policy", rollback_tailoring_policy, mode="sync")
     server.register("render_resume_pdf", render_resume_pdf, mode="sync")
+    server.register("render_cover_letter_pdf", render_cover_letter_pdf, mode="sync")
     server.register("gmail_feedback_scan", gmail_feedback_scan, mode="sync")
     server.register("check_posting_availability", check_posting_availability, mode="workflow")
     server.register("refresh_compensation", refresh_compensation, mode="workflow")
@@ -1264,6 +1356,26 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     server.register("apply", apply_action, mode="workflow")
     # Cooperative cancellation of in-flight workflows.
     server.register("cancel_run", make_cancel_run(canceler), mode="sync")
+
+
+def accepted_material_exports(params):
+    """Runtime-bound export/read operation; never changes Materials or Apply approval."""
+    if (set(params) != {"tenantId", "expectedAppDir", "expectedDbPath", "jobId", "request"}
+            or any(not isinstance(params[key], str) or not params[key]
+                   for key in ("tenantId", "expectedAppDir", "expectedDbPath", "jobId"))):
+        raise invalid_params("invalid_export_request")
+    assert_expected_runtime(expected_app_dir=params["expectedAppDir"], expected_db_path=params["expectedDbPath"])
+    from jobctrl.database import init_db
+    from jobctrl.domain.materials.editable_export import ExportFailure
+    from jobctrl.infrastructure.materials.accepted_export_api import operation
+    connection = init_db()
+    try:
+        return operation(connection, tenant_id=params["tenantId"], job_id=params["jobId"],
+                         root=params["expectedAppDir"], request=params["request"])
+    except ExportFailure as error:
+        raise invalid_params(error.code) from None
+    finally:
+        connection.close()
 
 
 def material_locale_variants(params):
@@ -1283,6 +1395,26 @@ def material_locale_variants(params):
         raise invalid_params(error.code) from None
     finally:
         connection.close()
+
+def career_learning(params):
+    from jobctrl.database import init_db
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.infrastructure.career_learning import CareerLearningService
+
+    assert_expected_runtime(
+        expected_app_dir=str(_require(params, "expectedAppDir")),
+        expected_db_path=str(_require(params, "expectedDbPath")),
+    )
+    if set(params) - {"tenantId", "expectedAppDir", "expectedDbPath", "command"}:
+        raise invalid_params("invalid_command")
+    connection = init_db()
+    try:
+        return CareerLearningService(connection, tenant_id=_tenant_id(params)).execute(params.get("command"))
+    except DeterminationFailure as error:
+        raise invalid_params(error.code) from None
+    finally:
+        connection.close()
+
 
 def screening_answers(params):
     """Private local snapshots; runtime identity is mandatory at this boundary."""

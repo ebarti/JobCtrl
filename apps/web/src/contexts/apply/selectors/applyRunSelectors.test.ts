@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { LOCAL_TENANT, createApplyRunEventRecorded } from "@jobctrl/domain-types";
 import { describe, expect, it } from "vitest";
 

@@ -1,4 +1,5 @@
-import type { CheckAvailabilityResponse, JobDetail } from "../../operations/types.js";
+import type { CheckAvailabilityResponse } from "../../operations/types.js";
+import type { JobDetail } from "@jobctrl/contracts";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";

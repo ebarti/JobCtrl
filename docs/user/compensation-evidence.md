@@ -153,3 +153,13 @@ policy.
 | Worker implementation | `workers/automation/src/jobctrl/domain/compensation/` and `workers/automation/src/jobctrl/infrastructure/compensation/`. |
 | Web implementation | `apps/web/src/contexts/enrichment/components/CompensationEvidence.tsx`, `apps/web/src/contexts/scoring/components/CompensationSourcePolicyPanel.tsx`, and Jobs/Apply Review composers. |
 | Deep architecture | [Storage → Schema At A Glance](../architecture/storage.md#schema-at-a-glance), [Apply Feedback & Projections → Evidence, Analytics, And Compensation](../architecture/read-model.md#evidence-analytics-and-compensation), and the [complete compensation contract](../api/complete-contract.md#compensation). |
+
+
+## Comparing An Actual Offer
+
+Job Detail → Application outcomes keeps [actual offer terms](outcomes-and-feedback.md#actual-offer-terms-and-decisions)
+separate from these posting facts and estimates. Its comparison reads existing
+compensation evidence without refreshing sources, converting currencies,
+annualizing amounts or valuing unknown equity. Offer-stage outreach can use
+this recorded evidence as dated context; it cannot promote a benchmark to an
+employer commitment or invent negotiating leverage.

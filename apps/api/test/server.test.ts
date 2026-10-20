@@ -1,3 +1,6 @@
+import { providerStatusResult, providerModelsResult, providerVerifyResult } from "./provider-fixture.js";
+import { workflowRpcFixture } from "./rpc-workflow-fixture.js";
+import { createActionDispatcher } from "../src/local-actions.js";
 import { recordArtifactAuthority, recordCompensationAuthority, recordRoleFeedback } from "./semantic-fixtures.js";
 import { recordCoachingDecision, recordCandidateProposal } from "./semantic-fixtures.js";
 import { seedApplicationUrl } from "./seed-enrichment.js";
@@ -39,7 +42,7 @@ import {
   KeychainCredentialStore,
 } from "../src/credentials.js";
 import type { NativeCredentialCommandRunner } from "../src/native-credential-store.js";
-import type { JsonRpcDispatcher } from "../src/json-rpc-adapter.js";
+import { callRpc, SubprocessJsonRpcAdapter, type JsonRpcDispatcher } from "../src/json-rpc-adapter.js";
 import {
   PROFILE_PREVIEW_SCRIPT,
   defaultActionDispatcher,
@@ -58,6 +61,7 @@ import { initializeExactDatabase } from "./exact-schema.js";
 
 let tempDir = "";
 let options: BuildAppOptions;
+let enrichmentRetryRpc: SubprocessJsonRpcAdapter;
 let strayProfileExportPath = "";
 let strayStyleExportPath = "";
 let strayTemplateExportPath = "";
@@ -145,11 +149,16 @@ async function waitForExpectation(assertion: () => void, timeoutMs = 500): Promi
 
 beforeEach(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-"));
+  enrichmentRetryRpc = new SubprocessJsonRpcAdapter({
+    appDir: tempDir,
+    pythonRuntime: createSourcePythonRuntime({ environment: { ...process.env, LANGFUSE_DISABLE: "1" } }),
+  });
   options = {
     dbPath: path.join(tempDir, "jobctrl.db"),
     configPath: path.join(tempDir, "config.json"),
     providerDispatcher: {
-      call: vi.fn(async (method) => {
+      call: vi.fn(async (method, params) => {
+        if (method === RpcMethods.ResetEnrichment) return enrichmentRetryRpc.call(method, params);
         if (method !== "browser_capabilities_list") throw new Error(`Unexpected provider RPC in API fixture: ${method}`);
         return { jsonrpc: "2.0" as const, id: 1, result: { capabilities: [], detectedBrowsers: [] } };
       }),
@@ -189,7 +198,8 @@ beforeEach(() => {
   );
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await enrichmentRetryRpc.close();
   vi.unstubAllEnvs();
   fs.rmSync(tempDir, { force: true, recursive: true });
 });
@@ -847,6 +857,20 @@ describe("local TypeScript API", () => {
         postingUrl: "https://example.com/jobs/legacy-timestamp",
       }),
     );
+    insertEvent.run(
+      "local",
+      null,
+      null,
+      "CompanyBriefingRecorded",
+      occurredAt,
+      JSON.stringify({
+        tenantId: "local",
+        companyId: "company-synthetic",
+        sources: [{ text: "company-briefing-source-canary" }],
+      }),
+    );
+    insertEvent.run("local", null, null, "CareerLearningRecorded", occurredAt,
+      JSON.stringify({ tenantId: "local", completionEvidence: "career-learning-private-source-canary" }));
     const outcomeOccurredAt = "2026-04-01T09:00:00+00:00";
     insertEvent.run(
       "local",
@@ -926,6 +950,10 @@ describe("local TypeScript API", () => {
     expect(streamed).not.toContain("event: ProfileUpdated");
     expect(streamed).not.toContain("\"jobKey\"");
     expect(streamed).not.toContain("legacy-timestamp");
+    expect(streamed).not.toContain("CompanyBriefingRecorded");
+    expect(streamed).not.toContain("company-briefing-source-canary");
+    expect(streamed).not.toContain("CareerLearningRecorded");
+    expect(streamed).not.toContain("career-learning-private-source-canary");
     await reader.cancel();
     db.close();
     await app.close();
@@ -2416,6 +2444,224 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("combines comma and repeated stages before global pagination while preserving scalar requests", async () => {
+    const app = buildApp(options);
+    try {
+      const request = async (query: string) => {
+        const response = await app.inject({ method: "GET", url: `/v1/jobs?${query}&sort=fit_score&dir=desc&pageSize=1` });
+        expect(response.statusCode, response.body).toBe(200);
+        return response.json();
+      };
+      const ids: string[] = [];
+      for (const page of [1, 2, 3]) {
+        const comma = await request(`stages=discover,apply&stage=score&page=${page}`);
+        const repeated = await request(`stages=discover&stages=apply&stages=discover&page=${page}`);
+        expect(repeated).toEqual({ ...comma, filter: { ...comma.filter, stage: "" } });
+        expect(comma.pagination).toEqual({ page, pageSize: 1, total: 3, pages: 3 });
+        expect(comma.filter.stages).toEqual(["discover", "apply"]);
+        ids.push(comma.items[0].jobKey);
+      }
+      expect(new Set(ids).size).toBe(3);
+      expect((await request("stages=discover,apply&page=999")).pagination).toEqual({ page: 3, pageSize: 1, total: 3, pages: 3 });
+      expect((await request("stages=apply&stage=discover")).pagination.total).toBe(1);
+      expect((await request("stage=apply")).pagination.total).toBe(1);
+      expect((await request("stage=apply&stages=")).pagination.total).toBe(3);
+      expect((await request("stage=apply&stages=invalid")).pagination.total).toBe(1);
+      const empty = await request("stages=score,enrich&page=999");
+      expect(empty.pagination).toEqual({ page: 1, pageSize: 1, total: 0, pages: 1 });
+      expect(empty.items).toEqual([]);
+      const searched = await request("stages=discover,apply&q=Engineer&page=999");
+      expect(searched.pagination).toMatchObject({ total: 3, page: 3 });
+    } finally { await app.close(); }
+  });
+
+  it.each(["discoveredSince", "scoredSince"] as const)(
+    "preserves %s instant boundaries through HTTP pages and all-matching hide/unhide",
+    async (field) => {
+      const timestamps = ["2027-01-01T00:00:00Z", "2027-01-01T00:00:00.000Z",
+        "2027-01-01T00:00:00.600000+00:00", "2027-01-01T00:00:00.600Z",
+        "2027-01-01T01:00:00.600+01:00", "2026-12-31T23:00:00.600-01:00"];
+      const ids = timestamps.map((_, index) => `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`);
+      const db = new Database(options.dbPath);
+      try {
+        for (const [index, id] of ids.entries()) {
+          db.prepare(`INSERT INTO jobs (tenant_id, job_id, url, title, discovered_at)
+            VALUES ('local', ?, ?, 'Needle', ?)`)
+            .run(id, `https://synthetic.invalid/${id}`, timestamps[index]);
+          db.prepare(`INSERT INTO job_scores (tenant_id, job_id, version, fit_score, breakdown_json, keywords_json, scored_at)
+            VALUES ('local', ?, 1, 7, '{}', '[]', ?)`).run(id, timestamps[index]);
+          const stages = ["discover", "enrich", "score", "tailor", "cover", "apply"];
+          for (const stage of stages) {
+            db.prepare(`INSERT INTO job_stage_states (tenant_id, job_id, stage, state, updated_at, version)
+              VALUES ('local', ?, ?, ?, '2027-01-01', 1)`)
+              .run(id, stage, index % 2 && stage !== "apply" ? "succeeded" : "pending");
+          }
+        }
+      } finally { db.close(); }
+      const app = buildApp(options);
+      try {
+        for (const cutoff of [".500Z", ".600Z", ".601Z"]) {
+          const expected = cutoff === ".601Z" ? [] : ids.slice(2);
+          for (const q of ["", "Needle"]) {
+            const filter = { stages: ["discover", "apply"], [field]: `2027-01-01T00:00:00${cutoff}`, q };
+            for (const sort of ["discovered_at", "title", "fit_score"]) {
+              const collected: string[] = [];
+              for (const page of [...expected.map((_, index) => index + 1), 999]) {
+                const params = new URLSearchParams({ ...filter, stages: filter.stages.join(","),
+                  sort, dir: "asc", pageSize: "1", page: String(page) });
+                const response = await app.inject({ method: "GET", url: `/v1/jobs?${params}` });
+                expect(response.statusCode, response.body).toBe(200);
+                const pages = Math.max(1, expected.length), safePage = Math.min(page, pages);
+                expect(response.json().pagination).toEqual({ page: safePage, pageSize: 1, total: expected.length, pages });
+                const keys = response.json().items.map((job: { jobKey: string }) => job.jobKey);
+                if (page !== 999) collected.push(...keys);
+                else expect(keys).toEqual(collected.slice(-1));
+              }
+              expect(collected.sort()).toEqual(expected);
+            }
+            const hide = await app.inject({ method: "POST", url: "/v1/jobs/bulk-hide", payload: { allMatching: true, filter } });
+            expect(hide.statusCode, hide.body).toBe(200);
+            expect(hide.json().jobKeys.sort()).toEqual(expected);
+            const unhide = await app.inject({ method: "POST", url: "/v1/jobs/bulk-unhide",
+              payload: { allMatching: true, filter: { ...filter, deleted: "hidden" } } });
+            expect(unhide.statusCode, unhide.body).toBe(200);
+            expect(unhide.json().jobKeys.sort()).toEqual(expected);
+          }
+        }
+      } finally { await app.close(); }
+    },
+  );
+
+  it("keeps HTTP page order and literal bulk membership stable when an all-matching search is added", async () => {
+    const labels = ["Needle A", "Needle a", "Needle Z", "Needle é", "Needle E", "Needle É"];
+    const sources = ["Board-a", "Board%a", "Board_a", "Board\\a", "Équipe", "éQUIPE"];
+    const states = ["exhausted", "failed", "failed", "pending", "exhausted", "pending"];
+    const ids = labels.map((_, index) => `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`);
+    const db = new Database(options.dbPath);
+    try {
+      for (const [index, id] of ids.entries()) {
+        db.prepare(`INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at)
+          VALUES ('local', ?, ?, ?, ?, ?, '2026-10-15')`)
+          .run(id, `https://synthetic.invalid/${id}`, labels[index], sources[index], sources[index]);
+        const stages = ["discover", "enrich", "score", "tailor", "cover", "apply"];
+        const current = index % 2 ? "apply" : "discover";
+        for (const stage of stages) {
+          const value = stage === current ? states[index] : stages.indexOf(stage) < stages.indexOf(current) ? "succeeded" : "pending";
+          db.prepare(`INSERT INTO job_stage_states (tenant_id, job_id, stage, state, updated_at, version)
+            VALUES ('local', ?, ?, ?, '2026-10-15', 1)`).run(id, stage, value);
+        }
+      }
+    } finally { db.close(); }
+    const app = buildApp(options);
+    const base = { stages: ["discover", "apply"], discoveredSince: "2026-10-01T00:00:00Z" };
+    try {
+      for (const sort of ["title", "current_state"] as const) {
+        for (const dir of ["asc", "desc"] as const) {
+          const order = sort === "title" ? dir === "asc" ? [0, 1, 4, 3, 5, 2] : [2, 3, 5, 4, 0, 1]
+            : dir === "asc" ? [1, 0, 2, 4, 3, 5] : [3, 5, 0, 2, 4, 1];
+          for (const state of sort === "current_state" ? ["", "failed"] : [""]) {
+            const expectedOrder = state ? order.filter((index) => states[index] !== "pending") : order;
+            for (const q of ["", "Needle"]) {
+              for (const page of [...expectedOrder.map((_, index) => index + 1), 999]) {
+                const params = new URLSearchParams({ stages: base.stages.join(","), discoveredSince: base.discoveredSince,
+                  sort, dir, state, q, page: String(page), pageSize: "1" });
+                const response = await app.inject({ method: "GET", url: `/v1/jobs?${params}` });
+                expect(response.statusCode, response.body).toBe(200);
+                const safePage = Math.min(page, expectedOrder.length);
+                expect(response.json().pagination).toEqual({ page: safePage, pageSize: 1, total: expectedOrder.length, pages: expectedOrder.length });
+                expect(response.json().items.map((job: { jobKey: string }) => job.jobKey)).toEqual([ids[expectedOrder[safePage - 1]!]]);
+              }
+            }
+          }
+        }
+      }
+      const cases: Array<[string, number[]]> = [["Board%", [1]], ["Board_", [2]], ["Board\\", [3]], ["équipe", [4, 5]], ["Absent%", []]];
+      for (const field of ["source", "company"]) {
+        for (const [value, selected] of cases) {
+          for (const q of ["", "Needle"]) {
+            const filter = { ...base, [field]: value, q };
+            const params = new URLSearchParams({ stages: base.stages.join(","), discoveredSince: base.discoveredSince,
+              [field]: value, q, sort: "title", dir: "asc", pageSize: "1", page: "999" });
+            const list = await app.inject({ method: "GET", url: `/v1/jobs?${params}` });
+            expect(list.statusCode, list.body).toBe(200);
+            expect(list.json().pagination).toEqual({ page: Math.max(1, selected.length), pageSize: 1, total: selected.length, pages: Math.max(1, selected.length) });
+            expect(list.json().items.map((job: { jobKey: string }) => job.jobKey)).toEqual(selected.slice(-1).map((index) => ids[index]));
+            const hide = await app.inject({ method: "POST", url: "/v1/jobs/bulk-hide", payload: { allMatching: true, filter } });
+            expect(hide.statusCode, hide.body).toBe(200);
+            expect(hide.json().jobKeys.sort()).toEqual(selected.map((index) => ids[index]));
+            const unhide = await app.inject({ method: "POST", url: "/v1/jobs/bulk-unhide",
+              payload: { allMatching: true, filter: { ...filter, deleted: "hidden" } } });
+            expect(unhide.statusCode, unhide.body).toBe(200);
+            expect(unhide.json().jobKeys.sort()).toEqual(selected.map((index) => ids[index]));
+          }
+        }
+      }
+      const restored = await app.inject({ method: "GET", url: `/v1/jobs?discoveredSince=${base.discoveredSince}&q=Needle` });
+      expect(restored.statusCode, restored.body).toBe(200);
+      expect(restored.json().items.map((job: { jobKey: string }) => job.jobKey).sort()).toEqual(ids);
+    } finally { await app.close(); }
+  });
+
+  it.each(["exhausted", "failed"] as const)("preserves %s selection through HTTP search and all-matching hide/unhide", async (state) => {
+    const db = new Database(options.dbPath);
+    const inputs = (["exhausted", "failed", "pending"] as const).flatMap((storedState) =>
+      (["discover", "apply"] as const).map((stage) => ({
+        jobKey: jobIdFor(`https://synthetic.invalid/${stage}-${storedState}`), stage, storedState,
+      })),
+    );
+    try {
+      for (const input of inputs) {
+        db.prepare(`INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at)
+          VALUES ('local', ?, ?, 'Needle', 'Synthetic', 'board-a', '2026-01-01')`)
+          .run(input.jobKey, `https://synthetic.invalid/${input.jobKey}`);
+        const stages = ["discover", "enrich", "score", "tailor", "cover", "apply"];
+        for (const stage of stages) {
+          const value = stage === input.stage ? input.storedState
+            : stages.indexOf(stage) < stages.indexOf(input.stage) ? "succeeded" : "pending";
+          db.prepare(`INSERT INTO job_stage_states (tenant_id, job_id, stage, state, updated_at, version)
+            VALUES ('local', ?, ?, ?, '2026-01-01', 1)`).run(input.jobKey, stage, value);
+        }
+      }
+    } finally { db.close(); }
+    const selectedIds = inputs.filter((input) => input.storedState === "exhausted" || state === "failed" && input.storedState === "failed")
+      .map((input) => input.jobKey).sort();
+    const app = buildApp(options);
+    try {
+      for (const stages of ["stages=discover,apply", "stages=discover&stages=apply&stages=discover"]) {
+        const response = await app.inject({ method: "GET",
+          url: `/v1/jobs?${stages}&state=${state}&q=Needle&sort=title&dir=asc&pageSize=1&page=999` });
+        expect(response.statusCode, response.body).toBe(200);
+        expect(response.json().pagination).toEqual({ page: selectedIds.length, pageSize: 1, total: selectedIds.length, pages: selectedIds.length });
+        expect(response.json().items[0].jobKey).toBe(selectedIds.at(-1));
+        expect(response.json().items[0].currentState).toBe("failed");
+      }
+      const scalar = await app.inject({ method: "GET", url: `/v1/jobs?stage=discover&state=${state}&q=Needle` });
+      expect(scalar.statusCode, scalar.body).toBe(200);
+      expect(scalar.json().pagination.total).toBe(selectedIds.length / 2);
+      const filter = { stages: ["discover", "apply"], state, q: "Needle" };
+      const hide = await app.inject({ method: "POST", url: "/v1/jobs/bulk-hide",
+        payload: { allMatching: true, filter } });
+      expect(hide.statusCode, hide.body).toBe(200);
+      expect(hide.json().count).toBe(selectedIds.length);
+      expect(hide.json().jobKeys.sort()).toEqual(selectedIds);
+      const hidden = await app.inject({ method: "GET", url: "/v1/jobs?deleted=hidden&q=Needle" });
+      expect(hidden.statusCode, hidden.body).toBe(200);
+      expect(hidden.json().items.map((job: { jobKey: string }) => job.jobKey).sort()).toEqual(selectedIds);
+      const remaining = await app.inject({ method: "GET", url: "/v1/jobs?q=Needle" });
+      expect(remaining.statusCode, remaining.body).toBe(200);
+      expect(remaining.json().items.map((job: { jobKey: string }) => job.jobKey).sort())
+        .toEqual(inputs.filter((input) => !selectedIds.includes(input.jobKey)).map((input) => input.jobKey).sort());
+      const unhide = await app.inject({ method: "POST", url: "/v1/jobs/bulk-unhide",
+        payload: { allMatching: true, filter: { ...filter, deleted: "hidden" } } });
+      expect(unhide.statusCode, unhide.body).toBe(200);
+      expect(unhide.json().count).toBe(selectedIds.length);
+      const restored = await app.inject({ method: "GET",
+        url: `/v1/jobs?stages=discover,apply&state=${state}&q=Needle` });
+      expect(restored.statusCode, restored.body).toBe(200);
+      expect(restored.json().items.map((job: { jobKey: string }) => job.jobKey).sort()).toEqual(selectedIds);
+    } finally { await app.close(); }
+  });
+
   it("filters, sorts, and paginates jobs globally", async () => {
     const app = buildApp(options);
     const response = await app.inject({
@@ -3267,7 +3513,7 @@ describe("local TypeScript API", () => {
     const recommendationId = `learning-recommendation:${"a".repeat(64)}`;
     const acceptedReviewId = `learning-recommendation-review:${"b".repeat(64)}`;
     const rejectedReviewId = `learning-recommendation-review:${"c".repeat(64)}`;
-    const call = vi.fn<JsonRpcDispatcher["call"]>(async (_method, params) => ({
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async (_method, params: Record<string, unknown>) => ({
       jsonrpc: "2.0" as const,
       id: 1,
       result:
@@ -8165,13 +8411,8 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  // Phase 7 (S-26 round-1 review B2 + round-2 L4): API-driven retry-enrich
-  // MUST clear the ``job_enrichments`` aggregate's terminal-state fields,
-  // otherwise the worker's ``_ENRICHMENT_PENDING`` queue predicate
-  // permanently excludes the row and the retry is a silent no-op. Mirror
-  // of the Python ``test_reset_job_stage_enrich_clears_job_enrichments_aggregate``
-  // — exercises ``resetEnrichmentAggregate`` in
-  // ``apps/api/src/write-model.ts`` end-to-end through the HTTP route.
+  // HTTP reaches the same Python owner as CLI: reopen the lifecycle for
+  // worker pickup while retaining accepted content during a refresh.
   it("retry-enrich resets the job_enrichments aggregate to pending", async () => {
     // Seed an enriched aggregate row directly — independent of the rest
     // of the fixture so the test is self-contained.
@@ -8256,10 +8497,10 @@ describe("local TypeScript API", () => {
     db.close();
 
     expect(enrichment.current_status).toBe("pending");
-    expect(enrichment.full_description).toBeNull();
-    expect(enrichment.application_url).toBeNull();
-    expect(enrichment.enriched_at).toBeNull();
-    expect(enrichment.extraction_tier).toBeNull();
+    expect(enrichment.full_description).toBe("The full job description.");
+    expect(enrichment.application_url).toBe("https://example.com/apply");
+    expect(enrichment.enriched_at).toBe("2026-04-29T10:01:00+00:00");
+    expect(enrichment.extraction_tier).toBe("json_ld");
     expect(stage).toEqual({ state: "pending", metadata_json: null });
     expect(legacyJob.detail_scraped_at).toBe("2026-04-29T10:01:00+00:00");
     expect(legacyJob.detail_error).toBeNull();
@@ -8272,7 +8513,7 @@ describe("local TypeScript API", () => {
     seedDb.prepare("DELETE FROM job_enrichments WHERE tenant_id = 'local' AND job_id = ?")
       .run(jobIdFor("https://example.com/jobs/blocked-tailor"));
     seedDb.close();
-    // Confirm ``resetEnrichmentAggregate`` doesn't crash when the
+    // Confirm the canonical reset service does not crash when the
     // aggregate row was never written. Exact-v7 reset is a 0-row aggregate
     // update and never falls back to retired wide job columns.
     const app = buildApp(options);
@@ -9933,7 +10174,7 @@ describe("local TypeScript API", () => {
     let observed: Array<Array<{ originalText: string; evidence: unknown[] }>> = [];
     let rpcError: unknown = null;
     let probeDiagnostics = "";
-    const call: JsonRpcDispatcher["call"] = async (method, params) => {
+    const call: JsonRpcDispatcher["call"] = async (method, params: Record<string, unknown>) => {
       const probe = spawnSync("uv", ["--project", AUTOMATION_PROJECT_DIR, "run", "--no-sync", "python",
         path.join(AUTOMATION_PROJECT_DIR, "tests/fixtures/required_bullet_rpc_probe.py")], {
         cwd: tempDir, env: { ...process.env, JOBCTRL_DIR: tempDir, JOBCTRL_DB_PATH: options.dbPath,
@@ -9945,7 +10186,9 @@ describe("local TypeScript API", () => {
       observed = observation.modelSources;
       rpcError = observation.response.error;
       probeDiagnostics = probe.stderr;
-      return observation.response;
+      // Probe returns dataclass fields; reproduce the production to_dict envelope.
+      const { error, result, ...envelope } = observation.response;
+      return error ? { ...envelope, error } : { ...envelope, result };
     };
     const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
     const seed = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
@@ -10806,7 +11049,11 @@ describe("local TypeScript API", () => {
 
   it("coalesces simultaneous genuine profile revisions into the newest durable continuation", async () => {
     const dispatched = deferred<ActionDispatchResult>();
-    const dispatch = vi.fn<ActionDispatcher>(() => dispatched.promise);
+    const dispatchStarted = deferred<void>();
+    const dispatch = vi.fn<ActionDispatcher>(() => {
+      dispatchStarted.resolve();
+      return dispatched.promise;
+    });
     const app = buildApp({ ...options, actionDispatcher: dispatch });
 
     const responses = Promise.all([
@@ -10822,7 +11069,10 @@ describe("local TypeScript API", () => {
       }),
     ]);
 
-    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1));
+    // Synchronize on the callback under the test's existing deadline. API
+    // startup and SQLite work on a loaded runner have no one-second SLA.
+    await dispatchStarted.promise;
+    expect(dispatch).toHaveBeenCalledTimes(1);
     const pendingDb = new Database(options.dbPath, { readonly: true });
     const events = pendingDb.prepare(
       "SELECT event_id FROM job_events WHERE event_type = 'ProfileUpdated' ORDER BY event_id",
@@ -12953,114 +13203,120 @@ function seedDatabase(dbPath: string): void {
 
   initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
-  seedBuiltInResumeTemplate(db);
+  try {
+    // Publish the complete fixture before the app opens its own connection.
+    db.transaction(() => {
+      seedBuiltInResumeTemplate(db);
 
-  insertJob(db, {
-    url: "https://example.com/jobs/ready",
-    title: "Platform Engineer",
-    site: "ExampleCo",
-    company: "ExampleCo",
-    fitScore: 9,
-    tailoredPath: artifactPath,
-  });
-  insertJob(db, {
-    url: "https://example.com/jobs/failed-score",
-    title: "Backend Engineer",
-    site: "ExampleCo",
-    company: "ExampleCo",
-    fitScore: 8,
-  });
-  insertJob(db, {
-    url: "https://example.com/jobs/blocked-tailor",
-    title: "Frontend Engineer",
-    site: "Acme",
-    company: "Acme",
-    fitScore: 6,
-  });
-  insertScore(db, "https://example.com/jobs/ready", 1, 9);
-  insertScore(db, "https://example.com/jobs/failed-score", 1, 8);
-  insertScore(db, "https://example.com/jobs/blocked-tailor", 1, 6);
+      insertJob(db, {
+        url: "https://example.com/jobs/ready",
+        title: "Platform Engineer",
+        site: "ExampleCo",
+        company: "ExampleCo",
+        fitScore: 9,
+        tailoredPath: artifactPath,
+      });
+      insertJob(db, {
+        url: "https://example.com/jobs/failed-score",
+        title: "Backend Engineer",
+        site: "ExampleCo",
+        company: "ExampleCo",
+        fitScore: 8,
+      });
+      insertJob(db, {
+        url: "https://example.com/jobs/blocked-tailor",
+        title: "Frontend Engineer",
+        site: "Acme",
+        company: "Acme",
+        fitScore: 6,
+      });
+      insertScore(db, "https://example.com/jobs/ready", 1, 9);
+      insertScore(db, "https://example.com/jobs/failed-score", 1, 8);
+      insertScore(db, "https://example.com/jobs/blocked-tailor", 1, 6);
 
-  for (const stage of ["discover", "enrich", "score", "tailor", "cover"]) {
-    insertStage(db, "https://example.com/jobs/ready", stage, "succeeded");
+      for (const stage of ["discover", "enrich", "score", "tailor", "cover"]) {
+        insertStage(db, "https://example.com/jobs/ready", stage, "succeeded");
+      }
+      insertStage(db, "https://example.com/jobs/ready", "apply", "pending");
+      insertStage(db, "https://example.com/jobs/failed-score", "discover", "succeeded");
+      insertStage(db, "https://example.com/jobs/failed-score", "enrich", "succeeded");
+      insertStage(db, "https://example.com/jobs/failed-score", "score", "failed", "LLM_ERROR");
+      insertStage(db, "https://example.com/jobs/blocked-tailor", "discover", "succeeded");
+      insertStage(db, "https://example.com/jobs/blocked-tailor", "enrich", "succeeded");
+      insertStage(db, "https://example.com/jobs/blocked-tailor", "score", "succeeded");
+      insertStage(db, "https://example.com/jobs/blocked-tailor", "tailor", "blocked", "MIN_SCORE");
+
+      db.prepare(
+        "INSERT INTO job_artifacts (tenant_id, job_id, stage, artifact_type, status, path, created_at, size_bytes) VALUES ('local', ?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        jobIdFor("https://example.com/jobs/ready"),
+        "tailor",
+        "tailored_resume_txt",
+        "active",
+        artifactPath,
+        "2026-04-29T10:05:00+00:00",
+        12,
+      );
+      db.prepare(
+        "INSERT INTO job_artifacts (tenant_id, job_id, stage, artifact_type, status, path, created_at, size_bytes) VALUES ('local', ?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        jobIdFor("https://example.com/jobs/ready"),
+        "tailor",
+        "tailored_resume_pdf",
+        "active",
+        artifactPath,
+        "2026-04-29T10:05:00+00:00",
+        12,
+      );
+      db.prepare(
+        "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at) VALUES ('local', ?, 1, ?, ?, ?, ?, ?)",
+      ).run(
+        jobIdFor("https://example.com/jobs/failed-score"),
+        "score",
+        "ActionFailed",
+        "error",
+        "Score failed",
+        "2026-04-29T10:10:00+00:00",
+      );
+      db.prepare(
+        "INSERT INTO apply_run_projections (run_id, job_id, job_title, job_employer, status, result, dry_run, started_at, events_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        "run-1",
+        jobIdFor("https://example.com/jobs/ready"),
+        "Platform Engineer",
+        "ExampleCo",
+        "finished",
+        "succeeded",
+        1,
+        "2026-04-29T10:15:00+00:00",
+        JSON.stringify([
+          {
+            event_type: "ApplyRunStarted",
+            level: "info",
+            occurred_at: "2026-04-29T10:15:00+00:00",
+            message: "Apply agent acquired job",
+            payload: { run_id: "run-1" },
+          },
+        ]),
+      );
+      // The unified Workflow Runs list reads `workflow_run_projections` (all
+      // workflow types); apply runs are enriched with job context via the LEFT
+      // JOIN to `apply_run_projections`. Seed the matching workflow row so the
+      // apply run surfaces in the list with its job title/company/dry-run.
+      db.prepare(
+        "INSERT INTO workflow_run_projections (workflow_id, workflow_type, status, started_at, finished_at, temporal_run_id) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run(
+        "run-1",
+        "ApplyWorkflow",
+        "succeeded",
+        "2026-04-29T10:15:00+00:00",
+        "2026-04-29T10:20:00+00:00",
+        "temporal-run-1",
+      );
+    })();
+  } finally {
+    db.close();
   }
-  insertStage(db, "https://example.com/jobs/ready", "apply", "pending");
-  insertStage(db, "https://example.com/jobs/failed-score", "discover", "succeeded");
-  insertStage(db, "https://example.com/jobs/failed-score", "enrich", "succeeded");
-  insertStage(db, "https://example.com/jobs/failed-score", "score", "failed", "LLM_ERROR");
-  insertStage(db, "https://example.com/jobs/blocked-tailor", "discover", "succeeded");
-  insertStage(db, "https://example.com/jobs/blocked-tailor", "enrich", "succeeded");
-  insertStage(db, "https://example.com/jobs/blocked-tailor", "score", "succeeded");
-  insertStage(db, "https://example.com/jobs/blocked-tailor", "tailor", "blocked", "MIN_SCORE");
-
-  db.prepare(
-    "INSERT INTO job_artifacts (tenant_id, job_id, stage, artifact_type, status, path, created_at, size_bytes) VALUES ('local', ?, ?, ?, ?, ?, ?, ?)",
-  ).run(
-    jobIdFor("https://example.com/jobs/ready"),
-    "tailor",
-    "tailored_resume_txt",
-    "active",
-    artifactPath,
-    "2026-04-29T10:05:00+00:00",
-    12,
-  );
-  db.prepare(
-    "INSERT INTO job_artifacts (tenant_id, job_id, stage, artifact_type, status, path, created_at, size_bytes) VALUES ('local', ?, ?, ?, ?, ?, ?, ?)",
-  ).run(
-    jobIdFor("https://example.com/jobs/ready"),
-    "tailor",
-    "tailored_resume_pdf",
-    "active",
-    artifactPath,
-    "2026-04-29T10:05:00+00:00",
-    12,
-  );
-  db.prepare(
-    "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at) VALUES ('local', ?, 1, ?, ?, ?, ?, ?)",
-  ).run(
-    jobIdFor("https://example.com/jobs/failed-score"),
-    "score",
-    "ActionFailed",
-    "error",
-    "Score failed",
-    "2026-04-29T10:10:00+00:00",
-  );
-  db.prepare(
-    "INSERT INTO apply_run_projections (run_id, job_id, job_title, job_employer, status, result, dry_run, started_at, events_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  ).run(
-    "run-1",
-    jobIdFor("https://example.com/jobs/ready"),
-    "Platform Engineer",
-    "ExampleCo",
-    "finished",
-    "succeeded",
-    1,
-    "2026-04-29T10:15:00+00:00",
-    JSON.stringify([
-      {
-        event_type: "ApplyRunStarted",
-        level: "info",
-        occurred_at: "2026-04-29T10:15:00+00:00",
-        message: "Apply agent acquired job",
-        payload: { run_id: "run-1" },
-      },
-    ]),
-  );
-  // The unified Workflow Runs list reads `workflow_run_projections` (all
-  // workflow types); apply runs are enriched with job context via the LEFT
-  // JOIN to `apply_run_projections`. Seed the matching workflow row so the
-  // apply run surfaces in the list with its job title/company/dry-run.
-  db.prepare(
-    "INSERT INTO workflow_run_projections (workflow_id, workflow_type, status, started_at, finished_at, temporal_run_id) VALUES (?, ?, ?, ?, ?, ?)",
-  ).run(
-    "run-1",
-    "ApplyWorkflow",
-    "succeeded",
-    "2026-04-29T10:15:00+00:00",
-    "2026-04-29T10:20:00+00:00",
-    "temporal-run-1",
-  );
-  db.close();
 }
 
 const DISCOVER_OLD_START = "2026-07-04T07:57:11.751+00:00";
@@ -13731,3 +13987,295 @@ function insertStage(
     "[]",
   );
 }
+
+
+function rpcContinuationMarkers() {
+  const db = new Database(options.dbPath, { readonly: true });
+  try { return db.prepare("SELECT event_id, idempotency_key, occurred_at, payload_json FROM job_events WHERE idempotency_key LIKE 'profile-continuation-handled:%' ORDER BY event_id").all(); }
+  finally { db.close(); }
+}
+
+function rpcPreservationControls(seed = false) {
+  const db = new Database(options.dbPath);
+  try {
+    if (seed) {
+      insertMaterialsGeneration(db, { jobUrl: "https://example.com/jobs/ready", artifactId: "rpc-accepted", artifactType: "tailored_resume", status: "approved", path: path.join(tempDir, "ready-resume.txt") });
+      db.prepare(`INSERT INTO application_review_decisions (tenant_id, decision_id, job_id, decision, decided_at, materials_generation, profile_version, email_attachment_artifact_id) VALUES ('local', 'rpc-approved', ?, 'approve_dry_run', '2026-10-17T00:00:00Z', 1, 1, 'rpc-accepted')`).run(jobIdFor("https://example.com/jobs/ready"));
+    }
+    return { materials: db.prepare("SELECT * FROM job_materials").all(), artifacts: db.prepare("SELECT * FROM job_materials_artifacts").all(), approvals: db.prepare("SELECT * FROM application_review_decisions").all(), acceptedBytes: fs.readFileSync(path.join(tempDir, "ready-resume.txt"), "utf8") };
+  } finally { db.close(); }
+}
+
+describe("enforcing route to registered worker handoffs", () => {
+  it("carries exact source IDs through HTTP, action dispatch, subprocess and registered Discover input", async () => {
+    const fixture = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
+    const app = buildApp({ ...options, actionDispatcher: createActionDispatcher(fixture.adapter) });
+    const observations: unknown[] = [];
+    try {
+      const sourceIds = ["jobspy:linkedin", "jobspy:indeed"];
+      const response = await app.inject({ method: "POST", url: "/v1/pipeline/actions/run-stage", payload: { stages: ["discover"], sourceIds, workers: 2, limit: 25 } });
+      observations.push({ status: response.statusCode, body: response.json() });
+      expect(response.statusCode, response.body).toBe(202);
+      expect(fixture.rows().find(row => row.kind === "request")).toMatchObject({ request: { params: { sourceIds } } });
+      expect(fixture.rows().find(row => row.kind === "start")).toMatchObject({ input: { source_ids: sourceIds, workers: 2, limit: 25 } });
+      const transmittedRequests = fixture.rows().filter(row => row.kind === "request").length;
+      for (const payload of [
+        { stages: ["discover"], sourceIds: ["jobspy:indeed", "jobspy:indeed"] },
+        { stages: ["discover"], workers: 0 },
+        { stages: ["discover"], limit: -1 },
+        { stages: ["discover"], minScore: 11 },
+        { stages: ["discover"], unexpected: true },
+        { stages: ["score"], sourceIds },
+      ]) {
+        const invalid = await app.inject({ method: "POST", url: "/v1/pipeline/actions/run-stage", payload });
+        observations.push({ input: payload, status: invalid.statusCode, body: invalid.body });
+        expect(invalid.statusCode).toBe(400);
+        expect(fixture.rows().filter(row => row.kind === "request")).toHaveLength(transmittedRequests);
+      }
+      observations.push({ transmittedBeforeInvalidInputs: transmittedRequests, transmittedAfterInvalidInputs: fixture.rows().filter(row => row.kind === "request").length });
+      expect(fixture.rows().filter(row => row.kind === "start")).toHaveLength(1);
+      fixture.mode("invalid_ack");
+      const malformed = await app.inject({ method: "POST", url: "/v1/pipeline/actions/run-stage", payload: { stages: ["discover"], sourceIds } });
+      observations.push({ malformedAckStatus: malformed.statusCode, body: malformed.json() });
+      expect(malformed.statusCode).toBeGreaterThanOrEqual(500);
+    } finally { fixture.retain("discover", observations); await app.close(); await fixture.adapter.close(); }
+  });
+
+  it.each([
+    { name: "single", stage: "discover" as const },
+    { name: "duplicate", stage: "discover" as const, stages: ["discover", "discover"] as const },
+    { name: "override", stage: "score" as const, stages: ["discover", "discover"] as const },
+  ])("requires the Discover completion dataclass for an awaited Discover call ($name)", async ({ name, stage, ...selection }) => {
+    const fixture = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
+    const observations: unknown[] = [];
+    try {
+      const params = { stage, ...("stages" in selection ? { stages: [...selection.stages] } : {}), awaitResult: true, sourceIds: ["jobspy:indeed"], expectedAppDir: tempDir, expectedDbPath: options.dbPath };
+      const completed = await callRpc(fixture.adapter, "run_stage", params);
+      expect(completed.result).toMatchObject({ result: { families_completed: ["synthetic-source"], failure: null } });
+      observations.push({ params, completed });
+      expect(fixture.rows().find(row => row.kind === "request")).toMatchObject({ request: { params } });
+      expect(fixture.rows().find(row => row.kind === "start")).toMatchObject({ input: { source_ids: params.sourceIds } });
+      fixture.mode("wrong_result_family");
+      await expect(callRpc(fixture.adapter, "run_stage", params)).rejects.toMatchObject({ name: "RpcContractError", phase: "result" });
+      observations.push({ rejectedPipelineResult: true });
+    } finally { fixture.retain("discover-awaited-" + name, observations); await fixture.adapter.close(); }
+  });
+
+  it.each([
+    { name: "duplicate", stage: "score" as const, stages: ["score", "score"] as const, effective: ["score"] },
+    { name: "mixed", stage: "discover" as const, stages: ["score", "discover", "score"] as const, effective: ["discover", "score"] },
+    { name: "override", stage: "discover" as const, stages: ["score"] as const, effective: ["score"] },
+  ])("requires pipeline completion for effective pipeline stages ($name)", async ({ name, stage, stages, effective }) => {
+    const fixture = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
+    const observations: unknown[] = [];
+    try {
+      const params = { stage, stages: [...stages], awaitResult: true, expectedAppDir: tempDir, expectedDbPath: options.dbPath };
+      const completed = await callRpc(fixture.adapter, "run_stage", params);
+      expect(completed.result).toMatchObject({ result: { stages_completed: ["score", "tailor", "cover"], failure: null } });
+      expect(fixture.rows().find(row => row.kind === "request")).toMatchObject({ request: { params } });
+      expect(fixture.rows().find(row => row.kind === "start")).toMatchObject({ input: { stages: effective } });
+      observations.push({ params, completed, effective });
+      fixture.mode("wrong_result_family");
+      await expect(callRpc(fixture.adapter, "run_stage", params)).rejects.toMatchObject({ name: "RpcContractError", phase: "result" });
+      observations.push({ rejectedDiscoverResult: true });
+    } finally { fixture.retain("pipeline-awaited-" + name, observations); await fixture.adapter.close(); }
+  });
+
+  it("serializes PATCH continuations until awaited completion and writes markers afterward", async () => {
+    const fixture = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
+    fixture.mode("hold");
+    const controls = rpcPreservationControls(true);
+    const dispatch = vi.fn(createActionDispatcher(fixture.adapter));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const observations: unknown[] = [];
+    try {
+      for (const name of ["First Synthetic Revision", "Second Synthetic Revision"]) {
+        const response = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: validProfileFixture(name) } });
+        observations.push({ status: response.statusCode, profile: response.json() });
+        expect(response.statusCode, response.body).toBe(200);
+        await vi.waitFor(() => expect(fixture.rows().some(row => row.kind === "waiting")).toBe(true), { timeout: 10000 });
+      }
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(rpcContinuationMarkers()).toEqual([]);
+      observations.push({ heldMarkers: rpcContinuationMarkers(), heldStarts: fixture.rows().filter(row => row.kind === "start") });
+      fixture.mode("success");
+      await vi.waitFor(() => expect(rpcContinuationMarkers()).toHaveLength(2), { timeout: 10000 });
+      const rows = fixture.rows();
+      expect(rows.filter(row => row.kind === "request")).toHaveLength(2);
+      expect(rows.find(row => row.kind === "request")).toMatchObject({ request: { params: { awaitResult: true, stages: ["score", "tailor", "cover"] } } });
+      expect(rows.findIndex(row => row.kind === "completed")).toBeLessThan(rows.findLastIndex(row => row.kind === "start"));
+      expect((await app.inject({ method: "GET", url: "/v1/profile" })).json().profile.personal.full_name).toBe("Second Synthetic Revision");
+      expect(rpcPreservationControls()).toEqual(controls);
+      observations.push({ settledMarkers: rpcContinuationMarkers(), preservation: controls });
+    } finally { fixture.mode("success"); fixture.retain("profile-serialization", observations); await app.close(); await fixture.adapter.close(); }
+  });
+
+  it.each(["start_failure", "wait_failure", "invalid_result", "wrong_result_family", "invalid_ack", "invalid_envelope", "transport_failure", "stage_failure", "stage_failure_without_message"])("keeps %s pending and startup reattaches the deterministic identity", async (mode) => {
+    const fixture = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
+    fixture.mode(mode === "transport_failure" ? "hold" : mode);
+    const controls = rpcPreservationControls(true);
+    const dispatch = vi.fn(createActionDispatcher(fixture.adapter));
+    let app = buildApp({ ...options, actionDispatcher: dispatch });
+    const observations: unknown[] = [];
+    try {
+      const response = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: validProfileFixture("Saved Through Failure") } });
+      expect(response.statusCode, response.body).toBe(200);
+      await vi.waitFor(() => expect(fixture.rows().some(row => row.kind === "start")).toBe(true), { timeout: 10000 });
+      const firstStart = fixture.rows().find(row => row.kind === "start");
+      if (mode === "transport_failure") await fixture.adapter.close();
+      if (mode === "start_failure" || mode === "wait_failure" || mode.startsWith("stage_failure")) await expect(dispatch.mock.results[0]!.value).resolves.toMatchObject({ status: "failed" });
+      else await expect(dispatch.mock.results[0]!.value).rejects.toThrow();
+      expect(rpcContinuationMarkers()).toEqual([]);
+      const saved = (await app.inject({ method: "GET", url: "/v1/profile" })).json();
+      expect(saved.profile.personal.full_name).toBe("Saved Through Failure");
+      expect(rpcPreservationControls()).toEqual(controls);
+      observations.push({ status: response.statusCode, saved, failedMarkers: rpcContinuationMarkers(), firstStart });
+      await app.close();
+      await fixture.adapter.close();
+      fixture.mode("success");
+      const restarted = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
+      const previousWaits = restarted.rows().filter(row => row.kind === "waiting").length;
+      restarted.mode("hold");
+      app = buildApp({ ...options, actionDispatcher: createActionDispatcher(restarted.adapter) });
+      try {
+        await app.listen({ host: "127.0.0.1", port: 0 });
+        await vi.waitFor(() => expect(restarted.rows().filter(row => row.kind === "waiting")).toHaveLength(previousWaits + 1), { timeout: 10000 });
+        expect(rpcContinuationMarkers()).toEqual([]);
+        observations.push({ startupHeldMarkers: rpcContinuationMarkers(), startupWait: restarted.rows().at(-1) });
+        restarted.mode("success");
+        await vi.waitFor(() => expect(rpcContinuationMarkers()).toHaveLength(1), { timeout: 10000 });
+        const starts = restarted.rows().filter(row => row.kind === "start");
+        expect(starts.at(-1)?.workflowId).toBe(firstStart?.workflowId);
+        const request = restarted.rows().find(row => row.kind === "request")?.request as { params: { reason: string } };
+        expect(firstStart?.workflowId).toBe("profile-continuation-" + createHash("sha256").update(request.params.reason).digest("hex").slice(0, 24));
+        expect(restarted.rows().filter(row => row.kind === "attached").at(-1)).toMatchObject({ reattached: mode !== "start_failure" });
+        expect(rpcPreservationControls()).toEqual(controls);
+        expect((await app.inject({ method: "GET", url: "/v1/profile" })).json()).toEqual(saved);
+        observations.push({ restartedStart: starts.at(-1), settledMarkers: rpcContinuationMarkers(), preservation: controls });
+      } finally { restarted.mode("success"); await restarted.adapter.close(); }
+    } finally { fixture.retain("profile-restart-" + mode, observations); await app.close(); await fixture.adapter.close(); }
+  });
+});
+
+it("preserves invalid-result HTTP mappings after shared boundary enforcement", async () => {
+  const app = buildApp({ ...options, providerDispatcher: { call: async () => ({ jsonrpc: "2.0", id: 1, result: {} }), close: async () => {} } });
+  try {
+    const saved = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: validProfileFixture("Invalid Result Controls") } });
+    for (const request of [
+      { method: "GET" as const, url: "/v1/providers/status" },
+      { method: "POST" as const, url: "/v1/providers/codex/verify" },
+      { method: "GET" as const, url: "/v1/browser-capabilities" },
+      { method: "POST" as const, url: `/v1/jobs/${jobIdFor("https://example.com/jobs/ready")}/actions/check-availability`, payload: {} },
+      { method: "POST" as const, url: "/v1/profile/target-role-suggestions", payload: { expectedProfileVersion: saved.json().profileVersion } },
+    ]) {
+      const response = await app.inject(request);
+      expect(response.statusCode, `${request.url}: ${response.body}`).toBe(502);
+    }
+  } finally { await app.close(); }
+});
+
+// Exercise the actual generated client, HTTP shell and typed worker boundary.
+describe("registered provider endpoint family", () => {
+  afterEach(() => vi.restoreAllMocks());
+  // Node fetch has no browser Origin; supply the first-party browser metadata.
+  function browserClient(baseUrl: string) {
+    const networkFetch = globalThis.fetch;
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => networkFetch(input, {
+      ...init, headers: { ...init?.headers, origin: "http://127.0.0.1:5173" },
+    }));
+    return createJobCtrlApiClient(baseUrl);
+  }
+  const cases = [
+    ["providerStatus", "GET", "/v1/providers/status", "provider_status", {}, { ok: true, ...providerStatusResult }, "provider_status_failed"],
+    ["providerModels", "GET", "/v1/providers/models", "provider_models", {}, { ok: true, ...providerModelsResult }, "provider_models_failed"],
+    ["verifyCodexProvider", "POST", "/v1/providers/codex/verify", "provider_verify", { provider: "codex" }, { ok: true, verification: providerVerifyResult }, "provider_verification_failed"],
+  ] as const;
+
+  it.each(cases)("%s preserves success, readiness and ignored legacy input", async (name, method, route, rpc, params, expected) => {
+    const result = rpc === "provider_status" ? providerStatusResult : rpc === "provider_models" ? providerModelsResult : providerVerifyResult;
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({ jsonrpc: "2.0", id: 1, result }));
+    const app = buildApp({ ...options, providerDispatcher: { call, close: async () => {} }, requireHealthyWorkerForActions: true });
+    try {
+      await app.listen({ host: "127.0.0.1", port: 0 });
+      const address = app.server.address();
+      if (!address || typeof address === "string") throw new Error("Expected loopback listener");
+      const client = browserClient(`http://127.0.0.1:${address.port}`);
+      await expect(client[name]()).resolves.toEqual(expected);
+      const legacy = await app.inject({ method, url: route + "?ignored=legacy", ...(method === "POST" ? { payload: { ignored: "legacy" } } : {}) });
+      expect(legacy.statusCode, legacy.body).toBe(200);
+      expect(legacy.json()).toEqual(expected);
+      expect(call).toHaveBeenCalledTimes(2);
+      for (const args of call.mock.calls) expect(args).toEqual([rpc, params]);
+    } finally { await app.close(); }
+  });
+
+  for (const failure of ["rpc", "invalid", "private", "transport"] as const) {
+    it.each(cases)(`%s sanitizes ${failure} failures through the client`, async (name, _method, _route, rpc, _params, _expected, errorCode) => {
+      const marker = "synthetic-private-failure-marker";
+      const call = vi.fn<JsonRpcDispatcher["call"]>(async () => {
+        if (failure === "transport") throw new Error(marker);
+        if (failure === "rpc") return { jsonrpc: "2.0", id: 1, error: { code: -32603, message: marker, data: { token: marker } } };
+        const valid = rpc === "provider_status" ? providerStatusResult : rpc === "provider_models" ? providerModelsResult : providerVerifyResult;
+        return { jsonrpc: "2.0", id: 1, result: failure === "private" ? { ...valid, token: marker } : {} };
+      });
+      const app = buildApp({ ...options, providerDispatcher: { call, close: async () => {} } });
+      try {
+        await app.listen({ host: "127.0.0.1", port: 0 });
+        const address = app.server.address();
+        if (!address || typeof address === "string") throw new Error("Expected loopback listener");
+        const client = browserClient(`http://127.0.0.1:${address.port}`);
+        const status = name === "providerModels" || failure === "transport" ? 503 : 502;
+        const message = name === "providerModels" ? "Provider models are temporarily unavailable."
+          : name === "providerStatus" ? (failure === "invalid" || failure === "private"
+            ? "Provider status returned an invalid response." : "Provider status is temporarily unavailable.")
+          : failure === "rpc" ? "Codex verification could not be completed."
+          : failure === "transport" ? "Codex verification is temporarily unavailable."
+          : "Codex verification returned an invalid response.";
+        const request = client[name]();
+        await expect(request).rejects.toMatchObject({ status, responseBody: { ok: false, error: errorCode, message } });
+        await request.catch(error => expect(JSON.stringify(error)).not.toContain(marker));
+      } finally { await app.close(); }
+    });
+  }
+
+  it.each(cases)("%s rejects unsafe Host and remote peers before dispatch", async (_name, method, route) => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>();
+    const app = buildApp({ ...options, providerDispatcher: { call, close: async () => {} } });
+    try {
+      for (const input of [{ headers: { host: "example.test" } }, { remoteAddress: "192.0.2.1" }]) {
+        const response = await app.inject({ method, url: route, ...input });
+        expect(response.statusCode, response.body).toBe(403);
+      }
+      expect(call).not.toHaveBeenCalled();
+    } finally { await app.close(); }
+  });
+
+  it("rejects cross-site verification before dispatch and keeps read CORS restrictions", async () => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({ jsonrpc: "2.0", id: 1, result: providerStatusResult }));
+    const app = buildApp({ ...options, providerDispatcher: { call, close: async () => {} } });
+    try {
+      const rejected = await app.inject({ method: "POST", url: "/v1/providers/codex/verify", headers: { origin: "https://example.test" }, payload: {} });
+      expect(rejected.statusCode, rejected.body).toBe(403);
+      expect(rejected.json().error).toBe("cross_site_request");
+      expect(call).not.toHaveBeenCalled();
+      const read = await app.inject({ method: "GET", url: "/v1/providers/status", headers: { origin: "https://example.test" } });
+      expect(read.statusCode).toBe(200);
+      expect(read.headers["access-control-allow-origin"]).toBeUndefined();
+    } finally { await app.close(); }
+  });
+
+  it.each(["not_configured", "failed"] as const)("returns an unsuccessful %s verification as a checked 200 response", async status => {
+    const verification = { ...providerVerifyResult, ok: false, status };
+    const app = buildApp({ ...options, providerDispatcher: { call: async () => ({ jsonrpc: "2.0", id: 1, result: verification }), close: async () => {} } });
+    try {
+      await app.listen({ host: "127.0.0.1", port: 0 });
+      const address = app.server.address();
+      if (!address || typeof address === "string") throw new Error("Expected loopback listener");
+      await expect(browserClient(`http://127.0.0.1:${address.port}`).verifyCodexProvider())
+        .resolves.toEqual({ ok: true, verification });
+      const response = await app.inject({ method: "POST", url: "/v1/providers/codex/verify", headers: { "content-type": "text/plain", origin: "http://127.0.0.1:5173" }, payload: "legacy ignored text" });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json()).toEqual({ ok: true, verification });
+    } finally { await app.close(); }
+  });
+});

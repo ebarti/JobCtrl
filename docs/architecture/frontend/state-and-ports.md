@@ -43,7 +43,8 @@ is the canonical decision matrix.
 | Jobs list response | **Server** (Query) | Same. |
 | Job detail | **Server** (Query) | Same. |
 | Saved resume review draft | **Server** (Query) | The apply-context reconciler publishes create/save/seed/render/reply responses to the initiating tenant/job key. Draft identity and base generation precede revision/state/time ordering; threads, replies and feedback signals merge independently by their IDs. |
-| Unsaved resume review edits | **Mounted Plate session** | Acknowledging saved snapshot A updates the baseline while later text or formatting B stays dirty. Comment-only updates do not reset focus or selection. |
+| Unsaved resume review edits | **Apply-owned mounted session** | `useApplyReviewSession` owns the document, autosave, submitted/saved baselines, render attempts, accepted comparison and approval preparation. Document identities compare the normalized persistence form, so acknowledging equivalent pasted blocks stops autosave without replacing the live editor; later text, formatting or undo B stays dirty. Saved text includes unnumbered pasted paragraphs alongside anchored lines. Materials renders controlled state; comment-only updates do not reset focus or selection. Tenant/job changes replace the session; replacement drafts reset document identity independently of revision counters. Every cache publication obeys the current material source fence; the session's own accepted render can retain its original base after promotion. |
+| Pending resume comment seeds | **Apply-owned mounted session** | Seed payloads and publisher callbacks bind to the initiating text/PDF material IDs. A material switch discards incompatible retained seeds before a replacement draft loads; delayed callbacks cannot attach foreign pins. Materials publishes empty pin lists too, so an empty source never replays an earlier payload. |
 | Interviews filters, graph/list mode, selected card, and optional canonical job | **URL** | The library view is bookmarkable and remains distinct from generated prep; navigation and browser Back/Forward use this state. |
 | Interviews Questions/Sources perspective, author drill-down, graph pan/zoom, and inspector tab | **Component** (`useState` / tabs) | Transient exploration controls; they do not shadow URL-owned card/job/filters, accepted evidence selections, or private drafts. |
 | Installed interview catalog and job prep/history/notes | **Server** (Query) | Public Operations read hooks use the API port; catalog browsing does not require a job/worker/provider. |
@@ -59,18 +60,28 @@ is the canonical decision matrix.
 Search params drive query keys. The pattern is:
 
 ```ts
-// routes/jobs.tsx (loader)
-loader: async ({ deps: { search }, context: { queryClient, tenantId } }) =>
-  queryClient.ensureQueryData({
-    queryKey: jobsKeys.list(tenantId, search),
-    queryFn: () => apiClient.jobs(search),
-  }),
+// routes/artifacts.tsx: validate/map URL input, then delegate to its read owner.
+loader: ({ deps, context }) =>
+  prefetchArtifactsList(context, artifactsListInput(deps.search)),
 ```
 
-The route's loader prefetches based on the typed search params. The
-component reads via `useJobsListQuery(useSearch(...))`, which builds the
-same query key. The cache hit rate is maximal because the URL is the
-single key derivation source.
+Operations, Profile and Outreach expose read helpers in their own
+`readQueries.ts` modules. Helpers accept structural tenant, API-port and query
+client dependencies independent of the router/generated tree. Routes validate
+search and orchestrate these helpers; they never operate on API or QueryClient
+capabilities. Contexts never import views. Shared key/read factories are reused
+by the observers; hook-specific `enabled`, `select`, freshness and refetch
+policies stay on the hooks.
+
+The existing prefetches await best-effort `prefetchQuery` reads using the query
+client's freshness defaults. Activity detail instead awaits `ensureQueryData`,
+unwrapping the event and propagating errors (including 404). Its observer's
+404-to-null policy is separate. An accepted Activity cache entry is reused even
+when stale; no automatic background revalidation is requested by that helper.
+
+Jobs has no loader: its view owns the effective-query handoff after saved-view
+and URL state are resolved. `useJobsListQuery` consumes that effective input;
+adding an independent route prefetch would risk a competing cache key.
 
 **Pagination + sort changes** mutate the URL (via `navigate({ search: { ...,
 page: 2 } })`); the URL change triggers a re-render with new search
@@ -152,6 +163,7 @@ hitting the network and gives a clear seam for cloud evolution.
 | `EventStreamPort` | Subscribe to a stream of `DomainEvent`s | `SseEventStreamAdapter` (`new EventSource(...)`) | `WebSocketEventStreamAdapter` (if SSE proves limiting at scale) or same SSE adapter behind CDN with edge buffering |
 | `StoragePort` | Persist client preferences and wizard drafts | `LocalStorageAdapter` (browser `localStorage`) | `IndexedDbAdapter` (when client-side cache exceeds 5 MB) |
 | `SessionPort` | Resolve `TenantId` and `UserId` for the current request | `LocalSessionAdapter` (returns `LOCAL_TENANT` + a stub user) | `JwtSessionAdapter` (Auth0 / Cognito; reads JWT, exposes `useSession()`) |
+| `ArtifactDownloadPort` | Download retained, verified DOCX bytes | `BrowserArtifactDownloadAdapter` calls the API client, creates a temporary object URL and starts a browser download | No hosted implementation; public demo reports unavailable |
 | `ClipboardPort` | Copy CLI commands to clipboard | `NavigatorClipboardAdapter` (`navigator.clipboard.writeText`) | Same adapter |
 | `OpenInOsPort` | Open an artifact in the OS default app (local-only feature) | `OpenArtifactAdapter` (POSTs to `/v1/artifacts/:id/open`) | **Disabled** in hosted mode — port returns `Unsupported`; the UI surfaces a "download" affordance instead. (Cloud users get presigned S3 URLs.) |
 | `TelemetryPort` | Emit frontend telemetry (errors, route timings, mutation latencies) | `ConsoleTelemetryAdapter` (no-op + dev-tools logs) | `OpenTelemetryWebAdapter` → OTLP collector → backend tracing pipeline |
@@ -176,6 +188,7 @@ const PortsContext = createContext<{
   session: SessionPort;
   clipboard: ClipboardPort;
   openInOs: OpenInOsPort;
+  artifactDownload: ArtifactDownloadPort;
   telemetry: TelemetryPort;
   featureFlags: FeatureFlagPort;
 } | null>(null);
@@ -262,40 +275,28 @@ The hosted-mode `WebSocketEventStreamAdapter` (if the SSE adapter proves
 limiting under cross-region or CDN-buffered conditions, see fitness
 function §9.4) preserves the same interface; only the transport changes.
 
-### 6.5 `contexts/operations/types.ts` — Frontend ACL
+### 6.5 Canonical DTOs And Frontend Input Refinements
 
-The frontend has an Anti-Corruption Layer too: `contexts/operations/types.ts`
-re-exports the projection and API response types and adds frontend-only
-refinements (e.g., narrower string-union types over `state` / `stage`
-derived from `STAGES` / `STAGE_STATE_KINDS`). The projection shapes are
-canonically defined in `@jobctrl/domain-types` (`operations/`) and
-re-exported through `@jobctrl/contracts`; the ACL is the intended single
-import surface for feature code, though `@jobctrl/contracts` is still
-imported directly in places today.
+Import unchanged wire DTOs, Zod schemas and wire constants directly from
+`@jobctrl/contracts`. Import domain vocabulary and the domain-event union from
+`@jobctrl/domain-types`. Those packages own the shapes; transparent aliases or
+re-exports do not isolate consumers from a wire-shape change. A canonical shape
+change requires updating its affected consumers.
 
-`corepack pnpm web:lint` guards this boundary in production feature source.
-Existing direct `@jobctrl/contracts` imports have exact file-and-imported-symbol
-exceptions with reasons: projection/response imports are migration debt, while
-runtime schemas and constants are intentional contract consumption. New callers
-or symbols require an explicit boundary decision; unused exceptions must be
-removed. Shared ports, adapters, and the Operations ACL legitimately consume
-contracts. Canonical `@jobctrl/domain-types` vocabulary, including tenant
-identities and domain events, remains available directly.
+`contexts/operations/types.ts` owns genuine frontend input refinements:
+`JobsListInput` accepts readonly stage selections, list inputs allow partial
+queries, and stage filters include the UI's `"all"` sentinel. It also retains
+string `JobId` compatibility, the indexed event-type union and the
+endpoint-derived availability acknowledgement. It does not mirror canonical
+DTOs, schemas or constants. The Operations public barrel exposes its hooks,
+query keys, infrastructure and frontend refinements.
 
-Why an ACL (this thin):
-
-- **Single point of compile-time impact** when a backend projection
-  shape changes — the ACL re-export site is the first error; we update
-  the frontend only at that boundary.
-- **Frontend-only refinements** (string narrowing for exhaustive
-  `switch`, branded date types, etc.) are introduced once.
-- **Future deviation from contract types** (e.g., a frontend-derived
-  computed field) has a natural home.
-
-This is an extremely thin ACL — it is mostly re-exports today. It exists
-because the alternative ("just import from `@jobctrl/contracts` directly")
-makes a future tightening of types or addition of frontend computed shape
-into a sprawling refactor.
+`corepack pnpm web:lint` permits canonical package imports without contract
+exemptions. It independently enforces capability ports, context-owned API/query/
+store usage and dependency direction, including edges hidden by local barrels.
+Remaining capability and dependency exemptions require exact file/symbol reasons
+and fail when stale. Canonical imports grant no capability to call the API client
+or query client from a view.
 
 ### 6.6 No Direct DOM Access from Feature Code
 
@@ -323,17 +324,39 @@ authorize those capabilities in other feature modules.
 
 ### Automated Boundary Checks
 
-`corepack pnpm web:lint` uses the TypeScript syntax tree to check dependency and
-capability boundaries:
+`corepack pnpm web:lint` uses TypeScript syntax, resolved symbols and capability
+provenance to check dependency and capability boundaries:
 
 - Contexts cannot import views, and views cannot add another view's modules.
   The existing Analytics-to-Dashboard KPI composition has an exact-edge
   relocation exception.
 - Aggregate contexts cannot import another aggregate's hooks or stores;
   Operations read hooks remain the shared read-side exception.
-- Views cannot use runtime Query or Zustand APIs or call the API client.
+- Views and routes cannot use runtime Query or Zustand APIs or call the API client.
   Type-only imports remain valid; API error values and URL-only preview helpers
   have scoped exceptions.
+- Loader context, API and QueryClient origins remain protected through aliases,
+  casts, fallback/conditional expressions, parameter and destructuring defaults, array
+  spread/rest positions, `for...of` bindings and assignments, comma-expression
+  results, `await` and member assignments even with `any` or
+  unresolved context declarations. API/cache capabilities and their containers
+  cannot escape through arbitrary calls, route/view return values, class-field
+  initializers, constructor parameter properties or receiver-field assignments.
+  Method receivers containing capabilities are handoffs too, including array
+  extraction and iteration calls. Passing them to a helper requires
+  a resolved context-owned implementation (including immutable aliases). The
+  shared syntax tracer follows computed keys through containers and bindings; an
+  unresolved key on a known capability container cannot grant access. Local
+  shadowing, known non-capability keys and context helper calls remain valid.
+  Context helper results retain returned capability provenance across module
+  boundaries and `any` annotations; ownership permits dependency handoff, not
+  returning raw API/cache authority to a route or view. DTO results remain valid.
+  Runtime re-exports cannot hide Query/API imports in exported containers or
+  destructured aliases, including mixed default/named imports and missing package
+  declarations.
+  `web:lint:test` overlays negative controls on the real
+  tsconfig/generated route program and requires source-located boundary
+  diagnostics independently of compiler errors.
 - Production code cannot import test scaffolding. Tests, stories, and generated
   source are excluded from feature checks.
 

@@ -1,15 +1,55 @@
-import { screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { act, fireEvent, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { sampleApplyReviewQueue } from "../../../test/fixtures/projections.js";
 import { renderWithProviders } from "../../../test/render.js";
 import { ApplyReviewDecisionControls } from "./ApplyReviewDecisionControls.js";
+import { buildTestPorts } from "../../../test/testPorts.js";
 
 describe("<ApplyReviewDecisionControls>", () => {
+  it("scopes pending presentation and settlement to the initiating session", async () => {
+    const item = sampleApplyReviewQueue.items[0]!;
+    const finishes: Array<() => void> = [];
+    const onDecision = vi.fn(() => new Promise<void>((resolve) => { finishes.push(resolve); }));
+    const hook = renderWithProviders(<ApplyReviewDecisionControls item={item} onDecision={onDecision} />);
+    const button = () => screen.getByRole("button", { name: `Defer for ${item.title}` });
+    fireEvent.click(button());
+    hook.rerender(<ApplyReviewDecisionControls item={{ ...item, jobKey: "next-job" }} onDecision={onDecision} />);
+    expect(button()).toBeEnabled();
+    fireEvent.click(button());
+    expect(onDecision).toHaveBeenCalledTimes(2);
+    await act(async () => { finishes[0]!(); });
+    expect(button()).toBeDisabled();
+    await act(async () => { finishes[1]!(); });
+    expect(button()).toBeEnabled();
+  });
+
+  it.each(["Authorize live submit", "Defer"])("delegates %s to the session and protects against repeated clicks during preparation", async (label) => {
+    const item = sampleApplyReviewQueue.items[0]!;
+    let finish!: () => void;
+    const onDecision = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const decideApplyReview = vi.fn();
+    renderWithProviders(<ApplyReviewDecisionControls item={item} onDecision={onDecision} />, { ports: buildTestPorts({ api: { decideApplyReview } }) });
+    const button = screen.getByRole("button", { name: `${label} for ${item.title}` });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(onDecision).toHaveBeenCalledTimes(1);
+    expect(button).toBeDisabled();
+    expect(button).toHaveTextContent("Saving");
+    await act(async () => { finish(); });
+    expect(decideApplyReview).not.toHaveBeenCalled();
+  });
+
+  it("presents a recoverable decision failure supplied by the session", () => {
+    renderWithProviders(<ApplyReviewDecisionControls item={sampleApplyReviewQueue.items[0]!}
+      onDecision={vi.fn(async () => {})} decisionError="Review conflict. Refresh and authorize again." />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Review conflict. Refresh and authorize again.");
+  });
+
   it("makes live-submit authorization the sole primary action when it is available", () => {
     const item = sampleApplyReviewQueue.items[0]!;
 
-    renderWithProviders(<ApplyReviewDecisionControls item={item} />);
+    renderWithProviders(<ApplyReviewDecisionControls item={item} onDecision={vi.fn(async () => {})} />);
 
     const getDecisionButton = (name: string) =>
       screen.getByRole("button", {
@@ -111,7 +151,7 @@ describe("<ApplyReviewDecisionControls>", () => {
       },
     };
 
-    renderWithProviders(<ApplyReviewDecisionControls item={item} />);
+    renderWithProviders(<ApplyReviewDecisionControls item={item} onDecision={vi.fn(async () => {})} />);
 
     const alert = screen
       .getAllByRole("alert")
@@ -163,6 +203,7 @@ describe("<ApplyReviewDecisionControls>", () => {
         approvalNotice="The saved draft will be rendered before approval."
         liveSubmitDisabledReason="Confirm the related prior application."
         item={item}
+        onDecision={vi.fn(async () => {})}
       />,
     );
 
@@ -203,7 +244,7 @@ describe("<ApplyReviewDecisionControls>", () => {
       },
     };
 
-    renderWithProviders(<ApplyReviewDecisionControls item={item} />);
+    renderWithProviders(<ApplyReviewDecisionControls item={item} onDecision={vi.fn(async () => {})} />);
 
     const approvalRow = screen
       .getByRole("cell", { name: "Approval recorded" })

@@ -260,3 +260,44 @@ not for an employer ranking people.
 Scoring work limits use recency and stable IDs. The model supplies typed blockers with spans and requirement verdicts bound to canonical IDs; code resolves only weights, caps and bands. Posting constraints, seniority, geography and requirement scope come from the accepted job interpretation. No prose reclassification or lexical retrieval decides eligibility.
 
 See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+
+## Optional company context
+
+[Company briefings](company-briefings.md) add separately dated public context beside Role Analysis. They are explicitly configured and refreshed, shared across confirmed company/job links, and do not change fit scores or posting requirements.
+
+## Selected-job demand and learning milestones
+
+Open **Selected-job demand and learning milestones** on `/evidence-map`. Name a
+cohort, choose its selection date, select up to 30 saved jobs and optionally
+record aspirations. **Review selected cohort** makes no model call. It shows
+unique selected identities, descriptions available for analysis, missing
+descriptions, exact duplicate application-identity groups (shared URL and identical posting content) and usable confirmed
+achievement sources. Repeated selections and shared recorded application URLs plus exact title/employer/description content
+count once; duplicates with different identities may remain. The selection date
+labels your cohort, not the publication dates of its postings.
+
+**Compare reviewed postings** sends the reviewed descriptions and unique,
+confirmed, supported/verified achievement evidence to the configured model in
+the Profile accounting lane. The saved comparison identifies its profile
+version, source snapshots, verbatim posting and achievement citations,
+provider/model, prompt/schema versions and determination fingerprint. Counts
+refer only to distinct analyzed postings in this cohort. Missing evidence means
+no confirmed support was found in these sources; it does not establish inability
+or a market-wide skills statistic. Declared skills and aspirations cannot serve
+as confirmed evidence.
+
+Choose each proposed learning or evidence-building milestone explicitly. Its
+origin retains the exact cohort revision, comparison, citations, completion
+criterion and selection time. Save progress and a completion-evidence statement
+or artifact reference; completion requires a nonempty statement. Status changes
+retain a revision history. These statements remain user-attested activity, never
+a readiness score or an automatic skill, Profile, fit, materials or Apply update.
+Confirm any new achievement through the existing Candidate Profile review flow.
+
+Profile/posting changes mark historical comparisons for review. Refreshing a
+cohort can change its selected jobs and aspirations; previously chosen milestones
+retain their original sources and show that the cohort changed. A failed
+refresh or stale revision preserves the last accepted comparison and your draft.
+The interface shows up to 20 recent cohorts, 100 milestones and 50 recent
+activity revisions per milestone; older records remain in local storage.
+The browser-only demo explains that this capability requires a local workspace.

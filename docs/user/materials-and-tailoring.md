@@ -421,6 +421,56 @@ Every generated artifact has a claim-verification determination and recorded lin
 
 See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
 
+## Editable DOCX Export
+
+In **Job Detail → Artifacts → Editable DOCX**, choose **A4** or **Letter**, then
+select **Export resume DOCX** or **Export cover letter DOCX** for the accepted
+generation you want. The browser downloads the new document. **Retained DOCX
+exports** keeps each successful export available with its paper size, source
+generation, language, creation time and formatting warnings. **Download DOCX**
+retries a download without creating another export.
+
+The source must still match the version displayed when you click Export.
+If it changes or loses acceptance, refresh the export list before trying again.
+Missing source files are shown as unavailable. If a download fails, the retained
+export stays in the list. Downloads verify the registered file's content hash;
+restore a missing file or generate a new export if its retained bytes changed.
+The public demo explains that this capability requires a local workspace.
+
+You can also export from the CLI using the saved artifact ID and generation:
+
+```sh
+jobctrl material-export JOB_ID --source-artifact-id SOURCE_ID --generation 1
+```
+
+This creates a new editable Word document in the local workspace and prints a
+JSON receipt containing its path, registered artifact ID and formatting limits.
+Use the canonical Job ID and accepted source artifact ID shown in Job Detail or
+Artifact Detail. Export requires an approved text artifact; drafts, rejected or
+superseded materials and PDF/HTML inputs are refused.
+
+The document preserves the accepted text, dates, contacts, Unicode, line order,
+blank lines and bullet markers. Standard JobCtrl resume section headings become
+Word headings. Other resume layouts remain literal paragraphs, with an explicit
+warning. Cover letters retain their paragraphs and line breaks. The export uses
+a simple single-column layout: it does not reproduce PDF pagination, HTML/CSS
+styling, images, columns, automatic hyperlinks or custom fonts. Bullet markers
+remain editable text with hanging indentation, not automatic Word numbering.
+
+The default page size is A4; use `--paper Letter` for US Letter. A recorded source
+locale is preserved. When the source has no locale, the document uses `und`
+(undetermined); `--locale fr-FR`, for example, labels that existing language.
+It never translates or reformats dates. A conflicting recorded locale or an
+unsupported format/setting fails explicitly. Reviewed translations continue to
+use the separate [locale-variant export](locale-variants.md).
+
+The receipt and document metadata bind the source ID, generation, source text
+hash, source metadata hash and export settings. The receipt also records the
+generated file hash. Export never rebuilds content from the current profile,
+replaces accepted files, changes a review or approves an application. A failed
+export retains prior exports and accepted material. Editing the DOCX in Word
+does not update JobCtrl or make those edits accepted for Apply.
+
 ## Reviewed Translations
 
 Job Detail's **Locale variants** section translates selected accepted resume or
@@ -434,3 +484,20 @@ original and prior accepted material. See [Reviewed Locale Variants](locale-vari
 ## Screening Answer Library
 
 Materials also owns source-bound [screening-answer drafts and reusable reviewed revisions](screening-answers.md). Application-specific question versions, review and manual-use history remain owned by Apply. Failed refreshes retain accepted answers and material bytes.
+
+## Cover-Letter Formatting And Accepted History
+
+The [Apply Review PDF controls](apply.md#cover-letter-pdf-review) print the full
+accepted letter through the existing Chromium cover-letter renderer. Previewing
+creates a separate render, without replacing accepted materials. An explicit
+save accepts those exact bytes and settings in a new material generation while
+retaining the resume, source provenance and previous PDF history. Stale sources,
+conflicting saves and rendering or persistence failures preserve the accepted
+version. A saved version survives reload; an acknowledgement for an earlier
+snapshot never accepts newer local edits.
+Unchanged resume and cover-letter sources remain available for DOCX export by
+their displayed generation after repeated formatting saves.
+New generated cover PDFs record both the full source-text hash and PDF byte hash,
+along with their source artifact, settings and renderer identity. Historical PDFs
+without a verifiable source binding need an explicit preview/save before Apply
+approval. Files changed outside JobCtrl never silently become accepted materials.

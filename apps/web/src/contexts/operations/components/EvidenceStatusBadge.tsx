@@ -2,7 +2,11 @@ import type { JSX } from "react";
 
 import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import type { StatusTagTone } from "../../../shared/ui/status-tokens.js";
-import type { EvidenceGap, EvidenceMapEntry, EvidenceUsageRef } from "../types.js";
+import type {
+  EvidenceGap,
+  EvidenceMapEntry,
+  EvidenceUsageRef,
+} from "@jobctrl/contracts";
 
 type EvidenceStrength = EvidenceMapEntry["freshness"]["evidenceStrength"];
 type EvidenceFit = EvidenceUsageRef["requirementFitKind"];

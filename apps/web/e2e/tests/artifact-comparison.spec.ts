@@ -472,3 +472,186 @@ test("a delayed seed snapshot cannot replace a rendered saved revision", async (
   await expect(page.getByText("replacement rendered", { exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Artifact comparison" })).toContainText("+covered");
 });
+
+// These cases use the production Plate editor and Apply controller. Only the
+// HTTP save/render/model responses are controlled; canonical persistence and
+// artifact/approval preservation have their owning API regression tests.
+test("multiline HTML paste acknowledges one autosave and survives reload", async ({ page }, testInfo) => {
+  await installArtifactComparisonRoutes(page, false);
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  const plateDocument = [{ type: "resume_block", tagName: "main", className: "resume-page", pageNumber: 1,
+    children: [
+      { type: "resume_block", tagName: "h1", lineNumber: 1, pageNumber: 1,
+        children: [{ text: "Principal Platform Engineer" }] },
+      { type: "resume_block", tagName: "h2", lineNumber: 2, pageNumber: 1,
+        children: [{ text: "Experience" }] },
+      { type: "resume_block", tagName: "p", lineNumber: 3, pageNumber: 1,
+        semanticId: "experience:line:3", children: [{ text: "Saved baseline." }] },
+    ],
+  }];
+  let current = { ...draft, latestRevision: { ...draft.latestRevision, plateDocument }, commentThreads: [] };
+  const saves: Array<{ editedText: string; plateDocument: typeof plateDocument }> = [];
+  await page.route("**/v1/jobs/*/resume-review/draft", route => route.fulfill({ json: { ok: true, draft: current } }));
+  await page.route("**/v1/resume-review/drafts/*/comment-threads", route => route.fulfill({ json: {
+    ok: true, draft: current, commentThreads: [], seededCount: 0, updatedCount: 0,
+  } }));
+  await page.route("**/v1/resume-review/drafts/*/revisions", async route => {
+    const body = route.request().postDataJSON();
+    saves.push(body);
+    current = { ...current, currentRevisionId: "paste-revision-" + saves.length, latestRevisionNumber: saves.length + 1,
+      latestRevision: { ...current.latestRevision, revisionId: "paste-revision-" + saves.length,
+        revisionNumber: saves.length + 1, editedText: body.editedText, plateDocument: body.plateDocument } };
+    await route.fulfill({ json: { ok: true, draft: current, revision: current.latestRevision } });
+  });
+  await page.goto("/apply-review");
+  await expect(page).toHaveTitle(/JobCtrl/);
+  const editor = page.getByRole("textbox", { name: "Tailored resume preview editor" });
+  const paper = page.getByLabel("Editable resume page");
+  await expect(editor).toContainText("Saved baseline.");
+  await editor.locator('[data-resume-line-number="3"] [data-slate-string]').first().click();
+  await editor.evaluate(element => {
+    const leaf = element.querySelector('[data-resume-line-number="3"] [data-slate-string]')!;
+    const range = document.createRange();
+    range.setStart(leaf.firstChild!, 0);
+    range.collapse(true);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+  });
+  // Slate admits paste against its throttled model selection.
+  await page.waitForTimeout(200);
+  await editor.evaluate(element => {
+    const data = new DataTransfer();
+    data.setData("text/html", "<p>First pasted paragraph.</p><p>Second pasted paragraph.</p>");
+    data.setData("text/plain", "First pasted paragraph.\nSecond pasted paragraph.");
+    const paste = new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true });
+    element.dispatchEvent(paste);
+    // Chromium handles rich paste through beforeinput. A synthetic ClipboardEvent
+    // has no browser default action, so emit the matching native input event too.
+    if (!paste.defaultPrevented) element.dispatchEvent(new InputEvent("beforeinput", {
+      inputType: "insertFromPaste", dataTransfer: data, bubbles: true, cancelable: true,
+    }));
+  });
+  await expect(editor).toContainText("First pasted paragraph.");
+  await expect(editor).toContainText("Second pasted paragraph.");
+  await expect.poll(() => saves.length).toBe(1);
+  await expect(paper).toHaveAttribute("data-draft-dirty", "false");
+  await expect(page.getByRole("button", { name: "Save draft" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Render replacement" })).toBeEnabled();
+  await expect(editor).toBeFocused();
+  expect(saves[0]!.editedText).toContain("First pasted paragraph.");
+  expect(saves[0]!.editedText).toContain("Second pasted paragraph.");
+  expect(saves[0]!.editedText.indexOf("First pasted paragraph.")).toBeLessThan(saves[0]!.editedText.indexOf("Second pasted paragraph."));
+  // The original defect repeated identical writes after each successful save.
+  // Observe two additional production autosave intervals without a new edit.
+  await page.waitForTimeout(3300);
+  expect(saves).toHaveLength(1);
+  await editor.pressSequentially(" later edit");
+  await expect.poll(() => saves.length).toBe(2);
+  await expect(paper).toHaveAttribute("data-draft-dirty", "false");
+  await page.reload();
+  await expect(editor).toContainText("First pasted paragraph.");
+  await expect(editor).toContainText("Second pasted paragraph.");
+  await expect(editor).toContainText("later edit");
+  await expect(paper).toHaveAttribute("data-draft-dirty", "false");
+  await expect(page.locator("vite-error-overlay")).toHaveCount(0);
+  expect(errors).toEqual([]);
+  await testInfo.attach("normalized-paste-saved-and-reloaded", { body: await paper.screenshot({ path: testInfo.outputPath("normalized-paste-saved-and-reloaded.png") }), contentType: "image/png" });
+  await testInfo.attach("paste-save-observations", { body: JSON.stringify(saves, null, 2), contentType: "application/json" });
+});
+
+test("save conflict and render failure recover before dry-run authorization", async ({ page }, testInfo) => {
+  await installArtifactComparisonRoutes(page, false);
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  let current = structuredClone(draft);
+  let saveCount = 0;
+  let renderCount = 0;
+  let promoted = false;
+  const decisions: unknown[] = [];
+  const observations: unknown[] = [];
+  const acceptedSource = { text: acceptedArtifact.artifactId, pdf: draft.baseResumePdfArtifactId };
+  const queue = () => ({ ...sampleApplyReviewQueue, items: sampleApplyReviewQueue.items.map(item => item.jobKey === jobKey && promoted ? {
+    ...item, materialsPreview: { ...item.materialsPreview, resumeTextArtifactId: draftArtifact.artifactId, resumePdfArtifactId: "resume-review-pdf" },
+  } : item) });
+  await page.route("**/v1/apply/review-queue", route => route.fulfill({ json: queue() }));
+  await page.route("**/v1/jobs/*/resume-review/draft", route => route.fulfill({ json: { ok: true, draft: current } }));
+  await page.route("**/v1/resume-review/drafts/*/comment-threads", route => route.fulfill({ json: {
+    ok: true, draft: current, commentThreads: current.commentThreads, seededCount: 0, updatedCount: 0,
+  } }));
+  await page.route("**/v1/resume-review/drafts/*/revisions", async route => {
+    const body = route.request().postDataJSON();
+    saveCount++;
+    observations.push({ operation: "save", attempt: saveCount, body });
+    if (saveCount === 1) {
+      await route.fulfill({ status: 409, json: { ok: false, error: "revision_conflict", message: "Synthetic save conflict" } });
+      return;
+    }
+    current = { ...current, currentRevisionId: "recovered-revision", latestRevisionNumber: 2,
+      latestRevision: { ...current.latestRevision, revisionId: "recovered-revision", revisionNumber: 2,
+        editedText: body.editedText, plateDocument: body.plateDocument } };
+    await route.fulfill({ json: { ok: true, draft: current, revision: current.latestRevision } });
+  });
+  await page.route("**/v1/resume-review/drafts/*/render", async route => {
+    renderCount++;
+    observations.push({ operation: "render", attempt: renderCount, body: route.request().postDataJSON() });
+    if (renderCount === 1) {
+      await route.fulfill({ status: 500, json: { ok: false, error: "render_failed", message: "Synthetic render failure" } });
+      return;
+    }
+    promoted = true;
+    current = { ...current, state: "promoted" };
+    await route.fulfill({ json: {
+      ok: true, draft: current, validation: { passed: true, errors: [], warnings: [] }, layoutBoxCount: 3,
+      artifacts: {
+        resumeText: { artifactId: draftArtifact.artifactId, artifactType: "tailored_resume", generation: 3, renderFormat: "text" },
+        resumePdf: { artifactId: "resume-review-pdf", artifactType: "resume_pdf", generation: 3, renderFormat: "html_pdf" },
+      },
+    } });
+  });
+  await page.route("**/v1/jobs/*/apply-review/decision", async route => {
+    decisions.push({ job: decodeURIComponent(new URL(route.request().url()).pathname.split("/")[3]!), body: route.request().postDataJSON(), promoted });
+    await route.fulfill({ json: { ok: true, decision: { decisionId: "synthetic-session-decision", jobKey, decision: "approve_dry_run", reason: "Synthetic review", decidedBy: "user", decidedAt: "2026-10-18T00:00:00Z" } } });
+  });
+  await page.goto("/apply-review");
+  const editor = page.getByRole("textbox", { name: "Tailored resume preview editor" });
+  const save = page.getByRole("button", { name: "Save draft" });
+  const render = page.getByRole("button", { name: "Render replacement" });
+  const authorize = page.getByRole("button", { name: /^Authorize dry run for/ });
+  await expect(editor).toBeVisible();
+  await editor.click();
+  await editor.press("ControlOrMeta+End");
+  await editor.pressSequentially(" recovery edit");
+  await expect(save).toBeEnabled();
+  await save.click();
+  await expect(page.getByLabel("Resume audit").getByText("Synthetic save conflict", { exact: true })).toBeVisible();
+  await expect(editor).toContainText("recovery edit");
+  await expect(render).toBeDisabled();
+  await expect(authorize).toBeDisabled();
+  expect(decisions).toHaveLength(0);
+  await save.click();
+  await expect(page.getByLabel("Editable resume page")).toHaveAttribute("data-draft-dirty", "false");
+  await expect(render).toBeEnabled();
+  await render.click();
+  await expect(page.getByLabel("Resume audit").getByText("Synthetic render failure", { exact: true })).toBeVisible();
+  expect(promoted).toBe(false);
+  expect(queue().items.find(item => item.jobKey === jobKey)!.materialsPreview).toMatchObject({ resumeTextArtifactId: acceptedSource.text, resumePdfArtifactId: acceptedSource.pdf });
+  expect(decisions).toHaveLength(0);
+  await expect(authorize).toBeDisabled();
+  await testInfo.attach("failed-render-preserves-editor", { body: await page.getByLabel("Editable resume page").screenshot({ path: testInfo.outputPath("render-recovery-" + renderCount + ".png") }), contentType: "image/png" });
+  await render.click();
+  await expect(page.getByText("replacement rendered", { exact: true })).toBeVisible();
+  await expect(authorize).toBeEnabled();
+  await authorize.click();
+  await expect.poll(() => decisions.length).toBe(1);
+  expect(decisions[0]).toMatchObject({ job: jobKey, body: { decision: "approve_dry_run" }, promoted: true });
+  expect(saveCount).toBe(2);
+  expect(renderCount).toBe(2);
+  await expect(editor).toContainText("recovery edit");
+  await expect(page.locator("vite-error-overlay")).toHaveCount(0);
+  expect(errors).toEqual([]);
+  await testInfo.attach("failure-recovery-observations", { body: JSON.stringify({ acceptedSource, observations, decisions }, null, 2), contentType: "application/json" });
+  await testInfo.attach("recovered-session", { body: await page.getByLabel("Editable resume page").screenshot({ path: testInfo.outputPath("render-recovery-" + renderCount + ".png") }), contentType: "image/png" });
+});

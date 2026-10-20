@@ -21,6 +21,8 @@ from rich.table import Table
 from rich.text import Text
 
 from jobctrl import __version__
+from jobctrl.company_briefing_cli import app as company_briefing_app
+from jobctrl.source_proposals_cli import app as source_proposals_app
 from jobctrl.pipeline import SUPPORTED_STAGE_ORDER, run_single_job
 from jobctrl.workflow_specs import (
     build_apply_workflow_spec,
@@ -45,6 +47,8 @@ capability_app = typer.Typer(help="Inspect and explicitly manage optional browse
 app.add_typer(capability_app, name="capability")
 credentials_app = typer.Typer(help="Manage provider credentials in the operating system's native store.")
 app.add_typer(credentials_app, name="credentials")
+app.add_typer(company_briefing_app, name="company-briefing")
+app.add_typer(source_proposals_app, name="source-proposals")
 console = Console()
 log = logging.getLogger(__name__)
 
@@ -1868,6 +1872,10 @@ def digest(
         "[/dim]\n"
     )
     console.print(_render_digest_table(digest_payload))
+    for briefing in digest_payload.get("companyBriefings", []):
+        console.print(Text(f"Company briefing: {briefing['name']} · {briefing['status']} · observed {briefing['observedAt'] or 'never'} · /jobs/{briefing['jobId']}"))
+        if briefing["failureCode"]:
+            console.print(Text("Refresh failed: " + briefing["failureCode"]))
     links_table = _render_digest_links_table(digest_payload)
     if links_table:
         console.print()
@@ -3772,6 +3780,40 @@ def gmail_auth(
         console.print(f"[red]Gmail auth failed:[/red] {exc}")
         raise typer.Exit(code=1) from exc
     console.print(f"[green]Gmail token saved:[/green] {token_path}")
+
+
+@app.command("material-export")
+def material_export(
+    job_id: str,
+    source_artifact_id: str = typer.Option(..., "--source-artifact-id", help="Accepted material artifact ID."),
+    generation: int = typer.Option(..., "--generation", help="Expected accepted generation."),
+    format_name: str = typer.Option("docx", "--format"),
+    paper: str = typer.Option("A4", "--paper"),
+    locale: str | None = typer.Option(None, "--locale", help="Label unrecorded source language; never translate."),
+    tenant: str = typer.Option("local", "--tenant"),
+) -> None:
+    """Export accepted resume/cover-letter text as an editable DOCX."""
+    from jobctrl.config import APP_DIR
+    from jobctrl.database import init_db
+    from jobctrl.domain.materials.editable_export import ExportFailure
+    from jobctrl.infrastructure.materials.accepted_export import export_accepted_material
+
+    connection = init_db()
+    try:
+        result = export_accepted_material(
+            connection, tenant_id=tenant, job_id=job_id, artifact_id=source_artifact_id,
+            generation=generation, root=APP_DIR,
+            settings={"format": format_name, "paper": paper, "locale": locale},
+        )
+        typer.echo(json.dumps(result, ensure_ascii=False))
+    except ExportFailure as error:
+        typer.echo(error.code, err=True)
+        raise typer.Exit(1) from None
+    except (OSError, sqlite3.Error):
+        typer.echo("material_export_failed: accepted materials and approvals are preserved", err=True)
+        raise typer.Exit(1) from None
+    finally:
+        connection.close()
 
 
 @app.command("material-locale")

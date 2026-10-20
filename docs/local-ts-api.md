@@ -36,6 +36,7 @@ when implementing or debugging a specific endpoint.
 | Boundary | Representative routes | Response model |
 | --- | --- | --- |
 | Profile and configuration | `/v1/profile`, `/v1/settings`, `/v1/credentials`, `/v1/providers/models`, `/v1/discovery/settings`, `/v1/browser-capabilities`, `/v1/extension/pairing-token`, `/v1/discovery/browser-extension/status` | Synchronous reads, validated patches, and live extension readiness |
+| Career learning | `/v1/evidence-map/learning` | Local recorded reads, no-model cohort preview and explicitly requested comparison/milestone commands |
 | Jobs and evidence | `/v1/jobs`, `/v1/jobs/:jobKey`, `/v1/evidence-map`, `/v1/artifacts` | Projection-backed reads |
 | Interviews | `/v1/interviews/catalog`, `/v1/interviews/questions/:questionId`, per-job prep history and interview notes | Asset-backed public reads; tenant/job-scoped prep and revisioned private notes |
 | Scoring keywords and feedback learning | `/v1/scoring/keywords`, `/v1/learning/recommendations`, `/v1/learning/policies/materials` | Current score-version aggregation plus explicit review and versioned policy history |
@@ -88,6 +89,28 @@ contract documents every generation, template, provenance, layout, and audit
 field.
 
 ## Jobs Read Model And Lifecycle
+
+The jobs list supports globally paginated `stages` membership alongside legacy
+scalar `stage`. The shared API client serializes arrays as comma-separated query
+values, including an empty array as `stages=`. Membership, precedence, metadata,
+and bulk-selection semantics are owned by [Jobs & Materials](api/jobs-and-materials.md)
+and the [complete contract](api/complete-contract.md).
+The Operations browser adapter validates the raw stage array with the shared
+schema before merging stage-local pages. It preserves explicit empty arrays,
+scalar fallback for invalid or oversized arrays, and the requested scalar in
+response metadata. Its input contract accepts readonly stage arrays.
+Text sorts use lowercase locale comparison consistent with the browser merger.
+Discovery sorts preserve the browser's locale comparison of raw timestamp
+strings, including mixed fractional/offset notation, rather than instant order.
+Source/company filters match literal Unicode-lowercased substrings on
+summary-equivalent scalar values. All searches and sorts use SQLite selection
+over the app-owned, rebuildable
+[query index](architecture/read-model.md#job-list-sqlite-selection).
+Timestamp cutoffs compare precomputed instants inclusively at JavaScript
+millisecond precision, including the OR of two cutoffs. Lists and all-matching
+bulk selection share those predicates. Index refresh, totals, page selection
+and selected-summary joins stay within one SQLite transaction; only the
+returned page receives DTO hydration, availability and template reads.
 
 Jobs list/detail include Enrichment's persisted `availability` observation:
 latest attempt/verdict, last successful verification, next due, acquisition
@@ -168,6 +191,10 @@ See [Operations & Events](api/operations-and-events.md#pipeline-operations-snaps
 Source registry, quarantine, locator candidates, manual capture, schedules, and
 role-match feedback are covered in
 [Profile & Settings](api/profile-and-settings.md#discovery-controls).
+Source-locator GET uses a read-only database connection and never promotes.
+History proposals join saved source-control receipts and registry overlaps;
+review writes and durable coordinate decisions commit atomically. The history
+scan and explicit suppression reset are CLI-owned.
 
 `POST /v1/jobs/import-url` accepts `{ "url": "https://…" }` and awaits the
 worker-owned `JobUrlImportWorkflow`. It returns either the canonical imported
@@ -308,6 +335,9 @@ confirmation, outreach drafts, send logs, and follow-ups share one route family.
 Global and per-job stage runs, rescore/re-tailor, retry, mark-applied, and
 mark-skipped commands are summarized in
 [Operations & Events](api/operations-and-events.md#starting-work).
+Enrichment resets use the synchronous Python application service through
+`reset_enrichment`; its transaction and preservation rules are defined in
+[Enrichment Retry Ownership](architecture/contracts-types-and-api-boundaries.md#enrichment-retry-ownership).
 
 ## Discovery Target Search
 
@@ -419,3 +449,27 @@ Semantic read envelopes and citations are shared in Contracts. Discovery execute
 See [the decision](decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
 
 Private screening-answer reads and commands use the generated endpoint clients and registered `screening_answers` Python RPC. See [Jobs and Materials](api/jobs-and-materials.md#screening-answers).
+
+The existing Job Detail and daily digest reads also expose optional saved [company briefings](user/company-briefings.md). They perform no fetch/model work; configuration and refresh are explicit local CLI commands. See [the wire contract](api/complete-contract.md#company-briefings).
+
+## Provider Endpoint Registration
+
+`GET /v1/providers/status`, `GET /v1/providers/models`, and
+`POST /v1/providers/codex/verify` share the existing endpoint specification,
+registered feature handlers and generated checked clients. Legacy query/body
+values remain ignored. The [provider contract](api/profile-and-settings.md#provider-endpoint-compatibility)
+defines status/error compatibility; the [migration recipe](architecture/contracts-types-and-api-boundaries.md#incremental-endpoint-migration)
+shows how to adopt later families without changing the #954 envelope boundary.
+
+## Accepted DOCX Export
+
+Job Detail exports original accepted resume and cover-letter text through the
+strict `material-exports` endpoint and runtime-bound Python RPC. Registered DOCX
+downloads verify owned paths and output hashes. See [Jobs & Materials](api/jobs-and-materials.md#artifacts-and-resume-templates)
+and the [complete contract](api/complete-contract.md#accepted-material-docx-exports)
+for request fields, source fences and errors.
+
+Actual offer terms and accepted/declined decisions use the private per-job
+`/v1/jobs/:jobId/offer` route family; [Jobs & Materials API → Actual Offers](api/jobs-and-materials.md#actual-offers)
+owns its source, expected-revision and correction semantics. Offer communication
+uses the existing reviewed outreach routes and manual-send boundary.

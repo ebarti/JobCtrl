@@ -279,3 +279,13 @@ export function createOutcomeSuggestionDecided(
 ): OutcomeSuggestionDecided {
   return createDomainEvent("OutcomeSuggestionDecided", tenantId, payload);
 }
+
+/** Public invalidation references; private offer terms are available only in the offer read. */
+export type OfferRecordChanged = DomainEvent<"OfferRecordChanged", {
+  readonly jobId: string;
+  readonly revisionId: string;
+  readonly decisionId: string | null;
+}>;
+export function createOfferRecordChanged(tenantId: TenantId, payload: OfferRecordChanged["payload"]): OfferRecordChanged {
+  return createDomainEvent("OfferRecordChanged", tenantId, payload);
+}

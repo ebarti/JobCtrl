@@ -6,7 +6,7 @@ import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 
 import type { MarketCompensationEstimateResponse } from "../src/contracts.js";
-import { getJobDetail } from "../src/read-model.js";
+import { refreshProjections } from "../src/projections.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp } from "../src/server.js";
 import { initializeExactDatabase } from "./exact-schema.js";
@@ -365,7 +365,7 @@ describe("market compensation estimates API", () => {
     }
   });
 
-  it("rebuilds stale projections without displaying unclassified observations", async () => {
+  it.each(["obsolete", "current"])("rebuilds stale detail with a %s list projection without displaying unclassified observations", async (listVersion) => {
     const { app, dbPath, cleanup } = withTempApp();
     insertEstimate(dbPath, ESTIMATED_JOB_ID, {
       estimatorVersion: "company-role-reported-compensation-canonical-benchmark-v1:direct:legacy",
@@ -382,7 +382,8 @@ describe("market compensation estimates API", () => {
       factors: [{ name: "level", score: 0.65, band: "medium", reason: "All-level fallback" }],
     });
     try {
-      // Seed a v3 projection so the next normal read must upgrade it without a source refresh.
+      // Startup captured an empty detail audit. A later list-only reconciliation
+      // must not leave that audit behind, even with no pending domain event.
       const db = new Database(dbPath);
       db.prepare("DELETE FROM semantic_entity_bindings WHERE entity_kind='market_compensation'").run();
       db.prepare(`INSERT INTO resume_templates (
@@ -395,12 +396,19 @@ describe("market compensation estimates API", () => {
       ) VALUES ('local', 'built_in:modern-html:v1', 'built_in:modern-html', 1,
         'Modern HTML', 'active', ?, '{}', 'seed-hash', ?)`)
         .run(JSON.stringify(BUILT_IN_RESUME_TEMPLATE_THEME), "2026-09-14T00:00:00Z");
-      getJobDetail(db, ESTIMATED_JOB_ID);
-      db.prepare(`UPDATE job_list_projections SET compensation_summary_json = json_set(compensation_summary_json,
-        '$.projectionVersion', 3, '$.market.estimateState', 'estimated_range', '$.market.displayRange', 'EUR 112000-142000/year')
-        WHERE job_id = ?`).run(ESTIMATED_JOB_ID);
-      const body = getJobDetail(db, ESTIMATED_JOB_ID)!;
+      refreshProjections(db);
+      expect(db.prepare(`SELECT json_extract(compensation_audit_json, '$.market.recordStatus') AS status
+        FROM job_detail_projections WHERE job_id = ?`).get(ESTIMATED_JOB_ID))
+        .toEqual({ status: "not_requested" });
+      if (listVersion === "obsolete") {
+        db.prepare(`UPDATE job_list_projections SET compensation_summary_json = json_set(compensation_summary_json,
+          '$.projectionVersion', 3, '$.market.estimateState', 'estimated_range', '$.market.displayRange', 'EUR 112000-142000/year')
+          WHERE job_id = ?`).run(ESTIMATED_JOB_ID);
+      }
       db.close();
+      const response = await app.inject({ method: "GET", url: `/v1/jobs/${ESTIMATED_JOB_ID}` });
+      expect(response.statusCode, response.body).toBe(200);
+      const body = response.json();
       expect(body.job.compensationSummary?.market).toMatchObject({recordStatus:"unavailable",displayRange:null,failureCode:"compensation_determination_unavailable"});
       expect(body.compensationAudit?.market).toMatchObject({recordStatus:"unavailable"});
       const readback = new Database(dbPath);

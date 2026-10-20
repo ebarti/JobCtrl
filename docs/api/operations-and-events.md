@@ -22,7 +22,13 @@ Temporal accepts the workflow. Eligibility no-ops and synchronous commands use
 `200`; invalid input or a failed start returns an error.
 
 `POST /v1/jobs/:jobKey/actions/retry-stage` has two distinct commands. A plain
-reset (`runAfter: false`) is local and synchronous. A reset-and-run
+reset (`runAfter: false`) is local and synchronous. Enrichment resets cross the
+local Python RPC boundary and acknowledge the committed application-service
+transaction with the same `200` reset response; Temporal and a healthy activity
+worker are not required for reset-only. A mixed bulk retry containing Enrich
+uses that same transaction for the complete cohort. See
+[ownership and preservation](../architecture/contracts-types-and-api-boundaries.md#enrichment-retry-ownership).
+A reset-and-run
 (`runAfter: true`) checks worker readiness before the reset; on
 `503 worker_runtime_unavailable`, the failed/blocked stage and its event history
 are preserved exactly so a dispatch precondition cannot erase retry evidence.
@@ -314,3 +320,19 @@ because a generation event arrived.
 | HTTP, operations snapshot, JSON-RPC, and SSE transport | `apps/api` |
 | Durable workflows and activities | `workers/automation` |
 | Browser cache and invalidation | `apps/web/src/contexts/operations` |
+
+The existing digest returns optional `companyBriefings` summaries (at most five), linking saved company context to canonical JobIds. It does not change acknowledgement semantics or initiate refresh. Internal `CompanyBriefingRecorded` events are withheld from SSE; reference-only `JobUpdated` events notify linked job/digest readers. See [Company Briefings](complete-contract.md#company-briefings).
+
+## Provider Operations And Workflow Boundaries
+
+Provider status, model catalogs and explicit Codex verification are synchronous
+registered feature handlers. Their [compatibility contract](profile-and-settings.md#provider-endpoint-compatibility)
+keeps provider readiness separate from Temporal action-worker readiness. They
+do not start or resume a workflow, emit settlement markers, refresh accepted
+materials or change approvals. Existing Discover/profile entry, handoff,
+checks, recovery and settlement remain covered by their owning workflow tests.
+
+The provider tests use a synthetic dispatcher; the workflow compatibility tests
+use the synthetic handles described in the
+[architecture reference](../architecture/contracts-types-and-api-boundaries.md#incremental-endpoint-migration).
+Neither seam establishes live Temporal persistence or provider authentication.

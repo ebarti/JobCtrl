@@ -771,11 +771,8 @@ func rollbackExisting(ctx launchContext, store *release.Store, active release.Ac
 	if err != nil {
 		return err
 	}
-	if active.SelectorBuildID != target.BuildID {
-		targetProtocol := targetVerified.runtime.LauncherProtocol
-		if !protocolSupports(activeVerified.distribution, targetProtocol) || !protocolSupports(targetVerified.distribution, targetProtocol) {
-			return fmt.Errorf("rollback launcher protocol %d cannot supervise both active and target payloads; choose a retained compatible bridge release", targetProtocol)
-		}
+	if !protocolSupports(activeVerified.distribution, launcherProtocol) || !protocolSupports(targetVerified.distribution, launcherProtocol) {
+		return fmt.Errorf("current launcher protocol %d cannot supervise both active and rollback payloads; choose a retained compatible bridge release", launcherProtocol)
 	}
 	journal, err := store.Begin("rollback", &active.Receipt, &target, target.DescriptorSHA256)
 	if err != nil {
@@ -785,21 +782,8 @@ func rollbackExisting(ctx launchContext, store *release.Store, active release.Ac
 	if err := advance(store, &journal, release.MetadataVerified); err != nil {
 		return err
 	}
-	if active.SelectorBuildID != target.BuildID {
-		if err := advance(store, &journal, release.SelectorHandoffPending); err != nil {
-			return err
-		}
-		if err := handoffPublicSelector(store.Home, targetVerified); err != nil {
-			return err
-		}
-		if err := advance(store, &journal, release.SelectorReplaced); err != nil {
-			return err
-		}
-		active, err = store.WriteSelectedActive(active.Receipt, active.Generation, target.BuildID, active.Acquisition)
-		if err != nil {
-			return err
-		}
-	}
+	// Keep the compatible current selector: immutable older launchers may not
+	// support journal-authorized startup or the current recovery protocol.
 	if err := advance(store, &journal, release.Quiescing); err != nil {
 		return err
 	}
@@ -855,7 +839,7 @@ func rollbackExisting(ctx launchContext, store *release.Store, active release.Ac
 	if err := advance(store, &journal, release.CandidateHealthy); err != nil {
 		return fail(err)
 	}
-	if _, err := store.WriteSelectedActive(target, active.Generation, target.BuildID, active.Acquisition); err != nil {
+	if _, err := store.WriteSelectedActive(target, active.Generation, active.SelectorBuildID, active.Acquisition); err != nil {
 		return fail(err)
 	}
 	if err := writeLegacyCurrent(store.Home, target); err != nil {
@@ -992,7 +976,9 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 	// active-record write. Identify the bytes actually installed rather than
 	// trusting the pre-crash record, then preserve that compatible identity in
 	// the recovered active record so terminal journals cannot hide a mismatch.
-	if selectorMatchesRelease(store, selector, journal.Old.BuildID) {
+	if selectorMatchesRelease(store, selector, active.SelectorBuildID) {
+		selectorBuild = active.SelectorBuildID
+	} else if selectorMatchesRelease(store, selector, journal.Old.BuildID) {
 		selectorBuild = journal.Old.BuildID
 	} else if journal.Candidate != nil && selectorMatchesRelease(store, selector, journal.Candidate.BuildID) {
 		selectorBuild = journal.Candidate.BuildID
@@ -1101,6 +1087,10 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 			return fmt.Errorf("candidate launcher protocol %d cannot supervise both active and candidate payloads; stage an explicit compatible bridge release", candidateProtocol)
 		}
 	}
+	unused, err := unusedDatabasePair(ctx.Instance.StateDir)
+	if err != nil {
+		return err
+	}
 	journal, err := store.Begin(operation, &active.Receipt, &candidate, candidate.DescriptorSHA256)
 	if err != nil {
 		return err
@@ -1147,6 +1137,23 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 		}
 		_ = store.Advance(&journal, release.RolledBack, cause)
 		return cause
+	}
+	if unused {
+		if err := advance(store, &journal, release.RollbackRestoring); err != nil {
+			return err
+		}
+		if err := startReleaseCommand(ctx, active.Receipt, journal.ID); err != nil {
+			return fmt.Errorf("initialize unused predecessor before paired backup: %w; run `jobctrl rollback` to recover", err)
+		}
+		if err := stop(ctx); err != nil {
+			return fmt.Errorf("quiesce initialized predecessor: %w", err)
+		}
+		if stillUnused, err := unusedDatabasePair(ctx.Instance.StateDir); err != nil || stillUnused {
+			return errors.New("predecessor did not initialize a complete database pair; preserve the journal for recovery")
+		}
+		if err := advance(store, &journal, release.Quiescing); err != nil {
+			return err
+		}
 	}
 	databaseVersion, err := jobCtrlSchemaVersion(activeRuntime)
 	if err != nil {
@@ -1304,11 +1311,23 @@ func startRelease(ctx launchContext, receipt release.Receipt, journalID string) 
 	if err != nil {
 		return fmt.Errorf("verify release immediately before execution: %w", err)
 	}
-	path := filepath.Join(verified.payloadRoot, "launcher", "jobctrl")
+	path := filepath.Join(store.Home, "bin", "jobctrl")
+	controller := selectorSupportsJournalStartup(store, path)
+	if !controller {
+		path = filepath.Join(verified.payloadRoot, "launcher", "jobctrl")
+	}
 	cmd := exec.Command(path, "start", "--no-open")
 	cmd.Env = append(append([]string{}, ctx.Environment...), "JOBCTRL_TRANSITION_CANDIDATE=1")
 	if journalID != "" {
 		cmd.Env = append(cmd.Env, "JOBCTRL_TRANSITION_JOURNAL="+journalID)
+		if controller {
+			cmd.Env = append(cmd.Env, "JOBCTRL_TRANSITION_TARGET="+receipt.BuildID)
+		}
+	}
+	if controller {
+		if _, _, err := transitionSelectorPayload(path, cmd.Env); err != nil {
+			return fmt.Errorf("verify transition controller immediately before execution: %w", err)
+		}
 	}
 	output, err := cmd.CombinedOutput()
 	if err != nil {

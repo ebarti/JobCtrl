@@ -14,6 +14,10 @@ export const OUTREACH_DRAFT_STATUS_LABELS: Record<OutreachDraftStatus, string> =
 export const OUTREACH_DRAFT_KIND_LABELS: Record<OutreachDraftKind, string> = {
   intro_request: "Intro request",
   follow_up: "Follow-up",
+  offer_negotiation: "Offer negotiation",
+  offer_clarification: "Offer clarification",
+  offer_acceptance: "Offer acceptance",
+  offer_decline: "Offer decline",
 };
 
 export function outreachDraftStatusLabel(status: OutreachDraftStatus | string): string {

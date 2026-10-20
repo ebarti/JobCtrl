@@ -93,11 +93,13 @@ Outside requests run when you start a step that needs them, and while the local
 worker rechecks due saved postings:
 
 - **LLM providers:** posting text, relevant profile evidence, and generated
-  text. Opt-in Required-bullet coaching sends the selected saved bullets and
+  text. Offer communication drafts also send the confirmed offer terms and sources,
+  decision attestation, and recorded compensation evidence through the configured
+  outreach provider. Optional company briefings send only selected public source text and the reviewed company identity. Opt-in Required-bullet coaching sends the selected saved bullets and
   linked evidence to your configured provider. During a dry run, Claude also sees the application page, but never your
   profile or documents.
 - **Job boards and other sites:** Discover, Enrich, and dry-run requests, plus
-  opt-in contact research and bounded saved-posting availability checks. The
+  opt-in contact research, company briefings and bounded saved-posting availability checks. The
   availability checks use public APIs or an anonymous browser. With the browser extension paired and connected,
   Discover and Enrich run in your Chrome session and carry its cookies.
 - **Salary data sources:** when a benchmark is missing or over a week old, a

@@ -36,6 +36,15 @@ command, schedule, or implicit TTL deletion.
 
 ## Schema At A Glance
 
+The API's job-list query index is app-owned SQLite TEMP state on its retained
+list connection. It adds no table, index, schema-version stamp or migration to
+the canonical exact-v14 database. Python and TypeScript projection ownership
+and exact-manifest admission remain unchanged. TEMP rows and freshness markers
+are disposable and rebuilt after connection close, app restart or database
+replacement; they are not a backup or a new source authority. See
+[job-list selection](read-model.md#job-list-sqlite-selection) for snapshot,
+failure and hydration boundaries.
+
 The database is easier to understand as a set of ownership families. The
 diagram shows the main relationships; the table below names the exact tables.
 
@@ -115,7 +124,8 @@ jobs, runs, or feedback signals:
 | Retained rows | Remaining references or effect |
 | --- | --- |
 | `manual_capture_queue` with `job_id IS NULL` | Includes pending Discovery captures and their `retry_context_json`; they can still appear as required on the Discovery page. Job-linked captures cascade with their Job. |
-| `source_locator_candidates` | Retains discovered source URLs and manual-action reasons. |
+| `source_locator_candidates` | Retains discovered source URLs and manual-action reasons, including deduplicated history proposals. |
+| Source-control `job_events` with null `job_id` | History-proposal `SourceLocationCandidateDiscovered` receipts retain origin JobIds/URLs, source-observation/run IDs, extraction/snapshot hashes and saved samples. `SourceLocationCandidateReviewed` retains coordinate-scoped promotion/rejection/reset decisions. These are retained source-control authorities, not job-owned rows; suppression survives Job deletion and job-data purge. |
 | `learning_recommendation_jobs`, `learning_recommendation_evidence_jobs` | Immutable learning provenance retains historical JobIds. |
 | `learning_recommendation_evidence`, `tailoring_feedback_signal_reviews`, `tailoring_feedback_signal_contradictions` | Append-only evidence/reviews retain signal/review references and historical JobIds even after source signals cascade away. |
 | `learning_recommendation_tombstones` | Append-only tombstones retain `affected_signal_id` after a Job-owned source signal cascades away. |
@@ -302,8 +312,9 @@ or apply dispatch behavior.
 Operations projections materialize compensation read data from those canonical
 tables into `job_list_projections.compensation_summary_json`,
 `job_detail_projections.compensation_summary_json`, and
-`job_detail_projections.compensation_audit_json`. Both Python and TypeScript
-projection builders own the same JSON shape. The list/detail API deserializes
+`job_detail_projections.compensation_audit_json`. TypeScript exclusively writes
+the detail family; list summaries remain shared pending their own cutover.
+See the [writer inventory and recovery contract](data-events-and-projections.md#projection-ownership-and-consistency). The list/detail API deserializes
 those projection columns only; it does not parse raw salary text on read.
 `JobSummary.salary` remains the compatibility raw string.
 
@@ -446,3 +457,72 @@ staged files. See [Material Locale Variants](material-locale-variants.md).
 ## Screening Answer Ledger
 
 Exact-v14 screening answer revisions use existing indexed `job_events` entries with `screening_question`, `screening_library`, `screening_failure` and `screening_notification` entity kinds. Private snapshots and supporting facts are exposed only by the screening owner; general activity/SSE retain references. The [owning contract](reviewed-screening-answers.md) defines atomic revision comparisons and source/version fences. No schema migration is introduced.
+
+## Company Briefing Ledger
+
+Materials stores immutable `company_briefing_config`, `company_briefing_link`, `company_briefing_accepted` and `company_briefing_attempt` records in the existing indexed exact-v14 `job_events` table. `entity_ref` is the explicit company URL hash or canonical JobId; tenant and event ID select the current revision. Accepted snapshots retain bounded public text and join their recorded `semantic_determinations` ID. Configuration and company history have no JobId foreign key and survive removal of the last linked job. Job link rows use the canonical JobId foreign key. No schema migration or separate store is introduced. See [Company Briefings](../user/company-briefings.md).
+
+## Cover-Letter Review Previews
+
+Cover-letter review previews live under
+`generated/cover-letter-previews/<preview UUID>/` with a full source snapshot,
+`letter.pdf` and a private identity/settings manifest. Preview files are separate
+from registered accepted Materials. Explicit acceptance registers that same PDF
+path in a new `job_materials_artifacts` generation and persists the print identity
+in `metadata_json.cover_letter_review`; the aggregate metadata retains the same
+receipt. This uses the existing exact schema. Historical generations, resume
+slots, layout boxes and source-bound records are retained. Failed acceptance
+never deletes a preview or previously accepted files. A committed receipt permits
+retry/reload reconciliation after a lost response. These local generated files
+are private material and must not be committed.
+The final source/PDF/manifest fence runs inside the promotion transaction after
+its last insert. A mismatch rolls back the new rows without restoring externally
+changed source files or changing prior accepted PDF files and authorization rows.
+
+Unchanged slots reuse their artifact IDs across generations. Readers that need
+an exact source, including DOCX export, bind both ID and generation. Artifact
+projections use the newest canonical occurrence with only that generation's
+layout and provenance rows; retained copies are history, not additional lines.
+Cover-only carry-forward binds both selected resume IDs to their original
+coherent generation, using the same selector as Apply Review. It never combines
+a newer partial resume generation with another PDF/text version. Cover aliases
+retain same-generation row order. Older aliases and partial generations remain
+historical. Cover-text display reads the canonical source ID and checks its hash;
+unreadable or changed source bytes cannot substitute another alias.
+
+The persisted review PDF digest remains authoritative if a file disappears or
+changes. Default generated cover PDFs store source-text and PDF digests in their
+artifact metadata with the source ID/generation, print settings and renderer.
+Unbound historical PDFs are never inferred current from generation alone.
+Owned source/preview/PDF I/O rejects symlink components, hard-linked files and
+nonregular or oversized inputs. RPC render output is a new exclusive file in its
+UUID attempt; failed cleanup removes only the original owned attempt directory.
+
+## Career-learning snapshot ownership
+
+Selected-job cohorts, failed comparison attempts and user-chosen milestones use
+scoped `career_cohort`, `career_attempt` and `career_milestone` records in the
+existing exact-v14 `job_events` table. Semantic envelopes remain in
+`semantic_determinations`. A milestone retains its immutable origin and later
+activity revisions; user completion evidence never changes Candidate Profile
+rows. These private snapshots can retain posting text and confirmed achievement
+excerpts after a source changes or a job is deleted. Job-data purge preserves
+these records and discloses `career_learning_records` in retained-reference
+counts. There is no new schema migration or automatic retention cleanup.
+
+## Private Offer Ledger
+
+Actual offer terms and accepted/declined corrections use immutable
+`job_events` rows with `entity_kind = offer`, `entity_ref = JobId` and
+`event_type = OfferRecordChanged` on the existing exact-v14 schema. Payloads
+contain a `termsRevision` or `decision`, including user-confirmed source
+reference/quotation and recorded timestamps. These scoped rows are canonical
+private state, following the existing screening ledger pattern; they are not
+public event payloads. SSE strips the private payload to reference IDs before
+publication. Job deletion follows the existing tenant/JobId foreign key.
+
+`outreach_drafts.gate_results_json.sourceContext` retains the offer binding,
+source snapshot and fingerprint used for review; semantic determinations remain
+in their existing canonical tables. No new database, profile copy, file store
+or runtime migration is introduced. Offer writes are transactional and retain
+all prior revisions and decisions.

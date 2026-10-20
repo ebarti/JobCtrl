@@ -476,7 +476,6 @@ def test_evidence_usage_projection_inverts_profile_provenance_and_requirement_fi
     assert all(gap["kind"] != "missing_skill" for gap in gaps)
 
 
-
 def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
     conn: sqlite3.Connection,
 ) -> None:
@@ -785,14 +784,8 @@ def test_projection_suppresses_historical_posted_as_market_rows(
     assert first_builder.refresh() == 1
     initial = conn.execute(
         """
-        SELECT list.compensation_summary_json,
-               detail.compensation_summary_json AS detail_summary_json,
-               detail.compensation_audit_json
-        FROM job_list_projections AS list
-        JOIN job_detail_projections AS detail
-          ON detail.tenant_id = list.tenant_id
-         AND detail.job_id = list.job_id
-        WHERE list.tenant_id = ? AND list.job_id = ?
+        SELECT compensation_summary_json FROM job_list_projections
+        WHERE tenant_id = ? AND job_id = ?
         """,
         (str(LOCAL_TENANT), str(job_id)),
     ).fetchone()
@@ -803,8 +796,6 @@ def test_projection_suppresses_historical_posted_as_market_rows(
     # existing list/detail compensation payloads still carry projection v1.
     for table, column in (
         ("job_list_projections", "compensation_summary_json"),
-        ("job_detail_projections", "compensation_summary_json"),
-        ("job_detail_projections", "compensation_audit_json"),
     ):
         payload = json.loads(
             conn.execute(
@@ -847,30 +838,15 @@ def test_projection_suppresses_historical_posted_as_market_rows(
 
     row = conn.execute(
         """
-        SELECT list.compensation_summary_json,
-               detail.compensation_summary_json AS detail_summary_json,
-               detail.compensation_audit_json
-        FROM job_list_projections AS list
-        JOIN job_detail_projections AS detail
-          ON detail.tenant_id = list.tenant_id
-         AND detail.job_id = list.job_id
-        WHERE list.tenant_id = ? AND list.job_id = ?
+        SELECT compensation_summary_json FROM job_list_projections
+        WHERE tenant_id = ? AND job_id = ?
         """,
         (str(LOCAL_TENANT), str(job_id)),
     ).fetchone()
     assert row is not None
     summary = json.loads(row["compensation_summary_json"])
-    detail_summary = json.loads(row["detail_summary_json"])
-    audit = json.loads(row["compensation_audit_json"])
     assert summary["projectionVersion"] == 4
-    assert detail_summary["projectionVersion"] == 4
-    assert audit["projectionVersion"] == 4
     assert summary["market"]["recordStatus"] == "not_requested"
-    assert audit["market"] == {
-        "ok": True,
-        "recordStatus": "not_requested",
-        "jobId": str(job_id),
-    }
 
 
 def _insert_score(
@@ -968,18 +944,6 @@ def test_projects_score_audit_columns_from_job_scores(conn: sqlite3.Connection) 
     assert json.loads(list_row["score_criteria_json"])["formula_version"] == "score-v3"
     assert json.loads(list_row["score_trace_json"])["scoring_policy_version"] == 3
 
-    detail_row = conn.execute(
-        """
-        SELECT score_criteria_json, score_trace_json, score_correction_json
-        FROM job_detail_projections WHERE job_id = ?
-        """,
-        (str(job_id),),
-    ).fetchone()
-    assert detail_row is not None
-    assert detail_row["score_criteria_json"] == criteria_json
-    assert detail_row["score_trace_json"] == trace_json
-    assert detail_row["score_correction_json"] is None
-
 
 def test_projects_score_correction_json_when_correction_exists(
     conn: sqlite3.Connection,
@@ -1019,14 +983,6 @@ def test_projects_score_correction_json_when_correction_exists(
     ).fetchone()
     assert list_row is not None
     assert list_row["score_correction_json"] == correction_json
-
-    detail_row = conn.execute(
-        "SELECT score_correction_json FROM job_detail_projections WHERE job_id = ?",
-        (str(job_id),),
-    ).fetchone()
-    assert detail_row is not None
-    assert detail_row["score_correction_json"] == correction_json
-    assert json.loads(detail_row["score_correction_json"])["corrected_fit_score"] == 7
 
 
 def test_score_audit_backfill_repopulates_existing_null_rows(conn: sqlite3.Connection) -> None:
@@ -1093,18 +1049,9 @@ def test_score_audit_backfill_repopulates_existing_null_rows(conn: sqlite3.Conne
     assert list_row["score_criteria_json"] == criteria_json
     assert list_row["score_trace_json"] == trace_json
     assert list_row["score_correction_json"] == correction_json
-
-    detail_row = conn.execute(
-        """
-        SELECT score_criteria_json, score_trace_json, score_correction_json
-        FROM job_detail_projections WHERE job_id = ?
-        """,
-        (str(job_id),),
-    ).fetchone()
-    assert detail_row is not None
-    assert detail_row["score_criteria_json"] == criteria_json
-    assert detail_row["score_trace_json"] == trace_json
-    assert detail_row["score_correction_json"] == correction_json
+    assert conn.execute(
+        "SELECT score_criteria_json FROM job_detail_projections WHERE job_id = ?", (str(job_id),)
+    ).fetchone()[0] is None
 
 
 def test_score_audit_backfill_runs_at_most_once(conn: sqlite3.Connection) -> None:

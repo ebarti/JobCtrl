@@ -14,7 +14,7 @@ import { seedApplicationUrl } from "./seed-enrichment.js";
  *    match the fixture's ``expected`` block, both as raw projection columns AND as
  *    the camelCase DTOs the read model serves, and
  *  - the FULL dual-written column set for job_list_projections /
- *    job_detail_projections / dashboard_projections matches the fixture's
+ *    dashboard_projections plus the TS-owned job_detail_projections matches the fixture's
  *    ``expectedProjections`` block key-for-key, PLUS a column-set guard: the set
  *    of columns the TS builder emits must equal the fixture's expected keys plus
  *    the wall-clock ``nonDeterministicColumns``. That guard fails if EITHER

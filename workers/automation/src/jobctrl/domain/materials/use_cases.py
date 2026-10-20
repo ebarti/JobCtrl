@@ -124,6 +124,7 @@ from jobctrl.domain.materials.generation import GeneratedResumeDraft
 from jobctrl.domain.ports.artifact_generation import GeneratedProseDraft
 from jobctrl.llm_lanes import lane_bound
 from jobctrl.domain.ports.materials import (
+    ArtifactTextWriter,
     BulletProvenanceRepository,
     EmployerAnalysisRepository,
     MaterialsRepository,
@@ -226,15 +227,6 @@ class TailoringLlmPolicy:
         object.__setattr__(self, "candidate_models", normalized)
         if self.judge_model is not None:
             object.__setattr__(self, "judge_model", _safe_model_arg(self.judge_model))
-
-    @classmethod
-    def from_env(cls) -> "TailoringLlmPolicy":
-        from jobctrl import config
-
-        return cls(
-            candidate_models=config.get_tailoring_generator_models(),
-            judge_model=config.get_tailoring_judge_model(),
-        )
 
     @property
     def effective_candidate_models(self) -> tuple[str, ...]:
@@ -1692,9 +1684,10 @@ class TailorResumeUseCase:
         assembler: ResumeAssembler,
         job_interpreter: JobInterpreter,
         quality_judge: ArtifactQualityJudge,
+        llm_policy: TailoringLlmPolicy,
+        artifact_writer: ArtifactTextWriter,
         publisher: EventPublisher | None = None,
         max_retries: int = 3,
-        llm_policy: TailoringLlmPolicy | None = None,
         policy_repository: TailoringPolicyRepository | None = None,
         provenance_repository: BulletProvenanceRepository | None = None,
         requirement_fit_repository: "RequirementFitReportRepository | None" = None,
@@ -1713,7 +1706,8 @@ class TailorResumeUseCase:
         self._quality_judge = quality_judge
         self._publisher = publisher
         self._max_retries = max_retries
-        self._llm_policy = llm_policy or TailoringLlmPolicy.from_env()
+        self._llm_policy = llm_policy
+        self._artifact_writer = artifact_writer
         self._policy_repository = policy_repository
         # Phase 2: the canonical per-bullet provenance repository. When injected,
         # an accepted generation emits one ``BulletProvenance`` row per rendered
@@ -1939,7 +1933,6 @@ class TailorResumeUseCase:
         # the payload, provenance or review evidence that was accepted.
         tailored_text = final_candidate.tailored_text
         prefix = f"{_safe_filename_prefix(job)}_g{materials.generation}"
-        tailored_dir.mkdir(parents=True, exist_ok=True)
         text_path = tailored_dir / f"{prefix}.txt"
 
         # Field-invalid candidates never reach assembly. Preserve their source
@@ -1955,12 +1948,7 @@ class TailorResumeUseCase:
                 )
                 + "\n"
             )
-        text_path.write_text(inspection_text, encoding="utf-8")
-
-        try:
-            size_bytes = text_path.stat().st_size
-        except OSError:
-            size_bytes = None
+        size_bytes = self._artifact_writer.write_text(text_path, inspection_text)
 
         judge_record = final_candidate.record.get("judge")
         report["final_judge"] = judge_record
@@ -2169,7 +2157,8 @@ class TailorResumeUseCase:
         # the legacy file layout downstream consumers know stays intact.
         try:
             job_path = tailored_dir / f"{prefix}_JOB.txt"
-            job_path.write_text(
+            self._artifact_writer.write_text(
+                job_path,
                 "\n".join(
                     [
                         f"Title: {job.get('title', '')}",
@@ -2182,11 +2171,10 @@ class TailorResumeUseCase:
                         str(job.get("full_description", "")),
                     ]
                 ),
-                encoding="utf-8",
             )
-            (tailored_dir / f"{prefix}_REPORT.json").write_text(
+            self._artifact_writer.write_text(
+                tailored_dir / f"{prefix}_REPORT.json",
                 json.dumps(report, indent=2, default=str),
-                encoding="utf-8",
             )
         except OSError as exc:
             log.debug("Failed to write tailor side files for %s: %s", prefix, exc)
@@ -3866,11 +3854,18 @@ class RenderPdfOutcome:
 
 
 def _pdf_with_accepted_source(pdf, source, generation):
+    metadata = {**pdf.metadata, **source.metadata}
+    if pdf.type is ArtifactType.COVER_LETTER_PDF:
+        metadata.pop("cover_letter_review", None)
+        # Print identity belongs to this renderer output; source provenance
+        # must not override its settings or byte/source hashes.
+        for key in ("cover_letter_settings", "cover_letter_renderer_version", "cover_letter_text_sha256", "cover_letter_pdf_sha256"):
+            if key in pdf.metadata:
+                metadata[key] = pdf.metadata[key]
     return replace(
         pdf,
         metadata={
-            **pdf.metadata,
-            **source.metadata,
+            **metadata,
             "source_artifact_id": source.artifact_id,
             "source_generation": generation,
         },
@@ -3968,7 +3963,7 @@ class RenderPdfUseCase:
             text_path = Path(materials.cover_letter.path)
             pdf_path = text_path.with_suffix(".pdf")
             try:
-                cover_text = text_path.read_text(encoding="utf-8")
+                cover_text = text_path.read_bytes().decode("utf-8")
                 pdf_artifact = self._cover_letter_renderer.render_cover_letter_to_pdf(
                     cover_letter_text=cover_text,
                     output_path=str(pdf_path),

@@ -1,3 +1,5 @@
+import type { PostedCompensationFactResponse, MarketCompensationEstimateResponse } from "@jobctrl/contracts";
+import type { OfferReadResponse, SaveOfferTerms, RecordOfferDecision } from "@jobctrl/contracts";
 import type {
   ActionRunResponse,
   ActivityEventResponse,
@@ -318,6 +320,12 @@ export interface ApiClientPort extends EndpointClientMethods {
     body?: Partial<EnsureCurrentResumeMaterialsRequest>,
   ): Promise<EnsureCurrentResumeMaterialsResponse>;
   applicationOutcomes(): Promise<ApplicationOutcomeListResponse>;
+  postedCompensationFact(jobId: string): Promise<PostedCompensationFactResponse>;
+  marketCompensationEstimate(jobId: string): Promise<MarketCompensationEstimateResponse>;
+  jobOffer(jobId: string): Promise<OfferReadResponse>;
+  saveOfferTerms(jobId: string, body: SaveOfferTerms): Promise<OfferReadResponse>;
+  recordOfferDecision(jobId: string, body: RecordOfferDecision): Promise<OfferReadResponse>;
+
   jobApplicationOutcomes(jobKey: string): Promise<JobApplicationOutcomeListResponse>;
   recordManualApplicationOutcome(
     jobKey: string,
@@ -363,7 +371,9 @@ export interface ApiClientPort extends EndpointClientMethods {
 
   artifacts(query?: Partial<ArtifactListQuery>): Promise<PaginatedResponse<ArtifactSummary>>;
   artifact(artifactId: string): Promise<ArtifactDetail>;
+  downloadMaterialDocx(artifactId: string): Promise<Blob>;
   artifactPreviewPdfUrl(artifactId: string, cacheKey?: number | string): string;
+  coverLetterPreviewPdfUrl(jobId: string, previewId: string): string;
   artifactPreviewHtmlUrl(artifactId: string, cacheKey?: number | string): string;
   openArtifact(artifactId: string): Promise<ArtifactOpenResponse>;
 

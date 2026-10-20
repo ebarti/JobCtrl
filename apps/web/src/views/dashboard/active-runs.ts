@@ -1,23 +1,4 @@
-import type {
-  WorkflowRunsListInput,
-  WorkflowRunSummary,
-} from "../../contexts/operations/types.js";
-
-export const STARTING_RUNS_INPUT = {
-  page: 1,
-  pageSize: 12,
-  status: "starting",
-  sort: "started_at",
-  dir: "desc",
-} as const satisfies WorkflowRunsListInput;
-
-export const IN_PROGRESS_RUNS_INPUT = {
-  page: 1,
-  pageSize: 12,
-  status: "in_progress",
-  sort: "started_at",
-  dir: "desc",
-} as const satisfies WorkflowRunsListInput;
+import type { WorkflowRunSummary } from "@jobctrl/contracts";
 
 const ACTIVE_RUN_STATUSES = new Set(["starting", "in_progress"]);
 

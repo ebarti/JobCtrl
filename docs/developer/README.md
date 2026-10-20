@@ -39,6 +39,7 @@ tooling.
 | Temporal workflows, activities, retries, or stage execution | [Job Pipeline](../architecture/pipeline/index.md) |
 | Backend aggregates, ports, or bounded-context language | [Backend Domain Model](../architecture/domain-model/index.md) |
 | Frontend state, contexts, ports, or realtime invalidation | [Frontend Architecture](../architecture/frontend/index.md) |
+| Version preparation, signed publication, or release verification | [Releasing JobCtrl](releasing.md) |
 | Documentation structure or wording | [Documentation Standards](documentation-standards.md) |
 | CLI setup diagnostics and their verification limits | [Doctor Diagnostic Coverage](qa/doctor-diagnostics.md) |
 

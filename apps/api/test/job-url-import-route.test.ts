@@ -309,7 +309,7 @@ describe("POST /v1/jobs/import-url", () => {
   });
   it.each(["provider_unavailable","budget_denied","malformed_json","schema_violation","foreign_source_id","non_verbatim_quote","mismatched_value"])("exposes the distinct safe %s interpretation failure", async (code) => {
     const {dbPath,dir,cleanup}=fixture();
-    const importer=createWorkerJobUrlImporter({dispatcherFactory:()=>({call:async()=>({jsonrpc:"2.0",id:1,result:{result:{status:"failed",outcome:null,job_id:null,item_id:null,reason:null,imported_at:null,already_existed:false,error:null,error_code:`semantic_determination_${code}`}}}),close:async()=>{}})});
+    const importer=createWorkerJobUrlImporter({dispatcherFactory:()=>({call:async()=>({jsonrpc:"2.0",id:1,result:{runId:"synthetic-import-workflow",workflowId:"synthetic-import-workflow",firstExecutionRunId:"synthetic-import-execution",result:{status:"failed",outcome:null,job_id:null,item_id:null,reason:null,imported_at:null,already_existed:false,error:null,error_code:`semantic_determination_${code}`}}}),close:async()=>{}})});
     const app=buildApp({dbPath,configPath:path.join(dir,"config.json"),jobUrlImporter:importer,jobUrlValidator:async()=>({allowed:true}),requireHealthyWorkerForActions:false});
     try {
       const response=await app.inject({method:"POST",url:"/v1/jobs/import-url",payload:{url:"https://example.com/jobs/42"}});

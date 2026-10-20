@@ -79,41 +79,6 @@ describe("exact-v7 write-model stage state", () => {
     expect(row).toEqual({ state: "pending", metadata_json: null });
   });
 
-  it("clears canceled Enrich execution ownership on an admin reset", () => {
-    const fixture = createFixture();
-    fixture.db.prepare(
-      `INSERT INTO jobs (tenant_id, job_id, url, title, discovered_at)
-       VALUES ('local', ?, ?, 'Platform Engineer', ?)`,
-    ).run(JOB_ID, JOB_URL, "2026-07-31T09:00:00.000Z");
-    fixture.db.prepare(
-      `INSERT INTO job_stage_states (
-         tenant_id, job_id, stage, state, attempt_count, max_attempts,
-         updated_at, retryable, metadata_json
-       ) VALUES ('local', ?, 'enrich', 'canceled', 1, 3, ?, 1, ?)`,
-    ).run(
-      JOB_ID,
-      "2026-07-31T09:00:00.000Z",
-      JSON.stringify({
-        workflowId: "workflow-canceled",
-        temporalRunId: "run-canceled",
-      }),
-    );
-
-    const reset = resetJobStage(fixture.db, JOB_ID, "enrich", {
-      resetAttempts: false,
-    });
-    const row = fixture.db.prepare(
-      `SELECT state, metadata_json FROM job_stage_states
-       WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'`,
-    ).get(JOB_ID) as { state: string; metadata_json: string | null };
-
-    expect(reset).toMatchObject({
-      jobUrl: JOB_URL,
-      stage: { state: "pending", attemptCount: 1 },
-    });
-    expect(row).toEqual({ state: "pending", metadata_json: null });
-  });
-
   it("makes an exhausted stage retryable by resetting its attempt budget", () => {
     const fixture = createFixture();
     fixture.db.prepare(

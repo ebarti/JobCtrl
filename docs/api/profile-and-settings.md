@@ -105,6 +105,14 @@ source fields, input/output limits, model-use flags and error codes.
 | Review queues | locator candidates, quarantine, and manual-capture routes |
 | Feedback | discovery feedback and role-match decision routes |
 
+Source-locator reads are strictly read-only. The opt-in
+`source-proposals from-history` CLI path feeds the same queue and registry with
+saved origin/extraction receipts and unknown completeness. Explicit review
+records coordinate-scoped decisions; rejection persists until a CLI reset.
+Promotion preserves an existing active overlap and refuses held/disabled
+sources. See [Discovery](../user/discovery.md#propose-sources-from-saved-posting-history)
+and the [wire contract](complete-contract.md#discovery-controls).
+
 These controls decide where discovery may look and how proposed sources or jobs
 enter the system. They do not hold provider credentials or raw feed contents.
 
@@ -212,3 +220,30 @@ file does not contain credentials, feed locations, or compensation records.
 | Settings → Browser & extension (`/settings/browser`) | Apply-browser capability adoption/removal plus live-profile extension pairing, installation selection, status, and token rotation. It does not expose profile copying. |
 
 This split keeps a configuration change from masquerading as candidate evidence.
+
+## Provider Endpoint Compatibility
+
+The provider family is declared in the shared endpoint registry and handled by
+`apps/api/src/provider-handlers.ts`. Generated `providerStatus`,
+`providerModels` and `verifyCodexProvider` clients parse the sanitized success
+schemas. GET calls send no body; verification sends `{}` by default. The server
+continues to ignore extra query/body inputs. Existing loopback Host/peer, CORS
+and mutation Origin/Referer/capability checks apply before dispatch.
+
+| Operation | RPC error | Invalid result | Transport failure |
+| --- | --- | --- | --- |
+| Status | 502 `provider_status_failed` | 502 `provider_status_failed` | 503 `provider_status_failed` |
+| Models | 503 `provider_models_failed` | 503 `provider_models_failed` | 503 `provider_models_failed` |
+| Codex verification | 502 `provider_verification_failed` | 502 `provider_verification_failed` | 503 `provider_verification_failed` |
+
+Errors expose fixed messages, never dispatcher exception text or error data.
+An unsuccessful verification result is still HTTP 200 with outer `ok: true`
+and inner `verification.ok: false`, status `not_configured` or `failed`.
+These synchronous routes do not require a healthy Temporal action worker.
+Settings uses the same checked model-catalog function before accepting a
+non-null preferred model; clearing a choice retains its readiness exception.
+
+The demo retains disconnected synthetic status and a synthetic model catalog;
+it cannot verify host authentication. Provider route tests inject synthetic
+results and failures without accessing credentials. See the
+[migration and verification boundaries](../architecture/contracts-types-and-api-boundaries.md#incremental-endpoint-migration).

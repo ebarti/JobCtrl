@@ -673,6 +673,7 @@ describe("guarded production job-data purge", () => {
     const db = openDatabase(fixture.dbPath);
     let before: Record<string, unknown>;
     let retainedWorkflowBefore: unknown;
+    let retainedCareerBefore: unknown;
     try {
       db.transaction(() => {
         db.prepare("INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at) VALUES ('local', ?, ?, 'Second', 'Example', 'example', ?)")
@@ -735,6 +736,9 @@ describe("guarded production job-data purge", () => {
           'succeeded', ?, 'contact-run-retained', ?, ?)`)
           .run(JSON.stringify({ taskId: "contact-task", jobId: JOB_ID }), NOW, NOW);
       })();
+      db.prepare("INSERT INTO job_events(tenant_id,identity_version,event_type,occurred_at,payload_json,entity_kind,entity_ref) VALUES('local',1,'CareerLearningRecorded',?,?,'career_cohort','owned-retained-cohort')")
+        .run(NOW, JSON.stringify({ sourceText: 'Owned synthetic retained career source', jobId: JOB_ID }));
+      retainedCareerBefore = db.prepare("SELECT * FROM job_events WHERE entity_ref='owned-retained-cohort'").get();
       before = Object.fromEntries(retainedTables.map((table) => [table, db.prepare(`SELECT * FROM ${table}`).all()]));
       retainedWorkflowBefore = db.prepare(
         "SELECT * FROM workflow_run_projections WHERE workflow_id = 'contact-research-retained'",
@@ -748,6 +752,7 @@ describe("guarded production job-data purge", () => {
       db.close();
     }
     const counts = {
+      career_learning_records: 1,
       manual_capture_queue: 1, source_locator_candidates: 1, learning_recommendation_jobs: 2,
       learning_recommendation_evidence_jobs: 3, learning_recommendation_evidence: 3,
       learning_recommendation_tombstones: 1, tailoring_feedback_signal_reviews: 3,
@@ -772,6 +777,7 @@ describe("guarded production job-data purge", () => {
         "SELECT * FROM workflow_run_projections WHERE workflow_id = 'contact-research-retained'",
       ).get()).toEqual(retainedWorkflowBefore);
       expect(after.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+      expect(after.prepare("SELECT * FROM job_events WHERE entity_ref='owned-retained-cohort'").get()).toEqual(retainedCareerBefore);
       expect(after.prepare("SELECT COUNT(*) AS count FROM tailoring_feedback_signals").get()).toEqual({ count: 0 });
       expect(after.prepare("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 0 });
     } finally {

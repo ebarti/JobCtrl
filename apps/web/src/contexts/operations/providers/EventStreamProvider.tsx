@@ -14,7 +14,8 @@ import type { DomainEventEnvelope, EventStreamStatus } from "../../../shared/por
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { useInvalidationRouter } from "../hooks/useInvalidationRouter.js";
-import type { KnownDomainEvent, KnownDomainEventType } from "../types.js";
+import type { DomainEventUnion as KnownDomainEvent } from "@jobctrl/domain-types";
+import type { KnownDomainEventType } from "../types.js";
 
 interface EventStreamContextValue {
   readonly status: EventStreamStatus;

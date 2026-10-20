@@ -456,6 +456,11 @@ below those details. Raw artifact, job, path, evidence, and requirement keys are
 diagnostic facts under **Technical details**, not the primary labels shown to
 the reviewer.
 
+In **Job Detail → Artifacts → Editable DOCX**, choose A4 or Letter and export an
+accepted resume or cover letter. Retained exports can be downloaded again without
+regeneration; failed exports preserve the accepted materials. See
+[Editable DOCX Export](materials-and-tailoring.md#editable-docx-export) for limits.
+
 [Materials & Tailoring](materials-and-tailoring.md) explains provenance,
 validation, accepted-artifact history, and the boundary between generation and
 human approval.
@@ -794,7 +799,7 @@ exist only in the installed launcher.
 | `stop` / `status` / `open` | Stop the runtime, report its state (`--json`, or `--pipeline` for pipeline stats), or open the app. |
 | `logs [component]` | Show the last 200 lines of the `temporal`, `worker`, or `api` log, or of all three when no component is given. |
 | `version` | Print the installed version (`--json`). |
-| `update` / `rollback` / `uninstall` | Install a newer release, return to an earlier one (`--to <build-id>`), or remove JobCtrl. `uninstall --remove-data` also deletes your local data after you type a confirmation phrase. |
+| `update` / `rollback` / `uninstall` | Install a newer release, restore an earlier application and its saved database pair (`--to <build-id>`), or remove JobCtrl. Rollback keeps a compatible recovery launcher; Homebrew preserves the selection until an explicit update. `uninstall --remove-data` also deletes your local data after you type a confirmation phrase. |
 | `backup` | Snapshot `jobctrl.db` and `temporal.db` as a pair (`--output <directory>`); see [Back Up And Restore](data-and-safety.md#back-up-and-restore). |
 
 | Domain command | What it does |
@@ -803,10 +808,11 @@ exist only in the installed launcher.
 | `setup` | Detect provider auth, save the enabled employer-analysis legs, and finish with a `doctor` report. In a source checkout it also syncs pnpm/uv dependencies and Playwright Chromium. |
 | `doctor` | Report setup checks for the database, LLM providers, Temporal, browser, Gmail, and telemetry. Read every row: it exits zero even when a check prints `MISSING`. |
 | `run [stages]` | Start pipeline workflows (default `all`, which maps to `discover`). |
+| `source-proposals from-history` / `list` / `reset CANDIDATE_ID` | Explicitly propose sources from saved canonical posting/application URLs, read retained evidence and review history, or reset one rejected coordinate. Review and promotion use the existing Source locator; see [Discovery](discovery.md#propose-sources-from-saved-posting-history). |
 | `discover` / `enrich` / `score` / `tailor` / `cover` | Start one stage; `score --rescore` re-scores jobs that already have a score. |
 | `job <url>` | Tailor and/or apply one job (`--tailor`, `--apply`, `--dry-run`). |
 | `apply` | Start apply automation (`--dry-run`, `--url`, `--continuous` to keep polling for new jobs). Utility modes: `--mark-applied`, `--mark-failed`, `--reset-failed`, and `--gen` (inspection-only dry-run prompt). |
-| `retry <stage> <url>` | Reset one failed stage for one job (`--reset-attempts`, `--run`). |
+| `retry <stage> <url>` | Reset one failed stage for one job (`--reset-attempts`, `--run`). Enrich retains accepted content and automatically renews an exhausted stage budget; see [Enrichment](enrichment-and-extraction.md). |
 | `action <stage>` | Low-level single-action dispatch with JSON output, for scripts. |
 | `compensation-refresh` | Re-parse posted salaries and refresh market estimates for all jobs or one (`--job-id`, `--observations-json`, `--no-eurotoptech`). |
 | `pipeline-status` / `runs` | Show pipeline stats, or recent apply runs and one run's event timeline (`runs --failed-only`, `--run-id`). |
@@ -815,6 +821,7 @@ exist only in the installed launcher.
 | `credentials migrate` | Move allowlisted provider secrets from legacy `.env` files into the native credential store. |
 | `gmail-auth` | Connect Gmail for verification codes, outcome lookup, and approved email applications. |
 | `migrate-resume-html` | Convert or refresh approved resume PDFs onto the HTML/CSS renderer. |
+| `material-export JOB_ID --source-artifact-id ID --generation N` | Create an editable DOCX from an accepted resume or cover-letter text artifact; see [Editable DOCX Export](materials-and-tailoring.md#editable-docx-export) for formatting and locale limits. |
 | `backup` | Source checkout only: write a `VACUUM INTO` copy of `jobctrl.db` (`--output`). |
 | `worker` | Run the long-lived Temporal worker. |
 | `rpc` | JSON-RPC server started by the TypeScript API (internal). |
@@ -825,3 +832,7 @@ exist only in the installed launcher.
 Saved settings drive deterministic provider searches and canonical ingestion. Full-posting analysis and scoring assess suitability; there is no separate listing-admission model or queue. Role-analysis agreement is a persisted model determination. Resume/outreach/interview truthfulness and quality use separate model verdicts and source-bound anchors. Form answers and repeat-role equivalence come from determinations; confirmation and submission authorization remain distinct user actions.
 
 See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+
+### Optional company briefing commands
+
+`jobctrl company-briefing configure JOB_ID --company-url URL --source URL --confirm-identity` confirms a company link and selected public sources. `company-briefing refresh JOB_ID --allow-public-fetch` refreshes explicitly; `--force` re-fetches within the freshness window. `company-briefing show JOB_ID` reads the saved result. All support `--json`. Job Detail, Interviews and the existing digest share the result; see [Company Briefings](company-briefings.md) for bounds, stale state and retention.

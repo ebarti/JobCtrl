@@ -24,6 +24,19 @@ async function expectNoCriticalOrSeriousAxeViolations(
   await expect(
     page.locator('[data-typography="page-title"]').first(),
   ).toBeVisible({ timeout: 30_000 });
+  if (route === "/apply-review") {
+    const authorizeDryRun = page.getByRole("button", {
+      name: /^Authorize dry run for /,
+    });
+    await expect(authorizeDryRun).toBeEnabled({ timeout: 30_000 });
+    // Draft hydration enables this action after the route title is visible.
+    // Audit its settled paint after the disabled-to-enabled color transition.
+    await authorizeDryRun.evaluate(async (element) => {
+      await Promise.all(
+        element.getAnimations().map((animation) => animation.finished),
+      );
+    });
+  }
   if (route === "/preferences") {
     await expect(
       page

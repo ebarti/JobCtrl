@@ -1,6 +1,295 @@
 {
   "schemaVersion": 1,
   "endpoints": {
+    "acceptedMaterialExports": {
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "operation": {
+                "type": "string",
+                "const": "history"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "operation": {
+                "type": "string",
+                "const": "export"
+              },
+              "sourceArtifactId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "expectedGeneration": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "expectedSourceSha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "expectedMetadataSha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "paper": {
+                "type": "string",
+                "enum": [
+                  "A4",
+                  "Letter"
+                ]
+              }
+            },
+            "required": [
+              "operation",
+              "sourceArtifactId",
+              "expectedGeneration",
+              "expectedSourceSha256",
+              "expectedMetadataSha256",
+              "paper"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "jobId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "artifactId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "generation": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "tailored_resume",
+                    "cover_letter"
+                  ]
+                },
+                "locale": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "sha256": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "metadataSha256": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "unavailableReason": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "artifactId",
+                "generation",
+                "kind",
+                "locale",
+                "sha256",
+                "metadataSha256",
+                "unavailableReason"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "exports": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "contract": {
+                  "type": "string",
+                  "const": "accepted-material-docx-v1"
+                },
+                "tenantId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "jobId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "artifactId": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$"
+                },
+                "sourceArtifactId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "generation": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "tailored_resume",
+                    "cover_letter"
+                  ]
+                },
+                "sourceSha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "sourceMetadataSha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "settings": {
+                  "type": "object",
+                  "properties": {
+                    "format": {
+                      "type": "string",
+                      "const": "docx"
+                    },
+                    "layout": {
+                      "type": "string",
+                      "const": "semantic-v1"
+                    },
+                    "paper": {
+                      "type": "string",
+                      "enum": [
+                        "A4",
+                        "Letter"
+                      ]
+                    },
+                    "locale": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "format",
+                    "layout",
+                    "paper",
+                    "locale"
+                  ],
+                  "additionalProperties": false
+                },
+                "settingsSha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "createdAt": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "warnings": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "contract",
+                "tenantId",
+                "jobId",
+                "artifactId",
+                "sourceArtifactId",
+                "generation",
+                "kind",
+                "sourceSha256",
+                "sourceMetadataSha256",
+                "settings",
+                "settingsSha256",
+                "sha256",
+                "createdAt",
+                "warnings"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "exportedArtifactId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "tenantId",
+          "jobId",
+          "sources",
+          "exports",
+          "exportedArtifactId"
+        ],
+        "additionalProperties": false
+      }
+    },
     "materialLocaleVariants": {
       "request": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -8158,6 +8447,400 @@
           "unlinkedCandidateCount",
           "evidence",
           "suggestions"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "renderCoverLetterPreview": {
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "object",
+            "properties": {
+              "tenantId": {
+                "type": "string"
+              },
+              "jobId": {
+                "type": "string"
+              },
+              "artifactId": {
+                "type": "string"
+              },
+              "generation": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "textSha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "required": [
+              "tenantId",
+              "jobId",
+              "artifactId",
+              "generation",
+              "textSha256"
+            ],
+            "additionalProperties": false
+          },
+          "expectedAcceptedVersion": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "settings": {
+            "type": "object",
+            "properties": {
+              "paper": {
+                "type": "string",
+                "enum": [
+                  "Letter",
+                  "A4"
+                ]
+              },
+              "fontFamily": {
+                "type": "string",
+                "enum": [
+                  "georgia",
+                  "times",
+                  "arial"
+                ]
+              },
+              "fontSizePt": {
+                "type": "number",
+                "minimum": 9,
+                "maximum": 14
+              },
+              "marginMm": {
+                "type": "number",
+                "minimum": 8,
+                "maximum": 28
+              },
+              "lineHeight": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 2
+              },
+              "paragraphSpacingPx": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 24
+              }
+            },
+            "required": [
+              "paper",
+              "fontFamily",
+              "fontSizePt",
+              "marginMm",
+              "lineHeight",
+              "paragraphSpacingPx"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "source",
+          "expectedAcceptedVersion",
+          "settings"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "preview": {
+            "type": "object",
+            "properties": {
+              "previewId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "source": {
+                "type": "object",
+                "properties": {
+                  "tenantId": {
+                    "type": "string"
+                  },
+                  "jobId": {
+                    "type": "string"
+                  },
+                  "artifactId": {
+                    "type": "string"
+                  },
+                  "generation": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "textSha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "tenantId",
+                  "jobId",
+                  "artifactId",
+                  "generation",
+                  "textSha256"
+                ],
+                "additionalProperties": false
+              },
+              "expectedAcceptedVersion": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "settings": {
+                "type": "object",
+                "properties": {
+                  "paper": {
+                    "type": "string",
+                    "enum": [
+                      "Letter",
+                      "A4"
+                    ]
+                  },
+                  "fontFamily": {
+                    "type": "string",
+                    "enum": [
+                      "georgia",
+                      "times",
+                      "arial"
+                    ]
+                  },
+                  "fontSizePt": {
+                    "type": "number",
+                    "minimum": 9,
+                    "maximum": 14
+                  },
+                  "marginMm": {
+                    "type": "number",
+                    "minimum": 8,
+                    "maximum": 28
+                  },
+                  "lineHeight": {
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 2
+                  },
+                  "paragraphSpacingPx": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 24
+                  }
+                },
+                "required": [
+                  "paper",
+                  "fontFamily",
+                  "fontSizePt",
+                  "marginMm",
+                  "lineHeight",
+                  "paragraphSpacingPx"
+                ],
+                "additionalProperties": false
+              },
+              "rendererVersion": {
+                "type": "string",
+                "const": "playwright-cover-letter-v2"
+              },
+              "pdfSha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "required": [
+              "previewId",
+              "source",
+              "expectedAcceptedVersion",
+              "settings",
+              "rendererVersion",
+              "pdfSha256"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "ok",
+          "preview"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "acceptCoverLetterPreview": {
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "previewId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "expectedAcceptedVersion": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "previewId",
+          "expectedAcceptedVersion"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "accepted": {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "object",
+                "properties": {
+                  "tenantId": {
+                    "type": "string"
+                  },
+                  "jobId": {
+                    "type": "string"
+                  },
+                  "artifactId": {
+                    "type": "string"
+                  },
+                  "generation": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "textSha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "tenantId",
+                  "jobId",
+                  "artifactId",
+                  "generation",
+                  "textSha256"
+                ],
+                "additionalProperties": false
+              },
+              "acceptedVersion": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "pdfArtifactId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "pdfSha256": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "pdfSourceCurrent": {
+                "type": "boolean"
+              },
+              "settings": {
+                "type": "object",
+                "properties": {
+                  "paper": {
+                    "type": "string",
+                    "enum": [
+                      "Letter",
+                      "A4"
+                    ]
+                  },
+                  "fontFamily": {
+                    "type": "string",
+                    "enum": [
+                      "georgia",
+                      "times",
+                      "arial"
+                    ]
+                  },
+                  "fontSizePt": {
+                    "type": "number",
+                    "minimum": 9,
+                    "maximum": 14
+                  },
+                  "marginMm": {
+                    "type": "number",
+                    "minimum": 8,
+                    "maximum": 28
+                  },
+                  "lineHeight": {
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 2
+                  },
+                  "paragraphSpacingPx": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 24
+                  }
+                },
+                "required": [
+                  "paper",
+                  "fontFamily",
+                  "fontSizePt",
+                  "marginMm",
+                  "lineHeight",
+                  "paragraphSpacingPx"
+                ],
+                "additionalProperties": false
+              },
+              "rendererVersion": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "source",
+              "acceptedVersion",
+              "pdfArtifactId",
+              "pdfSha256",
+              "pdfSourceCurrent",
+              "settings",
+              "rendererVersion"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "ok",
+          "accepted"
         ],
         "additionalProperties": false
       }

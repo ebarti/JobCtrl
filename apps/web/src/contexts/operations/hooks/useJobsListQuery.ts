@@ -4,7 +4,8 @@ import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { jobsKeys } from "../jobsKeys.js";
 import { fetchJobsList } from "../jobsListQuery.js";
-import type { JobsListInput, JobSummary, PaginatedResponse } from "../types.js";
+import type { JobsListInput } from "../types.js";
+import type { JobSummary, PaginatedResponse } from "@jobctrl/contracts";
 
 export function useJobsListQuery(
   input: JobsListInput,

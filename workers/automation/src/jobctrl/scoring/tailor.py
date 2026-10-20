@@ -48,6 +48,7 @@ from jobctrl.domain.materials.use_cases import (
 from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.ports.llm import LlmPort
 from jobctrl.domain.ports.materials import (
+    ArtifactTextWriter,
     BulletProvenanceRepository,
     MaterialsRepository,
     PdfRendererPort,
@@ -67,6 +68,7 @@ from jobctrl.infrastructure.materials import (
     SqliteTailoringPolicyRepository,
     SqliteUnitOfWork,
 )
+from jobctrl.infrastructure.materials.artifact_writer import LocalArtifactTextWriter
 from jobctrl.infrastructure.preparation import SqlitePreparationTargetReader
 from jobctrl.infrastructure.preparation_recovery import (
     assert_material_activity_commit_allowed,
@@ -184,6 +186,7 @@ def _build_use_case(
     preflight=None,
     assembler: ResumeAssembler | None = None,
     llm_policy: TailoringLlmPolicy | None = None,
+    artifact_writer: ArtifactTextWriter | None = None,
     policy_repository: TailoringPolicyRepository | None = None,
     provenance_repository: BulletProvenanceRepository | None = None,
     requirement_fit_repository=None,
@@ -246,6 +249,7 @@ def _build_use_case(
         quality_judge=quality_judge if quality_judge is not None else ModelArtifactQualityJudge(**deps),
         publisher=publisher,
         llm_policy=llm_policy,
+        artifact_writer=artifact_writer if artifact_writer is not None else LocalArtifactTextWriter(),
         policy_repository=policy_repository,
         provenance_repository=provenance_repository,
         requirement_fit_repository=requirement_fit_repository,

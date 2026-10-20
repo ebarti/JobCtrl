@@ -63,9 +63,13 @@ class GatewayContactResearchFetcher:
         timeout: float = _DEFAULT_TIMEOUT,
         opener: urllib.request.OpenerDirector | None = None,
         target_resolver: TargetResolver | None = None,
+        max_body_bytes: int | None = None,
+        max_redirects: int = _MAX_REDIRECTS,
     ) -> None:
         self._policy = policy
         self._timeout = timeout
+        self._max_body_bytes = max_body_bytes
+        self._max_redirects = max_redirects
         self._target_resolver = target_resolver or _resolve_target_addresses
         self._resolver = _resolver_from_target_resolver(self._target_resolver)
         self._opener = opener or build_public_http_opener(
@@ -85,7 +89,7 @@ class GatewayContactResearchFetcher:
     def fetch(self, url: str) -> ResearchPageFetch:
         if not self._source_allowed(url):
             return ResearchPageFetch(outcome=ResearchSourceOutcome.REJECTED.value, final_url=url)
-        return self._fetch_guarded(url, redirects_remaining=_MAX_REDIRECTS)
+        return self._fetch_guarded(url, redirects_remaining=self._max_redirects)
 
     def _fetch_guarded(self, url: str, *, redirects_remaining: int) -> ResearchPageFetch:
         with self._session.guard(url) as decision:
@@ -119,7 +123,9 @@ class GatewayContactResearchFetcher:
                         status=getattr(response, "status", None),
                     )
                 status = getattr(response, "status", None)
-                body = response.read()
+                body = response.read() if self._max_body_bytes is None else response.read(self._max_body_bytes + 1)
+                if self._max_body_bytes is not None and len(body) > self._max_body_bytes:
+                    return ResearchPageFetch(outcome=ResearchSourceOutcome.REJECTED.value, final_url=final_url)
         except urllib.error.HTTPError as exc:
             if exc.code in _REDIRECT_STATUS_CODES:
                 return self._handle_redirect(

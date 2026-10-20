@@ -15,6 +15,14 @@ const endpointCapabilities = Object.fromEntries(
  * `satisfies` makes a newly added ApiClientPort member a compile-time failure.
  */
 export const DEMO_CAPABILITY_MANIFEST = {
+  jobOffer: unavailable("Actual offers require a private local workspace."),
+  saveOfferTerms: unavailable("Actual offer terms require a private local workspace."),
+  recordOfferDecision: unavailable("Offer decisions require a private local workspace."),
+  postedCompensationFact: unavailable("Canonical compensation evidence requires a local workspace."),
+  marketCompensationEstimate: unavailable("Recorded compensation evidence requires a local workspace."),
+  downloadMaterialDocx: unavailable("DOCX downloads require retained exports in a local workspace."),
+
+  coverLetterPreviewPdfUrl: { class: "unavailable", reason: "Cover-letter PDF previews require the local renderer." },
   health: local("Shows synthetic browser-local service health."),
   dashboardSummary: local("Reads the synthetic dashboard projection."),
   pipelineOperations: unavailable("Pipeline operations telemetry is unavailable in the public demo."),
@@ -128,9 +136,6 @@ export const DEMO_CAPABILITY_MANIFEST = {
   enableBrowserCapability: unavailable("The public demo never adopts host browsers."),
   disableBrowserCapability: unavailable("The public demo has no adopted host browser to revoke."),
   copyLinkedInBrowserProfile: unavailable("The public demo never reads or copies browser profiles."),
-  providerModels: local("Shows a deterministic, read-only sample model catalog."),
-  providerStatus: local("Shows an unconfigured, read-only provider explanation."),
-  verifyCodexProvider: unavailable("The public demo cannot inspect host Codex authentication."),
   listContacts: local("Reads synthetic contacts."),
   contact: local("Reads a synthetic contact."),
   createContact: local("Creates a synthetic contact locally."),

@@ -156,27 +156,74 @@ work. Those rows are product state, not a second workflow queue.
 
 ## Projection Ownership And Consistency
 
-There are two materializers over the same SQLite read-model spine:
+The first family cutover gives `job_detail_projections` to TypeScript. The
+runtime inventory and designated destinations for subsequent bounded cutovers
+are below. A destination is a plan until its duplicate writer is removed; this
+change does not claim exclusive ownership of the remaining shared families.
 
-- Python `ProjectionBuilder` in
-  `workers/automation/src/jobctrl/infrastructure/projections/` refreshes at
-  bootstrap, from its event-bus subscription, and from explicit workflow/activity
-  finalize paths.
-- TypeScript `refreshProjections` in `apps/api/src/projections.ts` refreshes
-  before reads and after TypeScript-owned writes.
+| Family | Current materializers | Designated owner |
+| --- | --- | --- |
+| `job_detail_projections` | TypeScript only | TypeScript (cut over) |
+| `job_list_projections`, `evidence_usage_projections` | Python and TypeScript | Python (CLI digest and interview consumers), pending separate cutovers |
+| `artifact_list_projections`, `dashboard_projections` | Python and TypeScript | TypeScript (API consumers), pending separate cutovers |
+| `apply_run_projections`, `workflow_run_projections` | Python only | Python (preserved) |
+| `pipeline_step_projections`, `source_quality_stats` | Python and TypeScript | Python, pending a separate cutover |
+| `contact_projections`, `contact_research_task_projections`, `outreach_thread_projections`, `due_follow_up_projections` | Python and TypeScript | TypeScript (API consumers), pending separate cutovers |
 
-They derive overlapping projections from the same canonical state, but each
-consumer and tenant has an independent monotonic cursor in `event_watermarks`:
+Python refreshes its families at bootstrap, through its event subscription and
+explicit workflow/activity finalization. TypeScript refreshes its families
+before API reads and after API-owned writes. Command-owned deletion/purge may
+remove derived rows; frozen offline migrations construct their version's
+candidate schema. Neither is a second live detail materializer.
+
+The remaining shared families retain independent
 `typescript:operations_projections:<tenant>` and
-`python:operations_projections:<tenant>`. Neither consumer can acknowledge
-events on behalf of the other. Runtime-first names cannot collide with legacy
-`operations_projections` or `operations_projections:<tenant>` keys, even when
-an opaque tenant ID contains colons. Those legacy cursors and their timestamps
-are retained but unused; the first consumer-specific pass replays history so it
-repairs terminal events previously skipped behind that shared cursor. Some families
-have a narrower owner: apply-run and workflow-run projections are materialized
-on the Python side and read by TypeScript. Shared fixtures and parity tests
-guard the projection families written by both runtimes.
+`python:operations_projections:<tenant>` cursors. Detail uses
+`typescript:job_detail_projections:v1:<tenant>`; none of these consumers can
+acknowledge another's events. Legacy `operations_projections` cursors are
+retained but unused, including opaque tenant IDs containing colons.
+
+### Job-detail freshness and recovery
+
+`refreshJobDetailProjections` processes at most `REFRESH_EVENT_BATCH_LIMIT`
+tenant-filtered events in one transaction, rebuilding each affected JobId from
+canonical rows and publishing its cursor atomically. A settled detail pass
+only reads its cursor and pending-event index: it does not scan all jobs or
+acquire a writer. The existing TypeScript background drain continues capped
+passes without requiring another request. Other, uncut families still retain
+their existing broad reconciliation paths; this is not a claim that every API
+GET is free of SQLite writes.
+
+API Job Detail checks its requested JobId; Apply Review checks each returned
+job before reading requirement evidence. A pending event beyond the
+current batch, a missing/obsolete row, mismatched score versions or compensation
+summaries, or newer canonical stage state causes a single-job repair through
+the existing list and detail materializers without advancing either cursor. The selected list metadata and
+detail evidence are read in one SQLite transaction, so a missed Python
+notification cannot mix score versions. This preserves read-after-write even
+behind an unrelated backlog. Python CLI/workflow commands
+commit canonical state and events; detail catches up when the API consumes
+them. Their dashboard funnel reads canonical stages and never waits for detail.
+Apply/workflow family ownership and approval bindings are unchanged.
+
+`repairJobDetailProjections` is the explicit canonical full scan for API startup,
+migration and operator repair. It repairs missing rows, removes orphans and
+recovers canonical writes with no event. First activation (no family cursor)
+also performs this scan. Ordinary incremental passes never perform it. Repair
+and cursor publication share a writer transaction; failed repair or refresh
+preserves the previous projection and all accepted artifacts. A nested call
+uses the caller's savepoint boundary and cannot commit its canonical changes.
+
+The rollout requires no schema migration: stop both old runtimes, install the
+matching API/worker revision, then start the API to atomically rebuild detail.
+Retain the existing schema, canonical rows, files and runtime cursors. The
+pre-removal shared parity fixtures establish column/JSON compatibility; the
+mixed-runtime fixture proves the Python writer no longer touches detail and
+that committed events recover in either process order. Rollback stops both
+runtimes and restores the previous matching API/worker revision, whose shared
+fold still understands the unchanged table. Do not mix old and new processes
+across the ownership boundary. The new family cursor may remain; older builds
+ignore it. Restarting the new API after rollback repairs canonical state again.
 
 Event coverage is registry-derived. `DOMAIN_EVENT_TYPES`, its Python mirror,
 projection folds, and the frontend invalidation-handler map must agree through
@@ -197,9 +244,9 @@ and retains these cursors; it does not replay unrelated history. First-run and
 schema-recovery paths also detect missing/stale projection rows and rebuild from
 canonical state even when old events are already watermarked.
 
-Employer-analysis projections carry the analysis prompt version. Both builders
-rebuild a cached shape with an obsolete or missing version without requiring a
-new job event. The API also checks that version before serving it as current;
+Employer-analysis detail projections carry the analysis prompt version. The
+TypeScript owner repairs an obsolete shape at startup or on its keyed detail
+read without requiring a new event. The API also checks that version before serving it as current;
 the native semantic-schema cutover clears the derived shape and keeps canonical
 analysis history and accepted artifacts.
 
@@ -282,3 +329,65 @@ invalidation; the latter invalidates detail/lists only for job-scoped command
 feedback and ignores workspace/host reservation churn. Internal lease,
 request and sweep facts do not become user application outcomes. Source closure
 never calls Discovery's policy-deletion routine and cannot emit `JobDeleted`.
+
+## Company briefing reads
+
+The optional briefing ledger is read directly by Operations through exact tenant/company/job identities and its persisted determination ID. It adds no projection family. Accepted snapshots and failed attempts remain separate immutable records. Source bodies stay out of SSE; reference-only `JobUpdated` notifications invalidate each linked Job Detail and the existing digest. The [storage owner](storage.md#company-briefing-ledger) defines physical retention.
+
+## Selected-job cohorts and reviewed milestones
+
+The Operations career-learning service records private `career_cohort`,
+`career_milestone` and `career_attempt` entities on the existing indexed
+`job_events` journal. Accepted cohort revisions bind immutable canonical
+posting/confirmed-achievement snapshots to one `career_demand_comparison`
+envelope. The no-model preview fingerprints the exact sources; the browser
+supplies that fingerprint for comparison. Sources are rechecked before spend
+and, under a SQLite writer lock, before accepting a replacement. Cohort and
+milestone writes compare expected revisions. Failed refreshes add attempt state
+without replacing the accepted cohort. Choosing a proposal requires current
+sources and explicit user action; completion retains user evidence statements
+and revision history without promoting capability.
+
+The dedicated API reads recorded IDs and validates the envelope, request
+fingerprint, typed result and citations. General SSE suppresses the private
+`CareerLearningRecorded` payload. Profile and posting/identity events invalidate
+the tenant-scoped career-learning read key; successful mutations install the
+canonical response, and failed optimistic activity updates restore the accepted
+cache. Source changes mark historical records rather than reinterpreting them.
+
+## Saved-history source proposals
+
+The explicit `source-proposals from-history` command reads current posting
+locators/canonical identities and canonical enrichment application targets,
+then calls the existing learner in proposal-only mode. It writes only the
+existing source-locator queue and source-control events. Proposal receipts use
+`SourceLocationCandidateDiscovered` with `proposalOnly`, a normalized
+`coordinateKey`, candidate ID and immutable origin/extraction/sample evidence.
+They have null `job_id` so source review authority survives job removal.
+The normalized coordinate is also the event `entity_ref` under `discovery`,
+using the existing entity index for per-source learning fences.
+
+`SourceLocationCandidateReviewed` records candidate ID, coordinate, decision
+(`promote`, `reject`, `reset`), reason and decision time. The latest recorded
+review/proposal state fences ordinary learning by coordinate, including other
+posting URLs from the same recognized board. Rejection and queue deletion,
+and promotion and registry/queue updates, use one immediate transaction.
+Public-destination DNS checks precede the history scan's writer transaction.
+
+API and CLI reads never learn or promote. The API joins proposal receipts by
+recorded candidate ID and calculates registry overlap from exact coordinates;
+coverage remains unknown. The existing Discovery UI invalidates its locator and
+registry queries on the reviewed event. Application records, schedule settings
+and job identity are outside this writer's boundary.
+
+## Private Offer Revisions
+
+The scoped `offer` ledger in `job_events` is canonical private Outcomes state,
+like the existing screening revision ledger. Its `OfferRecordChanged` row
+contains confirmed terms or a decision; the event-stream adapter publishes
+only the corresponding revision/decision IDs and JobId. The complete private
+record is available only through the offer read. Broad activity/audit views
+show an update marker, not amounts, quotations or notes. The first saved offer
+also records one ordinary offer milestone; corrections preserve the milestone
+and change only the offer read model. Outreach keeps its own reviewed draft
+and source snapshot without gaining submission authority.

@@ -1,54 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { resolve } from "node:path";
+import { readFileSync } from "node:fs";
 import ts from "typescript";
-import { dependencies, lintProgram, webRoot } from "./lint-boundaries.mjs";
+import {
+  dependencies,
+  lint,
+  webRoot,
+} from "./lint-boundaries.mjs";
 
-function check(files, exemptions = {}) {
-  const sources = new Map(
-    Object.entries(files).map(([path, source]) => [
-      resolve(webRoot, "src", path),
-      source,
-    ]),
-  );
-  const options = {
-    target: ts.ScriptTarget.ESNext,
-    module: ts.ModuleKind.ESNext,
-    moduleResolution: ts.ModuleResolutionKind.Bundler,
-    jsx: ts.JsxEmit.ReactJSX,
-    baseUrl: webRoot,
-    paths: { "@/*": ["src/*"] },
-    skipLibCheck: true,
-  };
-  const host = ts.createCompilerHost(options);
-  const getSourceFile = host.getSourceFile.bind(host);
-  const fileExists = host.fileExists.bind(host);
-  const readFile = host.readFile.bind(host);
-  const directoryExists = host.directoryExists.bind(host);
-  host.directoryExists = (path) =>
-    [...sources.keys()].some((file) => file.startsWith(`${path}/`)) ||
-    directoryExists(path);
-  host.fileExists = (path) => sources.has(path) || fileExists(path);
-  host.readFile = (path) => sources.get(path) ?? readFile(path);
-  host.getSourceFile = (path, languageVersion, onError) =>
-    sources.has(path)
-      ? ts.createSourceFile(path, sources.get(path), languageVersion, true)
-      : getSourceFile(path, languageVersion, onError);
-  const program = ts.createProgram([...sources.keys()], options, host);
-  // Ignore unrelated real imported production files; the fixture owns its source set.
-  const scoped = {
-    getTypeChecker: () => program.getTypeChecker(),
-    getCompilerOptions: () => options,
-    getSourceFile: (path) => program.getSourceFile(path),
-    getSourceFiles: () =>
-      program.getSourceFiles().filter((source) => sources.has(source.fileName)),
-  };
-  return lintProgram(scoped, webRoot, exemptions);
-}
-const rules = (results) =>
-  [...new Set(results.map((result) => result.rule))].sort();
+import { check, rules } from "./lint-boundaries-fixtures.mjs";
 
-// These are deliberate negative controls: invalid source must yield diagnostics.
+// Dependency parsing supports both positive canonical imports and negative controls.
 test("all static module syntaxes preserve actual dependency and original symbol names", () => {
   const source = ts.createSourceFile(
     "example.ts",
@@ -77,85 +40,103 @@ test("all static module syntaxes preserve actual dependency and original symbol 
     ],
   );
 });
-test("rejects direct contracts with location and a useful ACL diagnostic", () => {
-  const result = check({
-    "views/lint-example/Page.ts":
-      "import type { JobSummary as Row } from '@jobctrl/contracts';",
-  });
-  assert.deepEqual(rules(result), ["operations-acl"]);
-  assert.equal(result[0].line, 1);
-  assert.equal(result[0].column, 1);
-  assert.match(result[0].message, /JobSummary.*contexts\/operations\/types.ts/);
+test("canonical DTOs, schemas, constants and domain vocabulary need no routing exemption", () => {
+  for (const file of [
+    "views/lint-example/Page.ts",
+    "contexts/lint-one/file.ts",
+    "routes/lint-page.ts",
+  ]) {
+    assert.deepEqual(
+      check({
+        [file]: `import type { JobSummary as Row } from '@jobctrl/contracts';
+        import { JobListQuerySchema, JOB_STATES } from '@jobctrl/contracts';
+        import type { DomainEventUnion, TenantId } from '@jobctrl/domain-types';
+        type Detail = import('@jobctrl/contracts').JobDetail;`,
+      }),
+      [],
+    );
+  }
 });
-test("exact file and symbol exemptions allow reviewed access but not additional imports", () => {
+test("canonical imports do not grant API-client or Query capabilities", () => {
+  assert.deepEqual(
+    rules(
+      check({
+        "views/lint-example/Page.ts":
+          "import { JobListQuerySchema } from '@jobctrl/contracts'; import { JobCtrlApiClient } from '@jobctrl/api-client'; import { useQuery } from '@tanstack/react-query'; fetch('/resource');",
+      }),
+    ),
+    ["api-adapter", "browser-port", "view-state"],
+  );
+});
+test("exact capability exemptions allow reviewed access but not additional symbols or files", () => {
   const exemptions = {
-    contracts: {
-      "views/lint-example/Page.ts": {
-        symbols: ["JobSummary"],
-        reason: "Reviewed migration debt",
+    capabilities: {
+      "contexts/lint-one/file.ts": {
+        symbols: ["fetch"],
+        reason: "Owned abortable preview load",
       },
     },
   };
   assert.deepEqual(
-    check(
-      {
-        "views/lint-example/Page.ts":
-          "import type { JobSummary as Row } from '@jobctrl/contracts';",
-      },
-      exemptions,
-    ),
+    check({ "contexts/lint-one/file.ts": "fetch('/preview');" }, exemptions),
     [],
   );
   assert.deepEqual(
     rules(
       check(
         {
-          "views/lint-example/Page.ts":
-            "import type { JobSummary, JobDetail } from '@jobctrl/contracts';",
+          "contexts/lint-one/file.ts":
+            "fetch('/preview'); localStorage.getItem('key');",
         },
         exemptions,
       ),
     ),
-    ["operations-acl"],
+    ["browser-port"],
   );
   assert.deepEqual(
     rules(
-      check(
-        {
-          "views/elsewhere/Page.ts":
-            "import type { JobSummary } from '@jobctrl/contracts';",
-        },
-        exemptions,
-      ),
+      check({ "contexts/lint-two/file.ts": "fetch('/preview');" }, exemptions),
     ),
-    ["operations-acl", "stale-exemption"],
+    ["browser-port", "stale-exemption"],
   );
 });
-test("removes stale or unreasoned exemptions", () => {
+test("removes stale or unreasoned capability and dependency exemptions", () => {
+  for (const group of ["capabilities", "dependencies"]) {
+    for (const reason of ["Old access", ""]) {
+      assert.deepEqual(
+        rules(
+          check(
+            { "views/lint-example/Page.ts": "export {};" },
+            {
+              [group]: {
+                "views/lint-example/Page.ts": { symbols: ["unused"], reason },
+              },
+            },
+          ),
+        ),
+        ["stale-exemption"],
+      );
+    }
+  }
   assert.deepEqual(
     rules(
       check(
-        { "views/lint-example/Page.ts": "export {};" },
+        { "contexts/lint-one/file.ts": "fetch('/preview');" },
         {
-          contracts: {
-            "views/lint-example/Page.ts": {
-              symbols: ["JobSummary"],
-              reason: "Old access",
-            },
+          capabilities: {
+            "contexts/lint-one/file.ts": { symbols: ["fetch"], reason: "" },
           },
         },
       ),
     ),
-    ["stale-exemption"],
+    ["browser-port", "stale-exemption"],
   );
 });
-test("ACL owner, domain vocabulary and ordinary React hooks remain legal", () => {
+test("ordinary React hooks remain legal with canonical DTO imports", () => {
   assert.deepEqual(
     check({
-      "contexts/operations/types.ts":
-        "export type { JobSummary } from '@jobctrl/contracts';",
       "views/lint-example/Page.ts":
-        "import { useState, useEffect, useRef } from 'react'; import type { TenantId } from '@jobctrl/domain-types'; import type { JobSummary } from '../../contexts/operations/types.js';",
+        "import { useState, useEffect, useRef } from 'react'; import type { TenantId } from '@jobctrl/domain-types'; import type { JobSummary } from '@jobctrl/contracts';",
     }),
     [],
   );
@@ -270,6 +251,21 @@ test("API methods obtained through the port remain forbidden in a view, includin
     );
 });
 test("a preview helper exemption does not allow network reads", () => {
+  const previewOnly = check(
+    {
+      "views/lint-example/Page.ts": `import type { ApiClientPort } from '../../shared/ports/ApiClientPort.js';
+      declare const client: ApiClientPort; client.artifactPreviewPdfUrl('id');`,
+    },
+    {
+      capabilities: {
+        "views/lint-example/Page.ts": {
+          symbols: ["artifactPreviewPdfUrl"],
+          reason: "Pure URL helper",
+        },
+      },
+    },
+  );
+  assert.deepEqual(previewOnly, []);
   const result = check(
     {
       "views/lint-example/Page.ts": `
@@ -288,7 +284,16 @@ test("a preview helper exemption does not allow network reads", () => {
     },
   );
   assert.deepEqual(rules(result), ["view-api"]);
-  assert.match(result[0].message, /health/);
+  assert.ok(
+    result.some(
+      (item) =>
+        item.rule === "view-api" &&
+        item.file === "views/lint-example/Page.ts" &&
+        item.line === 4 &&
+        item.column > 0 &&
+        item.message.includes("health"),
+    ),
+  );
 });
 test("concrete transport and primitive packages are rejected in features", () => {
   assert.deepEqual(
@@ -367,4 +372,514 @@ test("views cannot operate on a QueryClient obtained through typed context", () 
     ),
     ["view-state"],
   );
+});
+
+test("the actual tsconfig and generated routes delegate reads without exemptions", () => {
+  const generated = readFileSync(
+    resolve(webRoot, "src/routeTree.gen.ts"),
+    "utf8",
+  );
+  assert.match(generated, /dashboard/);
+  assert.match(generated, /activity/);
+  assert.deepEqual(lint(), []);
+});
+
+test("real generated loaders reject direct capabilities independently of any/unresolved types", () => {
+  const filename = "routes/dashboard.tsx";
+  const original = readFileSync(resolve(webRoot, "src", filename), "utf8");
+  const controls = [
+    ["context.ports.api.health();", "view-api"],
+    ["context.queryClient.clear();", "view-state"],
+    ["(context as any).ports.api.health();", "view-api"],
+    ["(context as unknown as { ports: any }).ports.api.health();", "view-api"],
+    ["const c = context; const a = c.ports.api; a.health();", "view-api"],
+    ["const { ports: { api: a } } = context; a.health();", "view-api"],
+    ["const { health: read } = context.ports.api; read();", "view-api"],
+    ["context['ports']['api']['health']();", "view-api"],
+    ["const key = 'health'; context.ports.api[key]();", "view-api"],
+    ["const { queryClient: q } = context; q['clear']();", "view-state"],
+    ["const { clear: reset } = context.queryClient; reset();", "view-state"],
+    ["const c: any = context; c.queryClient.prefetchQuery({});", "view-state"],
+    [
+      "const { context: { ports: { api } } } = { context }; api.health();",
+      "view-api",
+    ],
+    ["let a: any; a = context.ports.api; a.health();", "view-api"],
+    [
+      "const api = context.ports.api; const box = { first: api, second: api }; box.second.health();",
+      "view-api",
+    ],
+    ["const [api] = [context.ports.api]; api!.health();", "view-api"],
+    ["const clients = [context.ports.api]; clients[0]!.health();", "view-api"],
+    ["const api = context.ports.api ?? {}; api.health();", "view-api"],
+    [
+      "const api: any = Math.random() ? {} : context.ports.api; api.health();",
+      "view-api",
+    ],
+    [
+      "const { client: api = context.ports.api } = {} as any; api.health();",
+      "view-api",
+    ],
+    [
+      "const box: any = {}; box.client = context.ports.api; box.client.health();",
+      "view-api",
+    ],
+    [
+      "const key: string = ['queryClient'][0]!; (context as any)[key].clear();",
+      "view-state",
+    ],
+    [
+      "const key: string = ['api'][0]!; context.ports[key as 'api'].health();",
+      "view-api",
+    ],
+  ];
+  // Overlay the real route at its generated-tree identity. Both weak and missing
+  // declarations must still diagnose every source line, not merely fail tsc.
+  for (const annotation of [
+    undefined,
+    '{ context: import("../router.js").RouterContext }',
+    "any",
+    "MissingLoaderArguments",
+  ]) {
+    const body = controls.map(([code]) => `    { ${code} }`).join("\n");
+    const parameter = annotation ? `: ${annotation}` : "";
+    const replacement = `  loader: async ({ context }${parameter}) => {\n${body}\n  },`;
+    const text = original.replace(/  loader:.*\n/, replacement + "\n");
+    const results = check({ [filename]: text }, {}, true);
+    if (annotation === "MissingLoaderArguments")
+      assert.ok(
+        results.compilerDiagnostics.some((d) =>
+          ts
+            .flattenDiagnosticMessageText(d.messageText, " ")
+            .includes(annotation),
+        ),
+        "unresolved compiler control executed",
+      );
+    else
+      assert.equal(
+        results.compilerDiagnostics.length,
+        0,
+        `${annotation ?? "generated inference"} control is compiler-clean and must still fail the boundary`,
+      );
+    const firstLine = text.slice(0, text.indexOf(body)).split("\n").length;
+    controls.forEach(([code, rule], index) => {
+      assert.ok(
+        results.some(
+          (d) =>
+            d.file === filename &&
+            d.line === firstLine + index &&
+            d.column > 0 &&
+            d.rule === rule,
+        ),
+        `${annotation}: ${code}\n${JSON.stringify(results)}`,
+      );
+    });
+  }
+});
+
+test("capability provenance survives view casts, hook aliases and nested destructuring", () => {
+  const result = check({
+    "views/lint-example/Page.ts": `
+      import { usePorts as obtain } from '../../shared/providers/PortsProvider.js';
+      const p: any = obtain(); const { api: client } = p;
+      (client as any)['health']();
+      const { health: read } = client; read();
+    `,
+  });
+  assert.deepEqual(rules(result), ["view-api"]);
+  assert.ok(result.some((d) => d.message.includes("health")));
+  assert.deepEqual(
+    check({
+      "views/lint-example/Page.ts": `
+      const context = { ports: { api: { health() {} } }, queryClient: { clear() {} } };
+      const usePorts = () => context.ports;
+      context.ports.api.health(); context.queryClient.clear(); usePorts().api.health();
+      const Route = { useRouteContext: () => context }; Route.useRouteContext().ports.api.health();
+      type LocalContext = typeof context;
+      const local = { loader: ({ context }: { context: LocalContext }) => context.ports.api.health() };
+    `,
+    }),
+    [],
+  );
+});
+
+test("unresolved runtime re-exports cannot launder Query or concrete API authority", () => {
+  const files = {
+    "shared/lint-weak-barrel.ts": `
+      export { useQuery as fetcher } from '@tanstack/react-query/missing-declaration';
+      export { JobCtrlApiClient as Client } from '@jobctrl/api-client/missing-declaration';
+      export type { QueryClient as QueryType } from '@tanstack/react-query';
+    `,
+    "shared/lint-outer.ts":
+      "export { fetcher as load, Client } from './lint-weak-barrel.js'; export type { QueryType } from './lint-weak-barrel.js';",
+    "views/lint-example/Page.ts":
+      "import { load, Client } from '../../shared/lint-outer.js';",
+  };
+  assert.deepEqual(rules(check(files)), ["api-adapter", "view-state"]);
+  assert.deepEqual(
+    check({
+      ...files,
+      "views/lint-example/Page.ts":
+        "import type { QueryType } from '../../shared/lint-outer.js';",
+    }),
+    [],
+  );
+});
+
+test("loader callback aliases preserve capability ownership with weak parameter types", () => {
+  const result = check({
+    "routes/lint-loader.ts": `
+      import { createFileRoute as route } from '@tanstack/react-router';
+      const load = ({ context: c }: any) => c.ports.api.health();
+      const alias = load;
+      export const Route = route('/dashboard')({ loader: alias });
+    `,
+  });
+  assert.deepEqual(rules(result), ["view-api"]);
+  assert.ok(
+    result.some(
+      (d) => d.file === "routes/lint-loader.ts" && d.line === 3 && d.column > 0,
+    ),
+  );
+});
+
+test("any and unresolved capability slots fail closed without granting permission from a missing origin", () => {
+  for (const type of ["any", "MissingContext"]) {
+    const result = check({
+      "views/lint-example/Page.ts": `
+        declare const context: ${type};
+        context.ports.api.health();
+        context.queryClient.clear();
+        const { ports: { api: client } } = context; client.health();
+        const { queryClient: query } = context; query.clear();
+      `,
+    });
+    assert.deepEqual(rules(result), ["view-api", "view-state"]);
+    for (const [line, rule] of [
+      [3, "view-api"],
+      [4, "view-state"],
+      [5, "view-api"],
+      [6, "view-state"],
+    ])
+      assert.ok(
+        result.some((d) => d.line === line && d.rule === rule),
+        `${type}: ${line}`,
+      );
+  }
+});
+
+test("local import/export aliases cannot hide unresolved runtime capabilities", () => {
+  for (const [module, imported, rule] of [
+    ["@tanstack/react-query/missing-declaration", "useQuery", "view-state"],
+    [
+      "@jobctrl/api-client/missing-declaration",
+      "JobCtrlApiClient",
+      "api-adapter",
+    ],
+  ]) {
+    for (const declaration of [
+      "export { original as load };",
+      "const alias = original; export { alias as load };",
+      "export const load = original;",
+    ])
+      assert.deepEqual(
+        rules(
+          check({
+            "shared/lint-import-export.ts": `import { ${imported} as original } from '${module}'; ${declaration}`,
+            "views/lint-example/Page.ts":
+              "import { load } from '../../shared/lint-import-export.js';",
+          }),
+        ),
+        [rule],
+        declaration,
+      );
+  }
+  assert.deepEqual(
+    check({
+      "contexts/lint-one/hooks/useOwned.ts":
+        "import { useQuery } from '@tanstack/react-query/missing-declaration'; export function useOwned() { return useQuery({}); }",
+      "views/lint-example/Page.ts":
+        "import { useOwned } from '../../contexts/lint-one/hooks/useOwned.js'; useOwned();",
+    }),
+    [],
+  );
+});
+
+test("API provenance survives repeated container aliases and array destructuring", () => {
+  for (const code of [
+    "const api = context.ports.api; const box = { first: api, second: api }; box.second.health();",
+    "const [api] = [context.ports.api]; api.health();",
+    "const clients = [context.ports.api]; clients[0]!.health();",
+  ]) {
+    const result = check({
+      "routes/lint-loader.ts": `import { createFileRoute } from '@tanstack/react-router';
+      export const Route = createFileRoute('/dashboard')({ loader: ({ context }: any) => {
+        ${code}
+      } });`,
+    });
+    assert.ok(
+      result.some((d) => d.rule === "view-api" && d.line === 3),
+      code,
+    );
+  }
+});
+
+const reviewControls = [
+  [
+    "let api: any; ({ client: api = context.ports.api } = {} as any); api.health();",
+    "view-api",
+  ],
+  [
+    "let api: any; [api = context.ports.api] = [] as any; api.health();",
+    "view-api",
+  ],
+  [
+    "const box: any = {}; ({ client: box.api } = { client: context.ports.api }); box.api.health();",
+    "view-api",
+  ],
+  [
+    "let key: string; ({ value: key } = { value: ['queryClient'][0]! }); context[key].clear();",
+    "view-state",
+  ],
+  ["const api = context.ports.api ?? {}; api.health();", "view-api"],
+  [
+    "const api: any = Math.random() ? context.ports.api : {}; api.health();",
+    "view-api",
+  ],
+  [
+    "const api: any = Math.random() ? {} : context.ports.api; api.health();",
+    "view-api",
+  ],
+  [
+    "const { client: api = context.ports.api } = {} as any; api.health();",
+    "view-api",
+  ],
+  [
+    "const { optional: { api } = context.ports } = {} as any; api.health();",
+    "view-api",
+  ],
+  [
+    "const box: any = {}; box.client = context.ports.api; box.client.health();",
+    "view-api",
+  ],
+  [
+    "const box: any = {}; const alias = box; alias.client = context.ports.api; box.client.health();",
+    "view-api",
+  ],
+  [
+    "const key: string = ['queryClient'][0]!; context[key].clear();",
+    "view-state",
+  ],
+  ["const key: string = ['ports'][0]!; context[key].api.health();", "view-api"],
+  ["const key: string = ['api'][0]!; context.ports[key].health();", "view-api"],
+  [
+    "const key: string = ['queryClient'][Math.floor(Math.random())]!; context[key].clear();",
+    "view-state",
+  ],
+  [
+    "const key: string = ['api'][Math.floor(Math.random())]!; context.ports[key].health();",
+    "view-api",
+  ],
+  ["const api = context.ports.api || {}; api.health();", "view-api"],
+  [
+    "const api = context.ports.api && context.ports.api; api.health();",
+    "view-api",
+  ],
+  [
+    "const box: any = { nest: {} }; const alias = box.nest; alias.client ??= context.ports.api; box.nest.client.health();",
+    "view-api",
+  ],
+  [
+    "const box: any = {}; const key = ['client'][0]!; box[key] = context.ports.api; box.client.health();",
+    "view-api",
+  ],
+  [
+    "const api: any = Math.random() ? context.ports.api : context.queryClient; api.health();",
+    "view-api",
+  ],
+  [
+    "const query: any = Math.random() ? context.ports.api : context.queryClient; query.clear();",
+    "view-state",
+  ],
+  [
+    "const key: string = Math.random() ? 'tenantId' : String(Math.random()); context[key].clear();",
+    "view-state",
+  ],
+  [
+    "const key: string = Math.random() ? 'clipboard' : String(Math.random()); context.ports[key].health();",
+    "view-api",
+  ],
+];
+
+test("review findings: real generated loader expression and computed-key aliases retain authority", () => {
+  const file = "routes/dashboard.tsx";
+  const original = readFileSync(resolve(webRoot, "src", file), "utf8");
+  const body = reviewControls.map(([code]) => `    { ${code} }`).join("\n");
+  const text = original.replace(
+    /  loader:.*\n/,
+    `  loader: async ({ context }: any) => {\n${body}\n  },\n`,
+  );
+  const view = "views/lint-review/Page.ts";
+  const viewHeader = `import { useRouteContext } from '@tanstack/react-router';\nconst context: any = useRouteContext({ strict: false });\n`;
+  const results = check({ [file]: text, [view]: viewHeader + body }, {}, true);
+  console.log(
+    JSON.stringify({
+      control: "review-loader",
+      inputs: reviewControls,
+      boundary: results,
+      compiler: results.compilerDiagnostics.map((d) =>
+        ts.flattenDiagnosticMessageText(d.messageText, "\n"),
+      ),
+    }),
+  );
+  assert.equal(results.compilerDiagnostics.length, 0);
+  const line = text.slice(0, text.indexOf(body)).split("\n").length;
+  const missing = [
+    [file, line],
+    [view, viewHeader.split("\n").length],
+  ].flatMap(([path, first]) =>
+    reviewControls.filter(
+      ([, rule], i) =>
+        !results.some(
+          (d) =>
+            d.file === path &&
+            d.line === first + i &&
+            d.column > 0 &&
+            d.rule === rule,
+        ),
+    ),
+  );
+  assert.deepEqual(missing, []);
+});
+
+test("review findings: container and destructured barrel exports retain runtime authority", () => {
+  for (const suffix of ["", "/missing-declaration"]) {
+    const files = {};
+    const expected = [];
+    for (const [module, imported, rule] of [
+      ["@tanstack/react-query", "useQuery", "view-state"],
+      ["@jobctrl/api-client", "JobCtrlApiClient", "api-adapter"],
+    ]) {
+      const cases = [
+        ["export { Original as load };", "tools.load"],
+        [
+          "export const runtime = { nested: { member: Original } };",
+          "tools.runtime.nested.member",
+        ],
+        [
+          "const { member: load } = { member: Original }; export { load };",
+          "tools.load",
+        ],
+        ["export const { member: load } = { member: Original };", "tools.load"],
+        [`export const { ${imported}: load } = space;`, "tools.load"],
+        ["export const { absent: load = Original } = {} as any;", "tools.load"],
+        ["export const [load] = [Original];", "tools.load"],
+        ["export const [load] = [...[Original]];", "tools.load"],
+        ["export const load = await Original;", "tools.load"],
+        ["export const load = (Math.random(), Original);", "tools.load"],
+        [
+          "const forward = (value: any) => value; export const load = forward(Original);",
+          "tools.load",
+        ],
+        ["export const [, ...loads] = [null, Original];", "tools.loads[0]"],
+        ["export const loads = [null, ...[Original]];", "tools.loads[1]"],
+        [
+          "const prefix: any[] = []; export const loads = [...prefix, Original];",
+          "tools.loads[0]",
+        ],
+        [
+          "export const runtime: any = {}; runtime.member = Original;",
+          "tools.runtime.member",
+        ],
+        [
+          "const runtime = { member: Original }; export const load = runtime.member;",
+          "tools.load",
+        ],
+        [
+          "export const load = Math.random() ? Original : () => undefined;",
+          "tools.load",
+        ],
+        [
+          "export const load = (Original as any) ?? (() => undefined);",
+          "tools.load",
+        ],
+      ];
+      for (const [declaration, use] of cases) {
+        const id = expected.length;
+        const file = `views/lint-review-${id}/Page.ts`;
+        files[`shared/lint-review-${id}.ts`] =
+          `import { ${imported} as Original } from '${module}${suffix}';
+          import * as space from '${module}${suffix}'; ${declaration}`;
+        files[file] =
+          `import * as tools from '../../shared/lint-review-${id}.js'; (${use} as any)({});`;
+        expected.push({ file, rule, declaration });
+      }
+    }
+    const results = check(files, {}, true);
+    console.log(
+      JSON.stringify({
+        control: "review-barrel",
+        suffix,
+        inputs: files,
+        boundary: results,
+        compiler: results.compilerDiagnostics.map((d) =>
+          ts.flattenDiagnosticMessageText(d.messageText, "\n"),
+        ),
+      }),
+    );
+    if (!suffix) assert.equal(results.compilerDiagnostics.length, 0);
+    else
+      assert.ok(
+        results.compilerDiagnostics.some((d) =>
+          ts
+            .flattenDiagnosticMessageText(d.messageText, " ")
+            .includes("missing-declaration"),
+        ),
+      );
+    assert.deepEqual(
+      expected.filter(
+        ({ file, rule }) =>
+          !results.some(
+            (d) =>
+              d.file === file &&
+              d.rule === rule &&
+              d.line === 1 &&
+              d.column > 0,
+          ),
+      ),
+      [],
+    );
+  }
+});
+
+test("provenance keeps selected helpers, error values, local shadowing and safe computed keys legal", () => {
+  const files = {
+    "contexts/lint-one/hooks/useOwned.ts": `import { useQuery } from '@tanstack/react-query';
+      export const runtime = { useQuery }; export function useOwned() { return useQuery({ queryKey: ['owned'] }); }`,
+    "shared/lint-safe-error.ts": `import * as wire from '@jobctrl/api-client'; export const { JobCtrlApiError: ErrorValue } = wire;`,
+    "views/lint-example/Page.ts": `import { useOwned } from '../../contexts/lint-one/hooks/useOwned.js';
+      import { ErrorValue } from '../../shared/lint-safe-error.js';
+      import type { QueryClient } from '@tanstack/react-query';
+      useOwned(); const ErrorAlias = ErrorValue;
+      const context = { ports: { api: { health() {} } }, queryClient: { clear() {} } };
+      const api = context.ports.api ?? {}; api.health();
+      const box = { client: { health() {} } }; box.client = api; box.client.health();
+      function shadow() { const box = { client: { health() {} } }; box.client.health(); }
+      const key: string = ['queryClient'][0]!; context[key as 'queryClient'].clear();`,
+    "routes/dashboard.tsx": readFileSync(
+      resolve(webRoot, "src/routes/dashboard.tsx"),
+      "utf8",
+    ).replace(
+      /  loader:.*\n/,
+      `  loader: ({ context }) => { const key = ['tenantId'][0] as 'tenantId'; return context[key]; },\n`,
+    ),
+  };
+  const results = check(files, {}, true);
+  assert.deepEqual(
+    results.compilerDiagnostics.map((d) =>
+      ts.flattenDiagnosticMessageText(d.messageText, "\n"),
+    ),
+    [],
+  );
+  assert.deepEqual([...results], []);
 });

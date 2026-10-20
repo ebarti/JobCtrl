@@ -104,6 +104,24 @@ function invalidateApplyReviewSurfaces(
   }
 }
 
+export function useCoverLetterMutations() {
+  const tenantId = useTenantId();
+  const { api } = usePorts();
+  const queryClient = useQueryClient();
+  const render = useMutation({
+    mutationFn: ({ jobId, body }: { jobId: string; body: import("@jobctrl/contracts").CoverLetterRenderRequest }) => api.renderCoverLetterPreview(jobId, body),
+  });
+  const save = useMutation({
+    onMutate: () => ({ tenantId }),
+    mutationFn: ({ jobId, body }: { jobId: string; body: { previewId: string; expectedAcceptedVersion: string } }) => api.acceptCoverLetterPreview(jobId, body),
+    onSettled: (_data, _error, { jobId }, context) => {
+      invalidateApplyReviewSurfaces(queryClient, context!.tenantId, jobId);
+      void queryClient.invalidateQueries({ queryKey: artifactsKeys.lists(context!.tenantId) });
+    },
+  });
+  return { render, save };
+}
+
 export function useApplyReviewDecisionMutation(): UseMutationResult<
   ApplyReviewDecisionResponse,
   Error,
@@ -113,9 +131,10 @@ export function useApplyReviewDecisionMutation(): UseMutationResult<
   const { api } = usePorts();
   const queryClient = useQueryClient();
   return useMutation({
+    onMutate: () => ({ tenantId }),
     mutationFn: ({ jobId, body }) => api.decideApplyReview(jobId, body),
-    onSettled: (_data, _error, variables) => {
-      invalidateApplyReviewSurfaces(queryClient, tenantId, variables.jobId);
+    onSettled: (_data, _error, variables, context) => {
+      invalidateApplyReviewSurfaces(queryClient, context!.tenantId, variables.jobId);
     },
   });
 }

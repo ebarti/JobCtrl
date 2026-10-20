@@ -9,6 +9,7 @@ import {
 import { useMemo, useState } from "react";
 
 import { EvidenceStatusBadge } from "../../contexts/operations/components/EvidenceStatusBadge.js";
+import { CareerLearningPanel } from "../../contexts/operations/components/CareerLearningPanel.js";
 import {
   useEvidenceMapEntryQuery,
   useEvidenceMapQuery,
@@ -17,7 +18,7 @@ import type {
   EvidenceGap,
   EvidenceMapEntry,
   EvidenceUsageRef,
-} from "../../contexts/operations/types.js";
+} from "@jobctrl/contracts";
 import type { EvidenceMapSearch } from "../../routes/-evidence-map.search.js";
 import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert.js";
 import { Button, buttonVariants } from "../../shared/ui/button.js";
@@ -633,6 +634,7 @@ export function EvidenceMapView() {
           evidenceMap.data ? `${filteredEntries.length} entries` : "loading"
         }
       />
+      <CareerLearningPanel />
       <section className="card full evidence-map-view">
         {errorMessage ? (
           <Alert className="evidence-map-error" variant="destructive">

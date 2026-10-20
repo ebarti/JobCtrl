@@ -2,6 +2,7 @@ import { createContext, useContext, type ReactNode } from "react";
 
 import type {
   ApiClientPort,
+  ArtifactDownloadPort,
   ClipboardPort,
   EventStreamPort,
   FeatureFlagPort,
@@ -14,6 +15,7 @@ import type {
 
 export interface Ports {
   api: ApiClientPort;
+  artifactDownload: ArtifactDownloadPort;
   eventStream: EventStreamPort;
   storage: StoragePort;
   session: SessionPort;

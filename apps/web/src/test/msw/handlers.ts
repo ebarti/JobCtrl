@@ -267,6 +267,12 @@ function makeStoryArtifactDetail(artifactId: string) {
 }
 
 export const handlers = [
+  http.post("*/v1/jobs/:jobId/material-exports", async ({ params, request }) => {
+    const body = await request.json() as { operation: string };
+    return body.operation === "history"
+      ? HttpResponse.json({ tenantId: "local", jobId: params["jobId"], sources: [], exports: [], exportedArtifactId: null })
+      : HttpResponse.json({ ok: false, error: "accepted_source_unavailable" }, { status: 409 });
+  }),
   ...interviewHandlers,
   http.get("*/v1/health", () => HttpResponse.json(sampleHealthResponse)),
   http.get("*/v1/dashboard/summary", () => HttpResponse.json(sampleDashboardSummary)),
@@ -317,6 +323,7 @@ export const handlers = [
     });
   }),
   http.get("*/v1/evidence-map", () => HttpResponse.json(sampleEvidenceMapResponse)),
+  http.get("*/v1/evidence-map/learning", () => HttpResponse.json({ ok: true, preview: null, cohorts: [], milestones: [], truncated: false })),
   http.get("*/v1/debug/activity", () =>
     HttpResponse.json(makeActivityPage(sampleDashboardSummary.activity)),
   ),
@@ -635,6 +642,7 @@ export const handlers = [
       },
     });
   }),
+  http.get("*/v1/jobs/:jobId/offer", ({ params }) => HttpResponse.json({ ok: true, jobId: params["jobId"], termsHistory: [], decisions: [], currentTerms: null, currentDecision: null })),
   http.get("*/v1/outcomes", () => HttpResponse.json(sampleApplicationOutcomes)),
   http.get("*/v1/jobs/:jobKey/outcomes", ({ params }) =>
     HttpResponse.json({

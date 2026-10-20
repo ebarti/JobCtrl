@@ -7475,7 +7475,7 @@ import { fileURLToPath as fileURLToPath3, pathToFileURL as pathToFileURL3 } from
 
 // scripts/distribution-build.mjs
 import { createHash as createHash3 } from "node:crypto";
-import { createReadStream as createReadStream3, createWriteStream } from "node:fs";
+import { createReadStream as createReadStream3, createWriteStream, readFileSync } from "node:fs";
 import {
   chmod as chmod2,
   copyFile,
@@ -10158,6 +10158,8 @@ async function writeGeneratedComponents(payloadRoot, root, contracts, sourceDate
   await chmod2(path3.join(launcherRoot, "jobctrl-installer"), 493);
   await copyFile(path3.join(root, "launcher", "runtime-manifest.json"), path3.join(launcherRoot, "runtime-manifest.json"));
   await chmod2(path3.join(launcherRoot, "runtime-manifest.json"), 420);
+  await copyFile(path3.join(root, "launcher", "update-protocol.json"), path3.join(launcherRoot, "update-protocol.json"));
+  await chmod2(path3.join(launcherRoot, "update-protocol.json"), 420);
   const pdfjsRoot = componentRoot(payloadRoot, contracts, "pdfjs-renderer");
   await mkdir2(pdfjsRoot, { recursive: true, mode: 493 });
   await writeJson(path3.join(pdfjsRoot, "renderer.json"), {
@@ -10871,7 +10873,10 @@ function createExtractedRuntimeStackPlan({ payloadRoot, stateRoot, temporalPort,
         "--disable-config-env"
       ]
     },
-    worker: { command: pythonExecutable, args: ["-I", "-B", "-m", "jobctrl", "worker"] },
+    worker: {
+      command: pythonExecutable,
+      args: ["-I", "-B", "-c", readFileSync(path3.join(REPO_ROOT, "scripts", "distribution-smoke-model.py"), "utf8")]
+    },
     api: { command: nodeExecutable, args: [path3.join(payloadRoot, "api", "server.mjs")] },
     apiOrigin: `http://127.0.0.1:${apiPort}`
   };
@@ -11702,6 +11707,7 @@ with sync_playwright() as playwright:
     dbBackedRoute: "/v1/jobs",
     browserRevision: 1208,
     offlineManualCaptureJob: offlineFixtureUrl,
+    semanticModel: { provider: "distribution-smoke", model: "explicit-page-fixture", boundary: "model-port-test-double" },
     manualCaptureWorkflow: {
       itemId: captureEvidence.itemId,
       workflowId: workflowEvidence.workflowId,

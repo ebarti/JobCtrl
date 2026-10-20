@@ -6,7 +6,6 @@ import json
 import sqlite3
 from typing import Any
 
-from jobctrl.infrastructure.interview import SqliteInterviewPrepRepository
 from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
 from jobctrl.infrastructure.scoring import SqliteRequirementFitReportRepository
 
@@ -29,23 +28,13 @@ def test_detail_projection_roots_use_the_passed_job_id_without_job_key(
     requirement_fit = _ReadModel(
         {"jobId": "stale-requirement-fit-job", "jobKey": "obsolete", "scoreVersion": 2}
     )
-    interview_prep = _ReadModel(
-        {"jobId": "stale-interview-prep-job", "jobKey": "obsolete", "generation": 3}
-    )
     monkeypatch.setattr(
         SqliteRequirementFitReportRepository,
         "load",
         lambda *_: requirement_fit,
     )
-    monkeypatch.setattr(
-        SqliteInterviewPrepRepository,
-        "load_latest_read_model",
-        lambda *_args, **_kwargs: interview_prep.to_read_model(),
-    )
 
     with builder._bind(conn):
         requirement_payload = json.loads(builder._load_requirement_fit_report(job_id) or "{}")
-        interview_payload = json.loads(builder._load_interview_prep(job_id) or "{}")
 
     assert requirement_payload == {"jobId": job_id, "scoreVersion": 2}
-    assert interview_payload == {"jobId": job_id, "generation": 3}

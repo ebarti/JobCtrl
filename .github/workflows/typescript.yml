@@ -65,7 +65,7 @@ jobs:
   web:
     name: Web unit, types, and build
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -152,6 +152,11 @@ jobs:
         run: |
           corepack pnpm --filter @jobctrl/web exec playwright install --with-deps chromium
           uv --project workers/automation run --locked --all-extras playwright install chromium
+      - name: Prepare PDF measurement tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes poppler-utils
+          corepack pnpm --filter @jobctrl/web e2e:check-pdf-tools
       - name: Test web end-to-end
         env:
           JOBCTRL_E2E_ISOLATED: "1"
@@ -161,12 +166,14 @@ jobs:
         env:
           JOBCTRL_E2E_ISOLATED: "0"
           JOBCTRL_E2E_PROFILE_SUGGESTIONS: "0"
+          JOBCTRL_E2E_WEB_SERVER: dev
           JOBCTRL_E2E_APP_DIR: /tmp/jobctrl-real-rpc-e2e
         run: |
           mkdir -p "$JOBCTRL_E2E_APP_DIR"
           corepack pnpm --filter @jobctrl/web exec playwright test --config e2e/playwright.config.ts \
             e2e/tests/discovery-saved-views.spec.ts e2e/tests/repeat-application.spec.ts \
-            e2e/tests/dry-run-completed.spec.ts
+            e2e/tests/dry-run-completed.spec.ts e2e/tests/accepted-material-exports.spec.ts \
+            e2e/tests/offer-outcomes.spec.ts
 
   extension:
     name: Browser extension
@@ -188,9 +195,8 @@ jobs:
         run: corepack pnpm install --frozen-lockfile
       - name: Install Playwright Chromium
         run: corepack pnpm --filter @jobctrl/extension exec playwright install --with-deps chromium
-      - name: Check, test, build, and exercise extension
+      - name: Check, test, and exercise extension
         run: |
           corepack pnpm extension:check
           corepack pnpm extension:test
-          corepack pnpm extension:build
           xvfb-run --auto-servernum corepack pnpm extension:e2e

@@ -1,6 +1,6 @@
+import { prefetchActivityList } from "../contexts/operations/readQueries.js";
 import { createFileRoute } from "@tanstack/react-router";
 
-import { activityKeys } from "../contexts/operations/activityKeys.js";
 import { DebugView } from "../views/debug/DebugView.js";
 import { debugSearchSchema, type DebugSearch } from "./-debug.search.js";
 
@@ -20,12 +20,7 @@ function activityInput(search: DebugSearch) {
 export const Route = createFileRoute("/debug")({
   validateSearch: debugSearchSchema,
   loaderDeps: ({ search }) => ({ search }),
-  loader: ({ deps, context }) => {
-    const input = activityInput(deps.search);
-    return context.queryClient.prefetchQuery({
-      queryKey: activityKeys.list(context.tenantId, input),
-      queryFn: () => context.ports.api.activity(input),
-    });
-  },
+  loader: ({ context, deps }) =>
+    prefetchActivityList(context, activityInput(deps.search)),
   component: DebugView,
 });

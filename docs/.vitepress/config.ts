@@ -164,6 +164,7 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
       { text: "Discovery & Sources", link: "/user/discovery" },
       { text: "Enrichment & Extraction", link: "/user/enrichment-and-extraction" },
       { text: "Scoring", link: "/user/scoring-and-employer-analysis" },
+      { text: "Company briefings", link: "/user/company-briefings" },
       { text: "Materials & Tailoring", link: "/user/materials-and-tailoring" },
       { text: "Reviewed Locale Variants", link: "/user/locale-variants" },
       { text: "Apply", link: "/user/apply" },
@@ -196,6 +197,7 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
       { text: "Contributor Start", link: "/developer/" },
       { text: "Repository & Ownership Map", link: "/developer/repository-and-ownership-map" },
       { text: "Local Development", link: "/local-development" },
+      { text: "Releasing JobCtrl", link: "/developer/releasing" },
       { text: "Documentation Standards", link: "/developer/documentation-standards" },
       {
         text: "Reliability & QA",

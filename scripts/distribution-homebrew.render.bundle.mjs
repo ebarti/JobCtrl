@@ -7482,7 +7482,7 @@ import { fileURLToPath as fileURLToPath3, pathToFileURL as pathToFileURL3 } from
 
 // scripts/distribution-build.mjs
 import { createHash as createHash3 } from "node:crypto";
-import { createReadStream as createReadStream3, createWriteStream } from "node:fs";
+import { createReadStream as createReadStream3, createWriteStream, readFileSync } from "node:fs";
 import {
   chmod as chmod2,
   copyFile,
@@ -10165,6 +10165,8 @@ async function writeGeneratedComponents(payloadRoot, root, contracts, sourceDate
   await chmod2(path3.join(launcherRoot, "jobctrl-installer"), 493);
   await copyFile(path3.join(root, "launcher", "runtime-manifest.json"), path3.join(launcherRoot, "runtime-manifest.json"));
   await chmod2(path3.join(launcherRoot, "runtime-manifest.json"), 420);
+  await copyFile(path3.join(root, "launcher", "update-protocol.json"), path3.join(launcherRoot, "update-protocol.json"));
+  await chmod2(path3.join(launcherRoot, "update-protocol.json"), 420);
   const pdfjsRoot = componentRoot(payloadRoot, contracts, "pdfjs-renderer");
   await mkdir2(pdfjsRoot, { recursive: true, mode: 493 });
   await writeJson(path3.join(pdfjsRoot, "renderer.json"), {
@@ -10878,7 +10880,10 @@ function createExtractedRuntimeStackPlan({ payloadRoot, stateRoot, temporalPort,
         "--disable-config-env"
       ]
     },
-    worker: { command: pythonExecutable, args: ["-I", "-B", "-m", "jobctrl", "worker"] },
+    worker: {
+      command: pythonExecutable,
+      args: ["-I", "-B", "-c", readFileSync(path3.join(REPO_ROOT, "scripts", "distribution-smoke-model.py"), "utf8")]
+    },
     api: { command: nodeExecutable, args: [path3.join(payloadRoot, "api", "server.mjs")] },
     apiOrigin: `http://127.0.0.1:${apiPort}`
   };
@@ -11709,6 +11714,7 @@ with sync_playwright() as playwright:
     dbBackedRoute: "/v1/jobs",
     browserRevision: 1208,
     offlineManualCaptureJob: offlineFixtureUrl,
+    semanticModel: { provider: "distribution-smoke", model: "explicit-page-fixture", boundary: "model-port-test-double" },
     manualCaptureWorkflow: {
       itemId: captureEvidence.itemId,
       workflowId: workflowEvidence.workflowId,
@@ -14298,11 +14304,13 @@ function validateRenderedHomebrewFormula({ formula, descriptor, descriptorRaw, s
     `JOBCTRL_DESCRIPTOR_SHA256 = "${values.DESCRIPTOR_SHA256}"`,
     `JOBCTRL_SIGNATURE_SHA256 = "${values.SIGNATURE_SHA256}"`,
     'require "open3"',
-    'if !gatekeeper_status.success? || gatekeeper_output.exclude?("source=Notarized Developer ID")',
-    'verify_notarized_executable!(buildpath/"launcher/jobctrl")',
-    'verify_notarized_executable!(buildpath/"launcher/jobctrl-installer")',
+    'DEVELOPER_ID_REQUIREMENT = "anchor apple generic "',
+    '"and certificate 1[field.1.2.840.113635.100.6.2.6] exists "',
+    '"and certificate leaf[field.1.2.840.113635.100.6.1.13] exists"',
+    'verify_developer_id_executable!(buildpath/"launcher/jobctrl")',
+    'verify_developer_id_executable!(buildpath/"launcher/jobctrl-installer")',
     "managed_headless_shell",
-    "verify_notarized_executable!(managed_headless_shell)",
+    "verify_developer_id_executable!(managed_headless_shell)",
     'resource "jobctrl-release-descriptor"',
     'resource "jobctrl-release-descriptor-signature"',
     'bootstrap.install "release-descriptor.json" => "homebrew-release.json"',
@@ -14313,13 +14321,11 @@ function validateRenderedHomebrewFormula({ formula, descriptor, descriptorRaw, s
   ];
   for (const marker of required) invariant5(formula.includes(marker), `rendered Homebrew formula is missing ${marker}`);
   const requiredCalls = [
-    /Open3\.capture2e\(\s*"\/usr\/bin\/codesign",\s*"--verify",\s*"--deep",\s*"--strict",\s*"--check-notarization",\s*"-R=notarized",\s*"--verbose=2",\s*bundle\.to_s,?\s*\)/,
-    /Open3\.capture2e\(\s*"\/usr\/bin\/codesign",\s*"--verify",\s*"--strict",\s*"--check-notarization",\s*"-R=notarized",\s*"--verbose=2",\s*executable\.to_s,?\s*\)/,
-    /Open3\.capture2e\(\s*"\/usr\/sbin\/spctl",\s*"--assess",\s*"--type",\s*"execute",\s*"--verbose=4",\s*bundle\.to_s,?\s*\)/
+    /Open3\.capture2e\(\s*"\/usr\/bin\/codesign",\s*"--verify",\s*"--strict",\s*"-R=#\{DEVELOPER_ID_REQUIREMENT\}",\s*"--verbose=2",\s*executable\.to_s,?\s*\)/
   ];
   for (const pattern of requiredCalls) invariant5(pattern.test(formula), `rendered Homebrew formula is missing security call ${pattern}`);
   invariant5(formula.includes("Formula installation remains entirely prefix-owned"), "rendered Homebrew formula must use first-invocation bootstrap");
-  invariant5(!formula.includes('verify_notarized_app!(buildpath/"launcher/jobctrl")'), "rendered Homebrew formula must not Gatekeeper-assess raw launcher executables");
+  invariant5(!formula.includes("--check-notarization") && !formula.includes('"/usr/sbin/spctl"'), "rendered Homebrew formula must leave live notarization to the normal-user bootstrap and installer");
   invariant5(!formula.includes("Pathname.new(Dir.home)"), "rendered Homebrew formula must not write the user home during install");
   invariant5(!/\bhead\s+/.test(formula), "rendered Homebrew formula must not have a HEAD/source path");
   invariant5(!/depends_on\s+/.test(formula), "rendered Homebrew formula must not install a developer-toolchain dependency");
@@ -14420,5 +14426,6 @@ if (import.meta.url === invokedPath5) {
   }
 }
 export {
-  renderHomebrewFormula
+  renderHomebrewFormula,
+  verifyReleaseDescriptorSignature
 };

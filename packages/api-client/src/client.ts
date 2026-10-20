@@ -1,3 +1,4 @@
+import type { OfferReadResponse, SaveOfferTerms, RecordOfferDecision } from "@jobctrl/contracts";
 import type {
   ActionRunResponse,
   ActivityEventResponse,
@@ -60,7 +61,6 @@ import type {
   CorrectScoreResponse,
   CredentialsResponse,
   CredentialUpdateRequest,
-  CodexVerifyResponse,
   DigestAcknowledgeRequest,
   DigestAcknowledgeResponse,
   DashboardSummary,
@@ -114,8 +114,6 @@ import type {
   TargetRoleSuggestionRequest,
   TargetRoleSuggestionResponse,
   ProfileUpdateRequest,
-  ProviderStatusResponse,
-  ProviderModelCatalogResponse,
   PipelineStageRunResponse,
   QuarantineDecision,
   QuarantineDecisionResponse,
@@ -624,6 +622,18 @@ export class JobCtrlApiClient {
     );
   }
 
+  jobOffer(jobId: string): Promise<OfferReadResponse> {
+    return this.get(`/v1/jobs/${encodeURIComponent(jobId)}/offer`);
+  }
+
+  saveOfferTerms(jobId: string, body: SaveOfferTerms): Promise<OfferReadResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobId)}/offer/terms`, body);
+  }
+
+  recordOfferDecision(jobId: string, body: RecordOfferDecision): Promise<OfferReadResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobId)}/offer/decisions`, body);
+  }
+
   applicationOutcomes(): Promise<ApplicationOutcomeListResponse> {
     return this.get("/v1/outcomes");
   }
@@ -654,6 +664,8 @@ export class JobCtrlApiClient {
   jobs(
     query: Partial<JobListQuery> = {},
   ): Promise<PaginatedResponse<JobSummary>> {
+    // Arrays use the request serializer's comma form, including stages=[]
+    // as stages= so callers can explicitly clear a legacy scalar stage.
     return this.get("/v1/jobs", query);
   }
 
@@ -970,6 +982,20 @@ export class JobCtrlApiClient {
     return this.get(`/v1/artifacts/${encodeURIComponent(artifactId)}`);
   }
 
+  async downloadMaterialDocx(artifactId: string): Promise<Blob> {
+    const response = await fetch(`${this.baseUrl}/v1/artifacts/${encodeURIComponent(artifactId)}/download.docx`, {
+      signal: AbortSignal.timeout(this.requestTimeoutMs), cache: "no-store",
+    });
+    if (!response.ok) {
+      const body: unknown = await response.json().catch(() => undefined);
+      throw new JobCtrlApiError(response.status, response.statusText, undefined, body);
+    }
+    if (response.headers.get("content-type") !== "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+      throw new Error("The export download did not return a DOCX file.");
+    }
+    return response.blob();
+  }
+
   artifactPreviewPdfUrl(artifactId: string, cacheKey?: QueryValue): string {
     const path = `/v1/artifacts/${encodeURIComponent(artifactId)}/preview.pdf`;
     const url = new URL(
@@ -980,6 +1006,10 @@ export class JobCtrlApiClient {
       url.searchParams.set("v", String(cacheKey));
     }
     return this.baseUrl ? url.href : `${url.pathname}${url.search}`;
+  }
+
+  coverLetterPreviewPdfUrl(jobId: string, previewId: string): string {
+    return `${this.baseUrl}/v1/jobs/${encodeURIComponent(jobId)}/cover-letter/previews/${encodeURIComponent(previewId)}.pdf`;
   }
 
   artifactPreviewHtmlUrl(artifactId: string, cacheKey?: QueryValue): string {
@@ -1120,18 +1150,6 @@ export class JobCtrlApiClient {
       "/v1/browser-capabilities/authenticated-linkedin-browser/profile-copy",
       body,
     );
-  }
-
-  providerStatus(): Promise<ProviderStatusResponse> {
-    return this.get("/v1/providers/status");
-  }
-
-  providerModels(): Promise<ProviderModelCatalogResponse> {
-    return this.get("/v1/providers/models");
-  }
-
-  verifyCodexProvider(): Promise<CodexVerifyResponse> {
-    return this.post("/v1/providers/codex/verify", {});
   }
 
   retryStage(

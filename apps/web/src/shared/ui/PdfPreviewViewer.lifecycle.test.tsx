@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const pdfMocks = vi.hoisted(() => ({
@@ -99,6 +99,28 @@ afterAll(() => {
 });
 
 describe("PdfPreviewViewer resource lifecycle", () => {
+  it("reports completion only after the final page, including a reloaded accepted PDF", async () => {
+    let finishLastPage!: () => void;
+    const lastPage = createPage({ renderPromise: new Promise<void>(resolve => { finishLastPage = resolve; }) });
+    installPdfDocument([createPage(), lastPage]);
+    const view = render(<PdfPreviewViewer {...viewerProps} />);
+    await waitFor(() => expect(lastPage.render).toHaveBeenCalledTimes(1));
+    expect(view.container.querySelector(".toolbar-status")).not.toHaveTextContent(/^\d+ pages?$/);
+    await act(async () => { finishLastPage(); });
+    expect(await screen.findByText("2 pages")).toBeVisible();
+    expect(screen.getAllByRole("img")).toHaveLength(2);
+
+    let finishAcceptedPage!: () => void;
+    const acceptedPage = createPage({ renderPromise: new Promise<void>(resolve => { finishAcceptedPage = resolve; }) });
+    installPdfDocument([acceptedPage]);
+    view.rerender(<PdfPreviewViewer {...viewerProps} url="/v1/artifacts/accepted/preview.pdf" />);
+    await waitFor(() => expect(acceptedPage.render).toHaveBeenCalledTimes(1));
+    expect(view.container.querySelector(".toolbar-status")).not.toHaveTextContent(/^\d+ pages?$/);
+    await act(async () => { finishAcceptedPage(); });
+    expect(await screen.findByText("1 page")).toBeVisible();
+    expect(screen.getAllByRole("img")).toHaveLength(1);
+  });
+
   it("keeps the accessible page image and caption while mounted, then revokes its Blob URL", async () => {
     const page = createPage();
     const { loadingTask } = installPdfDocument([page]);

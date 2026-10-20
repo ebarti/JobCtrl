@@ -1,4 +1,5 @@
 import { JobCtrlApiClient } from "@jobctrl/api-client";
+import { BrowserArtifactDownloadAdapter } from "../shared/adapters/local/BrowserArtifactDownloadAdapter.js";
 
 import { ConsoleTelemetryAdapter } from "../shared/adapters/local/ConsoleTelemetryAdapter.js";
 import { LocalSessionAdapter } from "../shared/adapters/local/LocalSessionAdapter.js";
@@ -59,6 +60,7 @@ export function createLocalPorts(apiBaseUrl = ""): Ports {
   const api = new JobCtrlApiClient(apiBaseUrl);
   return {
     api,
+    artifactDownload: new BrowserArtifactDownloadAdapter(api),
     eventStream: new SseEventStreamAdapter(apiBaseUrl),
     storage: new LocalStorageAdapter("jh:"),
     session: new LocalSessionAdapter(),
@@ -99,6 +101,7 @@ export async function createAppComposition(
     kind: "demo",
     ports: {
       api,
+      artifactDownload: new BrowserArtifactDownloadAdapter(api),
       eventStream: new DemoWorkspaceEventStreamAdapter(workspace),
       storage: new DemoStorageAdapter(),
       session: new DemoSessionAdapter(),

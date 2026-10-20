@@ -1,6 +1,8 @@
 """Compensation classification, refresh leases, caching and accepted results."""
 
+import io
 from pathlib import Path
+from types import SimpleNamespace
 import pytest
 from jobctrl.database import init_db, close_connection
 from jobctrl.domain.determinations import DeterminationFailure
@@ -15,6 +17,7 @@ from jobctrl.infrastructure.compensation.refresh_state import (
 )
 from jobctrl.infrastructure.compensation.benchmark_materialization import materialize_automatic_compensation_estimates
 from jobctrl.infrastructure.compensation.sqlite_market_repository import (
+    EURO_TOP_TECH_DATA_ENTRIES_URL,
     SqliteMarketCompensationRepository,
     ReportedCompensationSourceLoad,
 )
@@ -77,6 +80,7 @@ def test_production_refresh_keeps_levels_disabled_without_user_opt_in(
         def fake_run(_conn, **kwargs):
             loaded = kwargs["load_observations"]((LevelsFyiPublicTarget("Software Engineer", "ES"),))
             assert loaded.levels_fyi_public_count == 0
+            assert loaded.source_errors == ()
             return expected
 
         monkeypatch.setattr(
@@ -84,14 +88,22 @@ def test_production_refresh_keeps_levels_disabled_without_user_opt_in(
             fake_run,
         )
 
+        requests = []
+
+        def public_feed(request, timeout):
+            requests.append(request.full_url)
+            return io.BytesIO(b'{"rows": [], "hasMore": false}')
+
         result = refresh_automatic_compensation_benchmarks(
             tenant_id="local",
             owner="discover-local-policy-test",
             now=NOW,
             conn=conn,
+            opener=SimpleNamespace(open=public_feed),
         )
 
         assert result == expected
+        assert requests == [EURO_TOP_TECH_DATA_ENTRIES_URL]
     finally:
         close_connection(db_path)
 

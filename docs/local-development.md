@@ -470,7 +470,15 @@ release workflows, demo composition, dev supervisor lifecycle).
 
 Python CI syncs `workers/automation/uv.lock` with `--locked --all-extras`; it
 must never resolve the floating ranges in `pyproject.toml` in place of the
-locked candidate graph. Ephemeral Temporal test environments must start and
+locked candidate graph. The full worker suite runs with two pytest-xdist
+processes and `--dist=loadfile`, keeping a file's fixtures in one process while
+independent files overlap. Each process owns its temporary JobCtrl workspace.
+`--max-worker-restart=0` makes a crashed or timed-out worker fail the run without
+an automatic restart. `corepack pnpm python:test` and the full worker recipe use
+the same settings and pass `workers/automation/tests` explicitly so pytest loads
+the worker's configuration. Focused pytest commands stay serial unless the
+caller requests workers; do not pay process startup for a single small file.
+Ephemeral Temporal test environments must start and
 stop only through the bounded, retried lifecycle in
 `workers/automation/tests/temporal_env.py` — two hosted lanes previously hung
 for GitHub's full six-hour ceiling on a wedged test-server start — and every
@@ -480,6 +488,13 @@ signal cannot unwind a blocked worker-pool thread), with a 45-minute job
 ceiling behind it. CI points `TMPDIR` at `/dev/shm` when available so
 hosted-runner disk latency cannot amplify the SQLite migration tests; the
 macOS launcher workflow still proves the migration boundary on real disk.
+If the SDK's automatic test-server download is unavailable locally, point
+`JOBCTRL_TEMPORAL_TEST_SERVER_PATH` at an existing Temporal time-skipping test
+server executable and `JOBCTRL_TEMPORAL_CLI_PATH` at an installed Temporal CLI.
+These test-only overrides must be absolute executable file paths; invalid paths
+fail before startup. They use the SDK's supported existing-binary parameters and
+retain real servers, per-test lifecycles, startup/shutdown bounds and workflow
+execution. Unset overrides keep the SDK's normal download/cache behavior.
 Dependabot staggers package-manager batches weekly, groups compatible minor
 and patch updates, and applies a rolling cooldown before opening a candidate
 lockfile.
@@ -508,6 +523,12 @@ cannot authorize deletion. All modes start their own servers; a busy configured
 port fails instead of reusing an unidentified listener. The API startup wrapper
 seeds the owned database before API construction, and global setup verifies that
 seed receipt. See [isolated browser setup](developer/qa/browser-smoke.md#isolated-browser-mode).
+
+## Publish a release
+
+Use [Releasing JobCtrl](developer/releasing.md) for version preparation, curated
+notes, exact-candidate checks, protected signing, publication, and independent
+verification of every public channel.
 
 ## Build the bundled payload
 
@@ -556,6 +577,16 @@ builder itself:
 corepack pnpm distribution:build:fixture
 corepack pnpm distribution:provider-lock:check
 ```
+
+The extracted-payload smoke runs the real API, JSON-RPC, Temporal workflow,
+worker activities and SQLite persistence without provider credentials. Its
+private worker bootstrap supplies explicit page-interpretation and description
+quality model choices through `LlmPort`; normal spend preflight, source/citation
+validation and determination persistence still execute. The bootstrap is passed
+as test code outside the immutable payload and is never installed or selected
+by product configuration. The resulting `semanticModel` evidence identifies
+the synthetic boundary. This proves capture plumbing and restart preservation,
+not model accuracy or live-provider readiness.
 
 Provider SDKs and their proprietary companion runtimes are not copied into the
 core archive. Their complete transitive wheel closures are generated from the
@@ -614,7 +645,10 @@ corepack pnpm web:build
 ```
 
 `web:lint` checks production imports and browser-capability access using the
-TypeScript syntax tree. Existing boundary debt has scoped exceptions; new
+TypeScript syntax tree and capability provenance, including real generated
+loader controls independent of compiler diagnostics. Run
+`corepack pnpm web:lint:test` for the complete positive/negative boundary suite.
+Existing boundary debt has scoped exceptions; new
 imports cannot silently widen them. See the
 [frontend boundary checks](architecture/frontend/state-and-ports.md#automated-boundary-checks)
 for the enforced rules, legitimate infrastructure access, and review limits.
@@ -685,7 +719,36 @@ corepack pnpm web:e2e:live-worker:test
 node scripts/live-worker-browser-smoke.mjs
 ```
 
+`web:e2e` builds a fresh production web bundle inside its owned temporary
+workspace and serves it with Vite preview. Browser contexts load bundled chunks
+instead of repeatedly loading the development module graph. The same-origin
+`/v1` and SSE proxy still reaches that run's real API. One Playwright worker
+preserves the shared seeded database's mutation order; every test still gets a
+fresh browser context. Build failures fail the run before preview can start.
+
+For a small focused browser run, the development server avoids the fresh build
+cost:
+
+```bash
+JOBCTRL_E2E_WEB_SERVER=dev JOBCTRL_E2E_ISOLATED=1 corepack pnpm --filter @jobctrl/web exec playwright test --config=e2e/playwright.config.ts e2e/tests/dashboard.spec.ts
+```
+
+Only `preview` (the default) and `dev` are accepted. Both modes allocate the same
+owned synthetic workspace and retain the same assertions. The focused browser
+recipes in `scripts/checks.toml` and the focused real-RPC CI step explicitly use
+`dev`; the full CI browser suite uses the default production preview. The separate
+demo workspace suite keeps its development server for source-module browser probes.
+
 `web:e2e` uses the deterministic stub dispatcher and seeded worker heartbeat.
+Its cover-letter PDF measurement cases also require the Poppler system tools
+`pdfinfo`, `pdffonts`, `pdftotext` and `pdftoppm` on PATH. Install them during
+environment preparation, before browser tests: on Ubuntu/Linux CI use
+`sudo apt-get update && sudo apt-get install --yes poppler-utils`; on macOS use
+`brew install poppler`. Verify preparation with
+`corepack pnpm --filter @jobctrl/web e2e:check-pdf-tools`. The materials test
+preflight fails explicitly if any required tool is unavailable; it never skips
+measurements or installs system packages during a test run.
+
 The direct `node scripts/live-worker-browser-smoke.mjs` command is a separate,
 slower, opt-in integration lane: it starts an owned Temporal dev server, the
 standard Python worker registry, the real API JSON-RPC dispatcher, and Vite

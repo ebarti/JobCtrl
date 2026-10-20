@@ -6,7 +6,7 @@ import {
 import { useForm } from "@tanstack/react-form";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { JobCtrlSettings } from "../../operations/types.js";
+import type { JobCtrlSettings } from "@jobctrl/contracts";
 import { useUpdateSettingsMutation } from "../hooks/useUpdateSettingsMutation.js";
 import { AutosaveUndoController } from "../../../shared/ui/autosave-undo-controller.js";
 import { Button } from "../../../shared/ui/button.js";

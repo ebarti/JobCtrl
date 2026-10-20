@@ -55,7 +55,7 @@ argv = ["corepack", "pnpm", "web:test-d"]
 [checks.web-dashboard]
 kind = "junit"
 description = "Dashboard navigation and KPI controls work against this run's synthetic workspace"
-argv = ["env", "PLAYWRIGHT_JUNIT_OUTPUT_FILE={report_path}", "corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "playwright", "test", "--config=e2e/playwright.config.ts", "tests/dashboard.spec.ts", "--reporter=junit"]
+argv = ["env", "JOBCTRL_E2E_WEB_SERVER=dev", "PLAYWRIGHT_JUNIT_OUTPUT_FILE={report_path}", "corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "playwright", "test", "--config=e2e/playwright.config.ts", "tests/dashboard.spec.ts", "--reporter=junit"]
 timeout_seconds = 600
 
 [checks.extension-types]
@@ -83,7 +83,7 @@ argv = ["corepack", "pnpm", "python:lint"]
 [checks.python]
 kind = "junit"
 description = "Worker regression suite executes without failures or skipped required tests"
-argv = ["uv", "--project", "workers/automation", "run", "--locked", "--all-extras", "pytest", "-q", "-m", "not system_browser", "--junitxml={report_path}"]
+argv = ["uv", "--project", "workers/automation", "run", "--locked", "--all-extras", "pytest", "workers/automation/tests", "-q", "-n", "2", "--dist=loadfile", "--max-worker-restart=0", "-m", "not system_browser", "--junitxml={report_path}"]
 timeout_seconds = 2700
 
 [checks.python-system-browser]
@@ -131,7 +131,7 @@ timeout_seconds = 300
 [checks.dry-run-browser]
 kind = "junit"
 description = "A synthetic emitted dry-run event refreshes browser status without recording submission"
-argv = ["env", "PLAYWRIGHT_JUNIT_OUTPUT_FILE={report_path}", "JOBCTRL_E2E_API_PORT=18966", "JOBCTRL_E2E_WEB_PORT=18967", "corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "playwright", "test", "--config=e2e/playwright.config.ts", "tests/dry-run-completed.spec.ts", "--reporter=junit"]
+argv = ["env", "JOBCTRL_E2E_WEB_SERVER=dev", "PLAYWRIGHT_JUNIT_OUTPUT_FILE={report_path}", "JOBCTRL_E2E_API_PORT=18966", "JOBCTRL_E2E_WEB_PORT=18967", "corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "playwright", "test", "--config=e2e/playwright.config.ts", "tests/dry-run-completed.spec.ts", "--reporter=junit"]
 timeout_seconds = 600
 
 [checks.optional-extension-launcher]
@@ -170,7 +170,7 @@ timeout_seconds = 300
 [checks.optional-extension-browser]
 kind = "junit"
 description = "Owned Chromium UI and real fixture API accept offline Discovery and show connected preference; dispatch is stubbed and worker persistence is covered separately"
-argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "UV_EXCLUDE_NEWER=false", "UV_LOCKED=1", "PLAYWRIGHT_JUNIT_OUTPUT_FILE={report_path}", "JOBCTRL_E2E_ISOLATED=1", "JOBCTRL_E2E_API_PORT=18976", "JOBCTRL_E2E_WEB_PORT=18977", "corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "playwright", "test", "--config=e2e/playwright.config.ts", "tests/optional-extension.spec.ts", "--project=chromium", "--reporter=junit"]
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "UV_EXCLUDE_NEWER=false", "UV_LOCKED=1", "JOBCTRL_E2E_WEB_SERVER=dev", "PLAYWRIGHT_JUNIT_OUTPUT_FILE={report_path}", "JOBCTRL_E2E_ISOLATED=1", "JOBCTRL_E2E_API_PORT=18976", "JOBCTRL_E2E_WEB_PORT=18977", "corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "playwright", "test", "--config=e2e/playwright.config.ts", "tests/optional-extension.spec.ts", "--project=chromium", "--reporter=junit"]
 min_executed = 1
 timeout_seconds = 600
 
@@ -186,6 +186,20 @@ description = "Repeated Discovery preparation and enrichment release SQLite writ
 argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "pytest", "-q", "workers/automation/tests/test_enrichment_lease_concurrency.py", "workers/automation/tests/test_discovery_transaction_lifecycle.py", "workers/automation/tests/test_discovery_preparation_orchestration.py", "workers/automation/tests/test_enrichment_queue_selectors.py", "workers/automation/tests/test_discovery_enrichment_handoff.py", "workers/automation/tests/test_discovery_execution_reconciliation.py", "workers/automation/tests/test_discover_reliability.py", "workers/automation/tests/test_workflow_discovery.py", "--junitxml={report_path}"]
 min_executed = 10
 timeout_seconds = 600
+
+[checks.enrichment-retry-worker]
+kind = "junit"
+description = "Canonical enrichment retries preserve accepted artifacts and prove CLI/RPC parity, atomic rollback, writer contention and stale-worker fencing"
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "pytest", "-q", "workers/automation/tests/test_enrichment_retry.py", "workers/automation/tests/test_rpc_contract_boundary.py", "--junitxml={report_path}"]
+min_executed = 28
+timeout_seconds = 300
+
+[checks.enrichment-retry-api]
+kind = "junit"
+description = "Actual HTTP/RPC and CLI resets share a synthetic fixture, preserve acknowledgements and reject malformed target bindings"
+argv = ["corepack", "pnpm", "--filter", "@jobctrl/api", "exec", "vitest", "run", "test/enrichment-retry.test.ts", "test/write-model-state.test.ts", "test/write-model-cancel.test.ts", "test/rpc-parity.test.ts", "--reporter=junit", "--outputFile={report_path}"]
+min_executed = 43
+timeout_seconds = 300
 
 [checks.discovery-api]
 kind = "junit"
@@ -230,7 +244,7 @@ timeout_seconds = 600
 [checks.review-evidence-worker]
 kind = "junit"
 description = "Compensation population matching and narrative validation preserve canonical evidence and accepted analysis on failed regeneration"
-argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "pytest", "-q", "workers/automation/tests/test_compensation_benchmark_materialization.py", "workers/automation/tests/test_automatic_compensation_refresh.py", "workers/automation/tests/test_employer_analysis_ensemble.py", "workers/automation/tests/test_analyze_job_use_case.py", "workers/automation/tests/test_employer_analysis_model.py", "workers/automation/tests/test_employer_analysis_projection.py", "workers/automation/tests/test_employer_analysis_repository.py", "--junitxml={report_path}"]
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "pytest", "-q", "workers/automation/tests/test_compensation_benchmark_materialization.py", "workers/automation/tests/test_automatic_compensation_refresh.py", "workers/automation/tests/test_employer_analysis_ensemble.py", "workers/automation/tests/test_analyze_job_use_case.py", "workers/automation/tests/test_employer_analysis_model.py", "workers/automation/tests/test_audit_projection_parity.py", "workers/automation/tests/test_employer_analysis_repository.py", "--junitxml={report_path}"]
 timeout_seconds = 600
 
 [checks.salary-lookup-worker]

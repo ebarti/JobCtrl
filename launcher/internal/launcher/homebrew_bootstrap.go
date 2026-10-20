@@ -41,6 +41,10 @@ var execPublicSelector = func(selector string, args, env []string) error {
 }
 
 func maybeHomebrewBootstrap(executable string, args, inheritedEnv []string, stdout, stderr io.Writer) (bool, error) {
+	return homebrewBootstrap(executable, args, inheritedEnv, stdout, stderr, false)
+}
+
+func homebrewBootstrap(executable string, args, inheritedEnv []string, stdout, stderr io.Writer, recoveryOnly bool) (bool, error) {
 	path, err := filepath.EvalSymlinks(executable)
 	if err != nil {
 		return false, nil
@@ -88,6 +92,15 @@ func maybeHomebrewBootstrap(executable string, args, inheritedEnv []string, stdo
 	if err != nil {
 		return true, err
 	}
+	if recoveryOnly {
+		journal, err := store.ReadJournal()
+		if errors.Is(err, os.ErrNotExist) || (err == nil && !journal.Resumable()) {
+			return false, nil
+		}
+		if err != nil {
+			return true, err
+		}
+	}
 	if len(args) > 0 && args[0] == "uninstall" {
 		if _, activeErr := store.ReadActive(); activeErr == nil {
 			if err := VerifyPublicSelectorForExecution(store.Home); err != nil {
@@ -106,7 +119,12 @@ func maybeHomebrewBootstrap(executable string, args, inheritedEnv []string, stdo
 			return true, activeErr
 		}
 	}
-	if active, activeErr := store.ReadActive(); activeErr == nil && active.Receipt.Channel == "stable" && active.Receipt.BuildID == config.BuildID && active.Receipt.DescriptorSHA256 == config.DescriptorSHA256 && active.Receipt.DescriptorURL == config.DescriptorURL && VerifyPublicSelectorForExecution(store.Home) == nil {
+	if len(args) == 0 || args[0] != "update" {
+		if preserveHomebrewRollback(store, config) {
+			return true, execPublicSelector(filepath.Join(store.Home, "bin", "jobctrl"), args, inheritedEnv)
+		}
+	}
+	if active, activeErr := store.ReadActive(); !recoveryOnly && activeErr == nil && active.Receipt.Channel == "stable" && active.Receipt.BuildID == config.BuildID && active.Receipt.DescriptorSHA256 == config.DescriptorSHA256 && active.Receipt.DescriptorURL == config.DescriptorURL && VerifyPublicSelectorForExecution(store.Home) == nil {
 		return true, bootstrapPromoteOrExec(executable, args, inheritedEnv, stdout, stderr, store, active.Receipt)
 	}
 	// A merely prepositioned release directory never qualifies for the fast
@@ -114,6 +132,9 @@ func maybeHomebrewBootstrap(executable string, args, inheritedEnv []string, stdo
 	installer := filepath.Join(root, "jobctrl-installer")
 	if info, err := os.Lstat(installer); err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 		return true, errors.New("Homebrew bootstrap installer is not a regular executable")
+	}
+	if err := verifyHomebrewBootstrapNotarization(root); err != nil {
+		return true, err
 	}
 	installerArgs := []string{
 		"--source", "homebrew", "--stage-only", "--home", store.Home,
@@ -132,7 +153,72 @@ func maybeHomebrewBootstrap(executable string, args, inheritedEnv []string, stdo
 	if candidate.Channel != "stable" || candidate.BuildID != config.BuildID || candidate.DescriptorSHA256 != config.DescriptorSHA256 {
 		return true, errors.New("Homebrew installer did not stage the exact stable descriptor-bound candidate")
 	}
+	if recoveryOnly {
+		return true, handoffRecoveryController(store, candidate)
+	}
 	return true, bootstrapPromoteOrExec(executable, args, inheritedEnv, stdout, stderr, store, candidate)
+}
+
+// A newly installed formula must be able to recover a transition left by two
+// older, broken launchers. Stage its authenticated cache without promoting it,
+// then replace only the compatible controller under both lifecycle locks.
+func handoffRecoveryController(store *release.Store, candidate release.Receipt) error {
+	transition, err := store.TransitionLock()
+	if err != nil {
+		return err
+	}
+	defer transition.Close()
+	selection, err := store.SelectionLock(true)
+	if err != nil {
+		return err
+	}
+	defer selection.Close()
+	journal, err := store.ReadJournal()
+	if err != nil || !journal.Resumable() {
+		return errors.New("recovery transition changed while staging its controller")
+	}
+	verified, err := verifyInstalledReleaseForExecution(store, candidate)
+	if err != nil {
+		return err
+	}
+	for _, target := range []*release.Receipt{journal.Old, journal.Candidate} {
+		if target == nil || store.Permit(*target) != nil {
+			continue
+		}
+		verifiedTarget, err := verifyInstalledReleaseForExecution(store, *target)
+		if err != nil {
+			return err
+		}
+		if !protocolSupports(verifiedTarget.distribution, verified.runtime.LauncherProtocol) {
+			return errors.New("recovery controller cannot supervise an interrupted release")
+		}
+	}
+	active, err := store.ReadActive()
+	if err != nil {
+		return err
+	}
+	if err := handoffPublicSelector(store.Home, verified); err != nil {
+		return err
+	}
+	_, err = store.WriteSelectedActive(active.Receipt, active.Generation, candidate.BuildID, active.Acquisition)
+	return err
+}
+
+// A completed rollback (including recovery from a failed update) is a durable
+// selection, not an invitation for every status/start command to retry the same
+// newer formula. Only an explicit update should attempt promotion again.
+func preserveHomebrewRollback(store *release.Store, config homebrewBootstrapConfig) bool {
+	active, err := store.ReadActive()
+	if err != nil || active.SelectorBuildID != config.BuildID || active.Receipt.BuildID == config.BuildID {
+		return false
+	}
+	journal, err := store.ReadJournal()
+	if err != nil {
+		return false
+	}
+	rolledBack := journal.Operation == "rollback" && journal.State == release.Promoted && journal.Candidate != nil && *journal.Candidate == active.Receipt
+	recovered := journal.State == release.RolledBack && journal.Old != nil && *journal.Old == active.Receipt
+	return (rolledBack || recovered) && VerifyPublicSelectorForExecution(store.Home) == nil
 }
 
 func decodeBootstrapConfig(path string, destination any) error {

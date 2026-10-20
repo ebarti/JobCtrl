@@ -75,3 +75,5 @@ export {
   followUpCompletedHandler,
   followUpDismissedHandler,
 } from "./handlers.js";
+
+export { OfferCommunication } from "./components/OfferCommunication.js";

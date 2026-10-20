@@ -1,3 +1,6 @@
+import { OfferCommunication } from "../../contexts/outreach/index.js";
+import { useOfferQuery } from "../../contexts/operations/hooks/useOfferQuery.js";
+import { CompanyBriefingPanel } from "../../contexts/materials/components/CompanyBriefingPanel.js";
 import { ScreeningAnswerLibrary } from "../../contexts/materials/components/ScreeningAnswerLibrary.js";
 import { JobCtrlApiError } from "@jobctrl/api-client";
 import type { JobAuditEntry, StageSummary } from "@jobctrl/contracts";
@@ -14,7 +17,7 @@ import { PostingAvailability } from "../../contexts/enrichment/index.js";
 import { CompensationAuditSection } from "../../contexts/enrichment/components/CompensationEvidence.js";
 import { JobContactsPanel } from "../../contexts/outreach/components/JobContactsPanel.js";
 import { ArtifactStatusBadge } from "../../contexts/materials/components/ArtifactStatusBadge.js";
-import { MaterialLocaleVariants } from "../../contexts/materials/index.js";
+import { AcceptedMaterialExports, MaterialLocaleVariants } from "../../contexts/materials/index.js";
 import {
   EmployerAnalysisPanel,
   type EmployerAnalysisEvidenceReference,
@@ -25,7 +28,7 @@ import { JobAuditHistory } from "../../contexts/operations/components/JobAuditHi
 import { useDiscoverySettingsQuery } from "../../contexts/operations/hooks/useDiscoverySettingsQuery.js";
 import { useEvidenceMapQuery } from "../../contexts/operations/hooks/useEvidenceMapQuery.js";
 import { useJobDetailQuery } from "../../contexts/operations/hooks/useJobDetailQuery.js";
-import type { ArtifactSummary, EvidenceMapEntry } from "../../contexts/operations/types.js";
+import type { ArtifactSummary, EvidenceMapEntry } from "@jobctrl/contracts";
 import { JobActions } from "../../contexts/pipeline/components/JobActions.js";
 import { RetryStageButton } from "../../contexts/pipeline/components/RetryStageButton.js";
 import { StageTimeline } from "../../contexts/pipeline/components/StageTimeline.js";
@@ -197,6 +200,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   const jumpTarget = useRef<string | null>(null);
   const { data: detail, error: detailError } = useJobDetailQuery(jobId);
+  const offer = useOfferQuery(jobId);
   const evidenceMap = useEvidenceMapQuery();
   const evidenceEntriesById = useMemo(() => {
     const entries = new Map<string, EvidenceMapEntry>();
@@ -282,6 +286,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
             </details>
           ) : null}
         </> : <Empty title="No artifacts recorded." />}
+        <AcceptedMaterialExports key={detail.job.jobKey} jobId={detail.job.jobKey} />
       </Section>,
     },
     {
@@ -312,7 +317,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
       id: "role-analysis",
       title: "Role Analysis",
       description: "Employer interpretation and requirement evidence",
-      content: <EmployerAnalysisPanel analysis={detail.employerAnalysis} className="section job-detail-role-analysis" requirementFitReport={detail.requirementFitReport} resolveEvidenceReference={resolveEvidenceReference} />,
+      content: <><EmployerAnalysisPanel analysis={detail.employerAnalysis} className="section job-detail-role-analysis" requirementFitReport={detail.requirementFitReport} resolveEvidenceReference={resolveEvidenceReference} /><CompanyBriefingPanel briefing={detail.companyBriefing} /></>,
     },
     {
       id: "screening-answers",
@@ -336,7 +341,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
       id: "outcomes",
       title: "Application outcomes",
       description: "Recorded follow-up outcomes",
-      content: <Section title="Application outcomes" help="Manually recorded or suggested follow-up outcomes for this job. Suggested outcomes need review before acceptance, and an empty timeline means none are recorded here."><JobOutcomePanel jobId={detail.job.jobKey} /></Section>,
+      content: <Section title="Application outcomes" help="Manually recorded or suggested follow-up outcomes for this job. Suggested outcomes need review before acceptance, and an empty timeline means none are recorded here."><JobOutcomePanel jobId={detail.job.jobKey} />{offer.data?.currentTerms ? <OfferCommunication key={`${jobId}:${offer.data.currentTerms.revisionId}`} jobId={jobId} revisionId={offer.data.currentTerms.revisionId} /> : null}</Section>,
     },
     {
       id: "contacts",

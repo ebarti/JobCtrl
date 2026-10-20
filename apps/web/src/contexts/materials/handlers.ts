@@ -38,6 +38,7 @@ export const resumeApprovedHandler = (
   event: ResumeApproved,
 ): readonly InvalidationItem[] => [
   invalidate(materialsKeys.locales(event.tenantId, event.payload.jobId)),
+  invalidate(materialsKeys.exports(event.tenantId, event.payload.jobId)),
   invalidate(interviewKeys.history(event.tenantId, event.payload.jobId)),
   // Patch already-registered rows. Approval can also register PDFs and suppress
   // older artifacts, so every artifact page still needs canonical reconciliation.
@@ -69,6 +70,7 @@ export const coverLetterGeneratedHandler = (
   event: CoverLetterGenerated,
 ): readonly InvalidationItem[] => [
   invalidate(materialsKeys.locales(event.tenantId, event.payload.jobId)),
+  invalidate(materialsKeys.exports(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(artifactsKeys.lists(event.tenantId)),
@@ -140,6 +142,7 @@ export const tailoredArtifactsSuppressedHandler = (
   event: TailoredArtifactsSuppressed,
 ): readonly InvalidationItem[] => [
   invalidate(materialsKeys.locales(event.tenantId, event.payload.jobId)),
+  invalidate(materialsKeys.exports(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(artifactsKeys.lists(event.tenantId)),
@@ -176,6 +179,7 @@ export const resumeTemplateRefreshCompletedHandler = (
   event: ResumeTemplateRefreshCompleted,
 ): readonly InvalidationItem[] => [
   invalidate(materialsKeys.locales(event.tenantId, event.payload.jobId)),
+  invalidate(materialsKeys.exports(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(artifactsKeys.lists(event.tenantId)),
