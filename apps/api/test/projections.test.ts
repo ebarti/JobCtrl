@@ -2371,6 +2371,8 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           awarded_points: 1.125,
           weighted_impact: 1.125,
           rationale: "Direct Python evidence covers r1.",
+          scope: "resume",
+          scope_source_id: "1".repeat(64),
         }),
         JSON.stringify({
           action: "double_down",
@@ -2435,6 +2437,8 @@ describe("apply_run_projections without legacy apply_runs table", () => {
             maxPoints: 1.125,
             awardedPoints: 1.125,
             weightedImpact: 1.125,
+            scope: "resume",
+            scopeSourceId: "1".repeat(64),
           },
           tailoring: {
             action: "double_down",

@@ -69,7 +69,7 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DB_PATH", db_path)
     monkeypatch.setattr(database, "DB_PATH", db_path)
     connection = database.init_db(db_path)
-    from tests.determination_fakes import job_interpretation
+    from tests.determination_fakes import recorded_job_interpretation
     from jobctrl.domain.determinations import Source
     from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
 
@@ -88,7 +88,7 @@ def world(tmp_path, monkeypatch):
                 preflight=lambda: None,
             ),
         )
-        kwargs.setdefault("job_interpretation_reader", lambda job: job_interpretation())
+        kwargs.setdefault("job_interpretation_reader", lambda job: recorded_job_interpretation(database.get_connection(db_path), job))
         kwargs.setdefault(
             "confirmed_preferences_reader",
             lambda snapshot, criteria: [Source(source_id="target:roles:0", text="Synthetic saved target")],

@@ -2890,6 +2890,8 @@ export interface RequirementScoreContribution {
   awardedPoints: number;
   weightedImpact: number;
   rationale: string;
+  scope?: "resume" | "eligibility" | "logistics" | "employer_condition";
+  scopeSourceId?: string;
 }
 
 export interface RequirementTailoringDirective {

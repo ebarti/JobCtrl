@@ -471,6 +471,18 @@ class ScoreJobUseCase:
                     if matched_employer_analysis
                     else {}
                 )
+                scopes = {
+                    row.requirement_id: "employer_condition" if row.protected_class else row.scope
+                    for row in interpretation.requirements
+                }
+                if matched_employer_analysis is not None and (
+                    set(scopes) != set(requirements) or len(scopes) != len(interpretation.requirements)
+                ):
+                    raise DeterminationFailure("foreign_or_missing_requirement_scope")
+                if requirements and not interpretation._determination_id:
+                    raise DeterminationFailure("requirement_scope_source_unavailable")
+                if requirements and "resume" not in scopes.values():
+                    raise DeterminationFailure("no_capability_requirements")
                 confirmed_preferences = self._confirmed_preferences_reader(profile_snapshot, criteria)
                 sources = [
                     Source(source_id="posting", text=build_jd_snapshot(job)),
@@ -528,6 +540,17 @@ class ScoreJobUseCase:
                     parsed = replace(
                         parsed,
                         employer_analysis_generation=matched_employer_analysis.generation,
+                        requirement_assessments=tuple(
+                            replace(
+                                row,
+                                contribution=replace(
+                                    row.contribution,
+                                    scope=scopes[row.requirement_id],
+                                    scope_source_id=interpretation._determination_id,
+                                ),
+                            )
+                            for row in parsed.requirement_assessments
+                        ),
                     )
             span.set_attribute("jobctrl.scoring.parse.ok", parsed.ok)
             span.set_attribute("jobctrl.scoring.parser_warning_count", len(parsed.trace.parser_warnings))
@@ -622,6 +645,8 @@ class ScoreJobUseCase:
             score_version=0,
         )
         assert report is not None
+        if report.resolved_fit_score is None:
+            return replace(parse, ok=False, fit_score=None, error="no_capability_requirements")
         signals = derive_requirement_fit_signals(report)
         resolved_score = report.resolved_fit_score or parse.fit_score
         assert resolved_score is not None

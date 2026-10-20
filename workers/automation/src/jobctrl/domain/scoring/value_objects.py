@@ -484,8 +484,18 @@ class RequirementScoreContribution:
     awarded_points: float
     weighted_impact: float
     rationale: str = ""
+    scope: str = "resume"
+    scope_source_id: str = ""
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "scope",
+            _clean_enum(self.scope, ("resume", "eligibility", "logistics", "employer_condition"), "resume"),
+        )
+        object.__setattr__(self, "scope_source_id", str(self.scope_source_id or "").strip())
+        if self.scope != "resume" and not self.scope_source_id:
+            raise ValueError("Non-resume requirement contributions require a recorded scope source")
         max_points = _non_negative_float(self.max_points, field_name="RequirementScoreContribution.max_points")
         awarded_points = _non_negative_float(
             self.awarded_points,
@@ -510,23 +520,31 @@ class RequirementScoreContribution:
             awarded_points=data.get("awarded_points", data.get("awardedPoints", 0.0)),
             weighted_impact=data.get("weighted_impact", data.get("weightedImpact", 0.0)),
             rationale=str(data.get("rationale") or ""),
+            scope=str(data.get("scope") or "resume"),
+            scope_source_id=str(data.get("scope_source_id", data.get("scopeSourceId", "")) or ""),
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "max_points": self.max_points,
             "awarded_points": self.awarded_points,
             "weighted_impact": self.weighted_impact,
             "rationale": self.rationale,
         }
+        if self.scope_source_id:
+            payload.update(scope=self.scope, scope_source_id=self.scope_source_id)
+        return payload
 
     def to_read_model(self) -> dict[str, Any]:
-        return {
+        payload = {
             "maxPoints": self.max_points,
             "awardedPoints": self.awarded_points,
             "weightedImpact": self.weighted_impact,
             "rationale": self.rationale,
         }
+        if self.scope_source_id:
+            payload.update(scope=self.scope, scopeSourceId=self.scope_source_id)
+        return payload
 
 
 @dataclass(frozen=True)

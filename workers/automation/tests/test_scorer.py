@@ -188,6 +188,7 @@ def determination_ports(monkeypatch):
         )
 
         def interpreted(job):
+            requirements = _employer_analysis(str(job["url"]), job_id=JobId(str(job["job_id"])), job=job).canonical.requirements
             interpreter = ModelJobInterpreter(
                 llm=ClassificationModel(),
                 repository=repo,
@@ -197,12 +198,14 @@ def determination_ports(monkeypatch):
                 lane="enrichment",
                 preflight=lambda: None,
             )
-            return interpreter.interpret(
+            result, envelope = interpreter.interpret(
                 entity_id=job["job_id"],
                 posting=Source(source_id="posting", text=build_jd_snapshot(job)),
                 fields=[],
-                requirements=[],
-            )[0]
+                requirements=[Source(source_id=row.id, text=row.evidence_span) for row in requirements],
+            )
+            result._determination_id = envelope.determination_id
+            return result
 
         kwargs["job_interpretation_reader"] = interpreted
         kwargs["confirmed_preferences_reader"] = lambda snapshot, criteria: [

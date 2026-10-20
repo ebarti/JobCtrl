@@ -1008,6 +1008,16 @@ Consequences:
 Cites: `docs/plans/implemented/2026-06-15-requirement-fit-ledger.md`;
 PRs #162–#177, #189.
 
+2026-10-20 update: `requirement-fit-v2-scoped` counts only requirements whose
+accepted model-owned job interpretation assigns resume scope. Scoring joins
+exact requirement IDs, persists the scope and interpretation determination ID
+with each contribution, and excludes eligibility, logistics and employer
+conditions from capability coverage and its blocker cap. Their assessments and
+downstream eligibility gates remain intact. No lexical classifier or new
+semantic determination is introduced. Missing/foreign scope bindings or no
+weighted capability requirements fail without replacing the accepted score.
+Historical v1 reports retain their bytes and formula until an explicit rescore.
+
 ## 2026-06-20: Compensation Is Warning-Only Evidence From Reported Company-Role Observations
 
 Status: accepted

@@ -25,6 +25,14 @@ accepted interview prep directly from its canonical owner, independently of
 projection lag. These reads do not recompute scores, parse salary text, or replay
 events during a request.
 
+The current requirement-fit report retains each contribution's optional
+`scope` and `scopeSourceId`, bound to the recorded job-interpretation
+determination and exact requirement ID. `requirement-fit-v2-scoped` includes
+only `resume`-scope rows in capability coverage; eligibility, logistics and
+employer conditions remain visible with zero `maxPoints` and `awardedPoints`.
+These readers expose stored arithmetic without recalculating it. Legacy
+reports without a recorded scope source retain their earlier shape and formula.
+
 `POST /v1/jobs/import-url` accepts `{ url }`, validates that the destination is
 public HTTP(S), and awaits `JobUrlImportWorkflow` on the local worker. A readable
 posting returns `{ ok, status: "imported", jobKey, importedAt,

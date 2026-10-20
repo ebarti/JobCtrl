@@ -17,7 +17,7 @@ def job_interpretation(requirements=(), *, seniority="senior", scope=None):
             "rationale": "Explicit synthetic decision",
         }
 
-    return JobInterpretation.model_validate(
+    result = JobInterpretation.model_validate(
         {
             "track": field("ic"),
             "seniority": field(seniority),
@@ -38,6 +38,8 @@ def job_interpretation(requirements=(), *, seniority="senior", scope=None):
             ],
         }
     )
+    result._determination_id = "1" * 64
+    return result
 
 
 class JobInterpreter:
@@ -158,6 +160,23 @@ def tailor_dependencies(llm, *, verdict="pass"):
     )
 
 
+def recorded_job_interpretation(conn, job):
+    from jobctrl.domain.determinations import Source
+    from jobctrl.domain.identifiers import JobId
+    from jobctrl.domain.tenant import LOCAL_TENANT
+    from jobctrl.infrastructure.enrichment.interpretation import interpret_job
+    from jobctrl.infrastructure.materials import SqliteEmployerAnalysisRepository
+    from tests.compensation_fakes import ClassificationModel, dependencies
+
+    analysis = SqliteEmployerAnalysisRepository(conn).load(LOCAL_TENANT, JobId(job["job_id"]))
+    result, _ = interpret_job(
+        conn, job, requirements=[Source(source_id=row.id, text=row.evidence_span)
+                                for row in analysis.canonical.requirements] if analysis else [],
+        dependencies=dependencies(conn, ClassificationModel(), "enrichment"),
+    )
+    return result
+
+
 def scoring_case(conn, llm):
     from jobctrl.scoring.scorer import _build_use_case
     from jobctrl.infrastructure.scoring import SqliteScoreRepository
@@ -175,7 +194,7 @@ def scoring_case(conn, llm):
             lane="scoring",
             preflight=lambda: None,
         ),
-        job_interpretation_reader=lambda job: job_interpretation(),
+        job_interpretation_reader=lambda job: recorded_job_interpretation(conn, job),
         confirmed_preferences_reader=lambda snapshot, criteria: [
             Source(source_id="target:roles:0", text="Synthetic saved target")
         ],

@@ -47,4 +47,31 @@ describe("requirementFitScoreContext", () => {
     expect(requirementFitScoreContext(detail)).toContain("The posting requires a current clearance.");
     expect(requirementFitScoreContext(detail)).not.toContain("caps");
   });
+
+  it("keeps a recorded eligibility blocker separate from scoped capability coverage", () => {
+    const detail = blockedDetail();
+    detail.job.fitScore = 10;
+    detail.requirementFitReport = {
+      ...detail.requirementFitReport!, formulaVersion: "requirement-fit-v2-scoped", resolvedFitScore: 10,
+      summary: { weightedFit: 1, mustHaveCoverage: 1, blockerCount: 0, missingHighWeightCount: 0 },
+      assessments: detail.requirementFitReport!.assessments.map((row, index) => ({
+        ...row, contribution: {
+          ...row.contribution, scope: index ? "eligibility" : "resume", scopeSourceId: "1".repeat(64),
+          ...(index ? { maxPoints: 0, awardedPoints: 0, weightedImpact: 0 } : {}),
+        },
+      })),
+    };
+    const context = requirementFitScoreContext(detail);
+    expect(context).toContain("100% weighted capability coverage");
+    expect(context).toContain("1 eligibility, logistics or employer condition is assessed separately");
+    expect(context).not.toContain("caps");
+  });
+
+  it("does not present scoped coverage without the recorded classification source", () => {
+    const detail = blockedDetail();
+    detail.requirementFitReport = { ...detail.requirementFitReport!, formulaVersion: "requirement-fit-v2-scoped" };
+    expect(requirementFitScoreContext(detail)).toBe(
+      "No recorded source for requirement classification. Review the saved assessment.",
+    );
+  });
 });
