@@ -1,30 +1,62 @@
 ---
 pageClass: jh-visual-doc jh-comparison-page
-description: "JobCtrl compared with 19 job-search alternatives, reviewed on 2026-10-19: local control, evidence, recovery, application assistance, career tools, and practical tradeoffs."
+description: "Why JobCtrl leads on evidence, accepted-material history, workflow recovery, and application control. Compare 19 alternatives, reviewed on 2026-10-19."
 ---
 
 # How JobCtrl Compares
 
-**Assessment date: 2026-10-19 (Europe/Madrid).** JobCtrl is a strong fit for
-people who want a local, inspectable workflow from discovery through reviewed
-materials and application decisions. Its clearest distinction is the combination
-of durable execution, versioned evidence, preserved accepted artifacts, and
-approvals bound to exact inputs. That is an architectural assessment, not evidence
-of a higher interview or offer rate.
+**JobCtrl is the better fit for candidates who want evidence, continuity, and
+control in one job-search application.** See why a job fits, inspect the experience
+behind your application claims, keep the materials you accepted, and recover
+interrupted work with its history intact.
 
-This review covers **19 alternatives**: six public repositories and thirteen
-commercial products. The detailed matrix compares the three closest previously
-reviewed workflows; the wider market tables cover the other sixteen. Repository
-claims use [immutable source snapshots](#snapshot-and-delta-method). Commercial
-rows describe current official product or help pages, with their implementation
-and outcome claims explicitly unverified.
+JobCtrl's advantage is how these controls work together from discovery through
+application review. The source comparison below shows where that combination
+goes further than Career-Ops, JobOps, and AI Job Search. The wider comparison
+covers another sixteen alternatives, including commercial application and career
+tools.
 
-JobCtrl's latest published release at review time is
-[v0.3.1](https://github.com/ebarti/JobCtrl/releases/tag/v0.3.1), published on
-2026-10-19. The source review and the published release are recorded separately
-below.
+**Evidence reviewed: 2026-10-19 (Europe/Madrid).** Six public repositories and
+thirteen commercial products are covered. Exact source snapshots, published
+releases, and the scope of the review appear in the
+[evidence appendix](#appendix-evidence-backed-capability-matrix).
+
+## Why choose JobCtrl
+
+1. **Understand why a job is worth your attention.** Requirement assessments
+   connect the posting to your profile evidence, gaps, confidence, and blockers.
+   You can inspect and correct the reasoning behind the score. See
+   [job-fit evidence](guides/evidence-based-job-fit-scoring.md).
+2. **Trace the claims in your application.** Generated materials retain the
+   source evidence and model reviews behind their final text. You can see what
+   supports a claim before using it. See
+   [resume tailoring and verification](guides/resume-tailoring-without-fabrication.md).
+3. **Keep the version that already passed review.** A failed refresh preserves
+   the last accepted material. Revised resumes, cover letters, and locale
+   variants carry their own source and acceptance history, so a new attempt
+   does not silently replace the version you were ready to use. See
+   [accepted materials](user/materials-and-tailoring.md) and
+   [locale reviews](user/locale-variants.md).
+4. **Recover work instead of reconstructing it.** Durable workflows retain
+   execution history, activity retries, and run identities. This goes beyond
+   the file checkpoints, stored summaries, or completed artifacts evidenced in
+   the three closest workflows below. See
+   [workflow recovery](guides/temporal-workflows-desktop-app.md).
+5. **Control exactly what gets sent.** You complete and submit browser forms
+   yourself. Owned Gmail sends bind approval to the exact recipient and
+   attachments, record send intent, and stop for verification after an ambiguous
+   result. See [application control](guides/at-most-once-job-application-submission.md).
+
+**That combination is the reason to choose JobCtrl:** inspectable decisions,
+accepted work you can retain, and application controls in one supported local
+web app. [Explore the product tour](user/product-tour.md) or
+[get started](user/getting-started.md).
 
 ## Four operating models
+
+JobCtrl brings evidence, accepted-material history, recovery, and application
+control into one supported web app. Here is where that combination puts it ahead
+of the three closest source-reviewed workflows.
 
 <div class="jh-compare-grid" role="list">
   <article class="jh-compare-card jh-compare-card--featured" role="listitem">
@@ -33,13 +65,13 @@ below.
       <h3>JobCtrl</h3>
       <span class="jh-compare-badge">Supported web UI</span>
     </div>
-    <p>A React control plane backed by a local API, Python worker, Temporal workflows, and a supporting CLI.</p>
+    <p>Discover jobs, inspect fit evidence, review tailored materials, and follow work in one local web app.</p>
     <ul>
-      <li>Scores and generated claims retain source bindings and model determinations.</li>
-      <li>Durable work and accepted-artifact history support recovery.</li>
+      <li>Inspect the profile evidence and recorded model review behind scores and generated claims.</li>
+      <li>Keep accepted materials through failed refreshes and recover work with its execution history.</li>
       <li>Browser forms are completed and submitted manually; owned Gmail sends need exact approval.</li>
     </ul>
-    <p class="jh-compare-card__verdict"><strong>Why JobCtrl leads:</strong> its strongest case in this source comparison is the integrated evidence, recovery, and approval model. The bundled release requires an Apple-silicon Mac.</p>
+    <p class="jh-compare-card__verdict"><strong>Why JobCtrl leads:</strong> evidence, accepted-material history, durable recovery, and exact Gmail approval work together as application controls you can inspect.</p>
     <a href="./user/product-tour">Explore the product tour →</a>
   </article>
 
@@ -55,7 +87,7 @@ below.
       <li>Interview practice, debriefs, contact research, and offer preparation.</li>
       <li>Autofill leaves final submission to the user; the Next.js UI still labels itself alpha.</li>
     </ul>
-    <p class="jh-compare-card__verdict"><strong>Gap versus JobCtrl:</strong> file and batch recovery does not provide Temporal-style execution history. Its fact gate covers selected claim types rather than proving every reformulation; its coaching breadth is a strength.</p>
+    <p class="jh-compare-card__verdict"><strong>Gap versus JobCtrl:</strong> its file checkpoints and selected fact checks do not provide JobCtrl's combination of replayable execution history and recorded line-level model reviews in a supported web app.</p>
     <a href="#appendix-evidence-backed-capability-matrix">Open the evidence matrix →</a>
   </article>
 
@@ -71,7 +103,7 @@ below.
       <li>Official sponsorship registers and OpenAI-compatible local-model endpoints.</li>
       <li>The user applies manually; running and paused pipelines remain process-local.</li>
     </ul>
-    <p class="jh-compare-card__verdict"><strong>Gap versus JobCtrl:</strong> the inspected tailoring path relies on prompt constraints, and active pipeline execution does not survive restart. Docker deployment, provider choice, and sponsorship research are strengths.</p>
+    <p class="jh-compare-card__verdict"><strong>Gap versus JobCtrl:</strong> active pipeline execution does not survive restart, and the inspected tailoring path relies on prompt constraints. JobCtrl adds durable execution and persisted reviews that bind final claims to their evidence.</p>
     <a href="#appendix-evidence-backed-capability-matrix">Open the evidence matrix →</a>
   </article>
 
@@ -87,7 +119,7 @@ below.
       <li>A separate reviewer, PDF inspection, and optional Gmail and Notion sync.</li>
       <li>Submission is a user handoff; LaTeX is the default with custom toolchains supported.</li>
     </ul>
-    <p class="jh-compare-card__verdict"><strong>Gap versus JobCtrl:</strong> the generated dashboard is not a stateful operator app, and interrupted drafting has no evidenced durable execution engine. Adaptable templates and the review workflow are strengths.</p>
+    <p class="jh-compare-card__verdict"><strong>Gap versus JobCtrl:</strong> a generated report and reviewer instructions leave more of the workflow in files and commands. JobCtrl brings review, accepted-material history, and durable execution into the application.</p>
     <a href="#appendix-evidence-backed-capability-matrix">Open the evidence matrix →</a>
   </article>
 </div>
@@ -96,7 +128,7 @@ below.
 
 <div class="jh-compare-table-wrap" role="region" aria-label="At-a-glance comparison table" tabindex="0">
   <table class="jh-compare-summary">
-    <caption>Selected differences between four source-reviewed workflows, 2026-10-19</caption>
+    <caption>Why JobCtrl stands out among four source-reviewed workflows, 2026-10-19</caption>
     <thead>
       <tr>
         <th scope="col">Capability</th>
@@ -115,22 +147,22 @@ below.
         <td>Claude Code skills; generated offline dashboard</td>
       </tr>
       <tr>
-        <th scope="row">Grounding mechanism</th>
-        <td>Persisted model determinations, source IDs, quotes, and line anchors</td>
+        <th scope="row">Inspect support for a claim</th>
+        <td>Recorded model reviews linked to source IDs, quotes, and final lines</td>
         <td>Source-aware prompts plus selected fact and PDF gates</td>
         <td>Prompt constraints and structured resume transforms</td>
         <td>Source-aware drafter and reviewer instructions; PDF checks</td>
       </tr>
       <tr>
-        <th scope="row">Submission boundary</th>
+        <th scope="row">Control sending</th>
         <td>Browser inspection only; manual forms; exact-approved Gmail send</td>
         <td>Assisted autofill; user submits</td>
         <td>Prepared materials; user applies</td>
         <td>Reviewed documents; user submits</td>
       </tr>
       <tr>
-        <th scope="row">Interrupted work</th>
-        <td>Temporal history, retries, and workflow identities</td>
+        <th scope="row">Recover interrupted work</th>
+        <td>Durable execution history, retries, and workflow identities</td>
         <td>Canonical files, locks, checkpoints, and resumable batch flags</td>
         <td>Stored run records; active execution is in memory</td>
         <td>Saved artifacts; no durable apply resumption evidenced</td>
@@ -153,21 +185,70 @@ below.
   </table>
 </div>
 
-These differences concern inspected mechanisms. A source check or a model
-verdict cannot guarantee that an application is accurate or will succeed. The
-[evidence matrix](#appendix-evidence-backed-capability-matrix) gives the supporting
-paths and limitations.
+**JobCtrl's lead is the integrated control over evidence, accepted work, and
+recovery.** The [evidence matrix](#appendix-evidence-backed-capability-matrix)
+links each comparison to inspected source paths and describes its scope.
 
-## What changed since the August comparison
+## JobCtrl's UI is part of the product
 
-| Project | Current evidence | Effect on the assessment |
+The web app starts work, edits and approves materials, displays requirement
+evidence, and follows durable runs. Its current lifecycle also includes reviewed
+[screening answers](user/screening-answers.md),
+[locale variants](user/locale-variants.md),
+[offer records](user/outcomes-and-feedback.md#actual-offer-terms-and-decisions),
+and [editable DOCX exports](user/materials-and-tailoring.md#editable-docx-export).
+
+[![JobCtrl dashboard showing pipeline progress, job counts, source health, and apply runs](assets/screenshots/dashboard.png)](user/product-tour.md)
+
+<ComparisonScreenshotCarousel />
+
+All screenshots use synthetic sample data. They illustrate the operator
+experience, not the results of a competitor usability trial. Open the
+[Product Tour](user/product-tour.md) for the complete workflow.
+
+## Other source-reviewed alternatives
+
+The same 2026-10-19 review date applies to these three repositories. Read the
+snapshot table for exact source and release identities.
+
+| Alternative | Inspected offering | Why choose JobCtrl instead |
 | --- | --- | --- |
-| **JobCtrl** | The [published v0.3.1 notes](https://github.com/ebarti/JobCtrl/releases/tag/v0.3.1) cover accepted DOCX export, company briefings, offer records and communications, posting-history source proposals, and evidence milestones. Current source also includes saved-posting revalidation, model-owned semantic determinations, reviewed screening answers, and locale variants. | Several old breadth gaps have narrowed. The case for JobCtrl now includes lifecycle continuity and inspectable evidence across more tasks, while platform and browser-entry limits remain. See the [source delta](https://github.com/ebarti/JobCtrl/compare/b4063e1a3227d31eebacbc7d2c620ae5236f744b...198d399d33d2bb527c8cd49cc43dd27e3203b36b). |
-| **Career-Ops** | The repository now lives under `career-ops-hq`. Its [web README][career-web] still says alpha but documents scheduled scans, assisted apply, editing, and analytics. Current [modes][career-readme] include interview practice/debriefs and contract/offer preparation. | Describing it as merely a prompt scaffold or terminal viewer understates its breadth. Its current fact gate and file-based recovery still differ from JobCtrl's determination and workflow model. [Source delta](https://github.com/career-ops-hq/career-ops/compare/03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182...0b35a138fffa5335340070c2d13e0c8d1b804a2b). |
-| **JobOps** | Current source documents [sponsorship registers][jobops-sponsors], broader provider routes, and the [Gmail review workflow][jobops-tracking], alongside its application UI. | A close graphical alternative with useful deployment and provider flexibility. The source remains newer than its latest published release; the snapshot table keeps that distinction. [Source delta](https://github.com/DaKheera47/job-ops/compare/c834c6502bf4685904b6abc3d5a008294b8b7020...4a5e52b76a729aa2f57e4e9171216cf9621140a0). |
-| **AI Job Search** | The current [apply command][ai-apply] defines a separate reviewer with restricted tools and verify-before-use research. Its [command set][ai-readme] includes ranking, profile expansion, gap plans, outcomes, and optional sync; v1.7.3 was published today. | Stronger preparation and continuity than the older comparison suggested; still a CLI and files workflow with a manual submission handoff. [Source delta](https://github.com/MadsLorentzen/ai-job-search/compare/670d30ae7e9709bbf624deb2d9962ba5733331f5...d621ebe63549dffb291edea7f7621cd00e67ddb1). |
+| **[ApplyPilot][applypilot-readme]** — original public project | A Python discovery → enrichment → scoring → tailoring → PDF → browser application pipeline. The [launcher][applypilot-launcher] supports dry runs and autonomous submission. | Choose JobCtrl for reviewed materials and explicit sending boundaries: manual browser submission or exact-approved owned Gmail sends with durable intent. The inspected ApplyPilot launcher does not evidence that approval model. This row covers the public repository, distinct from unrelated services using the same name. |
+| **[JobSync][jobsync-readme]** | A self-hosted tracker with scheduled ATS discovery, resume review and job matching, cover letters, contacts, companies, interview questions, MCP tools, and backup/restore. It supports Ollama and cloud models. | Choose JobCtrl for source-bound material acceptance, recorded claim reviews, and a guarded application lifecycle. JobSync's [grounding prompt][jobsync-cover] and [discovery persistence][jobsync-persist] do not evidence the same combination. JobSync has broader deployment and local-inference options; JobCtrl's model and platform limits are listed below. |
+| **[Proficiently skills][proficiently-readme]** | Public Claude skills for setup, search, tailoring, networking, browser apply, and a Telegram loop. The [apply instructions][proficiently-apply] propose field answers for approval; uploads can require manual handling. | Choose JobCtrl for review and submission boundaries enforced by the application, source-bound materials, and durable workflow recovery. Skills provide instructions for an agent; the inspected instructions do not establish equivalent enforcement. The separate [commercial service](https://proficiently.com/) markets managed search and outreach; its implementation and results remain unverified. |
 
-## Where competitors have the stronger offering
+## Commercial alternatives
+
+**Evidence label for every row: vendor documentation, reviewed 2026-10-19.**
+These pages establish what is currently offered or claimed. No paid account,
+private backend, live application, or interview session was tested. Missing
+source evidence for a guarantee means **unknown**, not absent. Free tiers,
+subscriptions, credits, supported sites, and availability can change.
+
+| Product | Current official offering | Why choose JobCtrl instead |
+| --- | --- | --- |
+| **[Simplify / Copilot](https://simplify.jobs/copilot)** | Browser autofill, tailoring, and automatic tracking. Its paid [Autopilot](https://help.simplify.jobs/articles/1784339-getting-started-with-autopilot) completes and submits selected supported jobs **without a final review step**; Copilot leaves Submit to the user. The [iOS app](https://help.simplify.jobs/help/articles/3745882-getting-started-with-the-simplify-ios-app) supports both flows. | Choose JobCtrl to inspect claim evidence, retain accepted materials, and control each application handoff. Browser entry stays manual; owned Gmail sends need exact recipient and attachment approval. Simplify offers more browser and mobile convenience. |
+| **[Huntr](https://huntr.co/)** | Resume tailoring, a job/contact tracker, and browser clipping/autofill. Its [Application Packets](https://help.huntr.co/en/articles/14367332-application-hub-and-packets) bundle a tailored resume, cover letter, and follow-up template for each job. | Choose JobCtrl for recorded source authority, accepted-material history, and durable recovery alongside application materials and tracking. Those connected controls are the reason to choose it when inspectability matters. |
+| **[Teal / Teal Pro](https://www.tealhq.com/pro)** | Alongside Teal's resume/tracker tools, Pro markets career memory, opportunity fit, resume/prep, a people graph from optional Google contacts/calendar access, follow-up guidance, and an iPhone app. | Choose JobCtrl when your priority is a local application workflow with versioned evidence, material review, and explicit approvals. Teal's connected relationship context and mobile workflow address needs beyond JobCtrl's current scope. |
+| **[Jobscan](https://www.jobscan.co/)** | ATS matching, a tracker, discovery, and auto-apply advertised with review before sending. Its [AI Resume Coach](https://www.jobscan.co/ai-resume) asks about experience, offers editable suggestions, and exports PDF/DOCX. | Choose JobCtrl to inspect how job requirements map to your experience, gaps, blockers, and correction history as you decide where to apply. Its fit assessment answers a different question from an ATS match score. |
+| **[LoopCV](https://www.loopcv.pro/)** | Continuous search, automated applications and recruiter emails, analytics, company/source filters, and optional manual review. The vendor offers free and paid tiers. | Choose JobCtrl for exact-material review, controlled sending, and recoverable work in a local app. LoopCV offers more hosted application automation; optional review alone does not establish the same artifact binding or recovery controls. |
+| **[LazyApply](https://lazyapply.com/)** | Browser-based automated applications and referrals, application analytics, and resume/cover-letter tools. | Choose JobCtrl when visible support for application claims and explicit sending controls matter more to your workflow than delegated application volume. Its evidence, acceptance history, and recovery are inspectable in the source and application. |
+| **[Sonara](https://www.sonara.ai/)** | A current BOLD-branded site with signup, a public job catalogue, and managed matching/auto-apply. It states that its system checks jobs daily and that employers can close postings between updates. | Choose JobCtrl to inspect a saved job's availability, latest check, and uncertainty alongside its evidence and application record. These persisted states help you review whether an opportunity is still worth pursuing. |
+| **[JobCopilot](https://jobcopilot.com/automate-job-applications/)** | Hosted discovery and applications, with a tracker and application modes. [Personalized AI Apply](https://jobcopilot.com/ai-apply/) markets writing-style controls and learning from edits; adjacent tools cover interviews and negotiation. | Choose JobCtrl for source/version records and accepted-material history you can inspect locally while reviewing applications. That is a concrete, inspectable control model; the implementation behind JobCopilot's edit-learning and submission claims remains unverified here. |
+| **[AIApply](https://support.aiapply.co/en/articles/14216708-how-auto-apply-works)** | Auto submits matches automatically; Hybrid auto-submits above its stated fit threshold and holds others; Review requires approval per suggestion. The [iPhone app](https://support.aiapply.co/en/articles/16764354-getting-started-with-the-aiapply-app) manages modes, history, and an employer-reply inbox. | Choose JobCtrl for recorded requirement evidence and exact recipient/attachment approval on owned Gmail sends. AIApply's per-suggestion Review mode is documented, but it does not establish equivalent evidence binding or send-intent semantics. |
+| **[Applyd](https://applyd.io/)** | The rendered public page markets ATS checks, source-constrained resume copies, PDF/Word export, a tracker, proof-backed skill mapping, round-specific text/voice mock interviews, a story bank, and an optional public profile. | Choose JobCtrl for inspectable, persisted claim determinations and accepted-material history connected to workflow recovery and application controls. Applyd also markets truthfulness and skill proof; the comparison rests on JobCtrl's visible implementation of those controls. |
+| **[Offerd](https://www.offerd.ai/)** | ATS scanning, AI video interviews, answer feedback, document generation, a tracker, and voice-profile claims. | Choose JobCtrl for materials tied to profile evidence and reviewable application decisions in one local workflow. Offerd advertises more interview-rehearsal functionality; that is a separate strength to weigh against JobCtrl's application controls. |
+| **[Final Round AI](https://www.finalroundai.com/)** | Desktop live interview assistance, spoken practice, automatic debriefs, and screen help, organized around job-specific goals and materials. | Choose JobCtrl for source-bound preparation and reviewed application materials connected to the rest of your search. Its interview preparation is in Beta; Final Round AI offers live assistance and more rehearsal features. |
+| **[Kickresume](https://www.kickresume.com/en/)** | Resume/cover-letter creation, tailoring and translation, templates, career mapping, interview-question tools, mobile apps, and a [job tracker](https://www.kickresume.com/en/job-application-tracker/). | Choose JobCtrl for source/version identity, separately reviewed locale variants, and accepted materials connected to each application. Kickresume offers broader template-design and mobile tools. |
+
+**JobCtrl's competitive advantage is the connected workflow:** stored evidence,
+accepted versions, recoverable work, and explicit application controls. Trackers,
+document exports, and human review are shared features across the market; the
+reason to choose JobCtrl is how they connect to inspectable records and enforced
+boundaries. For commercial services, this is a reasoned fit comparison based on
+public documentation. Their private implementations were not inspected.
+
+## Practical tradeoffs
 
 - **Convenience and reach.** Simplify offers browser autofill and an iOS flow;
   AIApply offers mobile auto-apply management; JobOps and JobSync offer Docker
@@ -194,67 +275,18 @@ paths and limitations.
   live interview assistance or validated rehearsal grading. See
   [Interview Preparation](user/materials-and-tailoring.md#interview-preparation).
 
-The competitor sources for these comparisons appear in the tables below. No
+The competitor sources for these comparisons appear in the tables above. No
 shared trial of setup time, generation quality, cost per application, ATS parsing,
 or hiring outcomes was run, so this page does not rank those results.
 
-## Other source-reviewed alternatives
+## What changed since the August comparison
 
-The same 2026-10-19 review date applies to these three repositories. Read the
-snapshot table for exact source and release identities.
-
-| Alternative | Inspected offering | How it compares with JobCtrl |
+| Project | Current evidence | Effect on the assessment |
 | --- | --- | --- |
-| **[ApplyPilot][applypilot-readme]** — original public project | A Python discovery → enrichment → scoring → tailoring → PDF → browser application pipeline. The [launcher][applypilot-launcher] supports dry runs and autonomous submission. | The closest volume-oriented local automation alternative in this set. SQLite statuses and retries are useful, but the inspected launcher does not evidence JobCtrl's exact-approved artifact/send-intent model. This is the public repository, distinct from unrelated services using the same name. |
-| **[JobSync][jobsync-readme]** | A self-hosted tracker with scheduled ATS discovery, resume review and job matching, cover letters, contacts, companies, interview questions, MCP tools, and backup/restore. It supports Ollama and cloud models. | A broader personal search organizer than the old watchlist description implied, with a local-inference option JobCtrl lacks. Its [cover-letter grounding prompt][jobsync-cover] and [discovery persistence][jobsync-persist] do not evidence the same source-bound material acceptance or guarded submission lifecycle. Configured cloud providers can receive data; self-hosting alone is not an offline guarantee. |
-| **[Proficiently skills][proficiently-readme]** | Public Claude skills for setup, search, tailoring, networking, browser apply, and a Telegram loop. The [apply instructions][proficiently-apply] propose field answers for approval; uploads can require manual handling. | A lighter agent-based route with useful network discovery. Prompt instructions are not a product-level enforcement guarantee. The separate [commercial service](https://proficiently.com/) markets managed search, applications, and hiring-manager outreach; its server implementation and advertised results were not verified. |
-
-## Commercial alternatives
-
-**Evidence label for every row: vendor documentation, reviewed 2026-10-19.**
-These pages establish what is currently offered or claimed. No paid account,
-private backend, live application, or interview session was tested. Missing
-source evidence for a guarantee means **unknown**, not absent. Free tiers,
-subscriptions, credits, supported sites, and availability can change.
-
-| Product | Current official offering | Implication for JobCtrl |
-| --- | --- | --- |
-| **[Simplify / Copilot](https://simplify.jobs/copilot)** | Browser autofill, tailoring, and automatic tracking. Its paid [Autopilot](https://help.simplify.jobs/articles/1784339-getting-started-with-autopilot) completes and submits selected supported jobs **without a final review step**; Copilot leaves Submit to the user. The [iOS app](https://help.simplify.jobs/help/articles/3745882-getting-started-with-the-simplify-ios-app) supports both flows. | Strong browser/mobile convenience. It can no longer be described as autofill-only. JobCtrl instead exposes manual browser completion and exact-approved Gmail sends; choose according to the control boundary you want. |
-| **[Huntr](https://huntr.co/)** | Resume tailoring, a job/contact tracker, and browser clipping/autofill. Its [Application Packets](https://help.huntr.co/en/articles/14367332-application-hub-and-packets) bundle a tailored resume, cover letter, and follow-up template for each job. | A direct organization and application-materials alternative. Bundled materials and a usable tracker are shared capabilities; JobCtrl's comparison should focus on recorded source authority, acceptance history, and recovery. |
-| **[Teal / Teal Pro](https://www.tealhq.com/pro)** | Alongside Teal's resume/tracker tools, Pro markets career memory, opportunity fit, resume/prep, a people graph from optional Google contacts/calendar access, follow-up guidance, and an iPhone app. | Competitive pressure extends beyond resume optimization into continuing career support. JobCtrl's evidence and contact records overlap, while that connected relationship and mobile workflow remains a gap. |
-| **[Jobscan](https://www.jobscan.co/)** | ATS matching, a tracker, discovery, and auto-apply advertised with review before sending. Its [AI Resume Coach](https://www.jobscan.co/ai-resume) asks about experience, offers editable suggestions, and exports PDF/DOCX. | Review, evidence-oriented writing, and Word export are not unique to JobCtrl. Jobscan's ATS score is not the same measure as JobCtrl's requirement-evidence fit assessment; no hiring-outcome comparison was run. |
-| **[LoopCV](https://www.loopcv.pro/)** | Continuous search, automated applications and recruiter emails, analytics, company/source filters, and optional manual review. The vendor offers free and paid tiers. | A stronger offering for someone seeking hosted, ongoing application automation. Optional review exists; that alone does not establish exact-artifact approval, send deduplication, or the same recovery guarantees. |
-| **[LazyApply](https://lazyapply.com/)** | Browser-based automated applications and referrals, application analytics, and resume/cover-letter tools. | Primarily competes on application throughput and convenience. Advertised volumes and success claims were not tested; the public page does not establish equivalent evidence and submission guarantees. |
-| **[Sonara](https://www.sonara.ai/)** | A current BOLD-branded site with signup, a public job catalogue, and managed matching/auto-apply. It states that its system checks jobs daily and that employers can close postings between updates. | Treat it as a current marketed alternative, not simply a historical shutdown. The live public surface does not prove submission quality or continuous revalidation of every saved job; JobCtrl exposes persisted availability and uncertainty. |
-| **[JobCopilot](https://jobcopilot.com/automate-job-applications/)** | Hosted discovery and applications, with a tracker and application modes. [Personalized AI Apply](https://jobcopilot.com/ai-apply/) markets writing-style controls and learning from edits; adjacent tools cover interviews and negotiation. | More emphasis on delegated application work. Edit learning and review claims overlap with parts of JobCtrl's lifecycle, but their provenance, effectiveness, and exact submission guarantees remain unverified. |
-| **[AIApply](https://support.aiapply.co/en/articles/14216708-how-auto-apply-works)** | Auto submits matches automatically; Hybrid auto-submits above its stated fit threshold and holds others; Review requires approval per suggestion. The [iPhone app](https://support.aiapply.co/en/articles/16764354-getting-started-with-the-aiapply-app) manages modes, history, and an employer-reply inbox. | A broader mobile and hosted submission offering. Review is a real documented mode; the threshold and vendor match ratings are not equivalent to JobCtrl's evidence model or an independent quality measure. |
-| **[Applyd](https://applyd.io/)** | The rendered public page markets ATS checks, source-constrained resume copies, PDF/Word export, a tracker, proof-backed skill mapping, round-specific text/voice mock interviews, a story bank, and an optional public profile. | A direct challenge to a generic “truthful resume plus career evidence” pitch. Its no-fabrication and skill-proof claims are vendor claims, not independently verified equivalents of JobCtrl's recorded determinations. |
-| **[Offerd](https://www.offerd.ai/)** | ATS scanning, AI video interviews, answer feedback, document generation, a tracker, and voice-profile claims. | More interview-practice functionality is advertised than JobCtrl currently ships. Interview scoring accuracy and advertised callback improvements were not verified. |
-| **[Final Round AI](https://www.finalroundai.com/)** | Desktop live interview assistance, spoken practice, automatic debriefs, and screen help, organized around job-specific goals and materials. | Compare its practice and debrief offering with JobCtrl's Beta preparation. Hidden real-time assistance is a different operating model that JobCtrl does not offer; invisibility and outcome claims were not tested. |
-| **[Kickresume](https://www.kickresume.com/en/)** | Resume/cover-letter creation, tailoring and translation, templates, career mapping, interview-question tools, mobile apps, and a [job tracker](https://www.kickresume.com/en/job-application-tracker/). | A broader document-design and career-tool offering than a resume builder alone. JobCtrl overlaps on tailoring and translation, with separate locale reviews and accepted source/version identity in the surrounding workflow. |
-
-Human review, honest-writing claims, trackers, DOCX, and career tools are now
-common competitive features. JobCtrl's defensible distinction in this review
-is how those decisions bind to stored evidence and recoverable work. Public
-commercial evidence is insufficient to claim that competitors cannot provide
-similar controls internally.
-
-## JobCtrl's UI is part of the product
-
-The web app starts work, edits and approves materials, displays requirement
-evidence, and follows durable runs. Its current lifecycle also includes reviewed
-[screening answers](user/screening-answers.md),
-[locale variants](user/locale-variants.md),
-[offer records](user/outcomes-and-feedback.md#actual-offer-terms-and-decisions),
-and [editable DOCX exports](user/materials-and-tailoring.md#editable-docx-export).
-
-[![JobCtrl dashboard showing pipeline progress, job counts, source health, and apply runs](assets/screenshots/dashboard.png)](user/product-tour.md)
-
-<ComparisonScreenshotCarousel />
-
-All screenshots use synthetic sample data. They illustrate the operator
-experience, not the results of a competitor usability trial. Open the
-[Product Tour](user/product-tour.md) for the complete workflow.
+| **JobCtrl** | The [published v0.3.1 notes](https://github.com/ebarti/JobCtrl/releases/tag/v0.3.1) cover accepted DOCX export, company briefings, offer records and communications, posting-history source proposals, and evidence milestones. Current source also includes saved-posting revalidation, model-owned semantic determinations, reviewed screening answers, and locale variants. | Several old breadth gaps have narrowed. The case for JobCtrl now includes lifecycle continuity and inspectable evidence across more tasks, while platform and browser-entry limits remain. See the [source delta](https://github.com/ebarti/JobCtrl/compare/b4063e1a3227d31eebacbc7d2c620ae5236f744b...198d399d33d2bb527c8cd49cc43dd27e3203b36b). |
+| **Career-Ops** | The repository now lives under `career-ops-hq`. Its [web README][career-web] still says alpha but documents scheduled scans, assisted apply, editing, and analytics. Current [modes][career-readme] include interview practice/debriefs and contract/offer preparation. | Describing it as merely a prompt scaffold or terminal viewer understates its breadth. Its current fact gate and file-based recovery still differ from JobCtrl's determination and workflow model. [Source delta](https://github.com/career-ops-hq/career-ops/compare/03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182...0b35a138fffa5335340070c2d13e0c8d1b804a2b). |
+| **JobOps** | Current source documents [sponsorship registers][jobops-sponsors], broader provider routes, and the [Gmail review workflow][jobops-tracking], alongside its application UI. | A close graphical alternative with useful deployment and provider flexibility. The source remains newer than its latest published release; the snapshot table keeps that distinction. [Source delta](https://github.com/DaKheera47/job-ops/compare/c834c6502bf4685904b6abc3d5a008294b8b7020...4a5e52b76a729aa2f57e4e9171216cf9621140a0). |
+| **AI Job Search** | The current [apply command][ai-apply] defines a separate reviewer with restricted tools and verify-before-use research. Its [command set][ai-readme] includes ranking, profile expansion, gap plans, outcomes, and optional sync; v1.7.3 was published on 2026-10-19. | Stronger preparation and continuity than the older comparison suggested; still a CLI and files workflow with a manual submission handoff. [Source delta](https://github.com/MadsLorentzen/ai-job-search/compare/670d30ae7e9709bbf624deb2d9962ba5733331f5...d621ebe63549dffb291edea7f7621cd00e67ddb1). |
 
 ## Semantic Determination Authority
 

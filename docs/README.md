@@ -30,9 +30,9 @@ has one defining page; other pages summarize it briefly and link to that owner.
 ### Start Here
 
 - [`index.md`](index.md): documentation homepage and product entry points.
-- [`comparison.md`](comparison.md): dated, evidence-backed comparison with 19
-  alternatives, including source-reviewed workflows and commercial job-search,
-  resume, application, and career tools.
+- [`comparison.md`](comparison.md): why choose JobCtrl, with a dated,
+  evidence-backed comparison of 19 source-reviewed and commercial job-search,
+  resume, application, and career alternatives.
 - [`user/product-tour.md`](user/product-tour.md): visual product tour.
 - [`user/getting-started.md`](user/getting-started.md): install, first-run setup,
   provider readiness, first workflow, update, rollback, and removal.
