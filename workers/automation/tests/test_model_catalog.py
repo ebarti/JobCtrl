@@ -2,7 +2,18 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from jobctrl.infrastructure.llm.model_catalog import provider_model_catalog
+from jobctrl.infrastructure.llm.model_catalog import provider_model_catalog, _normalize_codex_models
+
+
+def test_codex_efforts_are_dynamic_sanitized_and_model_specific():
+    models = _normalize_codex_models([
+        {"model": "model-a", "displayName": "A", "supportedReasoningEfforts": [{"reasoningEffort": "high", "description": "Provider high"}, {"reasoningEffort": "max"}, {"reasoningEffort": "max"}, {"reasoningEffort": "bad\nvalue"}], "defaultReasoningEffort": "max"},
+        {"model": "model-b", "supported_reasoning_efforts": [{"reasoning_effort": "low"}], "default_reasoning_effort": "unoffered"},
+    ])
+    assert models[0]["supportedReasoningEfforts"] == [{"reasoningEffort": "high", "description": "Provider high"}, {"reasoningEffort": "max"}]
+    assert models[0]["defaultReasoningEffort"] == "max"
+    assert models[1]["supportedReasoningEfforts"] == [{"reasoningEffort": "low"}]
+    assert "defaultReasoningEffort" not in models[1]
 
 
 class _FakeCodex:

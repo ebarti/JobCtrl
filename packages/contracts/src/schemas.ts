@@ -2098,6 +2098,7 @@ export const SettingsUpdateRequestSchema = z
     laneTokenLimits: laneTokenLimitsSchema.optional(),
     analysisLegs: z.array(z.enum(["codex", "claude", "google"])).min(1).optional(),
     defaultLlmModel: z.string().trim().min(1).max(160).nullable().optional(),
+    codexReasoningEfforts: z.record(z.string().trim().min(1).max(160), z.string().trim().min(1).max(40).nullable()).refine((value) => Object.keys(value).length <= 512).optional(),
     tailoringGeneratorModels: z.array(z.string().trim().min(1).max(160)).min(1).nullable().optional(),
     tailoringJudgeModel: z.string().trim().min(1).max(160).nullable().optional(),
     applyMaxBudgetUsd: z.coerce.number().min(0).optional(),
@@ -2238,6 +2239,8 @@ export const ProviderModelSchema = z
     id: z.string().trim().min(1).max(160),
     displayName: z.string().trim().min(1).max(160),
     isDefault: z.boolean().optional(),
+    supportedReasoningEfforts: z.array(z.object({ reasoningEffort: z.string().trim().min(1).max(40), description: z.string().trim().min(1).max(240).optional() }).strict()).max(32).optional(),
+    defaultReasoningEffort: z.string().trim().min(1).max(40).optional(),
   })
   .strict();
 export type ProviderModel = z.infer<typeof ProviderModelSchema>;
@@ -4658,6 +4661,7 @@ export interface JobCtrlSettings {
   laneTokenLimits: Record<LlmLane, number>;
   analysisLegs: ProviderId[];
   defaultLlmModel: string | null;
+  codexReasoningEfforts: Record<string, string>;
   tailoringGeneratorModels: string[] | null;
   tailoringJudgeModel: string | null;
   applyMaxBudgetUsd: number;
@@ -4704,6 +4708,7 @@ export interface EffectiveJobCtrlSettings {
   workerActivitySlots: EffectiveSetting<number>;
   analysisLegs: EffectiveSetting<ProviderId[]>;
   defaultLlmModel: EffectiveSetting<string | null>;
+  codexReasoningEfforts: EffectiveSetting<Record<string, string>>;
   tailoringGeneratorModels: EffectiveSetting<string[] | null>;
   tailoringJudgeModel: EffectiveSetting<string | null>;
   applyMaxBudgetUsd: EffectiveSetting<number>;
@@ -4724,6 +4729,7 @@ export const SettingsResponseSchema = z
         laneTokenLimits: laneTokenLimitsSchema.required(),
         analysisLegs: z.array(z.enum(ProviderIds)),
         defaultLlmModel: z.string().nullable(),
+        codexReasoningEfforts: z.record(z.string(), z.string()),
         tailoringGeneratorModels: z.array(z.string()).nullable(),
         tailoringJudgeModel: z.string().nullable(),
         applyMaxBudgetUsd: z.number(),
@@ -4748,6 +4754,7 @@ export const SettingsResponseSchema = z
         workerActivitySlots: effectiveSettingSchema(z.number()),
         analysisLegs: effectiveSettingSchema(z.array(z.enum(ProviderIds))),
         defaultLlmModel: effectiveSettingSchema(z.string().nullable()),
+        codexReasoningEfforts: effectiveSettingSchema(z.record(z.string(), z.string())),
         tailoringGeneratorModels: effectiveSettingSchema(z.array(z.string()).nullable()),
         tailoringJudgeModel: effectiveSettingSchema(z.string().nullable()),
         applyMaxBudgetUsd: effectiveSettingSchema(z.number()),

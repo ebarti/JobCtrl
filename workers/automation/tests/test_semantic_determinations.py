@@ -106,6 +106,32 @@ def test_same_sources_bind_opposite_valid_model_decisions() -> None:
         assert len(model.calls) == 1
 
 
+def test_effort_is_persisted_and_changes_cache_identity_without_relabeling_history():
+    repository = Repository()
+    high = Model(response("accept"))
+    high.reasoning_effort = "high"
+    _, first = call(high, repository)
+    low = Model(response("reject"))
+    low.reasoning_effort = "low"
+    second_result, second = call(low, repository)
+    assert second_result.verdict == "reject"
+    assert first.determination_id != second.determination_id
+    assert first.reasoning_effort == "high"
+    assert second.reasoning_effort == "low"
+    assert first.result["verdict"] == "accept"
+    _, cached = call(high, repository)
+    assert cached == first
+    assert len(high.calls) == 1
+    assert len(repository.rows) == 2
+
+
+def test_legacy_receipts_without_recorded_effort_remain_readable():
+    _, envelope = call(Model(response()), Repository())
+    legacy = envelope.model_dump()
+    legacy.pop("reasoning_effort")
+    assert DeterminationEnvelope.model_validate(legacy).reasoning_effort is None
+
+
 @pytest.mark.parametrize("quote", ["alpha, beta", "alpha. beta", "alpha,beta", "1,alpha,beta,2"])
 def test_literal_values_accept_punctuation_delimiters_without_deciding_the_verdict(quote):
     for verdict in ("accept", "reject"):

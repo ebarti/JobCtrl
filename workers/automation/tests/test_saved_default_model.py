@@ -47,6 +47,17 @@ def test_warm_acquisition_rebinds_after_saved_default_edit(configured_route):
     assert before.model == "gpt-6.1-sol"
 
 
+def test_warm_acquisition_rebinds_after_effort_edit(configured_route, monkeypatch):
+    monkeypatch.setattr(llm_client, "_make_backend", lambda provider, model: SimpleNamespace(provider_id=provider, model=model, reasoning_effort=criteria_provider.read_codex_reasoning_effort(model)))
+    configured_route["codex_reasoning_efforts"] = {"gpt-6.1-sol": "high"}
+    first = llm_client.get_llm_adapter()
+    configured_route["codex_reasoning_efforts"]["gpt-6.1-sol"] = "max"
+    second = llm_client.get_llm_adapter()
+    assert first is not second
+    assert first.reasoning_effort == "high"
+    assert second.reasoning_effort == "max"
+
+
 def test_saved_pin_does_not_fail_over_when_route_is_unavailable(configured_route):
     llm_client.get_llm_adapter()
     record_provider_failure("codex", "gpt-6.1-sol", ProviderCallError(ProviderFailureEnvelope(

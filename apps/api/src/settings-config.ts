@@ -24,6 +24,7 @@ export const DEFAULT_JOBCTRL_SETTINGS: JobCtrlSettings = {
   },
   analysisLegs: ["claude", "codex", "google"],
   defaultLlmModel: null,
+  codexReasoningEfforts: {},
   tailoringGeneratorModels: null,
   tailoringJudgeModel: null,
   applyMaxBudgetUsd: 5,
@@ -75,6 +76,7 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
   );
   const analysisLegs = persistedAnalysisLegs(raw);
   const defaultLlmModel = persistedNullableModel(raw, "default_llm_model");
+  const codexReasoningEfforts = persistedCodexReasoningEfforts(raw);
   const tailoringGeneratorModels = persistedModels(raw, "tailoring_generator_models");
   const tailoringJudgeModel = persistedNullableModel(raw, "tailoring_judge_model");
   const applyMaxBudgetUsd = persistedNumber(
@@ -105,6 +107,7 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
       laneTokenLimits: laneTokenLimits.value,
       analysisLegs: analysisLegs.value,
       defaultLlmModel: defaultLlmModel.value,
+      codexReasoningEfforts: codexReasoningEfforts.value,
       tailoringGeneratorModels: tailoringGeneratorModels.value,
       tailoringJudgeModel: tailoringJudgeModel.value,
       applyMaxBudgetUsd: applyMaxBudgetUsd.value,
@@ -121,6 +124,7 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
       workerActivitySlots,
       analysisLegs,
       defaultLlmModel,
+      codexReasoningEfforts,
       tailoringGeneratorModels,
       tailoringJudgeModel,
       applyMaxBudgetUsd,
@@ -216,6 +220,15 @@ function persistedModels(
   return Object.hasOwn(raw, key)
     ? persistedSetting(normalizeModels(raw[key]), "next_workflow")
     : defaultSetting(null, "next_workflow");
+}
+
+function persistedCodexReasoningEfforts(raw: Record<string, unknown>): EffectiveSetting<Record<string, string>> {
+  const value = isRecord(raw.codex_reasoning_efforts)
+    ? Object.fromEntries(Object.entries(raw.codex_reasoning_efforts).filter(([model, effort]) => model.length > 0 && model.length <= 160 && typeof effort === "string" && effort.length > 0 && effort.length <= 40)) as Record<string, string>
+    : {};
+  return Object.hasOwn(raw, "codex_reasoning_efforts")
+    ? persistedSetting(value, "next_workflow")
+    : defaultSetting(value, "next_workflow");
 }
 
 function persistedNullableModel(

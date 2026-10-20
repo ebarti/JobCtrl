@@ -3379,7 +3379,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       ...(body.tailoringJudgeModel ? [body.tailoringJudgeModel] : []),
     ].filter((model) => model.toLowerCase() !== "default");
     const materialModelBindings = new Map<string, string>();
-    if (selectedModels.length > 0 || materialModels.length > 0) {
+    const selectedEfforts = Object.entries(body.codexReasoningEfforts ?? {}).filter((entry): entry is [string, string] => entry[1] !== null);
+    if (selectedModels.length > 0 || materialModels.length > 0 || selectedEfforts.length > 0) {
       let catalog: { providers: ProviderModelCatalogItem[] };
       try {
         catalog = await dispatchProviderModelCatalog(providerDispatcher);
@@ -3389,6 +3390,23 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           "provider_models_failed",
           "Provider models are temporarily unavailable.",
         );
+      }
+      if (selectedEfforts.length > 0) {
+        const codex = catalog.providers.find((provider) => provider.provider === "codex");
+        if (!codex?.ready) {
+          void reply.code(409);
+          return { ok: false, error: "provider_not_ready", message: "Codex must be ready before selecting reasoning effort." };
+        }
+        if (codex.models.length === 0 && codex.message) {
+          void reply.code(503);
+          return providerOperationError("provider_models_failed", "Provider models are temporarily unavailable.");
+        }
+        for (const [model, effort] of selectedEfforts) {
+          if (!codex.models.find((candidate) => candidate.id === model)?.supportedReasoningEfforts?.some((option) => option.reasoningEffort === effort)) {
+            void reply.code(400);
+            return { ok: false, error: "invalid_reasoning_effort", message: "Select a reasoning effort offered by the current Codex model." };
+          }
+        }
       }
       for (const [provider, model] of selectedModels) {
         const item = catalog.providers.find((candidate) => candidate.provider === provider);

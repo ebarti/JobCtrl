@@ -455,6 +455,9 @@ class CodexSdkBackend:
         from jobctrl.infrastructure.analysis.codex_analysis_adapter import CODEX_ANALYSIS_MODEL
 
         self.model = model or CODEX_ANALYSIS_MODEL
+        from jobctrl.infrastructure.scoring.criteria_provider import read_codex_reasoning_effort
+
+        self.reasoning_effort = read_codex_reasoning_effort(self.model)
         self._async_codex_factory = async_codex_factory
         self._approval_mode_factory = approval_mode_factory
 
@@ -486,7 +489,7 @@ class CodexSdkBackend:
             temperature=temperature,
             max_tokens=max_tokens,
         )
-        effort = "high" if thinking_budget is None else _reasoning_level_from_budget(thinking_budget)
+        effort = self.reasoning_effort or ("high" if thinking_budget is None else _reasoning_level_from_budget(thinking_budget))
         if effort == "minimal":
             effort = "low"
         factory = self._async_codex_factory or _load_async_codex_factory()
@@ -811,6 +814,10 @@ class LlmAdapter:
     def provider_id(self) -> str:
         return self._provider_id
 
+    @property
+    def reasoning_effort(self) -> str | None:
+        return getattr(self._client, "reasoning_effort", None)
+
     def _client_for_model(self, model: str | None) -> Any:
         provider, selected_model, label = _parse_model_spec(model)
         if label == "default":
@@ -921,7 +928,10 @@ def get_llm_adapter() -> LlmAdapter:
             selection = _effective_default_selection(
                 default_provider=_singleton_default_provider,
             )
-            if selection != _singleton._default_selection:
+            from jobctrl.infrastructure.scoring.criteria_provider import read_codex_reasoning_effort
+
+            effort_changed = _singleton.provider_id == "codex" and _singleton.reasoning_effort != read_codex_reasoning_effort(_singleton.model)
+            if selection != _singleton._default_selection or effort_changed:
                 _singleton = LlmAdapter(_resolved_default=selection)
                 _singleton_default_provider = selection[0]
         return _singleton

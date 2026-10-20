@@ -381,6 +381,16 @@ class TestClaudeSynthesizer:
 
 
 class TestCodexAdapter:
+    @pytest.mark.parametrize("effort", ["low", "xhigh", "max"])
+    async def test_saved_model_effort_reaches_draft_thread_turn_and_telemetry(self, monkeypatch, in_memory_exporter, effort):
+        monkeypatch.setattr("jobctrl.infrastructure.scoring.criteria_provider.read_config_settings", lambda _path=None: {"codex_reasoning_efforts": {"gpt-6.1-sol": effort}})
+        fake = _FakeAsyncCodex(json.dumps(_grounded_dict()))
+        adapter = CodexAnalysisAdapter(async_codex_factory=lambda: fake)
+        await adapter.draft("system", JD)
+        assert fake.thread.runs[0]["effort"] == effort
+        assert fake.thread_start_calls[0]["config"]["model_reasoning_effort"] == effort
+        assert dict(in_memory_exporter.get_finished_spans()[0].attributes)["gen_ai.request.reasoning_effort"] == effort
+
     async def test_parses_final_response_into_typed_draft(self) -> None:
         adapter = CodexAnalysisAdapter(
             model="gpt-5.4",

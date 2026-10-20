@@ -365,6 +365,12 @@ before any settings bytes change. Clearing them or selecting provider-neutral
 `default` does not require provider availability.
 `defaultLlmModel` persists as `default_llm_model`; it binds newly acquired core
 adapters and the optional writing pass without changing explicit workflow pins.
+Codex catalog models also expose optional `supportedReasoningEfforts` and
+`defaultReasoningEffort` capabilities. Settings accepts model-specific
+`codexReasoningEfforts` patches validated against those live options; null
+entries clear offline. The optional `reasoning_effort` in determination envelopes
+records an explicit saved choice and participates in the determination identity.
+Legacy envelopes without the field remain readable.
 
 `GET/PATCH /v1/settings` also carries effective-source and activation metadata
 for launch controls. Environment-owned fields are read-only. Discovery runtime

@@ -18,8 +18,9 @@ resolved through an injectable factory that defaults to a lazy import, so tests
 pass a fake context-manager whose thread returns a canned ``final_response``.
 No live Codex login / app-server is needed in the suite.
 
-No timeout (D-19): the public turn stream is awaited to completion; effort is
-pinned to ``high`` (D-18). Cancellation = cancel the wrapping asyncio task.
+No timeout (D-19): the public turn stream is awaited to completion. Effort uses
+the saved model choice or the existing ``high`` default. Cancellation cancels
+the wrapping asyncio task.
 """
 
 from __future__ import annotations
@@ -251,6 +252,9 @@ class CodexAnalysisAdapter:
         async_codex_factory: AsyncCodexFactory | None = None,
     ) -> None:
         self._model = model
+        from jobctrl.infrastructure.scoring.criteria_provider import read_codex_reasoning_effort
+
+        self.reasoning_effort = read_codex_reasoning_effort(model)
         self._async_codex_factory = async_codex_factory
 
     @property
@@ -260,6 +264,7 @@ class CodexAnalysisAdapter:
     @lane_bound("discovery")
     async def draft(self, system_prompt: str, jd_snapshot: str) -> JobAnalysisDraft:
         factory = self._async_codex_factory or _load_async_codex_factory()
+        effort = self.reasoning_effort or "high"
         prompt = f"{system_prompt}\n\nJOB DESCRIPTION:\n{jd_snapshot}"
         span_input = [
             {"role": "system", "content": system_prompt},
@@ -268,7 +273,7 @@ class CodexAnalysisAdapter:
         with llm_generation_span(
             model=self._model,
             messages=span_input,
-            params={"structured": True},
+            params={"structured": True, "effort": effort},
             scope_name=_CODEX_SCOPE,
         ) as record:
             try:
@@ -279,9 +284,8 @@ class CodexAnalysisAdapter:
                         # tool despite the locked-down feature configuration.
                         approval_mode=_deny_all_approval_mode(),
                         model=self._model,
-                        # Max reasoning effort (D-18). Command filesystem access is
-                        # governed by the configured Codex permissions profile.
-                        config={"model_reasoning_effort": "high"},
+                        # Filesystem access retains the configured permissions profile.
+                        config={"model_reasoning_effort": effort},
                     )
                     outcome = await run_codex_turn(
                         thread,
@@ -293,7 +297,7 @@ class CodexAnalysisAdapter:
                             # to set additionalProperties:false and list all props in
                             # required; Pydantic's model_json_schema() emits neither.
                             "output_schema": strict_json_schema(JobAnalysis.model_json_schema()),
-                            "effort": "high",
+                            "effort": effort,
                         },
                         record_usage=lambda input_tokens, output_tokens: record(
                             "",

@@ -43,6 +43,13 @@ provider/model provenance. Without a saved default, the legacy optional Claude
 voice adapter remains available. A writing-pass failure retains the already
 verified candidate; every proposed rewrite still receives the existing final
 claim, quality and source-binding checks.
+Codex adapters capture each model's saved reasoning effort when constructed.
+An explicit choice takes precedence over the numeric thinking budget in a
+tailoring policy and reaches both thread creation and the turn. Employer-analysis
+configuration fingerprints and semantic determination identities include that
+choice. Determination envelopes persist optional `reasoning_effort`; legacy
+envelopes remain valid. A later preference edit cannot change the metadata or
+execution parameters of an already constructed adapter.
 
 ## Canonical Employer Analysis
 

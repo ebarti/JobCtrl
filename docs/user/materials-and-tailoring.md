@@ -87,6 +87,10 @@ the selection or choose `default` to remove an explicit override.
 The default route also controls the optional writing pass; explicit analysis
 perspectives and material roles retain their own choices. See
 [model configuration](configuration.md#llm-providers) for route precedence.
+The same page exposes reasoning effort for the selected Codex models. A saved
+choice applies to drafts, review, analysis and writing refinement alike. Clearing
+it restores the earlier per-call settings; accepted material and its recorded
+effort history remain unchanged.
 
 Eligible jobs receive materials during Discover preparation. You can also
 generate first-time materials for one job, re-tailor a job with the current

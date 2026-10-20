@@ -31,6 +31,7 @@ import {
   useSettingsPolicyQuery,
 } from "../../operations/hooks/useSettingsPolicyQueries.js";
 import { useUpdateAiExecutionPolicyMutation } from "../hooks/useUpdateAiExecutionPolicyMutation.js";
+import { CodexReasoningEffortFields } from "./CodexReasoningEffortFields.js";
 
 const LEG_OPTIONS: Array<{ value: ProviderId; label: string }> = [
   { value: "claude", label: "Claude" },
@@ -67,6 +68,7 @@ export function AiExecutionPolicyPanel() {
   const form = useForm({
     defaultValues: {
       defaultLlmModel: response?.settings.defaultLlmModel ?? "",
+      codexReasoningEfforts: response?.settings.codexReasoningEfforts ?? {} as Record<string, string>,
       analysisLegs:
         response?.settings.analysisLegs ??
         (["claude", "codex", "google"] as ProviderId[]),
@@ -83,6 +85,11 @@ export function AiExecutionPolicyPanel() {
       ].filter((model, index, all) => model && all.indexOf(model) === index);
       const request = {
         defaultLlmModel: value.defaultLlmModel || null,
+        codexReasoningEfforts: Object.fromEntries(
+          [...new Set([...Object.keys(response.settings.codexReasoningEfforts), ...Object.keys(value.codexReasoningEfforts)])]
+            .filter((model) => response.settings.codexReasoningEfforts[model] !== value.codexReasoningEfforts[model])
+            .map((model) => [model, value.codexReasoningEfforts[model] || null]),
+        ),
         ...(response.effectiveSettings.analysisLegs.editable
           ? { analysisLegs: value.analysisLegs }
           : {}),
@@ -110,6 +117,7 @@ export function AiExecutionPolicyPanel() {
         const savedGenerators = saved.settings.tailoringGeneratorModels ?? [];
         formApi.reset({
           defaultLlmModel: saved.settings.defaultLlmModel ?? "",
+          codexReasoningEfforts: saved.settings.codexReasoningEfforts,
           analysisLegs: saved.settings.analysisLegs,
           generatorPrimary: savedGenerators[0] ?? "",
           generatorFallback: savedGenerators[1] ?? "",
@@ -133,6 +141,7 @@ export function AiExecutionPolicyPanel() {
     const savedGenerators = response.settings.tailoringGeneratorModels ?? [];
     form.reset({
       defaultLlmModel: response.settings.defaultLlmModel ?? "",
+      codexReasoningEfforts: response.settings.codexReasoningEfforts,
       analysisLegs: response.settings.analysisLegs,
       generatorPrimary: savedGenerators[0] ?? "",
       generatorFallback: savedGenerators[1] ?? "",
@@ -162,6 +171,7 @@ export function AiExecutionPolicyPanel() {
   const effective = response.effectiveSettings;
   const initialValues = {
     defaultLlmModel: response.settings.defaultLlmModel ?? "",
+    codexReasoningEfforts: response.settings.codexReasoningEfforts,
     analysisLegs: response.settings.analysisLegs,
     generatorPrimary: generators[0] ?? "",
     generatorFallback: generators[1] ?? "",
@@ -327,6 +337,28 @@ export function AiExecutionPolicyPanel() {
             />
           )}
         </form.Field>
+        <form.Subscribe
+          selector={(state) => ({
+            specs: [state.values.defaultLlmModel, state.values.generatorPrimary, state.values.generatorFallback, state.values.tailoringJudgeModel],
+            codexAnalysis: state.values.analysisLegs.includes("codex"),
+          })}
+        >
+          {({ specs, codexAnalysis }) => (
+            <form.Field name="codexReasoningEfforts">
+              {(field) => (
+                <CodexReasoningEffortFields
+                  models={catalogQuery.data?.providers.find((provider) => provider.provider === "codex" && provider.ready)?.models ?? []}
+                  modelSpecs={specs}
+                  analysisModel={codexAnalysis ? response.settings.preferredModels.codex ?? null : null}
+                  includeDefaultAnalysisModel={codexAnalysis}
+                  value={field.state.value}
+                  readOnly={catalogQuery.isPending || Boolean(catalogQuery.error) || !effective.codexReasoningEfforts.editable}
+                  onChange={(value) => { clearSaveStatus(); field.handleChange(value); }}
+                />
+              )}
+            </form.Field>
+          )}
+        </form.Subscribe>
         <form.Subscribe
           selector={(state) => ({
             canSubmit: state.canSubmit,

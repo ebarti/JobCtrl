@@ -175,6 +175,15 @@ invalid model cannot partially save other changes. `null` and provider-neutral
 The settings and discovery responses also include effective-source and
 activation metadata for managed controls.
 
+`codexReasoningEfforts` patches a mapping of bare Codex model IDs to effort IDs.
+Each non-null effort must appear in that ready model's current
+`supportedReasoningEfforts` catalog. Unsupported pairs return
+`400 invalid_reasoning_effort`; readiness and catalog failures use the same
+409/503 boundary as model choices. Validation is atomic with other settings.
+A `null` entry clears just that model's effort without requiring provider
+availability. Readback includes `codexReasoningEfforts` and its effective-source
+metadata; the mapping persists as `codex_reasoning_efforts`.
+
 The same route accepts `laneTokenLimits`, an object whose only valid keys are
 `discovery`, `enrichment`, `scoring`, `tailoring`, `apply`, `contact`,
 `interview`, `profile`, and `compensation`. Values are non-negative integers;
@@ -201,6 +210,7 @@ durable control composed on `/discovery` is stored in SQLite instead.
 | `lane_token_limits` | Object keyed only by the nine LLM product lanes, each a non-negative integer; default all `0` | UTC daily observed input-plus-output token thresholds. `0` means unlimited. |
 | `analysis_legs` | Non-empty array of `codex`, `claude`, and/or `google`; default all three | Provider legs used by newly started employer-analysis work. |
 | `default_llm_model` | Provider-qualified model ID or `null`; default `null` | Default route for newly acquired core model calls and the optional writing pass. Explicit workflow and material choices take precedence. `null` restores automatic provider selection. |
+| `codex_reasoning_efforts` | Object mapping bare Codex model IDs to effort IDs; default `{}` | Explicit effort for newly constructed Codex adapters. Applies to thread and turn, overrides legacy numeric thinking budgets, and preserves unrelated models when patched. An absent entry retains existing per-call behavior. |
 | `tailoring_generator_models` | Non-empty array of model IDs or `null`; default `null` | Ordered generator-model policy for newly started tailoring workflows. `null` uses the provider/default policy. |
 | `tailoring_judge_model` | Model ID or `null`; default `null` | Judge model for newly started tailoring workflows. `null` uses the provider/default policy. |
 | `tailoring_judge_min_score` | Number `0–1`, default `0.82` | Minimum judge score for accepting a tailored candidate. |

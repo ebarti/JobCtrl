@@ -93,6 +93,25 @@ def _normalize_codex_models(items: Iterable[Any]) -> list[dict[str, object]]:
         }
         if bool(_field(item, "is_default")):
             model["isDefault"] = True
+        efforts = []
+        seen_efforts: set[str] = set()
+        for option in _field(item, "supported_reasoning_efforts") or ():
+            effort = _safe_text(_field(option, "reasoning_effort"))
+            if not effort or len(effort) > 40 or effort in seen_efforts:
+                continue
+            seen_efforts.add(effort)
+            normalized = {"reasoningEffort": effort}
+            description = _safe_text(_field(option, "description"))
+            if description:
+                normalized["description"] = description
+            efforts.append(normalized)
+            if len(efforts) == 32:
+                break
+        if efforts:
+            model["supportedReasoningEfforts"] = efforts
+            default_effort = _safe_text(_field(item, "default_reasoning_effort"))
+            if default_effort in seen_efforts:
+                model["defaultReasoningEffort"] = default_effort
         models.append(model)
         if len(models) == 512:
             break

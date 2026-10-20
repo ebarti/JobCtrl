@@ -12698,6 +12698,45 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it.each(["high", "max"])("saves a current Codex effort and reads it back (%s)", async (effort) => {
+    const catalog = { providers: providerModelsResult.providers.map(provider => provider.provider === "codex" ? { ...provider, models: provider.models.map(model => ({ ...model, supportedReasoningEfforts: [{ reasoningEffort: "high" }, { reasoningEffort: "max" }] })) } : provider) };
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({ jsonrpc: "2.0", id: 1, result: catalog }));
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: { codexReasoningEfforts: { "synthetic-model": effort } } });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().settings.codexReasoningEfforts).toEqual({ "synthetic-model": effort });
+    expect(response.json().effectiveSettings.codexReasoningEfforts).toEqual({ value: { "synthetic-model": effort }, source: "persisted", activation: "next_workflow", editable: true });
+    expect(JSON.parse(fs.readFileSync(options.configPath, "utf8")).codex_reasoning_efforts).toEqual({ "synthetic-model": effort });
+    expect(call).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it.each([
+    { model: "synthetic-model", effort: "unoffered", ready: true, empty: false, status: 400 },
+    { model: "unoffered-model", effort: "high", ready: true, empty: false, status: 400 },
+    { model: "synthetic-model", effort: "high", ready: false, empty: false, status: 409 },
+    { model: "synthetic-model", effort: "high", ready: true, empty: true, status: 503 },
+  ])("rejects an unsupported effort atomically: $model/$effort ($status)", async ({ model, effort, ready, empty, status }) => {
+    const catalog = { providers: providerModelsResult.providers.map(provider => provider.provider === "codex" ? { ...provider, ready, models: empty || !ready ? [] : provider.models, ...(empty ? { message: "Catalog unavailable" } : {}) } : provider) };
+    const app = buildApp({ ...options, providerDispatcher: { call: vi.fn(async () => ({ jsonrpc: "2.0" as const, id: 1, result: catalog })), close: vi.fn(async () => undefined) } });
+    const before = fs.readFileSync(options.configPath, "utf8");
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: { codexReasoningEfforts: { [model]: effort }, dailyBudgetUsd: 17 } });
+    expect(response.statusCode, response.body).toBe(status);
+    expect(fs.readFileSync(options.configPath, "utf8")).toBe(before);
+    await app.close();
+  });
+
+  it("clears a saved effort offline without losing another model's choice", async () => {
+    fs.writeFileSync(options.configPath, JSON.stringify({ codex_reasoning_efforts: { "model-a": "high", "model-b": "max" } }));
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => { throw new Error("No catalog for offline clearing"); });
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: { codexReasoningEfforts: { "model-a": null } } });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().settings.codexReasoningEfforts).toEqual({ "model-b": "max" });
+    expect(call).not.toHaveBeenCalled();
+    await app.close();
+  });
+
   it("permits offline clearing and default material model selection", async () => {
     const call = vi.fn<JsonRpcDispatcher["call"]>(async () => { throw new Error("offline catalog"); });
     const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });

@@ -75,6 +75,7 @@ class DeterminationEnvelope(DeterminationModel):
     prompt_version: StrictStr
     provider: StrictStr
     model: StrictStr
+    reasoning_effort: StrictStr | None = None
     lane: LlmLane
     input_fingerprint: StrictStr
     created_at: StrictStr
@@ -211,6 +212,11 @@ def determine(
         "entity_id": entity_id,
         "input": data,
     }
+    reasoning_effort = getattr(llm, "reasoning_effort", None)
+    if reasoning_effort is not None:
+        if not isinstance(reasoning_effort, str) or not 0 < len(reasoning_effort) <= 40:
+            raise DeterminationFailure("configuration_invalid")
+        identity["reasoning_effort"] = reasoning_effort
     encoded = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     fingerprint = hashlib.sha256(encoded.encode()).hexdigest()
 
@@ -225,6 +231,7 @@ def determine(
             prompt_version=prompt_version,
             provider=provider,
             model=model,
+            reasoning_effort=reasoning_effort,
             lane=lane,
         )
         if any(getattr(envelope, key) != value for key, value in expected.items()):
@@ -312,6 +319,7 @@ def determine(
                 prompt_version=prompt_version,
                 provider=provider,
                 model=model,
+                reasoning_effort=reasoning_effort,
                 lane=lane,
                 input_fingerprint=fingerprint,
                 created_at=datetime.now(timezone.utc).isoformat(),

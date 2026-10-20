@@ -247,6 +247,22 @@ throughout analysis and materials, select only its provider perspective and set
 those roles to the same model. A pinned default fails visibly on provider
 failure rather than silently selecting a different model.
 
+**Reasoning effort** appears for each selected Codex model whose live catalog
+reports supported efforts. Options come from that model's
+`supportedReasoningEfforts`; JobCtrl does not invent options from another model.
+The selected effort applies to every new call using that model, including
+analysis, generation, review and the writing pass. Higher efforts may take more
+time and tokens. The provider's option description is shown beside the choice.
+
+**Existing call settings** clears the override and preserves the earlier policy:
+High for Codex analysis and ordinary model calls, and Low for tailoring drafts
+whose generation policy supplies a zero thinking budget. A selected effort
+overrides that numeric-budget mapping. Existing adapters retain their captured
+effort; newly acquired adapters use the saved choice without a worker restart.
+Determinations record an explicit effort and bind their cache identity to it;
+changing effort never relabels or erases an accepted result. Other providers
+retain their existing SDK controls.
+
 Without a saved default, provider selection keeps the readiness order Claude, then
 Codex, then Google. Explicit `provider:model` workflow values select the named
 provider. Existing adapters and in-flight work keep their resolved model. Newly

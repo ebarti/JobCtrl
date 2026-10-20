@@ -915,6 +915,11 @@ pass. Failed pinned routes never silently substitute another model. Model
 pickers contain only current authenticated runtime catalog options; saved IDs
 absent from the catalog remain visible solely as configuration status. SDK and
 CLI versions are upgraded together with their verified provider-pack metadata.
+Per-model Codex reasoning effort follows the same live capability boundary.
+An explicit saved effort overrides legacy per-call numeric thinking budgets;
+clearing it restores the previous call policy. Adapters capture it at
+construction, new acquisitions rebind after edits, and new determinations record
+it in provenance and cache identity without changing historical receipts.
 
 ## 2026-06-09: Generated-Materials Audit Is Served From Canonical Provenance Rows
 

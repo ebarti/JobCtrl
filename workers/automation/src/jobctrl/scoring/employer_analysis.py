@@ -125,6 +125,11 @@ def build_analyze_use_case(
         "drafts": [(leg, adapter.model_id) for leg, adapter in zip(active_legs, adapters, strict=True)],
         "synthesizer": [llm.provider_id, llm.model],
     }
+    efforts = {leg: adapter.reasoning_effort for leg, adapter in zip(active_legs, adapters, strict=True) if getattr(adapter, "reasoning_effort", None)}
+    if effort := getattr(llm, "reasoning_effort", None):
+        efforts["synthesizer"] = effort
+    if efforts:
+        model_set["reasoning_efforts"] = efforts
     model_set_fingerprint = hashlib.sha256(json.dumps(model_set, sort_keys=True).encode()).hexdigest()[:16]
     sdk_set_version = analysis_sdk_set_version(
         tuple(active_legs), synthesizer_provider=llm.provider_id,
