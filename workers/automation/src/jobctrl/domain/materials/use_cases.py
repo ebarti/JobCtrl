@@ -1674,6 +1674,11 @@ def _resume_review_rubric(profile, plan):
             "required_skill_category_ids": get_required_skill_category_ids(profile),
             "max_bullets_per_experience": get_max_experience_bullets(profile),
         }),
+        "tailoring_plan": json.dumps(plan.to_prompt_dict(), ensure_ascii=False),
+        "retry_evidence_targets": json.dumps([
+            item.to_dict() for item in _eligible_retry_evidence(profile, plan)
+        ], ensure_ascii=False),
+        "revision_authority": "The current coverage graph and required evidence pins constrain generation. The retry evidence targets are the canonical alternatives that a bounded revision may reconsider; they do not authorize new coverage edges or a larger artifact budget. A required role without active coverage or an explicit bullet pin permits exactly one positioning bullet, or no bullet when it has no achievement evidence. Assess the best truthful artifact within these constraints; do not require additional bullets or evidence that neither the active plan nor the revision targets permit. Source verification and your semantic pass/fail decision remain independent gates.",
         "role_scope": "Use the canonical posting's actual responsibilities. A seniority label alone does not establish people-management duties or direct reports.",
         "selection": "Required experience entries are a minimum; a complete career inventory is not required. An omitted optional role alone is not a completeness defect. Recommend additional saved evidence when it adds distinct role-relevant proof within the generation permissions.",
         "fixed_structure": "Historical titles, employers, dates, locations, education and skill-category labels are source-controlled. Repairs must preserve them and stay within the permitted mutable fields.",

@@ -253,6 +253,8 @@ def test_independent_quality_verdict_controls_approval_without_score_threshold(t
     permissions = json.loads(supplied["context"]["rubric"]["generation_permissions"])
     assert permissions["required_experience_entry_ids"] == ["entry"]
     assert permissions["max_bullets_per_experience"] == 4
+    assert "coverage_graph" in json.loads(supplied["context"]["rubric"]["tailoring_plan"])
+    assert json.loads(supplied["context"]["rubric"]["retry_evidence_targets"]) == []
 
 
 @pytest.mark.parametrize("verdict", ["pass", "fail"])
@@ -274,6 +276,8 @@ def test_high_fit_resume_keeps_all_six_personas_and_their_model_verdict(tmp_path
     supplied = json.loads(messages[1].content)
     assert any(row["source_id"] == "posting" for row in supplied["sources"])
     assert "generation_permissions" in supplied["context"]["rubric"]
+    quality_messages = next(messages for title, _, messages in model.calls if title == "ArtifactQuality")
+    assert supplied["context"]["rubric"] == json.loads(quality_messages[1].content)["context"]["rubric"]
     if verdict == "pass":
         metadata = conn.execute(
             "SELECT metadata_json FROM job_materials_artifacts WHERE artifact_type='tailored_resume'"
@@ -288,6 +292,47 @@ def test_high_fit_resume_keeps_all_six_personas_and_their_model_verdict(tmp_path
             ).fetchone()[0]
             == envelope["determination_id"]
         )
+
+
+def test_review_uses_current_coverage_and_only_admissible_revision_evidence():
+    from jobctrl.domain.materials.quality import EvidencePlanItem, TailoringPlan
+    from jobctrl.domain.materials.requirement_coverage import (
+        AchievementNode, CoverageEdge, CoverageGraph, RequirementNode,
+    )
+    from jobctrl.domain.materials.use_cases import _resume_review_rubric
+
+    selected = CoverageEdge("selected-edge", "requirement", "selected", "direct", "direct", "verified_only")
+    alternative = CoverageEdge("alternative-edge", "requirement", "alternative", "direct", "direct", "verified_only")
+    plan = TailoringPlan(
+        claim_mode="verified_only",
+        auto_approvable_claim_modes=("verified_only",),
+        allow_adjacent_achievement_drafts=False,
+        writing_style={},
+        target_seniority="senior",
+        evidence_items=tuple(
+            EvidencePlanItem(
+                evidence_id=ident, experience_entry_id="entry", source_text="Owned synthetic fact",
+                scope="Owned synthetic scope", action="Owned synthetic action",
+            )
+            for ident in ("selected", "alternative", "unlinked")
+        ),
+        coverage_graph=CoverageGraph(
+            requirements=(RequirementNode("requirement", "Owned synthetic requirement", "must_have"),),
+            achievements=tuple(
+                AchievementNode(ident, "entry", "Owned synthetic fact")
+                for ident in ("selected", "alternative", "unlinked")
+            ),
+            coverage_edges=(selected,),
+            alternative_edges=(alternative,),
+        ),
+    )
+    rubric = _resume_review_rubric(source_profile(), plan)
+    current = json.loads(rubric["tailoring_plan"])["coverage_graph"]
+    targets = json.loads(rubric["retry_evidence_targets"])
+    assert current["coverage_edges"] == [selected.to_dict()]
+    assert {row["evidence_id"] for row in targets} == {"selected", "alternative"}
+    assert next(row for row in targets if row["evidence_id"] == "alternative")["coverage_edge_ids"] == ["alternative-edge"]
+    assert "unlinked" not in {row["evidence_id"] for row in targets}
 
 
 @pytest.mark.parametrize("mode", ["lenient", "normal", "strict"])
