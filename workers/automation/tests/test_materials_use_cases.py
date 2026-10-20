@@ -255,6 +255,8 @@ def test_independent_quality_verdict_controls_approval_without_score_threshold(t
     assert permissions["max_bullets_per_experience"] == 4
     assert "coverage_graph" in json.loads(supplied["context"]["rubric"]["tailoring_plan"])
     assert json.loads(supplied["context"]["rubric"]["retry_evidence_targets"]) == []
+    assert "fact" in supplied["context"]["allowed_evidence_correction_ids"]
+    assert json.loads(supplied["context"]["rubric"]["allowed_evidence_correction_ids"]) == supplied["context"]["allowed_evidence_correction_ids"]
 
 
 @pytest.mark.parametrize("verdict", ["pass", "fail"])
@@ -295,11 +297,12 @@ def test_high_fit_resume_keeps_all_six_personas_and_their_model_verdict(tmp_path
 
 
 def test_review_uses_current_coverage_and_only_admissible_revision_evidence():
+    from types import SimpleNamespace
     from jobctrl.domain.materials.quality import EvidencePlanItem, TailoringPlan
     from jobctrl.domain.materials.requirement_coverage import (
         AchievementNode, CoverageEdge, CoverageGraph, RequirementNode,
     )
-    from jobctrl.domain.materials.use_cases import _resume_review_rubric
+    from jobctrl.domain.materials.use_cases import _resume_review_rubric, _resume_review_evidence_ids
 
     selected = CoverageEdge("selected-edge", "requirement", "selected", "direct", "direct", "verified_only")
     alternative = CoverageEdge("alternative-edge", "requirement", "alternative", "direct", "direct", "verified_only")
@@ -326,13 +329,21 @@ def test_review_uses_current_coverage_and_only_admissible_revision_evidence():
             alternative_edges=(alternative,),
         ),
     )
-    rubric = _resume_review_rubric(source_profile(), plan)
+    profile = source_profile()
+    profile["resume"]["experience_entries"][0]["achievement_evidence"] = [
+        {"id": ident, "source_text": "Owned synthetic fact", "user_confirmed": True}
+        for ident in ("selected", "alternative", "unlinked")
+    ]
+    rubric = _resume_review_rubric(profile, plan)
     current = json.loads(rubric["tailoring_plan"])["coverage_graph"]
     targets = json.loads(rubric["retry_evidence_targets"])
     assert current["coverage_edges"] == [selected.to_dict()]
     assert {row["evidence_id"] for row in targets} == {"selected", "alternative"}
     assert next(row for row in targets if row["evidence_id"] == "alternative")["coverage_edge_ids"] == ["alternative-edge"]
     assert "unlinked" not in {row["evidence_id"] for row in targets}
+    assert _resume_review_evidence_ids(profile, plan, ()) == ["alternative", "selected"]
+    rendered = SimpleNamespace(evidence_ids=("unlinked", "foreign"), bullet_id="experience:entry#0", source_id="entry")
+    assert _resume_review_evidence_ids(profile, plan, (rendered,)) == ["alternative", "selected", "unlinked"]
 
 
 @pytest.mark.parametrize("mode", ["lenient", "normal", "strict"])

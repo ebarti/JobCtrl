@@ -1662,7 +1662,15 @@ def _resume_review_sources(profile, job, employer_analysis):
     ]
 
 
-def _resume_review_rubric(profile, plan):
+def _resume_review_evidence_ids(profile, plan, rows):
+    allowed = {item.evidence_id for item in _eligible_retry_evidence(profile, plan)}
+    for row in rows:
+        allowed.update(row.evidence_ids)
+        allowed.update((row.bullet_id, row.source_id))
+    return sorted(allowed & {source.source_id for source in profile_sources(profile)})
+
+
+def _resume_review_rubric(profile, plan, *, rows=()):
     return {
         "criteria": json.dumps(TAILORING_JUDGE_CRITERIA),
         "writing_style": json.dumps(plan.writing_style),
@@ -1678,6 +1686,7 @@ def _resume_review_rubric(profile, plan):
         "retry_evidence_targets": json.dumps([
             item.to_dict() for item in _eligible_retry_evidence(profile, plan)
         ], ensure_ascii=False),
+        "allowed_evidence_correction_ids": json.dumps(_resume_review_evidence_ids(profile, plan, rows)),
         "revision_authority": "The current coverage graph and required evidence pins constrain generation. The retry evidence targets are the canonical alternatives that a bounded revision may reconsider; they do not authorize new coverage edges or a larger artifact budget. A required role without active coverage or an explicit bullet pin permits exactly one positioning bullet, or no bullet when it has no achievement evidence. Assess the best truthful artifact within these constraints; do not require additional bullets or evidence that neither the active plan nor the revision targets permit. Source verification and your semantic pass/fail decision remain independent gates.",
         "role_scope": "Use the canonical posting's actual responsibilities. A seniority label alone does not establish people-management duties or direct reports.",
         "selection": "Required experience entries are a minimum; a complete career inventory is not required. An omitted optional role alone is not a completeness defect. Recommend additional saved evidence when it adds distinct role-relevant proof within the generation permissions.",
@@ -2997,6 +3006,7 @@ class TailorResumeUseCase:
             tailored_text=tailored_text,
             job=job,
             employer_analysis=employer_analysis,
+            provenance=candidate.provenance,
         )
         record["judge"] = self._judge_record(verdict)
         adversarial_review = AdversarialReviewResult.skipped(
@@ -3006,7 +3016,7 @@ class TailorResumeUseCase:
         )
         if verdict.approved and should_run_adversarial_review(job):
             rows = candidate.provenance
-            evidence = profile_sources(profile_snapshot.as_dict())
+            evidence_ids = _resume_review_evidence_ids(profile_snapshot.as_dict(), tailoring_plan, rows)
             requirements = [
                 Source(source_id=row.id, text=row.evidence_span) for row in employer_analysis.canonical.requirements
             ]
@@ -3016,13 +3026,13 @@ class TailorResumeUseCase:
                     ArtifactLine(
                         line_id=row.bullet_id,
                         text=row.generated_text,
-                        allowed_evidence_ids=[source.source_id for source in evidence],
+                        allowed_evidence_ids=evidence_ids,
                         allowed_requirement_ids=[source.source_id for source in requirements],
                     )
                     for row in rows
                 ],
                 sources=_resume_review_sources(profile_snapshot.as_dict(), job, employer_analysis),
-                rubric=_resume_review_rubric(profile_snapshot.as_dict(), tailoring_plan),
+                rubric=_resume_review_rubric(profile_snapshot.as_dict(), tailoring_plan, rows=rows),
             )
             adversarial_review = AdversarialReviewResult(
                 ran=True,
@@ -3074,10 +3084,10 @@ class TailorResumeUseCase:
         )
 
     def _judge_resume(
-        self, *, profile_snapshot, tailoring_plan, tailored_payload, tailored_text, job, employer_analysis
+        self, *, profile_snapshot, tailoring_plan, tailored_payload, tailored_text, job, employer_analysis, provenance
     ):
-        rows = build_bullet_provenance(profile_snapshot.as_dict(), tailored_payload, tailoring_plan, employer_analysis)
-        evidence = profile_sources(profile_snapshot.as_dict())
+        rows = provenance
+        evidence_ids = _resume_review_evidence_ids(profile_snapshot.as_dict(), tailoring_plan, rows)
         requirements = [
             Source(source_id=row.id, text=row.evidence_span) for row in employer_analysis.canonical.requirements
         ]
@@ -3088,13 +3098,13 @@ class TailorResumeUseCase:
                 ArtifactLine(
                     line_id=row.bullet_id,
                     text=row.generated_text,
-                    allowed_evidence_ids=[source.source_id for source in evidence],
+                    allowed_evidence_ids=evidence_ids,
                     allowed_requirement_ids=[source.source_id for source in requirements],
                 )
                 for row in rows
             ],
             sources=_resume_review_sources(profile_snapshot.as_dict(), job, employer_analysis),
-            rubric=_resume_review_rubric(profile_snapshot.as_dict(), tailoring_plan),
+            rubric=_resume_review_rubric(profile_snapshot.as_dict(), tailoring_plan, rows=rows),
         )
         notes = {
             "determination_id": envelope.determination_id,

@@ -64,8 +64,12 @@ class ModelArtifactQualityJudge:
         def validate(result: ArtifactQuality) -> None:
             for finding in result.findings:
                 self._validate_finding(finding, line_ids)
-            if any(citation.source_id not in evidence_ids for citation in result.evidence_corrections):
-                raise DeterminationFailure("foreign_source_id")
+            invalid = [citation for citation in result.evidence_corrections if citation.source_id not in evidence_ids]
+            if invalid:
+                raise DeterminationFailure("foreign_source_id", repair_context={
+                    "evidence_corrections": [citation.model_dump() for citation in invalid],
+                    "allowed_evidence_correction_ids": sorted(evidence_ids),
+                })
             if len({cite.source_id for cite in result.evidence_corrections}) != len(result.evidence_corrections):
                 raise DeterminationFailure("duplicate_source_id")
             if (result.findings or result.evidence_corrections) and result.verdict != "fail":
@@ -78,7 +82,11 @@ class ModelArtifactQualityJudge:
             prompt_version=ARTIFACT_QUALITY_PROMPT_VERSION,
             instruction="Judge the artifact's relevance, clarity, completeness, structure, voice and interview defensibility. Apply the supplied rubric by understanding the text. Return your pass/fail decision and a diagnostic quality score from 0 to 1, specific findings bound to supplied line IDs and verbatim quotations, and actionable repairs. Each finding.line_id must be an exact context.line_ids value, and its citation.source_id must be 'line:' plus that line_id, quoting that rendered line. If a repair requires adding saved candidate evidence, cite that evidence in evidence_corrections; only that list uses candidate evidence IDs, never posting or requirement IDs. Factual support has its own separate claim verifier. Do not use a numeric threshold to make this judgment.",
             sources=[*(Source(source_id="line:" + line.line_id, text=line.text) for line in lines), *sources],
-            context={"artifact_kind": artifact_kind, "rubric": rubric, "line_ids": [line.line_id for line in lines]},
+            context={
+                "artifact_kind": artifact_kind, "rubric": rubric,
+                "line_ids": [line.line_id for line in lines],
+                "allowed_evidence_correction_ids": sorted(evidence_ids),
+            },
             tenant_id=self._tenant_id,
             entity_id=entity_id,
             provider=self._provider,

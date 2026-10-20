@@ -89,6 +89,11 @@ coverage edge or expand the artifact budget. A required role without active
 coverage or a bullet pin retains its single positioning-bullet constraint;
 additional saved evidence outside the permitted revision set cannot become an
 impossible drafting requirement.
+Quality correction IDs are checked against admitted revision targets plus
+canonical sources already bound to the verified rendered candidate. The full
+profile remains available for factual review; its mere presence cannot grant a
+new coverage edge. An out-of-scope correction gets exact private ID feedback in
+the existing bounded repair, without changing the model's quality verdict.
 Seniority does not imply direct reports, and omitted optional roles alone do not
 require a complete career inventory. Reviewers assess the truthful artifact;
 unsupported qualification gaps remain gaps rather than requests to invent proof.

@@ -154,6 +154,40 @@ def ports(conn, model, preflight=lambda: None, lane="tailoring"):
     return ModelClaimVerifier(**deps), ModelArtifactQualityJudge(**deps)
 
 
+@pytest.mark.parametrize("admitted", [False, True])
+def test_quality_correction_requires_revision_authority_even_when_source_exists(admitted):
+    class CorrectionModel(Model):
+        def chat_json(self, messages, *, response_schema, **kwargs):
+            result = super().chat_json(messages, response_schema=response_schema, **kwargs)
+            result.update(
+                verdict="fail",
+                evidence_corrections=[{"source_id": "addition", "quote": "Saved additional fact", "exact_values": []}],
+            )
+            return result
+
+    conn, model = connection(), CorrectionModel()
+    _, judge = ports(conn, model)
+    allowed = ["current", "addition"] if admitted else ["current"]
+    kwargs = dict(
+        artifact_kind="resume", entity_id="owned",
+        lines=[ArtifactLine(line_id="owned", text="Owned current line", allowed_evidence_ids=allowed, allowed_requirement_ids=[])],
+        sources=[Source(source_id="current", text="Current fact"), Source(source_id="addition", text="Saved additional fact")],
+        rubric={},
+    )
+    if admitted:
+        result, _ = judge.judge(**kwargs)
+        assert result.verdict == "fail"
+        assert len(model.calls) == 1
+    else:
+        with pytest.raises(DeterminationFailure, match="foreign_source_id") as error:
+            judge.judge(**kwargs)
+        assert error.value.repair_context["allowed_evidence_correction_ids"] == ["current"]
+        assert len(model.calls) == 3
+        assert conn.execute("SELECT COUNT(*) FROM semantic_determinations").fetchone()[0] == 0
+    supplied = json.loads(model.calls[0][2][1].content)
+    assert supplied["context"]["allowed_evidence_correction_ids"] == sorted(allowed)
+
+
 @pytest.mark.parametrize("artifact_kind", ["resume", "cover_letter", "outreach", "employer_analysis"])
 def test_same_text_opposite_verdicts_control_each_artifact_kind(artifact_kind):
     outcomes = []
