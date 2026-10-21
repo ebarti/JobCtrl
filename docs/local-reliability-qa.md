@@ -176,6 +176,23 @@ workflow dispatch are synthetic; it does not exercise personal Chrome, external
 sources, scoring or material generation. Pair this with the applicable live
 Discovery proof from the regression catalog before claiming runtime recovery.
 
+## Agent Runtime Integration
+
+Run the pool and actual-kit adapter checks together with existing provider
+routing, failure recovery, analysis, voice and Codex isolation cases. Preserve
+parallel admitted requests above the idle-cache count, fresh conversation IDs,
+model/effort and named permissions, partial-usage accounting, original typed
+failures, startup-publication ordering and complete cancellation cleanup.
+
+Use a configured provider only in an owned synthetic workspace. Repeat calls
+through the production LlmPort and inspect actual kit process-start/reuse
+metadata and distinct conversation IDs. A reused Python adapter object is not
+proof of a reused SDK process. Verify source-installed and bundled dependency
+closure: a package moved into core must leave generated provider deltas, and
+core-overlap rejection stays enabled. Follow
+[Agent Runtime Ownership](architecture/agent-runtime.md) and the
+[Auditability Checks](developer/qa/regression-catalog.md#auditability-checks).
+
 ## Safe QA Data
 
 Use uniquely owned synthetic workspaces. Never point QA at real profiles,

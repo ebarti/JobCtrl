@@ -2431,9 +2431,13 @@ def worker(
     try:
         asyncio.run(_run())
     finally:
-        # Flush any in-flight spans so the BatchSpanProcessor doesn't drop
-        # them on Ctrl-C.
-        shutdown_otel()
+        from jobctrl.infrastructure.llm.agent_runtime_pool import close_agent_runtimes
+
+        try:
+            close_agent_runtimes()
+        finally:
+            # Runtime teardown may emit final accounting; flush after it settles.
+            shutdown_otel()
 
 
 async def _worker_heartbeat_loop(

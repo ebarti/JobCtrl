@@ -69,14 +69,14 @@ def test_next_automatic_attempt_uses_a_new_provider_without_relabeling_the_faile
     assert (second.provider_id, second.model) == ("codex", "model-b")
     assert second is not first
     assert (first.provider_id, first.model) == ("claude", "model-a")
-    assert second.chat_json([], response_schema={"type": "object"}) == {"accepted": True}
+    assert second.chat_json([LlmMessage(role="user", content="Synthetic provider request")], response_schema={"type": "object"}) == {"accepted": True}
     assert llm_client.get_llm_adapter() is second
     assert calls == [("claude", "model-a"), ("codex", "model-b")]
     assert not provider_route_available("claude", "another-model")
     from jobctrl.domain.ports.llm import LlmFailure
 
     with pytest.raises(LlmFailure, match="provider_unavailable"):
-        second.chat_json([], model="claude:model-a", response_schema={"type": "object"})
+        second.chat_json([LlmMessage(role="user", content="Synthetic provider request")], model="claude:model-a", response_schema={"type": "object"})
     assert calls == [("claude", "model-a"), ("codex", "model-b")]
 
 
@@ -216,7 +216,7 @@ def test_untyped_claude_sdk_failure_rebinds_next_default_route(monkeypatch, tmp_
     monkeypatch.setattr(llm_client.LlmAdapter, "chat_json", _ROUTED_CHAT_JSON)
     first = llm_client.get_llm_adapter()
     with pytest.raises(ProviderCallError) as raised:
-        first.chat_json([], response_schema={"type": "object"})
+        first.chat_json([LlmMessage(role="user", content="Synthetic provider request")], response_schema={"type": "object"})
     assert raised.value.envelope.code == "provider_unavailable"
     assert "private provider detail" not in str(raised.value) + json.dumps(raised.value.envelope.to_dict())
     assert not provider_route_available("claude", "model-a")
@@ -224,7 +224,7 @@ def test_untyped_claude_sdk_failure_rebinds_next_default_route(monkeypatch, tmp_
     second = llm_client.get_llm_adapter()
     assert (second.provider_id, second.model) == ("codex", "model-b")
     assert (first.provider_id, first.model) == ("claude", "model-a")
-    assert second.chat_json([], response_schema={"type": "object"}) == {"accepted": True}
+    assert second.chat_json([LlmMessage(role="user", content="Synthetic provider request")], response_schema={"type": "object"}) == {"accepted": True}
     assert calls == ["claude", "codex"]
 
 
@@ -269,7 +269,7 @@ def test_claude_sdk_boundary_preserves_non_execution_failures(failure_kind, sdk_
 
     backend = llm_client.ClaudeSdkBackend(model="model-a", query_fn=query, options_factory=SimpleNamespace)
     with pytest.raises(type(failure)) as raised:
-        backend.chat_json([], response_schema={"type": "object"})
+        backend.chat_json([{"role": "user", "content": "Synthetic provider request"}], response_schema={"type": "object"})
     assert raised.value is failure
 
 
@@ -285,6 +285,6 @@ def test_claude_returned_structure_failure_does_not_exclude_route(sdk_lane):
 
     backend = llm_client.ClaudeSdkBackend(model="model-a", query_fn=query, options_factory=SimpleNamespace)
     with pytest.raises(RuntimeError) as raised:
-        backend.chat_json([], response_schema={"type": "object"})
+        backend.chat_json([{"role": "user", "content": "Synthetic provider request"}], response_schema={"type": "object"})
     assert not record_provider_failure("claude", "model-a", raised.value)
     assert provider_route_available("claude", "model-a")

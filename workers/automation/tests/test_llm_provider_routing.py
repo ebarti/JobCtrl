@@ -216,6 +216,15 @@ class _GoogleTypes:
     class BuiltinTools:
         FINISH = "finish"
 
+        @classmethod
+        def read_only(cls):
+            return [cls.FINISH]
+
+    Text = type("Text", (), {})
+    Thought = type("Thought", (), {})
+    ToolCall = type("ToolCall", (), {})
+    ToolResult = type("ToolResult", (), {})
+
     class CapabilitiesConfig:
         def __init__(self, **kwargs: Any) -> None:
             self.kwargs = kwargs

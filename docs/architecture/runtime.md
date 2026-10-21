@@ -21,6 +21,14 @@ or where a change belongs.
 You start the first four; the API spawns and reuses the `jobctrl rpc`
 subprocess itself.
 
+## Agent execution
+
+The Python worker and RPC process use a process-owned `agent-runtime-kit`
+service for provider generation. Its persistent event loop, bounded idle cache,
+fresh request conversations and cancellation/shutdown rules are defined in
+[Agent Runtime Ownership](agent-runtime.md). Pipeline admission and Temporal
+activity capacity remain owned by their existing layers.
+
 ## Source and bundled runtime boundaries
 
 The table above describes the source-development topology. The bundled
@@ -47,6 +55,12 @@ web, and Chromium roots and rejects paths outside that payload. Python isolated
 mode ignores ambient `PYTHONHOME`, `PYTHONPATH`, user-site, and virtualenv
 state. Bundled dotenv discovery is limited to the JobCtrl-owned state file and
 never searches the current directory or a checkout.
+
+Provider pack directories identify the exact signed wheel closure as well as
+the SDK version. A changed closure installs alongside the previous directory;
+activation validates its schema-2 installation identity against the signed
+payload. Compatible legacy schema-1 version directories retain the same full
+wheel and tree verification. See [Agent Runtime Ownership](agent-runtime.md).
 
 Provider runtimes that JobCtrl cannot redistribute are a separate mutable
 boundary under the JobCtrl state directory. The signed payload owns the exact

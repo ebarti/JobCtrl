@@ -83,6 +83,15 @@ def source_runtime_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def close_test_agent_runtimes(monkeypatch):
+    """Release loop-bound SDK resources before each test's sandbox is removed."""
+    from jobctrl.infrastructure.llm.agent_runtime_pool import close_agent_runtimes
+
+    yield
+    close_agent_runtimes()
+
+
+@pytest.fixture(autouse=True)
 def reset_apply_dashboard_state() -> None:
     """Keep the module-level apply dashboard state from leaking across tests."""
     from jobctrl.apply import dashboard

@@ -1,7 +1,7 @@
 """Provider-routed local implementation of the model-neutral ``LlmPort``.
 
-Claude, Codex, and Google use their pinned agent SDKs so one authenticated
-provider can service both plain chat and schema-constrained core pipeline calls.
+Claude, Codex, and Google execute their pinned SDKs through agent-runtime-kit
+so one authenticated provider serves plain chat and schema-constrained calls.
 Raw OpenAI keys are Codex CLI enrollment input, never a direct model route.
 """
 
@@ -23,7 +23,6 @@ from typing import Any, Protocol
 
 from jobctrl.domain.ports.llm import LlmFailure, LlmMessage
 from jobctrl.infrastructure.llm.provider_availability import provider_route_available, record_provider_failure
-from jobctrl.infrastructure.llm.codex_turn import run_codex_turn
 from jobctrl.infrastructure.llm.provider_errors import (
     ProviderCallError, provider_exception_error, raise_on_claude_execution_failure,
 )
@@ -504,27 +503,16 @@ class CodexSdkBackend:
             schema_fingerprint=schema_fingerprint,
         ) as record:
             try:
-                async with factory() as codex:
-                    thread = await codex.thread_start(
-                        approval_mode=approval(),
-                        model=self.model,
-                        config={"model_reasoning_effort": effort},
-                    )
-                    run_kwargs: dict[str, Any] = {"effort": effort}
-                    if response_schema is not None:
-                        run_kwargs["output_schema"] = strict_json_schema(response_schema)
-                    outcome = await run_codex_turn(
-                        thread,
-                        combined,
-                        model=self.model,
-                        operation=operation,
-                        run_kwargs=run_kwargs,
-                        record_usage=lambda input_tokens, output_tokens: record(
-                            "",
-                            input_tokens=input_tokens,
-                            output_tokens=output_tokens,
-                        ),
-                    )
+                from jobctrl.infrastructure.llm.agent_runtime_codex import call_codex_runtime
+
+                outcome = await call_codex_runtime(
+                    factory=factory, approval=approval, model=self.model, effort=effort,
+                    prompt=combined, operation=operation,
+                    output_schema=strict_json_schema(response_schema) if response_schema is not None else None,
+                    record_usage=lambda input_tokens, output_tokens: record(
+                        "", input_tokens=input_tokens, output_tokens=output_tokens,
+                    ),
+                )
             except ProviderCallError:
                 raise
             except Exception as exc:  # noqa: BLE001 - normalize only the provider boundary
@@ -535,11 +523,11 @@ class CodexSdkBackend:
                     error=exc,
                 ) from exc
             record(
-                outcome.final_response,
+                outcome.text,
                 input_tokens=outcome.input_tokens,
                 output_tokens=outcome.output_tokens,
             )
-            return outcome.final_response
+            return outcome.text
 
     def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
         return _run_sync(
@@ -621,7 +609,7 @@ class GoogleSdkBackend:
         config_kwargs: dict[str, Any] = {
             "model": self.model,
             "system_instructions": system_prompt,
-            "capabilities": types_module.CapabilitiesConfig(enabled_tools=[types_module.BuiltinTools.FINISH]),
+            "capabilities": types_module.CapabilitiesConfig(enabled_tools=[types_module.BuiltinTools.FINISH], enable_subagents=False),
             "policies": [],
             "workspaces": [],
             "save_dir": _runtime_subdir("llm-sessions"),
@@ -668,24 +656,26 @@ class GoogleSdkBackend:
             },
             scope_name="jobctrl.llm.google",
         ) as record:
-            async with agent_factory(config_factory(**config_kwargs)) as agent:
-                response = await agent.chat(prompt)
-                async for _chunk in response.chunks:
-                    pass
-                usage = getattr(response, "usage_metadata", None)
-                input_tokens, output_tokens = _usage_from_metadata(usage)
-                record("", input_tokens=input_tokens, output_tokens=output_tokens)
-                value: str | dict
-                if response_schema is not None:
-                    value = await response.structured_output()
-                    if isinstance(value, str):
-                        value = json.loads(value)
-                    if not isinstance(value, dict):
-                        raise RuntimeError("Google structured output was not a JSON object")
-                else:
-                    value = await response.text()
-                    if not value:
-                        raise RuntimeError("Google SDK returned no final text result")
+            from jobctrl.infrastructure.llm.agent_runtime_antigravity import call_antigravity_runtime
+
+            outcome = await call_antigravity_runtime(
+                factory=agent_factory, config=config_factory(**config_kwargs), types=types_module,
+                model=self.model, prompt=prompt, output_schema=response_schema,
+                record_usage=lambda i, o: record("", input_tokens=i, output_tokens=o),
+            )
+            input_tokens, output_tokens = _usage_from_metadata(outcome.usage)
+            record("", input_tokens=input_tokens, output_tokens=output_tokens)
+            value: str | dict
+            if response_schema is not None:
+                value = outcome.structured
+                if isinstance(value, str):
+                    value = json.loads(value)
+                if not isinstance(value, dict):
+                    raise RuntimeError("Google structured output was not a JSON object")
+            else:
+                value = outcome.text
+                if not value:
+                    raise RuntimeError("Google SDK returned no final text result")
             return value
 
     def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str:

@@ -131,6 +131,8 @@ has one defining page; other pages summarize it briefly and link to that owner.
   bounded-context composition.
 - [`architecture/runtime.md`](architecture/runtime.md): process ownership,
   lifetimes, readiness, and TypeScript-to-Python boundaries.
+- [`architecture/agent-runtime.md`](architecture/agent-runtime.md): kit-owned
+  provider execution, reusable Codex clients, request isolation and cleanup.
 - [`architecture/pipeline/`](architecture/pipeline/index.md): Temporal workflow
   catalog, stage execution, activities and retries, concurrency, scheduling,
   operations, and recovery.

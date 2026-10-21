@@ -526,3 +526,11 @@ source snapshot and fingerprint used for review; semantic determinations remain
 in their existing canonical tables. No new database, profile copy, file store
 or runtime migration is introduced. Offer writes are transactional and retain
 all prior revisions and decisions.
+
+
+Provider pack installation directories include the SDK version and signed
+specification hash. Activation schema 2 records that identity; readers derive
+it from the signed payload and retain schema-1 compatibility for verified
+legacy directories. Updating a closure preserves the prior installation and
+never repurposes a version-only directory. The [runtime contract](agent-runtime.md)
+keeps wheel/tree integrity and core-overlap refusal mandatory.

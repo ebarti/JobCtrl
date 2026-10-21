@@ -26,6 +26,7 @@ the Historical Spec Ledger in `plans/README.md`.
 
 **Local API & runtime**
 
+- [Agent Runtime Kit Owns Provider Execution](#_2026-10-21-agent-runtime-kit-owns-provider-execution) · 2026-10-21
 - [Fastify For The Local API](#_2026-05-02-fastify-for-the-local-api) · 2026-05-02
 - [Loopback API Binding By Default](#_2026-05-02-loopback-api-binding-by-default) · 2026-05-02
 - [Stage State Is The Operational Source Of Truth](#_2026-05-02-stage-state-is-the-operational-source-of-truth) · 2026-05-02
@@ -2820,3 +2821,27 @@ state. The existing three-call limit, lane/spend preflight, cache binding and
 accepted-artifact preservation remain unchanged. See
 [Scoring](architecture/scoring.md) and
 [Materials](architecture/materials.md#source-bound-claim-verification).
+
+
+## 2026-10-21: Agent Runtime Kit Owns Provider Execution
+
+Provider generation, analysis and voice delegate to agent-runtime-kit rather
+than each adapter owning a new SDK process. A process-owned async service keeps
+clients on one event loop. Runtime leases preserve existing admitted fanout;
+the cache bounds idle retention, not active pipeline concurrency. Codex reuses
+its process with a fresh ephemeral thread per task. Claude queries and
+Antigravity task isolation preserve independent semantic conversations.
+
+JobCtrl retains credential isolation, exact model/effort selection, native
+permissions, spend/lane admission, structured failure classification and all
+artifact acceptance rules. The Codex facade consumes the public turn stream to
+retain typed failures and joins SDK startup before cancellation teardown.
+Provider catalog/setup introspection remains native where the kit has no
+matching operation. [Agent Runtime Ownership](architecture/agent-runtime.md)
+owns the lifecycle and verification contract.
+
+Provider installation identity also includes the signed wheel specification,
+since adopting the kit moves shared dependencies into core without changing
+vendor SDK versions. Closure-addressed directories and activation schema 2
+preserve previous installations; verified schema-1 paths remain supported.
+Mutable activation metadata cannot authorize a different directory or tree.

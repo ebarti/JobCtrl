@@ -30,6 +30,18 @@ wheels = [
 ]
 
 [[package]]
+name = "agent-runtime-kit"
+version = "0.5.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "jsonschema" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f9/d8/8ceb42cc2f0ba02cda7618ea6aef51b530af97aaae6b6896b98dd0e37795/agent_runtime_kit-0.5.4.tar.gz", hash = "sha256:3594cfe0c2cfedf01051e5d0426c6ab1e146380d1e0c5ca03a802a99f4fa7e4a", size = 237579, upload-time = "2026-10-18T00:08:43.132Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/01/c6/3888f7ad5fcacb786a6aef6796f363fc70a60b5795332a150fa155768414/agent_runtime_kit-0.5.4-py3-none-any.whl", hash = "sha256:73cf25500000a7dd7219d33ced920972ad0e2fa9f8c824a30fd0c7edaa4e1849", size = 79317, upload-time = "2026-10-18T00:08:41.588Z" },
+]
+
+[[package]]
 name = "annotated-doc"
 version = "0.0.4"
 source = { registry = "https://pypi.org/simple" }
@@ -597,6 +609,7 @@ name = "jobctrl"
 version = "0.3.1"
 source = { editable = "." }
 dependencies = [
+    { name = "agent-runtime-kit" },
     { name = "beautifulsoup4" },
     { name = "certifi" },
     { name = "click" },
@@ -659,6 +672,7 @@ release-check = [
 
 [package.metadata]
 requires-dist = [
+    { name = "agent-runtime-kit", specifier = ">=0.5.4,<0.6" },
     { name = "beautifulsoup4", specifier = ">=4.12" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.2" },
     { name = "certifi", specifier = ">=2024.2.2" },

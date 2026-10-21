@@ -59,6 +59,12 @@ choice. Determination envelopes persist optional `reasoning_effort`; legacy
 envelopes remain valid. A later preference edit cannot change the metadata or
 execution parameters of an already constructed adapter.
 
+Generation, analysis and voice use the shared
+[agent-runtime-kit execution boundary](agent-runtime.md). Reusing a Codex
+process creates a fresh ephemeral thread for every semantic request; a judge
+never inherits the generator's conversation. Model, effort, source bindings,
+review ordering and accepted-artifact authority remain owned here.
+
 ## Canonical Employer Analysis
 
 A parallel Claude, Codex, and Google analysis ensemble produces drafts; a
@@ -102,7 +108,7 @@ as explicitly untrusted repair data. Grounding and semantic-verification retries
 also receive the rejected typed analysis for targeted correction of the identified
 fields. The same posting remains the authority;
 the membership gate and retry bound stay unchanged for drafts and synthesis.
-An unavailable route is skipped before a direct SDK draft. Provider, budget,
+An unavailable route is skipped before a kit-dispatched SDK draft. Provider, budget,
 cache, persistence and invalid canonical-source failures leave the current bound
 attempt instead of causing another paid draft through this repair loop.
 The same boundary applies to exhausted verifier JSON, schema, ID, quote and
