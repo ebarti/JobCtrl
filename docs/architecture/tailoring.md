@@ -47,6 +47,13 @@ eligibility blockers, current-score and posting checks, artifact ownership,
 attempt limits, claim verification and quality review still apply. PDF exports
 consume the accepted materials without changing the score or global policy.
 
+Preparation targets carry the latest canonical Score grade and version, joined
+by tenant and JobId. The legacy grade on `jobs` cannot choose review behavior.
+The target passes its saved grade to the resume review gate, so a
+normalized fit of at least 0.8 receives its independent six-persona review.
+A manual low-fit exception leaves that grade unchanged. Unscored targets remain
+readable for scoring; material admission still requires a current Score.
+
 Selected Tailor and Cover cohorts isolate typed per-job prerequisite failures
 that occur before a stage claim. Missing inputs skip that member, and temporary
 source unavailability remains a bounded item error while healthy peers finish.

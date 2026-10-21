@@ -222,6 +222,28 @@ def request(tmp_path, *, retailor=False, profile=None):
     )
 
 
+def canonical_scored_target(conn, grade):
+    """Use the production preparation reader, including a stale legacy grade."""
+    from jobctrl.infrastructure.preparation import SqlitePreparationTargetReader
+
+    conn.execute("UPDATE jobs SET fit_score = 1 WHERE tenant_id='local' AND job_id=?", (str(JOB_ID),))
+    conn.execute(
+        """INSERT INTO job_enrichments (tenant_id,job_id,current_status,full_description,updated_at)
+           VALUES ('local',?,'enriched',?,'2026-10-01')""",
+        (str(JOB_ID), JOB["full_description"]),
+    )
+    for version, value in ((1, 10), (2, grade)):
+        conn.execute(
+            """INSERT INTO job_scores (
+                tenant_id,job_id,version,fit_score,breakdown_json,keywords_json,
+                scored_at,criteria_json,trace_json
+            ) VALUES ('local',?,?,?,'{}','[]','2026-10-01','{}','{}')""",
+            (str(JOB_ID), version, value),
+        )
+    conn.commit()
+    return SqlitePreparationTargetReader(conn).load(LOCAL_TENANT, JOB_ID)
+
+
 @pytest.mark.parametrize("verdict,expected", [("pass", "approved"), ("fail", "failed_validation")])
 def test_model_support_verdict_controls_actual_resume_path(tmp_path, verdict, expected):
     conn, model = connection(), ResumeModel(verdict=verdict)
@@ -260,11 +282,12 @@ def test_independent_quality_verdict_controls_approval_without_score_threshold(t
 
 
 @pytest.mark.parametrize("verdict", ["pass", "fail"])
-def test_high_fit_resume_keeps_all_six_personas_and_their_model_verdict(tmp_path, verdict):
+@pytest.mark.parametrize("grade", [8, 9])
+def test_high_fit_resume_keeps_all_six_personas_and_their_model_verdict(tmp_path, verdict, grade):
     conn, model = connection(), ResumeModel(score=0.01)
     model.adversarial = verdict
     kwargs = request(tmp_path)
-    kwargs["job"] = {**kwargs["job"], "fit_score": 9}
+    kwargs["job"] = canonical_scored_target(conn, grade)
     outcome = resume_case(conn, model).execute(**kwargs)
     assert outcome.materials.is_resume_approved is (verdict == "pass")
     envelope = conn.execute(
@@ -426,7 +449,7 @@ def test_provider_failure_preserves_last_accepted_resume(tmp_path, stage):
     model = ResumeModel(text="Changed synthetic draft", fault_at=stage, fault=RuntimeError("PRIVATE PAYLOAD"))
     kwargs = request(tmp_path, retailor=True)
     if stage == "ResumeAdversarialReview":
-        kwargs["job"] = {**kwargs["job"], "fit_score": 9}
+        kwargs["job"] = canonical_scored_target(conn, 8)
     with pytest.raises(DeterminationFailure, match="provider_error") as error:
         resume_case(conn, model).execute(**kwargs)
     assert "PRIVATE" not in str(error.value)

@@ -59,6 +59,8 @@ last accepted resume.
    Resumes for jobs in the high-fit band also receive all six persona judgments,
    with citations and a recorded determination. Their pass/fail verdicts govern
    acceptance; diagnostic scores do not set a cutoff.
+   The current saved fit score selects this additional review, including when
+   material generation was requested manually.
 4. **Repair bounded failures.** Model findings and recorded fit gaps guide
    repairs under the configured attempt budget. A failed or unavailable
    determination blocks acceptance with an actionable failure status.

@@ -560,6 +560,16 @@ unchanged inputs reuse accepted determinations with zero calls. Failed refreshes
 preserve the last accepted artifact. Do not create eval sets, labeled corpora,
 baseline comparisons, English sentence corpora or recorded-output replay fixtures.
 
+For preparation review gates, seed a latest canonical grade of 8, an older grade
+of 10, a conflicting legacy `jobs` grade, and a second tenant sharing the JobId.
+The production preparation reader and per-job Tailor entry must deliver only
+the selected tenant's latest grade and version to the resume review gate. At
+grades 8 and 9, run the actual resume use case from that reader: opposing valid
+six-persona verdicts must control acceptance and persist their determination
+bindings. A persona-provider failure preserves the accepted resume. A manual
+grade-6 request retains grade 6, and an unscored target must remain readable
+without adopting the legacy grade.
+
 For version changes, seed an obsolete analysis projection with already-folded
 event cursors. The TypeScript detail owner must rebuild it from the current
 canonical version on startup or keyed detail read without a new event, or expose
