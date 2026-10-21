@@ -77,7 +77,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-SCORE_PROMPT_VERSION = "score-fit-assessment-v9-canonical-evidence"
+SCORE_PROMPT_VERSION = "score-fit-assessment-v10-binding-repair"
 SCORE_SCHEMA_VERSION = "score-fit-assessment-v5-determinations"
 SCORE_THINKING_BUDGET = 0
 

@@ -154,6 +154,14 @@ source contributions. An inconsistent inventory is repaired as a structural
 binding failure; code never infers contribution from wording.
 Corrections receive the immediately rejected response as explicitly untrusted
 data so they can repair individual bindings against the original source inputs.
+Citation validation reports all current mechanical failures across typed model,
+sequence and mapping fields, with structural paths and the exact canonical
+sources needed for correction. Scoring inventory validation likewise identifies
+every invalid field and its canonical requirement target. The first safe error
+code and legacy first-citation slots remain available. This request-local
+feedback never enters public exception text or persisted failure-state fields.
+Code neither normalizes a rejected quote nor substitutes a source; every
+corrected response must pass the same strict checks within the existing budget.
 Cover-letter generation also supplies its exact candidate-evidence allowlist and
 the single `posting` requirement ID. Draft schema, duplicate-line and foreign-ID
 failures consume the existing generation retry budget and return the rejected

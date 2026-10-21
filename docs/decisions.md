@@ -2799,3 +2799,22 @@ typed verdict authority, attempt/spend limits and accepted-artifact preservation
 remain enforced. Review context participates in determination fingerprints and
 is retained with the artifact/attempt audit. See
 [Tailoring](architecture/tailoring.md#attempt-loop-and-candidate-selection).
+
+## 2026-10-21: Binding Repairs Receive Complete Mechanical Feedback
+
+Status: accepted
+
+Literal citation validation reports the current failure inventory across typed
+model, sequence and mapping fields. Scoring inventory errors identify their
+fields, canonical requirement spans and allowed IDs. This lets one bounded
+correction address the known mechanical violations together. Non-empty verbatim
+spans, exact values, current source membership and semantic verdict authority
+remain enforced; code does not normalize text, choose substitute evidence or
+infer meaning.
+
+The first safe error code remains stable. Canonical text and rejected values
+stay in request-local repair context, outside exception text and stored failure
+state. The existing three-call limit, lane/spend preflight, cache binding and
+accepted-artifact preservation remain unchanged. See
+[Scoring](architecture/scoring.md) and
+[Materials](architecture/materials.md#source-bound-claim-verification).

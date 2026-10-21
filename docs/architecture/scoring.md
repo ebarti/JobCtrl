@@ -81,6 +81,15 @@ The model owns the fit assessment; code applies arithmetic to the accepted
 typed verdicts. Invalid determinations block the refresh while preserving the
 last accepted score.
 
+`job_evidence_span` must be non-empty and copied as one contiguous exact span
+from the canonical requirement source matching `requirement_id`. Rewritten
+requirement descriptions cannot substitute for that evidence. Invalid inventory,
+span, evidence-ID and eligibility-status fields receive a complete mechanical
+repair report with exact IDs and canonical targets. Scoring uses prompt revision
+`score-fit-assessment-v10-binding-repair`; the scoring formula and independent
+semantic decisions are unchanged. Bounded repair never accepts invalid output,
+increases its call limit or replaces an accepted score on failure.
+
 For each parsed requirement assessment:
 
 - `max_points = requirement weight × tier multiplier`, where must-have is

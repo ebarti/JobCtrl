@@ -592,6 +592,19 @@ Historical quotes cannot become current finding citations. Provider or spend
 failure after earlier reviews must preserve the last accepted artifact. Use
 owned synthetic sources and explicit model choices, never native prose replay.
 
+For mechanical binding repair, send multiple invalid literal quotes through the
+actual scoring/model port. One correction must receive all current violations,
+their structural paths and exact canonical sources. Opposing eligibility
+decisions remain authoritative. Exercise typed citation mappings as well as
+lists; invalid entries must never be cached as accepted. Scoring requirement
+spans receive per-field canonical targets, including whitespace-sensitive input,
+and blank spans receive no verbatim credit. Unknown requirement IDs must not hide
+independent evidence-ID errors. Stubborn invalid output still exhausts the same
+three-call limit; provider/spend failures preserve the last accepted score.
+Failure text and stored blocked-state records retain safe codes rather than
+source/model prose. Pair these owned synthetic cases with a configured-provider
+correction probe before claiming live integration.
+
 For version changes, seed an obsolete analysis projection with already-folded
 event cursors. The TypeScript detail owner must rebuild it from the current
 canonical version on startup or keyed detail read without a new event, or expose

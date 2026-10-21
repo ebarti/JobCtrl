@@ -110,27 +110,44 @@ def validate_citations(result: BaseModel, sources: Sequence[Source]) -> None:
     by_id = {source.source_id: source.text for source in sources}
     if len(by_id) != len(sources):
         raise DeterminationFailure("duplicate_source_id")
+    failures: list[dict[str, Any]] = []
+    failed_sources: set[str] = set()
 
-    def visit(value: Any) -> None:
+    def visit(value: Any, path: tuple = ()) -> None:
         if isinstance(value, Citation):
-            repair_context = {"citation": value.model_dump()}
+            context = {"path": list(path), "citation": value.model_dump()}
             if value.source_id not in by_id:
-                raise DeterminationFailure("foreign_source_id", repair_context=repair_context)
+                failures.append({"code": "foreign_source_id", **context})
+                return
+            before = len(failures)
             if not value.quote.strip() or value.quote not in by_id[value.source_id]:
-                raise DeterminationFailure("non_verbatim_quote", repair_context=repair_context)
+                failures.append({"code": "non_verbatim_quote", **context})
             for exact in value.exact_values:
                 if not _contains_exact_value(value.quote, exact):
-                    raise DeterminationFailure(
-                        "mismatched_value", repair_context={**repair_context, "invalid_exact_value": exact},
-                    )
+                    failures.append({"code": "mismatched_value", **context, "invalid_exact_value": exact})
+            if len(failures) > before:
+                failed_sources.add(value.source_id)
         elif isinstance(value, BaseModel):
             for name in type(value).model_fields:
-                visit(getattr(value, name))
+                visit(getattr(value, name), (*path, name))
         elif isinstance(value, (list, tuple)):
-            for child in value:
-                visit(child)
+            for index, child in enumerate(value):
+                visit(child, (*path, index))
+        elif isinstance(value, Mapping):
+            for key, child in value.items():
+                visit(child, (*path, str(key)))
 
     visit(result)
+    if failures:
+        first = failures[0]
+        # Keep the first safe code/legacy citation slots; complete request-local
+        # feedback never enters exception text or persisted failure state.
+        raise DeterminationFailure(first["code"], repair_context={
+            **{key: value for key, value in first.items() if key not in {"code", "path"}},
+            "binding_failures": failures,
+            "canonical_sources": [source.model_dump() for source in sources if source.source_id in failed_sources],
+            "allowed_source_ids": list(by_id),
+        })
 
 
 T = TypeVar("T", bound=BaseModel)
