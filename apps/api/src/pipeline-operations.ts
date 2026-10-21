@@ -218,6 +218,7 @@ export function buildPipelineOperationsSnapshot(
   const freshness = buildFreshness(telemetry);
   const executions = loadExecutions(db, tenantId);
   const selected = selectExecution(db, tenantId, executions);
+  const active = buildActiveItems(db, tenantId, selected, telemetry);
 
   if (!selected) {
     const overallEta = estimatePipelineEta({
@@ -248,9 +249,9 @@ export function buildPipelineOperationsSnapshot(
         : null,
       stages: buildGlobalStages(db, tenantId, capacity, generatedAt, telemetry, budgetAvailable, now),
       activeStageCounts,
-      activeItems: [],
-      activeItemsTotal: null,
-      activeItemsTruncated: null,
+      activeItems: active.items,
+      activeItemsTotal: active.total,
+      activeItemsTruncated: active.truncated,
       overallEta,
     };
   }
@@ -289,7 +290,6 @@ export function buildPipelineOperationsSnapshot(
     projectionCoverage,
   );
   const reconciliation = reconciliationProgress(selected);
-  const active = buildActiveItems(db, tenantId, selected, telemetry);
   const etaInput = buildEtaInput(
     db,
     tenantId,
@@ -1733,13 +1733,13 @@ function reconciliationProgress(
 function buildActiveItems(
   db: SqliteDatabase,
   tenantId: string,
-  selected: SelectedExecution,
+  selected: SelectedExecution | null,
   telemetry: WorkerRuntimeTelemetrySnapshot,
 ): { items: PipelineActiveItem[]; total: number | null; truncated: boolean | null } {
   if (telemetry.status !== "available") return { items: [], total: null, truncated: null };
+  const members = selected ? selected.current.members.concat(selected.sweep.members) : [];
   const byWorkflow = new Map(
-    selected.current.members
-      .concat(selected.sweep.members)
+    members
       .filter((member): member is MembershipRow & { preparation_workflow_id: string } =>
         nullableText(member.preparation_workflow_id) !== null,
       )
@@ -1782,48 +1782,50 @@ function buildActiveItems(
   });
   const consumedRuntimeItemIndexes = new Set<number>();
   const projectionItems: PipelineActiveItem[] = [];
-  for (const step of selected.steps
-    .filter((step) => step.state === "running")
-    .sort((left, right) => Date.parse(left.started_at ?? "") - Date.parse(right.started_at ?? ""))) {
-    const activityType = STEP_ACTIVITY_TYPES[step.step_kind] ?? step.step_kind;
-    const pdfMember =
-      step.step_kind === "pdf_render"
-        ? selected.current.members
-            .concat(selected.sweep.members)
-            .find((member) => pdfStepForMember(member, [step]) !== undefined)
-        : undefined;
-    const runtimeIndex = runtimeItems.findIndex(
-      (item, index) =>
-        !consumedRuntimeItemIndexes.has(index) &&
-        isExactRuntimeProjectionMatch(item, activityType, selected, step.step_kind === "pdf_render", pdfMember),
-    );
-    // Fresh runtime telemetry is the active-work authority. Projection rows
-    // only enrich a runtime item whose safe workflow identity proves the pair.
-    if (runtimeIndex < 0) continue;
-    const runtimeItem = runtimeItems[runtimeIndex];
-    if (runtimeItem === undefined) continue;
-    consumedRuntimeItemIndexes.add(runtimeIndex);
-    const base = {
-      activityType,
-      workflowId: runtimeItem.workflowId,
-      executionId: runtimeItem.executionId,
-      attempt: Math.max(1, Math.floor(nonnegative(step.attempt) ?? 1)),
-      startedAt: step.started_at ?? latestStepObservation([step]),
-    };
-    if (pdfMember) {
-      const job = display.get(pdfMember.job_id);
-      projectionItems.push({
-        ...base,
-        kind: "resolved_job",
-        jobKey: step.item_key,
-        title: job?.title ?? null,
-        company: job?.company ?? null,
-        stage: "pdf_render",
-      });
-    } else if (step.step_kind === "source_family") {
-      projectionItems.push({ ...base, kind: "source_family", sourceFamily: safeItemKey(step.item_key) });
-    } else {
-      projectionItems.push({ ...base, kind: "orchestration", operation: step.step_kind });
+  if (selected) {
+    for (const step of selected.steps
+      .filter((step) => step.state === "running")
+      .sort((left, right) => Date.parse(left.started_at ?? "") - Date.parse(right.started_at ?? ""))) {
+      const activityType = STEP_ACTIVITY_TYPES[step.step_kind] ?? step.step_kind;
+      const pdfMember =
+        step.step_kind === "pdf_render"
+          ? selected.current.members
+              .concat(selected.sweep.members)
+              .find((member) => pdfStepForMember(member, [step]) !== undefined)
+          : undefined;
+      const runtimeIndex = runtimeItems.findIndex(
+        (item, index) =>
+          !consumedRuntimeItemIndexes.has(index) &&
+          isExactRuntimeProjectionMatch(item, activityType, selected, step.step_kind === "pdf_render", pdfMember),
+      );
+      // Fresh runtime telemetry is the active-work authority. Projection rows
+      // only enrich a runtime item whose safe workflow identity proves the pair.
+      if (runtimeIndex < 0) continue;
+      const runtimeItem = runtimeItems[runtimeIndex];
+      if (runtimeItem === undefined) continue;
+      consumedRuntimeItemIndexes.add(runtimeIndex);
+      const base = {
+        activityType,
+        workflowId: runtimeItem.workflowId,
+        executionId: runtimeItem.executionId,
+        attempt: Math.max(1, Math.floor(nonnegative(step.attempt) ?? 1)),
+        startedAt: step.started_at ?? latestStepObservation([step]),
+      };
+      if (pdfMember) {
+        const job = display.get(pdfMember.job_id);
+        projectionItems.push({
+          ...base,
+          kind: "resolved_job",
+          jobKey: step.item_key,
+          title: job?.title ?? null,
+          company: job?.company ?? null,
+          stage: "pdf_render",
+        });
+      } else if (step.step_kind === "source_family") {
+        projectionItems.push({ ...base, kind: "source_family", sourceFamily: safeItemKey(step.item_key) });
+      } else {
+        projectionItems.push({ ...base, kind: "orchestration", operation: step.step_kind });
+      }
     }
   }
   const all = runtimeItems
