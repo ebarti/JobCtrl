@@ -580,6 +580,18 @@ Through real Temporal Tailor and Cover activity entry points, a bounded content
 rejection must fail once as non-retryable `material_rejected`; provider/network
 faults must still exercise their configured retries.
 
+For review continuity, run the actual resume and cover use cases through three
+synthetic model decisions. Verify exact prior determination IDs and complete
+typed findings reach later generation/review inputs and the persisted audit.
+Opposing valid final verdicts must control acceptance independently of their
+diagnostic score. Repeat an unchanged draft: review history must affect its
+determination fingerprint while unchanged claim verification remains cached.
+Exercise a rejected high-fit persona review and changed-voice review; retain
+all six independent personas and the accepted base when voice is rejected.
+Historical quotes cannot become current finding citations. Provider or spend
+failure after earlier reviews must preserve the last accepted artifact. Use
+owned synthetic sources and explicit model choices, never native prose replay.
+
 For version changes, seed an obsolete analysis projection with already-folded
 event cursors. The TypeScript detail owner must rebuild it from the current
 canonical version on startup or keyed detail read without a new event, or expose

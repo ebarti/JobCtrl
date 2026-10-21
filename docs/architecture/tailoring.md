@@ -127,6 +127,23 @@ Authored experience, education and skill rows remain canonical. Exact row IDs co
 
 A generated candidate must pass structural binding, claim verification and the separate quality judge. Model findings supply repair reasons and exact line IDs. Arithmetic may compare accepted typed fit results; it does not assess prose. Provider, spend, JSON, schema and source-binding failures remain distinct and preserve accepted material.
 
+Each bounded resume or cover correction carries an ordered review history:
+recorded determination IDs and their complete typed quality/persona results.
+Later generators and reviewers receive that history, including after a changed
+voice proposal. The reviewer considers earlier repairs and explains any reversal
+with a feasible correction addressing the competing concerns. Its independent
+typed verdict still decides acceptance; history cannot force a pass or expand
+generation permissions.
+
+History is context, never an additional factual or citation source. Current
+canonical sources and rendered lines retain their exact ID/quote fences. The
+history participates in determination fingerprints, so changed review context
+requires a new decision while unchanged factual inputs can reuse verification.
+Resume attempt audits retain per-candidate and final review context; cover
+artifact metadata retains the history supplied to its final review. Rejected
+voice review context remains in the voice audit. Existing attempt/spend limits
+and accepted-artifact preservation apply unchanged.
+
 Quality and persona reviewers receive the canonical posting plus the same user
 generation permissions, required roles, bullet limits and current coverage plan
 as the generator. Their shared rubric also carries the exact canonical evidence

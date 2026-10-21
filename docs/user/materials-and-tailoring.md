@@ -69,6 +69,10 @@ last accepted resume.
    acceptance; provider failures do not become content-repair attempts.
    Exhausted content review stops with its recorded findings instead of
    restarting the entire generation budget as a temporary provider failure.
+   Later resume and cover reviews receive the earlier recorded decisions and
+   repair instructions, so they can consider previous corrections and explain
+   reversals. Each review still judges the current draft independently against
+   the saved facts; earlier feedback cannot approve unsupported text.
    Selected achievements and user pins remain required. Dates and other
    canonical context can support a claim when used, without requiring their
    repetition in the summary or granting automatic coverage credit.

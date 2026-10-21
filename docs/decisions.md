@@ -2781,3 +2781,21 @@ is non-retryable `material_rejected`. It cannot consume another complete budget
 under a transient-provider retry. Accepted artifacts and rejected audit history
 remain preserved. Real transport/provider failures retain their existing retry
 contract. See [Tailoring](architecture/tailoring.md).
+
+## 2026-10-21: Bounded Material Reviews Retain Decision History
+
+Status: accepted
+
+Resume and cover correction carry the recorded quality/persona determination
+IDs and complete typed results into subsequent generation and review. Changed
+voice proposals retain the selected candidate's review context and receive the
+existing fresh factual, quality and applicable six-persona checks. Reviewers
+consider prior repairs and explain reversals while judging the current artifact
+independently.
+
+This ledger is untrusted historical context, not new candidate evidence or a
+current citation source. Current source/line allowlists, generation permissions,
+typed verdict authority, attempt/spend limits and accepted-artifact preservation
+remain enforced. Review context participates in determination fingerprints and
+is retained with the artifact/attempt audit. See
+[Tailoring](architecture/tailoring.md#attempt-loop-and-candidate-selection).

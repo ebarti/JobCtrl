@@ -37,6 +37,14 @@ flowchart TB
 The invariant is simple: the text audited for provenance and coverage is the
 same text rendered into the accepted artifact.
 
+Bounded resume and cover repairs also retain review continuity. Their audits
+record the exact prior determination IDs and typed results supplied to each
+later review, including changed-voice verification. These historical decisions
+enter input fingerprints as context; they never enter the current factual
+source or citation allowlist. Independent verdicts and immutable accepted
+artifacts retain their authority. See the
+[attempt-loop contract](tailoring.md#attempt-loop-and-candidate-selection).
+
 When `default_llm_model` is configured, `LlmVoiceAdapter` uses the same resolved
 core route as other default calls, including its lane/spend admission and actual
 provider/model provenance. Without a saved default, the legacy optional Claude

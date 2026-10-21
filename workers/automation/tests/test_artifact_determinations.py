@@ -216,7 +216,7 @@ def test_same_text_opposite_verdicts_control_each_artifact_kind(artifact_kind):
     assert outcomes == ["pass", "fail"]
 
 
-def cover_case(conn, model, preflight=lambda: None):
+def cover_case(conn, model, preflight=lambda: None, *, retries=0):
     verifier, quality = ports(conn, model, preflight)
     return GenerateCoverLetterUseCase(
         repository=SqliteMaterialsRepository(conn),
@@ -225,7 +225,7 @@ def cover_case(conn, model, preflight=lambda: None):
         quality_judge=quality,
         preflight=preflight,
         validator=ContentValidator(),
-        max_retries=0,
+        max_retries=retries,
     )
 
 
