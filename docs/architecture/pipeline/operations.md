@@ -686,6 +686,13 @@ defensive dashboard read keep them truthful on existing databases:
   model-work pool, so completed intake can acknowledge its result while scoring
   remains busy. Exact execution/event keys make those writes safe to repeat;
   versioned replay retains the old remote lifecycle history.
+  Spend preflight and owner-scoped preparation cancellation share that same
+  two-slot local control pool with independent patch markers. Their SQLite work
+  runs off the worker event loop, each attempt is limited to 30 seconds, and
+  scheduling plus retries is limited to three minutes. Old remote control
+  histories retain their original commands. This removes dependence on remote
+  model-slot occupancy; it does not shorten model calls or bypass spend,
+  cancellation ownership, or accepted-result preservation checks.
 
 ## Recurring Saved Posting Checks
 

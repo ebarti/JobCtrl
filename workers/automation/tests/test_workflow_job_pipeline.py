@@ -528,13 +528,15 @@ async def test_pipeline_material_cancel_activity_retries_are_bounded() -> None:
             return_value=SimpleNamespace(run_id="run-cancel"),
         ),
         patch(
-            "jobctrl.pipeline.workflow.workflow.execute_activity",
+            "jobctrl.pipeline.workflow.workflow.execute_local_activity",
             new=AsyncMock(),
         ) as execute_activity,
     ):
         await _cancel_material_stage_state("tailor", payload)
     assert execute_activity.await_count == 1
     assert execute_activity.call_args.kwargs["retry_policy"].maximum_attempts == 5
+    assert execute_activity.call_args.kwargs["start_to_close_timeout"] == timedelta(seconds=30)
+    assert execute_activity.call_args.kwargs["schedule_to_close_timeout"] == timedelta(minutes=3)
 
 
 def _all_activities():

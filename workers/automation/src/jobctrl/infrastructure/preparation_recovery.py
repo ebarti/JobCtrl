@@ -112,6 +112,15 @@ async def recover_preparation_state_activity(
 async def cancel_preparation_state_activity(
     payload: CancelPreparationStateInput,
 ) -> CancelPreparationStateOutput:
+    from jobctrl.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
+
+    return await run_blocking_with_heartbeat(
+        lambda: _cancel_preparation_state(payload),
+        starting_message="canceling owned preparation state",
+    )
+
+
+def _cancel_preparation_state(payload: CancelPreparationStateInput) -> CancelPreparationStateOutput:
     from jobctrl.database import get_connection
     from jobctrl.infrastructure.temporal.runtime_guard import assert_activity_runtime
 

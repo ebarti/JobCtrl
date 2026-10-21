@@ -12,6 +12,7 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
 
 with workflow.unsafe.imports_passed_through():
+    from jobctrl.infrastructure.temporal.control import execute_control_activity
     from jobctrl.domain.discovery.execution import (
         DiscoveryExecutionCohortKind,
         DiscoveryExecutionRef,
@@ -670,7 +671,7 @@ def _chunk(items: list[Any], size: int) -> list[list[Any]]:
 
 async def _check_spend(payload: DiscoverWorkflowInput) -> None:
     for lane in ("discovery", "enrichment"):
-        await workflow.execute_activity(
+        await execute_control_activity(
             check_spend_budget,
             SpendBudgetInput(tenant_id=payload.tenant_id, lane=lane),
             start_to_close_timeout=timedelta(seconds=30),

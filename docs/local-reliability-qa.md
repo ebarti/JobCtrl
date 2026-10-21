@@ -325,3 +325,18 @@ prove recovery removes every staged candidate and SQLite sidecar.
 ## Smart Extract Posting Qualification
 
 Run locked `pytest tests/test_smart_posting_intake.py` with the captured-posting recovery, Smart Extract, limits, live-browser/optional-extension, source-activity reliability and direct URL-import suites. Prove actual role/employer/location writes from the captured posting, full snapshot/enrichment convergence, canonical cross-source deduplication, literal exclusions and the new-job cap. Opposite valid model verdicts for identical sources must control location admission and specific-role acceptance. Listing pages, announcements, absent employers, incomplete descriptions and unknown location compatibility must create no Job and retain unresolved capture evidence. Confirmed mismatches retain their decision references without creating a Job. Exercise provider, budget, JSON/schema/enum, citation/value/field-binding faults, cancellation and unsafe redirects; existing accepted jobs and enrichment must survive every failed refresh. Verify identical determinations, including concurrent calls, reuse the accepted receipt without another provider call. Archived Smart Extract recovery must use the same qualification, retain source/tenant identity, preserve owner deletions and newer content, and recover interruptions without duplicate observations/events. The source activity must preserve exhausted schema/citation failure authority and retain retryability only for transient provider failures. Also run one configured-provider call with owned synthetic posting sources and inspect its actual model, effort, discovery lane and persisted source bindings. Do not build a semantic eval corpus.
+
+## Short workflow controls under model load
+
+For changes to local control scheduling, run locked pytest for
+`workers/automation/tests/test_workflow_control_capacity.py`, the spend-budget
+and material-recovery tests, then the full worker suite. Use a real independent
+Temporal test server and an owned synthetic SQLite workspace. Hold every remote
+activity slot with synthetic blocking work at both one and four slots. Prove
+that a denied spend preflight and owner-scoped preparation cancellation finish
+before that work is released, while an extra queued heavy activity stays queued
+and reported remote concurrency remains unchanged. Preserve a successor owner's
+stage and committed results. Replay generated old remote histories and new local
+histories. Check that control database work runs off the worker event loop and
+closes thread-local connections on success and failure. No provider calls or
+personal workspace data belong in this regression.

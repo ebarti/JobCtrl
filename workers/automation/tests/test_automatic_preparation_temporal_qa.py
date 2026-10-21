@@ -247,7 +247,10 @@ async def history_types(client, workflow_id):
             if marker.marker_name == "core_local_activity":
                 assert len(marker.details["data"].payloads) == 1
                 recorded = json.loads(marker.details["data"].payloads[0].data)
-                assert recorded["activity_type"] in {"record_workflow_started", "record_workflow_outcome"}
+                assert recorded["activity_type"] in {
+                    "record_workflow_started", "record_workflow_outcome",
+                    "check_spend_budget", "cancel_preparation_state",
+                }
                 kinds.append(recorded["activity_type"])
     return kinds
 

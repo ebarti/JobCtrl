@@ -48,10 +48,13 @@ worker startup in
 - **Remote activity slots** — the `worker_activity_slots` Setting in `config.json`
   (default `4`): the maximum number of server-dispatched activities running at once,
   across all workflows.
-- **Local lifecycle slots** — two independent SDK slots for short workflow
-  start/outcome writes. They bypass the remote queue, so finalization does not
-  wait behind long model work. The existing two reserve executor threads serve
-  those writes. Remote activity-slot telemetry excludes this separate pool.
+- **Local control slots** — two independent SDK slots shared by short workflow
+  start/outcome writes, spend preflight and owner-scoped preparation cancellation.
+  They bypass the remote queue, so these controls do not wait for a model slot.
+  Each control attempt has a 30-second limit and its scheduling plus retries has
+  a three-minute limit. Existing retry policies and cancellation ownership checks
+  still apply. The two reserve executor threads serve this pool; remote
+  activity-slot telemetry excludes it.
 - **Executor threads** — separate worker-owned Temporal-sync and blocking-stage
   `ThreadPoolExecutor` pools, each sized `slots + 2`, so blocking stage work
   never spills into the process default executor or starves Temporal's own
@@ -68,13 +71,15 @@ current lease and stage version are checked again before atomic persistence.
 Snapshot recorders also compare the accepted snapshot set under the writer
 reservation. A concurrent availability or content change rejects the stale
 result, preserves the newer state, and leaves downstream preparation blocked.
-Workflow lifecycle activities also offload SQLite writes and close their
-connection on every exit. A failed projection refresh retains its committed
+Workflow lifecycle and short control activities also offload SQLite work and
+close their connection on every exit. A failed projection refresh retains its committed
 canonical event for the next refresh.
 Lifecycle events have exact tenant/workflow/run/event-type idempotency keys,
 including across retries after a committed write. New histories use versioned
 [local activities](https://github.com/temporalio/documentation/blob/main/docs/design-patterns/local-activities.mdx);
-existing remote lifecycle histories retain their replay path.
+existing remote lifecycle and control histories retain their replay paths.
+Only the explicit spend-preflight and preparation-cancellation allowlist enters
+the local control helper; model work keeps the saved remote activity limit.
 
 The worker heartbeat records the activity slots and configured executor width.
 `GET /v1/health` exposes the health
