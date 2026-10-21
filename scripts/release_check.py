@@ -281,6 +281,21 @@ FORBIDDEN_TEXT = (
     ),
 )
 
+_PUBLIC_APPLYPILOT_REPOSITORY = (
+    "https://github.com/" + "-".join(("Pickle", "Pixel")) + "/ApplyPilot"
+)
+_PUBLIC_APPLYPILOT_COMMIT = "4a8d521f67f5139811c0a910ef37410f8e6d836a"
+# Reviewed public competitor references, not JobCtrl's repository provenance.
+# Keep the exact source pins and owning page explicit; the legacy-owner needle
+# still applies to every other occurrence, including elsewhere on that page.
+PUBLIC_COMPARISON_SOURCE_URLS = (
+    f"{_PUBLIC_APPLYPILOT_REPOSITORY}/tree/{_PUBLIC_APPLYPILOT_COMMIT}",
+    f"{_PUBLIC_APPLYPILOT_REPOSITORY}/releases/tag/v0.3.0",
+    f"{_PUBLIC_APPLYPILOT_REPOSITORY}/blob/{_PUBLIC_APPLYPILOT_COMMIT}/README.md",
+    f"{_PUBLIC_APPLYPILOT_REPOSITORY}/blob/{_PUBLIC_APPLYPILOT_COMMIT}"
+    "/src/applypilot/apply/launcher.py",
+)
+
 MINIFIED_BUILD_COLLISION_VALUES = frozenset(
     {
         "Well" + "tech",
@@ -655,7 +670,13 @@ def _is_public_demo_controller_build_asset(rel: Path) -> bool:
 
 
 def _redact_public_attribution(text: str, rel: Path, needle: ForbiddenNeedle) -> str:
-    """Exclude explicit public legal metadata from the private-name tripwire."""
+    """Exclude reviewed public attribution only from its matching tripwire."""
+    if needle.reason == "old repository owner" and rel == Path("docs/comparison.md"):
+        for url in PUBLIC_COMPARISON_SOURCE_URLS:
+            pattern = r"(^|[\s(\"'<])" + re.escape(url) + r"(?=$|[\s)\"'>])"
+            text = re.sub(pattern, r"\1<reviewed public competitor source>", text)
+        return text
+
     if needle.reason != "private first name":
         return text
 
