@@ -51,6 +51,7 @@ from jobctrl.domain.events import (
     create_resume_failed,
 )
 from jobctrl.domain.identifiers import JobId, canonical_job_id
+from jobctrl.domain.ports.letter_reviews import LetterReviews, SequentialLetterReviews
 from jobctrl.domain.materials.aggregate import (
     MaterialsLifecycle,
     MaterialsSet,
@@ -3723,12 +3724,14 @@ class GenerateCoverLetterUseCase:
         analysis_repository: EmployerAnalysisRepository | None = None,
         max_retries: int = 3,
         unit_of_work: UnitOfWork | None = None,
+        letter_reviews: LetterReviews | None = None,
     ) -> None:
         self._repository = repository
         self._llm = llm
         self._validator = validator
         self._claim_verifier = claim_verifier
         self._quality_judge = quality_judge
+        self._letter_reviews = letter_reviews or SequentialLetterReviews(claim_verifier, quality_judge)
         self._preflight = preflight
         self._publisher = publisher
         self._analysis_repository = analysis_repository
@@ -3941,7 +3944,7 @@ class GenerateCoverLetterUseCase:
                 }]
                 continue
             letter = "\n\n".join(row.text for row in draft.lines)
-            result, envelope = self._claim_verifier.verify(
+            claim_request = dict(
                 artifact_kind="cover_letter",
                 entity_id=str(job["job_id"]),
                 lines=[
@@ -3957,7 +3960,7 @@ class GenerateCoverLetterUseCase:
                 requirements=requirements,
                 rubric={"voice": json.dumps(get_writing_style(profile_snapshot.as_dict()))},
             )
-            quality, quality_envelope = self._quality_judge.judge(
+            quality_request = dict(
                 artifact_kind="cover_letter",
                 entity_id=str(job["job_id"]),
                 lines=[
@@ -3975,6 +3978,11 @@ class GenerateCoverLetterUseCase:
                     "quality": "Useful, coherent letter for this role; judge meaning and readability.",
                 }, review_history),
             )
+            reviews = self._letter_reviews.review(
+                claim_request=claim_request, quality_request=quality_request, execution_guard=execution_guard,
+            )
+            result, envelope = reviews.claims
+            quality, quality_envelope = reviews.quality
             source_bindings = {row.line_id: {cite.source_id for cite in row.source_evidence} for row in result.lines}
             anchor_error = any(set(row.evidence_ids) - source_bindings[row.line_id] for row in draft.lines)
             findings = [

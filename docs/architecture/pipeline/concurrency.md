@@ -62,6 +62,24 @@ worker startup in
   generation before its grace wait, so a fresh bounded generation accepts an
   immediate retry even when the old provider call ignores cancellation.
 
+Cover-letter factual and quality reviews use a third, separate executor. Its
+running-leaf limit is the startup activity setting `N`; each pair submits exactly
+two independent reviews and at most `N` pairs / `2N` leaves are outstanding in
+that process. A capacity of one executes a pair sequentially. Waiting coordinators
+continue checking their owner guards; they never consume this executor's threads.
+This is a review bound, not a global provider-call limit: other admitted stages
+can generate concurrently. It does not add Temporal activity slots or use the
+local-control reserve.
+
+Each review opens and closes its own connection to the captured runtime database;
+a mismatch with the process database fails before review model work. Cancellation
+or a terminal review failure stops queued work and new application-level model
+attempts. The first failure remains authoritative, including while its blocked
+state is saved. Already-admitted SDK calls may settle and record usage; their
+permits remain occupied until cleanup. SDK-internal wire retries are outside this
+admission boundary. No partial pair can accept an artifact. Worker shutdown stops
+admission, drains reviews, then closes agent runtimes and flushes telemetry.
+
 Both activity pools and direct blocking activity runners using the default
 asyncio pool close their thread-local SQLite connections before reusing a thread. Committed artifacts remain durable; unfinished writes are rolled back.
 A function that returns successfully with an unfinished transaction fails with

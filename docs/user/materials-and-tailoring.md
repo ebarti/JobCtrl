@@ -21,6 +21,11 @@ When a posting becomes unavailable after batch selection, that member is skipped
 while the other selected jobs continue. A temporarily unavailable source remains
 a reported item error; it does not prevent its peers from finishing.
 
+A cover letter's factual and quality reviews can run together because they inspect
+the same unchanged draft. Both must pass before acceptance. Corrections still
+wait for their findings, and revised text receives fresh checks. Model reasoning,
+bounded repairs and worker capacity still determine the total duration.
+
 ## How JobCtrl Chooses A Resume
 
 Tailoring is a candidate-selection pipeline, not one unconstrained prompt:

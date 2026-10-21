@@ -86,8 +86,14 @@ def source_runtime_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
 def close_test_agent_runtimes(monkeypatch):
     """Release loop-bound SDK resources before each test's sandbox is removed."""
     from jobctrl.infrastructure.llm.agent_runtime_pool import close_agent_runtimes
+    from jobctrl.infrastructure.materials import letter_reviews
 
+    # A new test is an explicit new process-owner scope, after the prior drain.
+    monkeypatch.setattr(letter_reviews, "_pool", None)
     yield
+    from jobctrl.infrastructure.materials.letter_reviews import close_letter_reviews
+
+    close_letter_reviews()
     close_agent_runtimes()
 
 

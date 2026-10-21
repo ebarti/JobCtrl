@@ -75,6 +75,9 @@ def build_worker(
         if max_concurrent_activities is not None
         else _max_concurrent_activities()
     )
+    from jobctrl.infrastructure.materials.letter_reviews import configure_letter_reviews
+
+    configure_letter_reviews(active_max_concurrent_activities)
     activity_executor = ActivityThreadPoolExecutor(
         max_workers=activity_executor_max_workers(active_max_concurrent_activities),
         thread_name_prefix="jobctrl-temporal-sync-activity",

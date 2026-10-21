@@ -111,6 +111,12 @@ and spend preflight still precede each admitted provider attempt. Determination
 IDs, source citations and accepted artifact bindings remain the canonical
 read authority. Failed refreshes preserve the last accepted artifact.
 
+The request-scoped model-attempt guard is carried through thread and async context.
+Letter-review cancellation checks it before determination repairs and at the shared
+provider-generation admission boundary, before spend checking. Calls admitted
+before stop may finish with usage accounting; this does not claim control over
+SDK-internal retries. The separate bounded review pool drains before runtime close.
+
 Draft generation, voice changes and their dependent factual/quality checks keep
 the [Tailoring Contract](tailoring.md). Runtime reuse removes repeated process
 startup; model reasoning and artifact dependencies still contribute to duration.
