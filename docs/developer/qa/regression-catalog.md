@@ -580,6 +580,19 @@ Through real Temporal Tailor and Cover activity entry points, a bounded content
 rejection must fail once as non-retryable `material_rejected`; provider/network
 faults must still exercise their configured retries.
 
+For an overflowing initial material selection, use owned synthetic supported
+edges that require five distinct achievements under a four-bullet role ceiling.
+Exercise the production selector through the resume use case. Opposite valid
+model selections must change the selected graph, persist their source-cited
+determination IDs and expose omitted requirements. Feasible seeds and impossible
+explicit pins must make no selection call. Enforce pins, edge ownership, complete
+requirement decisions, verbatim citations and the unchanged ceiling; distinguish
+provider, spend, JSON, schema and binding failures. Unchanged inputs reuse the
+accepted determination, changed profile versions invalidate it, and a failed
+refresh preserves the prior accepted material and bytes. Prove the production
+builder uses the configured generator route and tailoring lane, then make one
+real configured-provider call using owned synthetic sources.
+
 For review continuity, run the actual resume and cover use cases through three
 synthetic model decisions. Verify exact prior determination IDs and complete
 typed findings reach later generation/review inputs and the persisted audit.

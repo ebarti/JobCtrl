@@ -152,6 +152,7 @@ class TailoringPlan:
     requirement_led_controls: RequirementLedTailoringControls = field(default_factory=RequirementLedTailoringControls)
     target_profile: TargetProfile | None = None
     coverage_graph: CoverageGraph | None = None
+    selection_determination_id: str | None = None
 
     @property
     def evidence_by_id(self) -> dict[str, EvidencePlanItem]:
@@ -199,6 +200,7 @@ class TailoringPlan:
 
     def to_metadata(self) -> dict[str, Any]:
         return {
+            "selection_determination_id": self.selection_determination_id,
             "claim_mode": self.claim_mode,
             "auto_approvable_claim_modes": list(self.auto_approvable_claim_modes),
             "writing_style": {

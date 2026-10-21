@@ -48,7 +48,11 @@ last accepted resume.
 1. **Bind canonical inputs.** JobCtrl combines the accepted posting and job
    interpretation, profile snapshot, requirement-fit ledger, permissions, pins
    and writing style. Models determine seniority and requirement scope; code
-   checks source IDs, versions and the available artifact budget.
+   checks source IDs, versions and the available artifact budget. When the
+   initial evidence selection exceeds a role's bullet limit, the configured
+   model chooses a smaller supported selection and records any requirements
+   left uncovered. Your explicit pins and saved limit remain authoritative;
+   pins that cannot fit produce an actionable block before drafting.
 2. **Generate candidates with anchors.** Each candidate records its line IDs,
    evidence IDs, requirement IDs, transform and reason. A posting provides
    employer context and cannot establish a candidate fact.

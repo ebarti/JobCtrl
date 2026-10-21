@@ -161,7 +161,7 @@ class ResumeModel(Model):
 
 def resume_case(
     conn, model, *, preflight=lambda: None, retries=0, renderer=None, repository=None,
-    writer=None, llm_policy=None, assembler=None, voice=None,
+    writer=None, llm_policy=None, assembler=None, voice=None, evidence_selector=None,
 ):
     verifier, quality = ports(conn, model, preflight)
     unit = SqliteUnitOfWork(conn)
@@ -192,6 +192,7 @@ def resume_case(
         ),
         artifact_writer=writer if writer is not None else LocalArtifactTextWriter(),
         voice=voice,
+        evidence_selector=evidence_selector,
     )
 
 

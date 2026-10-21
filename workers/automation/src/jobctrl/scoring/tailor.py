@@ -192,6 +192,7 @@ def _build_use_case(
     claim_verifier=None,
     quality_judge=None,
     job_interpreter=None,
+    evidence_selector=None,
     preflight=None,
     assembler: ResumeAssembler | None = None,
     llm_policy: TailoringLlmPolicy | None = None,
@@ -248,7 +249,15 @@ def _build_use_case(
             conn, tenant_id=tenant_id, lane="tailoring", model_spec=llm_policy.effective_judge_model,
         )
     from jobctrl.domain.materials.artifact_quality import ModelArtifactQualityJudge
+    from jobctrl.domain.materials.evidence_selection import DeferredMaterialEvidenceSelector, ModelMaterialEvidenceSelector
     from jobctrl.infrastructure.enrichment.interpretation import PersistedJobInterpreter
+
+    def build_evidence_selector():
+        primary = llm_policy.effective_candidate_models[0]
+        selection_deps = deps if primary == DEFAULT_PIPELINE_LLM_MODEL_SPEC else determination_dependencies(
+            conn, tenant_id=tenant_id, lane="tailoring", model_spec=primary,
+        )
+        return ModelMaterialEvidenceSelector(**selection_deps)
 
     return TailorResumeUseCase(
         repository=repository,
@@ -261,6 +270,7 @@ def _build_use_case(
         if job_interpreter is not None
         else PersistedJobInterpreter(conn, tenant_id=tenant_id),
         quality_judge=quality_judge if quality_judge is not None else ModelArtifactQualityJudge(**review_deps),
+        evidence_selector=evidence_selector if evidence_selector is not None else DeferredMaterialEvidenceSelector(build_evidence_selector),
         publisher=publisher,
         llm_policy=llm_policy,
         artifact_writer=artifact_writer if artifact_writer is not None else LocalArtifactTextWriter(),

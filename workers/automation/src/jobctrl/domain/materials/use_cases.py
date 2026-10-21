@@ -99,6 +99,7 @@ from jobctrl.domain.materials.quality import (
     evaluate_tailoring_quality,
     require_artifact_budget_feasible,
 )
+from jobctrl.domain.materials.evidence_selection import MaterialEvidenceSelector, resolve_artifact_budget
 from jobctrl.domain.materials.requirement_coverage import (
     GeneratedClaimMapping,
     bullet_limit_overflows,
@@ -1821,6 +1822,7 @@ class TailorResumeUseCase:
         voice: VoicePort | None = None,
         pdf_renderer: PdfRendererPort | None = None,
         unit_of_work: UnitOfWork | None = None,
+        evidence_selector: MaterialEvidenceSelector | None = None,
     ) -> None:
         self._repository = repository
         self._llm = llm
@@ -1830,6 +1832,7 @@ class TailorResumeUseCase:
         self._assembler = assembler
         self._job_interpreter = job_interpreter
         self._quality_judge = quality_judge
+        self._evidence_selector = evidence_selector
         self._publisher = publisher
         self._max_retries = max_retries
         self._llm_policy = llm_policy
@@ -1960,9 +1963,9 @@ class TailorResumeUseCase:
             requirement_fit_report=requirement_fit_report,
             job_interpretation=self._job_interpreter.interpret(job=job, employer_analysis=employer_analysis),
         )
-        require_artifact_budget_feasible(
-            profile_snapshot.as_dict(),
-            tailoring_plan,
+        tailoring_plan = resolve_artifact_budget(
+            entity_id=str(job_id), profile_snapshot=profile_snapshot,
+            plan=tailoring_plan, selector=self._evidence_selector,
         )
         tailor_prompt_base = build_master_tailor_prompt(
             profile_snapshot,

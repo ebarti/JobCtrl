@@ -64,6 +64,17 @@ source contribution and served requirement. Unused context cannot become an
 extra provenance anchor, and an unrepresented context edge receives no automatic
 generated-coverage credit.
 
+An overflowing seeded graph is still an evidence menu. If explicit user pins
+fit but the seeded selection exceeds a saved per-role bullet ceiling, Materials
+requests a `material_evidence_selection` determination from the configured
+generator route before drafting. It selects only admitted requirement/evidence
+edges, cites their canonical sources, and records a reason for each requirement
+left uncovered. Code enforces exact IDs, pins and the unchanged ceiling; the
+existing artifact-budget guard runs again on the selected plan. The plan audit
+stores the determination ID. Feasible seeds make no additional call, impossible
+pins still block before spend, and failed selection preserves accepted materials.
+Selection never establishes shipped coverage or replaces independent reviews.
+
 Exhausted factual or quality correction returns the non-retryable
 `material_rejected` error. It preserves the rejected audit and last accepted
 artifacts; Temporal does not restart the whole correction budget as though a
