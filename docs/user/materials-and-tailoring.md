@@ -391,7 +391,11 @@ these threshold-owned skips. The per-job **Tailor this job** action is an
 explicit low-fit override for the requested resume, cover letter and their PDF
 exports. The same exception follows the request through Tailor and Cover; it
 does not change the recorded score or global threshold, and does not weaken
-score hard blockers or material validation and quality review.
+score hard blockers or material validation and quality review. The accepted
+generation retains this request flag, so later Discover/recovery sweeps do not
+hide those materials solely for being below the automatic threshold. Another
+generation does not inherit the exception; a current hard blocker or missing
+score still follows normal suppression policy.
 
 Tailor failures also own their downstream state. If Tailor is retryably failed
 or has exhausted its durable attempt budget, Cover and Apply show `blocked`
@@ -438,7 +442,9 @@ the local-file boundary.
 7. **Supersede or suppress deliberately.** A newly accepted replacement
    supersedes the prior active generation while preserving history. If a live
    threshold or blocker makes materials ineligible, JobCtrl soft-suppresses
-   them from active/Apply surfaces rather than deleting the audit record.
+   them from active/Apply surfaces rather than deleting the audit record. A
+   generation accepted under the explicit low-fit override retains its
+   threshold exception; the override grants no application submission.
 8. **Review policy changes separately.** Compatible accepted feedback may
    produce a pending recommendation. Acceptance or restore appends a policy
    revision, while rejection or a failed restore leaves the current revision

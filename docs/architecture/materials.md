@@ -37,6 +37,13 @@ flowchart TB
 The invariant is simple: the text audited for provenance and coverage is the
 same text rendered into the accepted artifact.
 
+An explicit low-fit request is retained as `allow_low_fit_override` in the
+accepted generation and resume metadata. The preparation suppression reader
+joins only that active tenant/job/generation and accepts only a literal JSON
+`true` for the threshold exception. Current missing-score and hard-blocker
+suppression remains unchanged. Normal generations and later replacements do
+not acquire an earlier generation’s exception.
+
 Bounded resume and cover repairs also retain review continuity. Their audits
 record the exact prior determination IDs and typed results supplied to each
 later review, including changed-voice verification. These historical decisions

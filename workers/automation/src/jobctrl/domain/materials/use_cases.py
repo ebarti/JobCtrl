@@ -1890,6 +1890,7 @@ class TailorResumeUseCase:
         tenant_id: TenantId = LOCAL_TENANT,
         retailor: bool = False,
         suppress_existing_artifacts: bool = False,
+        allow_low_fit_override: bool = False,
         employer_analysis: EmployerAnalysis | None = None,
         requirement_fit_report: "RequirementFitReport | None" = None,
         commit_guard: Callable[[], None] | None = None,
@@ -2090,6 +2091,7 @@ class TailorResumeUseCase:
         )
         policy_metadata = tailoring_policy.as_artifact_metadata()
         tailoring_metadata = {
+            "allow_low_fit_override": allow_low_fit_override is True,
             "validation_mode": validation_mode,
             "attempts": attempts,
             "tailoring_policy_id": tailoring_policy.policy_id,
@@ -2171,6 +2173,7 @@ class TailorResumeUseCase:
         materials = materials.with_metadata(
             {
                 **dict(materials.metadata),
+                "allow_low_fit_override": allow_low_fit_override is True,
                 "tailoring_policy_id": tailoring_policy.policy_id,
                 "tailoring_policy_version": tailoring_policy.version,
                 "tailoring_policy": policy_metadata,
