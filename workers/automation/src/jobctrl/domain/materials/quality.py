@@ -55,6 +55,7 @@ class EvidencePlanItem:
     claim_confidence: float = 0.0
     user_confirmed: bool = False
     tags: tuple[str, ...] = ()
+    requires_generated_claim: bool = True
 
     @property
     def prompt_dict(self) -> dict[str, Any]:
@@ -71,6 +72,7 @@ class EvidencePlanItem:
             "claim_confidence": self.claim_confidence,
             "user_confirmed": self.user_confirmed,
             "tags": list(self.tags),
+            "requires_generated_claim": self.requires_generated_claim,
         }
 
     @property
@@ -83,6 +85,7 @@ class EvidencePlanItem:
             "evidence_strength": self.evidence_strength,
             "user_confirmed": self.user_confirmed,
             "tags": list(self.tags),
+            "requires_generated_claim": self.requires_generated_claim,
         }
 
 
@@ -611,6 +614,7 @@ def _canonical_fact_items(profile: dict) -> tuple[EvidencePlanItem, ...]:
                     scope="",
                     action="",
                     user_confirmed=True,
+                    requires_generated_claim=False,
                 )
             )
     return tuple(items)

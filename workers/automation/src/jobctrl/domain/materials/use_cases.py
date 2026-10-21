@@ -174,7 +174,7 @@ class ClaimIssue:
 
 log = logging.getLogger(__name__)
 
-TAILORING_PROMPT_VERSION = "tailor.v14.explicit-claim-bindings"
+TAILORING_PROMPT_VERSION = "tailor.v15.context-claim-requirements"
 TAILORING_SCHEMA_VERSION = "tailored-resume.v5"
 TAILORING_JUDGE_SCHEMA_VERSION = "artifact-quality.v2"
 TAILORING_JUDGE_CRITERIA: tuple[str, ...] = (
@@ -1538,8 +1538,14 @@ HARD RULES:
 - COVERAGE_GRAPH.coverage_edges is the complete active edge allowlist for this
   round. Cite only its exact edge_id values, never infer an edge from other
   evidence, requirement directives, or unused achievements
-- Every edge in COVERAGE_GRAPH.coverage_edges must appear in at least one bound
-  mapping citing its achievement_evidence_id and requirement_id
+- Every COVERAGE_GRAPH.required_generated_evidence_ids item requires a bound
+  generated claim with its applicable active coverage edge and requirement.
+  This includes selected achievements and explicit user pins
+- Other canonical context remains available, but its selected fit edge does not
+  require repeating it in new prose. Dates and other fixed fields are injected
+  by the renderer. Cite a context source only when it contributes to the actual
+  rendered line; omit unused context bindings. The final verifier decides which
+  sources and requirements that line supports
 - Each experience bullet must cite exactly one primary achievement evidence id
 - For an experience bullet, choose that evidence id only from its matching entry
   in EXPERIENCE BULLET EVIDENCE IDS BY ROLE. General summary, skill and education

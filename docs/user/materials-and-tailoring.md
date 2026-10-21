@@ -67,6 +67,11 @@ last accepted resume.
    Cover-letter drafts also use that budget to correct malformed structure or
    source IDs. Corrected drafts still pass factual and quality review before
    acceptance; provider failures do not become content-repair attempts.
+   Exhausted content review stops with its recorded findings instead of
+   restarting the entire generation budget as a temporary provider failure.
+   Selected achievements and user pins remain required. Dates and other
+   canonical context can support a claim when used, without requiring their
+   repetition in the summary or granting automatic coverage credit.
 5. **Persist accepted output.** Accepted text, PDF lineage, determinations,
    anchors and coverage are recorded together. Any optional voice rewrite
    receives fresh claim verification and quality review on the final text.

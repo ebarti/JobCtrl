@@ -37,6 +37,19 @@ class LlmTransientError(JobCtrlError):
     code = "llm_transient"
 
 
+MATERIAL_REJECTION_STATUSES = frozenset({
+    "failed_judge", "failed_validation", "failed_adversarial_review",
+    "failed_fabrication_gate", "failed_quality_gate", "exhausted_retries", "review_required",
+})
+
+
+class MaterialRejectedError(JobCtrlError):
+    """A recorded material decision exhausted or stopped bounded correction."""
+
+    retryable = False
+    code = "material_rejected"
+
+
 class AttemptBudgetExhaustedError(JobCtrlError):
     """A durable stage used every configured execution attempt."""
 
@@ -70,6 +83,8 @@ __all__ = [
     "ConfigurationError",
     "JobCtrlError",
     "LlmTransientError",
+    "MATERIAL_REJECTION_STATUSES",
+    "MaterialRejectedError",
     "MissingInputError",
     "SavedSearchSettingsError",
     "SourceUnavailableError",

@@ -341,6 +341,7 @@ Retry behavior is driven by a small error taxonomy in
 | `TransientNetworkError` | `transient_network` | yes |
 | `BrowserTransientError` | `browser_transient` | yes |
 | `LlmTransientError` | `llm_transient` | yes |
+| `MaterialRejectedError` | `material_rejected` | no |
 | `SourceUnavailableError` | `source_unavailable` | yes |
 | unclassified exception | `unclassified` | yes |
 
@@ -350,6 +351,10 @@ Every retrying workflow lists
 configuration/precondition errors stop immediately, while transient failures
 retry up to the policy's attempt cap and then surface as a stage/workflow
 failure. `RuntimeIdentityMismatch` is also non-retryable.
+`material_rejected` carries `ApplicationError.non_retryable=true`: an exhausted
+source-bound material correction budget stops immediately, including under an
+already scheduled workflow's retry policy. Transient provider and network
+failures retain their normal retries.
 
 ## Availability Workflow Envelope
 

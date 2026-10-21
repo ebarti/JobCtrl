@@ -570,6 +570,16 @@ bindings. A persona-provider failure preserves the accepted resume. A manual
 grade-6 request retains grade 6, and an unscored target must remain readable
 without adopting the legacy grade.
 
+For material context, use the production plan builder with a synthetic fit edge
+to a role date or another canonical context field. The source remains available,
+the renderer preserves fixed fields, and omitting a generated context claim
+receives neither an inclusion error nor shipped coverage. Selected achievements
+and explicitly pinned context still require their claims. Keep the existing
+unaffirmed-source rejection checks: context must not be pruned into acceptance.
+Through real Temporal Tailor and Cover activity entry points, a bounded content
+rejection must fail once as non-retryable `material_rejected`; provider/network
+faults must still exercise their configured retries.
+
 For version changes, seed an obsolete analysis projection with already-folded
 event cursors. The TypeScript detail owner must rebuild it from the current
 canonical version on startup or keyed detail read without a new event, or expose

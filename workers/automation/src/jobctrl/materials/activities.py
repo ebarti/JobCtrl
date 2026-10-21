@@ -14,6 +14,8 @@ from jobctrl.domain.errors import (
     AttemptBudgetExhaustedError,
     JobCtrlError,
     LlmTransientError,
+    MATERIAL_REJECTION_STATUSES,
+    MaterialRejectedError,
     to_application_error,
 )
 from jobctrl.domain.identifiers import JobId, canonical_job_id
@@ -364,6 +366,8 @@ async def tailor_job_activity(payload: TailorJobActivityInput) -> TailorJobActiv
         status = str(result.get("status") or "error")
         if status == "exhausted":
             raise AttemptBudgetExhaustedError(str(result.get("error") or "Tailor durable attempt budget exhausted"))
+        if status in MATERIAL_REJECTION_STATUSES:
+            raise MaterialRejectedError(str(result.get("error") or f"Tailoring ended with status {status}"))
         if status not in {"approved", "skipped", "not_eligible", "already_done"}:
             raise LlmTransientError(str(result.get("error") or f"Tailoring ended with status {status}"))
         materials = result.get("materials")
@@ -705,6 +709,8 @@ async def cover_letter_activity(payload: CoverLetterActivityInput) -> CoverLette
             activity_name="cover_letter",
         )
         status = str(result.get("status") or "error")
+        if status in MATERIAL_REJECTION_STATUSES:
+            raise MaterialRejectedError(str(result.get("error") or f"Cover ended with status {status}"))
         if status not in {"ok", "skipped", "already_done"}:
             raise LlmTransientError(str(result.get("error") or f"Cover ended with status {status}"))
         return CoverLetterActivityOutput(

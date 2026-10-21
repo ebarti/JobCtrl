@@ -2764,3 +2764,20 @@ timers remain recorded in history; synthetic regression runs prove a healthy
 stage crosses the old budget without retry, old histories replay under the new
 policy, and missing heartbeats and cancellation still stop work. See the
 [workflow envelope](architecture/pipeline/envelope.md#run_blocking_with_heartbeat).
+
+## 2026-10-21: Material Context Is Optional In Generated Claims
+
+Status: accepted
+
+Canonical role metadata and other context remain source facts, but a selected
+fit edge cannot force their repetition in mutable resume prose. The generation
+manifest requires selected achievements and explicit user pins. Omitted context
+receives no generated-coverage credit; declared context must still be affirmed
+by the source-bound verifier. Structural source ownership supplies this flag,
+without classifying meaning from source text.
+
+After the content-correction budget is exhausted, a recorded material rejection
+is non-retryable `material_rejected`. It cannot consume another complete budget
+under a transient-provider retry. Accepted artifacts and rejected audit history
+remain preserved. Real transport/provider failures retain their existing retry
+contract. See [Tailoring](architecture/tailoring.md).

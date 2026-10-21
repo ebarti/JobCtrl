@@ -54,6 +54,23 @@ normalized fit of at least 0.8 receives its independent six-persona review.
 A manual low-fit exception leaves that grade unchanged. Unscored targets remain
 readable for scoring; material admission still requires a current Score.
 
+The generation graph distinguishes selected achievements from canonical
+context. Its `required_generated_evidence_ids` manifest requires selected
+achievement claims and explicit user pins. Role dates, role metadata, education,
+skills and baseline context remain available sources without forcing them into
+new summary prose. This structural ownership flag does not decide relevance or
+grant shipped coverage: the final model verifier must affirm every declared
+source contribution and served requirement. Unused context cannot become an
+extra provenance anchor, and an unrepresented context edge receives no automatic
+generated-coverage credit.
+
+Exhausted factual or quality correction returns the non-retryable
+`material_rejected` error. It preserves the rejected audit and last accepted
+artifacts; Temporal does not restart the whole correction budget as though a
+provider transport had failed. Provider/network faults retain their separate
+transient retry behavior. A new explicit request can use the existing recovery
+controls after the owner addresses the recorded finding.
+
 Selected Tailor and Cover cohorts isolate typed per-job prerequisite failures
 that occur before a stage claim. Missing inputs skip that member, and temporary
 source unavailability remains a bounded item error while healthy peers finish.

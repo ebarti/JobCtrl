@@ -292,6 +292,7 @@ class AchievementNode:
     evidence_strength: str = ""
     user_confirmed: bool = False
     pinned: bool = False
+    requires_generated_claim: bool = True
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -321,6 +322,7 @@ class AchievementNode:
             "evidence_strength": self.evidence_strength,
             "user_confirmed": self.user_confirmed,
             "pinned": self.pinned,
+            "requires_generated_claim": self.requires_generated_claim,
         }
 
 
@@ -621,6 +623,16 @@ class CoverageGraph:
     def edge_ids(self) -> set[str]:
         return {item.edge_id for item in self.coverage_edges}
 
+    @property
+    def required_generated_evidence_ids(self) -> set[str]:
+        nodes = {node.achievement_evidence_id: node for node in self.achievements}
+        return {
+            edge.achievement_evidence_id for edge in self.coverage_edges
+            if edge.achievement_evidence_id not in nodes
+            or nodes[edge.achievement_evidence_id].requires_generated_claim
+            or nodes[edge.achievement_evidence_id].pinned
+        }
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "requirements": [item.to_dict() for item in self.requirements],
@@ -635,12 +647,18 @@ class CoverageGraph:
         """Expose only this round's active claim edges to the generator."""
         payload = self.to_dict()
         del payload["alternative_edges"]
+        payload["required_generated_evidence_ids"] = sorted(self.required_generated_evidence_ids)
         return payload
 
     def to_safe_metadata(self) -> dict[str, Any]:
         return {
             "requirement_count": len(self.requirements),
             "achievement_count": len(self.achievements),
+            "required_generated_evidence_ids": sorted(self.required_generated_evidence_ids),
+            "optional_context_evidence_ids": [
+                node.achievement_evidence_id for node in self.achievements
+                if not node.requires_generated_claim and not node.pinned
+            ],
             "coverage_edge_count": len(self.coverage_edges),
             "alternative_edges": [
                 {
@@ -1016,8 +1034,7 @@ def validate_mandatory_covered_achievements(
     represented = {
         evidence_id for mapping in mappings for evidence_id in mapping.evidence_ids if mapping.coverage_edge_ids
     }
-    covered = {edge.achievement_evidence_id for edge in graph.coverage_edges}
-    return tuple(sorted(covered - represented))
+    return tuple(sorted(graph.required_generated_evidence_ids - represented))
 
 
 def score_generated_resume_against_target(
@@ -1231,6 +1248,7 @@ def _achievement_node_from_item(item: Any, *, pinned: bool) -> AchievementNode:
         evidence_strength=_item_attr(item, "evidence_strength"),
         user_confirmed=bool(_item_value(item, "user_confirmed", False)),
         pinned=pinned,
+        requires_generated_claim=bool(_item_value(item, "requires_generated_claim", True)),
     )
 
 

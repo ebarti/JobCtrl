@@ -725,6 +725,7 @@ as the durable error code:
 | `TransientNetworkError` | `transient_network` | yes |
 | `BrowserTransientError` | `browser_transient` | yes |
 | `LlmTransientError` | `llm_transient` | yes |
+| `MaterialRejectedError` | `material_rejected` | no |
 | `SourceUnavailableError` | `source_unavailable` | yes |
 | `BudgetExceededError` | `budget_exceeded` | no |
 
