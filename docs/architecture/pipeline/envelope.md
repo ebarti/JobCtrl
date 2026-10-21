@@ -211,6 +211,14 @@ is a describe loop inside the worker's 15-second heartbeat loop (`cli.py`,
   duplicate starts still cannot reopen terminal truth. A recovered closed run
   receives its actual terminal outcome in the same pass.
 
+The RPC dispatch acknowledgement and the workflow's own start marker can arrive
+in either order. Their input summaries merge only when both identify the same
+exact Temporal run, so a sparse acknowledgement cannot erase a recorded JobId
+or configuration field. A new execution, or a start without a provable matching
+run ID, does not inherit the previous execution's input metadata. Both start
+facts remain in the timeline; this metadata rule does not reopen a terminal run
+or relax the marked missing-history recovery requirement.
+
 The reconciler never deletes or overwrites terminal audit events. Both
 `JobPipelineWorkflow` and
 `ApplyWorkflow` encode stage/apply failure in their *return value*, so a failing

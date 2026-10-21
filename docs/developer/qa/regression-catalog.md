@@ -1062,6 +1062,15 @@ override-ready state, and a simulated live dispatch while proving no
 
 ### Pipeline history recovery and restart regression
 
+Race the real RPC dispatch-start writer against the workflow's detailed start
+marker in both orders, with empty and sparse summaries. The exact same Temporal
+run must retain its recorded job/configuration keys across projection refreshes.
+Reusing the workflow ID for another run must clear prior metadata even when the
+new summary is absent. An unidentified execution cannot merge job bindings;
+late duplicate starts preserve terminal truth, while explicitly marked
+same-run missing-history recovery retains its known inputs. Keep every start
+fact in the timeline. Use owned structural SQL fixtures and no model replay.
+
 Reproduce the human-reported partial-projection state with an active Discover
 execution, 72 expected execution members, 15 persisted members, 16 expected
 pipeline-step keys, four persisted keys, one live source-family activity, three
