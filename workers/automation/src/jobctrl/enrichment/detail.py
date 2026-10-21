@@ -35,6 +35,7 @@ import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import nullcontext
+from dataclasses import replace
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, urljoin, urlparse
 
@@ -95,6 +96,7 @@ from jobctrl.infrastructure.enrichment.playwright_fetcher import (
     _collect_json_ld,
     _collect_main_content,
     _collect_status_html,
+    _partial_resource_failure,
 )
 from jobctrl.infrastructure.enrichment.linkedin_apply_resolver import (
     LinkedInApplyResolution,
@@ -576,7 +578,7 @@ def _scrape_detail_page_body(page, url: str, result: dict, t0: float, *, page_in
     status_code: int | None = None
     try:
         try:
-            resp = page.goto(url, timeout=45000)
+            resp = page.goto(url, wait_until="domcontentloaded", timeout=45000)
             if resp is not None:
                 status_code = resp.status
             page.wait_for_load_state("domcontentloaded", timeout=15000)
@@ -585,7 +587,7 @@ def _scrape_detail_page_body(page, url: str, result: dict, t0: float, *, page_in
             except Exception:
                 pass
         except Exception as exc:
-            if route_guard.blocked:
+            if route_guard.blocked and not _partial_resource_failure(route_guard):
                 decision = _route_failure_decision(route_guard)
                 return _mark_public_fetch_failure(
                     result,
@@ -593,12 +595,13 @@ def _scrape_detail_page_body(page, url: str, result: dict, t0: float, *, page_in
                     blocked_url=route_guard.blocked_url or url,
                     t0=t0,
                 )
-            err_str = str(exc)
-            result["error"] = "timeout" if "timeout" in err_str.lower() else err_str[:200]
-            result["elapsed"] = time.time() - t0
-            return result
+            if not _partial_resource_failure(route_guard):
+                err_str = str(exc)
+                result["error"] = "timeout" if "timeout" in err_str.lower() else err_str[:200]
+                result["elapsed"] = time.time() - t0
+                return result
 
-        if route_guard.blocked:
+        if route_guard.blocked and not _partial_resource_failure(route_guard):
             decision = _route_failure_decision(route_guard)
             return _mark_public_fetch_failure(
                 result,
@@ -617,13 +620,19 @@ def _scrape_detail_page_body(page, url: str, result: dict, t0: float, *, page_in
             )
 
         detail_page = _page_to_detail_page(page, url, status=status_code)
-        if route_guard.blocked:
+        if route_guard.blocked and not _partial_resource_failure(route_guard):
             decision = _route_failure_decision(route_guard)
             return _mark_public_fetch_failure(
                 result,
                 decision,
                 blocked_url=route_guard.blocked_url or url,
                 t0=t0,
+            )
+        if _partial_resource_failure(route_guard):
+            detail_page = replace(
+                detail_page,
+                status_evidence_complete=False,
+                status_evidence_reason=f"public_resource_{route_guard.failure_kind.value}",
             )
     finally:
         route_guard.close()

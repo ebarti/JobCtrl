@@ -304,7 +304,11 @@ def test_document_transport_failure_cannot_be_hidden_by_subresource_failure(docu
 
 @pytest.mark.parametrize("failure", [TimeoutError("owned timeout"), socket.gaierror("owned DNS failure")])
 @pytest.mark.parametrize("resource_type", ["script", "ping"])
-def test_retryable_subresource_failure_retains_content_with_unknown_availability(monkeypatch, failure, resource_type):
+@pytest.mark.parametrize("entrypoint", ["import_fetcher", "discovery_batch"])
+@pytest.mark.parametrize("phase", ["navigation", "navigation_timeout", "snapshot"])
+def test_retryable_subresource_failure_retains_content_with_unknown_availability(
+    monkeypatch, failure, resource_type, entrypoint, phase,
+):
     import playwright.sync_api
     from jobctrl.domain.enrichment import ActiveState
     from jobctrl.domain.enrichment.snapshot_services import ActiveStateVerifier
@@ -314,10 +318,17 @@ def test_retryable_subresource_failure_retains_content_with_unknown_availability
     class Page(_RouteOnlyPage):
         url = "https://public.example/role"
 
-        def goto(self, *_args, **_kwargs):
+        def fail_resource(self):
             self.handler(_FulfillRoute(), SimpleNamespace(
                 url="https://public.example/dependency", method="GET", headers={}, resource_type=resource_type,
             ))
+
+        def goto(self, *_args, **kwargs):
+            assert kwargs["wait_until"] == "domcontentloaded"
+            if phase != "snapshot":
+                self.fail_resource()
+            if phase == "navigation_timeout":
+                raise TimeoutError("Owned navigation timeout after dependency failure")
             return SimpleNamespace(status=200)
 
         def wait_for_load_state(self, *_args, **_kwargs):
@@ -341,9 +352,29 @@ def test_retryable_subresource_failure_retains_content_with_unknown_availability
     monkeypatch.setattr(playwright.sync_api, "sync_playwright", fake_playwright)
     monkeypatch.setattr(playwright_fetcher, "_collect_json_ld", lambda _page: [])
     monkeypatch.setattr(playwright_fetcher, "_collect_main_content", lambda _page: "<main>Captured posting details</main>")
-    monkeypatch.setattr(playwright_fetcher, "_collect_status_html", lambda *_args, **_kwargs: ("<body>Captured controls</body>", True, "owned-hash"))
+    def collect_status(*_args, **_kwargs):
+        if phase == "snapshot":
+            page.fail_resource()
+        return "<body>Captured controls</body>", True, "owned-hash"
 
-    result = PlaywrightDetailPageFetcher(raise_on_unavailable=True)._fetch_page(page.url, "owned-time", user_agent="JobCtrl")
+    monkeypatch.setattr(playwright_fetcher, "_collect_status_html", collect_status)
+
+    if entrypoint == "import_fetcher":
+        result = PlaywrightDetailPageFetcher(raise_on_unavailable=True)._fetch_page(page.url, "owned-time", user_agent="JobCtrl")
+    else:
+        captured = []
+        monkeypatch.setattr(detail, "_collect_json_ld", playwright_fetcher._collect_json_ld)
+        monkeypatch.setattr(detail, "_collect_main_content", playwright_fetcher._collect_main_content)
+        monkeypatch.setattr(detail, "_collect_status_html", playwright_fetcher._collect_status_html)
+
+        def extract(page, *_args, **_kwargs):
+            captured.append(page)
+            return {"status": "captured"}
+
+        monkeypatch.setattr(detail, "_extract_detail_page", extract)
+        scrape_detail_page(page, page.url, session=offline_session(), page_interpreter=object())
+        assert len(captured) == 1
+        result = captured[0]
 
     assert result.html == "<main>Captured posting details</main>"
     assert not result.status_evidence_complete
@@ -353,6 +384,40 @@ def test_retryable_subresource_failure_retains_content_with_unknown_availability
     assert active is ActiveState.UNKNOWN
     assert reason == result.status_evidence_reason
     assert signals == [{"kind": "acquisition_failure", "value": reason}]
+
+
+@pytest.mark.parametrize("resource_type", ["document", "iframe"])
+@pytest.mark.parametrize("failure", [TimeoutError("owned timeout"), socket.gaierror("owned DNS failure")])
+def test_batch_document_failure_never_reaches_extraction(monkeypatch, resource_type, failure):
+    from jobctrl.infrastructure.network import url_safety
+
+    class Page(_RouteOnlyPage):
+        url = "https://public.example/role"
+
+        def goto(self, *_args, **_kwargs):
+            self.handler(_FulfillRoute(), SimpleNamespace(
+                url=self.url, method="GET", headers={}, resource_type=resource_type,
+            ))
+            return SimpleNamespace(status=200)
+
+        def wait_for_load_state(self, *_args, **_kwargs):
+            pass
+
+    def fail(*_args):
+        raise failure
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("A failed document cannot be collected or interpreted")
+
+    monkeypatch.setattr(socket, "getaddrinfo", _resolver_for("93.184.216.34"))
+    monkeypatch.setattr(url_safety, "_fetch_public_route_request", fail)
+    monkeypatch.setattr(detail, "_page_to_detail_page", forbidden)
+    monkeypatch.setattr(detail, "_extract_detail_page", forbidden)
+    page = Page()
+    result = scrape_detail_page(page, page.url, session=offline_session(), page_interpreter=object())
+    assert result["status"] == "error"
+    assert result["fetch_failure_kind"] in {"timeout", "dns_failure"}
+    assert page.handler is None
 
 
 @pytest.mark.parametrize("destination,size", [("document", 2_000_001), ("empty", 2_000_001), ("script", 16_000_001), ("style", 16_000_001)])

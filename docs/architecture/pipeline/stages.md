@@ -204,13 +204,20 @@ Two truths correct the old diagram:
   `EnrichmentFailed` — those come from that unused use case and from the separate
   protected-source manual-capture snapshot path.
 
-Within `DiscoverWorkflow`, detail rendering uses only the paired extension in
-the current profile and the shared extraction cascade. It does not start the
-legacy Playwright browser or the separately consented copied-profile LinkedIn
-resolver, and it never clicks an apply control. The copied-profile resolver is
-retained only for standalone maintenance compatibility outside integrated
-Discovery. Application-target outcomes remain distinct from description
-confidence and cannot quarantine otherwise trustworthy posting content.
+Within `DiscoverWorkflow`, detail rendering prefers the selected paired
+extension in the current profile. If the setup availability probe reports it
+offline, the batch selects guarded anonymous Playwright before acquisition.
+An acquisition error never switches transports. Integrated Discovery does not
+start the separately consented copied-profile LinkedIn resolver or click an
+apply control; that resolver remains standalone maintenance compatibility.
+Both anonymous intake and batch capture wait for DOM content and retain a
+readable document after a typed retryable subresource timeout or DNS failure.
+The captured `DetailPage` then carries incomplete status evidence and its
+acquisition reason, so availability stays unknown. Failed documents, unsafe
+destinations and response-size violations still prevent extraction. The shared
+independent interpretation and description-quality gates remain authoritative.
+Application-target outcomes remain distinct from description confidence and
+cannot quarantine otherwise trustworthy posting content.
 Detail enrichment isolates faults at two levels. A crash while processing one
 site's batch is recorded in `site_errors`, healthy sites keep running, and the
 enrichment run ends `partial` rather than `failed`. Within a site, a single

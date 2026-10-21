@@ -895,6 +895,15 @@ and confirm a later timeout cannot replace stronger destination-denial evidence.
 The job drawer must show the typed cause, historical observation, current
 recheck result, and manual fallback without claiming the original denial was a
 permanent site policy or suppressing technical evidence.
+Exercise partial acquisition through both the intake fetcher and anonymous
+batch entry point. Inject typed script/ping timeout and DNS failures during
+navigation, a navigation exception, and snapshot collection. Both paths must
+retain the readable document, carry incomplete status evidence with the exact
+acquisition reason, and return unknown availability before any model call.
+Main/embedded-document failures, private destinations and resource-size limits
+must still prevent extraction. A real Chromium fault probe separately exercises
+the batch entry point with owned synthetic documents; it must not access native
+data or replace the independent interpretation/description-quality gates.
 For summary metric grounding, seed a baseline tenure estimate with no supporting
 achievement and a separately pinned verified metric. The normal Tailor use case
 must reject the tenure claim even with an unrelated citation, retain that failure

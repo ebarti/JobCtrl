@@ -86,7 +86,9 @@ source keeps its observed URL in the receipt, and relative links resolve against
 that source. Short fields retain verbatim-value and citation validation.
 
 A retryable subresource timeout or DNS failure can retain readable posting
-content for interpretation and quality review. Its availability evidence is
+content for interpretation and quality review in both manual intake and
+anonymous batch enrichment. Both wait for the document's DOM content rather
+than the full asset load. Its availability evidence is
 explicitly incomplete, so the saved availability remains **unknown** with the
 acquisition reason. Main-document failures, unsafe destinations and resource
 size violations still prevent this partial capture from being accepted.
