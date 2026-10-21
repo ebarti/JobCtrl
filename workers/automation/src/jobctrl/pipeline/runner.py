@@ -30,6 +30,7 @@ from jobctrl.domain.discovery.scheduler import (
     SourceQualitySnapshot,
 )
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
+from jobctrl.domain.determinations import DeterminationFailure
 from jobctrl.domain.discovery.source_registry import SourceKind, SourcePriority, SourceState
 from jobctrl.domain.errors import (
     AttemptBudgetExhaustedError,
@@ -563,7 +564,7 @@ def _run_discovery_source(
                         "sourceIds": list(source_ids),
                         "error_class": type(exc).__name__,
                         "errorClass": type(exc).__name__,
-                        "retryable": True,
+                        "retryable": bool(getattr(exc, "retryable", True)),
                         "failed_at": failed_at,
                         "failedAt": failed_at,
                     },
@@ -608,6 +609,8 @@ def _run_discovery_source(
                     ),
                 },
             )
+            if isinstance(exc, DeterminationFailure):
+                raise
             raise SourceUnavailableError(f"{label} failed: {exc}") from exc
 
         elapsed = time.time() - t0

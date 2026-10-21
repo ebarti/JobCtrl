@@ -54,6 +54,7 @@ from jobctrl.infrastructure.discovery.live_browser import (
 )
 from jobctrl.infrastructure.discovery.production_wiring import DurableJobEventPublisher
 from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
+from jobctrl.infrastructure.discovery.smart_postings import LivePostingFetcher, SmartPostingIntake
 from jobctrl.discovery.target_queries import (
     query_specs_for_source,
 )
@@ -98,9 +99,6 @@ def _smart_extract_session(
     )
 
 
-# -- Location filtering -------------------------------------------------------
-
-
 # -- Site configuration from YAML --------------------------------------------
 
 _NULL_DESCRIPTION_SENTINELS = {"<na>", "nan", "nat", "none", "null"}
@@ -121,8 +119,31 @@ def load_sites() -> list[dict]:
 
 
 def _store_jobs(
-    conn, jobs, site, strategy, *, search_cfg, limit=0, source_url=None, run_id="smartextract", discovery_execution=None
+    conn,
+    jobs,
+    site,
+    strategy,
+    *,
+    search_cfg,
+    limit=0,
+    source_url=None,
+    run_id="smartextract",
+    discovery_execution=None,
+    cancel_event=None,
+    intake=None,
+    browser_client=None,
+    source_id=None,
+    tenant_id=LOCAL_TENANT,
+    refresh_existing_job=True,
+    observation_id_factory=None,
+    idempotency_prefix=None,
+    source_native_id=None,
 ):
+    from jobctrl.domain.enrichment.snapshot_use_case import CapturePostingSnapshotUseCase
+    from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository, SqlitePostingSnapshotSetRepository
+    from jobctrl.infrastructure.enrichment.playwright_fetcher import PlaywrightDetailPageFetcher
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state, utc_now
+
     repository = SqliteJobRepository(
         conn,
         discovery_execution=discovery_execution,
@@ -131,38 +152,106 @@ def _store_jobs(
     use_case = DiscoverJobsUseCase(
         exact_title_exclusions=tuple(search_cfg.get("exact_title_exclusions") or ()),
         repository=repository,
-        publisher=DurableJobEventPublisher(conn, stage="discover"),
+        publisher=DurableJobEventPublisher(conn, stage="discover", idempotency_prefix=idempotency_prefix),
+        refresh_existing_job=refresh_existing_job,
+        observation_id_factory=observation_id_factory,
     )
-    postings = []
+    source_id = source_id or f"smartextract:{site}"
+    intake = intake or SmartPostingIntake(
+        conn,
+        source_id=source_id,
+        run_id=run_id,
+        search_cfg=search_cfg,
+        cancel_event=cancel_event,
+        tenant_id=tenant_id,
+        fetcher=LivePostingFetcher(browser_client)
+        if browser_client is not None
+        else PlaywrightDetailPageFetcher(
+            raise_on_unavailable=True,
+            session=_smart_extract_session(source_id=f"smartextract:{site}", run_id=run_id),
+        ),
+    )
+    new, existing = 0, 0
     for job in jobs:
+        _raise_if_canceled(cancel_event)
+        if limit > 0 and new >= limit:
+            break
         url = _normalize_job_url(job.get("url"), source_url)
         if not url:
             continue
-        company = str(job.get("company") or "").strip()
-        postings.append(
-            ScrapedJobPosting(
-                posting_url=PostingUrl(value=url),
-                source=Source(board=site or "smart-extract"),
-                employer=Employer(name=company) if company else Employer.unknown(),
-                metadata=JobMetadata(
-                    title=str(job.get("title") or ""),
-                    salary=str(job.get("salary") or ""),
-                    description=_job_description_text(job) or "",
-                    location=str(job.get("location") or ""),
-                ),
-                strategy=SearchStrategy.SMART_EXTRACT,
-                source_id=f"smartextract:{site}",
-                source_native_id=url,
-                canonical_url=url,
-            )
+        qualified = intake.prepare(url, job)
+        if qualified is None:
+            continue
+        fields = qualified.fields
+        posting = ScrapedJobPosting(
+            posting_url=PostingUrl(value=qualified.url),
+            source=Source(board=site or "smart-extract"),
+            employer=Employer(name=fields["employer"]),
+            metadata=JobMetadata(
+                title=fields["title"],
+                salary=fields["salary"],
+                description=fields["description"],
+                location=fields["location"],
+            ),
+            strategy=SearchStrategy.SMART_EXTRACT,
+            source_id=source_id,
+            source_native_id=source_native_id or qualified.url,
+            canonical_url=qualified.url,
         )
-    new, existing = 0, 0
-    for posting in postings:
-        if limit > 0 and new >= limit:
-            break
-        summary = use_case.execute(tenant_id=LOCAL_TENANT, postings=(posting,), run_id=run_id)
+        _raise_if_canceled(cancel_event)
+        summary = use_case.execute(tenant_id=tenant_id, postings=(posting,), run_id=run_id)
         new += summary.new_jobs
         existing += int(summary.new_jobs == 0 and (summary.observed > 0 or summary.duplicates_linked > 0))
+        if not summary.total:
+            intake.record(url, "filtered", "exact_title_exclusion", receipts=qualified.determinations)
+            continue
+        identity = repository.find_canonical_owner(
+            tenant_id,
+            source_id=posting.source_id,
+            source_native_id=posting.source_native_id,
+            canonical_url=posting.canonical_url,
+        )
+        if identity is None:
+            raise RuntimeError("Qualified Smart Extract posting has no canonical identity")
+        if not summary.new_jobs and not refresh_existing_job:
+            # Archived captures may add an observation, but never refresh an
+            # owner's newer content, accepted enrichment or deleted state.
+            intake.record(
+                url, "accepted", "verified_posting", receipts=qualified.determinations, job_id=identity.job_id
+            )
+            continue
+        outcome = CapturePostingSnapshotUseCase(
+            snapshot_repository=SqlitePostingSnapshotSetRepository(conn),
+            acquisition_service=qualified,
+            publisher=DurableJobEventPublisher(conn, stage="enrich"),
+            enrichment_repository=SqliteEnrichmentRepository(conn),
+        ).execute(
+            tenant_id=tenant_id,
+            job_id=identity.job_id,
+            url=qualified.url,
+            source_id=posting.source_id,
+            policy_id="smart_extract_verified_posting",
+            promote_to_job_enrichment=True,
+        )
+        if not outcome.ok:
+            raise RuntimeError("Qualified Smart Extract posting snapshot was not persisted")
+        if outcome.promoted_to_job_enrichment:
+            now = utc_now()
+            ensure_job_stage_rows(conn, identity.job_id, tenant_id=tenant_id, discovered_at=now)
+            set_stage_state(
+                conn, identity.job_id, "enrich", "running", tenant_id=tenant_id, started_at=now, attempt_count=1
+            )
+            set_stage_state(
+                conn,
+                identity.job_id,
+                "enrich",
+                "succeeded",
+                tenant_id=tenant_id,
+                started_at=now,
+                finished_at=now,
+                attempt_count=1,
+            )
+        intake.record(url, "accepted", "verified_posting", receipts=qualified.determinations, job_id=identity.job_id)
     conn.commit()
     return new, existing
 
@@ -1295,8 +1384,8 @@ def build_scrape_targets(
 
     - Search-only sites get one URL per query because the external page is the
       only source enumeration mechanism.
-    - Source-first/static sites get scraped once and filtered internally against
-      the full exact-plus-recall query spec set.
+    - Source-first/static sites get scraped once. Individual postings are then
+      qualified against captured evidence and saved location/work-model controls.
 
     Placeholders in URLs:
       {query_encoded} -> URL-encoded search query
@@ -1374,8 +1463,11 @@ def _run_all(
     results: list[dict] = []
     total_new = 0
     total_existing = 0
+    selected_clients = {}
 
     def _browser_client_for_target(target: dict) -> PoliteLiveChromeHttpClient | None:
+        if id(target) in selected_clients:
+            return selected_clients[id(target)]
         if discovery_execution is None:
             return None
         slug = re.sub("[^a-z0-9]+", "-", str(target.get("name") or "site").casefold()).strip("-")
@@ -1384,9 +1476,12 @@ def _run_all(
             discovery_execution, source_family="smartextract", source_id=source_id, cancel_event=cancel_event
         )
         if prefer_live_browser(client, cancel_event=cancel_event) is None:
+            selected_clients[id(target)] = None
             return None
         session = _smart_extract_session(source_id=source_id, run_id=run_id, browser=client)
-        return PoliteLiveChromeHttpClient(session, client, default_timeout=60.0)
+        selected = PoliteLiveChromeHttpClient(session, client, default_timeout=60.0)
+        selected_clients[id(target)] = selected
+        return selected
 
     def _process_result(r: dict, target: dict) -> None:
         nonlocal total_new, total_existing
@@ -1405,6 +1500,8 @@ def _run_all(
                 source_url=target.get("url"),
                 run_id=run_id,
                 discovery_execution=discovery_execution,
+                cancel_event=cancel_event,
+                browser_client=selected_clients.get(id(target)),
             )
             total_new += new
             total_existing += existing
