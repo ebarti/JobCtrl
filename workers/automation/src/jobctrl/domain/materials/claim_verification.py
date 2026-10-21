@@ -120,7 +120,9 @@ class ModelClaimVerifier:
                             number for citation in claim.evidence for _, number in numeric_literals(citation.quote)
                         }
                         if any(number not in supported_numbers for _, number in numeric_literals(claim.text.quote)):
-                            raise DeterminationFailure("mismatched_value")
+                            raise DeterminationFailure("mismatched_value", repair_context=_numeric_binding_context(
+                                result, by_id, [*evidence, *requirements],
+                            ))
                     if claim.support in {"unsupported", "uncertain"} and row.verdict != "fail":
                         raise DeterminationFailure("inconsistent_verdict")
                     if claim.kind == "candidate_fact" and claim.support == "supported":
@@ -166,3 +168,30 @@ class ModelClaimVerifier:
             preflight=self._preflight,
             validate=validate,
         )
+
+
+def _numeric_binding_context(
+    result: ClaimVerification, by_id: dict[str, ArtifactLine], sources: list[Source],
+) -> dict:
+    """Report every rejected numeric binding without changing validation order."""
+    failures = []
+    source_ids = set()
+    for row_index, row in enumerate(result.lines):
+        line = by_id[row.line_id]
+        for claim_index, claim in enumerate(row.claims):
+            if claim.kind not in {"candidate_fact", "employer_statement", "target_role"} or claim.support != "supported":
+                continue
+            supported = {number for citation in claim.evidence for _, number in numeric_literals(citation.quote)}
+            missing = [literal for literal, number in numeric_literals(claim.text.quote) if number not in supported]
+            if missing:
+                failures.append({
+                    "code": "mismatched_value", "path": ["lines", row_index, "claims", claim_index],
+                    "claim": claim.model_dump(), "unsupported_numeric_literals": missing,
+                    "allowed_evidence_ids": line.allowed_evidence_ids,
+                    "allowed_requirement_ids": line.allowed_requirement_ids,
+                })
+                source_ids.update(line.allowed_evidence_ids)
+                if claim.kind != "candidate_fact":
+                    source_ids.update(line.allowed_requirement_ids)
+    return {"binding_failures": failures,
+            "canonical_sources": [source.model_dump() for source in sources if source.source_id in source_ids]}

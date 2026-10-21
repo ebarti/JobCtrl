@@ -105,6 +105,14 @@ the membership gate and retry bound stay unchanged for drafts and synthesis.
 An unavailable route is skipped before a direct SDK draft. Provider, budget,
 cache, persistence and invalid canonical-source failures leave the current bound
 attempt instead of causing another paid draft through this repair loop.
+The same boundary applies to exhausted verifier JSON, schema, ID, quote and
+numeric-binding repairs: these failures belong to the verifier's existing
+three-call budget and do not start a new analysis draft or synthesis. A valid
+`claim_verification_failed` verdict still supplies its recorded findings to the
+bounded analysis revision loop. When every leg fails with a typed determination
+failure, the ensemble retains the first terminal code, or a transient provider
+code if a leg can recover, alongside every leg's safe diagnostic. A healthy peer
+still permits a degraded, fully verified analysis.
 
 ### Reuse And Lifecycle
 
@@ -162,6 +170,11 @@ code and legacy first-citation slots remain available. This request-local
 feedback never enters public exception text or persisted failure-state fields.
 Code neither normalizes a rejected quote nor substitutes a source; every
 corrected response must pass the same strict checks within the existing budget.
+Supported-claim numeric mismatches identify every affected claim path, missing
+literal and line-specific source allowlist in the same request-local correction
+packet. The packet includes the canonical allowed source text so the model can
+correct its citation or support judgment. It does not change validation order,
+infer support, increase the correction budget or enter public failure messages.
 Cover-letter generation also supplies its exact candidate-evidence allowlist and
 the single `posting` requirement ID. Draft schema, duplicate-line and foreign-ID
 failures consume the existing generation retry budget and return the rejected

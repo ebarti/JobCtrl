@@ -90,6 +90,13 @@ repair report with exact IDs and canonical targets. Scoring uses prompt revision
 semantic decisions are unchanged. Bounded repair never accepts invalid output,
 increases its call limit or replaces an accepted score on failure.
 
+Employer-analysis failures preserve that same safe determination protocol through
+the scorer and Temporal activity. An exhausted verifier binding failure blocks
+the stage with its exact semantic failure code; it cannot become an
+`llm_transient` error that repeats the entire Score. A classified transient
+provider error retains normal activity retry behavior. Per-leg diagnostics
+remain separate from source prose and raw model output.
+
 For each parsed requirement assessment:
 
 - `max_points = requirement weight × tier multiplier`, where must-have is

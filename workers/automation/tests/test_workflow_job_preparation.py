@@ -83,6 +83,59 @@ async def test_preparation_workflow_runs_requested_steps_in_order(monkeypatch: p
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["mismatched_value", "non_verbatim_quote"])
+async def test_analysis_protocol_failure_stops_score_after_one_temporal_attempt(monkeypatch, code):
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.domain.materials.analysis import AnalysisFailure, EnsembleError
+    from jobctrl.scoring.scorer import _employer_analysis_failure_message
+
+    attempts = []
+    recovered = []
+
+    @activity.defn(name="record_workflow_started")
+    async def record_started(_payload):
+        return None
+
+    @activity.defn(name="record_workflow_outcome")
+    async def record_outcome(_payload):
+        return None
+
+    @activity.defn(name="recover_preparation_state")
+    async def recover(_payload):
+        recovered.append(True)
+        return {"restored": 0, "failed": 0}
+
+    def score(_payload, **_kwargs):
+        attempts.append(len(attempts) + 1)
+        failure = EnsembleError("all ensemble legs failed", (AnalysisFailure("synthetic", code),),
+                                determination_failure=DeterminationFailure(code))
+        return {"status": "failed", "error": _employer_analysis_failure_message(failure)}
+
+    monkeypatch.setattr("jobctrl.scoring.activities._score_one_job", score)
+    async with time_skipping_env() as env:
+        queue = "typed-analysis-" + uuid.uuid4().hex
+        async with Worker(env.client, task_queue=queue, workflows=[JobPreparationWorkflow],
+                          activities=[_check_spend_budget, record_started, record_outcome, recover, score_job_activity],
+                          workflow_runner=UnsandboxedWorkflowRunner()):
+            handle = await env.client.start_workflow(JobPreparationWorkflow.run,
+                JobPreparationInput(tenant_id="local", job_id=_JOB_ID, steps=["score", "tailor"],
+                                    target_version="1", idempotency_key=queue), id=queue, task_queue=queue)
+            result = await asyncio.wait_for(handle.result(), timeout=30)
+            history = await handle.fetch_history()
+    assert attempts == [1]
+    assert recovered == [True]
+    assert result.steps_failed == ["score"] and result.steps_completed == []
+    assert result.error_code == code
+    failures = [event.activity_task_failed_event_attributes.failure.application_failure_info
+                for event in history.events if event.HasField("activity_task_failed_event_attributes")]
+    assert len(failures) == 1
+    assert failures[0].type == code and failures[0].non_retryable
+    score_events = [event.activity_task_started_event_attributes
+                    for event in history.events if event.HasField("activity_task_started_event_attributes")]
+    assert all(event.attempt == 1 for event in score_events)
+
+
+@pytest.mark.asyncio
 async def test_model_steps_have_long_work_budget_without_extending_pdf_or_heartbeat(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

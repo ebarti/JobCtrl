@@ -58,10 +58,6 @@ from jobctrl.domain.ports.materials import (
 log = logging.getLogger(__name__)
 
 DEFAULT_MAX_LEG_RETRIES = 2
-_NON_RESPONSE_FAILURES = {
-    "provider_error", "provider_unavailable", "budget_denied", "cache_binding_invalid",
-    "persistence_error", "source_schema_violation", "duplicate_source_id",
-}
 
 
 async def _draft_with_retry(
@@ -99,7 +95,9 @@ async def _draft_with_retry(
             assert isinstance(snapped, JobAnalysisDraft)  # snap preserves the leg type
             return snapped
         except (ValidationError, GroundingError, DeterminationFailure) as exc:
-            if isinstance(exc, DeterminationFailure) and exc.code in _NON_RESPONSE_FAILURES:
+            # A valid verifier rejection can revise this analysis. A failed
+            # verifier protocol already used its own bounded correction budget.
+            if isinstance(exc, DeterminationFailure) and exc.code != "claim_verification_failed":
                 raise
             last_error = exc
             previous_analysis = draft.model_dump() if draft is not None else None
@@ -174,7 +172,13 @@ async def run_ensemble(
 
     if not drafts:
         # Hard fail ONLY when zero legs survived (failure mode #2 boundary).
-        raise EnsembleError("all ensemble legs failed", tuple(failures))
+        typed = [result for result in results if isinstance(result, DeterminationFailure)]
+        failure = None
+        if len(typed) == len(results):
+            # A transient leg may recover on a new activity attempt. Otherwise
+            # retain the first terminal code and every leg's safe audit entry.
+            failure = next((result for result in typed if result.retryable), typed[0])
+        raise EnsembleError("all ensemble legs failed", tuple(failures), determination_failure=failure)
 
     agreement_envelope = None
     agreement = AnalysisAgreement()
@@ -243,7 +247,7 @@ async def _synthesize_with_retry(
             verify_prose(canonical)
             return canonical
         except (ValidationError, GroundingError, DeterminationFailure) as exc:
-            if isinstance(exc, DeterminationFailure) and exc.code in _NON_RESPONSE_FAILURES:
+            if isinstance(exc, DeterminationFailure) and exc.code != "claim_verification_failed":
                 raise
             last_error = exc
             previous_analysis = canonical.model_dump() if canonical is not None else None
