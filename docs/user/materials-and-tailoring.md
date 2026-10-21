@@ -130,6 +130,11 @@ not mean material generation is running. Missing resume text or PDF reports
 **materials preparing**. Stage and apply-run failures still report repair, retain
 accepted review evidence, and preserve all approval and submission gates.
 
+Generated resume PDFs keep the selected template's page insets on continuation
+pages, for both A4 and Letter, and keep section headings with their content.
+Text flows to another page when needed; the
+renderer does not shrink the font or remove accepted content to force a fit.
+
 Generating materials, choosing a default template, revising a resume in Apply
 Review, and approving a live submission are separate decisions. Materials
 hands accepted generations to Apply; it does not own submission approval.

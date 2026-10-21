@@ -144,6 +144,13 @@ Code validates row/line membership, immutable fields, explicit selections and nu
 
 Rendering preserves stable line IDs through text, HTML and PDF layout boxes. No reader reconstructs sources by matching strings.
 
+The shared HTML print renderer repeats the selected template padding on every
+physical page fragment. A4 and Letter continuation pages retain their top and
+bottom insets without shrinking the font or changing accepted text. Section
+headings stay with their following content across a page break. Content
+may still flow onto another page; inset preservation does not impose a page
+count or establish the accuracy of the pre-print layout-box approximation.
+
 ### 4. Rendered Resume Validation
 
 Sections, layout and quote existence are mechanical. Meaning is assessed against actual final text.

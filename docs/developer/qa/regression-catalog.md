@@ -280,7 +280,7 @@ env -u UV_PROJECT_ENVIRONMENT -u VIRTUAL_ENV -u UV_EXCLUDE_NEWER -u UV_EXCLUDE_N
   uv run --project workers/automation --locked --all-extras --no-sync --exclude-newer false \
   pytest -q workers/automation/tests/test_pdf_renderer_ports.py \
   --basetemp="$trial_root/pytest" --junitxml="$trial_root/junit.xml" \
-  -o cache_dir="$trial_root/pytest-cache"
+  -o cache_dir="$trial_root/pytest-cache" -o tmp_path_retention_policy=all
 ```
 
 The trial comprises **eight required cases** (four cases × two paper sizes).
@@ -288,10 +288,24 @@ Each runs three adapter renders and three shared-entry renders, all with fresh
 Chromium lifecycles and separate `repeat-1`/`repeat-2`/`repeat-3` directories:
 **48 measured PDFs**, plus the boundary probes and a browser/font preflight.
 The focused selector is `-k dense_resume_pagination_trial`; it must execute
-eight cases with zero skips. Ordinary port-test runs without the explicit flag
-skip these eight browser cases and supply no trial evidence. With the flag,
+eight cases with zero skips. The full module also runs four required
+`test_resume_continuation_pages_keep_selected_template_insets` cases: A4/Letter
+with default/asymmetric margins, each through both entry points (eight more
+PDFs). Independent Poppler geometry verifies the selected top/bottom inset on
+every continuation page with 3 pt top / 2 pt bottom font-metric tolerances;
+canonical marker
+order and nonblank pages remain required. These cases reproduce the missing
+continuation inset without reading private profile data.
+The top tolerance includes the 2.85 pt ascent of a 9.5 pt section heading's
+Poppler font box; every-page PNG review still checks actual painted insets.
+The repeated trial also rejects independently located section headings whose
+following content starts on a later physical page.
+Ordinary port-test runs without the explicit flag skip these twelve browser
+cases and supply no trial evidence. With the flag,
 missing imports, Chromium, fonts or Poppler are failures. Do not count a docs
 build, fake renderer, zero-test run or skipped case as product QA.
+The retention override is required: the ordinary test configuration removes
+successful temporary cases, which would discard their PDF/PNG review evidence.
 `JOBCTRL_RUN_PAGINATION_TRIAL=1` remains an accepted alias for older invocations;
 the managed gate's `JOBCTRL_RUN_DENSE_HTML_PAGINATION_TESTS=1` enables the same
 required scenarios even when the alias is unset.
