@@ -14,6 +14,7 @@ import os
 import stat
 import tomllib
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from urllib.request import Request
 
@@ -79,6 +80,7 @@ def test_config_overrides_select_workspace_only_permission_profile() -> None:
     assert "features.apps=false" in overrides
     assert "features.shell_tool=false" in overrides
     assert "allow_login_shell=false" in overrides
+    assert 'project_root_markers=[".git"]' in overrides
     assert 'shell_environment_policy={inherit="none"}' in overrides
     assert f'default_permissions="{profile}"' in overrides
 
@@ -451,3 +453,89 @@ async def test_pinned_app_server_denies_auth_file_and_strips_provider_key_from_c
     assert "sk-command-must-not-see-this" not in response.stdout
     assert response.stdout == "FILE:DENIED ENV:"
     assert codex_home.exists()
+
+
+def _kit_workspace_report(dirs):
+    from agent_runtime_kit import AgentTask, FilesystemAccess, PermissionMode, PermissionProfile
+    from agent_runtime_kit.adapters.codex import CodexAgentRuntime
+
+    overrides = tuple(value for value in adapter._codex_config_overrides(Path("/owned/codex"))
+                      if value != f'default_permissions="{adapter._CODEX_PERMISSION_PROFILE}"')
+    runtime = CodexAgentRuntime(
+        env=adapter._isolated_codex_env(dirs.codex_home, dirs.process_home),
+        config_overrides=overrides,
+    )
+    task = AgentTask(
+        goal="Owned configuration boundary check; no provider call",
+        model="gpt-6.1-sol",
+        reasoning_effort="max",
+        working_directory=dirs.workdir,
+        permissions=PermissionProfile(
+            mode=PermissionMode.STRICT, filesystem=FilesystemAccess.READ_ONLY,
+            native_profile=adapter._CODEX_PERMISSION_PROFILE,
+        ),
+    )
+    return runtime, task, runtime.validate_task(task)
+
+
+def test_prepared_workspace_bounds_kit_configuration_to_owned_root(monkeypatch, tmp_path):
+    retained_home = tmp_path / "retained-user-home"
+    ancestor = retained_home / ".codex" / "config.toml"
+    ancestor.parent.mkdir(parents=True)
+    original = 'sandbox_mode="read-only"\nproject_root_markers=[".foreign-root"]\n'
+    ancestor.write_text(original)
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", retained_home / ".jobctrl")
+
+    dirs = adapter._prepare_isolated_codex_home(ensure_auth=False)
+    runtime, task, report = _kit_workspace_report(dirs)
+
+    assert not report.issues
+    paths = runtime._native_config_paths(task)
+    assert dirs.codex_home / "config.toml" in paths
+    assert Path("/etc/codex/config.toml") in paths
+    assert dirs.workdir / ".codex" / "config.toml" in paths
+    assert ancestor not in paths
+    assert ancestor.read_text() == original
+    assert not (dirs.codex_home / "auth.json").exists()
+
+
+@pytest.mark.parametrize("scope", ["workspace", "isolated_home"])
+def test_workspace_root_does_not_hide_effective_config_conflicts(monkeypatch, tmp_path, scope):
+    _isolate_homes(monkeypatch, tmp_path)
+    dirs = adapter._prepare_isolated_codex_home(ensure_auth=False)
+    path = dirs.workdir / ".codex" / "config.toml" if scope == "workspace" else dirs.codex_home / "config.toml"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text('sandbox_mode="read-only"\n')
+
+    _runtime, _task, report = _kit_workspace_report(dirs)
+
+    assert any(issue.field == "permissions.native_profile" for issue in report.issues)
+    assert path.read_text() == 'sandbox_mode="read-only"\n'
+
+
+@pytest.mark.parametrize("directory", ["codex_home", "workspace", "home"])
+def test_redirected_runtime_directories_are_refused_before_auth_or_chmod(monkeypatch, tmp_path, directory):
+    app_dir, _source = _isolate_homes(monkeypatch, tmp_path)
+    codex_home = app_dir / "codex_home"
+    target = codex_home if directory == "codex_home" else codex_home / directory
+    target.mkdir(parents=True, mode=0o755)
+    original = Path.lstat
+    enrolled = []
+    monkeypatch.setattr(adapter, "ensure_jobctrl_codex_auth", lambda: enrolled.append(True))
+
+    def with_reparse(path, *args, **kwargs):
+        info = original(path, *args, **kwargs)
+        if path != target:
+            return info
+        return SimpleNamespace(st_mode=info.st_mode, st_nlink=info.st_nlink,
+                               st_file_attributes=0x400, st_reparse_tag=0xA0000003)
+
+    mode_before = target.stat().st_mode
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "lstat", with_reparse)
+        with pytest.raises(RuntimeError, match="Codex"):
+            adapter._prepare_isolated_codex_home()
+    assert target.stat().st_mode == mode_before
+    assert not (target / "auth.json").exists()
+    if directory == "codex_home":
+        assert enrolled == []

@@ -70,6 +70,9 @@ _CODEX_STATIC_CONFIG_OVERRIDES = (
     # receives provider auth through CodexConfig.env.
     "features.shell_tool=false",
     "allow_login_shell=false",
+    # Keep SDK project discovery and the kit's native-policy inspection inside
+    # the generated workspace, independently of ambient/system root markers.
+    'project_root_markers=[".git"]',
     'shell_environment_policy={inherit="none"}',
     f'default_permissions="{_CODEX_PERMISSION_PROFILE}"',
 )
@@ -97,7 +100,13 @@ def _prepare_isolated_codex_home(*, ensure_auth: bool = True) -> _CodexHomeDirs:
     already-ready JobCtrl-owned session without copying ambient credentials.
     """
 
+    from jobctrl.infrastructure.llm.codex_workspace import (
+        ensure_codex_workspace_root,
+        reject_codex_path_redirection,
+    )
+
     codex_home = _isolated_codex_home()
+    reject_codex_path_redirection(codex_home)
     if ensure_auth:
         ensure_jobctrl_codex_auth()
     ensure_private_directory(codex_home.parent)
@@ -105,7 +114,9 @@ def _prepare_isolated_codex_home(*, ensure_auth: bool = True) -> _CodexHomeDirs:
     workdir = codex_home / _CODEX_WORKSPACE_DIRNAME
     process_home = codex_home / _CODEX_PROCESS_HOME_DIRNAME
     for directory in (workdir, process_home):
+        reject_codex_path_redirection(directory)
         ensure_private_directory(directory, parent=codex_home)
+    ensure_codex_workspace_root(codex_home, workdir)
     return _CodexHomeDirs(
         codex_home=codex_home,
         workdir=workdir,

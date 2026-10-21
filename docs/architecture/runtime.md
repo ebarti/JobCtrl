@@ -80,6 +80,10 @@ When isolated auth is absent, setup and generation retain one-time reuse
 of a regular Codex CLI `auth.json`; the explicit Codex provider verify action
 uses the same copy-once behavior before checking the isolated login. Existing
 JobCtrl-owned auth is not overwritten, and the normal Codex home is unchanged.
+The generated workspace also has an explicit private project root, so SDK
+configuration discovery cannot inherit unrelated settings from its physical
+ancestors. Its initialization and validation are defined in
+[Agent Runtime Ownership](agent-runtime.md#codex).
 SDK processes clear ambient credential values and pin refresh/revocation URLs
 to OpenAI's default HTTPS endpoints. These URL overrides cannot be blank:
 Codex consumes an empty value literally and cannot build a refresh request.

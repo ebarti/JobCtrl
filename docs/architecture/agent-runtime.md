@@ -41,6 +41,17 @@ disabled shell/apps/plugins and named filesystem profile. Model commands cannot
 read credentials or arbitrary root paths. The profile permits only the owned
 workspace, minimal runtime paths and the canonical Codex executable.
 
+The generated workspace is a private empty Git project root, created with
+stdlib filesystem operations without requiring a Git executable. The immutable
+`project_root_markers=[".git"]` override keeps app-server project discovery and
+the kit's policy inspection at that same boundary, even beneath a retained user
+home with unrelated Codex configuration. Initialization is serialized across
+processes and publishes complete metadata by directory rename. Symlinks, Windows reparse points,
+gitfiles, partial or unfamiliar metadata fail closed and remain unchanged.
+The isolated credential-home, system and workspace-local configuration layers
+remain subject to native policy validation; ancestor configuration outside the
+project is excluded.
+
 A narrow SDK facade consumes the public turn stream. The native convenience
 `run` method loses structured `TurnError` fields; the facade retains JobCtrl's
 bounded provider-error envelope and observed token accounting while the kit
