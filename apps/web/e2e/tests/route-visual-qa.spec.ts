@@ -1978,7 +1978,7 @@ test("pipeline recovery explains the current run record check in plain language"
   await expect(summary).not.toContainText("Restoring history");
 });
 
-test("busy replacement guidance keeps its title readable without an action", async ({
+test("draining preparation guidance keeps its title readable without an action", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1491, height: 1245 });
@@ -2008,7 +2008,7 @@ test("busy replacement guidance keeps its title readable without an action", asy
   await page.goto("/pipelines");
 
   const alert = page.getByRole("alert").filter({
-    hasText: "This Discover run has ended",
+    hasText: "Source collection complete",
   });
   const title = alert.locator('[data-slot="alert-title"]');
   await expect(title).toBeVisible({ timeout: 30_000 });
