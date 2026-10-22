@@ -514,7 +514,9 @@ def _bounded_receipts(items):
     retained = []
     byte_count = 2  # JSON array delimiters; each list owns an independent payload allowance.
     for item in items:
-        size = len(json.dumps(item, ensure_ascii=False).encode()) + 1
+        # Escaped JSON and default spacing conservatively cover Temporal's
+        # compact JSON wire encoding, including non-ASCII source identifiers.
+        size = len(json.dumps(item, ensure_ascii=True).encode("utf-8")) + (2 if retained else 0)
         if byte_count + size > MAX_RECEIPT_LIST_BYTES:
             break
         retained.append(item)
