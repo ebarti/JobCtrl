@@ -545,6 +545,20 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For bounded JobStreaming source intake, run locked
+`pytest tests/test_selected_board_wiring.py tests/test_source_registry.py tests/test_jobstreaming_source_result_budget.py tests/test_discovery_result_budget.py tests/test_workflow_discovery.py`.
+Use owned exact-schema SQLite, synthetic adapters and real Temporal histories.
+Prove supported boards upgrade their old experimental default while disabled and
+quarantined intent survives; interrupt before/after the last admission and during
+checkpoint acknowledgement; preserve exact request fingerprints and accepted
+counts. Race independent live/capture writers for the last allowance. Fail receipt
+insertion/readback, later identity attachment and execution lineage, including a
+caller-owned savepoint: no partial canonical job, locator, admission receipt or
+membership may commit. A source-specific cap must not stop healthy siblings, and
+disabling all boards before retry must settle the frozen units without provider
+acquisition. Replay histories with and without the source-budget patch. These are
+structural ownership/transaction checks, with no native data or model calls.
+
 For automatic compensation classification and refresh ownership, run locked
 `pytest tests/test_compensation_classification_parallelism.py tests/test_automatic_compensation_refresh.py tests/test_compensation_refresh_state.py tests/test_compensation_refresh_temporal.py tests/test_workflow_discovery.py`.
 Use owned exact-schema SQLite and synthetic provider rows. Prove configured

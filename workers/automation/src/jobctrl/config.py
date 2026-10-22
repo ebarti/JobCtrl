@@ -955,7 +955,7 @@ def _jobspy_sources(search_cfg: dict | None) -> list[SourceRegistryEntry]:
                     display_name=_jobstreaming_source_display_name(board),
                     owner="system",
                     priority=SourcePriority.LEAD_GENERATOR,
-                    state=SourceState.EXPERIMENTAL,
+                    state=SourceState.ACTIVE,
                     policy=BROAD_BOARD_LEAD_POLICY,
                     adapter_config={"board": board},
                 )
@@ -1130,6 +1130,11 @@ def _merge_local_source_registry(
         adapter_config = dict(existing.adapter_config) if existing else {}
         if _row_overrides_adapter_config(row, existing):
             adapter_config.update(_adapter_config_from_row(row))
+        # Built-in JobStreaming adapters are supported sources. Retained rows
+        # from older defaults must not keep an artificial experimental probe.
+        if (kind == SourceKind.BROAD_BOARD and state == SourceState.EXPERIMENTAL
+                and any(source_id == f"jobspy:{_source_slug(board)}" for board in _JOBSTREAMING_BOARD_DISPLAY_NAMES)):
+            state = SourceState.ACTIVE
         owner = str(row["owner"] or (existing.owner if existing else "user"))
         display_name = (
             existing.display_name

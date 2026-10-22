@@ -14,6 +14,7 @@ from jobctrl.domain.discovery.use_cases import DiscoverJobsUseCase
 from jobctrl.domain.ports.discovery import ScrapedJobPosting
 from jobctrl.domain.tenant import TenantId
 from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
+from jobctrl.infrastructure.discovery.result_budget import DiscoveryResultLimitReached
 
 _CAPTURE_FAILURE_CODES = ("captured_posting_invalid", "captured_posting_source_mismatch")
 
@@ -29,6 +30,7 @@ def recover_captured_postings(
     discovery_execution=None,
     limit=0,
     cancel_event=None,
+    result_budget=None,
 ):
     """Consume at most 100 archived captures, counting only new jobs toward limit."""
     from jobctrl.infrastructure.discovery.production_wiring import DurableJobEventPublisher
@@ -56,6 +58,10 @@ def recover_captured_postings(
             break
         if limit > 0 and result["new"] >= limit:
             break
+        if result_budget is not None and (
+            result_budget.run_exhausted() or result_budget.source_exhausted(source_id)
+        ):
+            continue
         capture_key = hashlib.sha256(
             json.dumps([str(tenant_id), listing_id, snapshot, target]).encode()
         ).hexdigest()
@@ -119,13 +125,23 @@ def recover_captured_postings(
             )
             excluded = not (new or existing)
         else:
-            summary = DiscoverJobsUseCase(
-                repository=repository,
-                publisher=DurableJobEventPublisher(conn, stage="discover", idempotency_prefix=f"capture:{capture_key}"),
-                exact_title_exclusions=tuple(search_cfg.get("exact_title_exclusions") or ()),
-                observation_id_factory=lambda key=capture_key: f"capture:{key}",
-                refresh_existing_job=False,
-            ).execute(tenant_id=TenantId(str(tenant_id)), postings=[posting], run_id=run_id)
+            if result_budget is not None:
+                repository = SqliteJobRepository(
+                    conn, discovery_execution=discovery_execution, source_family=source_family,
+                    result_budget=result_budget, result_budget_source_id=source_id,
+                )
+            try:
+                summary = DiscoverJobsUseCase(
+                    repository=repository,
+                    publisher=DurableJobEventPublisher(conn, stage="discover", idempotency_prefix=f"capture:{capture_key}"),
+                    exact_title_exclusions=tuple(search_cfg.get("exact_title_exclusions") or ()),
+                    observation_id_factory=lambda key=capture_key: f"capture:{key}",
+                    refresh_existing_job=False,
+                ).execute(tenant_id=TenantId(str(tenant_id)), postings=[posting], run_id=run_id)
+            except DiscoveryResultLimitReached:
+                # The canonical insert rolled back after a competing writer
+                # used the allowance. Leave this archived capture unconsumed.
+                continue
             new, existing, excluded = summary.new_jobs, summary.observed, not summary.total
         conn.execute(
             "UPDATE posting_triage SET consumed_at=? WHERE tenant_id=? AND listing_id=? "

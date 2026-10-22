@@ -194,6 +194,24 @@ their recorded 30-minute activity budget. New histories use the same six-hour
 model-work ceiling as enrichment, with bounded classification concurrency,
 cooperative cancellation and exact live lease renewal.
 
+Bounded Discover result handling is versioned by
+`discover-source-result-budget-v1`. The planning activity records the absolute
+new-job limit's per-source allowances; source activities retain that plan while
+current disabled/quarantine controls may only reduce it. Legacy histories retain
+their original consumer behavior. Supported built-in JobStreaming boards load as
+active, including retained rows with the retired experimental default.
+
+New canonical JobStreaming admissions append `DiscoveryNewJobAdmitted` to the
+existing `job_events` ledger under the exact tenant/workflow/run/source identity.
+The writer transaction includes the job, locator, canonical identity, source
+observation, acceptance receipt and execution membership. The receipt and both
+lineage adapters join the caller's transaction or savepoint; none may commit it
+early. A failed receipt, stale owner or later identity/membership failure rolls
+the whole admission back. Captured-posting recovery shares this budget. Retries
+compare cumulative receipts with the recorded absolute limit, settle exhausted
+units without opening a provider, and keep individual source caps separate from
+the shared result limit.
+
 A few catalog details worth calling out:
 
 - **`DiscoverWorkflow` streams scoring as it discovers (R9 Phase 1–2).** One

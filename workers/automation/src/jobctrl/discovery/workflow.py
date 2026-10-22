@@ -102,6 +102,7 @@ _LIVE_ENRICH_HEARTBEAT_TIMEOUT = timedelta(seconds=5)
 _DEFAULT_HEARTBEAT_TIMEOUT = timedelta(minutes=2)
 _AUTOMATIC_COMPENSATION_REFRESH_PATCH = "discover-automatic-compensation-refresh-v1"
 _COMPENSATION_MODEL_BUDGET_PATCH = "discover-compensation-model-budget-v1"
+_SOURCE_RESULT_BUDGET_PATCH = "discover-source-result-budget-v1"
 _TERMINAL_ENRICHMENT_HANDOFF_PATCH = "discover-terminal-enrichment-handoff-v1"
 
 
@@ -195,6 +196,7 @@ class DiscoverWorkflow:
                 expected_app_dir=payload.expected_app_dir,
                 expected_db_path=payload.expected_db_path,
                 discovery_execution=discovery_execution,
+                use_source_result_budget=workflow.patched(_SOURCE_RESULT_BUDGET_PATCH),
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
@@ -404,6 +406,8 @@ class DiscoverWorkflow:
                     progress_total=plan.progress_total,
                     next_run_settings=plan.next_run_settings,
                     discovery_execution=discovery_execution,
+                    use_source_result_budget=plan.use_source_result_budget,
+                    source_result_limits=plan.source_result_limits,
                 ),
                 start_to_close_timeout=_DISCOVERY_TIMEOUT,
                 heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,

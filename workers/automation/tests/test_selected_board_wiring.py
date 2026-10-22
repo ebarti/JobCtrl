@@ -46,7 +46,7 @@ def retained_board_registry(tmp_path, monkeypatch):
     ("zip_recruiter", "jobspy:zip-recruiter"),
 ])
 @pytest.mark.parametrize("state,expected_budget", [
-    ("experimental", 10),
+    ("experimental", 100),
     ("disabled", 0),
     ("quarantined", 5),
 ])
@@ -69,7 +69,7 @@ def test_retained_board_reaches_provider_units_with_its_original_state(
         100, source_ids=(source_id,), search_cfg=search_cfg,
     )
     source, = schedule.for_prefix("jobspy")
-    assert source.configured_state.value == state
+    assert source.configured_state.value == ("active" if state == "experimental" else state)
     assert source.crawl_budget == expected_budget
     assert source.adapter_config["board"] == board
     effective = runner._jobspy_config_for_sources(search_cfg, (source,))
@@ -96,7 +96,7 @@ def test_explicit_two_board_selection_does_not_silently_drop_retained_board(
     )
     sources = schedule.for_prefix("jobspy")
     assert schedule.runnable_source_ids == ("jobspy:linkedin", "jobspy:zip-recruiter")
-    assert schedule.budget_for_prefix("jobspy") == 20
+    assert schedule.budget_for_prefix("jobspy") == 200
     assert runner._jobspy_config_for_sources(cfg, sources)["boards"] == ["linkedin", "zip_recruiter"]
     assert sources[1].adapter_config["url"] == "https://example.test/jobs"
     assert list(conn.execute("SELECT * FROM source_registry_entries")) == before
@@ -166,7 +166,7 @@ def test_real_family_dispatch_records_both_boards_or_configuration_failure(
         )
         assert result["status"] == "ok"
         assert result["source_ids"] == ["jobspy:linkedin", retained_id]
-        assert dispatches == [{"boards": [("linkedin",), ("zip_recruiter",)], "limit": 20}]
+        assert dispatches == [{"boards": [("linkedin",), ("zip_recruiter",)], "limit": 100}]
     stored, = conn.execute("SELECT status, error_classes_json FROM discovery_runs")
     assert stored["status"] == ("failed" if unknown else "completed")
     assert stored["error_classes_json"] == ('["ConfigurationError"]' if unknown else '[]')
