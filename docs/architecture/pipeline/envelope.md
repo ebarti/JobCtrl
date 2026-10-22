@@ -127,6 +127,31 @@ to current, but cannot duplicate or demote it. A work plan remains explicitly
 `pending` until it becomes `planned`, `not_eligible`, or `failed`; a missing
 required-step list is never interpreted as proof of no work.
 
+### Completed Preparation Outcome Evidence
+
+`PreparationWorkflowOutcomeObserved` is an append-only audit receipt recovered
+from one exact completed `JobPreparationWorkflow` Temporal history. Decoder
+version 1 validates the start tenant, canonical JobId, `prep-` idempotency
+identity, ordered required steps and Discover execution against the current
+successful preparation owner and immutable membership. Its bounded result
+contains completed/skipped step enums and no failure. An empty skipped list is
+valid negative evidence; it does not explain a missing PDF.
+
+The receipt uses the existing `job_events` workflow-run identity and an
+idempotency key containing decoder version, tenant, preparation workflow and
+Temporal run. A short transaction rechecks ownership before append. Historical
+receipt recovery leaves workflow outcomes, accepted artifacts, stage states,
+immutable work plans and PDF lifecycle projections intact. Membership promotion
+from swept backlog to observed work retains the original owner and is not a
+lineage conflict.
+
+The normal worker reconciler inspects a bounded set of completed member owners
+that lack receipts, alongside its existing recovery work. Unavailable or
+malformed histories remain unproved and are retried without blocking later
+owners. The API uses only a valid exact receipt to explain conditional PDF
+nonexecution. Recorded PDF lifecycle states retain precedence. This adds no
+workflow commands and requires no history replay change or database migration.
+
 ### Broad-Board Search Unit Envelope
 
 The `jobspy` source family name remains a compatibility key, but its provider is

@@ -396,8 +396,19 @@ Once that workflow is terminal, a planned family with no durable lifecycle is
 An unrecorded planned PDF is **waiting** while a recorded prerequisite in its
 required-step list is pending, queued or running, provided its preparation owner
 is not already terminal. A recorded PDF lifecycle always takes precedence.
-Missing prerequisites, a terminal owner, or no unfinished required prerequisite
-leave the missing PDF **unknown**. Other missing stage state after work-plan
+A missing PDF is **skipped** only when a run-owned
+`PreparationWorkflowOutcomeObserved` receipt proves that the exact successful
+preparation execution stopped at an earlier required step. The worker derives
+that bounded receipt from the exact Temporal run's start input and completed
+result, binding tenant, job, idempotency key, required plan and Discover run. The
+API joins its recorded owner/run and indexed event identity; current unowned
+`MIN_SCORE` rows or successful preparation alone cannot supply this proof. The
+same classification resolves cohort completion and removes PDF demand from
+remaining paths and swept-backlog contention. It does not change the immutable
+plan, create a PDF lifecycle or claim that a document was generated.
+
+Without that exact receipt, missing prerequisites, a terminal owner, or no
+unfinished required prerequisite leave the missing PDF **unknown**. Other missing stage state after work-plan
 resolution remains **unknown** and actionable; a genuinely missing or failed PDF
 is never hidden by unrelated work.
 The producer-lifetime live enrichment activity is runtime telemetry, not a

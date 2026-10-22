@@ -22,8 +22,8 @@ from rich.text import Text
 
 from jobctrl import __version__
 from jobctrl.company_briefing_cli import app as company_briefing_app
-from jobctrl.source_proposals_cli import app as source_proposals_app
 from jobctrl.pipeline import SUPPORTED_STAGE_ORDER, run_single_job
+from jobctrl.source_proposals_cli import app as source_proposals_app
 from jobctrl.workflow_specs import (
     build_apply_workflow_spec,
     build_compensation_refresh_workflow_spec,
@@ -136,7 +136,7 @@ def _bootstrap(*, reconcile_posted_compensation: bool = False) -> None:
     drive live projection refreshes.
     """
     global _projection_subscription
-    from jobctrl.config import load_env, ensure_dirs
+    from jobctrl.config import ensure_dirs, load_env
     from jobctrl.database import get_connection, init_db
     from jobctrl.infrastructure.projections.projection_builder import (
         ProjectionBuilder,
@@ -1873,7 +1873,11 @@ def digest(
     )
     console.print(_render_digest_table(digest_payload))
     for briefing in digest_payload.get("companyBriefings", []):
-        console.print(Text(f"Company briefing: {briefing['name']} · {briefing['status']} · observed {briefing['observedAt'] or 'never'} · /jobs/{briefing['jobId']}"))
+        console.print(
+            Text(
+                f"Company briefing: {briefing['name']} · {briefing['status']} · observed {briefing['observedAt'] or 'never'} · /jobs/{briefing['jobId']}"
+            )
+        )
         if briefing["failureCode"]:
             console.print(Text("Refresh failed: " + briefing["failureCode"]))
     links_table = _render_digest_links_table(digest_payload)
@@ -2332,6 +2336,10 @@ def worker(
     # here, not two hours into a Discover run.
     _preflight_browsers_or_exit()
 
+    from jobctrl.infrastructure.runtime_identity import (
+        current_runtime_identity,
+        write_worker_heartbeat,
+    )
     from jobctrl.infrastructure.temporal import (
         JOBCTRL_TASK_QUEUE,
         build_worker,
@@ -2342,10 +2350,6 @@ def worker(
     )
     from jobctrl.infrastructure.temporal.concurrency import resolve_max_concurrent_activities
     from jobctrl.infrastructure.temporal.registry import ACTIVITIES, WORKFLOWS
-    from jobctrl.infrastructure.runtime_identity import (
-        current_runtime_identity,
-        write_worker_heartbeat,
-    )
 
     queue = task_queue or JOBCTRL_TASK_QUEUE
 
@@ -2818,6 +2822,9 @@ async def _reconcile_workflow_runs(temporal_client: Any, *, tenant_id: str | Non
         if await _reconcile_cancellation_audit(temporal_client, conn, run):
             changed += 1
     changed += _reconcile_canceled_enrichment_cohorts(conn, tenant_id=str(tenant))
+    from jobctrl.infrastructure.temporal.preparation_outcome_audit import reconcile_preparation_outcomes
+
+    changed += await reconcile_preparation_outcomes(temporal_client, conn=conn, tenant_id=str(tenant))
     return changed
 
 
@@ -3345,17 +3352,18 @@ def doctor() -> None:
     """Check your setup and diagnose missing requirements."""
     import os
     import shutil
+
     from jobctrl.config import (
-        load_env,
         DB_PATH,
         RESUME_PATH,
         RESUME_PDF_PATH,
-        load_search_config,
         gmail_mcp_auth_status,
+        load_env,
+        load_search_config,
     )
     from jobctrl.domain.tenant import LOCAL_TENANT
-    from jobctrl.infrastructure.profile import get_profile_repository
     from jobctrl.infrastructure.apply.claude_code_cli import _claude_supports_budget_flag
+    from jobctrl.infrastructure.profile import get_profile_repository
     from jobctrl.infrastructure.scoring.criteria_provider import (
         read_apply_approval_required,
     )
@@ -3363,8 +3371,8 @@ def doctor() -> None:
         probe_analysis_setup,
         resolve_claude_apply_binary,
     )
-    from jobctrl.runtime import is_bundled_runtime, payload_path
     from jobctrl.native_credentials import native_store_label
+    from jobctrl.runtime import is_bundled_runtime, payload_path
 
     credential_diagnostics = load_env() or ()
     bundled = is_bundled_runtime()
@@ -3703,7 +3711,7 @@ def doctor() -> None:
     console.print()
 
     # Tier summary
-    from jobctrl.config import get_tier, TIER_LABELS
+    from jobctrl.config import TIER_LABELS, get_tier
 
     tier = get_tier()
     console.print(f"[bold]Current tier: Tier {tier} — {TIER_LABELS[tier]}[/bold]")
@@ -3808,8 +3816,12 @@ def material_export(
     connection = init_db()
     try:
         result = export_accepted_material(
-            connection, tenant_id=tenant, job_id=job_id, artifact_id=source_artifact_id,
-            generation=generation, root=APP_DIR,
+            connection,
+            tenant_id=tenant,
+            job_id=job_id,
+            artifact_id=source_artifact_id,
+            generation=generation,
+            root=APP_DIR,
             settings={"format": format_name, "paper": paper, "locale": locale},
         )
         typer.echo(json.dumps(result, ensure_ascii=False))
@@ -3840,14 +3852,20 @@ def material_locale(
     format_name: str = typer.Option("txt", "--format"),
 ):
     """Generate, independently review, accept and export source-linked locale revisions."""
-    from jobctrl.database import init_db
     from jobctrl.config import APP_DIR
-    from jobctrl.infrastructure.materials.locale_variants import operation
+    from jobctrl.database import init_db
     from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.infrastructure.materials.locale_variants import operation
+
     request = {"operation": operation_name}
     if operation_name == "generate":
-        request.update(sourceArtifactId=source_artifact_id, sourceLocale=source_locale, targetLocale=target_locale,
-                       expectedGeneration=generation, expectedProfileVersion=profile_version)
+        request.update(
+            sourceArtifactId=source_artifact_id,
+            sourceLocale=source_locale,
+            targetLocale=target_locale,
+            expectedGeneration=generation,
+            expectedProfileVersion=profile_version,
+        )
     elif operation_name != "history":
         request.update(revisionId=revision_id, expectedVersion=expected_version)
         if operation_name == "review":
@@ -3865,7 +3883,6 @@ def material_locale(
         connection.close()
 
 
-
 screening_app = typer.Typer(help="Review local screening answers; never enter or submit forms.")
 app.add_typer(screening_app, name="screening")
 
@@ -3874,7 +3891,13 @@ def _screening_cli_response(job_id, tenant, command=None):
     from jobctrl import config
     from jobctrl.infrastructure.rpc.handlers import screening_answers
     from jobctrl.infrastructure.rpc.server import _RpcParamError
-    params = {"tenantId": tenant, "jobId": job_id, "expectedAppDir": str(config.APP_DIR), "expectedDbPath": str(config.DB_PATH)}
+
+    params = {
+        "tenantId": tenant,
+        "jobId": job_id,
+        "expectedAppDir": str(config.APP_DIR),
+        "expectedDbPath": str(config.DB_PATH),
+    }
     if command is not None:
         params["command"] = command
     try:

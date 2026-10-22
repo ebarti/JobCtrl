@@ -63,9 +63,7 @@ class _FakeCancelRequestedEvent:
         identity: str = "temporal-cli:tester@local",
         cause: str | None = None,
     ) -> None:
-        self.workflow_execution_cancel_requested_event_attributes = (
-            _FakeCancelRequestAttributes(identity, cause)
-        )
+        self.workflow_execution_cancel_requested_event_attributes = _FakeCancelRequestAttributes(identity, cause)
         self.event_time = _FakeTimestamp()
 
     def WhichOneof(self, _field: str) -> str:  # noqa: N802 — protobuf casing
@@ -102,9 +100,7 @@ class _FakeClient:
         self._histories = histories or {}
         self.lookups: list[tuple[str, str | None]] = []
 
-    def get_workflow_handle(
-        self, workflow_id: str, *, run_id: str | None = None
-    ) -> _FakeHandle:
+    def get_workflow_handle(self, workflow_id: str, *, run_id: str | None = None) -> _FakeHandle:
         self.lookups.append((workflow_id, run_id))
         return _FakeHandle(
             self._mapping.get(workflow_id, _FakeDescribe(WorkflowExecutionStatus.RUNNING)),
@@ -165,8 +161,7 @@ def _reason(conn, workflow_id: str) -> tuple[str | None, str | None]:
 
 def _raw_workflow_payloads(conn, workflow_id: str) -> list[dict]:
     rows = conn.execute(
-        "SELECT payload_json FROM job_events WHERE event_type LIKE 'Workflow%' "
-        "ORDER BY event_id ASC"
+        "SELECT payload_json FROM job_events WHERE event_type LIKE 'Workflow%' ORDER BY event_id ASC"
     ).fetchall()
     payloads = [json.loads(row["payload_json"] or "{}") for row in rows]
     return [payload for payload in payloads if payload.get("workflowId") == workflow_id]
@@ -218,16 +213,12 @@ async def test_reconciler_recovers_exact_run_after_false_not_found_terminal() ->
     run_id = f"temporal-{uuid.uuid4().hex}"
     _seed_open_run(conn, workflow_id, temporal_run_id=run_id)
 
-    missing_client = _FakeClient(
-        {workflow_id: RPCError("not found", RPCStatusCode.NOT_FOUND, b"")}
-    )
+    missing_client = _FakeClient({workflow_id: RPCError("not found", RPCStatusCode.NOT_FOUND, b"")})
     assert await _reconcile_workflow_runs(missing_client) >= 1
     assert _status(conn, workflow_id) == "terminated"
     assert _reason(conn, workflow_id)[0] == "reconciled_not_found"
 
-    live_client = _FakeClient(
-        {workflow_id: _FakeDescribe(WorkflowExecutionStatus.RUNNING, run_id=run_id)}
-    )
+    live_client = _FakeClient({workflow_id: _FakeDescribe(WorkflowExecutionStatus.RUNNING, run_id=run_id)})
     assert await _reconcile_workflow_runs(live_client) >= 1
 
     assert (workflow_id, run_id) in live_client.lookups
@@ -250,15 +241,11 @@ async def test_reconciler_replaces_false_terminal_with_recovered_real_outcome() 
     run_id = f"temporal-{uuid.uuid4().hex}"
     _seed_open_run(conn, workflow_id, temporal_run_id=run_id)
 
-    missing_client = _FakeClient(
-        {workflow_id: RPCError("not found", RPCStatusCode.NOT_FOUND, b"")}
-    )
+    missing_client = _FakeClient({workflow_id: RPCError("not found", RPCStatusCode.NOT_FOUND, b"")})
     await _reconcile_workflow_runs(missing_client)
     assert _status(conn, workflow_id) == "terminated"
 
-    completed_client = _FakeClient(
-        {workflow_id: _FakeDescribe(WorkflowExecutionStatus.COMPLETED, run_id=run_id)}
-    )
+    completed_client = _FakeClient({workflow_id: _FakeDescribe(WorkflowExecutionStatus.COMPLETED, run_id=run_id)})
     assert await _reconcile_workflow_runs(completed_client) >= 1
 
     assert _status(conn, workflow_id) == "succeeded"
@@ -272,9 +259,7 @@ async def test_reconciler_does_not_duplicate_provisional_terminal_while_still_mi
     workflow_id = f"run-{uuid.uuid4().hex}"
     run_id = f"temporal-{uuid.uuid4().hex}"
     _seed_open_run(conn, workflow_id, temporal_run_id=run_id)
-    client = _FakeClient(
-        {workflow_id: RPCError("not found", RPCStatusCode.NOT_FOUND, b"")}
-    )
+    client = _FakeClient({workflow_id: RPCError("not found", RPCStatusCode.NOT_FOUND, b"")})
 
     assert await _reconcile_workflow_runs(client) >= 1
     event_count = len(_events(conn, workflow_id))
@@ -377,18 +362,12 @@ async def test_reconciler_maps_canceled_execution_to_workflow_canceled() -> None
     canceled_code, canceled_message = _reason(conn, canceled_id)
     assert canceled_code == "reconciled_closed_canceled"
     assert canceled_message and "CANCELED" in canceled_message
-    audit_payloads = [
-        payload
-        for payload in _raw_workflow_payloads(conn, canceled_id)
-        if payload.get("requestedBy")
-    ]
+    audit_payloads = [payload for payload in _raw_workflow_payloads(conn, canceled_id) if payload.get("requestedBy")]
     assert audit_payloads == [
         {
             "evidenceKind": "temporal_history",
             "level": "info",
-            "message": (
-                "Cancellation requested by temporal-cli:tester@local via temporal_cli."
-            ),
+            "message": ("Cancellation requested by temporal-cli:tester@local via temporal_cli."),
             "reason": None,
             "requestedAt": "2026-08-04T21:04:08+00:00",
             "requestedBy": "temporal-cli:tester@local",
@@ -415,13 +394,7 @@ async def test_reconciler_maps_canceled_execution_to_workflow_canceled() -> None
         },
     ]
     await _reconcile_workflow_runs(client)
-    assert len(
-        [
-            payload
-            for payload in _raw_workflow_payloads(conn, canceled_id)
-            if payload.get("requestedBy")
-        ]
-    ) == 2
+    assert len([payload for payload in _raw_workflow_payloads(conn, canceled_id) if payload.get("requestedBy")]) == 2
 
 
 def _cancellation_facts(conn, workflow_id: str) -> list[dict]:
@@ -447,9 +420,7 @@ async def test_reconciler_records_requester_when_closing_canceled_execution() ->
 
     client = _FakeClient(
         {canceled_id: _FakeDescribe(WorkflowExecutionStatus.CANCELED, run_id=run_id)},
-        histories={
-            canceled_id: (_FakeCancelRequestedEvent("temporal-web:ops@local"),)
-        },
+        histories={canceled_id: (_FakeCancelRequestedEvent("temporal-web:ops@local"),)},
     )
     await _reconcile_workflow_runs(client)
 
@@ -502,11 +473,7 @@ def test_recovered_temporal_history_is_explicit_and_satisfies_audit_backfill() -
         evidence_kind="recovered_temporal_history",
     )
 
-    payloads = [
-        payload
-        for payload in _raw_workflow_payloads(conn, workflow_id)
-        if payload.get("requestedBy")
-    ]
+    payloads = [payload for payload in _raw_workflow_payloads(conn, workflow_id) if payload.get("requestedBy")]
     assert payloads == [
         {
             "evidenceKind": "recovered_temporal_history",
@@ -527,10 +494,7 @@ def test_recovered_temporal_history_is_explicit_and_satisfies_audit_backfill() -
         }
     ]
     assert workflow_id not in {
-        row["workflow_id"]
-        for row in SqliteProjectionStore(
-            conn
-        ).workflow_runs_missing_cancellation_audit("local")
+        row["workflow_id"] for row in SqliteProjectionStore(conn).workflow_runs_missing_cancellation_audit("local")
     }
     assert not record_workflow_cancellation_requested(
         conn,
@@ -585,8 +549,7 @@ async def test_reconciler_cancels_persisted_enrich_ownership_after_worker_restar
     assert await _reconcile_workflow_runs(client) >= 1
 
     row = conn.execute(
-        "SELECT state FROM job_stage_states "
-        "WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'",
+        "SELECT state FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'",
         (job_id,),
     ).fetchone()
     assert row[0] == "canceled"
@@ -599,3 +562,21 @@ async def test_reconciler_cancels_persisted_enrich_ownership_after_worker_restar
     payload = json.loads(event[0])
     assert payload["workflowId"] == workflow_id
     assert payload["temporalRunId"] == run_id
+
+
+@pytest.mark.asyncio
+async def test_reconciler_dispatches_preparation_outcome_audit_for_already_succeeded_runs(monkeypatch):
+    from jobctrl.infrastructure.temporal import preparation_outcome_audit
+
+    conn = get_connection()
+    calls = []
+
+    async def audit(client, *, conn, tenant_id):
+        assert not conn.in_transaction
+        calls.append((client, conn, tenant_id))
+        return 1
+
+    monkeypatch.setattr(preparation_outcome_audit, "reconcile_preparation_outcomes", audit)
+    client = _FakeClient({})
+    assert await _reconcile_workflow_runs(client) >= 1
+    assert calls == [(client, conn, "local")]
