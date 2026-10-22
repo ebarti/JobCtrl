@@ -205,10 +205,18 @@ def cover_letter_by_id(
     cancel_event: threading.Event | None = None,
     recovery_workflow_id: str | None = None,
     allow_low_fit_override: bool = False,
+    explicit_material_request: bool = True,
 ) -> dict:
     """Generate exactly one eligible cover letter by tenant-scoped JobId."""
     stable_job_id = canonical_job_id(str(job_id))
     conn = get_connection()
+    from jobctrl.infrastructure.materials.manual_decline import material_request_declined
+
+    if material_request_declined(
+        conn, tenant_id=tenant_id, job_id=stable_job_id, stage="cover",
+        explicit_material_request=explicit_material_request, workflow_id=workflow_id,
+    ):
+        return {"job_id": str(stable_job_id), "status": "skipped", "reason": "manual_apply_decline"}
     job = SqlitePreparationTargetReader(conn).load(tenant_id, stable_job_id)
     if job is None:
         return _skipped_result(stable_job_id, reason="job_not_found")
@@ -282,6 +290,11 @@ def cover_letter_by_id(
         cancel_event=cancel_event,
         expected_posting_url=expected_posting_url,
     ):
+        if material_request_declined(
+            conn, tenant_id=tenant_id, job_id=stable_job_id, stage="cover",
+            explicit_material_request=explicit_material_request, workflow_id=workflow_id,
+        ):
+            return {"job_id": str(stable_job_id), "status": "skipped", "reason": "manual_apply_decline"}
         job = SqlitePreparationTargetReader(conn).load(tenant_id, stable_job_id)
     if job is None:
         return _skipped_result(stable_job_id, reason="availability_candidate_changed")
@@ -317,6 +330,11 @@ def cover_letter_by_id(
         cancel_event=cancel_event,
         expected_posting_url=expected_posting_url,
     ):
+        if material_request_declined(
+            conn, tenant_id=tenant_id, job_id=stable_job_id, stage="cover",
+            explicit_material_request=explicit_material_request, workflow_id=workflow_id,
+        ):
+            return {"job_id": str(stable_job_id), "status": "skipped", "reason": "manual_apply_decline"}
         ensure_job_stage_rows(
             conn,
             stable_job_id,

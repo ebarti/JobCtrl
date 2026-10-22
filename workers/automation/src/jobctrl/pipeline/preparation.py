@@ -128,6 +128,9 @@ def derive_preparation_targets(payload: DerivePreparationTargetsInput) -> list[P
     # writes before entering the rollback scope so their caller keeps control.
     conn.execute("BEGIN IMMEDIATE")
     try:
+        from jobctrl.infrastructure.materials.manual_decline import release_manual_material_skips
+
+        release_manual_material_skips(conn, tenant_id=tenant_id)
         reconcile_all_score_threshold_skips(
             conn,
             tenant_id=tenant_id,
@@ -352,6 +355,7 @@ def build_preparation_workflow_spec(
     retailor: bool = False,
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
+    explicit_material_request: bool = False,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
@@ -377,6 +381,7 @@ def build_preparation_workflow_spec(
         kind=kind,
         target_version=target_version,
         source_event_id=source_event,
+        explicit_material_request=explicit_material_request,
     )
     payload = JobPreparationInput(
         tenant_id=str(tenant_id),
@@ -391,6 +396,7 @@ def build_preparation_workflow_spec(
         retailor=retailor,
         suppress_existing_artifacts=suppress_existing_artifacts,
         allow_low_fit_override=allow_low_fit_override,
+        explicit_material_request=explicit_material_request,
         tailor_models=tailor_models,
         tailor_judge_model=tailor_judge_model,
         llm_model=llm_model or DEFAULT_PIPELINE_LLM_MODEL_SPEC,

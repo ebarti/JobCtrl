@@ -670,6 +670,7 @@ def tailor_job_by_id(
     llm_policy: TailoringLlmPolicy | None = None,
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
+    explicit_material_request: bool = True,
     workflow_id: str | None = None,
     cancel_event: threading.Event | None = None,
     recovery_workflow_id: str | None = None,
@@ -685,6 +686,13 @@ def tailor_job_by_id(
         raise RuntimeError("tailor activity canceled before dispatch")
     stable_job_id = canonical_job_id(str(job_id))
     conn = get_connection()
+    from jobctrl.infrastructure.materials.manual_decline import material_request_declined
+
+    if material_request_declined(
+        conn, tenant_id=tenant_id, job_id=stable_job_id, stage="tailor",
+        explicit_material_request=explicit_material_request, workflow_id=workflow_id,
+    ):
+        return {"job_id": str(stable_job_id), "status": "skipped", "reason": "manual_apply_decline"}
     if recovery_workflow_id and not owns_preparation_reservation(
         conn,
         tenant_id=tenant_id,
@@ -813,6 +821,11 @@ def tailor_job_by_id(
         cancel_event=cancel_event,
         expected_posting_url=expected_posting_url,
     ):
+        if material_request_declined(
+            conn, tenant_id=tenant_id, job_id=stable_job_id, stage="tailor",
+            explicit_material_request=explicit_material_request, workflow_id=workflow_id,
+        ):
+            return {"job_id": str(stable_job_id), "status": "skipped", "reason": "manual_apply_decline"}
         job = target_reader.load(tenant_id, stable_job_id)
     if job is None:
         return {"job_id": str(stable_job_id), "status": "skipped", "reason": "availability_candidate_changed"}
@@ -846,6 +859,11 @@ def tailor_job_by_id(
         cancel_event=cancel_event,
         expected_posting_url=expected_posting_url,
     ):
+        if material_request_declined(
+            conn, tenant_id=tenant_id, job_id=stable_job_id, stage="tailor",
+            explicit_material_request=explicit_material_request, workflow_id=workflow_id,
+        ):
+            return {"job_id": str(stable_job_id), "status": "skipped", "reason": "manual_apply_decline"}
         ensure_job_stage_rows(
             conn,
             stable_job_id,

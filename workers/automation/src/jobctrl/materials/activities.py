@@ -81,7 +81,11 @@ class TailorJobActivityInput:
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     workflow_id: str | None = None
 
+    explicit_material_request: bool = False
+
     def __post_init__(self) -> None:
+        if type(self.explicit_material_request) is not bool:
+            raise ValueError("explicit_material_request must be a boolean")
         object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
 
 
@@ -285,6 +289,7 @@ def _run_selected_tailoring(
             tailor_judge_model=payload.tailor_judge_model,
             workflow_id=payload.workflow_id,
             cancel_event=cancel_event,
+            explicit_material_request=not bool(payload.recovery_workflow_id),
             **({"recovery_workflow_id": payload.recovery_workflow_id} if payload.recovery_workflow_id else {}),
         )
 
@@ -402,6 +407,7 @@ def _tailor_one_job(
         llm_model=payload.llm_model,
         suppress_existing_artifacts=payload.suppress_existing_artifacts,
         allow_low_fit_override=payload.allow_low_fit_override,
+        explicit_material_request=payload.explicit_material_request,
         tailor_models=payload.tailor_models,
         tailor_judge_model=payload.tailor_judge_model,
         workflow_id=payload.workflow_id,
@@ -454,7 +460,11 @@ class CoverLetterActivityInput:
     workflow_id: str | None = None
     allow_low_fit_override: bool = False
 
+    explicit_material_request: bool = False
+
     def __post_init__(self) -> None:
+        if type(self.explicit_material_request) is not bool:
+            raise ValueError("explicit_material_request must be a boolean")
         object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
 
 
@@ -635,6 +645,7 @@ def _run_selected_cover(
             workflow_id=payload.workflow_id,
             cancel_event=cancel_event,
             allow_low_fit_override=payload.allow_low_fit_override,
+            explicit_material_request=not bool(payload.recovery_workflow_id),
             **({"recovery_workflow_id": payload.recovery_workflow_id} if payload.recovery_workflow_id else {}),
         )
 
@@ -742,6 +753,7 @@ def _cover_one_job(
         workflow_id=payload.workflow_id,
         cancel_event=cancel_event,
         allow_low_fit_override=payload.allow_low_fit_override,
+        explicit_material_request=payload.explicit_material_request,
     )
 
 

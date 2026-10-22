@@ -545,6 +545,19 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For implicit per-job preparation after a manual Apply skip, run locked
+`pytest tests/test_preparation_manual_decline.py tests/test_automatic_material_decline.py tests/test_preparation_score_material_block.py tests/test_v7_tailor_runtime.py tests/test_v7_cover_runtime.py`.
+Use owned exact-schema jobs and real activity/workflow entry points. With a
+passing score, a canonical manual Skip must stop implicit Tailor/Cover before
+acquisition, model setup and attempt accounting; recheck a decline committed
+between early selection and the locked admission. Preserve other tenants,
+policy-only/legacy/retryable skips, foreign queued/running owners, unrelated
+stops and accepted files/bindings. An Apply reset must reopen only this cause
+before real automatic selection. Explicit RPC material actions carry a literal
+frozen intent and distinct idempotency identity while retaining normal guards;
+automatic identities remain unchanged. Decode absent legacy fields and replay
+old/new real Temporal histories without stored model-output fixtures.
+
 For cover-letter publication anchors, run locked
 `pytest tests/test_cover_reviewed_anchors.py tests/test_cover_generation_repair.py tests/test_artifact_determinations.py tests/test_material_review_history.py`.
 Use owned exact-schema SQLite and explicit synthetic model decisions. A passing

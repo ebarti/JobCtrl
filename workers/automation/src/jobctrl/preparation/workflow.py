@@ -67,6 +67,7 @@ class JobPreparationInput:
     retailor: bool = False
     suppress_existing_artifacts: bool = False
     allow_low_fit_override: bool = False
+    explicit_material_request: bool = False
     tailor_models: tuple[str, ...] = ()
     tailor_judge_model: str | None = None
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
@@ -74,6 +75,8 @@ class JobPreparationInput:
     discovery_cohort_kind: DiscoveryExecutionCohortKind | None = None
 
     def __post_init__(self) -> None:
+        if type(self.explicit_material_request) is not bool:
+            raise ValueError("explicit_material_request must be a boolean")
         object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
         if (self.discovery_execution is None) != (self.discovery_cohort_kind is None):
             raise ValueError("discovery_execution and discovery_cohort_kind must be supplied together")
@@ -303,6 +306,7 @@ async def _execute_step(step: str, payload: JobPreparationInput) -> Any:
                 retailor=payload.retailor,
                 suppress_existing_artifacts=payload.suppress_existing_artifacts,
                 allow_low_fit_override=payload.allow_low_fit_override,
+                explicit_material_request=payload.explicit_material_request,
                 tailor_models=payload.tailor_models,
                 tailor_judge_model=payload.tailor_judge_model,
                 llm_model=payload.llm_model,
@@ -321,6 +325,7 @@ async def _execute_step(step: str, payload: JobPreparationInput) -> Any:
                 validation_mode=payload.validation_mode,
                 llm_model=payload.llm_model,
                 allow_low_fit_override=payload.allow_low_fit_override,
+                explicit_material_request=payload.explicit_material_request,
             ),
             start_to_close_timeout=_MODEL_ACTIVITY_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
@@ -385,6 +390,8 @@ def _input_summary(payload: JobPreparationInput) -> dict[str, Any]:
         "targetVersion": payload.target_version,
         "idempotencyKey": payload.idempotency_key,
     }
+    if payload.explicit_material_request:
+        summary["explicitMaterialRequest"] = True
     if payload.discovery_execution is not None:
         summary["discoveryExecution"] = payload.discovery_execution.safe_summary()
         summary["discoveryCohortKind"] = payload.discovery_cohort_kind
