@@ -5,6 +5,7 @@ import os
 import subprocess
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
@@ -460,6 +461,9 @@ def test_atomic_replacement_detects_edit_during_temp_write(
 
 
 def test_windows_temporary_mode_path_does_not_require_fchmod(monkeypatch: pytest.MonkeyPatch) -> None:
+    native_name = os.name
+    native_fchmod = getattr(os, "fchmod", None)
+    monkeypatch.setattr(credentials, "os", SimpleNamespace(**vars(os)))
     destination = Path(__file__)
     temporary = Path("temporary")
     monkeypatch.setattr(credentials.os, "name", "nt")
@@ -467,11 +471,14 @@ def test_windows_temporary_mode_path_does_not_require_fchmod(monkeypatch: pytest
         credentials.os,
         "fchmod",
         lambda *_args: (_ for _ in ()).throw(AssertionError("fchmod must not run on Windows")),
+        raising=False,
     )
     copied: list[tuple[Path, Path]] = []
     monkeypatch.setattr(credentials, "_copy_windows_dacl", lambda source, target: copied.append((source, target)))
     credentials._set_temporary_mode(123, temporary, destination, 0o600)
     assert copied == [(destination, temporary)]
+    assert os.name == native_name
+    assert getattr(os, "fchmod", None) is native_fchmod
 
 
 def stat_mode(path: Path) -> int:
