@@ -207,7 +207,10 @@ remain code-only. Rejected resume reports retain only verifier-affirmed anchors,
 while preserving the failed gate, original candidate and missing-ID findings.
 Numeric binding accepts complete comma-grouped amounts with an attached
 three-letter prefix, without deciding the prefix's meaning or matching a fragment
-inside a larger token. The model still determines whether the amount is pay.
+inside a larger token. A sentence-ending period delimits a complete number;
+a period joining word characters remains part of a numeric or dotted token.
+The same grammar guards supported claim values on both sides of the binding.
+The model still determines whether the amount is pay.
 Quality/persona findings bind to rendered line citations; saved-evidence repairs
 use the separate candidate-evidence slot. Both namespaces are explicit in the
 prompt/schema, and malformed findings receive exact slot feedback within the

@@ -5,9 +5,11 @@ import re
 
 # Format grammar only: digits, thousands separators, decimal fractions and
 # explicit numeric multipliers and optional attached three-letter prefixes.
-# Prefix syntax does not determine currency or any other meaning.
+# Prefix syntax does not determine currency or any other meaning. A final
+# period delimits a sentence; a period joining word characters belongs to the
+# numeric/dotted token and must not expose a fragment.
 _NUMBER_LITERAL = re.compile(
-    r"(?<![\w.,])(?:[A-Z]{3})?(?P<number>\d+(?:,\d{3})*(?:\.\d+)?(?:[kKmM](?!\w))?)(?![\w.]|,\d)"
+    r"(?<![\w.,])(?:[A-Z]{3})?(?P<number>\d+(?:,\d{3})*(?:\.\d+)?(?:[kKmM](?!\w))?)(?!\w|\.\w|,\d)"
 )
 
 

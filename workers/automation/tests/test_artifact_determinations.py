@@ -311,6 +311,64 @@ def test_cover_budget_preflight_precedes_generation_and_uses_lane(tmp_path):
     assert model.calls == []
 
 
+
+@pytest.mark.parametrize("verdict", ["pass", "fail"])
+@pytest.mark.parametrize("source_value,claim_value", [("12345", "12345"), ("1,234.50", "1234.5")])
+def test_sentence_final_numeric_evidence_does_not_override_a_valid_model_verdict(verdict, source_value, claim_value):
+    conn = connection()
+    model = _SentenceNumberModel(verdict, f"Recorded {source_value}.", f"Recorded {claim_value}; verified.")
+    verifier, _ = ports(conn, model)
+    result, envelope = verifier.verify(
+        artifact_kind="resume", entity_id="owned-sentence-number",
+        lines=[ArtifactLine(line_id="line", text=model.claim, allowed_evidence_ids=["fact"], allowed_requirement_ids=[])],
+        evidence=[Source(source_id="fact", text=model.source)], requirements=[], rubric={},
+    )
+    assert result.verdict == envelope.result["verdict"] == verdict
+    assert len(model.calls) == 1
+    assert SqliteDeterminationRepository(conn).find("local", envelope.determination_id).result == result.model_dump()
+
+
+def test_sentence_final_numeric_claim_cannot_hide_a_different_value_and_preserves_accepted_review():
+    conn = connection()
+    model = _SentenceNumberModel("pass", "Recorded 12345.", "Recorded 12345.")
+    verifier, _ = ports(conn, model)
+    arguments = dict(
+        artifact_kind="resume", entity_id="owned-sentence-number",
+        lines=[ArtifactLine(line_id="line", text=model.claim, allowed_evidence_ids=["fact"], allowed_requirement_ids=[])],
+        evidence=[Source(source_id="fact", text=model.source)], requirements=[], rubric={},
+    )
+    _, accepted = verifier.verify(**arguments)
+    model.claim = "Recorded 12346."
+    arguments["lines"] = [
+        ArtifactLine(line_id="line", text=model.claim, allowed_evidence_ids=["fact"], allowed_requirement_ids=[]),
+    ]
+    with pytest.raises(DeterminationFailure, match="mismatched_value"):
+        verifier.verify(**arguments)
+    assert len(model.calls) == 4  # Accepted call, then the existing three-call correction budget.
+    repository = SqliteDeterminationRepository(conn)
+    assert repository.find("local", accepted.determination_id) == accepted
+    assert conn.execute("SELECT COUNT(*) FROM semantic_determinations").fetchone()[0] == 1
+
+
+class _SentenceNumberModel:
+    def __init__(self, verdict, source, claim):
+        self.verdict, self.source, self.claim, self.calls = verdict, source, claim, []
+
+    def chat_json(self, messages, **kwargs):
+        self.calls.append(messages)
+        evidence = {"source_id": "fact", "quote": self.source, "exact_values": []}
+        return {
+            "verdict": self.verdict, "rationale": "Synthetic model decision", "lines": [{
+                "line_id": "line", "verdict": self.verdict, "source_evidence": [evidence],
+                "served_requirements": [], "findings": [], "claims": [{
+                    "kind": "candidate_fact", "support": "supported",
+                    "text": {"source_id": "line:line", "quote": self.claim, "exact_values": []},
+                    "evidence": [evidence], "rationale": "Synthetic model support decision",
+                }],
+            }],
+        }
+
+
 def test_supported_numeric_claim_cannot_borrow_values_from_another_source():
     conn = connection()
 
