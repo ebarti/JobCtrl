@@ -536,8 +536,11 @@ as a source inventory, `candidate_evidence_ids` must match it, and every
 requirement field and analysis generation must remain. Keep unconfirmed
 suggestions excluded and retain opposite model verdicts, strict citation/ID
 rejection and accepted-score preservation. Do not use native prompt/response
-replay fixtures. Measure payload sizes separately from token counts, latency
-and semantic quality; a smaller representation proves only the former.
+replay fixtures. Regenerate and check the semantic-result registry; the API
+receipt-version regression must keep strict v10 history readable and distinguish
+v11 current-only reads while rejecting unknown versions and malformed results.
+Measure payload sizes separately from token counts, latency and semantic quality;
+a smaller representation proves only the former.
 
 For workflow/model trace joins, run locked
 `pytest tests/test_worker_trace_context.py tests/test_workflow_run_context.py tests/test_activity_connection_lifetime.py tests/test_p1b_error_inversion.py`

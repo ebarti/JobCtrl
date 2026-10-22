@@ -4741,7 +4741,10 @@
     "schemaVersion": "2"
   },
   "scoring": {
-    "promptVersion": "score-fit-assessment-v10-binding-repair",
+    "compatiblePromptVersions": [
+      "score-fit-assessment-v10-binding-repair"
+    ],
+    "promptVersion": "score-fit-assessment-v11-single-evidence-source",
     "schema": {
       "$defs": {
         "Blocker": {

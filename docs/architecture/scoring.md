@@ -72,8 +72,9 @@ and posting span, without a second aliased profile-evidence copy. This reduces
 request representation size without removing facts or changing citation,
 model/effort, admission or score-resolution rules. Prompt versioning and the
 full input fingerprint distinguish the revised representation; accepted
-historical scores remain intact. Smaller payloads alone do not establish a
-latency or model-quality improvement.
+historical scores remain intact. The generated reader registry accepts v10
+results under the unchanged strict schema while current-only reads require v11.
+Smaller payloads alone do not establish a latency or model-quality improvement.
 
 ### Deterministic Score Resolution
 
