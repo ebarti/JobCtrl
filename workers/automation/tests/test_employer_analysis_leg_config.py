@@ -38,7 +38,7 @@ def test_saved_analysis_legs_control_adapters_and_cache_key(monkeypatch, tmp_pat
 
     adapter_names = {type(adapter).__name__ for adapter in use_case._adapters}
     assert adapter_names == {"AntigravityAnalysisAdapter"}
-    assert use_case._sdk_set_version.startswith("antigravity-v2-synth-google-models-")
+    assert use_case._sdk_set_version.startswith("antigravity-v3-verified-single-synth-google-models-")
 
 
 def test_ready_provider_excluded_from_saved_leg_list_is_added_as_draft(monkeypatch, tmp_path) -> None:
@@ -49,7 +49,7 @@ def test_ready_provider_excluded_from_saved_leg_list_is_added_as_draft(monkeypat
     use_case = build_analyze_use_case(conn=sqlite3.connect(":memory:"), event_stage="score")
 
     assert {type(adapter).__name__ for adapter in use_case._adapters} == {"CodexAnalysisAdapter"}
-    assert use_case._sdk_set_version.startswith("codex-v2-synth-codex-models-")
+    assert use_case._sdk_set_version.startswith("codex-v3-verified-single-synth-codex-models-")
 
 
 def test_synthesizer_uses_saved_model_for_selected_analysis_provider(

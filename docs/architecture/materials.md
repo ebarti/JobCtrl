@@ -74,16 +74,23 @@ review ordering and accepted-artifact authority remain owned here.
 
 ## Canonical Employer Analysis
 
-A parallel Claude, Codex, and Google analysis ensemble produces drafts; a
-provider-neutral synthesizer reconciles healthy legs through any ready
-provider. One failed optional leg records degraded audit data without cancelling
-the others. A single ready provider is sufficient; all-provider failure is a
-hard error.
+Enabled ready providers produce strict, independently grounded and verified
+drafts. With exactly one admitted draft adapter, JobCtrl promotes that draft's
+exact content into the strict canonical analysis schema, excluding only its
+per-model identifier. The use-case boundary still verifies the canonical and
+records its determination reference; unchanged verification inputs reuse the
+same durable determination as the draft. Job interpretation and persistence
+remain required.
+
+With multiple admitted adapters, a provider-neutral synthesizer reconciles the
+healthy drafts through a ready provider, including when one draft survives a
+partial failure. Optional-leg failures remain in the degraded audit. No surviving
+draft is a hard error.
 
 Composition excludes perspectives whose providers are unavailable and supplies
 the selected ready provider as a draft when necessary. Every draft uses that
 provider's saved preferred model, as synthesis does. The effective draft/model
-set and synthesis model participate in cache identity. A typed SDK availability
+set, synthesis model and analysis execution-policy revision participate in cache identity. A typed SDK availability
 failure stops retries of that failed leg and excludes its route from the next
 automatic attempt; a failed semantic or structural judgment does not.
 Claude SDK query and iteration exceptions receive a safe availability envelope

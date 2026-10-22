@@ -426,9 +426,12 @@ Literal user-approved exact-title exclusions remain literal. Saved free-text cri
 After Discovery accepts a posting, the Discover preparation workflow turns it
 into one structured, inspectable reading of the employer's requirements,
 priorities, and ideal candidate. Each enabled provider first analyzes the
-posting independently. JobCtrl compares those drafts, records agreement and
-provider failures, and asks a ready provider to synthesize the surviving drafts
-into the canonical analysis used by scoring and tailoring.
+posting independently and receives source-bound verification. With one admitted
+provider, that verified draft becomes the canonical analysis used by scoring and
+tailoring without another rewrite. With multiple admitted providers, JobCtrl
+compares their drafts, records agreement and failures, and asks a ready provider
+to synthesize the surviving drafts. A partial failure retains that synthesis
+path. Canonical verification and requirement interpretation remain required.
 
 Choose the participating providers under **Settings → Model selection →
 Employer analysis perspectives**. This provider policy is a non-secret Settings

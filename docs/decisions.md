@@ -2856,3 +2856,30 @@ since adopting the kit moves shared dependencies into core without changing
 vendor SDK versions. Closure-addressed directories and activation schema 2
 preserve previous installations; verified schema-1 paths remain supported.
 Mutable activation metadata cannot authorize a different directory or tree.
+
+## 2026-10-22: Promote A Sole Verified Employer-Analysis Draft
+
+Status: accepted; supersedes mandatory synthesis for the single-admitted-leg
+case of the one-ready-provider analysis contract.
+
+Decision: when exactly one draft adapter is admitted, its successful grounded,
+source-verified draft is copied into the strict canonical `JobAnalysis` schema,
+excluding only `model_id`. The canonical boundary still performs source-bound
+verification, records its determination ID, and interprets requirements before
+persistence. Identical draft/canonical verification inputs may share the same
+durable determination. Multiple admitted legs retain agreement and synthesis,
+including degraded runs with one survivor. Zero successful drafts still fail.
+
+Rationale: a sole source-verified strict draft needs no reconciliation with
+another perspective. Removing its additional generation pass avoids one model
+request plus any fresh review caused by that rewrite, while preserving the
+independent source-verification gate. This deliberately foregoes that additional
+rewrite; equivalent prose quality and whole-workflow speedups are not inferred
+from call counts.
+
+Consequences: analysis execution cache identity moves to the
+`v3-verified-single` policy revision. Model, effort, lane/spend preflight, bounded
+repairs, interpretation provenance, generation allocation and preservation of
+accepted analysis during failed refreshes remain unchanged. Use owned synthetic
+sources and a configured-provider run for integration proof; do not introduce
+quality baselines, labeled corpora or recorded-output replay.

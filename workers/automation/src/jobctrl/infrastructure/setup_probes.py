@@ -147,7 +147,7 @@ def analysis_sdk_set_version(
     safe_provider = "".join(
         char for char in synthesizer_provider.strip().lower() if char.isalnum() or char in {"-", "_"}
     ) or "default"
-    return f"{'+'.join(selected)}-v2-synth-{safe_provider}"
+    return f"{'+'.join(selected)}-v3-verified-single-synth-{safe_provider}"
 
 
 def effective_codex_home(env: Mapping[str, str] | None = None) -> Path:

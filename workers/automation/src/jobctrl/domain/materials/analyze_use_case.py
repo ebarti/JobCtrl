@@ -8,9 +8,9 @@ The application-layer orchestrator for Phase 1 (sits beside
   2. Cache short-circuit (D-11/D-12): if an analysis already exists for the same
      ``(snapshot_hash, PROMPT_VERSION, SDK_SET_VERSION)`` cache key and
      ``force`` is False, return it — never re-reason on re-tailor.
-  3. Run the 3-SDK merge+synthesize ensemble (grounding-gated + synthesized
-     inside the runner), surfacing partial failures (D-08).
-  4. Re-validate the synthesized canonical's grounding (defense in depth) and
+  3. Run the admitted-provider ensemble: promote a sole verified draft, or
+     synthesize multiple admitted drafts, surfacing partial failures (D-08).
+  4. Re-validate the canonical's grounding (defense in depth) and
      persist a new generation, superseding prior ones (D-13).
   5. Publish ``EmployerAnalyzed`` (Python factory + ``job_events`` row so the
      read-side projection rebuilds and the SSE router fans out).
@@ -176,7 +176,7 @@ class AnalyzeJobUseCase:
         outcome = await self._run_ensemble(jd_snapshot, verify_prose=verify_prose, entity_id=str(job_id))
         verify_prose(outcome.canonical)
 
-        # Defense in depth: re-validate the synthesized canonical's grounding AND
+        # Defense in depth: re-validate the canonical's grounding AND
         # snap its evidence spans to verbatim JD text before persistence (the
         # runner already grounds+snaps, but persistence is the hard boundary —
         # never persist a fabricated span, and the persisted spans must be

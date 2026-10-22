@@ -216,8 +216,8 @@ does not add, remove, or rename those search targets.
 - **The Candidate Profile owns candidate claims.** Scoring receives an immutable
   profile snapshot; neither analysis nor scoring can add experience or skills.
 - **Discovery supplies the canonical requirement reading.** It records role
-  framing, requirements, priorities, keywords, posting evidence, synthesis,
-  and generation identity. Scoring and Tailoring consume that accepted record;
+  framing, requirements, priorities, keywords, posting evidence, canonicalization
+  policy and generation identity. Scoring and Tailoring consume that accepted record;
   its perspective and recovery rules stay in
   [Discovery](discovery.md#employer-analysis-perspectives).
 - **Scoring owns the decision record.** Versioned `job_scores` rows hold the

@@ -89,7 +89,7 @@ PROMPT_VERSION = "employer-analysis-v4-determinations"
 # or model ids change so the cache invalidates (D-12). The config.json
 # ``analysis_legs`` setting records intentional degraded-mode choices, so cache
 # keys also reflect those choices.
-SDK_SET_VERSION = "claude+codex+antigravity-v2-synth-default"
+SDK_SET_VERSION = "claude+codex+antigravity-v3-verified-single-synth-default"
 
 RequirementTier = Literal["must_have", "nice_to_have"]
 RequirementCoverageScope = Literal[
