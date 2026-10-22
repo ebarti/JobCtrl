@@ -545,6 +545,16 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For blocking-activity cancellation heartbeats, run locked
+`pytest tests/test_p1b_error_inversion.py tests/test_workflow_control_capacity.py tests/test_activity_connection_lifetime.py`.
+Use both the ephemeral time-skipping server and an independent real Temporal
+dev server. Hold cooperative cleanup longer than the server heartbeat but
+shorter than the existing cancellation grace; the actual history must record
+activity cancellation with no heartbeat timeout. The time-skipping server alone
+does not reproduce the real server's cancellation heartbeat expiry. Preserve
+ignored-cancellation abandonment, hard-timeout retry capacity, connection
+cleanup, and workflow ownership.
+
 For terminal enrichment preparation handoff, run locked
 `pytest tests/test_workflow_discovery.py tests/test_discovery_enrichment_handoff.py tests/test_discovery_preparation_orchestration.py`.
 Use an independent Temporal test server and owned exact-schema SQLite data.

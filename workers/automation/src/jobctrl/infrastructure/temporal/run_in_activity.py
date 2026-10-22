@@ -211,8 +211,22 @@ async def run_blocking_with_heartbeat(
         )
         if cancel_wait_seconds > 0:
             try:
-                done, _pending = await asyncio.wait({task}, timeout=cancel_wait_seconds)
-                if task in done:
+                deadline = loop.time() + cancel_wait_seconds
+                while not task.done():
+                    remaining = deadline - loop.time()
+                    if remaining <= 0:
+                        break
+                    done, _pending = await asyncio.wait(
+                        {task}, timeout=min(poll_interval, remaining),
+                    )
+                    if task in done:
+                        break
+                    # WAIT_CANCELLATION_COMPLETED still owns the activity
+                    # until this drain settles. Keep a short server heartbeat
+                    # alive without extending the bounded cleanup deadline.
+                    if heartbeat_supported:
+                        activity.heartbeat("stopping")
+                if task.done():
                     await task
             except Exception:  # noqa: BLE001 - cancellation cleanup must not mask cancellation
                 pass

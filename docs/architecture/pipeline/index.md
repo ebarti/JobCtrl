@@ -253,7 +253,11 @@ Primary implementation files (repo-relative):
 - `workers/automation/src/jobctrl/infrastructure/temporal/finalize.py` — the
   workflow envelope (`record_workflow_started` / `record_workflow_outcome`).
 - `workers/automation/src/jobctrl/infrastructure/temporal/run_in_activity.py`
-  — `run_blocking_with_heartbeat`.
+  — `run_blocking_with_heartbeat`. Its bounded cancellation drain continues
+  heartbeating until the blocking thread settles or the original grace expires;
+  a short heartbeat must not turn an intentional handoff into a timeout. Hard
+  activity deadlines, cooperative cancellation and abandoned-executor recovery
+  still apply.
 - `workers/automation/src/jobctrl/infrastructure/temporal/runtime_guard.py` —
   `assert_activity_runtime`.
 - `workers/automation/src/jobctrl/discovery/workflow.py`,
