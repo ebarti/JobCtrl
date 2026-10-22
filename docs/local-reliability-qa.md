@@ -252,6 +252,18 @@ incomplete, not a pass; deterministic external fixtures do not certify live ATS
 reliability.
 
 
+## Automatic Material Declines
+
+Use owned SQLite and real Temporal fixtures to prove a canonical manual Apply
+skip prevents new automatic Tailor/Cover admission. Exercise fresh selection,
+frozen reservations, activity execution and a second-writer change before the
+locked claim. Keep the original survivor cohort identity, release only
+unstarted automatic queued ownership, preserve attempts and accepted materials,
+and prove an empty filtered cohort cannot select unrelated jobs. Another
+tenant, legacy apply fields, stale reason metadata and `MIN_SCORE` must not
+become manual-decline authority. Clearing the canonical decline permits normal
+eligibility, and an explicit foreground request retains its existing contract.
+
 ## Semantic Determinations
 
 Use an owned synthetic workspace for these risk-tier 2/3 paths. Do not grade model

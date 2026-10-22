@@ -61,6 +61,18 @@ approved materials are reused. Attempts are preserved, capped by the smaller
 of the stage limit and five, and delayed by `min(1800, 60 * 2^attempts)` seconds.
 Both dispatch and the workflow enforce the normal spend preflight.
 
+Automatic Tailor/Cover also respect a canonical manual Apply decline: `skipped`,
+no error code, and non-retryable. This differs from a `MIN_SCORE` policy skip;
+legacy fields and retained reason metadata do not decide the outcome. New
+selection, activity filtering and the locked per-job claim share this veto.
+Before reusing a frozen reservation, the coordinator releases only declined,
+unstarted queued automatic material ownership to pending, recording its former
+reservation without consuming an attempt. Surviving members retain the original
+frozen cohort/workflow identity; an all-declined cohort cannot block unrelated
+work. The Apply outcome and accepted materials remain intact. Resetting Apply
+can restore normal automatic eligibility. Explicit foreground generation and
+Enrich/Score are unchanged; cooperative Cancel stops already-admitted work.
+
 `pipeline/public_fetch_recovery.py` is a narrow exception for a still-current
 non-retryable `DETAIL_UNSAFE_URL`: the canonical stage, enrichment attempt, and
 latest `StageFailed` event must agree. It accepts typed `dns_non_public` evidence
