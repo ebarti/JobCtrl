@@ -490,6 +490,7 @@ async def test_automatic_compensation_refresh_activity_materializes_safe_counts(
             insufficient_results=1,
             failed_results=0,
             warnings=("cost_of_living_only",),
+            diagnostics={"owner": kwargs["owner"], "tenantId": kwargs["tenant_id"], "levelsFyiTargets": []},
         )
 
     def fake_materialize(conn, **kwargs):
@@ -536,6 +537,7 @@ async def test_automatic_compensation_refresh_activity_materializes_safe_counts(
         estimates_written=2,
         estimates_unchanged=1,
         warnings=("cost_of_living_only",),
+        diagnostics={"owner": captured["refresh"]["owner"], "tenantId": "local", "levelsFyiTargets": []},
     )
     assert captured["activity_name"] == "discover:automatic-compensation"
     assert captured["refresh"]["tenant_id"] == "local"

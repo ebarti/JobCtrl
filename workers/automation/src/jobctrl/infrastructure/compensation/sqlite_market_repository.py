@@ -32,6 +32,7 @@ from jobctrl.infrastructure.network import (
 from jobctrl.infrastructure.compensation.levels_fyi_public import (
     DEFAULT_LEVELS_FYI_PUBLIC_MAX_PAGES,
     LevelsFyiPublicLoadOutcome,
+    LevelsFyiPublicTargetOutcome,
     LevelsFyiPublicTarget,
     load_levels_fyi_public_observations,
 )
@@ -174,6 +175,7 @@ class ReportedCompensationSourceLoad:
     glassdoor_count: int = 0
     euro_top_tech_count: int = 0
     source_errors: tuple[str, ...] = ()
+    levels_fyi_target_outcomes: tuple[LevelsFyiPublicTargetOutcome, ...] = ()
 
     @property
     def licensed_count(self) -> int:
@@ -696,7 +698,9 @@ def load_default_reported_compensation_observations(
         else ()
     )
     if any(
-        outcome.unavailable or outcome.level_lookup_unavailable or outcome.reachable_pages < outcome.requested_pages
+        any(target.failed for target in outcome.targets) if outcome.targets else (
+            outcome.unavailable or outcome.level_lookup_unavailable or outcome.reachable_pages < outcome.requested_pages
+        )
         for outcome in levels_fyi_outcomes
     ):
         source_errors.append("levels_fyi_public_unavailable")
@@ -760,6 +764,7 @@ def load_default_reported_compensation_observations(
         glassdoor_count=len(glassdoor),
         euro_top_tech_count=len(eurotoptech),
         source_errors=tuple(source_errors),
+        levels_fyi_target_outcomes=tuple(target for outcome in levels_fyi_outcomes for target in outcome.targets),
     )
 
 

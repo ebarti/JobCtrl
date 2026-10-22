@@ -608,8 +608,15 @@ acquisition. Replay histories with and without the source-budget patch. These ar
 structural ownership/transaction checks, with no native data or model calls.
 
 For automatic compensation classification and refresh ownership, run locked
-`pytest tests/test_compensation_classification_parallelism.py tests/test_automatic_compensation_refresh.py tests/test_compensation_refresh_state.py tests/test_compensation_refresh_temporal.py tests/test_workflow_discovery.py`.
+`pytest tests/test_compensation_source_outcomes.py tests/test_levels_fyi_public.py tests/test_compensation_classification_parallelism.py tests/test_automatic_compensation_refresh.py tests/test_compensation_refresh_state.py tests/test_compensation_refresh_temporal.py tests/test_workflow_discovery.py`.
 Use owned exact-schema SQLite and synthetic provider rows. Prove configured
+target-code deduplication and source/derivation error isolation across independent
+role, level and country slices. Exercise HTTP rejections, empty/incompatible
+responses, parser exceptions, unsupported coverage and exhausted page budgets;
+cache upgrades for one level must not change a completed generic target receipt.
+Verify exact source fingerprints and cached classification IDs on rejected rows,
+bounded receipt omission counts and actual Temporal activity-result readback and
+replay, without retaining source bodies or exception messages. Prove configured
 overlap/capacity, exact duplicate/cache identities and ordering, product-lane and
 spend admission, thread-local connection cleanup, live renewal, atomic stale-owner
 rejection and accepted-range preservation. Hold admitted model calls while a real

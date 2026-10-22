@@ -140,6 +140,7 @@ class AutomaticCompensationRefreshActivityOutput:
     estimates_unchanged: int = 0
     estimates_cleared: int = 0
     warnings: tuple[str, ...] = ()
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -524,6 +525,7 @@ async def automatic_compensation_refresh_activity(
             estimates_unchanged=materialization.estimates_unchanged,
             estimates_cleared=materialization.estimates_cleared,
             warnings=warnings,
+            diagnostics=refresh.diagnostics,
         )
 
     try:

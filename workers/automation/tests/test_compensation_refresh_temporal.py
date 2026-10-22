@@ -1,8 +1,10 @@
 """Actual activity timeout propagation with synthetic public rows and an owned DB."""
 import asyncio
+import json
 from datetime import timedelta
 import threading
 from types import SimpleNamespace
+from urllib.error import HTTPError
 import uuid
 
 import pytest
@@ -10,11 +12,15 @@ from temporalio import workflow
 from temporalio.client import WorkflowFailureError
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, TimeoutError as ActivityTimeout, TimeoutType
-from temporalio.worker import UnsandboxedWorkflowRunner, Worker
+from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
 
 from jobctrl import database as database_module
 from jobctrl.database import close_connection, init_db
-from jobctrl.discovery.activities import AutomaticCompensationRefreshActivityInput, automatic_compensation_refresh_activity
+from jobctrl.discovery.activities import (
+    AutomaticCompensationRefreshActivityInput, AutomaticCompensationRefreshActivityOutput,
+    automatic_compensation_refresh_activity,
+)
+from jobctrl.infrastructure.compensation.levels_fyi_public import load_levels_fyi_public_observations
 from jobctrl.infrastructure.compensation.sqlite_market_repository import ReportedCompensationSourceLoad
 from jobctrl.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat, shutdown_activity_executors
 from tests.compensation_fakes import ClassificationModel, configure_classifier, observation, put_job, refresh
@@ -32,6 +38,101 @@ class OwnedCompensationTimeoutWorkflow:
             heartbeat_timeout=timedelta(seconds=10),
             retry_policy=RetryPolicy(maximum_attempts=1),
         )
+
+
+@workflow.defn(name="OwnedCompensationReceiptWorkflow")
+class OwnedCompensationReceiptWorkflow:
+    @workflow.run
+    async def run(self) -> AutomaticCompensationRefreshActivityOutput:
+        return await workflow.execute_activity(
+            automatic_compensation_refresh_activity,
+            AutomaticCompensationRefreshActivityInput(tenant_id="local"),
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )
+
+
+@pytest.mark.asyncio
+async def test_actual_activity_records_scoped_source_and_cached_classification_receipts(tmp_path, monkeypatch):
+    path = tmp_path / "owned-compensation-receipts.sqlite"
+    monkeypatch.setattr(database_module, "DB_PATH", path)
+    conn = init_db(path)
+    put_job(conn, family="engineering_management", seniority="director")
+    put_job(conn, job_id="22222222-2222-4222-8222-222222222222", family="operations", seniority="director")
+    model = ClassificationModel(family="unknown")
+    configure_classifier(monkeypatch, model)
+    refresh(conn, rows=(observation(),))
+    assert len(model.calls) == 1
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.temporal.concurrency.resolve_max_concurrent_activities",
+        lambda: SimpleNamespace(value=2),
+    )
+
+    def fetch(url):
+        raise HTTPError(url, 403, "private exception message", {}, None)
+
+    def load(**kwargs):
+        outcomes = []
+        load_levels_fyi_public_observations(
+            kwargs["levels_fyi_targets"], fetch_text=fetch, on_load_outcome=outcomes.append,
+        )
+        return ReportedCompensationSourceLoad(
+            observations=(observation(),), source_errors=("levels_fyi_public_unavailable",),
+            levels_fyi_target_outcomes=outcomes[0].targets,
+        )
+
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.compensation.automatic_refresh.load_default_reported_compensation_observations", load,
+    )
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.compensation.automatic_refresh.load_eurostat_actual_individual_consumption_price_levels",
+        lambda **_kwargs: (),
+    )
+    try:
+        async with local_env() as env:
+            queue = f"owned-compensation-receipt-{uuid.uuid4()}"
+            async with Worker(
+                env.client, task_queue=queue, workflows=[OwnedCompensationReceiptWorkflow],
+                activities=[automatic_compensation_refresh_activity], workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                handle = await env.client.start_workflow(
+                    OwnedCompensationReceiptWorkflow.run, id=queue, task_queue=queue,
+                )
+                result = await asyncio.wait_for(handle.result(), 30)
+                description = await handle.describe()
+                history = await handle.fetch_history()
+            completed = [event.activity_task_completed_event_attributes for event in history.events
+                         if event.HasField("activity_task_completed_event_attributes")]
+            scheduled = [event.activity_task_scheduled_event_attributes for event in history.events
+                         if event.HasField("activity_task_scheduled_event_attributes")]
+            assert len(completed) == len(scheduled) == 1
+            recorded = json.loads(completed[0].result.payloads[0].data)
+            assert recorded["diagnostics"] == result.diagnostics
+            assert result.failed_results == result.insufficient_results == 1
+            assert result.diagnostics["owner"] == f"discover:{queue}:{description.run_id}:{scheduled[0].activity_id}:1"
+            targets = {item["occupationFamilyCode"]: item for item in result.diagnostics["levelsFyiTargets"]}
+            assert targets["operations"]["coverage"] == "unsupported_role" and not targets["operations"]["failed"]
+            assert targets["engineering_management"]["failed"]
+            assert {request["httpStatus"] for request in targets["engineering_management"]["requests"]} == {403}
+            receipt, = result.diagnostics["rejectedObservations"]
+            assert receipt["reason"] == "missing_role_family"
+            stored = conn.execute(
+                "SELECT entity_id FROM semantic_determinations WHERE tenant_id='local' AND determination_id=?",
+                (receipt["classificationId"],),
+            ).fetchone()
+            assert stored[0] == receipt["sourceFingerprint"] == receipt["classificationEntityId"]
+            assert len(model.calls) == 1  # The recorded receipt joins the pre-existing accepted classification.
+            assert "private exception message" not in json.dumps(recorded)
+            assert not any(event.HasField(name) for event in history.events for name in (
+                "activity_task_failed_event_attributes", "activity_task_timed_out_event_attributes",
+                "workflow_task_failed_event_attributes",
+            ))
+            await Replayer(
+                workflows=[OwnedCompensationReceiptWorkflow], workflow_runner=UnsandboxedWorkflowRunner(),
+            ).replay_workflow(history)
+    finally:
+        shutdown_activity_executors()
+        close_connection(path)
 
 
 @pytest.mark.asyncio
