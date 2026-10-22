@@ -329,7 +329,9 @@ active work before suggesting another run. A positive total tells you to review
 that work first; unavailable inventory is reported as unknown, never as idle.
 The disabled Discover action reports the occupied worker-slot count and known
 active stages, and links to Runs to inspect progress or cancel work. Saved-posting
-checks appear in the active-work inventory alongside pipeline stages. These
+checks and manual URL imports appear in the active-work inventory alongside
+pipeline stages. URL intake is labeled **Import job URL**, including before
+the Job row exists; its private URL is excluded from runtime telemetry. These
 checks use shared worker slots even when the selected Discover run has already
 ended. The selected closed run's end time distinguishes its historical outcomes
 from today's active work. The action refreshes automatically and becomes

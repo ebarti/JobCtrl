@@ -98,6 +98,31 @@ describe("pipeline operations read model", () => {
     expect(result.activeItemsTruncated).toBe(true);
   });
 
+  it("reports four standalone URL imports without inventing pipeline stages or a Discover execution", () => {
+    const fixture = createFixture();
+    insertHeartbeat(fixture, {
+      activeSlots: 4, counts: { job_url_import: 4 },
+      details: Array.from({ length: 4 }, (_, index) => ({
+        ...activityDetail("job_url_import", `op_${String(index).padStart(24, "0")}`, unmatchedWorkflowRef("intake")),
+        workflowRef: null,
+      })),
+    });
+    const result = snapshot(fixture);
+    expect(result.execution).toBeNull();
+    expect(result.capacity).toMatchObject({ activeSlots: 4 });
+    expect(result.activeItemsTotal).toBe(4);
+    expect(result.activeItemsTruncated).toBe(false);
+    expect(result.activeStageCounts).toEqual([]);
+    expect(result.activeItems).toHaveLength(4);
+    for (const item of result.activeItems) {
+      expect(item).toMatchObject({
+        kind: "unresolved_runtime_activity", activityType: "job_url_import", stage: null,
+        workflowId: null, attempt: 1,
+      });
+    }
+    expect(result.projectionCoverage?.status).toBe("recovering");
+  });
+
   it("reports recovering coverage when fresh runtime work has no selected execution", () => {
     const fixture = createFixture();
     insertHeartbeat(fixture, {
@@ -1798,6 +1823,7 @@ function activityDetail(
   executionRef = DISCOVER_RUN_ID,
 ): Record<string, unknown> {
   const kinds: Record<string, string> = {
+    job_url_import: "job-url-import",
     render_pdf: "job-pdf-render",
     score_job: "job-scoring",
     tailor_job: "job-tailoring",
