@@ -45,8 +45,7 @@ _PATCH = "preparation-score-cancellation-v1"
 def _score(conn, llm, **kwargs):
     from jobctrl.domain.scoring import ScoringCriteria
 
-    return scorer.score_job_by_id(
-        _JOB_ID_A,
+    options = dict(
         tenant_id=_TENANT_A,
         profile_snapshot=_profile_snapshot(_TENANT_A),
         resume_text="Synthetic Python engineer.",
@@ -54,8 +53,99 @@ def _score(conn, llm, **kwargs):
         llm_port=llm,
         require_employer_analysis=False,
         workflow_id="direct-owner",
-        **kwargs,
     )
+    options.update(kwargs)
+    return scorer.score_job_by_id(_JOB_ID_A, **options)
+
+
+@pytest.mark.parametrize("state", ["canceled", "pending", "queued", "running"])
+def test_direct_cold_entry_cannot_reclaim_stopped_or_foreign_work(conn, state):
+    _seed_target(conn, tenant_id=_TENANT_A, job_id=_JOB_ID_A)
+    owner = "direct-owner" if state == "canceled" else "successor-owner"
+    ensure_job_stage_rows(conn, _JOB_ID_A, tenant_id=_TENANT_A)
+    set_stage_state(
+        conn,
+        _JOB_ID_A,
+        "score",
+        state,
+        tenant_id=_TENANT_A,
+        metadata={"activityOwner": owner},
+        validate_transition=False,
+    )
+    conn.commit()
+    before = tuple(
+        conn.execute(
+            "SELECT * FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage='score'",
+            (str(_TENANT_A), str(_JOB_ID_A)),
+        ).fetchone()
+    )
+    llm = _StrongLlm()
+    with pytest.raises(PreparationReservationLost):
+        _score(conn, llm)
+    assert (
+        tuple(
+            conn.execute(
+                "SELECT * FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage='score'",
+                (str(_TENANT_A), str(_JOB_ID_A)),
+            ).fetchone()
+        )
+        == before
+    )
+    assert llm.calls == 0 and conn.execute("SELECT COUNT(*) FROM job_scores").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("state", ["canceled", "queued", "running"])
+def test_direct_cache_entry_preserves_stopped_or_foreign_state(conn, state):
+    _seed_target(conn, tenant_id=_TENANT_A, job_id=_JOB_ID_A)
+    assert _score(conn, _StrongLlm()).ok
+    score = tuple(conn.execute("SELECT * FROM job_scores").fetchone())
+    set_stage_state(
+        conn,
+        _JOB_ID_A,
+        "score",
+        state,
+        tenant_id=_TENANT_A,
+        attempt_count=2,
+        metadata={"activityOwner": "successor-owner"},
+        validate_transition=False,
+    )
+    conn.commit()
+    before = tuple(
+        conn.execute(
+            "SELECT * FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage='score'",
+            (str(_TENANT_A), str(_JOB_ID_A)),
+        ).fetchone()
+    )
+    llm = _StrongLlm()
+    with pytest.raises(PreparationReservationLost):
+        _score(conn, llm)
+    assert (
+        tuple(
+            conn.execute(
+                "SELECT * FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage='score'",
+                (str(_TENANT_A), str(_JOB_ID_A)),
+            ).fetchone()
+        )
+        == before
+    )
+    assert tuple(conn.execute("SELECT * FROM job_scores").fetchone()) == score and llm.calls == 0
+
+
+def test_new_explicit_owner_can_reuse_cache_without_another_attempt_or_rescore(conn):
+    _seed_target(conn, tenant_id=_TENANT_A, job_id=_JOB_ID_A)
+    assert _score(conn, _StrongLlm()).ok
+    llm = _StrongLlm()
+    assert _score(conn, llm, workflow_id="next-explicit-owner").ok
+    assert llm.calls == 0
+    assert (
+        conn.execute(
+            "SELECT attempt_count FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage='score'",
+            (str(_TENANT_A), str(_JOB_ID_A)),
+        ).fetchone()[0]
+        == 1
+    )
+    result = _score(conn, llm, workflow_id="next-explicit-owner", rescore=True)
+    assert result.ok and result.score.version == 2
 
 
 @pytest.mark.parametrize("stop", ["cancel", "reset", "successor"])

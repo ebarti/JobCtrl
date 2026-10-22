@@ -824,6 +824,8 @@ def score_job_by_id(
         return ScoreJobOutcome(ok=True, score=committed_score)
     if not job.get("full_description"):
         return ScoreJobOutcome(ok=False, score=None, error=f"Job is not enriched: {stable_job_id}")
+    if workflow_id and not enforce_workflow_ownership:
+        _assert_direct_score_admission(conn, tenant_id, stable_job_id, workflow_id, cancel_event)
 
     from jobctrl.enrichment.availability import require_fresh_active, assert_fresh_candidate
     from jobctrl.infrastructure.preparation_recovery import PreparationReservationLost, claim_preparation_reservation
@@ -922,7 +924,7 @@ def score_job_by_id(
     existing = repository.load(tenant_id, stable_job_id)
     if existing is not None and not rescore:
         if enforce_workflow_ownership:
-            recorded = _record_score_stage_succeeded(
+            _record_score_stage_succeeded(
                 conn,
                 job=job,
                 score=existing,
@@ -930,15 +932,15 @@ def score_job_by_id(
                 metadata=owned_metadata,
                 cancel_event=cancel_event,
             )
-            if not recorded:
-                raise PreparationReservationLost("Score activity no longer owns its stage")
         else:
-            _ensure_existing_score_stage_succeeded(
-                conn,
-                job=job,
-                score=existing,
-                tenant_id=tenant_id,
-            )
+            with claim_preparation_reservation(
+                conn, tenant_id=tenant_id, job_id=stable_job_id, stage="score",
+                workflow_id=None, cancel_event=cancel_event, expected_posting_url=expected_posting_url,
+            ):
+                _assert_direct_score_admission(conn, tenant_id, stable_job_id, workflow_id, cancel_event)
+                _ensure_existing_score_stage_succeeded(
+                    conn, job=job, score=existing, tenant_id=tenant_id,
+                )
         return ScoreJobOutcome(ok=True, score=existing)
     started_at = utc_now()
     metadata = owned_metadata or _score_activity_metadata(
@@ -958,6 +960,7 @@ def score_job_by_id(
             cancel_event=cancel_event,
             expected_posting_url=expected_posting_url,
         ):
+            _assert_direct_score_admission(conn, tenant_id, stable_job_id, workflow_id, cancel_event)
             ensure_job_stage_rows(
                 conn,
                 stable_job_id,
@@ -1105,6 +1108,25 @@ class _OwnedScoreRepository:
         except BaseException:
             self._conn.rollback()
             raise
+
+
+def _assert_direct_score_admission(conn, tenant_id, job_id, owner, cancel_event):
+    """A direct request may not acquire stopped work or another live owner."""
+    if not owner:
+        return
+    from jobctrl.infrastructure.preparation_recovery import PreparationReservationLost
+
+    if cancel_event is not None and cancel_event.is_set():
+        raise PreparationReservationLost("Score activity canceled before admission")
+    row = conn.execute(
+        "SELECT state, json_extract(metadata_json, '$.activityOwner') FROM job_stage_states "
+        "WHERE tenant_id=? AND job_id=? AND stage='score'", (str(tenant_id), str(job_id)),
+    ).fetchone()
+    if row is not None and (
+        row[0] == "canceled"
+        or (row[0] in {"pending", "queued", "running"} and row[1] and row[1] != owner)
+    ):
+        raise PreparationReservationLost("Score activity no longer owns admission")
 
 
 def _score_activity_may_write(conn, tenant_id, job_id, owner, cancel_event) -> bool:

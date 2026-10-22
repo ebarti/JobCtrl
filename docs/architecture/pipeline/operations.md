@@ -732,6 +732,12 @@ defensive dashboard read keep them truthful on existing databases:
   recovery also checks ordinary preparation owners against their exact Temporal
   execution, canonical job and selected step; unavailable history leaves the
   row untouched. Already committed results survive cancellation.
+  Direct admission and cached-score reuse check current ownership under the
+  writer lock before changing a stage. Recovery mutates only the verified job
+  for a single-job preparation and requires an explicit known terminal status;
+  an unknown status never releases ownership. To revoke queued work, cancel its
+  exact workflow and observe terminalization before resetting the stage. A
+  reset-only action changes local stage state without canceling Temporal work.
 
 ## Recurring Saved Posting Checks
 
