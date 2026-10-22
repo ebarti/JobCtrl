@@ -213,6 +213,7 @@ durable control composed on `/discovery` is stored in SQLite instead.
 | `codex_reasoning_efforts` | Object mapping bare Codex model IDs to effort IDs; default `{}` | Explicit effort for newly constructed Codex adapters. Applies to thread and turn, overrides legacy numeric thinking budgets, and preserves unrelated models when patched. An absent entry retains existing per-call behavior. |
 | `tailoring_generator_models` | Non-empty array of model IDs or `null`; default `null` | Ordered generator-model policy for newly started tailoring workflows. `null` uses the provider/default policy. |
 | `tailoring_judge_model` | Model ID or `null`; default `null` | Judge model for newly started tailoring workflows. `null` uses the provider/default policy. |
+| `resume_voice_polish` | Boolean, default `false` | **Extra résumé polish** under Settings → Model selection. Newly constructed résumé preparation skips the additional post-approval writing pass by default. `true` requests it; changed prose still needs fresh factual, quality and applicable persona reviews. Existing accepted artifacts and already-running work are unchanged. |
 | `tailoring_judge_min_score` | Number `0–1`, default `0.82` | Minimum judge score for accepting a tailored candidate. |
 | `apply_max_budget_usd` | Non-negative number, default `5` | Per-application AI-agent budget cap in USD. |
 | `apply_timeout_seconds` | Integer `60–3600`, default `900` | Time limit for one application agent run. |

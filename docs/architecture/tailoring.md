@@ -28,7 +28,7 @@ Canonical facts enter bounded prompts by ID. The generator returns strict JSON w
 4. Assemble and check format, IDs, immutable fields and exact values.
 5. Verify final claims and provenance with the model, then judge artifact quality separately. High-fit resumes (normalized fit at least 0.8) retain a separate, cited six-persona review. Its typed verdict decides acceptance; the persona score is diagnostic.
 6. Repair from model findings within the attempt budget. No lexical gate or score cutoff replaces the verdict.
-7. If voice is requested, the model chooses wording changes; changed text receives fresh claim verification, quality and applicable persona review. An optional rewrite provider or shape failure records a rejected voice attempt and retains the already-verified candidate. A failure of verification for changed text blocks that refresh.
+7. Extra post-approval voice polish is opt-in (`resume_voice_polish`, default `false`). With it disabled, retain the exact selected candidate and its factual, quality and applicable persona receipts, recording a skipped voice audit linked to those reviews. Explicit injected voice ports retain their requested behavior. If voice is requested, the model chooses wording changes; changed text receives fresh claim verification, quality and applicable persona review. An optional rewrite provider or shape failure records a rejected voice attempt and retains the already-verified candidate. A failure of verification for changed text blocks that refresh.
 8. Commit the accepted generation and audit together. A failed attempt cannot replace the accepted resume/PDF or its approval.
 
 ## Local Application Boundary

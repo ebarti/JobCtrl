@@ -91,7 +91,12 @@ last accepted resume.
    Selected achievements and user pins remain required. Dates and other
    canonical context can support a claim when used, without requiring their
    repetition in the summary or granting automatic coverage credit.
-5. **Persist accepted output.** Accepted text, PDF lineage, determinations,
+5. **Persist accepted output.** Extra résumé polish is off by default in
+   Settings → Model selection. Required factual, quality and applicable persona
+   reviews run in either mode; with the option off, the exact approved candidate
+   is retained. Enabling it requests an additional wording pass for newly
+   generated résumés and may add another complete review chain.
+   Accepted text, PDF lineage, determinations,
    anchors and coverage are recorded together. Any optional voice rewrite
    receives fresh claim verification and quality review on the final text.
    A failed optional voice rewrite retains the candidate already verified by

@@ -235,8 +235,12 @@ def _build_use_case(
         llm_policy = _build_llm_policy()
     if analyze_use_case is None:
         analyze_use_case = _build_analyze_use_case(conn=conn, tenant_id=tenant_id, publisher=publisher)
+    voice_skip_reason = "no_voice_port"
     if voice is None:
-        voice = _build_voice_port()
+        if config.get_resume_voice_polish_enabled():
+            voice = _build_voice_port()
+        else:
+            voice_skip_reason = "optional_voice_polish_disabled"
     if pdf_renderer is None:
         pdf_renderer = _build_pdf_renderer()
     from jobctrl.infrastructure.determinations import determination_dependencies
@@ -279,6 +283,7 @@ def _build_use_case(
         requirement_fit_repository=requirement_fit_repository,
         analyze_use_case=analyze_use_case,
         voice=voice,
+        voice_skip_reason=voice_skip_reason,
         pdf_renderer=pdf_renderer,
         unit_of_work=unit_of_work if default_flip_repositories else None,
     )

@@ -69,6 +69,7 @@ export function patchSettingsResponse(
       current.effectiveSettings.tailoringJudgeModel,
       body.tailoringJudgeModel,
     ),
+    resumeVoicePolish: persistedValue(current.effectiveSettings.resumeVoicePolish, body.resumeVoicePolish),
     applyMaxBudgetUsd: persistedValue(
       current.effectiveSettings.applyMaxBudgetUsd,
       body.applyMaxBudgetUsd,
@@ -110,6 +111,7 @@ export function patchSettingsResponse(
       ...(body.tailoringJudgeModel !== undefined
         ? { tailoringJudgeModel: body.tailoringJudgeModel }
         : {}),
+      ...(body.resumeVoicePolish !== undefined ? { resumeVoicePolish: body.resumeVoicePolish } : {}),
       ...(body.applyMaxBudgetUsd !== undefined
         ? { applyMaxBudgetUsd: body.applyMaxBudgetUsd }
         : {}),
