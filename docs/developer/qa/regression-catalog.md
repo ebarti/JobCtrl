@@ -529,6 +529,17 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For anonymous enrichment capture, run locked
+`pytest tests/test_enrichment_visible_capture.py tests/test_enrichment_extractors.py tests/test_optional_extension.py`.
+Exercise real owned browser DOMs with hidden dialog/comment preambles longer than
+the unchanged content cap, both a selected main and body fallback, CSS visibility
+inheritance, visible inert content and an actually over-budget visible prefix.
+The existing extractor must receive the exact visible description and link;
+hidden controls must not win. Prove the original DOM, full status capture and
+separately collected JSON-LD remain unchanged. Repeat the production public-page
+capture in an owned temporary workspace for an affected URL; keep captures private
+and do not replay them as semantic model fixtures.
+
 For selected-job demand, run locked `pytest tests/test_career_learning.py` and
 API `vitest run test/career-learning.test.ts` through their package owners.
 Require a no-model, read-only preview including all-missing descriptions;
