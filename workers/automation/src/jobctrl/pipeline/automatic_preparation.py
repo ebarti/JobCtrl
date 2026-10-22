@@ -272,7 +272,8 @@ async def _reconcile_stopped_activity_owners(client: Any, conn: sqlite3.Connecti
     owners = conn.execute(
         "SELECT DISTINCT s.stage, "
         "COALESCE(json_extract(s.metadata_json, '$.workflowId'), r.workflow_id) AS workflow_id, "
-        "json_extract(s.metadata_json, '$.activityOwner') AS temporal_run_id "
+        "json_extract(s.metadata_json, '$.activityOwner') AS temporal_run_id, "
+        "CASE WHEN r.workflow_type='JobPreparationWorkflow' THEN s.job_id END AS selected_job_id "
         "FROM job_stage_states s LEFT JOIN workflow_run_projections r "
         "ON r.tenant_id = s.tenant_id "
         "AND r.temporal_run_id = json_extract(s.metadata_json, '$.activityOwner') "
@@ -299,8 +300,13 @@ async def _reconcile_stopped_activity_owners(client: Any, conn: sqlite3.Connecti
             if exc.status == RPCStatusCode.NOT_FOUND:
                 continue
             raise
-        if description.status == WorkflowExecutionStatus.RUNNING:
+        if description.status not in {
+            WorkflowExecutionStatus.COMPLETED, WorkflowExecutionStatus.FAILED,
+            WorkflowExecutionStatus.CANCELED, WorkflowExecutionStatus.TERMINATED,
+            WorkflowExecutionStatus.TIMED_OUT, WorkflowExecutionStatus.CONTINUED_AS_NEW,
+        }:
             continue
+        selected = (owner["selected_job_id"],) if owner["selected_job_id"] else ()
         conn.execute("BEGIN IMMEDIATE")
         try:
             if description.status == WorkflowExecutionStatus.CANCELED:
@@ -310,7 +316,7 @@ async def _reconcile_stopped_activity_owners(client: Any, conn: sqlite3.Connecti
                         tenant_id=str(LOCAL_TENANT),
                         workflow_id=owner["temporal_run_id"],
                         stage=owner["stage"],
-                        job_ids=(),
+                        job_ids=selected,
                     ),
                 )
             else:
@@ -320,6 +326,7 @@ async def _reconcile_stopped_activity_owners(client: Any, conn: sqlite3.Connecti
                         tenant_id=str(LOCAL_TENANT),
                         workflow_id=owner["temporal_run_id"],
                         stage=owner["stage"],
+                        job_ids=selected,
                     ),
                 )
         except BaseException:
