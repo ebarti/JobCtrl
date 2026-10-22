@@ -197,6 +197,13 @@ not merge the jobs or turn either record into application history. See
 
 ## Launch And Observe Discovery
 
+Explicit source selection uses each retained registry entry's provider identity,
+even when that board is absent from the saved default board list. Planning
+preserves source state: disabled entries stay skipped and quarantined entries
+retain their bounded probe budget. A runnable broad-board entry without a known
+provider identity fails with a configuration error instead of being silently
+omitted from the requested run.
+
 Discovery owns the controls that decide what may enter a run; **Pipelines** owns
 starting and observing that run. In Pipelines, choose the Discover action, set a
 bounded result limit, internal source concurrency, optional sources, and dry-run

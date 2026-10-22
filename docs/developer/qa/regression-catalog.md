@@ -529,6 +529,19 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For selected broad-board routing, run locked
+`pytest tests/test_selected_board_wiring.py tests/test_source_registry.py tests/test_discovery_scheduler_pr4.py tests/test_discover_reliability.py`.
+Use owned exact-schema SQLite registry entries with a selected retained board
+outside the saved default subset. Exercise the real registry read, explicit
+selection, scheduler and durable provider-unit compilation for every registered
+board. Prove a two-board selection reaches both identities, disabled sources
+remain skipped, quarantined sources retain their existing probe budget, and
+owner, URL metadata, saved defaults and persisted registry rows do not change.
+An unknown runnable source or missing/malformed board configuration must raise
+a typed configuration failure before provider dispatch; disabled unknown sources
+remain safely skipped. Keep this format/identity QA independent of model
+judgments and native user data.
+
 For scoring evidence payloads, run the score-use-case, scoring-determination,
 exact-v7 score-runtime and semantic-determination suites. Inspect the actual
 composed request: canonical authored source IDs and exact text must appear once

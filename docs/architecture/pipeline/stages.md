@@ -23,6 +23,14 @@ tenant, deterministic workflow ID, and Temporal run ID. That exact identity is
 threaded through every stage below. Source-run IDs describe observations; they
 do not identify the Discover execution.
 
+Retained broad-board registry entries recover their provider board from the
+canonical source ID independently of the saved default board subset. Explicit
+selection therefore carries every runnable selected board through scheduling
+and provider-unit compilation. The family runner rejects missing or malformed
+board identity with `ConfigurationError` before provider dispatch; it never
+silently omits a board while retaining its allocated budget. Registry state,
+budgets and saved defaults are not rewritten during loading.
+
 `DiscoverWorkflow` decomposes into **four activities**, not one monolithic run:
 
 ```mermaid
