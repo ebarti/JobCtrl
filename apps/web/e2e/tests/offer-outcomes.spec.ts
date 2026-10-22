@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { checkA11y, injectAxe } from "axe-playwright";
 import { loadE2eDbPath } from "../fixtures/e2e-state.js";
 
@@ -53,6 +53,15 @@ test.afterEach(() => {
   }
 });
 
+async function openOutcomes(page: Page) {
+  await expect(page.locator("#job-detail-outcomes > .configuration-section__header [data-slot='collapsible-trigger']"))
+    .toHaveAttribute("aria-expanded", "false");
+  await page.getByRole("button", { name: "Sections", exact: true }).click();
+  await page.getByRole("navigation", { name: "Job detail sections" })
+    .getByRole("button", { name: "Application outcomes", exact: true }).click();
+  return page.getByRole("region", { name: "Offer terms and decisions" });
+}
+
 test("actual offer terms, decisions and corrections through Job Detail", async ({
   page,
 }) => {
@@ -71,7 +80,7 @@ test("actual offer terms, decisions and corrections through Job Detail", async (
   await page.goto(`/jobs/${JOB}`);
   await expect(page).toHaveTitle(/JobCtrl/);
   await expect(page).toHaveURL(new RegExp(`/jobs/${JOB}(?:[?]|$)`));
-  const panel = page.getByRole("region", { name: "Offer terms and decisions" });
+  const panel = await openOutcomes(page);
   await expect(
     panel.getByText("No actual offer terms recorded."),
   ).toBeVisible();
@@ -149,6 +158,7 @@ test("actual offer terms, decisions and corrections through Job Detail", async (
     panel.getByText("Offer decision: declined", { exact: true }),
   ).toBeVisible();
   await page.reload();
+  await openOutcomes(page);
   await expect(
     panel.getByText("Offer decision: declined", { exact: true }),
   ).toBeVisible();
@@ -178,6 +188,7 @@ test("actual offer terms, decisions and corrections through Job Detail", async (
   }, JOB);
   expect(contactResponse.status).toBe(200);
   await page.reload();
+  await openOutcomes(page);
   await page.getByText("Draft an offer communication", { exact: true }).click();
   await page
     .getByRole("combobox", { name: "Offer recipient", exact: true })

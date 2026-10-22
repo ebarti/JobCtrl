@@ -62,6 +62,11 @@ async function openPanel(page: Page) {
   await page.goto(`/jobs/${JOB}`);
   await expect(page).toHaveURL(new RegExp(`/jobs/${JOB}`));
   await expect(page).toHaveTitle(/JobCtrl/);
+  await expect(page.locator("#job-detail-artifacts > .configuration-section__header [data-slot='collapsible-trigger']"))
+    .toHaveAttribute("aria-expanded", "false");
+  await page.getByRole("button", { name: "Sections", exact: true }).click();
+  await page.getByRole("navigation", { name: "Job detail sections" })
+    .getByRole("button", { name: "Artifacts", exact: true }).click();
   const panel = page.getByRole("region", { name: "Editable DOCX exports" });
   await panel.scrollIntoViewIfNeeded();
   await expect(
