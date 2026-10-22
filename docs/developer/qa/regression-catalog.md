@@ -615,8 +615,9 @@ role, level and country slices. Exercise HTTP rejections, empty/incompatible
 responses, parser exceptions, unsupported coverage and exhausted page budgets;
 cache upgrades for one level must not change a completed generic target receipt.
 Verify exact source fingerprints and cached classification IDs on rejected rows,
-bounded receipt omission counts and actual Temporal activity-result readback and
-replay, without retaining source bodies or exception messages. Prove configured
+bounded receipt omission counts, Unicode receipt sizes through the actual Temporal
+payload converter, and activity-result readback and replay, without retaining
+source bodies or exception messages. Prove configured
 overlap/capacity, exact duplicate/cache identities and ordering, product-lane and
 spend admission, thread-local connection cleanup, live renewal, atomic stale-owner
 rejection and accepted-range preservation. Hold admitted model calls while a real

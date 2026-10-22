@@ -259,3 +259,46 @@ def test_target_receipt_count_and_large_public_request_are_bounded(database):
     assert result.failed_results == 1
     assert result.diagnostics["levelsFyiTargets"] == [] and result.diagnostics["levelsFyiTargetsOmitted"] == 1
     assert len(json.dumps(result.diagnostics).encode()) < 1024
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["rejection", "target"])
+@pytest.mark.parametrize("unicode_characters", [20_000, 60_000])
+async def test_unicode_receipt_limit_matches_temporal_wire_encoding(
+    database, monkeypatch, kind, unicode_characters,
+):
+    from temporalio.converter import DataConverter
+    from jobctrl.infrastructure.compensation.automatic_refresh import MAX_RECEIPT_LIST_BYTES
+    from jobctrl.infrastructure.compensation.levels_fyi_public import (
+        LevelsFyiPublicRequestOutcome, LevelsFyiPublicTargetOutcome,
+    )
+
+    put_job(database)
+    synthetic_id = "é" * unicode_characters
+    if kind == "rejection":
+        configure_classifier(monkeypatch, ClassificationModel(family="unknown"))
+        result = refresh(database, rows=(observation(snapshot=synthetic_id),))
+        key = "rejectedObservations"
+    else:
+        target = LevelsFyiPublicTargetOutcome(
+            LevelsFyiPublicTarget("software_engineering", "ES", "senior"), "supported",
+            requested_pages=1, requests=(LevelsFyiPublicRequestOutcome(
+                "https://www.levels.fyi/" + synthetic_id, "unavailable",
+            ),),
+        )
+        result = refresh(database, load=lambda _targets: ReportedCompensationSourceLoad(
+            observations=(), levels_fyi_target_outcomes=(target,),
+        ))
+        key = "levelsFyiTargets"
+    receipts = result.diagnostics[key]
+    payload, = await DataConverter.default.encode([receipts])
+    assert len(payload.data) <= MAX_RECEIPT_LIST_BYTES
+    assert result.diagnostics[key + "Omitted"] == int(unicode_characters == 60_000)
+    decoded, = await DataConverter.default.decode([payload])
+    assert decoded == receipts
+    if unicode_characters == 20_000:
+        assert len(receipts) == 1
+        if kind == "rejection":
+            assert receipts[0]["sourceSnapshotId"] == synthetic_id
+        else:
+            assert receipts[0]["requests"][0]["url"] == "https://www.levels.fyi/" + synthetic_id
