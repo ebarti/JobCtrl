@@ -176,7 +176,7 @@ activity call sites.
 
 | Workflow | Business activities | Key timeouts | Retry |
 | --- | --- | --- | --- |
-| `DiscoverWorkflow` | `plan_discovery_sources`, then one execution-scoped live `discovery_enrichment` alongside `discovery_source_family` producers, per-family preparation backstops, terminal reconcile enrichment, `automatic_compensation_refresh`, and terminal fan-out | source/enrichment 6 h; plan/fanout/compensation 30 min; live-enrich heartbeat 5 s; other heartbeats 2 min | source, enrich, and automatic compensation: 5 s→60 s ×3 |
+| `DiscoverWorkflow` | `plan_discovery_sources`, then one execution-scoped live `discovery_enrichment` alongside `discovery_source_family` producers, per-family preparation backstops, terminal reconcile enrichment, `automatic_compensation_refresh`, and terminal fan-out | source/enrichment/compensation 6 h; plan/fanout 30 min; live-enrich heartbeat 5 s; other heartbeats 2 min | source, enrich, and automatic compensation: 5 s→60 s ×3 |
 | `JobPipelineWorkflow` | serial stage dispatch; `discover`→child `DiscoverWorkflow`, `enrich`/`score`/`tailor`/`cover`→activities, `apply`→child `ApplyWorkflow` | score/tailor/cover 6 h; enrich 30 min per selected worker wave, capped at 6 h; heartbeat 2 min | enrich/score 5 s→60 s ×3; tailor/cover 10 s→120 s ×3 |
 | `JobPreparationWorkflow` | `score_job`, `tailor_job`, `cover_letter`, `render_pdf` in fixed order | score/tailor/cover 6 h; PDF 30 min; heartbeat 2 min | score ×3; tailor ×3; cover/pdf ×3 |
 | `ApplyWorkflow` | `apply_activity` | 2 h batch / 1 h continuous batch; heartbeat 60 s | live: 1 attempt; dry-run: 2 attempts |
@@ -187,6 +187,12 @@ activity call sites.
 | `InterviewPrepWorkflow` | `generate_interview_prep_activity` | 20 min | 2 attempts |
 | `ContactResearchWorkflow` | `check_spend_budget` preflight, then `run_contact_research` (one source-family activity: gateway-guarded fetch + LLM candidate extraction, proposing candidates in `needs_review`) | activity 30 min; heartbeat 2 min | 10 s→120 s ×3 |
 | `DurabilityProbeWorkflow` | durable timer only (diagnostic; no business activity) | caller-selected timer | Temporal timer recovery |
+
+The compensation model-work budget is versioned by
+`discover-compensation-model-budget-v1`; histories without that marker retain
+their recorded 30-minute activity budget. New histories use the same six-hour
+model-work ceiling as enrichment, with bounded classification concurrency,
+cooperative cancellation and exact live lease renewal.
 
 A few catalog details worth calling out:
 

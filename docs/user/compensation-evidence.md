@@ -24,7 +24,13 @@ Job interpretation and cached provider-row classifications use the same versione
 A failed refresh retains a previously accepted model-backed estimate and reports the blocked reason. It never substitutes a title/location classifier or fixed exchange rate. Compensation remains warning-only and cannot manufacture a hard eligibility blocker. The offline demo reports refresh unavailable. Native schema 13 withdraws old inferred estimates for recomputation from source evidence; the paired pre-upgrade backup remains recoverable.
 
 Ordinary Discovery refreshes missing slices or those whose seven-day freshness
-window has expired. Failed source availability retries after one day. A focused
+window has expired. Independent provider-row classifications run concurrently,
+bounded by the configured worker activity capacity. Each keeps its own strict
+source-bound determination; duplicate rows and cached classifications reuse the
+same recorded identity. An interrupted refresh stops new model admissions and
+preserves accepted ranges. A refresh still owned by another attempt, or waiting
+through a recorded failure backoff, reports that deferred state rather than
+claiming fresh completion. Failed source availability retries after one day. A focused
 retry uses the same lease and source policy. Euro Top Tech is a fixed public
 source; Glassdoor and Levels.fyi require an explicitly permitted access mode in
 Settings. An absent Levels.fyi preference leaves it disabled. **Reads are passive:**
@@ -121,6 +127,8 @@ source conflict is a warning to inspect, not a hidden decision rule.
 3. **Finish Discovery.** After terminal enrichment, `DiscoverWorkflow` invokes
    the replay-safe `automatic_compensation_refresh` activity. It deduplicates
    active role/level/country slices and skips every slice that is still fresh.
+   Healthy work renews its exact publication leases; cancellation and owner
+   replacement fence publication without withdrawing the last accepted result.
 4. **Parse posted evidence.** The worker records a model-backed posted-fact
    state, normalized legal range fields when available, parser identity,
    confidence, and warnings without overwriting the raw salary.

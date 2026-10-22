@@ -41,6 +41,7 @@ from jobctrl.discovery.workflow import (
     DiscoverWorkflowInput,
     DiscoverWorkflowResult,
     _AUTOMATIC_COMPENSATION_REFRESH_PATCH,
+    _COMPENSATION_MODEL_BUDGET_PATCH,
     _TERMINAL_ENRICHMENT_HANDOFF_PATCH,
     _activity_error_was_cancelled,
     _cancel_owned_enrichment,
@@ -584,17 +585,22 @@ def test_build_per_job_handoff_starts_scored_prep_with_params(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("legacy_history", [False, True])
-async def test_discover_workflow_runs_sources_then_enrichment_and_fanout(monkeypatch, legacy_history) -> None:
+@pytest.mark.parametrize("legacy_compensation_budget", [False, True])
+async def test_discover_workflow_runs_sources_then_enrichment_and_fanout(
+    monkeypatch, legacy_history, legacy_compensation_budget,
+) -> None:
     from jobctrl.discovery import workflow as discovery_workflow
 
     _reset_state()
     patched = discovery_workflow.workflow.patched
-    if legacy_history:
-        # Generate the pre-change branch with no terminal-handoff marker.
-        monkeypatch.setattr(
-            discovery_workflow.workflow, "patched",
-            lambda patch_id: False if patch_id == _TERMINAL_ENRICHMENT_HANDOFF_PATCH else patched(patch_id),
-        )
+    def historical_branch(patch_id):
+        if legacy_history and patch_id == _TERMINAL_ENRICHMENT_HANDOFF_PATCH:
+            return False
+        if legacy_compensation_budget and patch_id == _COMPENSATION_MODEL_BUDGET_PATCH:
+            return False
+        return patched(patch_id)
+
+    monkeypatch.setattr(discovery_workflow.workflow, "patched", historical_branch)
     _TARGETS.append(
         _Target(
             job_url="https://example.com/job/1",
@@ -632,6 +638,11 @@ async def test_discover_workflow_runs_sources_then_enrichment_and_fanout(monkeyp
     await Replayer(
         workflows=[DiscoverWorkflow], workflow_runner=UnsandboxedWorkflowRunner(),
     ).replay_workflow(history)
+    compensation = [event.activity_task_scheduled_event_attributes for event in history.events
+                    if event.HasField("activity_task_scheduled_event_attributes")
+                    and event.activity_task_scheduled_event_attributes.activity_type.name == "automatic_compensation_refresh"]
+    assert len(compensation) == 1
+    assert compensation[0].start_to_close_timeout.seconds == (1800 if legacy_compensation_budget else 21600)
     assert result.families_completed == ["jobspy", "workday", "smartextract"]
     assert result.families_failed == []
     assert result.preparation_started == 1
