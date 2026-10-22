@@ -66,6 +66,12 @@ When isolated auth is absent, setup and generation retain one-time reuse
 of a regular Codex CLI `auth.json`; the explicit Codex provider verify action
 uses the same copy-once behavior before checking the isolated login. Existing
 JobCtrl-owned auth is not overwritten, and the normal Codex home is unchanged.
+Only `auth.json` is reused; user configuration, instructions, skills, sessions
+and logs are never copied. Generation threads are ephemeral. Each generation
+or model-catalog app-server client uses a private temporary `sqlite_home` and
+`log_dir`, removed after the app server closes, including startup failures and
+cancellation. Existing files in the stable credential home are preserved.
+JobCtrl retains its own provider-error, usage and provenance records.
 SDK processes clear ambient credential values and pin refresh/revocation URLs
 to OpenAI's default HTTPS endpoints. These URL overrides cannot be blank:
 Codex consumes an empty value literally and cannot build a refresh request.

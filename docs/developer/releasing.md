@@ -177,23 +177,29 @@ Update and rollback verification must also exercise the real launcher entry
 point with a resumable transition journal, including the detached supervisor.
 A fresh installation and tests that replace the readiness-start function do not
 prove that an authenticated candidate can start before the journal is finalized.
-The protected release workflow also runs `scripts/released-upgrade-smoke.mjs`
-against the actual published 0.1.0, 0.1.1, 0.2.0, 0.2.1 and 0.3.0 executables and the signed
-candidate before any immutable publication or stable promotion. Its isolated signed formula-cache adapter
-replaces only Homebrew acquisition; native installers, migrations, services,
-readiness failure, explicit rollback, interrupted recovery, paired backups and
-repeated update execute through the real binaries. Retain the credential-free
-`released-upgrade-smoke.json` evidence and require every matrix case to pass.
-Require a separate ordinary update, rollback and repeated update from every
-historical version's original controller. The additional 0.2.1 fault-injection
-case must not replace its ordinary successful-update case.
-Include a separate workspace that first reproduces the released 0.2.1-to-0.3.0
-failure, then recovers it using the new authenticated formula controller.
-The serial matrix retains time for real installer notarization and repeated
-service restarts; do not shorten it to a version-only check to fit a timeout.
-Also upgrade a real 0.2.1 installation that has never started or created either
-database, then roll back its initialized predecessor pair. Partial pairs and
-orphaned sidecars must fail before any selection change in the native suite.
+The protected release workflow runs `scripts/released-upgrade-smoke.mjs` against
+actual released executables before immutable publication. One case upgrades from
+**the latest published stable version before the candidate**, rolls back to that
+version with its paired data backup, then explicitly upgrades again. It checks
+real service readiness, retained job data and Temporal history throughout.
+
+The harness resolves that source from GitHub's published stable releases, so the
+source advances automatically after each release. Drafts, prereleases and the
+candidate itself are excluded; a rerun after publication still tests the previous
+release. Its signed descriptor and artifact hashes must verify against protected
+release trust, and its signed sequence must precede the candidate's.
+
+Historical source schemas, detailed readiness-fault injection, old failed
+transitions, never-started installations, partial pairs and orphaned sidecars
+remain covered by the native suite. Do not repeat that compatibility matrix in
+every release's publication gate.
+
+The single case retains its report and elapsed time, with a 20-minute limit.
+Publication depends directly on its success. It uses the existing self-contained
+verification bundle and actual bundled runtimes without installing application
+development dependencies. The signed formula-cache adapter replaces only
+Homebrew acquisition. Keep installers, migrations, services and data/history
+checks real; use only owned synthetic workspaces.
 
 Verify the Homebrew formula with unmodified Homebrew: strict Developer ID checks
 must accept the actual released executables and reject an ad-hoc control inside
