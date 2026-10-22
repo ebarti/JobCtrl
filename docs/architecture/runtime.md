@@ -84,6 +84,12 @@ The generated workspace also has an explicit private project root, so SDK
 configuration discovery cannot inherit unrelated settings from its physical
 ancestors. Its initialization and validation are defined in
 [Agent Runtime Ownership](agent-runtime.md#codex).
+Only `auth.json` is reused; user configuration, instructions, skills, sessions
+and logs are never copied. Generation threads are ephemeral. Each pooled generation client
+or model-catalog app-server client uses a private temporary `sqlite_home` and
+`log_dir`, removed after the app server closes, including startup failures and
+cancellation. Existing files in the stable credential home are preserved.
+JobCtrl retains its own provider-error, usage and provenance records.
 SDK processes clear ambient credential values and pin refresh/revocation URLs
 to OpenAI's default HTTPS endpoints. These URL overrides cannot be blank:
 Codex consumes an empty value literally and cannot build a refresh request.

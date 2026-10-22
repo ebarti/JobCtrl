@@ -10,8 +10,10 @@ These tests pin both invariants for the Codex analysis leg:
 
 from __future__ import annotations
 
+import asyncio
 import os
 import stat
+import threading
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,6 +25,19 @@ import pytest
 import jobctrl.config
 from jobctrl.infrastructure import setup_probes
 from jobctrl.infrastructure.analysis import codex_analysis_adapter as adapter
+
+
+
+class _FactoryCodexDouble:
+    @property
+    def _client(self) -> "_FactoryCodexDouble":
+        return self
+
+    async def start(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        await self.__aexit__(None, None, None)
 
 
 def _isolate_homes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Path, Path]:
@@ -141,8 +156,16 @@ def test_prepare_isolated_codex_home_copies_auth_outside_workspace(
     payload = b'{"OPENAI_API_KEY":"sk-isolation-token"}'
     (source_codex_home / "auth.json").write_bytes(payload)
 
+    for relative in ("config.toml", "AGENTS.md", "logs_2.sqlite", "sessions/old.jsonl", "skills/private/SKILL.md"):
+        baggage = source_codex_home / relative
+        baggage.parent.mkdir(parents=True, exist_ok=True)
+        baggage.write_text("synthetic user state")
+
     dirs = adapter._prepare_isolated_codex_home()
 
+    assert all(not (dirs.codex_home / relative).exists() for relative in (
+        "config.toml", "AGENTS.md", "logs_2.sqlite", "sessions", "skills",
+    ))
     assert dirs.codex_home == app_dir / "codex_home"
     assert dirs.workdir == dirs.codex_home / "workspace"
     assert dirs.process_home == dirs.codex_home / "home"
@@ -245,7 +268,8 @@ def test_bundled_codex_uses_persisted_auth_and_neutralizes_raw_keys(
     }
 
 
-def test_bundled_codex_factory_uses_persisted_credentials(
+@pytest.mark.asyncio
+async def test_bundled_codex_factory_uses_persisted_credentials(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -263,23 +287,30 @@ def test_bundled_codex_factory_uses_persisted_credentials(
     binary = _write_executable(tmp_path / "codex-bin")
     monkeypatch.setattr(adapter, "resolve_codex_binary", lambda: binary)
 
-    class FakeAsyncCodex:
+    class FakeAsyncCodex(_FactoryCodexDouble):
         def __init__(self, *, config: Any) -> None:
             self.config = config
 
+        async def __aenter__(self) -> "FakeAsyncCodex":
+            return self
+
+        async def __aexit__(self, *exc: Any) -> None:
+            return None
+
     monkeypatch.setattr(openai_codex, "AsyncCodex", FakeAsyncCodex)
 
-    codex = adapter._load_async_codex_factory()()
+    async with adapter._load_async_codex_factory()() as codex:
 
-    assert codex.config.codex_bin == str(binary.resolve())
-    assert codex.config.config_overrides == adapter._codex_config_overrides(binary.resolve())
-    assert codex.config.env["OPENAI_API_KEY"] == ""
-    _assert_isolated_auth_env(codex.config.env)
+        assert codex.config.codex_bin == str(binary.resolve())
+        assert codex.config.config_overrides[:-2] == adapter._codex_config_overrides(binary.resolve())
+        assert codex.config.env["OPENAI_API_KEY"] == ""
+        _assert_isolated_auth_env(codex.config.env)
 
 
 @pytest.mark.parametrize("factory_name", ["_load_async_codex_factory", "_load_catalog_async_codex_factory"])
 @pytest.mark.parametrize("runtime_mode", ["source", "bundled"])
-def test_codex_factories_grant_only_the_exact_canonical_binary_across_runtime_layouts(
+@pytest.mark.asyncio
+async def test_codex_factories_grant_only_the_exact_canonical_binary_across_runtime_layouts(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     factory_name: str,
@@ -308,21 +339,27 @@ def test_codex_factories_grant_only_the_exact_canonical_binary_across_runtime_la
             lambda pack_id, *, app_dir: pack_calls.append((pack_id, app_dir)),
         )
 
-    class FakeAsyncCodex:
+    class FakeAsyncCodex(_FactoryCodexDouble):
         def __init__(self, *, config: Any) -> None:
             self.config = config
 
+        async def __aenter__(self) -> "FakeAsyncCodex":
+            return self
+
+        async def __aexit__(self, *exc: Any) -> None:
+            return None
+
     monkeypatch.setattr(openai_codex, "AsyncCodex", FakeAsyncCodex)
 
-    codex = getattr(adapter, factory_name)()()
-    canonical = binary.resolve()
-    filesystem = _profile_filesystem_permissions(codex.config.config_overrides)
+    async with getattr(adapter, factory_name)()() as codex:
+        canonical = binary.resolve()
+        filesystem = _profile_filesystem_permissions(codex.config.config_overrides)
 
-    assert codex.config.codex_bin == str(canonical)
-    assert filesystem[str(canonical)] == "read"
-    assert str(canonical.parent) not in filesystem
-    assert str(sibling) not in filesystem
-    assert pack_calls == ([('codex-provider-runtime', app_dir)] if runtime_mode == "bundled" else [])
+        assert codex.config.codex_bin == str(canonical)
+        assert filesystem[str(canonical)] == "read"
+        assert str(canonical.parent) not in filesystem
+        assert str(sibling) not in filesystem
+        assert pack_calls == ([('codex-provider-runtime', app_dir)] if runtime_mode == "bundled" else [])
 
 
 @pytest.mark.asyncio
@@ -334,7 +371,7 @@ async def test_live_factory_uses_jobctrl_codex_home_without_cleanup(
     binary = _write_executable(tmp_path / "codex-bin")
     monkeypatch.setattr(adapter, "resolve_codex_binary", lambda: binary)
 
-    class FakeAsyncCodex:
+    class FakeAsyncCodex(_FactoryCodexDouble):
         instances: list["FakeAsyncCodex"] = []
 
         def __init__(self, *, config: Any) -> None:
@@ -350,7 +387,7 @@ async def test_live_factory_uses_jobctrl_codex_home_without_cleanup(
             assert (codex_home / "auth.json").is_file()
             assert not (Path(self.config.cwd) / "auth.json").exists()
             assert self.config.codex_bin == str(binary.resolve())
-            assert self.config.config_overrides == adapter._codex_config_overrides(binary.resolve())
+            assert self.config.config_overrides[:-2] == adapter._codex_config_overrides(binary.resolve())
             return self
 
         async def __aexit__(self, *exc: Any) -> None:
@@ -381,7 +418,7 @@ async def test_live_factory_uses_same_jobctrl_codex_home_when_contexts_overlap(
     binary = _write_executable(tmp_path / "codex-bin")
     monkeypatch.setattr(adapter, "resolve_codex_binary", lambda: binary)
 
-    class FakeAsyncCodex:
+    class FakeAsyncCodex(_FactoryCodexDouble):
         instances: list["FakeAsyncCodex"] = []
 
         def __init__(self, *, config: Any) -> None:
@@ -403,15 +440,22 @@ async def test_live_factory_uses_same_jobctrl_codex_home_when_contexts_overlap(
     first_context = factory()
     second_context = factory()
 
-    first_home = Path(FakeAsyncCodex.instances[0].config.env["CODEX_HOME"])
-    second_home = Path(FakeAsyncCodex.instances[1].config.env["CODEX_HOME"])
-    assert first_home == second_home == app_dir / "codex_home"
-
     async with first_context as first_codex:
         async with second_context as second_codex:
+            first_home = Path(first_codex.config.env["CODEX_HOME"])
+            second_home = Path(second_codex.config.env["CODEX_HOME"])
+            assert first_home == second_home == app_dir / "codex_home"
             assert Path(first_codex.config.cwd) == first_home / "workspace"
-            assert Path(second_codex.config.cwd) == first_home / "workspace"
+            assert Path(second_codex.config.cwd) == second_home / "workspace"
             assert (first_home / "auth.json").is_file()
+            first_runtime = _runtime_root(first_codex.config)
+            second_runtime = _runtime_root(second_codex.config)
+            assert first_runtime != second_runtime
+            assert first_runtime.is_dir() and second_runtime.is_dir()
+        assert not second_runtime.exists()
+        assert first_runtime.is_dir()
+    assert not first_runtime.exists()
+
 
 
 @pytest.mark.asyncio
@@ -430,6 +474,7 @@ async def test_pinned_app_server_denies_auth_file_and_strips_provider_key_from_c
         codex_home = Path(config.env["CODEX_HOME"])
         assert Path(config.cwd) == codex_home / "workspace"
         assert (codex_home / "auth.json").is_file()
+        runtime_root = _runtime_root(config)
 
         response = await codex._client.request(
             "command/exec",
@@ -448,6 +493,8 @@ async def test_pinned_app_server_denies_auth_file_and_strips_provider_key_from_c
             response_model=CommandExecResponse,
         )
 
+    assert not runtime_root.exists()
+    assert not list(codex_home.glob("*.sqlite*"))
     assert response.exit_code == 0
     assert "sk-fake-runtime" not in response.stdout
     assert "sk-command-must-not-see-this" not in response.stdout
@@ -539,3 +586,264 @@ def test_redirected_runtime_directories_are_refused_before_auth_or_chmod(monkeyp
     assert not (target / "auth.json").exists()
     if directory == "codex_home":
         assert enrolled == []
+
+
+def _runtime_root(config: Any) -> Path:
+    overrides = tomllib.loads("\n".join(config.config_overrides[-2:]))
+    sqlite_root = Path(overrides["sqlite_home"])
+    assert Path(overrides["log_dir"]).parent == sqlite_root.parent
+    return sqlite_root.parent
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["none", "constructor", "startup", "startup_cancelled", "body", "cancelled"])
+async def test_runtime_storage_is_removed_on_every_client_exit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure: str
+) -> None:
+    import openai_codex
+
+    app_dir, source_home = _isolate_homes(monkeypatch, tmp_path)
+    auth = b'{"OPENAI_API_KEY":"sk-synthetic-cleanup"}'
+    (source_home / "auth.json").write_bytes(auth)
+    stable_home = app_dir / "codex_home"
+    stable_home.mkdir(parents=True)
+    (stable_home / "auth.json").write_bytes(auth)
+    old_log = stable_home / "logs_2.sqlite"
+    old_log.write_bytes(b"pre-existing provider state")
+    binary = _write_executable(tmp_path / "codex-bin")
+    monkeypatch.setattr(adapter, "resolve_codex_binary", lambda: binary)
+    roots: list[Path] = []
+    closed: list[bool] = []
+
+    class FakeAsyncCodex(_FactoryCodexDouble):
+        def __init__(self, *, config: Any) -> None:
+            self.config = config
+            root = _runtime_root(config)
+            roots.append(root)
+            _assert_private_mode(root, 0o700)
+            (root / "sqlite").mkdir()
+            (root / "sqlite/logs_2.sqlite").write_bytes(b"synthetic runtime log")
+            if failure == "constructor":
+                raise RuntimeError("synthetic constructor failure")
+
+        async def __aenter__(self) -> "FakeAsyncCodex":
+            if failure == "startup":
+                raise RuntimeError("synthetic startup failure")
+            if failure == "startup_cancelled":
+                raise asyncio.CancelledError()
+            return self
+
+        async def close(self) -> None:
+            assert roots[-1].exists()
+            closed.append(True)
+
+        async def __aexit__(self, *exc: Any) -> None:
+            assert roots[-1].exists()  # Close the app server before removing storage.
+            closed.append(True)
+
+    monkeypatch.setattr(openai_codex, "AsyncCodex", FakeAsyncCodex)
+    factory = adapter._load_async_codex_factory()
+    expected_error = asyncio.CancelledError if failure in {"cancelled", "startup_cancelled"} else RuntimeError
+
+    async def run() -> None:
+        async with factory():
+            if failure == "body":
+                raise RuntimeError("synthetic provider failure")
+            if failure == "cancelled":
+                raise asyncio.CancelledError()
+
+    if failure == "none":
+        await run()
+    else:
+        with pytest.raises(expected_error):
+            await run()
+    assert roots and all(not root.exists() for root in roots)
+    assert bool(closed) == (failure != "constructor")
+    assert (stable_home / "auth.json").read_bytes() == auth
+    assert (source_home / "auth.json").read_bytes() == auth
+    assert old_log.read_bytes() == b"pre-existing provider state"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["process_start", "initialize", "shutdown"])
+@pytest.mark.parametrize("route", ["factory", "kit"])
+async def test_cancellation_joins_process_start_and_shutdown_before_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, phase: str, route: str
+) -> None:
+    import openai_codex
+    from jobctrl.infrastructure.llm import agent_runtime_codex as kit_adapter
+    from jobctrl.infrastructure.llm.agent_runtime_pool import AgentRuntimeService
+
+    _app_dir, source_home = _isolate_homes(monkeypatch, tmp_path)
+    (source_home / "auth.json").write_text('{"OPENAI_API_KEY":"sk-synthetic-race"}')
+    binary = _write_executable(tmp_path / "codex-bin")
+    monkeypatch.setattr(adapter, "resolve_codex_binary", lambda: binary)
+    starting = threading.Event()
+    publish_process = threading.Event()
+    initializing = threading.Event()
+    allow_initialize = threading.Event()
+    closing = threading.Event()
+    allow_close = threading.Event()
+    roots: list[Path] = []
+    process = {"running": False}
+
+    class FakeAsyncCodex(_FactoryCodexDouble):
+        def __init__(self, *, config: Any) -> None:
+            roots.append(_runtime_root(config))
+
+        async def start(self) -> None:
+            def launch() -> None:
+                starting.set()
+                assert publish_process.wait(timeout=5)
+                process["running"] = True
+            await asyncio.to_thread(launch)
+
+        async def __aenter__(self) -> "FakeAsyncCodex":
+            initializing.set()
+            await asyncio.to_thread(allow_initialize.wait)
+            return self
+
+        async def close(self) -> None:
+            closing.set()
+            await asyncio.to_thread(allow_close.wait)
+            assert roots[0].exists()
+            process["running"] = False
+
+    async def thread_start(self, **kwargs):
+        async def run(prompt, **turn_kwargs):
+            # A successful kit turn remains pooled. Exercise shutdown through
+            # the actual failed-turn eviction boundary instead.
+            return SimpleNamespace(
+                status="failed", final_response=None,
+                error=SimpleNamespace(message="owned shutdown trigger"), usage=None,
+            )
+        return SimpleNamespace(id="owned-shutdown-thread", run=run)
+
+    FakeAsyncCodex.thread_start = thread_start
+    monkeypatch.setattr(openai_codex, "AsyncCodex", FakeAsyncCodex)
+
+    owner = AgentRuntimeService(capacity=1) if route == "kit" else None
+    if owner is not None:
+        monkeypatch.setattr(kit_adapter, "agent_runtime_service", lambda: owner)
+
+    async def run() -> None:
+        factory = adapter._load_async_codex_factory()
+        if owner is not None:
+            await kit_adapter.call_codex_runtime(
+                factory=factory, approval=lambda: "deny-all", model="owned-model",
+                effort="max", prompt="owned startup cancellation", operation="chat_json",
+                output_schema=None,
+            )
+        else:
+            async with factory():
+                pass
+
+    task = asyncio.create_task(run())
+    try:
+        assert await asyncio.to_thread(starting.wait, 5)
+        if phase == "process_start":
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+            assert roots[0].exists()
+            assert not closing.is_set()
+            publish_process.set()
+        else:
+            publish_process.set()
+            assert await asyncio.to_thread(initializing.wait, 5)
+            if phase == "initialize":
+                task.cancel()
+            else:
+                allow_initialize.set()
+        assert await asyncio.to_thread(closing.wait, 5)
+        assert process["running"] and roots[0].exists()
+        # Repeated cancellation must not detach the SDK's shutdown worker.
+        task.cancel()
+        await asyncio.sleep(0)
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+        assert process["running"] and roots[0].exists()
+        allow_close.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=5)
+        assert not process["running"]
+        assert not roots[0].exists()
+    finally:
+        publish_process.set()
+        allow_initialize.set()
+        allow_close.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        if owner is not None:
+            await asyncio.to_thread(owner.close)
+
+
+@pytest.mark.asyncio
+async def test_pooled_native_storage_survives_reuse_then_closes_before_removal(monkeypatch, tmp_path):
+    import openai_codex
+    from jobctrl.infrastructure.llm import agent_runtime_codex as kit_adapter
+    from jobctrl.infrastructure.llm.agent_runtime_pool import AgentRuntimeService
+
+    app_dir, source_home = _isolate_homes(monkeypatch, tmp_path)
+    auth = b'{"OPENAI_API_KEY":"sk-owned-pool-storage"}'
+    (source_home / "auth.json").write_bytes(auth)
+    stable_home = app_dir / "codex_home"
+    stable_home.mkdir(parents=True)
+    (stable_home / "auth.json").write_bytes(auth)
+    retained = stable_home / "logs_2.sqlite"
+    retained.write_bytes(b"retained provider state")
+    binary = _write_executable(tmp_path / "codex-bin")
+    monkeypatch.setattr(adapter, "resolve_codex_binary", lambda: binary)
+    roots = []
+    closed = []
+    threads = []
+
+    class FakeAsyncCodex(_FactoryCodexDouble):
+        def __init__(self, *, config):
+            self.root = _runtime_root(config)
+            roots.append(self.root)
+            assert self.root.exists()
+
+        async def __aenter__(self):
+            return self
+
+        async def close(self):
+            assert self.root.exists()
+            closed.append(self.root)
+
+        async def thread_start(self, **kwargs):
+            assert kwargs["ephemeral"] is True
+            thread_id = f"owned-pool-thread-{len(threads)}"
+            threads.append(thread_id)
+            async def run(prompt, **turn_kwargs):
+                return SimpleNamespace(status="completed", final_response="{}", error=None, usage=None)
+            return SimpleNamespace(id=thread_id, run=run)
+
+    monkeypatch.setattr(openai_codex, "AsyncCodex", FakeAsyncCodex)
+    owner = AgentRuntimeService(capacity=1)
+    monkeypatch.setattr(kit_adapter, "agent_runtime_service", lambda: owner)
+    try:
+        async def run(model):
+            factory = adapter._load_async_codex_factory()
+            assert all(not value.startswith(("sqlite_home=", "log_dir="))
+                       for value in factory.jobctrl_runtime_config["config_overrides"])
+            return await kit_adapter.call_codex_runtime(
+                factory=factory, approval=lambda: "deny-all", model=model, effort="max",
+                prompt="owned pool storage", operation="chat_json", output_schema=None,
+            )
+        first = await run("owned-a")
+        second = await run("owned-a")
+        assert len(roots) == 1 and roots[0].exists() and closed == []
+        assert first.session_id != second.session_id
+        assert second.runtime_metadata["sdk_process_reused"] is True
+        await run("owned-b")
+        assert len(roots) == 2 and closed == roots[:1]
+        assert not roots[0].exists() and roots[1].exists()
+    finally:
+        await asyncio.to_thread(owner.close)
+    assert closed == roots and all(not root.exists() for root in roots)
+    assert (stable_home / "auth.json").read_bytes() == auth
+    assert (source_home / "auth.json").read_bytes() == auth
+    assert retained.read_bytes() == b"retained provider state"

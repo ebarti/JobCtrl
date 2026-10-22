@@ -24,9 +24,12 @@ the wrapping asyncio task.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
-from collections.abc import Callable
+import tempfile
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -197,6 +200,57 @@ def _codex_config_kwargs(dirs: _CodexHomeDirs) -> dict[str, Any]:
     }
 
 
+@asynccontextmanager
+async def _codex_client_context(
+    async_codex: Any, codex_config: Any, *, configuration: dict[str, Any]
+) -> AsyncIterator[Any]:
+    """Keep auth stable while tying provider databases/logs to client lifetime.
+
+    Close the app server before removing its private runtime directory, including
+    on failed startup, provider errors and cancellation. Never clean up the
+    credential home or any pre-existing provider state.
+    """
+
+    with tempfile.TemporaryDirectory(prefix="jobctrl-codex-runtime-") as runtime_dir:
+        runtime_root = Path(runtime_dir).resolve()
+        runtime_configuration = {
+            **configuration,
+            "config_overrides": (
+                *configuration["config_overrides"],
+                f"sqlite_home={json.dumps(str(runtime_root / 'sqlite'))}",
+                f"log_dir={json.dumps(str(runtime_root / 'logs'))}",
+            ),
+        }
+        client = async_codex(config=codex_config(**runtime_configuration))
+        # The pinned SDK offloads process creation to a worker thread. Joining
+        # just that operation prevents close() racing an unpublished process,
+        # while the subsequent local initialize handshake remains cancellable.
+        startup = asyncio.create_task(client._client.start())
+        try:
+            await asyncio.shield(startup)
+            await client.__aenter__()
+            yield client
+        finally:
+            async def stop() -> None:
+                try:
+                    await startup
+                finally:
+                    await client.close()
+
+            shutdown = asyncio.create_task(stop())
+            interrupted = False
+            while True:
+                try:
+                    await asyncio.shield(shutdown)
+                    break
+                except asyncio.CancelledError:
+                    if shutdown.cancelled():
+                        raise
+                    interrupted = True
+            if interrupted:
+                raise asyncio.CancelledError()
+
+
 def _load_async_codex_factory() -> AsyncCodexFactory:
     """Build an ``AsyncCodex`` CM with a locked-down command permissions profile.
 
@@ -214,8 +268,9 @@ def _load_async_codex_factory() -> AsyncCodexFactory:
     configuration = _codex_config_kwargs(dirs)
 
     def _make() -> Any:
-        return AsyncCodex(config=CodexConfig(**configuration))
+        return _codex_client_context(AsyncCodex, CodexConfig, configuration=configuration)
 
+    _make.jobctrl_managed_startup = True
     _make.jobctrl_runtime_config = configuration
     return _make
 
@@ -236,9 +291,11 @@ def _load_catalog_async_codex_factory() -> AsyncCodexFactory:
         activate_provider_pack("codex-provider-runtime", app_dir=APP_DIR)
     from openai_codex import AsyncCodex, CodexConfig  # type: ignore[import-untyped]
 
+    dirs = _prepare_isolated_codex_home(ensure_auth=False)
+    configuration = _codex_config_kwargs(dirs)
+
     def _make() -> Any:
-        dirs = _prepare_isolated_codex_home(ensure_auth=False)
-        return AsyncCodex(config=CodexConfig(**_codex_config_kwargs(dirs)))
+        return _codex_client_context(AsyncCodex, CodexConfig, configuration=configuration)
 
     return _make
 

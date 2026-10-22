@@ -82,10 +82,19 @@ class _Thread:
 class _Client:
     def __init__(self, factory: Callable[[], Any]) -> None:
         self._context = factory()
+        self._managed_startup = bool(getattr(factory, 'jobctrl_managed_startup', False))
+        self._entered = False
+        self._startup = None
 
     async def __aenter__(self) -> _Client:
         import asyncio
 
+        if self._managed_startup:
+            # The native context joins process publication itself. Keep the
+            # initialize handshake cancellable instead of shielding all entry.
+            self._client = await self._context.__aenter__()
+            self._entered = True
+            return self
         self._startup = asyncio.create_task(self._context.__aenter__())
         try:
             self._client = await asyncio.shield(self._startup)
@@ -97,6 +106,8 @@ class _Client:
     async def _join_startup(self) -> None:
         import asyncio
 
+        if self._startup is None:
+            return
         while not self._startup.done():
             try:
                 await asyncio.shield(self._startup)
@@ -111,7 +122,9 @@ class _Client:
 
     async def __aexit__(self, *args: Any) -> None:
         await self._join_startup()
-        await self._context.__aexit__(*args)
+        # A failed managed entry already closed its app-server and storage.
+        if not self._managed_startup or self._entered:
+            await self._context.__aexit__(*args)
 
     async def thread_start(
         self, *, approval_mode: Any, sandbox: Any = None, model: str | None = None,

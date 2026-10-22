@@ -870,6 +870,17 @@ Consequences:
 
 Cites: PRs #145, #147 (3-way leg), #149, #205, #213.
 
+### Amendment 2026-10-13
+
+The isolated credential home remains stable and imports only `auth.json`.
+Generation threads are ephemeral, and every generation/catalog app-server
+client redirects SQLite state and diagnostic logs to private temporary
+storage removed after shutdown. This prevents repeated provider calls from
+accumulating runtime databases and conversation rollouts beside credentials.
+JobCtrl-owned provider errors, usage and provenance remain durable; existing
+provider files and the user's normal Codex home are preserved.
+
+
 ## 2026-07-12: One Ready Provider Serves Core LLM And Analysis Paths
 
 Status: accepted; supersedes the mandatory Claude-synthesis and separate

@@ -69,6 +69,8 @@ def test_immutable_publication_requires_real_released_upgrade_proof() -> None:
     gate = jobs["verify-released-upgrades"]
     assert _needs(gate) == {"resolve", "sign", "package-signed-candidate"}
     assert gate["runs-on"] == "macos-15"
+    assert gate["timeout-minutes"] == 20
+    assert "strategy" not in gate
     assert gate["permissions"] == {"actions": "read", "contents": "read"}
     assert "environment" not in gate
     assert "verify-released-upgrades" in _needs(jobs["publish-immutable"])
@@ -76,4 +78,6 @@ def test_immutable_publication_requires_real_released_upgrade_proof() -> None:
     assert proof["if"] == "${{ inputs.channel == 'stable' }}"
     assert proof["env"]["JOBCTRL_RELEASE_PUBLIC_KEY"] == "${{ needs.resolve.outputs.release_public_key }}"
     assert proof["env"]["JOBCTRL_RELEASE_KEY_ID"] == "${{ needs.resolve.outputs.release_key_id }}"
-    assert "--release-dir" in proof["run"]
+    assert "--case" not in proof["run"]
+    assert '--output "$RUNNER_TEMP/released-upgrade-smoke.json"' in proof["run"]
+    assert all("pnpm install" not in step.get("run", "") for step in gate["steps"])

@@ -307,6 +307,9 @@ revoked credentials.
 
 Advanced operators can set `JOBCTRL_CODEX_BIN` to override the Codex runtime.
 By default, JobCtrl uses its pinned, bundled `openai-codex-cli-bin` binary.
+Authentication reuse copies only `auth.json`. Generation chats are ephemeral;
+provider databases and logs use private temporary storage removed when the
+client closes, while authentication remains in the stable JobCtrl home.
 
 ### Claude
 

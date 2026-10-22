@@ -363,6 +363,7 @@ def test_codex_sdk_maps_thinking_to_effort_and_normalizes_unsupported_controls()
             thinking_budget=2048,
         ) == "plain codex"
 
+    assert calls["thread_start"]["ephemeral"] is True
     assert calls["thread_start"]["config"] == {"model_reasoning_effort": "medium"}
     assert calls["run"]["effort"] == "medium"
     assert "temperature" not in calls["run"]

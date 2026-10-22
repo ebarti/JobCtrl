@@ -14426,5 +14426,6 @@ if (import.meta.url === invokedPath5) {
   }
 }
 export {
-  renderHomebrewFormula
+  renderHomebrewFormula,
+  verifyReleaseDescriptorSignature
 };

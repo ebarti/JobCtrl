@@ -55,8 +55,14 @@ project is excluded.
 A narrow SDK facade consumes the public turn stream. The native convenience
 `run` method loses structured `TurnError` fields; the facade retains JobCtrl's
 bounded provider-error envelope and observed token accounting while the kit
-owns process lifecycle. Startup is shielded and joined before cancellation can
-tear down a partially published SDK process. Completed raw output still reaches
+owns process lifecycle. Each native client owns private temporary `sqlite_home`
+and `log_dir` storage through its pooled lifetime, including reuse across requests.
+The storage is removed only after the client closes on eviction, failure,
+cancellation or process shutdown. Stable authentication and existing provider
+files remain unchanged. Process creation is shielded and joined before cleanup;
+the subsequent initialize handshake remains cancellable. Repeated cancellation
+waits for shutdown before storage removal. Catalog clients use the same temporary
+storage without enrolling ambient auth. Completed raw output still reaches
 JobCtrl's strict parser, preserving its distinct schema/citation repair paths.
 A kit schema failure is never treated as an accepted artifact.
 
