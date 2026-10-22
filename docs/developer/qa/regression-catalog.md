@@ -545,6 +545,17 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For cover-letter publication anchors, run locked
+`pytest tests/test_cover_reviewed_anchors.py tests/test_cover_generation_repair.py tests/test_artifact_determinations.py tests/test_material_review_history.py`.
+Use owned exact-schema SQLite and explicit synthetic model decisions. A passing
+factual reviewer may endorse fewer candidate sources than the generator proposed,
+or identify a source after an empty proposal. Persist exactly the reviewer's
+source and requirement links, preserve the generator proposals separately, and
+require both factual and quality approval. Test source-free lines, rejected first
+attempts, failed refresh preservation and foreign IDs. A rejected draft must keep
+valid provenance and inspectable findings rather than fail during persistence.
+These are structural model-authority checks, not a semantic evaluation corpus.
+
 For bounded JobStreaming source intake, run locked
 `pytest tests/test_selected_board_wiring.py tests/test_source_registry.py tests/test_jobstreaming_source_result_budget.py tests/test_discovery_result_budget.py tests/test_workflow_discovery.py`.
 Use owned exact-schema SQLite, synthetic adapters and real Temporal histories.

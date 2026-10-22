@@ -3990,8 +3990,7 @@ class GenerateCoverLetterUseCase:
             )
             result, envelope = reviews.claims
             quality, quality_envelope = reviews.quality
-            source_bindings = {row.line_id: {cite.source_id for cite in row.source_evidence} for row in result.lines}
-            anchor_error = any(set(row.evidence_ids) - source_bindings[row.line_id] for row in draft.lines)
+            verified_lines = {row.line_id: row for row in result.lines}
             findings = [
                 ClaimIssue(row.line_id, finding.kind, finding.rationale)
                 for row in result.lines
@@ -4009,15 +4008,16 @@ class GenerateCoverLetterUseCase:
                 "review_history": deepcopy(review_history),
                 "verdict": result.verdict,
                 "lines": [row.model_dump() for row in result.lines],
+                "proposed_anchors": [row.model_dump(exclude={"text"}) for row in draft.lines],
                 "anchors": [
                     {
                         "line_id": row.line_id,
-                        "evidence_ids": row.evidence_ids,
-                        "requirement_ids": next(
-                            verified.served_requirement_ids
-                            for verified in result.lines
-                            if verified.line_id == row.line_id
-                        ),
+                        # The generator selects possible sources; only the independent
+                        # verifier establishes which sources contributed to this line.
+                        "evidence_ids": list(dict.fromkeys(
+                            cite.source_id for cite in verified_lines[row.line_id].source_evidence
+                        )),
+                        "requirement_ids": verified_lines[row.line_id].served_requirement_ids,
                         "transform_type": row.transform_type,
                         "reason": row.reason,
                     }
@@ -4026,11 +4026,11 @@ class GenerateCoverLetterUseCase:
             }
             validation = (
                 ValidationResult.success()
-                if result.verdict == "pass" and quality.verdict == "pass" and not anchor_error
+                if result.verdict == "pass" and quality.verdict == "pass"
                 else ValidationResult.failure(
                     tuple(finding.rationale for finding in findings)
                     + tuple(finding.rationale for finding in quality.findings)
-                    or (("source_anchor_binding_invalid",) if anchor_error else ("artifact_verification_failed",))
+                    or ("artifact_verification_failed",)
                 )
             )
             if validation.passed:

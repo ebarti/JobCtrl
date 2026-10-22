@@ -29,7 +29,11 @@ a separate decision controlled by the score and materials threshold.
 
 A cover letter's factual and quality reviews can run together because they inspect
 the same unchanged draft. Both must pass before acceptance. Corrections still
-wait for their findings, and revised text receives fresh checks. Model reasoning,
+wait for their findings, and revised text receives fresh checks. The generator's
+source selections remain proposals in the audit. The saved letter's evidence and
+requirement links come from the factual review's recorded citations, including
+empty evidence for lines that make no candidate claim. An unused proposed source
+does not require rewriting text that both reviewers have approved. Model reasoning,
 bounded repairs and worker capacity still determine the total duration.
 
 ## How JobCtrl Chooses A Resume
