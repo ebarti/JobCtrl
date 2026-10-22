@@ -826,7 +826,7 @@ def score_job_by_id(
         return ScoreJobOutcome(ok=False, score=None, error=f"Job is not enriched: {stable_job_id}")
 
     from jobctrl.enrichment.availability import require_fresh_active, assert_fresh_candidate
-    from jobctrl.infrastructure.preparation_recovery import claim_preparation_reservation
+    from jobctrl.infrastructure.preparation_recovery import PreparationReservationLost, claim_preparation_reservation
 
     expected_posting_url = job["url"]
     conn.commit()
@@ -911,7 +911,7 @@ def score_job_by_id(
         criteria = LocalScoringCriteriaProvider().load(profile_snapshot)
     if repository is None:
         repository = SqliteScoreRepository(conn)
-    if enforce_workflow_ownership:
+    if workflow_id:
         # Resolve the SQLite companion before the ownership decorator hides
         # its concrete type from the use-case factory's default wiring.
         if requirement_fit_repository is None and isinstance(repository, SqliteScoreRepository):
@@ -922,7 +922,7 @@ def score_job_by_id(
     existing = repository.load(tenant_id, stable_job_id)
     if existing is not None and not rescore:
         if enforce_workflow_ownership:
-            _record_score_stage_succeeded(
+            recorded = _record_score_stage_succeeded(
                 conn,
                 job=job,
                 score=existing,
@@ -930,6 +930,8 @@ def score_job_by_id(
                 metadata=owned_metadata,
                 cancel_event=cancel_event,
             )
+            if not recorded:
+                raise PreparationReservationLost("Score activity no longer owns its stage")
         else:
             _ensure_existing_score_stage_succeeded(
                 conn,
@@ -988,6 +990,8 @@ def score_job_by_id(
                 message="Scoring started",
             )
             conn.commit()
+    if workflow_id and not _score_activity_may_write(conn, tenant_id, stable_job_id, workflow_id, cancel_event):
+        raise PreparationReservationLost("Score activity no longer owns its stage")
     if employer_analysis is None:
         try:
             if employer_analysis_repository is None:
@@ -1011,7 +1015,7 @@ def score_job_by_id(
             )
         except Exception as exc:  # noqa: BLE001 -- persist one bounded attempt failure
             error = _employer_analysis_failure_message(exc)
-            _record_score_stage_failed(
+            recorded = _record_score_stage_failed(
                 conn,
                 job=job,
                 tenant_id=tenant_id,
@@ -1020,8 +1024,12 @@ def score_job_by_id(
                 error=error,
                 cancel_event=cancel_event,
             )
+            if workflow_id and not recorded:
+                raise PreparationReservationLost("Score activity no longer owns its stage") from exc
             return ScoreJobOutcome(ok=False, score=None, error=error)
 
+    if workflow_id and not _score_activity_may_write(conn, tenant_id, stable_job_id, workflow_id, cancel_event):
+        raise PreparationReservationLost("Score activity no longer owns its stage")
     outcome = score_job(
         profile_snapshot,
         job,
@@ -1042,7 +1050,7 @@ def score_job_by_id(
         require_employer_analysis=require_employer_analysis,
     )
     if outcome.ok and outcome.score is not None:
-        _record_score_stage_succeeded(
+        recorded = _record_score_stage_succeeded(
             conn,
             job=job,
             score=outcome.score,
@@ -1053,7 +1061,7 @@ def score_job_by_id(
             validate_transition=True,
         )
     else:
-        _record_score_stage_failed(
+        recorded = _record_score_stage_failed(
             conn,
             job=job,
             tenant_id=tenant_id,
@@ -1062,6 +1070,8 @@ def score_job_by_id(
             error=outcome.error or "Scoring failed",
             cancel_event=cancel_event,
         )
+    if workflow_id and not recorded:
+        raise PreparationReservationLost("Score activity no longer owns its stage")
     return outcome
 
 
@@ -1078,6 +1088,8 @@ class _OwnedScoreRepository:
         return getattr(self._repository, name)
 
     def save(self, score):
+        from jobctrl.infrastructure.preparation_recovery import PreparationReservationLost
+
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             if not _score_activity_may_write(
@@ -1087,7 +1099,7 @@ class _OwnedScoreRepository:
                 self._owner,
                 self._cancel_event,
             ):
-                raise RuntimeError("Score activity no longer owns score persistence")
+                raise PreparationReservationLost("Score activity no longer owns score persistence")
             self._repository.save(score)
             self._conn.commit()
         except BaseException:
@@ -1184,14 +1196,14 @@ def _record_score_stage_succeeded(
     validate_transition: bool = False,
     metadata: dict[str, Any] | None = None,
     cancel_event: Any | None = None,
-) -> None:
+) -> bool:
     job_id = canonical_job_id(str(score.job_id))
-    owned = bool(metadata and metadata.get("automaticRecovery"))
+    owned = bool(metadata and metadata.get("activityOwner"))
     if owned:
         conn.execute("BEGIN IMMEDIATE")
         if not _score_activity_may_write(conn, tenant_id, job_id, metadata.get("activityOwner"), cancel_event):
             conn.rollback()
-            return
+            return False
     finished_at = finished_at or utc_now()
     ensure_job_stage_rows(
         conn,
@@ -1229,6 +1241,7 @@ def _record_score_stage_succeeded(
         now=finished_at,
     )
     conn.commit()
+    return True
 
 
 def _record_score_stage_failed(
@@ -1240,15 +1253,15 @@ def _record_score_stage_failed(
     metadata: dict[str, Any] | None,
     error: str,
     cancel_event: Any | None = None,
-) -> None:
+) -> bool:
     """Persist one bounded, retryable scoring attempt failure."""
 
     job_id = canonical_job_id(str(job["job_id"]))
-    if metadata and metadata.get("automaticRecovery"):
+    if metadata and metadata.get("activityOwner"):
         conn.execute("BEGIN IMMEDIATE")
         if not _score_activity_may_write(conn, tenant_id, job_id, metadata.get("activityOwner"), cancel_event):
             conn.rollback()
-            return
+            return False
     finished_at = utc_now()
     failure = serialized_determination_failure(error)
     set_stage_state(
@@ -1282,6 +1295,7 @@ def _record_score_stage_failed(
         message=error,
     )
     conn.commit()
+    return True
 
 
 def _sync_score_eligibility_stage_state(

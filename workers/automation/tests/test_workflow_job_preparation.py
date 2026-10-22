@@ -52,6 +52,7 @@ async def _check_spend_budget(_payload) -> SpendBudgetStatus:
 
 @pytest.mark.asyncio
 async def test_preparation_workflow_runs_requested_steps_in_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(prep_workflow_mod.workflow, "patched", lambda _marker: True)
     calls: list[tuple[object, object]] = []
 
     async def fake_execute_activity(activity_fn, payload, **_kwargs):
@@ -139,6 +140,7 @@ async def test_analysis_protocol_failure_stops_score_after_one_temporal_attempt(
 async def test_model_steps_have_long_work_budget_without_extending_pdf_or_heartbeat(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(prep_workflow_mod.workflow, "patched", lambda _marker: True)
     scheduled: dict[str, dict] = {}
 
     async def capture(activity_fn, _payload, **kwargs):
@@ -257,10 +259,14 @@ async def test_long_model_budget_retains_heartbeat_failure_and_explicit_cancella
                 activity.heartbeat("synthetic live model work")
             await asyncio.sleep(0.01)
 
+    @activity.defn(name="cancel_preparation_state")
+    async def cancel_owned_state(_payload) -> dict:
+        return {"canceled": 0, "restored": 0}
+
     async with time_skipping_env() as env:
         async with Worker(
             env.client, task_queue=queue, workflows=[JobPreparationWorkflow],
-            activities=[_check_spend_budget, record_started, record_outcome, recover, held_score],
+            activities=[_check_spend_budget, record_started, record_outcome, recover, held_score, cancel_owned_state],
             workflow_runner=UnsandboxedWorkflowRunner(),
         ):
             handle = await env.client.start_workflow(
@@ -335,7 +341,7 @@ async def test_preparation_material_cancel_activity_retries_are_bounded(
     )
     monkeypatch.setattr(prep_workflow_mod.workflow, "execute_local_activity", fake_execute_activity)
 
-    await prep_workflow_mod._cancel_material_stage_state(
+    await prep_workflow_mod._cancel_stage_state(
         "tailor",
         JobPreparationInput(
             tenant_id="local",
@@ -425,6 +431,7 @@ def test_preparation_workflow_rejects_url_shaped_job_id() -> None:
 async def test_preparation_workflow_records_failed_step_and_error_code(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(prep_workflow_mod.workflow, "patched", lambda _marker: True)
     recoveries: list[tuple[str, JobPreparationInput]] = []
 
     async def fake_recover(stage: str, payload: JobPreparationInput) -> None:
@@ -472,6 +479,7 @@ async def test_preparation_workflow_records_failed_step_and_error_code(
 async def test_preparation_workflow_recovers_owned_score_after_retry_exhaustion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(prep_workflow_mod.workflow, "patched", lambda _marker: True)
     payload = JobPreparationInput(
         tenant_id="local",
         job_id=_JOB_ID,

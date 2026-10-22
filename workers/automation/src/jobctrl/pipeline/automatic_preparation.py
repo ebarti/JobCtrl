@@ -281,7 +281,11 @@ async def _reconcile_stopped_activity_owners(client: Any, conn: sqlite3.Connecti
         "(json_extract(s.metadata_json, '$.automaticRecovery') = 1 "
         "AND json_extract(s.metadata_json, '$.workflowId') IS NOT NULL "
         "AND json_extract(s.metadata_json, '$.temporalRunId') = json_extract(s.metadata_json, '$.activityOwner')) "
-        "OR (r.workflow_type = 'JobPipelineWorkflow' AND r.workflow_id GLOB 'prepare-auto-local-*'))",
+        "OR (r.workflow_type = 'JobPipelineWorkflow' AND r.workflow_id GLOB 'prepare-auto-local-*') "
+        "OR (r.workflow_type = 'JobPreparationWorkflow' "
+        "AND json_extract(r.input_summary_json, '$.jobId') = s.job_id "
+        "AND EXISTS (SELECT 1 FROM json_each(r.input_summary_json, '$.steps') step "
+        "WHERE step.value = s.stage)))",
         (str(LOCAL_TENANT),),
     ).fetchall()
     for owner in owners:
