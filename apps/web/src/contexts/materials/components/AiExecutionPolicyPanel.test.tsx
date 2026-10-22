@@ -24,6 +24,29 @@ describe("<AiExecutionPolicyPanel>", () => {
     await waitFor(() => expect(updateSettings).toHaveBeenCalledWith({ resumeVoicePolish: enabled }));
   });
 
+  it.each([
+    [true, true], [false, true], [true, false], [false, false],
+  ])("preserves undisplayed generator fallbacks on a polish-only save (%s, catalog ready: %s)", async (enabled, catalogReady) => {
+    const user = userEvent.setup();
+    const settings = { ...sampleSettingsResponse, settings: {
+      ...sampleSettingsResponse.settings,
+      resumeVoicePolish: !enabled,
+      tailoringGeneratorModels: ["codex:gpt-6.1-sol", "codex:gpt-6-sol", "codex:gpt-5.6-sol"],
+    } };
+    const updateSettings = vi.fn(async () => ({ ...settings, settings: { ...settings.settings, resumeVoicePolish: enabled } }));
+    renderWithProviders(<AiExecutionPolicyPanel />, { ports: buildTestPorts({ api: {
+      settings: vi.fn(async () => settings),
+      providerModels: vi.fn(async () => {
+        if (!catalogReady) throw new Error("Synthetic catalog outage");
+        return sampleProviderModelsResponse;
+      }),
+      updateSettings,
+    } }) });
+    await user.click(await screen.findByRole("checkbox", { name: "Extra résumé polish" }));
+    await user.click(screen.getByRole("button", { name: "Save AI policy" }));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledWith({ resumeVoicePolish: enabled }));
+  });
+
   it("rolls back extra-polish cache state while keeping the failed-save draft editable", async () => {
     const user = userEvent.setup();
     let rejectSave: (reason: Error) => void = () => undefined;

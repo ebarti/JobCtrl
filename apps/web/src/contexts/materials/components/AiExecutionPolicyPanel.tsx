@@ -102,7 +102,8 @@ export function AiExecutionPolicyPanel() {
           ? { analysisLegs: value.analysisLegs }
           : {}),
         ...(response.effectiveSettings.tailoringGeneratorModels.editable &&
-          JSON.stringify(generatorModels) !== JSON.stringify(response.settings.tailoringGeneratorModels ?? [])
+          (value.generatorPrimary !== (generators[0] ?? "") ||
+            value.generatorFallback !== (generators[1] ?? ""))
           ? { tailoringGeneratorModels: generatorModels.length ? generatorModels : null }
           : {}),
         ...(response.effectiveSettings.tailoringJudgeModel.editable &&

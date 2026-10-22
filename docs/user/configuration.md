@@ -251,9 +251,10 @@ failure rather than silently selecting a different model.
 A résumé is saved once its required factual, quality and applicable persona
 reviews approve it. Enable the option for an additional wording pass; any
 changed text receives fresh reviews, so this takes more time. The setting
-applies to new résumé generations and does not rewrite accepted materials or
-change work already in progress. Saving this option alone does not require a
-live model catalog or change your model choices.
+is read when each résumé generation starts. An already-started résumé generation
+keeps its choice; queued or later Tailor steps use the newly saved value, even
+within an existing workflow. Accepted materials are not rewritten. Saving this
+option alone does not require a live model catalog or change your model choices.
 
 **Reasoning effort** appears for each selected Codex model whose live catalog
 reports supported efforts. Options come from that model's
