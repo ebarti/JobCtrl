@@ -529,6 +529,16 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For scoring evidence payloads, run the score-use-case, scoring-determination,
+exact-v7 score-runtime and semantic-determination suites. Inspect the actual
+composed request: canonical authored source IDs and exact text must appear once
+as a source inventory, `candidate_evidence_ids` must match it, and every
+requirement field and analysis generation must remain. Keep unconfirmed
+suggestions excluded and retain opposite model verdicts, strict citation/ID
+rejection and accepted-score preservation. Do not use native prompt/response
+replay fixtures. Measure payload sizes separately from token counts, latency
+and semantic quality; a smaller representation proves only the former.
+
 For workflow/model trace joins, run locked
 `pytest tests/test_worker_trace_context.py tests/test_workflow_run_context.py tests/test_activity_connection_lifetime.py tests/test_p1b_error_inversion.py`
 and the existing OTel/RPC span tests. Use in-memory export and synthetic sources
