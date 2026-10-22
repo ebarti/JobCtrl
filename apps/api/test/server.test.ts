@@ -1660,6 +1660,58 @@ describe("local TypeScript API", () => {
     }
   });
 
+  it("serves standalone preparation job labels through HTTP and withholds a stale execution", async () => {
+    const app = buildApp(options);
+    const workflowId = `prep-preparation:${"a".repeat(64)}`;
+    const runId = "00000000-0000-4000-8000-000000000071";
+    const opaqueId = `op_${"b".repeat(24)}`;
+    const jobUrl = "https://example.test/standalone-runtime";
+    const now = new Date().toISOString();
+    try {
+      await app.ready();
+      const db = new Database(options.dbPath);
+      try {
+        insertJob(db, { url: jobUrl, title: "Standalone runtime role", company: "Synthetic runtime employer", site: "test" });
+        db.prepare(`INSERT INTO workflow_run_projections (
+          tenant_id, workflow_id, workflow_type, status, temporal_run_id, input_summary_json, started_at
+        ) VALUES ('local', ?, 'JobPreparationWorkflow', 'in_progress', ?, ?, ?)`)
+          .run(workflowId, runId, JSON.stringify({ jobId: jobIdFor(jobUrl), privateNote: "private-standalone-http-sentinel" }), now);
+      } finally { db.close(); }
+      insertWorkerHeartbeat(options.dbPath, {
+        workerId: "standalone-http", appDir: path.dirname(options.dbPath), dbPath: options.dbPath, lastSeenAt: now,
+      });
+      const heartbeatDb = new Database(options.dbPath);
+      try {
+        heartbeatDb.prepare(`UPDATE worker_runtime_heartbeats SET heartbeat_schema_version = 2,
+          active_activity_count = 1, active_activity_counts_json = ?, active_activity_details_json = ?,
+          active_activity_details_total = 1, active_activity_details_truncated = 0
+          WHERE worker_id = 'standalone-http'`).run(JSON.stringify({ tailor_job: 1 }), JSON.stringify([{
+            activityType: "tailor_job", operationalRef: { kind: "job-tailoring", opaqueId },
+            workflowRef: workflowId, executionRef: runId, attempt: 1, startedAt: now,
+          }]));
+      } finally { heartbeatDb.close(); }
+      const response = await app.inject({ method: "GET", url: "/v1/pipeline/operations" });
+      expect(response.statusCode, response.body).toBe(200);
+      const result = PipelineOperationsSnapshotSchema.parse(response.json());
+      expect(result.execution).toBeNull();
+      expect(result.activeItems).toEqual([expect.objectContaining({
+        kind: "resolved_job", workflowId, executionId: runId, jobKey: opaqueId,
+        title: "Standalone runtime role", company: "Synthetic runtime employer", stage: "tailor",
+      })]);
+      expect(response.body).not.toContain("private-standalone-http-sentinel");
+      expect(response.body).not.toContain(jobUrl);
+      const staleDb = new Database(options.dbPath);
+      try {
+        staleDb.prepare("UPDATE workflow_run_projections SET temporal_run_id = ? WHERE workflow_id = ?")
+          .run("00000000-0000-4000-8000-000000000072", workflowId);
+      } finally { staleDb.close(); }
+      const stale = await app.inject({ method: "GET", url: "/v1/pipeline/operations" });
+      expect(stale.statusCode, stale.body).toBe(200);
+      expect(PipelineOperationsSnapshotSchema.parse(stale.json()).activeItems)
+        .toEqual([expect.objectContaining({ kind: "unresolved_runtime_activity" })]);
+    } finally { await app.close(); }
+  });
+
   it("classifies current running work as active or stuck from canonical stage timestamps", async () => {
     const db = new Database(options.dbPath);
     try {
