@@ -14327,7 +14327,12 @@ describe("enforcing route to registered worker handoffs", () => {
       expect(response.statusCode, response.body).toBe(200);
       await vi.waitFor(() => expect(fixture.rows().some(row => row.kind === "start")).toBe(true), { timeout: 10000 });
       const firstStart = fixture.rows().find(row => row.kind === "start");
-      if (mode === "transport_failure") await fixture.adapter.close();
+      if (mode === "transport_failure") {
+        // Disconnect after durable start, not between the attempted-start trace
+        // and the synthetic starter's registry write.
+        await vi.waitFor(() => expect(fixture.rows().some(row => row.kind === "waiting")).toBe(true), { timeout: 10000 });
+        await fixture.adapter.close();
+      }
       if (mode === "start_failure" || mode === "wait_failure") await expect(dispatch.mock.results[0]!.value).resolves.toMatchObject({ status: "failed" });
       else await expect(dispatch.mock.results[0]!.value).rejects.toThrow();
       expect(rpcContinuationMarkers()).toEqual([]);
