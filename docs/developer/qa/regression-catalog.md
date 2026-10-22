@@ -545,6 +545,19 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For terminal enrichment preparation handoff, run locked
+`pytest tests/test_workflow_discovery.py tests/test_discovery_enrichment_handoff.py tests/test_discovery_preparation_orchestration.py`.
+Use an independent Temporal test server and owned exact-schema SQLite data.
+Interrupt live capture when its producer finishes, then prove terminal enrichment
+reclaims the job and uses the real flag-gated callback only after its commit.
+With a second job, assert the first completed job starts preparation before the
+next capture. Preserve execution/cohort identity, existing idempotent preparation
+ownership, inactive/blocked admission, final fan-out and compensation ordering.
+Generate and replay histories with and without the terminal-handoff marker;
+old histories and already scheduled activities retain their recorded input.
+No native workspace or provider calls belong in these regressions.
+
+
 For planned PDF progress counts, run
 `corepack pnpm --filter @jobctrl/api exec vitest run test/pipeline-operations.test.ts`.
 Use owned exact-schema members in both execution cohorts. Without a PDF lifecycle,
