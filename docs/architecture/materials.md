@@ -500,8 +500,12 @@ compact spacing with the same base font, margins and complete approved content.
 It adopts that candidate only if it has one physical page and its ordered
 whitespace-normalized extracted text exactly matches the original. Other page
 counts, empty/unverifiable text and a still-multipage or text-mismatched candidate
-retain the original rendering. Custom templates, any explicit theme and the
-shared supplied-HTML print entry point retain their selected layout.
+retain the original rendering. The saved built-in fallback supplies its complete
+theme with `assignmentSource: built_in`; that path is eligible even though its
+theme object is populated. Compaction changes only density and preserves every
+other resolved theme token. Custom templates, explicit profile/job assignments,
+explicit themes without built-in fallback provenance and the shared supplied-HTML
+print entry point retain their selected layout.
 
 The chosen HTML sidecar, PDF bytes and DOM layout boxes come from the same render.
 Artifact metadata records the `default-single-page-v1` fit policy, original/final

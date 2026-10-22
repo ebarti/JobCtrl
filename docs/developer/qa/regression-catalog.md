@@ -226,8 +226,11 @@ its two pages. The saved HTML and returned layout boxes must match the selected
 render. Cover single-page/large/empty outputs, still-multipage candidates, text
 mismatch, renderer failure, temporary-file cleanup and all explicit/custom theme
 bypasses. Keep the original rendering when compaction cannot remove the page;
-never truncate text or shrink font size. Native examples are private product QA,
-not committed replay fixtures.
+never truncate text or shrink font size. Exercise fresh SQLite template resolution
+through the adapter: the populated unassigned built-in theme must admit fitting;
+profile/job assignments must bypass it. Verify compaction preserves all resolved
+theme tokens except density. Native examples are private product QA, not committed
+replay fixtures.
 
 
 This bounded trial measures the current `HtmlResumePdfAdapter` and

@@ -770,6 +770,8 @@ def _fit_default_resume(
     html_content: str,
     output_path: str,
     layout_boxes: list[LayoutBox],
+    *,
+    resume_theme: dict[str, Any] | None = None,
 ) -> tuple[str, list[LayoutBox], dict[str, Any]]:
     """Try existing compact spacing for a two-page default, conserving all text."""
     output = Path(output_path)
@@ -784,7 +786,7 @@ def _fit_default_resume(
     if original_pages != 2 or not original_text:
         return html_content, layout_boxes, decision
 
-    compact_html = build_resume_html(document, resume_theme={"density": "compact"})
+    compact_html = build_resume_html(document, resume_theme={**(resume_theme or {}), "density": "compact"})
     with tempfile.TemporaryDirectory(prefix=".resume-fit-", dir=output.parent) as temporary:
         candidate = Path(temporary) / "compact.pdf"
         compact_boxes = _render_resume_pdf_playwright(compact_html, str(candidate))
@@ -820,12 +822,13 @@ class HtmlResumePdfAdapter:
         layout_boxes = _render_resume_pdf_playwright(html_content, output_path)
         fit_metadata: dict[str, Any] = {}
         if (
-            resume_theme is None
-            and isinstance(resume_template, dict)
+            isinstance(resume_template, dict)
             and resume_template.get("templateId") == "built_in:modern-html"
+            and resume_template.get("assignmentSource") in (None, "built_in")
+            and (resume_theme is None or resume_template.get("assignmentSource") == "built_in")
         ):
             html_content, layout_boxes, fit_metadata = _fit_default_resume(
-                document, html_content, output_path, layout_boxes,
+                document, html_content, output_path, layout_boxes, resume_theme=resume_theme,
             )
         html_path.write_text(html_content, encoding="utf-8")
         log.info("HTML resume PDF generated: %s", output_path)
