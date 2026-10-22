@@ -92,10 +92,12 @@ from jobctrl.infrastructure.enrichment.sqlite_repository import (
     SqlitePostingSnapshotSetRepository,
 )
 from jobctrl.infrastructure.enrichment.playwright_fetcher import (
+    _assert_capture_url,
     _clean_content_html,
     _collect_json_ld,
     _collect_main_content,
     _collect_status_html,
+    _dismiss_optional_linkedin_dialog,
     _partial_resource_failure,
 )
 from jobctrl.infrastructure.enrichment.linkedin_apply_resolver import (
@@ -410,6 +412,7 @@ def _page_to_detail_page(page, url: str, status: int | None = None) -> DetailPag
     the fields the extractors need so the cascade can run as pure
     functions over the value object.
     """
+    _dismiss_optional_linkedin_dialog(page)
     fetched_at = datetime.now(timezone.utc).isoformat()
     final_url = page.url
     page_title = ""
@@ -421,6 +424,7 @@ def _page_to_detail_page(page, url: str, status: int | None = None) -> DetailPag
     html = _collect_main_content(page)
     visibility = []
     status_html, status_complete, raw_hash = _collect_status_html(page, visibility_out=visibility)
+    _assert_capture_url(page, final_url)
     return DetailPage(
         url=url,
         final_url=final_url,

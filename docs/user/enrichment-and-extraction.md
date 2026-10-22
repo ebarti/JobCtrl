@@ -59,6 +59,14 @@ is retained unless you request a reset or its budget was exhausted. Saved
 scores, approved materials and approvals remain intact; downstream preparation
 waits for enrichment to succeed again.
 
+On a public LinkedIn job-view page, anonymous acquisition can close the site's
+optional contextual sign-in dialog through its offered dismiss button before
+capturing. This is scoped to that known control and route. It does not sign in
+or submit a form; a required wall without that control remains captured as-is.
+Only an enabled, rendered control that cannot submit or reset a form is admitted.
+An unexpected navigation during dismissal or the remaining capture reads fails
+acquisition instead of retaining the original posting identity.
+
 LinkedIn's public guest description and authenticated job-detail layouts both
 have deterministic extraction rules. When the public description is present in
 the captured content, anonymous enrichment can save it without an LLM or an

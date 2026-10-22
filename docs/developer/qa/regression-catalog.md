@@ -570,6 +570,16 @@ reviews before closing runtimes or removing temporary data. A real configured
 provider call with owned synthetic sources separately proves the integration;
 synthetic timing is not a whole-workflow speed claim.
 
+For the optional LinkedIn guest dialog, run locked
+`pytest tests/test_linkedin_guest_dialog.py` with the capture and URL-safety suites.
+Use owned offline DOMs to prove origin/route scope, one rendered non-submitting
+control, opposed explicit/default submit controls, a transparent earlier control,
+actual walls without dismissal and zero form submissions. Inject delayed URL and
+content changes during both direct and batch capture; both must reject through
+the typed acquisition failure after all capture reads. Repeat a fresh affected
+public URL through production acquisition and retain only private source captures
+and safe control metadata. Do not substitute hidden-page extraction for dismissal.
+
 Every displayed semantic judgment must trace to a persisted determination:
 kind, schema/prompt versions, provider/model, input fingerprint, canonical source
 IDs and verbatim citations. Inspect the canonical writer, the accepted artifact
