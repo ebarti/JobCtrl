@@ -490,3 +490,24 @@ Cover source, manifest and PDF reads reject symlinks beneath the trusted workspa
 and bound regular-file reads through descriptors. The worker opens owned attempt
 directories relative to descriptors and writes Chromium's returned PDF bytes
 exclusively; Chromium receives no output filename from RPC input.
+
+
+## Default resume print fit
+
+The uncustomized built-in Modern HTML template first renders its balanced layout.
+When the physical PDF has exactly two pages, the adapter tries the existing
+compact spacing with the same base font, margins and complete approved content.
+It adopts that candidate only if it has one physical page and its ordered
+whitespace-normalized extracted text exactly matches the original. Other page
+counts, empty/unverifiable text and a still-multipage or text-mismatched candidate
+retain the original rendering. Custom templates, any explicit theme and the
+shared supplied-HTML print entry point retain their selected layout.
+
+The chosen HTML sidecar, PDF bytes and DOM layout boxes come from the same render.
+Artifact metadata records the `default-single-page-v1` fit policy, original/final
+page counts, chosen density and physical text conservation. A compact render
+failure propagates before artifact acceptance; it leaves the original rendered
+bytes intact. This mechanical pagination policy performs no model call and
+changes no authored claim, factual/quality determination or accepted source.
+The DOM boxes remain the existing pre-pagination approximation; the fit decision
+does not establish accurate physical highlights for multipage documents.

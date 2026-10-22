@@ -1243,3 +1243,45 @@ def test_dense_resume_pagination_trial(
         all(value is True for key, value in result.items() if key != "max_geometry_delta_pt")
         for result in report["repeatability"]
     ), report["repeatability"]
+
+
+@pytest.mark.parametrize("explicit_theme", [False, True])
+def test_default_resume_fit_preserves_physical_text_and_explicit_theme(
+    pagination_environment, pagination_boundaries, tmp_path, explicit_theme,
+):
+    from pypdf import PdfReader
+
+    count = pagination_boundaries["a4"]["above"]
+    profile, expected_markers = _pagination_profile("boundary-above", boundary_bullets=count)
+    document = build_resume_document({}, profile)
+    baseline_html = build_resume_html(document)
+    baseline = tmp_path / "baseline.pdf"
+    html_resume_pdf.render_resume_html_to_pdf(baseline_html, str(baseline))
+    original = PdfReader(baseline)
+    assert len(original.pages) == 2
+    theme = {"density": "balanced"} if explicit_theme else None
+    path = tmp_path / "rendered.pdf"
+    artifact = HtmlResumePdfAdapter().render_resume_to_pdf(
+        tailored_payload={}, profile_dict=profile, output_path=str(path), created_at="2026-10-22T00:00:00Z",
+        resume_template={"templateId": "built_in:modern-html"}, resume_theme=theme,
+    )
+    result = PdfReader(path)
+    def text(pdf):
+        return " ".join(" ".join((p.extract_text() or "").split()) for p in pdf.pages)
+    assert text(result) == text(original)
+    assert all(marker in text(result) for marker in expected_markers)
+    expected_theme = theme if explicit_theme else {"density": "compact"}
+    expected_html = build_resume_html(document, expected_theme)
+    assert path.with_suffix(".html").read_text() == expected_html
+    observation = _pagination_pdf_observation(path, pagination_environment)
+    assert not observation["outside_page_candidates"]
+    if explicit_theme:
+        assert len(result.pages) == 2 and "layout_fit" not in artifact.metadata
+    else:
+        assert len(result.pages) == 1
+        fit = artifact.metadata["layout_fit"]
+        assert fit["original_page_count"] == 2 and fit["page_count"] == 1
+        assert fit["selected_density"] == "compact" and fit["physical_text_preserved"]
+        comparison = tmp_path / "matching-layout.pdf"
+        boxes = html_resume_pdf.render_resume_html_to_pdf(expected_html, str(comparison))
+        assert artifact.metadata["layout_boxes"] == boxes

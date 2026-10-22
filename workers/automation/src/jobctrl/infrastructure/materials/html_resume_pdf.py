@@ -16,6 +16,7 @@ import uuid
 from functools import lru_cache
 from importlib.resources import files
 from pathlib import Path
+import tempfile
 from typing import Any
 
 from jobctrl.domain.materials.entities import Artifact
@@ -755,6 +756,51 @@ def render_resume_html_to_pdf(html_content: str, output_path: str) -> list[Layou
     return _render_resume_pdf_playwright(html_content, output_path)
 
 
+def _pdf_page_text(path: Path) -> tuple[int, str]:
+    """Physical page count and ordered text, normalized only for whitespace."""
+    from pypdf import PdfReader
+
+    reader = PdfReader(path)
+    text = " ".join(" ".join((page.extract_text() or "").split()) for page in reader.pages)
+    return len(reader.pages), text
+
+
+def _fit_default_resume(
+    document: ResumeDocument,
+    html_content: str,
+    output_path: str,
+    layout_boxes: list[LayoutBox],
+) -> tuple[str, list[LayoutBox], dict[str, Any]]:
+    """Try existing compact spacing for a two-page default, conserving all text."""
+    output = Path(output_path)
+    original_pages, original_text = _pdf_page_text(output)
+    decision: dict[str, Any] = {
+        "policy": "default-single-page-v1",
+        "original_page_count": original_pages,
+        "page_count": original_pages,
+        "selected_density": "balanced",
+        "compact_attempted": False,
+    }
+    if original_pages != 2 or not original_text:
+        return html_content, layout_boxes, decision
+
+    compact_html = build_resume_html(document, resume_theme={"density": "compact"})
+    with tempfile.TemporaryDirectory(prefix=".resume-fit-", dir=output.parent) as temporary:
+        candidate = Path(temporary) / "compact.pdf"
+        compact_boxes = _render_resume_pdf_playwright(compact_html, str(candidate))
+        compact_pages, compact_text = _pdf_page_text(candidate)
+        decision["compact_attempted"] = True
+        decision["compact_page_count"] = compact_pages
+        decision["physical_text_preserved"] = compact_text == original_text
+        if compact_pages == 1 and compact_text == original_text:
+            # The candidate belongs to this render and shares the filesystem.
+            # Its HTML and layout boxes become authoritative with its bytes.
+            candidate.replace(output)
+            decision.update(page_count=1, selected_density="compact")
+            return compact_html, compact_boxes, decision
+    return html_content, layout_boxes, decision
+
+
 class HtmlResumePdfAdapter:
     """Concrete ``PdfRendererPort`` that renders tailored resumes via HTML/CSS."""
 
@@ -771,9 +817,17 @@ class HtmlResumePdfAdapter:
         document = build_resume_document(tailored_payload, profile_dict)
         html_content = build_resume_html(document, resume_theme=resume_theme)
         html_path = Path(output_path).with_suffix(".html")
-        html_path.write_text(html_content, encoding="utf-8")
-
         layout_boxes = _render_resume_pdf_playwright(html_content, output_path)
+        fit_metadata: dict[str, Any] = {}
+        if (
+            resume_theme is None
+            and isinstance(resume_template, dict)
+            and resume_template.get("templateId") == "built_in:modern-html"
+        ):
+            html_content, layout_boxes, fit_metadata = _fit_default_resume(
+                document, html_content, output_path, layout_boxes,
+            )
+        html_path.write_text(html_content, encoding="utf-8")
         log.info("HTML resume PDF generated: %s", output_path)
 
         size = None
@@ -794,6 +848,7 @@ class HtmlResumePdfAdapter:
                 "html_path": str(html_path),
                 "layout_boxes": layout_boxes,
                 "layout_source": "html_resume_dom",
+                **({"layout_fit": fit_metadata} if fit_metadata else {}),
                 **({"resume_template": resume_template} if resume_template else {}),
             },
             superseded_at=None,

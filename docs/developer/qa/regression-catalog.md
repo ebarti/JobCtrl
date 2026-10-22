@@ -217,6 +217,19 @@ run against `~/.jobctrl`.
 
 ## Dense HTML Resume Pagination (#907)
 
+For the conditional default-template fit policy, also run locked
+`pytest tests/test_default_resume_fit.py`, followed by this entire real-render
+module with the opt-in flag. The generated adjacent A4 boundary must print two
+balanced pages; the uncustomized built-in adapter must print one complete compact
+page with identical ordered physical text. An explicit balanced theme must keep
+its two pages. The saved HTML and returned layout boxes must match the selected
+render. Cover single-page/large/empty outputs, still-multipage candidates, text
+mismatch, renderer failure, temporary-file cleanup and all explicit/custom theme
+bypasses. Keep the original rendering when compaction cannot remove the page;
+never truncate text or shrink font size. Native examples are private product QA,
+not committed replay fixtures.
+
+
 This bounded trial measures the current `HtmlResumePdfAdapter` and
 `render_resume_html_to_pdf` path: structured synthetic profile → shipped
 HTML/CSS with embedded Geist → fresh Playwright Chromium → physical PDF.
