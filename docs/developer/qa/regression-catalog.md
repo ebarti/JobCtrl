@@ -1302,6 +1302,14 @@ readable; it must not leave stale ready data published during the failure.
 
 ### Public demo privacy and edge gate
 
+For additive demo settings, reopen a retained current-schema/current-seed
+workspace missing the new fields and require a strict, complete settings response
+and a rendered settings panel. Preserve identity, revision, authored edits,
+receipts and blobs on read; verify both subsequent boolean save directions and
+reload, existing saved values, an older tab's latest transaction state, and storage
+fallback. Never replace the workspace or relax response-schema assertions to
+update an immutable seed digest.
+
 When consent, cookies, telemetry, D1, retention, or Cloudflare configuration
 changes, the edge suite must prove that decline creates no analytics identity,
 grant is required before telemetry, cookie attributes and versioning remain
