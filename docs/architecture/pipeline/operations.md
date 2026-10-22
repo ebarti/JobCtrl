@@ -291,7 +291,12 @@ the latest terminal execution. The phase vocabulary is `discovering`,
 `draining`, `completed`, `completed_with_issues`, `failed`, and `canceled`.
 Both execution cohorts participate in the delivered phase calculation:
 unresolved observed jobs or swept backlog can keep an otherwise successful
-workflow in `draining`.
+workflow in `draining`. While a successful, error-free source workflow is closed
+and shared work has not been confirmed idle, the UI reports **Source collection
+complete**, counts remaining jobs across both execution cohorts, and points to
+running and waiting preparation stages. Closing source collection does not imply
+that active preparation needs another Discover run. An unavailable runtime
+inventory remains explicit; the notice does not claim the workers are idle.
 
 ### Operator stop and failure recovery
 
