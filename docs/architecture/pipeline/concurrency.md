@@ -80,6 +80,18 @@ permits remain occupied until cleanup. SDK-internal wire retries are outside thi
 admission boundary. No partial pair can accept an artifact. Worker shutdown stops
 admission, drains reviews, then closes agent runtimes and flushes telemetry.
 
+Compensation provider-row classification has a separate per-refresh bound of
+`N` independent determinations. The coordinator deduplicates the existing exact
+source identity, admits at most `N` leaves, retains input order and reuses
+accepted cache IDs. Every leaf has its own SQLite connection and the captured
+model, effort, product lane and spend preflight. Publication-owner guards run
+only on the coordinator; model-attempt cancellation uses a thread-safe stop
+signal. An aborted batch releases its still-owned refresh leases before waiting
+for admitted calls to settle and account usage. Those calls can retain valid
+classification cache results but cannot publish the canceled refresh. Healthy
+classification renews live leases; an expired or replaced owner cannot renew or
+publish. This is a per-refresh leaf bound and does not add Temporal activity slots.
+
 Both activity pools and direct blocking activity runners using the default
 asyncio pool close their thread-local SQLite connections before reusing a thread. Committed artifacts remain durable; unfinished writes are rolled back.
 A function that returns successfully with an unfinished transaction fails with

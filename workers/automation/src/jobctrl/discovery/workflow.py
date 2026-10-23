@@ -101,6 +101,7 @@ _DISCOVERY_TIMEOUT = timedelta(hours=6)
 _LIVE_ENRICH_HEARTBEAT_TIMEOUT = timedelta(seconds=5)
 _DEFAULT_HEARTBEAT_TIMEOUT = timedelta(minutes=2)
 _AUTOMATIC_COMPENSATION_REFRESH_PATCH = "discover-automatic-compensation-refresh-v1"
+_COMPENSATION_MODEL_BUDGET_PATCH = "discover-compensation-model-budget-v1"
 _TERMINAL_ENRICHMENT_HANDOFF_PATCH = "discover-terminal-enrichment-handoff-v1"
 
 
@@ -520,7 +521,9 @@ async def _run_automatic_compensation_refresh_activity(
             expected_db_path=payload.expected_db_path,
             discovery_execution=discovery_execution,
         ),
-        start_to_close_timeout=_DEFAULT_TIMEOUT,
+        start_to_close_timeout=(
+            _DISCOVERY_TIMEOUT if workflow.patched(_COMPENSATION_MODEL_BUDGET_PATCH) else _DEFAULT_TIMEOUT
+        ),
         heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
         retry_policy=_SOURCE_RETRY,
     )

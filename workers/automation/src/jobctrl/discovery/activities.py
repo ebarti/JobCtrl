@@ -457,6 +457,7 @@ async def automatic_compensation_refresh_activity(
         run_blocking_with_heartbeat,
     )
     from jobctrl.infrastructure.temporal.runtime_guard import assert_activity_runtime
+    from jobctrl.domain.determinations import DeterminationFailure
 
     assert_activity_runtime(
         expected_app_dir=payload.expected_app_dir,
@@ -468,6 +469,7 @@ async def automatic_compensation_refresh_activity(
     except RuntimeError:
         # Direct unit calls have no Temporal activity context.
         owner = f"discover:{payload.tenant_id}:direct"
+    cancel_event = threading.Event()
 
     def _run() -> AutomaticCompensationRefreshActivityOutput:
         refresh_started_at = datetime.now(timezone.utc).isoformat()
@@ -477,7 +479,10 @@ async def automatic_compensation_refresh_activity(
             owner=owner,
             now=refresh_started_at,
             conn=conn,
+            cancel_event=cancel_event,
         )
+        if cancel_event.is_set():
+            raise DeterminationFailure("compensation_refresh_canceled")
         materialized_at = datetime.now(timezone.utc).isoformat()
         materialization = materialize_automatic_compensation_estimates(
             conn,
@@ -517,6 +522,7 @@ async def automatic_compensation_refresh_activity(
             starting_message="automatic compensation refresh starting",
             progress_message="automatic compensation refresh still running",
             activity_name="discover:automatic-compensation",
+            on_cancel=cancel_event.set,
         )
     except JobCtrlError as exc:
         raise to_application_error(exc) from exc

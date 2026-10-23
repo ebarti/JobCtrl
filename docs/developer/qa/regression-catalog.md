@@ -545,6 +545,20 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For automatic compensation classification and refresh ownership, run locked
+`pytest tests/test_compensation_classification_parallelism.py tests/test_automatic_compensation_refresh.py tests/test_compensation_refresh_state.py tests/test_compensation_refresh_temporal.py tests/test_workflow_discovery.py`.
+Use owned exact-schema SQLite and synthetic provider rows. Prove configured
+overlap/capacity, exact duplicate/cache identities and ordering, product-lane and
+spend admission, thread-local connection cleanup, live renewal, atomic stale-owner
+rejection and accepted-range preservation. Hold admitted model calls while a real
+Temporal activity times out: its cooperative stop must prevent new admissions and
+release current publication leases before those calls drain. Busy refreshes and
+failed backoff must remain explicit instead of being reported as fresh success.
+Generate and replay both the legacy and new compensation-budget histories; retain
+their recorded 30-minute and six-hour budgets respectively. No native data,
+provider calls, semantic eval corpora or recorded model-output fixtures belong in
+these tests.
+
 For blocking-activity cancellation heartbeats, run locked
 `pytest tests/test_p1b_error_inversion.py tests/test_workflow_control_capacity.py tests/test_activity_connection_lifetime.py`.
 Use both the ephemeral time-skipping server and an independent real Temporal
