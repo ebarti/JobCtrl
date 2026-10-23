@@ -50,6 +50,7 @@ dependencies = [
     # Gmail verification scopes derive sender domains from application URLs and
     # need public-suffix-aware eTLD+1 parsing.
     "publicsuffix2>=2.20191221,<3",
+    "ua-generator>=2.1.7",
 ]
 
 [project.optional-dependencies]

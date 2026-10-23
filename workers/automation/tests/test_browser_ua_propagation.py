@@ -106,11 +106,13 @@ class _RecordingBrowser:
 
     def new_context(self, *, user_agent: str | None = None, **_kw: object) -> "_RecordingBrowser":
         self._recorder.context_user_agents.append(user_agent)
+        self._recorder.context_headers.append(_kw.get("extra_http_headers", {}))
         return self
 
     def new_page(self, *, user_agent: str | None = None, **_kw: object) -> _RecordingPage:
         if user_agent is not None:
             self._recorder.page_user_agents.append(user_agent)
+        self._recorder.page_headers.append(_kw.get("extra_http_headers", {}))
         return _RecordingPage(self._recorder)
 
     def close(self) -> None:
@@ -130,6 +132,8 @@ class _RecordingPlaywright:
 
     def __init__(self) -> None:
         self.context_user_agents: list[str | None] = []
+        self.context_headers: list[object] = []
+        self.page_headers: list[object] = []
         self.page_user_agents: list[str | None] = []
         self.goto_urls: list[str] = []
         self.chromium = _RecordingChromium(self)
@@ -383,3 +387,34 @@ def explicit_semantic_ports(monkeypatch):
     from tests.workflow_determination_fakes import install_page_models
 
     install_page_models(monkeypatch)
+
+
+@pytest.mark.parametrize("surface", ["detail", "smart_extract"])
+def test_generated_headers_reach_anonymous_browser_context(monkeypatch, surface):
+    from jobctrl import config
+
+    monkeypatch.setattr(config, "load_saved_search_settings", lambda: {
+        "crawl_user_agent": {"use_browser_headers": True},
+    })
+    _allow_fetcher_url_safety(monkeypatch)
+    _allow_smartextract_url_safety(monkeypatch)
+    gateway = PolitenessGateway(rate_limiter=no_sleep_limiter())
+    session = PolitenessSession(
+        gateway, policy=ENRICHMENT_CRAWL_POLICY, budget=gateway.new_run_budget(5),
+        context=PolitenessSourceContext(stage="enrich", adapter="test"),
+    )
+    recorder = _RecordingPlaywright()
+    if surface == "detail":
+        monkeypatch.setattr("playwright.sync_api.sync_playwright", lambda: recorder)
+        result = PlaywrightDetailPageFetcher(session=session).fetch("https://example.test/jobs/1")
+        assert result.status == 200
+        assert recorder.context_headers == [gateway.request_headers]
+        assert recorder.context_user_agents == [gateway.user_agent]
+    else:
+        monkeypatch.setattr(smartextract, "sync_playwright", lambda: recorder)
+        result = smartextract.collect_page_intelligence("https://example.test/list", session=session)
+        assert result["page_title"] == "Role"
+        assert recorder.page_headers == [gateway.request_headers]
+        assert recorder.page_user_agents == [gateway.user_agent]
+    assert "Chrome/" in gateway.user_agent
+    assert gateway.request_headers["sec-ch-ua-mobile"] == "?0"

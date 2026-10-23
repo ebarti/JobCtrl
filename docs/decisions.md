@@ -1854,7 +1854,8 @@ Consequences:
 
 ## 2026-07-06: Crawl Politeness / Third-Party-Control Compliance Layer
 
-Status: accepted; robots enforcement superseded by the 2026-09-13 decision below
+Status: accepted; robots enforcement superseded by the 2026-09-13 decision below;
+request identity amended on 2026-10-23 below
 
 Decision: every outbound discovery/enrichment fetch — the `urllib` client, the
 `python-jobspy` invocation boundary, and every Playwright navigation — routes
@@ -2903,3 +2904,25 @@ spend admission and failed-refresh preservation remain unchanged. Existing
 accepted materials and work already running are not rewritten by a setting edit.
 See [Materials](architecture/materials.md) and
 [Configuration](user/configuration.md).
+
+
+## 2026-10-23: Optional Generated Browser Request Headers
+
+Status: accepted
+
+Discovery Runtime replaces the crawler product/contact text fields with **Use
+browser headers**, off by default. The typed boolean is persisted in SQLite as
+`crawl_user_agent.use_browser_headers`. Existing product/contact settings and
+API compatibility remain intact so disabling the option restores the previous
+product/version/contact construction.
+
+The shared gateway snapshots the setting at construction. Only literal `true`
+enables `ua-generator`; it produces a desktop Chrome identity using the latest
+versions bundled with the installed library and matching client hints, retained
+for the gateway lifetime. Controlled HTTP and anonymous Playwright requests
+carry those headers. JobStreaming accepts the selected User-Agent but owns its
+other headers; connected Chrome keeps its own browser identity. Operation-specific
+Accept, Content-Type and encoding headers, URL/redirect validation, request
+budgets, pacing, and Retry-After behavior are unchanged. This replaces the
+mandatory non-browser identity portion of the 2026-07-06 decision. It does not
+change source access policy or imply that a denied request will be accepted.

@@ -348,9 +348,8 @@ def collect_page_intelligence(url: str, headless: bool = True, *, session: Polit
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
         try:
-            # Resolve the honest UA at use time so an owner override reaches
-            # the browser fetch.
-            page = browser.new_page(user_agent=session.user_agent)
+            # Preserve the gateway session identity, including optional client hints.
+            page = browser.new_page(user_agent=session.user_agent, extra_http_headers=dict(session.request_headers))
             route_guard = PublicHttpUrlRouteGuard(page, fetch_public_requests=True).install()
             page.on("response", on_response)
 

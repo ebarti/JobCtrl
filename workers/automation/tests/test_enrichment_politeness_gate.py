@@ -286,6 +286,7 @@ def test_wttj_bootstrap_uses_the_guard_decision_identity(tmp_path: Path, monkeyp
             allowed=True,
             outcome=PolitenessOutcome.ALLOWED,
             user_agent="OwnerCrawler/9 (+https://example.test/crawler)",
+        request_headers={"sec-ch-ua": '"Synthetic Browser";v="1"'},
         )
         session = _DecisionSession(decision)
         playwright = _SpyPlaywright()
@@ -296,7 +297,7 @@ def test_wttj_bootstrap_uses_the_guard_decision_identity(tmp_path: Path, monkeyp
 
         assert session.guarded_urls == playwright.goto_calls
         assert len(session.guarded_urls) == 1
-        assert playwright.page_options == [{"user_agent": decision.user_agent}]
+        assert playwright.page_options == [{"user_agent": decision.user_agent, "extra_http_headers": dict(decision.request_headers)}]
     finally:
         close_connection(db_path)
 
@@ -313,6 +314,7 @@ def test_wttj_bootstrap_does_not_navigate_when_the_guard_denies(
                 allowed=False,
                 outcome=PolitenessOutcome.ROBOTS_DISALLOWED,
                 user_agent="OwnerCrawler/9 (+https://example.test/crawler)",
+        request_headers={"sec-ch-ua": '"Synthetic Browser";v="1"'},
                 reason="robots.txt disallows this path",
             )
         )
