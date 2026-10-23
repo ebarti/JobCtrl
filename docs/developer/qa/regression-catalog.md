@@ -558,6 +558,22 @@ old histories and already scheduled activities retain their recorded input.
 No native workspace or provider calls belong in these regressions.
 
 
+For conditional preparation completion, run locked
+`pytest tests/test_preparation_outcome_audit.py tests/test_worker_reconciler.py`
+and `corepack pnpm --filter @jobctrl/api exec vitest run test/pipeline-operations.test.ts`.
+Recover actual synthetic Temporal completion results into owned exact-schema
+SQLite, then read those same event bytes through the production API snapshot.
+A successful material skip must leave PDF lifecycle absent and the immutable plan
+unchanged while its exact run-owned receipt resolves the PDF as skipped in both
+cohorts. Current skipped rows without a receipt, wrong tenant/job/owner/run/plan,
+malformed or failed results, unknown decoder versions, and unrelated skips remain
+insufficient. Ordinary successful work with no skip cannot explain a missing PDF.
+Recorded PDF states retain precedence; refreshed pending prerequisites keep the
+member unresolved. Prove bounded, starvation-resistant recovery, duplicate
+idempotence, successor-owner fencing, transaction/thread ownership and no change
+to workflow terminal outcomes or accepted materials. Do not infer historical
+attribution from reason prose or nearby timestamps.
+
 For planned PDF progress counts, run
 `corepack pnpm --filter @jobctrl/api exec vitest run test/pipeline-operations.test.ts`.
 Use owned exact-schema members in both execution cohorts. Without a PDF lifecycle,

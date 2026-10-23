@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { z } from "zod";
 
 import type {
   DiscoveryProviderProgress,
@@ -25,6 +26,34 @@ import {
 } from "./pipeline-eta.js";
 import { readWorkerRuntimeTelemetry, type WorkerRuntimeTelemetrySnapshot } from "./worker-runtime-telemetry.js";
 import { readLlmSpendHealth } from "./worker-health.js";
+
+const PREPARATION_STEPS = ["score", "tailor", "cover", "pdf"] as const;
+const PreparationStepSchema = z.enum(PREPARATION_STEPS);
+const PreparationStepsSchema = z.array(PreparationStepSchema).max(4);
+const PreparationOutcomeObservationSchema = z.object({
+  tenantId: z.string().min(1),
+  decoderVersion: z.literal(1),
+  evidenceKind: z.literal("temporal_history"),
+  workflowType: z.literal("JobPreparationWorkflow"),
+  workflowId: z.string().min(1),
+  temporalRunId: z.string().min(1),
+  jobId: z.string().min(1),
+  idempotencyKey: z.string().min(1),
+  requiredSteps: PreparationStepsSchema.min(1),
+  discoveryExecution: z.object({
+    tenantId: z.string().min(1),
+    workflowId: z.string().min(1),
+    temporalRunId: z.string().min(1),
+  }).strict(),
+  terminalHistoryEventId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  result: z.object({
+    stepsCompleted: PreparationStepsSchema,
+    stepsSkipped: PreparationStepsSchema.max(1),
+    stepsFailed: z.array(PreparationStepSchema).max(0),
+    failure: z.null(),
+    errorCode: z.null(),
+  }).strict(),
+});
 
 const DEFAULT_TENANT = "local";
 const ETA_SAMPLE_LIMIT = 50;
@@ -158,6 +187,7 @@ interface Cohort {
   stageStates: Map<string, Map<string, StageStateRow>>;
   preparationWorkflowStatuses: Map<string, string>;
   preparationWorkflowRunIds: Map<string, string>;
+  conditionallySkippedPdfJobs: ReadonlySet<string>;
   summary: PipelineExecutionCohortSummary;
 }
 
@@ -383,6 +413,9 @@ function materializeExecution(
   const memberships = loadMemberships(db, tenantId, row.workflow_id, runId);
   const stageStates = loadStageStates(db, tenantId, memberships.map((membership) => membership.job_id));
   const preparationWorkflows = loadPreparationWorkflows(db, tenantId, memberships);
+  const conditionallySkippedPdfJobs = loadConditionallySkippedPdfJobs(
+    db, tenantId, row.workflow_id, runId, memberships, preparationWorkflows,
+  );
   const steps = loadPipelineSteps(db, tenantId, row.workflow_id, runId);
   const current = cohort(
     memberships.filter((membership) => membership.cohort_kind === "observed_this_run"),
@@ -390,6 +423,7 @@ function materializeExecution(
     steps,
     preparationWorkflows.statuses,
     preparationWorkflows.runIds,
+    conditionallySkippedPdfJobs,
   );
   const sweep = cohort(
     memberships.filter((membership) => membership.cohort_kind === "existing_backlog"),
@@ -397,6 +431,7 @@ function materializeExecution(
     steps,
     preparationWorkflows.statuses,
     preparationWorkflows.runIds,
+    conditionallySkippedPdfJobs,
   );
   const membershipClosed = hasTerminalFanout(steps, isTerminalWorkflowStatus(row.status));
   const phase = phaseFor(row.status, current, sweep, steps, membershipClosed);
@@ -456,7 +491,8 @@ function loadPreparationWorkflows(
       db,
       `SELECT workflow_id, status, temporal_run_id
          FROM workflow_run_projections
-        WHERE tenant_id = ? AND workflow_id IN (${group.map(() => "?").join(", ")})`,
+        WHERE tenant_id = ? AND workflow_type = 'JobPreparationWorkflow'
+          AND workflow_id IN (${group.map(() => "?").join(", ")})`,
       [tenantId, ...group],
     );
     for (const row of rows) {
@@ -466,6 +502,57 @@ function loadPreparationWorkflows(
     }
   }
   return { statuses, runIds };
+}
+
+function loadConditionallySkippedPdfJobs(
+  db: SqliteDatabase,
+  tenantId: string,
+  discoverWorkflowId: string,
+  discoverRunId: string,
+  members: MembershipRow[],
+  owners: { statuses: Map<string, string>; runIds: Map<string, string> },
+): ReadonlySet<string> {
+  const skipped = new Set<string>();
+  const byWorkflowId = new Map(members.flatMap((member) =>
+    member.preparation_workflow_id ? [[member.preparation_workflow_id, member] as const] : [],
+  ));
+  for (const group of chunks([...byWorkflowId.keys()], 500)) {
+    const rows = allRows<{
+      job_id: string | null; entity_ref: string | null; idempotency_key: string | null; payload_json: string | null;
+    }>(db,
+      `SELECT job_id, entity_ref, idempotency_key, payload_json FROM job_events
+        WHERE tenant_id = ? AND stage = 'workflow' AND entity_kind = 'workflow_run'
+          AND event_type = 'PreparationWorkflowOutcomeObserved'
+          AND entity_ref IN (${group.map(() => "?").join(", ")})`,
+      [tenantId, ...group],
+    );
+    for (const row of rows) {
+      const parsed = PreparationOutcomeObservationSchema.safeParse(parseJson(row.payload_json));
+      if (!parsed.success) continue;
+      const receipt = parsed.data;
+      const member = byWorkflowId.get(receipt.workflowId);
+      if (!member || member.work_plan_state !== "planned" || row.entity_ref !== receipt.workflowId ||
+          receipt.tenantId !== tenantId || row.job_id !== member.job_id || receipt.jobId !== member.job_id ||
+          owners.statuses.get(receipt.workflowId) !== "succeeded" ||
+          owners.runIds.get(receipt.workflowId) !== receipt.temporalRunId ||
+          receipt.workflowId !== `prep-${receipt.idempotencyKey}` ||
+          row.idempotency_key !== `preparation-outcome:1:${tenantId}:${receipt.workflowId}:${receipt.temporalRunId}` ||
+          receipt.discoveryExecution.tenantId !== tenantId ||
+          receipt.discoveryExecution.workflowId !== discoverWorkflowId ||
+          receipt.discoveryExecution.temporalRunId !== discoverRunId) continue;
+      const required = requiredSteps(member);
+      if (JSON.stringify(receipt.requiredSteps) !== JSON.stringify(parseJson(member.required_steps_json)) ||
+          JSON.stringify(required) !== JSON.stringify(PREPARATION_STEPS.filter((step) => required.includes(step)))) continue;
+      const skippedStep = receipt.result.stepsSkipped[0];
+      if (!skippedStep) continue;
+      const skipIndex = required.indexOf(skippedStep);
+      const pdfIndex = required.indexOf("pdf");
+      if (skipIndex < 0 || pdfIndex <= skipIndex ||
+          JSON.stringify(receipt.result.stepsCompleted) !== JSON.stringify(required.slice(0, skipIndex))) continue;
+      skipped.add(member.job_id);
+    }
+  }
+  return skipped;
 }
 
 function loadPipelineSteps(
@@ -490,13 +577,15 @@ function cohort(
   steps: PipelineStepRow[] = [],
   preparationWorkflowStatuses = new Map<string, string>(),
   preparationWorkflowRunIds = new Map<string, string>(),
+  conditionallySkippedPdfJobs: ReadonlySet<string> = new Set(),
 ): Cohort {
   return {
     members,
     stageStates,
     preparationWorkflowStatuses,
     preparationWorkflowRunIds,
-    summary: cohortSummary(members, stageStates, steps, preparationWorkflowStatuses),
+    conditionallySkippedPdfJobs,
+    summary: cohortSummary(members, stageStates, steps, preparationWorkflowStatuses, conditionallySkippedPdfJobs),
   };
 }
 
@@ -505,6 +594,7 @@ function cohortSummary(
   stageStates: Map<string, Map<string, StageStateRow>>,
   steps: PipelineStepRow[],
   preparationWorkflowStatuses: Map<string, string>,
+  conditionallySkippedPdfJobs: ReadonlySet<string>,
 ): PipelineExecutionCohortSummary {
   let planned = 0;
   let notEligible = 0;
@@ -515,7 +605,7 @@ function cohortSummary(
   for (const member of members) {
     if (member.work_plan_state === "planned") {
       planned += 1;
-      if (plannedMemberResolved(member, stageStates.get(member.job_id), steps, preparationWorkflowStatuses)) terminal += 1;
+      if (plannedMemberResolved(member, stageStates.get(member.job_id), steps, preparationWorkflowStatuses, conditionallySkippedPdfJobs)) terminal += 1;
       else remaining += 1;
       continue;
     }
@@ -538,12 +628,13 @@ function plannedMemberResolved(
   states: Map<string, StageStateRow> | undefined,
   pipelineSteps: PipelineStepRow[],
   preparationWorkflowStatuses: Map<string, string>,
+  conditionallySkippedPdfJobs: ReadonlySet<string>,
 ): boolean {
   const required = requiredSteps(member);
   if (required.length === 0) return false;
   return required.every((stage) => {
     const terminalOwner = memberPreparationWorkflowFailed(member, preparationWorkflowStatuses);
-    if (stage === "pdf") return isTerminalStepState(pdfStepForMember(member, pipelineSteps), terminalOwner);
+    if (stage === "pdf") return memberPdfResolved(member, pipelineSteps, preparationWorkflowStatuses, conditionallySkippedPdfJobs);
     return isTerminalStageState(states?.get(stage), terminalOwner);
   });
 }
@@ -613,6 +704,7 @@ function hasUnresolvedPlannedMember(cohortValue: Cohort, steps: PipelineStepRow[
         cohortValue.stageStates.get(member.job_id),
         steps,
         cohortValue.preparationWorkflowStatuses,
+        cohortValue.conditionallySkippedPdfJobs,
       ),
   );
 }
@@ -1059,10 +1151,23 @@ function pdfCounts(cohortValue: Cohort, steps: PipelineStepRow[]): PipelineStage
     counts.eligible += 1;
     const step = pdfStepForMember(member, steps);
     if (step) addPipelineStepState(counts, step.state);
+    else if (cohortValue.conditionallySkippedPdfJobs.has(member.job_id)) counts.skipped += 1;
     else if (pdfAwaitsRecordedPrerequisite(cohortValue, member)) counts.waiting += 1;
     else counts.unknown += 1;
   }
   return counts;
+}
+
+function memberPdfResolved(
+  member: MembershipRow,
+  steps: PipelineStepRow[],
+  ownerStatuses: Map<string, string>,
+  conditionallySkippedPdfJobs: ReadonlySet<string>,
+): boolean {
+  const step = pdfStepForMember(member, steps);
+  return step
+    ? isTerminalStepState(step, memberPreparationWorkflowFailed(member, ownerStatuses))
+    : conditionallySkippedPdfJobs.has(member.job_id);
 }
 
 function pdfAwaitsRecordedPrerequisite(cohortValue: Cohort, member: MembershipRow): boolean {
@@ -2177,7 +2282,9 @@ function remainingPaths(
     const states = cohortValue.stageStates.get(member.job_id);
     const stageIds = requiredSteps(member).filter((stage) => {
       const terminalOwner = memberPreparationWorkflowFailed(member, cohortValue.preparationWorkflowStatuses);
-      if (stage === "pdf") return !isTerminalStepState(pdfStepForMember(member, pipelineSteps), terminalOwner);
+      if (stage === "pdf") return !memberPdfResolved(
+        member, pipelineSteps, cohortValue.preparationWorkflowStatuses, cohortValue.conditionallySkippedPdfJobs,
+      );
       return !isTerminalStageState(states?.get(stage), terminalOwner);
     });
     return stageIds.length > 0 ? [{ stageIds: stageIds.map((stage) => (stage === "pdf" ? "pdf_render" : stage)) }] : [];
@@ -2323,7 +2430,9 @@ function sweepMemberHasRemainingWork(
   if (member.work_plan_state !== "planned") return true;
   return requiredSteps(member).some((stage) =>
     stage === "pdf"
-      ? !isTerminalStepState(pdfStepForMember(member, selected.steps), terminalOwner)
+      ? !memberPdfResolved(
+        member, selected.steps, selected.sweep.preparationWorkflowStatuses, selected.sweep.conditionallySkippedPdfJobs,
+      )
       : !isTerminalStageState(states?.get(stage), terminalOwner),
   );
 }
