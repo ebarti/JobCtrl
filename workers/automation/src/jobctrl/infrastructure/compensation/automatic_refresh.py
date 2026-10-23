@@ -23,7 +23,10 @@ from jobctrl.infrastructure.compensation.benchmark_ingestion import (
     FxRateToEur,
     canonicalize_reported_observations,
 )
-from jobctrl.infrastructure.compensation.levels_fyi_public import LevelsFyiPublicTarget
+from jobctrl.infrastructure.compensation.levels_fyi_public import (
+    LEVELS_FYI_PUBLIC_ERROR_CODES,
+    LevelsFyiPublicTarget,
+)
 from jobctrl.infrastructure.compensation.official_data import (
     load_ecb_daily_exchange_rates,
     load_eurostat_actual_individual_consumption_price_levels,
@@ -479,9 +482,8 @@ def _slice_load_errors(load_errors, source_load, benchmark_slice) -> list[str]:
     # unrelated Levels error; missing diagnostics never prove source success.
     if not matching:
         return list(load_errors)
-    errors = [error for error in load_errors if error != "levels_fyi_public_unavailable"]
-    if any(outcome.failed for outcome in matching):
-        errors.append("levels_fyi_public_unavailable")
+    errors = [error for error in load_errors if error not in LEVELS_FYI_PUBLIC_ERROR_CODES]
+    errors.extend(dict.fromkeys(code for outcome in matching for code in outcome.error_codes))
     return errors
 
 
@@ -525,13 +527,13 @@ def _bounded_receipts(items):
 
 
 LEVELS_LOOKUP_ERROR_CODES: tuple[str, ...] = (
-    "levels_fyi_public_unavailable",
+    *LEVELS_FYI_PUBLIC_ERROR_CODES,
     "reported_sources_unavailable",
 )
 
 
 def _levels_lookup_error(load_errors: list[str]) -> str | None:
-    """Return the first error proving the Levels role/level lookup did not run."""
+    """Return the first recorded cause of an incomplete Levels role/level lookup."""
 
     return next((code for code in load_errors if code in LEVELS_LOOKUP_ERROR_CODES), None)
 

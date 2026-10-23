@@ -42,7 +42,13 @@ country; an unrelated target does not inherit that source error. The automatic
 activity's recorded result retains each target's request outcomes, HTTP rejection
 codes when available, source-body hashes and parsing status. Empty, blocked and
 incompatible responses do not establish that salary data is absent. The result
-also retains the source fingerprint and exact classification ID for up to 128
+distinguishes `levels_fyi_public_unavailable` (required pages could not be read),
+`levels_fyi_public_unparsed` (reachable pages yielded no supported salary
+structure), and `levels_fyi_public_page_budget_exhausted` (the bounded traversal
+ended with coverage incomplete). Target receipts retain all applicable error
+codes. Incomplete lookups keep the same retry and accepted-evidence preservation
+rules; a page cap does not establish a provider outage. The result also retains
+the source fingerprint and exact classification ID for up to 128
 rejected observations, with an explicit omitted count if that bound is reached.
 Each diagnostic list retains up to 128 entries and 128 KiB, with explicit
 omission counts. These receipts contain no response bodies, headers or exception

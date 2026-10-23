@@ -302,3 +302,117 @@ async def test_unicode_receipt_limit_matches_temporal_wire_encoding(
             assert receipts[0]["sourceSnapshotId"] == synthetic_id
         else:
             assert receipts[0]["requests"][0]["url"] == "https://www.levels.fyi/" + synthetic_id
+
+
+def test_reachable_budget_exhaustion_is_not_a_provider_outage(tmp_path, monkeypatch):
+    target = LevelsFyiPublicTarget("software_engineering", "ES", "principal")
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.compensation.levels_fyi_public._salary_links",
+        lambda *_args: ("https://www.levels.fyi/companies/synthetic/salaries/software-engineer",),
+    )
+    loaded = public_load(tmp_path, monkeypatch, (target,), lambda _url: MARKDOWN, max_pages=1)
+    receipt, = loaded.levels_fyi_target_outcomes
+    assert receipt.requested_pages == receipt.reachable_pages == receipt.parsed_pages == 1
+    assert receipt.page_budget_exhausted and not receipt.level_lookup_unavailable
+    assert loaded.observations and receipt.failed
+    assert loaded.source_errors == ("levels_fyi_public_page_budget_exhausted",)
+    assert receipt.as_dict()["errorCodes"] == ["levels_fyi_public_page_budget_exhausted"]
+
+
+def test_reachable_unparsed_source_is_not_a_provider_outage(tmp_path, monkeypatch):
+    loaded = public_load(
+        tmp_path, monkeypatch, (LevelsFyiPublicTarget("software_engineering", "ES"),),
+        lambda _url: "<html><body>synthetic page with no salary payload</body></html>",
+    )
+    receipt, = loaded.levels_fyi_target_outcomes
+    assert receipt.requested_pages == receipt.reachable_pages == 1 and receipt.parsed_pages == 0
+    assert receipt.failed and loaded.observations == ()
+    assert loaded.source_errors == ("levels_fyi_public_unparsed",)
+    assert receipt.as_dict()["errorCodes"] == ["levels_fyi_public_unparsed"]
+
+
+def test_unattempted_source_budget_does_not_claim_an_outage(tmp_path, monkeypatch):
+    loaded = public_load(
+        tmp_path, monkeypatch, (LevelsFyiPublicTarget("software_engineering", "ES"),),
+        lambda _url: pytest.fail("zero allowance must perform no request"), max_pages=0,
+    )
+    assert loaded.source_errors == ("levels_fyi_public_page_budget_exhausted",)
+    receipt, = loaded.levels_fyi_target_outcomes
+    assert receipt.failed and receipt.requests == ()
+
+
+def test_distinct_source_errors_remain_scoped_to_their_actual_targets(database, tmp_path, monkeypatch):
+    put_job(database, country="ES", seniority="unknown")
+    put_job(database, job_id="22222222-2222-4222-8222-222222222222", country="PT", seniority="unknown")
+    put_job(database, job_id="33333333-3333-4333-8333-333333333333", family="operations", seniority="unknown")
+
+    def fetch(url):
+        if "/spain" in url:
+            raise HTTPError(url, 403, "unavailable", {}, None)
+        return "<html><body>synthetic unsupported salary structure</body></html>"
+
+    result = refresh(database, load=lambda targets: public_load(tmp_path, monkeypatch, targets, fetch))
+    rows = database.execute(
+        "SELECT role_family_code,country_code,refresh_status,last_error_code FROM compensation_market_refresh_state",
+    ).fetchall()
+    states = {(row[0], row[1]): tuple(row[2:]) for row in rows}
+    assert states[("software_engineering", "ES")] == ("failed", "levels_fyi_public_unavailable")
+    assert states[("software_engineering", "PT")] == ("failed", "levels_fyi_public_unparsed")
+    assert states[("operations", "ES")][0] == "insufficient_evidence"
+    assert result.failed_results == 2 and result.insufficient_results == 1
+
+
+@pytest.mark.parametrize("cause,expected", [
+    ("budget", "levels_fyi_public_page_budget_exhausted"),
+    ("parse", "levels_fyi_public_unparsed"),
+])
+@pytest.mark.parametrize("previously_accepted", [False, True])
+def test_incomplete_lookup_retains_direct_fallback_and_retry_policy(
+    database, monkeypatch, cause, expected, previously_accepted,
+):
+    from jobctrl.infrastructure.compensation.levels_fyi_public import LevelsFyiPublicTargetOutcome
+    from jobctrl.infrastructure.compensation.refresh_state import SqliteCompensationRefreshStateRepository
+
+    put_job(database)
+    configure_classifier(monkeypatch, ClassificationModel(seniority="unknown"))
+    repository = SqliteCompensationRefreshStateRepository(database)
+    slices = repository.discover_active_job_slices("local").slices
+    previous_id = None
+    if previously_accepted:
+        first = refresh(database)
+        assert first.direct_results == 1
+        previous_id = repository.get(slices[0]).last_direct_fact_id
+        assert previous_id is not None
+    outcome = LevelsFyiPublicTargetOutcome(
+        LevelsFyiPublicTarget("software_engineering", "ES", "senior"), "supported",
+        requested_pages=1, reachable_pages=1, parsed_pages=1 if cause == "budget" else 0,
+        page_budget_exhausted=cause == "budget",
+    )
+    result = refresh(
+        database, now="2026-08-13T08:00:00Z", force=slices,
+        load=lambda _targets: ReportedCompensationSourceLoad(
+            observations=(observation(),) if not previously_accepted else (),
+            levels_fyi_target_outcomes=(outcome,),
+        ),
+    )
+    state = repository.get(slices[0])
+    assert result.status == "completed_with_warnings" and result.failed_results == 1
+    assert expected in result.warnings and "levels_fyi_public_unavailable" not in result.warnings
+    assert state.refresh_status == "failed" and state.last_error_code == expected
+    assert state.last_result_kind == "direct" and state.last_direct_fact_id is not None
+    if previously_accepted:
+        assert state.last_direct_fact_id == previous_id
+    assert state.next_refresh_at == "2026-08-14T08:00:00.000000Z"
+    assert state.lease_owner is None
+
+
+def test_combined_lookup_failures_preserve_each_protocol_reason():
+    from jobctrl.infrastructure.compensation.levels_fyi_public import LevelsFyiPublicTargetOutcome
+
+    outcome = LevelsFyiPublicTargetOutcome(
+        LevelsFyiPublicTarget("software_engineering", "ES"), "supported",
+        requested_pages=1, reachable_pages=0, page_budget_exhausted=True,
+    )
+    assert outcome.as_dict()["errorCodes"] == [
+        "levels_fyi_public_unavailable", "levels_fyi_public_page_budget_exhausted",
+    ]
