@@ -495,6 +495,13 @@ Integrated anonymous broad-board requests receive the selected User-Agent;
 JobStreaming owns their remaining transport headers. `jobctrl doctor` prints an
 identity for the selected mode. Connected Chrome retains its real browser identity.
 
+Controlled HTTP and posting-browser acquisition record HTTP 429 and 503 as
+server deferrals before extraction. They honor a valid `Retry-After` through the
+shared host limiter; when the header is absent or invalid, they use a one-minute
+cooldown. Connected rendered-page results do not carry response headers, so they
+use that same fallback. Other hosts remain independent. Long server delays retain
+the limiter's five-minute bound and explicit deferral behavior.
+
 The rest of crawl policy also lives on the SQLite-backed Discovery boundary, so
 per-source overrides ride the existing registry rather than a parallel config
 surface:

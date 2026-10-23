@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import math
 import urllib.error
 import urllib.request
 from email.utils import parsedate_to_datetime
@@ -47,8 +48,9 @@ def parse_retry_after(value: str | None) -> float | None:
     if not value:
         return None
     value = value.strip()
-    if value.isdigit():
-        return float(value)
+    if value.isascii() and value.isdigit():
+        seconds = float(value)
+        return seconds if math.isfinite(seconds) else None
     try:
         when = parsedate_to_datetime(value)
     except (TypeError, ValueError):
@@ -59,6 +61,29 @@ def parse_retry_after(value: str | None) -> float | None:
         when = when.replace(tzinfo=timezone.utc)
     delta = (when - datetime.now(timezone.utc)).total_seconds()
     return max(0.0, delta)
+
+
+def record_rate_limited_response(
+    session: PolitenessSession,
+    url: str,
+    status: int | None,
+    headers: Mapping[str, str] | None = None,
+) -> float | None:
+    """Feed a server deferral into the shared host limiter on every transport.
+
+    A missing or invalid Retry-After still needs a cooldown, rather than a
+    rapid series of requests for different jobs on the throttled host. The
+    limiter bounds long server delays; zero retains normal minimum pacing.
+    """
+    if status not in (429, 503):
+        return None
+    header = next((value for name, value in (headers or {}).items() if name.lower() == "retry-after"), None)
+    retry_after = parse_retry_after(header)
+    if retry_after is None:
+        retry_after = 60.0
+    session.note_retry_after(url, retry_after)
+    session.record_server_rate_limit(url, retry_after)
+    return retry_after
 
 
 class GatewayHttpClient:
@@ -145,10 +170,6 @@ class GatewayHttpClient:
             except UnsafePublicDestinationError:
                 return None
             except urllib.error.HTTPError as exc:
-                if exc.code in (429, 503):
-                    retry_after = parse_retry_after(exc.headers.get("Retry-After") if exc.headers else None)
-                    if retry_after:
-                        self._session.note_retry_after(url, retry_after)
-                    self._session.record_server_rate_limit(url, retry_after)
+                if record_rate_limited_response(self._session, url, exc.code, exc.headers) is not None:
                     return None
                 raise
