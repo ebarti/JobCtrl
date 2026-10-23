@@ -14,7 +14,9 @@ describe("<DiscoveryRuntimeSettingsPanel>", () => {
 
     expect(await screen.findByRole("spinbutton", { name: "Results per board" })).toHaveValue(50);
     expect(screen.getByLabelText("Parallel source families")).toHaveValue(1);
-    expect(screen.getByLabelText("Crawler product name")).toHaveValue("JobCtrl");
+    expect(screen.getByRole("checkbox", { name: "Use browser headers" })).not.toBeChecked();
+    expect(screen.queryByLabelText("Crawler product name")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Crawler contact")).not.toBeInTheDocument();
     expect(screen.queryByText(/Saved in SQLite/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/applies to the next/i)).not.toBeInTheDocument();
 
@@ -23,8 +25,7 @@ describe("<DiscoveryRuntimeSettingsPanel>", () => {
       "Results per board",
       "Posting lookback hours",
       "Parallel source families",
-      "Crawler product name",
-      "Crawler contact",
+      "Use browser headers",
       "Enable scheduled discovery",
       "Schedule cron",
     ];
@@ -78,6 +79,56 @@ describe("<DiscoveryRuntimeSettingsPanel>", () => {
     expect(updateDiscoverySettings).toHaveBeenCalledWith(
       expect.objectContaining({ maxParallelFamilies: 4 }),
     );
+  });
+
+  it("discards and saves the browser-header choice without overwriting the legacy identity", async () => {
+    const user = userEvent.setup();
+    let saved = sampleDiscoverySettingsResponse;
+    const updateDiscoverySettings = vi.fn(async (body) => {
+      saved = {
+        ...saved,
+        settings: { ...saved.settings, useBrowserHeaders: body.useBrowserHeaders },
+        effectiveSettings: {
+          ...saved.effectiveSettings,
+          useBrowserHeaders: { ...saved.effectiveSettings.useBrowserHeaders, value: body.useBrowserHeaders },
+        },
+      };
+      return saved;
+    });
+    renderWithProviders(<DiscoveryRuntimeSettingsPanel />, {
+      ports: buildTestPorts({ api: {
+        discoverySettings: vi.fn(async () => saved), updateDiscoverySettings,
+      } }),
+    });
+    const checkbox = await screen.findByRole("checkbox", { name: "Use browser headers" });
+    await user.click(checkbox);
+    await user.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(checkbox).not.toBeChecked();
+    expect(updateDiscoverySettings).not.toHaveBeenCalled();
+    for (const enabled of [true, false]) {
+      await user.click(checkbox);
+      await user.click(screen.getByRole("button", { name: "Save changes" }));
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument());
+      expect(updateDiscoverySettings).toHaveBeenLastCalledWith(expect.objectContaining({ useBrowserHeaders: enabled }));
+      expect(updateDiscoverySettings.mock.lastCall?.[0]).not.toHaveProperty("crawlUserAgentProduct");
+      expect(updateDiscoverySettings.mock.lastCall?.[0]).not.toHaveProperty("crawlUserAgentContact");
+      expect(checkbox).toHaveAttribute("aria-checked", String(enabled));
+    }
+  });
+
+  it("keeps the draft available and reports a failed save", async () => {
+    const user = userEvent.setup();
+    const updateDiscoverySettings = vi.fn(async () => { throw new Error("Synthetic save failed"); });
+    renderWithProviders(<DiscoveryRuntimeSettingsPanel />, {
+      ports: buildTestPorts({ api: { updateDiscoverySettings } }),
+    });
+    const checkbox = await screen.findByRole("checkbox", { name: "Use browser headers" });
+    await user.click(checkbox);
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Synthetic save failed");
+    expect(checkbox).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(checkbox).not.toBeChecked();
   });
 
   it("announces restart pending after saving schedule changes", async () => {

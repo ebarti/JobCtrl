@@ -4,7 +4,7 @@ The politeness gateway is the single choke point every outbound fetch —
 ``urllib``, the JobStreaming invocation boundary, and every Playwright
 navigation — routes through. Each source's :class:`SourcePolicy` defines the
 per-host rate limit +
-concurrency cap + per-run request budget, stamps an honest user-agent, and
+concurrency cap + per-run request budget, stamps the configured request identity, and
 records rate-limit / budget-exhaustion as first-class
 *outcomes* (never scrape errors).
 
@@ -18,8 +18,9 @@ co-locates ``ScrapedJobPosting`` with ``JobBoardScraperPort``).
 from __future__ import annotations
 
 import importlib.metadata
+from collections.abc import Mapping
 from contextlib import AbstractContextManager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Protocol
 
@@ -68,7 +69,7 @@ class HonestUserAgent:
     """The product's single outbound identity (owner decision D1).
 
     Replaces the four divergent UA literals scattered across the fetch paths.
-    Never impersonates a browser on a surface the product controls.
+    Used by default, and whenever optional generated browser headers are off.
     """
 
     product: str
@@ -105,7 +106,7 @@ def default_honest_user_agent() -> HonestUserAgent:
 class PolitenessDecision:
     """The gateway's verdict for one prospective fetch or navigation.
 
-    ``allowed`` gates the fetch. ``user_agent`` is the honest UA the caller
+    ``allowed`` gates the fetch. ``user_agent`` is the selected UA the caller
     must stamp (``urllib`` header / Playwright context). ``outcome`` is the
     recordable reason; ``retry_after_seconds`` carries a honored ``Retry-After``
     when the limiter deferred; ``reason`` is a human-readable detail.
@@ -116,6 +117,7 @@ class PolitenessDecision:
     user_agent: str
     retry_after_seconds: float | None = None
     reason: str | None = None
+    request_headers: Mapping[str, str] = field(default_factory=dict)
 
 
 class RunBudget(Protocol):
@@ -216,7 +218,12 @@ class PolitenessGatewayPort(Protocol):
 
     @property
     def user_agent(self) -> str:
-        """The honest ``User-Agent`` header value stamped on every fetch."""
+        """The selected ``User-Agent`` header value stamped on every fetch."""
+        ...
+
+    @property
+    def request_headers(self) -> Mapping[str, str]:
+        """The session identity, including generated client hints when enabled."""
         ...
 
     def new_run_budget(self, max_requests: int) -> RunBudget:

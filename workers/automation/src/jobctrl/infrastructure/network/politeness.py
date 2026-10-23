@@ -16,6 +16,9 @@ from dataclasses import dataclass
 from typing import Iterator
 from urllib.parse import urlsplit
 
+import ua_generator
+from ua_generator.options import Options
+
 from jobctrl.domain.discovery.source_registry import SourcePolicy
 from jobctrl.domain.ports.politeness import (
     HonestUserAgent,
@@ -39,15 +42,7 @@ POLITENESS_BLOCKED_OUTCOME = "blocked"
 def resolve_honest_user_agent(
     search_cfg: Mapping[str, object] | None = None,
 ) -> HonestUserAgent:
-    """Resolve the SQLite-owned honest outbound identity.
-
-    Starts from :func:`default_honest_user_agent` (``JobCtrl/<version>
-    (+<repo url>)``, decision D1) and applies the product token and contact saved
-    with the Discovery controls. This is the single point every gateway resolves
-    its default UA from, so the owner-chosen identity applies to every fetch
-    surface at once. It never
-    impersonates a browser; owners should review the effective value before real
-    crawls (see ``docs/user/discovery.md``)."""
+    """Build the legacy product/version/contact identity used when browser headers are off."""
     base = default_honest_user_agent()
     if search_cfg is None:
         from jobctrl import config
@@ -63,6 +58,27 @@ def resolve_honest_user_agent(
     else:
         contact = base.contact_url
     return HonestUserAgent(product=product, version=base.version, contact_url=contact)
+
+
+def resolve_request_headers(search_cfg: Mapping[str, object] | None = None) -> dict[str, str]:
+    """Snapshot the saved request identity; only an explicit boolean true opts in.
+
+    Generate once per gateway, retaining matching client hints for the session.
+    Versions come from the installed package; this performs no network lookup.
+    """
+    if search_cfg is None:
+        from jobctrl import config
+
+        search_cfg = config.load_saved_search_settings()
+    identity = search_cfg.get("crawl_user_agent")
+    if isinstance(identity, Mapping) and identity.get("use_browser_headers") is True:
+        generated = ua_generator.generate(
+            device="desktop", browser="chrome", options=Options(latest_versions=True)
+        )
+        headers = dict(generated.headers.get())
+        headers["User-Agent"] = headers.pop("user-agent")
+        return headers
+    return {"User-Agent": resolve_honest_user_agent(search_cfg).header_value()}
 
 
 class RunBudgetCounter(RunBudget):
@@ -105,15 +121,21 @@ class PolitenessGateway(PolitenessGatewayPort):
         robots: RobotsPort | None = None,
         rate_limiter: RateLimiterPort | None = None,
     ) -> None:
-        self._user_agent = user_agent or resolve_honest_user_agent()
-        self._ua_header = self._user_agent.header_value()
+        self._request_headers = (
+            {"User-Agent": user_agent.header_value()} if user_agent is not None else resolve_request_headers()
+        )
+        self._ua_header = self._request_headers["User-Agent"]
         # Retain the injection argument for older callers; never consult it.
         self._rate_limiter = rate_limiter or get_shared_rate_limiter()
 
     @property
     def user_agent(self) -> str:
-        """The honest ``User-Agent`` header value stamped on every fetch."""
+        """The selected ``User-Agent`` header value stamped on every fetch."""
         return self._ua_header
+
+    @property
+    def request_headers(self) -> dict[str, str]:
+        return dict(self._request_headers)
 
     def new_run_budget(self, max_requests: int) -> RunBudget:
         return RunBudgetCounter(max_requests)
@@ -125,7 +147,7 @@ class PolitenessGateway(PolitenessGatewayPort):
     def check(self, url: str, policy: SourcePolicy, budget: RunBudget) -> PolitenessDecision:
         if budget.remaining() <= 0:
             return self._budget_exhausted()
-        return PolitenessDecision(True, PolitenessOutcome.ALLOWED, self._ua_header)
+        return PolitenessDecision(True, PolitenessOutcome.ALLOWED, self._ua_header, request_headers=self.request_headers)
 
     @contextmanager
     def guard(
@@ -151,7 +173,7 @@ class PolitenessGateway(PolitenessGatewayPort):
             max_concurrency=policy.max_concurrent_requests_per_host,
             **({"timeout_seconds": timeout_seconds} if timeout_seconds is not None else {}),
         ):
-            yield PolitenessDecision(True, PolitenessOutcome.ALLOWED, self._ua_header)
+            yield PolitenessDecision(True, PolitenessOutcome.ALLOWED, self._ua_header, request_headers=self.request_headers)
 
     def note_retry_after(self, url: str, retry_after_seconds: float) -> float:
         """Forward a server ``Retry-After`` for ``url``'s host to the limiter.
@@ -266,6 +288,10 @@ class PolitenessSession:
     @property
     def user_agent(self) -> str:
         return self._gateway.user_agent
+
+    @property
+    def request_headers(self) -> Mapping[str, str]:
+        return self._gateway.request_headers
 
     @property
     def budget(self) -> RunBudget:

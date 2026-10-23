@@ -383,14 +383,14 @@ class Response:
 
 def _public_get_in_process(url: str) -> Response:
     from jobctrl.infrastructure.network.public_http import build_public_http_opener
-    from jobctrl.infrastructure.network.politeness import resolve_honest_user_agent
+    from jobctrl.infrastructure.network.politeness import resolve_request_headers
     from jobctrl.infrastructure.network.url_safety import validate_public_http_url
 
     if not validate_public_http_url(url).allowed:
         raise DeferredCheck("unsafe_posting_url")
     request = Request(
         url,
-        headers={"User-Agent": resolve_honest_user_agent().header_value(), "Accept": "application/json,text/html"},
+        headers={**resolve_request_headers(), "Accept": "application/json,text/html"},
         method="GET",
     )
     # Each redirect is acquired separately so its actual host is reserved first.

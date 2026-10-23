@@ -163,12 +163,10 @@ class PlaywrightDetailPageFetcher:
                     status=None,
                     fetched_at=fetched_at,
                 )
-            # The context presents the gateway-resolved honest UA — the same
-            # identity robots was evaluated with above, never an import-time
-            # constant — so an owner UA override reaches the browser fetch.
-            return self._fetch_page(url, fetched_at, user_agent=decision.user_agent)
+            # Carry the same selected identity and client hints into the browser.
+            return self._fetch_page(url, fetched_at, user_agent=decision.user_agent, request_headers=dict(decision.request_headers))
 
-    def _fetch_page(self, url: str, fetched_at: str, *, user_agent: str) -> DetailPage:
+    def _fetch_page(self, url: str, fetched_at: str, *, user_agent: str, request_headers: dict[str, str]) -> DetailPage:
         # Imported lazily because Playwright is heavyweight + optional
         # in some test environments (see workers/automation/pyproject).
         from playwright.sync_api import sync_playwright
@@ -179,7 +177,7 @@ class PlaywrightDetailPageFetcher:
                 launch_opts["proxy"] = self._proxy.playwright
             browser = p.chromium.launch(**launch_opts)
             try:
-                context = browser.new_context(user_agent=user_agent)
+                context = browser.new_context(user_agent=user_agent, extra_http_headers=request_headers)
                 page = context.new_page()
                 route_guard = PublicHttpUrlRouteGuard(page, fetch_public_requests=True).install()
                 status: int | None = None

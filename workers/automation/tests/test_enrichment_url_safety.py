@@ -360,7 +360,7 @@ def test_retryable_subresource_failure_retains_content_with_unknown_availability
     monkeypatch.setattr(playwright_fetcher, "_collect_status_html", collect_status)
 
     if entrypoint == "import_fetcher":
-        result = PlaywrightDetailPageFetcher(raise_on_unavailable=True)._fetch_page(page.url, "owned-time", user_agent="JobCtrl")
+        result = PlaywrightDetailPageFetcher(raise_on_unavailable=True)._fetch_page(page.url, "owned-time", user_agent="JobCtrl", request_headers={})
     else:
         captured = []
         monkeypatch.setattr(detail, "_collect_json_ld", playwright_fetcher._collect_json_ld)

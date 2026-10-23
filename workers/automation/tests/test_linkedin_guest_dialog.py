@@ -174,4 +174,4 @@ def test_direct_capture_rejects_delayed_post_dismissal_identity_change(browser, 
     monkeypatch.setattr(fetcher, "_collect_main_content", delayed_collect)
     with pytest.raises(DetailPageFetchUnavailable, match="capture was being collected"):
         fetcher.PlaywrightDetailPageFetcher()._fetch_page(
-            "https://www.linkedin.com/jobs/view/owned", "2026-10-22T00:00:00Z", user_agent="Owned capture QA")
+            "https://www.linkedin.com/jobs/view/owned", "2026-10-22T00:00:00Z", user_agent="Owned capture QA", request_headers={})
