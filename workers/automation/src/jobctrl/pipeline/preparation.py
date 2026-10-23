@@ -137,11 +137,13 @@ def derive_preparation_targets(payload: DerivePreparationTargetsInput) -> list[P
             conn,
             tenant_id=tenant_id,
         )
+        # Keep eligibility selection and artifact mutation under this write
+        # owner, so a concurrent approval cannot replace the selected generation.
+        _suppress_ineligible_artifacts(conn, tenant_id=tenant_id, min_score=min_score)
         conn.commit()
     except Exception:
         conn.rollback()
         raise
-    _suppress_ineligible_artifacts(conn, tenant_id=tenant_id, min_score=min_score)
     targets = _derive_targets(
         conn,
         tenant_id=tenant_id,
@@ -1063,7 +1065,7 @@ def _suppress_active_artifacts(
         """,
         (reason, suppressed_at, suppressed_at, str(tenant_id), str(job_id), generation),
     )
-    conn.commit()
+    # derive_preparation_targets owns commit/rollback for the complete sweep.
     return 1
 
 
@@ -1096,7 +1098,14 @@ def _jobs_needing_artifact_suppression(
           AND tailored_resume.artifact_id IS NOT NULL
           AND (
             score.fit_score IS NULL
-            OR score.fit_score < ?
+            OR (
+              score.fit_score < ?
+              AND CASE
+                WHEN json_valid(tailored_resume.metadata_json)
+                  THEN COALESCE(json_type(tailored_resume.metadata_json, '$.allow_low_fit_override'), '')
+                ELSE ''
+              END != 'true'
+            )
             OR score.eligible_for_downstream = 0
           )
         ORDER BY jobs.discovered_at DESC, jobs.job_id

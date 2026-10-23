@@ -176,6 +176,21 @@ workflow dispatch are synthetic; it does not exercise personal Chrome, external
 sources, scoring or material generation. Pair this with the applicable live
 Discovery proof from the regression catalog before claiming runtime recovery.
 
+## Accepted Low-Fit Material Retention
+
+Run locked `pytest tests/test_material_override_retention.py` with the
+canonical single-job Tailor, material use-case, preparation fan-out and real
+Temporal preparation checks. Exercise the actual writer with opposed explicit
+request booleans, then repeat normal Discover target derivation. An accepted
+manual generation remains approved at an unchanged automatic floor without
+admitting new automatic work or changing its score; a normal generation is
+suppressed. Reject string/numeric flag substitutes, another tenant or generation,
+a missing score and a newly recorded hard blocker. A failed automatic replacement
+must preserve the prior accepted generation and its request flag. Use two real
+SQLite connections to prove a concurrent approval cannot cross the suppression
+eligibility/mutation window, and inject a post-mutation failure to prove the
+complete reconciliation and suppression sweep rolls back.
+
 ## Agent Runtime Integration
 
 Run the pool and actual-kit adapter checks together with existing provider

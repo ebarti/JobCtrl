@@ -1948,7 +1948,8 @@ def test_tailor_job_activity_wires_canonical_job_id_to_runtime(
     assert captured["retailor"] is True
 
 
-def test_tailor_one_job_passes_canonical_id_to_materials_use_case() -> None:
+@pytest.mark.parametrize("allow_override", [False, True])
+def test_tailor_one_job_passes_canonical_id_to_materials_use_case(allow_override) -> None:
     captured: dict[str, object] = {}
 
     class FakeUseCase:
@@ -1974,8 +1975,10 @@ def test_tailor_one_job_passes_canonical_id_to_materials_use_case() -> None:
         "normal",
         use_case=FakeUseCase(),
         audit_execution_id="temporal-run-owned",
+        allow_low_fit_override=allow_override,
     )
 
     assert result["status"] == "approved"
     assert captured["job_id"] == _JOB_ID
     assert captured["audit_execution_id"] == "temporal-run-owned"
+    assert captured["allow_low_fit_override"] is allow_override

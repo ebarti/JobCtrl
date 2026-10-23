@@ -285,7 +285,13 @@ Behavior notes:
   approved material input.
 - Threshold changes are **live eligibility changes**, not scoring changes:
   lowering the threshold can derive new `tailor`/`cover`/`pdf` work from
-  persisted scores; raising it suppresses active artifacts. Neither path invokes
+  persisted scores; raising it suppresses active artifacts except generations
+  accepted under the explicit low-fit override. The accepted resume records a
+  literal boolean bound to its tenant/job/generation. Suppression honors that
+  flag only for the fit-floor branch; missing scores and current hard blockers
+  remain authoritative. Eligibility selection and suppression share the
+  reconciliation write transaction, serializing concurrent material approval. A replacement generation does not inherit the request.
+  Neither path invokes
   the scoring LLM. Scoring-policy and tailoring-policy changes never silently
   rescore or regenerate — that is what the explicit `rescore_*` / `retailor_*`
   actions are for.
