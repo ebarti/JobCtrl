@@ -1,5 +1,6 @@
 """Model authority, source binding and native cutover in owned synthetic storage."""
 
+import json
 import sqlite3
 from dataclasses import replace
 from pathlib import Path
@@ -71,6 +72,38 @@ def interpretation():
             compensation=[],
         )
     )
+
+
+@pytest.mark.parametrize("fault", ["missing_currency", "mismatched_amount", "prefixed_amount"])
+def test_compensation_response_repair_identifies_the_exact_structural_defect(fault):
+    from jobctrl.domain.determinations import Source
+    from jobctrl.domain.enrichment.interpretation import ModelJobInterpreter
+
+    class CorrectingModel(Model):
+        def chat_json(self, messages, **kwargs):
+            output = interpretation().model_dump()
+            quote = "pay USD10" if fault == "prefixed_amount" else "pay 10 USD"
+            row = dict(state="stated", lower="10", upper=None, currency="USD", period="year",
+                       component="base_salary", citations=[citation("posting", quote)],
+                       rationale="Synthetic source amount")
+            if not self.calls:
+                row["currency" if fault == "missing_currency" else "lower"] = None if fault == "missing_currency" else "11"
+            output["compensation"] = [row]
+            self.output = output
+            return super().chat_json(messages, **kwargs)
+
+    model = CorrectingModel(None)
+    interpreter = ModelJobInterpreter(**dependencies(storage(), model, "enrichment"))
+    text = "Synthetic pay USD10" if fault == "prefixed_amount" else "Synthetic pay 10 USD"
+    result, _ = interpreter.interpret(entity_id="synthetic", posting=Source(source_id="posting", text=text), fields=[], requirements=[])
+    assert result.compensation[0].lower == "10"
+    assert len(model.calls) == 2
+    feedback = json.loads(model.calls[1][0][-1].content.split("\n", 1)[1])["binding_failure"]
+    if fault == "missing_currency":
+        assert feedback["missing_fields"] == ["currency"]
+    else:
+        assert feedback["invalid_amounts"] == ["11"]
+    assert feedback["compensation"]["state"] == "stated"
 
 
 def test_page_availability_changes_only_with_the_model_and_cache_is_durable():

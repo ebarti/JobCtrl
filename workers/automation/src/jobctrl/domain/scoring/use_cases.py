@@ -77,7 +77,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-SCORE_PROMPT_VERSION = "score-fit-assessment-v9-canonical-evidence"
+SCORE_PROMPT_VERSION = "score-fit-assessment-v11-single-evidence-source"
 SCORE_SCHEMA_VERSION = "score-fit-assessment-v5-determinations"
 SCORE_THINKING_BUDGET = 0
 
@@ -159,8 +159,6 @@ def _build_job_blob(job: dict[str, Any]) -> str:
 
 def _build_requirement_fit_inputs_blob(
     *,
-    job: dict[str, Any],
-    profile_snapshot: ProfileSnapshot,
     employer_analysis: EmployerAnalysis | None,
 ) -> str:
     if employer_analysis is None:
@@ -183,18 +181,8 @@ def _build_requirement_fit_inputs_blob(
     payload = {
         "employer_analysis_generation": employer_analysis.generation,
         "requirements": requirements,
-        "profile_evidence": _profile_evidence_prompt_items(profile_snapshot),
     }
     return "REQUIREMENT FIT INPUTS:\n" + json_dumps(payload)
-
-
-def _profile_evidence_prompt_items(profile_snapshot: ProfileSnapshot) -> list[dict[str, Any]]:
-    # Advertised evidence is the same inventory and verbatim text validated
-    # after the model call. Unconfirmed suggestions never become evidence.
-    return [
-        {"id": source.source_id, "source_text": source.text}
-        for source in profile_sources(profile_snapshot.as_dict())
-    ]
 
 
 def _optional_prompt_section(text: str) -> str:
@@ -450,8 +438,6 @@ class ScoreJobUseCase:
             profile_snapshot_version=profile_snapshot.version,
         )
         requirement_fit_inputs = _build_requirement_fit_inputs_blob(
-            job=job,
-            profile_snapshot=profile_snapshot,
             employer_analysis=matched_employer_analysis,
         )
         with otel_trace.get_tracer("jobctrl.scoring").start_as_current_span("scoring.score_job") as span:
@@ -471,6 +457,18 @@ class ScoreJobUseCase:
                     if matched_employer_analysis
                     else {}
                 )
+                scopes = {
+                    row.requirement_id: "employer_condition" if row.protected_class else row.scope
+                    for row in interpretation.requirements
+                }
+                if matched_employer_analysis is not None and (
+                    set(scopes) != set(requirements) or len(scopes) != len(interpretation.requirements)
+                ):
+                    raise DeterminationFailure("foreign_or_missing_requirement_scope")
+                if requirements and not interpretation._determination_id:
+                    raise DeterminationFailure("requirement_scope_source_unavailable")
+                if requirements and "resume" not in scopes.values():
+                    raise DeterminationFailure("no_capability_requirements")
                 confirmed_preferences = self._confirmed_preferences_reader(profile_snapshot, criteria)
                 sources = [
                     Source(source_id="posting", text=build_jd_snapshot(job)),
@@ -528,6 +526,17 @@ class ScoreJobUseCase:
                     parsed = replace(
                         parsed,
                         employer_analysis_generation=matched_employer_analysis.generation,
+                        requirement_assessments=tuple(
+                            replace(
+                                row,
+                                contribution=replace(
+                                    row.contribution,
+                                    scope=scopes[row.requirement_id],
+                                    scope_source_id=interpretation._determination_id,
+                                ),
+                            )
+                            for row in parsed.requirement_assessments
+                        ),
                     )
             span.set_attribute("jobctrl.scoring.parse.ok", parsed.ok)
             span.set_attribute("jobctrl.scoring.parser_warning_count", len(parsed.trace.parser_warnings))
@@ -622,6 +631,8 @@ class ScoreJobUseCase:
             score_version=0,
         )
         assert report is not None
+        if report.resolved_fit_score is None:
+            return replace(parse, ok=False, fit_score=None, error="no_capability_requirements")
         signals = derive_requirement_fit_signals(report)
         resolved_score = report.resolved_fit_score or parse.fit_score
         assert resolved_score is not None

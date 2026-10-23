@@ -1,11 +1,9 @@
 """Google Antigravity (Gemini) Agent SDK adapter — the 3rd ensemble leg.
 
-Mirrors the mestre vendor-lane pattern (``mestre/vendor_lane/backends/
-antigravity_sdk.py``): drive the official ``google-antigravity`` Python SDK
-directly via a local ``Agent`` over a ``LocalAgentConfig``, force
-JSON-schema-constrained output through ``response_schema``, drain the streamed
-chunks, and read the parsed object off ``response.structured_output()``. This
-gives the ensemble a Google-diverse 3rd leg alongside Claude + Codex.
+Dispatches the official ``google-antigravity`` SDK through
+``agent-runtime-kit`` with task-isolated agent lifecycle. JobCtrl supplies
+FINISH-only configuration and Gemini-compatible schemas; the kit drains the
+stream before JobCtrl consumes native usage and structured output.
 
 Test-mockability (no live auth in tests — D-04): the ``Agent`` class, the
 ``LocalAgentConfig`` class, and the ``types`` module are each resolved through
@@ -119,6 +117,9 @@ def _runtime_subdir(name: str) -> str:
 class AntigravityAnalysisAdapter:
     """Google Antigravity (Gemini) Agent SDK draft leg (``AnalysisDraftPort``)."""
 
+    provider_id = "google"
+    default_model_selection = False
+
     def __init__(
         self,
         *,
@@ -149,7 +150,7 @@ class AntigravityAnalysisAdapter:
             # Constrained extraction only — the single built-in FINISH tool, no
             # file/shell/workspace tools.
             capabilities=types_module.CapabilitiesConfig(
-                enabled_tools=[types_module.BuiltinTools.FINISH]
+                enabled_tools=[types_module.BuiltinTools.FINISH], enable_subagents=False,
             ),
             policies=[],
             workspaces=[],
@@ -177,15 +178,16 @@ class AntigravityAnalysisAdapter:
             params={},
             scope_name=_ANTIGRAVITY_SCOPE,
         ) as record:
-            async with agent_factory(config) as agent:
-                response = await agent.chat(jd_snapshot)
-                # The chunk stream MUST be drained before structured_output() resolves.
-                async for _chunk in response.chunks:
-                    pass
-                usage_metadata = getattr(response, "usage_metadata", None)
-                input_tokens, output_tokens = _usage_from_metadata(usage_metadata)
-                record("", input_tokens=input_tokens, output_tokens=output_tokens)
-                structured = await response.structured_output()
+            from jobctrl.infrastructure.llm.agent_runtime_antigravity import call_antigravity_runtime
+
+            outcome = await call_antigravity_runtime(
+                factory=agent_factory, config=config, types=types_module, model=self._model,
+                prompt=jd_snapshot, output_schema=JobAnalysis.model_json_schema(),
+                record_usage=lambda i, o: record("", input_tokens=i, output_tokens=o),
+            )
+            input_tokens, output_tokens = _usage_from_metadata(outcome.usage)
+            record("", input_tokens=input_tokens, output_tokens=output_tokens)
+            structured = outcome.structured
 
             if structured is None:
                 raise RuntimeError(

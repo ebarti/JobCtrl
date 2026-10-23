@@ -157,7 +157,11 @@ slot. The active-item inventory is a separate, bounded diagnostic view: only
 allowlisted activity kinds are displayed, the oldest 20 items are returned, and
 `activeItemsTotal` / `activeItemsTruncated` distinguish exact allowlisted
 cardinality from the bounded list. A worker may therefore have more active
-slots than visible items.
+slots than visible items. The inventory does not require a selected Discover
+execution: fresh standalone activity retains its safe operational references,
+and fresh idle inventory returns `0` / `false`. Selected execution projections
+only enrich matching runtime items. Stale or unavailable telemetry keeps the
+total and truncation marker `null`.
 
 The worker interceptor does not inspect activity arguments. Displayed
 identifiers are either validated safe workflow/run references or non-reversible

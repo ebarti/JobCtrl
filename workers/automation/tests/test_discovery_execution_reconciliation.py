@@ -620,8 +620,8 @@ async def test_decoder_v2_recovers_exact_legacy_fanouts_and_resumes_partial_repl
     assert len({index for indexes in fanout_job_indexes for index in indexes}) == 72
 
     # The job-only dispatch marker is the causal evidence inside each fanout
-    # interval. The full workflow input remains append-only evidence, while a
-    # later job-only marker reproduces the lossy folded projection.
+    # interval. Full workflow input remains append-only recovery evidence even
+    # when a later sparse acknowledgement describes the same exact execution.
     for pass_index, job_indexes in enumerate(fanout_job_indexes):
         for position, job_index in enumerate(job_indexes):
             idempotency_key = f"job-{job_index:03d}"
@@ -672,12 +672,31 @@ async def test_decoder_v2_recovers_exact_legacy_fanouts_and_resumes_partial_repl
 
     folded_summaries = conn.execute(
         """
-        SELECT input_summary_json FROM workflow_run_projections
+        SELECT workflow_id, input_summary_json FROM workflow_run_projections
         WHERE workflow_id LIKE 'prep-job-%'
         """
     ).fetchall()
     assert len(folded_summaries) == 72
-    assert all(set(json.loads(row["input_summary_json"])) == {"jobUrl"} for row in folded_summaries)
+    for row in folded_summaries:
+        summary = json.loads(row["input_summary_json"])
+        assert summary == {
+            "jobUrl": job_ids[int(row["workflow_id"].removeprefix("prep-job-"))],
+            "steps": ["pdf", "cover", "score", "tailor"],
+            "targetVersion": "1",
+            "idempotencyKey": row["workflow_id"].removeprefix("prep-"),
+        }
+        # Today's fold no longer produces the historical metadata-loss bug.
+        # Seed that persisted legacy projection explicitly in this owned DB;
+        # the decoder must still recover it from the unchanged event history.
+        conn.execute(
+            "UPDATE workflow_run_projections SET input_summary_json = ? WHERE workflow_id = ?",
+            (json.dumps({"jobUrl": summary["jobUrl"]}), row["workflow_id"]),
+        )
+    conn.commit()
+    assert all(
+        set(json.loads(row[0])) == {"jobUrl"}
+        for row in conn.execute("SELECT input_summary_json FROM workflow_run_projections WHERE workflow_id LIKE 'prep-job-%'")
+    )
 
     # Simulate an interrupted recovery after the first 15 memberships and work
     # plans became durable. The four native keys already owned by their normal

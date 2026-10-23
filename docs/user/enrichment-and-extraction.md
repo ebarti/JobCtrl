@@ -59,15 +59,56 @@ is retained unless you request a reset or its budget was exhausted. Saved
 scores, approved materials and approvals remain intact; downstream preparation
 waits for enrichment to succeed again.
 
+On a public LinkedIn job-view page, anonymous acquisition can close the site's
+optional contextual sign-in dialog through its offered dismiss button before
+capturing. This is scoped to that known control and route. It does not sign in
+or submit a form; a required wall without that control remains captured as-is.
+Only an enabled, rendered control that cannot submit or reset a form is admitted.
+An unexpected navigation during dismissal or the remaining capture reads fails
+acquisition instead of retaining the original posting identity.
+
 LinkedIn's public guest description and authenticated job-detail layouts both
 have deterministic extraction rules. When the public description is present in
 the captured content, anonymous enrichment can save it without an LLM or an
 external application URL. Guest extraction selects the description's nested
 text block, excluding unrelated expandable content and show-more controls.
-Anonymous page collection removes page chrome and noisy attributes before
-applying its 50,000-character HTML limit, so removable markup does not crowd out
-posting text or application links. JSON-LD is collected separately; meaningful
-content beyond the HTML limit remains outside CSS and LLM extraction input.
+Anonymous page collection removes page chrome, comments, noisy attributes and
+non-visible DOM subtrees before applying its 50,000-character HTML limit. Hidden
+sign-in dialogs therefore cannot crowd out a readable posting or its application
+links. Computed visibility comes from a copied DOM; collection does not change
+the page. Visible descendants that override an ancestor's `visibility: hidden`
+and visible inert content remain readable. JSON-LD and the full status evidence
+are collected separately; meaningful content beyond the HTML limit remains
+outside CSS and LLM extraction input.
+
+Anonymous browser acquisition bounds each public document or data response to
+2 MB. Browser-identified JavaScript and stylesheet dependencies have a separate
+16 MB limit so large career-site bundles can render. Public-address pinning,
+redirect validation, credential stripping, timeouts and read-only request
+restrictions apply to both limits. An oversized resource remains an acquisition
+failure and cannot establish a posting or availability verdict.
+
+Direct URL imports interpret the complete visible page capture, including
+posting details and current controls outside its main-content panel. For the
+description, the model selects a recorded source and contiguous line range;
+the application copies that span exactly and saves the selection, copied text
+and citation in the extraction receipt. Capture includes up to eight visible
+public embedded pages, such as an employer's hosted application frame. Each
+source keeps its observed URL in the receipt, and relative links resolve against
+that source. Short fields retain verbatim-value and citation validation.
+
+A retryable subresource timeout or DNS failure can retain readable posting
+content for interpretation and quality review in both manual intake and
+anonymous batch enrichment. Both wait for the document's DOM content rather
+than the full asset load. Its availability evidence is
+explicitly incomplete, so the saved availability remains **unknown** with the
+acquisition reason. Main-document failures, unsafe destinations and resource
+size violations still prevent this partial capture from being accepted.
+Missing or incomplete embedded-page evidence also keeps availability unknown.
+Public structured posting data can also feed extraction and quality review
+when the model identifies the individual posting but cannot verify visual
+access. Its unknown access and availability remain in the audit. Explicit
+login/challenge pages and unidentified postings continue to require capture.
 
 While the worker is running, unfinished enrichment and retryable failures are
 picked up automatically without a new discovery search. Recovery waits for
@@ -359,3 +400,7 @@ user. The exact selector rules are owned by the
 Page availability, individual-posting state and description quality use cited model determinations over the bound rendered page. HTTP status, exact ATS identity, URL safety and DOM visibility remain code. Automatic duplicate identity uses exact keys/full-content fingerprints; no token-Jaccard threshold merges jobs. Failed semantic checks preserve accepted snapshots and materials.
 
 See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+
+### Arbitrary-site discovery captures
+
+Smart Extract resolves listing cards through the same rendered and structured posting-source preparation as direct URL imports. Card titles, employer guesses and blank places are not canonical posting facts. Its full-posting qualification checks the extracted specific role, description and saved location/work-model scope before creating a Job, as described in [Discovery](discovery.md#how-target-search-controls-are-used). The accepted posting snapshot records the page, extraction and qualification determination IDs. That exact capture seeds enrichment; failed or uncertain qualification preserves existing accepted job content and creates no replacement job.

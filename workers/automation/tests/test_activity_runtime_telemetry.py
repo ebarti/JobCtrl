@@ -16,7 +16,8 @@ from jobctrl.infrastructure.temporal.activity_runtime_telemetry import (
 )
 
 
-def test_inventory_is_concurrency_safe_for_parallel_starts_and_terminals():
+@pytest.mark.parametrize("activity_type", ["score_job", "job_url_import"])
+def test_inventory_is_concurrency_safe_for_parallel_starts_and_terminals(activity_type):
     inventory = ActiveActivityInventory()
     participants = 8
     started = threading.Barrier(participants + 1)
@@ -25,7 +26,7 @@ def test_inventory_is_concurrency_safe_for_parallel_starts_and_terminals():
 
     def run_activity(index: int) -> None:
         token = inventory.start(
-            activity_type="score_job",
+            activity_type=activity_type,
             activity_id=f"activity-{index}",
             workflow_id=f"workflow-{index}",
             workflow_run_id=f"run-{index}",
@@ -41,7 +42,7 @@ def test_inventory_is_concurrency_safe_for_parallel_starts_and_terminals():
         started.wait(timeout=5)
         active = inventory.snapshot()
         assert active.active_activity_count == participants
-        assert active.counts_by_type == {"score_job": participants}
+        assert active.counts_by_type == {activity_type: participants}
         release.set()
         for future in futures:
             future.result(timeout=5)
@@ -49,7 +50,29 @@ def test_inventory_is_concurrency_safe_for_parallel_starts_and_terminals():
     terminal = inventory.snapshot()
     assert terminal.active_activity_count == 0
     assert terminal.active_details == ()
-    assert terminal.durations_by_type["score_job"].completed_count == participants
+    assert terminal.durations_by_type[activity_type].completed_count == participants
+
+
+@pytest.mark.asyncio
+async def test_local_lifecycle_activity_does_not_consume_reported_remote_capacity(monkeypatch):
+    inventory = ActiveActivityInventory()
+    inventory.start(
+        activity_type="score_job", activity_id="busy", workflow_id="scoring",
+        workflow_run_id="scoring-run", attempt=1, started_at=datetime(2026, 7, 14, tzinfo=UTC),
+    )
+    monkeypatch.setattr(activity_runtime_telemetry.activity, "info", lambda: SimpleNamespace(
+        activity_type="record_workflow_outcome", activity_id="local-control", workflow_id="control",
+        workflow_run_id="control-run", attempt=1, started_time=datetime(2026, 7, 14, tzinfo=UTC), is_local=True,
+    ))
+
+    class Next:
+        async def execute_activity(self, _input):
+            assert inventory.snapshot().active_activity_count == 1
+            return "recorded"
+
+    inbound = ActivityRuntimeTelemetryInterceptor(inventory).intercept_activity(Next())
+    assert await inbound.execute_activity(object()) == "recorded"
+    assert inventory.snapshot().active_activity_count == 1
 
 
 @pytest.mark.asyncio
@@ -151,6 +174,30 @@ def test_inventory_returns_exact_total_with_bounded_longest_running_safe_details
         and len(detail.operational_ref.opaque_id) == 27
         for detail in snapshot.active_details
     )
+
+
+@pytest.mark.parametrize(("activity_type", "kind"), [
+    ("check_saved_posting_availability", "saved-posting-availability"),
+    ("job_url_import", "job-url-import"),
+])
+def test_intake_and_saved_posting_checks_are_visible_without_exposing_job_identity(activity_type, kind):
+    inventory = ActiveActivityInventory()
+    token = inventory.start(
+        activity_type=activity_type,
+        activity_id="private-job-url",
+        workflow_id="availability-local-private-job-id",
+        workflow_run_id="00000000-0000-4000-8000-000000000001",
+        attempt=1,
+        started_at=datetime(2026, 7, 14, 9, 0, tzinfo=UTC),
+    )
+    snapshot = inventory.snapshot()
+    assert snapshot.active_activity_count == snapshot.active_details_total == 1
+    assert snapshot.counts_by_type == {activity_type: 1}
+    assert snapshot.active_details[0].operational_ref.kind == kind
+    assert snapshot.active_details[0].workflow_ref is None
+    assert "private-job" not in json.dumps(snapshot.details_json_list())
+    inventory.finish(token)
+    assert inventory.snapshot().active_activity_count == 0
 
 
 def test_inventory_counts_non_allowlisted_slot_without_exposing_metadata():

@@ -173,12 +173,14 @@ async def run_blocking_with_heartbeat(
     Mirrors the pattern ``apply_activity`` uses, lifted into a reusable
     helper so the non-apply activities stop blocking the event loop.
     """
-    activity.heartbeat(starting_message)
+    heartbeat_supported = not (activity.in_activity() and activity.info().is_local)
+    if heartbeat_supported:
+        activity.heartbeat(starting_message)
     loop = asyncio.get_running_loop()
     blocking_executor = _activity_executor()
     # ``run_in_executor`` does not carry this coroutine's context into the
-    # worker thread, so bind the owning workflow id explicitly. Durable events
-    # recorded by the blocking stage runner then keep canonical run ownership.
+    # worker thread. Carry canonical workflow ownership and OTel context so
+    # durable events and child model/stage spans retain the submitting run.
     # Direct activity runners may use asyncio's default pool rather than the
     # production ActivityThreadPoolExecutor. Enforce the same connection
     # boundary there, before an idle thread can retain a failed writer.
@@ -193,7 +195,8 @@ async def run_blocking_with_heartbeat(
             if task in done:
                 return await task
             else:
-                activity.heartbeat(progress_message)
+                if heartbeat_supported:
+                    activity.heartbeat(progress_message)
     except asyncio.CancelledError:
         if on_cancel is not None:
             on_cancel()
@@ -208,8 +211,22 @@ async def run_blocking_with_heartbeat(
         )
         if cancel_wait_seconds > 0:
             try:
-                done, _pending = await asyncio.wait({task}, timeout=cancel_wait_seconds)
-                if task in done:
+                deadline = loop.time() + cancel_wait_seconds
+                while not task.done():
+                    remaining = deadline - loop.time()
+                    if remaining <= 0:
+                        break
+                    done, _pending = await asyncio.wait(
+                        {task}, timeout=min(poll_interval, remaining),
+                    )
+                    if task in done:
+                        break
+                    # WAIT_CANCELLATION_COMPLETED still owns the activity
+                    # until this drain settles. Keep a short server heartbeat
+                    # alive without extending the bounded cleanup deadline.
+                    if heartbeat_supported:
+                        activity.heartbeat("stopping")
+                if task.done():
                     await task
             except Exception:  # noqa: BLE001 - cancellation cleanup must not mask cancellation
                 pass
@@ -228,7 +245,8 @@ async def run_blocking_with_heartbeat(
         # Final heartbeat so a future post-loop delay regression doesn't
         # surface as a phantom dead activity. Never raise from cleanup.
         try:
-            activity.heartbeat("done")
+            if heartbeat_supported:
+                activity.heartbeat("done")
         except Exception:  # noqa: BLE001 — heartbeat outside activity ctx is fine
             pass
 

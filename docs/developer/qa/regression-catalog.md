@@ -20,6 +20,17 @@ individual regression to exact test files.
 | Provider/browser setup | Environment ownership and passive detection cannot silently become credential or browser adoption. Extension pairing-token presence remains distinct from one explicitly selected installation's fresh live heartbeat; another Chrome profile with the token cannot lease. Integrated Discovery and Enrich prefer the selected connected extension or choose guarded public HTTP/anonymous Playwright before acquisition. Offline status must not block eligible dispatch. Neither mode reads a copied profile; acquisition errors and cancellation never trigger a second transport. Anonymous provider initial/redirect/recreated/detail requests retain public URL/DNS/socket checks and reject proxy routing. Connected worker tasks must not carry browser-owned cookie/user-agent headers. Hanging/canceled tasks close their tabs, active leases remain live past 45 seconds, four-way admission uses backpressure, cross-origin redirects are blocked before dispatch, and UTF-8 byte bounds stop streaming early. | Worker/API bridge tests, two-installation contention and lease-liveness tests, extension persistent-context timeout/redirect E2E, Settings/Pipelines components, and a bounded live Discovery smoke. |
 | Retry preflight | Starting a retry cannot erase failure evidence before worker readiness is known. | API state-before/state-after regression plus route smoke. |
 
+Provider recovery regressions exercise an actual adapter over explicit fake SDK
+boundaries: a rejected route is excluded from the next automatic acquisition,
+the replacement carries its own provider/model, and the failed adapter is never
+relabeled. Auth failures, model-specific rate limits, implicit SDK defaults,
+explicit reset, malformed responses and budget denial remain distinct. Use
+`test_provider_availability_recovery.py`, `test_llm_port.py`,
+`test_employer_analysis_leg_config.py` and `test_job_url_import_workflow.py`.
+Employer-analysis tests also bind each draft's preferred model and effective
+model-set cache identity. Shared determination repair tests repeat budget
+admission, retain strict citation checks and prove bounded failure preservation.
+
 ## Bounded Combined Jobs Pages (#1003)
 
 The Operations helper must make one combined list request and return its server
@@ -206,6 +217,22 @@ run against `~/.jobctrl`.
 
 ## Dense HTML Resume Pagination (#907)
 
+For the conditional default-template fit policy, also run locked
+`pytest tests/test_default_resume_fit.py`, followed by this entire real-render
+module with the opt-in flag. The generated adjacent A4 boundary must print two
+balanced pages; the uncustomized built-in adapter must print one complete compact
+page with identical ordered physical text. An explicit balanced theme must keep
+its two pages. The saved HTML and returned layout boxes must match the selected
+render. Cover single-page/large/empty outputs, still-multipage candidates, text
+mismatch, renderer failure, temporary-file cleanup and all explicit/custom theme
+bypasses. Keep the original rendering when compaction cannot remove the page;
+never truncate text or shrink font size. Exercise fresh SQLite template resolution
+through the adapter: the populated unassigned built-in theme must admit fitting;
+profile/job assignments must bypass it. Verify compaction preserves all resolved
+theme tokens except density. Native examples are private product QA, not committed
+replay fixtures.
+
+
 This bounded trial measures the current `HtmlResumePdfAdapter` and
 `render_resume_html_to_pdf` path: structured synthetic profile → shipped
 HTML/CSS with embedded Geist → fresh Playwright Chromium → physical PDF.
@@ -269,7 +296,7 @@ env -u UV_PROJECT_ENVIRONMENT -u VIRTUAL_ENV -u UV_EXCLUDE_NEWER -u UV_EXCLUDE_N
   uv run --project workers/automation --locked --all-extras --no-sync --exclude-newer false \
   pytest -q workers/automation/tests/test_pdf_renderer_ports.py \
   --basetemp="$trial_root/pytest" --junitxml="$trial_root/junit.xml" \
-  -o cache_dir="$trial_root/pytest-cache"
+  -o cache_dir="$trial_root/pytest-cache" -o tmp_path_retention_policy=all
 ```
 
 The trial comprises **eight required cases** (four cases × two paper sizes).
@@ -277,10 +304,24 @@ Each runs three adapter renders and three shared-entry renders, all with fresh
 Chromium lifecycles and separate `repeat-1`/`repeat-2`/`repeat-3` directories:
 **48 measured PDFs**, plus the boundary probes and a browser/font preflight.
 The focused selector is `-k dense_resume_pagination_trial`; it must execute
-eight cases with zero skips. Ordinary port-test runs without the explicit flag
-skip these eight browser cases and supply no trial evidence. With the flag,
+eight cases with zero skips. The full module also runs four required
+`test_resume_continuation_pages_keep_selected_template_insets` cases: A4/Letter
+with default/asymmetric margins, each through both entry points (eight more
+PDFs). Independent Poppler geometry verifies the selected top/bottom inset on
+every continuation page with 3 pt top / 2 pt bottom font-metric tolerances;
+canonical marker
+order and nonblank pages remain required. These cases reproduce the missing
+continuation inset without reading private profile data.
+The top tolerance includes the 2.85 pt ascent of a 9.5 pt section heading's
+Poppler font box; every-page PNG review still checks actual painted insets.
+The repeated trial also rejects independently located section headings whose
+following content starts on a later physical page.
+Ordinary port-test runs without the explicit flag skip these twelve browser
+cases and supply no trial evidence. With the flag,
 missing imports, Chromium, fonts or Poppler are failures. Do not count a docs
 build, fake renderer, zero-test run or skipped case as product QA.
+The retention override is required: the ordinary test configuration removes
+successful temporary cases, which would discard their PDF/PNG review evidence.
 `JOBCTRL_RUN_PAGINATION_TRIAL=1` remains an accepted alias for older invocations;
 the managed gate's `JOBCTRL_RUN_DENSE_HTML_PAGINATION_TESTS=1` enables the same
 required scenarios even when the alias is unset.
@@ -504,6 +545,195 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For interpretation metadata citation sources, run locked
+`pytest tests/test_interpretation_citable_fields.py tests/test_remaining_determinations.py tests/test_binding_repair_feedback.py tests/test_analysis_retry_boundaries.py`.
+Use owned exact-schema storage and explicit synthetic model decisions. Omit
+absent and whitespace-only metadata from both the source catalog and citation
+schema; preserve nonblank text and literal zero. Missing fields must not replace
+the model's full-posting judgment with a mechanical unknown. Verify model-selected
+unknowns, cache/readback identity, and preservation of accepted bindings after a
+failed refresh. Foreign IDs and changed quotes still exhaust one bounded
+three-call budget; never substitute a quote or increase stage retry budgets.
+
+For implicit per-job preparation after a manual Apply skip, run locked
+`pytest tests/test_preparation_manual_decline.py tests/test_automatic_material_decline.py tests/test_preparation_score_material_block.py tests/test_v7_tailor_runtime.py tests/test_v7_cover_runtime.py`.
+Use owned exact-schema jobs and real activity/workflow entry points. With a
+passing score, a canonical manual Skip must stop implicit Tailor/Cover before
+acquisition, model setup and attempt accounting; recheck a decline committed
+between early selection and the locked admission. Preserve other tenants,
+policy-only/legacy/retryable skips, foreign queued/running owners, unrelated
+stops and accepted files/bindings. An Apply reset must reopen only this cause
+before real automatic selection. Explicit RPC material actions carry a literal
+frozen intent and distinct idempotency identity while retaining normal guards;
+automatic identities remain unchanged. Decode absent legacy fields and replay
+old/new real Temporal histories without stored model-output fixtures.
+
+For cover-letter publication anchors, run locked
+`pytest tests/test_cover_reviewed_anchors.py tests/test_cover_generation_repair.py tests/test_artifact_determinations.py tests/test_material_review_history.py`.
+Use owned exact-schema SQLite and explicit synthetic model decisions. A passing
+factual reviewer may endorse fewer candidate sources than the generator proposed,
+or identify a source after an empty proposal. Persist exactly the reviewer's
+source and requirement links, preserve the generator proposals separately, and
+require both factual and quality approval. Test source-free lines, rejected first
+attempts, failed refresh preservation and foreign IDs. A rejected draft must keep
+valid provenance and inspectable findings rather than fail during persistence.
+These are structural model-authority checks, not a semantic evaluation corpus.
+
+For bounded JobStreaming source intake, run locked
+`pytest tests/test_selected_board_wiring.py tests/test_source_registry.py tests/test_jobstreaming_source_result_budget.py tests/test_discovery_result_budget.py tests/test_workflow_discovery.py`.
+Use owned exact-schema SQLite, synthetic adapters and real Temporal histories.
+Prove supported boards upgrade their old experimental default while disabled and
+quarantined intent survives; interrupt before/after the last admission and during
+checkpoint acknowledgement; preserve exact request fingerprints and accepted
+counts. Race independent live/capture writers for the last allowance. Fail receipt
+insertion/readback, later identity attachment and execution lineage, including a
+caller-owned savepoint: no partial canonical job, locator, admission receipt or
+membership may commit. A source-specific cap must not stop healthy siblings, and
+disabling all boards before retry must settle the frozen units without provider
+acquisition. Replay histories with and without the source-budget patch. These are
+structural ownership/transaction checks, with no native data or model calls.
+
+For automatic compensation classification and refresh ownership, run locked
+`pytest tests/test_compensation_classification_parallelism.py tests/test_automatic_compensation_refresh.py tests/test_compensation_refresh_state.py tests/test_compensation_refresh_temporal.py tests/test_workflow_discovery.py`.
+Use owned exact-schema SQLite and synthetic provider rows. Prove configured
+overlap/capacity, exact duplicate/cache identities and ordering, product-lane and
+spend admission, thread-local connection cleanup, live renewal, atomic stale-owner
+rejection and accepted-range preservation. Hold admitted model calls while a real
+Temporal activity times out: its cooperative stop must prevent new admissions and
+release current publication leases before those calls drain. Busy refreshes and
+failed backoff must remain explicit instead of being reported as fresh success.
+Generate and replay both the legacy and new compensation-budget histories; retain
+their recorded 30-minute and six-hour budgets respectively. No native data,
+provider calls, semantic eval corpora or recorded model-output fixtures belong in
+these tests.
+
+For blocking-activity cancellation heartbeats, run locked
+`pytest tests/test_p1b_error_inversion.py tests/test_workflow_control_capacity.py tests/test_activity_connection_lifetime.py`.
+Use both the ephemeral time-skipping server and an independent real Temporal
+dev server. Hold cooperative cleanup longer than the server heartbeat but
+shorter than the existing cancellation grace; the actual history must record
+activity cancellation with no heartbeat timeout. The time-skipping server alone
+does not reproduce the real server's cancellation heartbeat expiry. Preserve
+ignored-cancellation abandonment, hard-timeout retry capacity, connection
+cleanup, and workflow ownership.
+
+For terminal enrichment preparation handoff, run locked
+`pytest tests/test_workflow_discovery.py tests/test_discovery_enrichment_handoff.py tests/test_discovery_preparation_orchestration.py`.
+Use an independent Temporal test server and owned exact-schema SQLite data.
+Interrupt live capture when its producer finishes, then prove terminal enrichment
+reclaims the job and uses the real flag-gated callback only after its commit.
+With a second job, assert the first completed job starts preparation before the
+next capture. Preserve execution/cohort identity, existing idempotent preparation
+ownership, inactive/blocked admission, final fan-out and compensation ordering.
+Generate and replay histories with and without the terminal-handoff marker;
+old histories and already scheduled activities retain their recorded input.
+No native workspace or provider calls belong in these regressions.
+
+
+For conditional preparation completion, run locked
+`pytest tests/test_preparation_outcome_audit.py tests/test_worker_reconciler.py`
+and `corepack pnpm --filter @jobctrl/api exec vitest run test/pipeline-operations.test.ts`.
+Recover actual synthetic Temporal completion results into owned exact-schema
+SQLite, then read those same event bytes through the production API snapshot.
+A successful material skip must leave PDF lifecycle absent and the immutable plan
+unchanged while its exact run-owned receipt resolves the PDF as skipped in both
+cohorts. Current skipped rows without a receipt, wrong tenant/job/owner/run/plan,
+malformed or failed results, unknown decoder versions, and unrelated skips remain
+insufficient. Ordinary successful work with no skip cannot explain a missing PDF.
+Recorded PDF states retain precedence; refreshed pending prerequisites keep the
+member unresolved. Prove bounded, starvation-resistant recovery, duplicate
+idempotence, successor-owner fencing, transaction/thread ownership and no change
+to workflow terminal outcomes or accepted materials. Do not infer historical
+attribution from reason prose or nearby timestamps.
+
+For planned PDF progress counts, run
+`corepack pnpm --filter @jobctrl/api exec vitest run test/pipeline-operations.test.ts`.
+Use owned exact-schema members in both execution cohorts. Without a PDF lifecycle,
+recorded pending/queued/running required Score, Tailor or Cover prerequisites must
+report waiting. A terminal preparation owner, absent prerequisite state, unrelated
+running work, and completed/blocked/failed/canceled prerequisites must preserve an
+unknown PDF gap. Recorded queued/running/succeeded/failed PDF steps retain their
+own state even while upstream rows remain pending. Preserve exact PDF identity
+joins, projection coverage, count partitions and private-input exclusion.
+
+For optional post-approval résumé polish, run locked
+`pytest tests/test_resume_polish_policy.py tests/test_tailor_voice_audit_integration.py tests/test_tailor_judge_selection.py tests/test_saved_default_model.py tests/test_tailoring_artifact_boundary.py`.
+Prove a missing/false setting never acquires a voice provider; explicit boolean
+true and injected ports retain the existing rewrite/no-op/rejection paths.
+Required factual, quality and applicable persona verdicts retain authority.
+The disabled pass must preserve the exact selected text and provenance, keep the
+accepted review IDs, and record a truthful skipped audit. Rejected required
+reviews, malformed/stale/foreign receipts, cancellation and rendering failures
+must retain their existing failure and accepted-artifact preservation behavior.
+Exercise the HTTP Settings route with both booleans and invalid types in owned
+workspaces, retaining unrelated config bytes/values and avoiding provider calls
+for a polish-only update. Cover the real form's default/saved/reset states,
+changed-fields-only save during catalog failure, optimistic update and rollback,
+and browser readback. Call counts establish avoided work; report latency only
+when measured through completed production work.
+
+For known eligibility blocks in preparation, run locked
+`pytest tests/test_preparation_score_material_block.py tests/test_workflow_control_capacity.py tests/test_workflow_job_preparation.py tests/test_score_eligibility_stage_state.py tests/test_automatic_material_decline.py tests/test_v7_score_runtime.py`.
+Exercise the actual Score activity and Temporal payload conversion with the
+existing typed eligibility predicate, including absent legacy fields and
+non-boolean flags. In a real independent Temporal server, finish Score, then
+hold every main activity slot at both one and four slots. The blocked preparation
+must settle without scheduling Tailor, Cover or PDF while those holds remain.
+Replay old histories both with and without the additive field, plus new
+short-circuit histories. Preserve low-fit override semantics, separate explicit
+material work, accepted newer state, and existing source/profile staleness fences.
+Use owned synthetic workspaces and no provider calls or personal data.
+
+For selected broad-board routing, run locked
+`pytest tests/test_selected_board_wiring.py tests/test_source_registry.py tests/test_discovery_scheduler_pr4.py tests/test_discover_reliability.py`.
+Use owned exact-schema SQLite registry entries with a selected retained board
+outside the saved default subset. Exercise the real registry read, explicit
+selection, scheduler and durable provider-unit compilation for every registered
+board. Prove a two-board selection reaches both identities, disabled sources
+remain skipped, quarantined sources retain their existing probe budget, and
+owner, URL metadata, saved defaults and persisted registry rows do not change.
+An unknown runnable source or missing/malformed board configuration must raise
+a typed configuration failure before provider dispatch; disabled unknown sources
+remain safely skipped. Keep this format/identity QA independent of model
+judgments and native user data.
+
+For scoring evidence payloads, run the score-use-case, scoring-determination,
+exact-v7 score-runtime and semantic-determination suites. Inspect the actual
+composed request: canonical authored source IDs and exact text must appear once
+as a source inventory, `candidate_evidence_ids` must match it, and every
+requirement field and analysis generation must remain. Keep unconfirmed
+suggestions excluded and retain opposite model verdicts, strict citation/ID
+rejection and accepted-score preservation. Do not use native prompt/response
+replay fixtures. Regenerate and check the semantic-result registry; the API
+receipt-version regression must keep strict v10 history readable and distinguish
+v11 current-only reads while rejecting unknown versions and malformed results.
+Measure payload sizes separately from token counts, latency and semantic quality;
+a smaller representation proves only the former.
+
+For workflow/model trace joins, run locked
+`pytest tests/test_worker_trace_context.py tests/test_workflow_run_context.py tests/test_activity_connection_lifetime.py tests/test_p1b_error_inversion.py`
+and the existing OTel/RPC span tests. Use in-memory export and synthetic sources
+to prove actual activity-to-blocking-to-fan-out parent IDs with both default and
+owned executors, distinct concurrent jobs, concurrent reuse of one wrapper,
+thread reuse after success/error, and cancellation while a retired generation
+settles. Unrelated Python context variables and Temporal activity context must
+not cross the handoff. Preserve canonical workflow event ownership, connection
+cleanup, heartbeats and cancellation behavior. Prompts, completions, arbitrary
+parameters and private exception messages must remain absent from model span
+attributes/events/status. Verify a fresh owned operation's actual exported
+parent links after activation; a time-window match is not a workflow join.
+
+For anonymous enrichment capture, run locked
+`pytest tests/test_enrichment_visible_capture.py tests/test_enrichment_extractors.py tests/test_optional_extension.py`.
+Exercise real owned browser DOMs with hidden dialog/comment preambles longer than
+the unchanged content cap, both a selected main and body fallback, CSS visibility
+inheritance, visible inert content and an actually over-budget visible prefix.
+The existing extractor must receive the exact visible description and link;
+hidden controls must not win. Prove the original DOM, full status capture and
+separately collected JSON-LD remain unchanged. Repeat the production public-page
+capture in an owned temporary workspace for an affected URL; keep captures private
+and do not replay them as semantic model fixtures.
+
 For selected-job demand, run locked `pytest tests/test_career_learning.py` and
 API `vitest run test/career-learning.test.ts` through their package owners.
 Require a no-model, read-only preview including all-missing descriptions;
@@ -520,6 +750,42 @@ expanded surface for accessibility and desktop/mobile overflow. Synthetic model
 doubles prove authority and failure handling; a configured-provider call with
 owned synthetic sources separately establishes live model integration.
 
+For parallel letter reviews, run locked `pytest tests/test_parallel_letter_reviews.py`
+and the artifact-determination and worker-lifecycle suites. Exercise the production
+builder against an owned file database: a rendezvous must prove both reviews
+enter independently on separate connection-owning threads, while owner guards and
+acceptance stay on the coordinator. Prove unchanged cached determination IDs,
+separate frozen inputs, capacities one/four, the outstanding-pair bound, cancellation
+before admission and after submission, terminal failure before blocked-state writes,
+first-cause retention, typed source/provider/spend failures, bounded repairs and
+accepted-artifact preservation. Stop must precede the next application-level
+provider admission; already-admitted calls may settle with accounting. Drain
+reviews before closing runtimes or removing temporary data. A real configured
+provider call with owned synthetic sources separately proves the integration;
+synthetic timing is not a whole-workflow speed claim.
+
+For the optional LinkedIn guest dialog, run locked
+`pytest tests/test_linkedin_guest_dialog.py` with the capture and URL-safety suites.
+Use owned offline DOMs to prove origin/route scope, one rendered non-submitting
+control, opposed explicit/default submit controls, a transparent earlier control,
+actual walls without dismissal and zero form submissions. Inject delayed URL and
+content changes during both direct and batch capture; both must reject through
+the typed acquisition failure after all capture reads. Repeat a fresh affected
+public URL through production acquisition and retain only private source captures
+and safe control metadata. Do not substitute hidden-page extraction for dismissal.
+
+For sole-provider canonical analysis, run locked
+`pytest tests/test_single_provider_analysis.py` with analysis-determination,
+ensemble, use-case, repository and provider-configuration checks. A sole admitted
+leg must retain strict source verification and exact canonical/per-leg
+verification IDs with no synthesis or duplicate verifier inference. Opposing
+valid model verdicts must control acceptance, failed refreshes preserve the
+accepted record, and a single survivor of multiple admitted legs must still
+synthesize. Prove the revised execution cache identity, then run a configured
+provider against owned synthetic posting data and inspect actual model/effort,
+call provenance and persisted readback. Call-count reduction alone is not a
+whole-workflow speed or quality-equivalence result.
+
 Every displayed semantic judgment must trace to a persisted determination:
 kind, schema/prompt versions, provider/model, input fingerprint, canonical source
 IDs and verbatim citations. Inspect the canonical writer, the accepted artifact
@@ -534,6 +800,64 @@ lexical fallback. Check the lane and spend preflight run before each new call;
 unchanged inputs reuse accepted determinations with zero calls. Failed refreshes
 preserve the last accepted artifact. Do not create eval sets, labeled corpora,
 baseline comparisons, English sentence corpora or recorded-output replay fixtures.
+
+For preparation review gates, seed a latest canonical grade of 8, an older grade
+of 10, a conflicting legacy `jobs` grade, and a second tenant sharing the JobId.
+The production preparation reader and per-job Tailor entry must deliver only
+the selected tenant's latest grade and version to the resume review gate. At
+grades 8 and 9, run the actual resume use case from that reader: opposing valid
+six-persona verdicts must control acceptance and persist their determination
+bindings. A persona-provider failure preserves the accepted resume. A manual
+grade-6 request retains grade 6, and an unscored target must remain readable
+without adopting the legacy grade.
+
+For material context, use the production plan builder with a synthetic fit edge
+to a role date or another canonical context field. The source remains available,
+the renderer preserves fixed fields, and omitting a generated context claim
+receives neither an inclusion error nor shipped coverage. Selected achievements
+and explicitly pinned context still require their claims. Keep the existing
+unaffirmed-source rejection checks: context must not be pruned into acceptance.
+Through real Temporal Tailor and Cover activity entry points, a bounded content
+rejection must fail once as non-retryable `material_rejected`; provider/network
+faults must still exercise their configured retries.
+
+For an overflowing initial material selection, use owned synthetic supported
+edges that require five distinct achievements under a four-bullet role ceiling.
+Exercise the production selector through the resume use case. Opposite valid
+model selections must change the selected graph, persist their source-cited
+determination IDs and expose omitted requirements. Feasible seeds and impossible
+explicit pins must make no selection call. Enforce pins, edge ownership, complete
+requirement decisions, verbatim citations and the unchanged ceiling; distinguish
+provider, spend, JSON, schema and binding failures. Unchanged inputs reuse the
+accepted determination, changed profile versions invalidate it, and a failed
+refresh preserves the prior accepted material and bytes. Prove the production
+builder uses the configured generator route and tailoring lane, then make one
+real configured-provider call using owned synthetic sources.
+
+For review continuity, run the actual resume and cover use cases through three
+synthetic model decisions. Verify exact prior determination IDs and complete
+typed findings reach later generation/review inputs and the persisted audit.
+Opposing valid final verdicts must control acceptance independently of their
+diagnostic score. Repeat an unchanged draft: review history must affect its
+determination fingerprint while unchanged claim verification remains cached.
+Exercise a rejected high-fit persona review and changed-voice review; retain
+all six independent personas and the accepted base when voice is rejected.
+Historical quotes cannot become current finding citations. Provider or spend
+failure after earlier reviews must preserve the last accepted artifact. Use
+owned synthetic sources and explicit model choices, never native prose replay.
+
+For mechanical binding repair, send multiple invalid literal quotes through the
+actual scoring/model port. One correction must receive all current violations,
+their structural paths and exact canonical sources. Opposing eligibility
+decisions remain authoritative. Exercise typed citation mappings as well as
+lists; invalid entries must never be cached as accepted. Scoring requirement
+spans receive per-field canonical targets, including whitespace-sensitive input,
+and blank spans receive no verbatim credit. Unknown requirement IDs must not hide
+independent evidence-ID errors. Stubborn invalid output still exhausts the same
+three-call limit; provider/spend failures preserve the last accepted score.
+Failure text and stored blocked-state records retain safe codes rather than
+source/model prose. Pair these owned synthetic cases with a configured-provider
+correction probe before claiming live integration.
 
 For version changes, seed an obsolete analysis projection with already-folded
 event cursors. The TypeScript detail owner must rebuild it from the current
@@ -825,6 +1149,15 @@ and confirm a later timeout cannot replace stronger destination-denial evidence.
 The job drawer must show the typed cause, historical observation, current
 recheck result, and manual fallback without claiming the original denial was a
 permanent site policy or suppressing technical evidence.
+Exercise partial acquisition through both the intake fetcher and anonymous
+batch entry point. Inject typed script/ping timeout and DNS failures during
+navigation, a navigation exception, and snapshot collection. Both paths must
+retain the readable document, carry incomplete status evidence with the exact
+acquisition reason, and return unknown availability before any model call.
+Main/embedded-document failures, private destinations and resource-size limits
+must still prevent extraction. A real Chromium fault probe separately exercises
+the batch entry point with owned synthetic documents; it must not access native
+data or replace the independent interpretation/description-quality gates.
 For summary metric grounding, seed a baseline tenure estimate with no supporting
 achievement and a separately pinned verified metric. The normal Tailor use case
 must reject the tenure claim even with an unrelated citation, retain that failure
@@ -983,6 +1316,15 @@ override-ready state, and a simulated live dispatch while proving no
 
 ### Pipeline history recovery and restart regression
 
+Race the real RPC dispatch-start writer against the workflow's detailed start
+marker in both orders, with empty and sparse summaries. The exact same Temporal
+run must retain its recorded job/configuration keys across projection refreshes.
+Reusing the workflow ID for another run must clear prior metadata even when the
+new summary is absent. An unidentified execution cannot merge job bindings;
+late duplicate starts preserve terminal truth, while explicitly marked
+same-run missing-history recovery retains its known inputs. Keep every start
+fact in the timeline. Use owned structural SQL fixtures and no model replay.
+
 Reproduce the human-reported partial-projection state with an active Discover
 execution, 72 expected execution members, 15 persisted members, 16 expected
 pipeline-step keys, four persisted keys, one live source-family activity, three
@@ -1003,6 +1345,13 @@ live tailoring activities, and an approximate activity backlog of 41. Verify:
   idle or `ready`; and
 - a non-ASCII membership and stage-key golden vector hashes identically in the
   Python recovery writer and TypeScript API validator.
+
+For manual URL intake, seed four `job_url_import` activities without a selected
+Discover execution. Prove exact slot/detail totals, bounded readable items,
+opaque identifiers, null-safe workflow identity, completion cleanup and no
+invented pipeline stage. Mix imports with Score and retain the correct Score
+counts. Exercise the TypeScript heartbeat reader and rendered **Import job URL**
+items; private URLs and arguments must remain absent.
 
 Then exercise the write-side recovery controller with legacy queued, running,
 completed, and failed activities, a mixed legacy/native history, and a true
@@ -1064,6 +1413,14 @@ readable; it must not leave stale ready data published during the failure.
 
 ### Public demo privacy and edge gate
 
+For additive demo settings, reopen a retained current-schema/current-seed
+workspace missing the new fields and require a strict, complete settings response
+and a rendered settings panel. Preserve identity, revision, authored edits,
+receipts and blobs on read; verify both subsequent boolean save directions and
+reload, existing saved values, an older tab's latest transaction state, and storage
+fallback. Never replace the workspace or relax response-schema assertions to
+update an immutable seed digest.
+
 When consent, cookies, telemetry, D1, retention, or Cloudflare configuration
 changes, the edge suite must prove that decline creates no analytics identity,
 grant is required before telemetry, cookie attributes and versioning remain
@@ -1090,8 +1447,8 @@ missing credential files, consumer Claude OAuth, raw OpenAI keys, and deferred
 local/custom endpoints must not unlock readiness. Inject a failure at every
 native credential-store batch boundary and prove exact rollback, then exercise provider-level
 revocation, the three-card Settings route at desktop/mobile width, the demo
-read-only boundary, and a sole-provider draft plus synthesis path without making
-a live model call. For model selection, use deterministic SDK fakes to prove
+read-only boundary, sole-provider verified promotion, and retained multi-leg
+synthesis without making a live model call. For model selection, use deterministic SDK fakes to prove
 catalog order, ready-only listing, Codex hidden/invalid filtering, Google
 generate-content filtering, Claude runtime-catalog normalization, stable deduplication, and
 sanitized failures. Prove settings reject an unready provider or unoffered ID,

@@ -1021,6 +1021,9 @@ def test_generator_following_all_advertised_edges_accepts_reselected_artifacts(
         props = schema["$defs"]["GeneratedClaim"]["properties"]
         assert set(props["coverage_edge_ids"]["items"]["enum"]) == active_ids
         assert "pinned" not in props["non_requirement_reason"]["enum"]
+        assert "adjacent_translation" not in props["claim_label"]["enum"]
+        assert "draft_requires_confirmation" not in props["claim_label"]["enum"]
+        assert "evidence_reframed" in props["claim_label"]["enum"]
         assert "pinned" not in props["claim_label"]["enum"]
         assert "A required role is not a pinned bullet" in messages[0].content
     for attempt in outcome.report["attempt_history"]:

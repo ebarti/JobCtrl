@@ -248,11 +248,16 @@ async def test_apply_workflow_continuous_batch_is_bounded_and_continues_as_new(m
     )
     monkeypatch.setattr("jobctrl.apply.workflow.workflow.sleep", fake_sleep)
 
+    async def fake_preflight(_activity, payload, **_kwargs):
+        captured.setdefault("preflight_lanes", []).append(payload.lane)
+    monkeypatch.setattr("jobctrl.apply.workflow.execute_control_activity", fake_preflight)
+
     with pytest.raises(ContinueAsNewRaised):
         await workflow.run(ApplyWorkflowInput(tenant_id="local", continuous=True))
     assert captured["sleep"] == timedelta(seconds=30)
     assert captured["continued_payload"].continuous is True
     assert captured.get("outcomes", []) == []
+    assert captured["preflight_lanes"] == ["apply"]
 
 
 @pytest.mark.asyncio
@@ -294,10 +299,10 @@ async def test_continuous_apply_workflow_budget_exceeded_halts_before_apply():
                     )
 
     cause = exc_info.value.cause
-    assert isinstance(cause, ActivityError)
-    app_error = cause.cause
+    app_error = cause.cause if isinstance(cause, ActivityError) else cause
     assert isinstance(app_error, ApplicationError)
     assert app_error.type == "budget_exceeded"
+    assert app_error.non_retryable
     assert apply_main_mock.call_count == 0
 
 

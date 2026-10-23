@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
+import pytest
+
 from jobctrl.domain.scoring import (
     FitScore,
     RequirementFitAssessment,
@@ -83,6 +87,50 @@ def test_requirement_fit_value_maps_statuses() -> None:
     assert requirement_fit_value(RequirementFitStatus(kind="missing", reason="No evidence")) == 0.0
 
 
+@pytest.mark.parametrize("scope", ["eligibility", "logistics", "employer_condition"])
+def test_non_capability_conditions_do_not_reduce_coverage_or_cap_fit(scope) -> None:
+    matched = _assessment(
+        "capability",
+        status=RequirementFitStatus(
+            kind="matched",
+            evidence_ids=("evidence",),
+            strength="direct",
+        ),
+    )
+    condition = _assessment("condition", status=RequirementFitStatus(kind="blocked", blocker="Recorded condition"))
+    condition = replace(
+        condition,
+        contribution=replace(
+            condition.contribution,
+            scope=scope,
+            scope_source_id="1" * 64,
+        ),
+    )
+    report = resolve_requirement_fit_report(_report(matched, condition))
+    assert report.resolved_fit_score == FitScore.create(10)
+    assert report.summary.weighted_fit == 1
+    assert report.summary.must_have_coverage == 1
+    assert report.summary.blocker_count == 0
+    assert report.summary.missing_high_weight_count == 0
+    assert report.assessments[1].fit.kind == "blocked"
+    assert report.assessments[1].contribution.max_points == 0
+    assert report.assessments[1].contribution.awarded_points == 0
+    assert report.assessments[1].contribution.scope_source_id == "1" * 64
+
+
+def test_only_context_conditions_cannot_produce_a_capability_score() -> None:
+    condition = _assessment("condition", status=RequirementFitStatus(kind="missing", reason="Unconfirmed"))
+    condition = replace(
+        condition,
+        contribution=replace(
+            condition.contribution,
+            scope="logistics",
+            scope_source_id="1" * 64,
+        ),
+    )
+    assert resolve_requirement_fit_report(_report(condition)).resolved_fit_score is None
+
+
 def test_resolve_requirement_fit_report_scores_weighted_requirements() -> None:
     report = _report(
         _assessment(
@@ -115,7 +163,7 @@ def test_resolve_requirement_fit_report_scores_weighted_requirements() -> None:
 
     resolved = resolve_requirement_fit_report(report)
 
-    assert resolved.formula_version == "requirement-fit-v1"
+    assert resolved.formula_version == "requirement-fit-v2-scoped"
     assert resolved.resolved_fit_score == FitScore.create(6)
     assert resolved.fit_band == "plausible"
     assert resolved.summary.weighted_fit == 0.5474

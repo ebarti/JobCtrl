@@ -61,6 +61,9 @@ def llm_generation_span(
     from jobctrl.llm import enforce_spend_budget
     from jobctrl.llm_lanes import current_llm_lane
 
+    from jobctrl.infrastructure.llm.attempt_admission import check_model_attempt_admission
+
+    check_model_attempt_admission()
     lane = current_llm_lane()
     enforce_spend_budget(lane)
     tracer = trace.get_tracer(scope_name)
@@ -72,6 +75,9 @@ def llm_generation_span(
         span.set_attribute("langfuse.observation.type", "generation")
         span.set_attribute("langfuse.observation.model.name", model)
         span.set_attribute("gen_ai.request.model", model)
+        effort = params.get("effort")
+        if isinstance(effort, str) and effort in {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}:
+            span.set_attribute("gen_ai.request.reasoning_effort", effort)
         operation = "chat_json" if params.get("structured") is True else "chat"
         span.set_attribute("gen_ai.operation.name", operation)
         span.set_attribute("jobctrl.llm.operation", operation)

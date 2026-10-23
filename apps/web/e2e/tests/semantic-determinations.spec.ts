@@ -80,6 +80,8 @@ test("Compensation displays only rows with persisted matching taxonomy classific
     interpretation.result.places[0].country_code,
   );
   await page.goto(`/jobs/${QA_PLATFORM_JOB_ID}`);
+  await page.getByRole("button", { name: "Sections", exact: true }).click();
+  await page.getByRole("navigation", { name: "Job detail sections" }).getByRole("button", { name: "Compensation", exact: true }).click();
   const section = page.getByRole("region", {
     name: "Compensation evidence",
     exact: true,
@@ -148,6 +150,8 @@ test("Gmail shows the model's quoted outcome and an actionable unavailable refre
     quote,
   });
   await page.goto(`/jobs/${QA_PLATFORM_JOB_ID}`);
+  await page.getByRole("button", { name: "Sections", exact: true }).click();
+  await page.getByRole("navigation", { name: "Job detail sections" }).getByRole("button", { name: "Application outcomes", exact: true }).click();
   await expect(
     page.locator("blockquote").filter({ hasText: quote }),
   ).toBeVisible();
@@ -163,6 +167,8 @@ test("Gmail shows the model's quoted outcome and an actionable unavailable refre
     failed.close();
   }
   await page.reload();
+  await page.getByRole("button", { name: "Sections", exact: true }).click();
+  await page.getByRole("navigation", { name: "Job detail sections" }).getByRole("button", { name: "Application outcomes", exact: true }).click();
   await expect(
     page.getByRole("status").filter({
       hasText: /Email outcome interpretation unavailable: provider_unavailable/,

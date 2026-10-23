@@ -121,7 +121,8 @@ jobs:
   e2e:
     name: Web end-to-end
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # Browser/PDF setup shares this budget with both complete E2E suites.
+    timeout-minutes: 35
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

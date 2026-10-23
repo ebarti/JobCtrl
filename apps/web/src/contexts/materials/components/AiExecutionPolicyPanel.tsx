@@ -31,6 +31,7 @@ import {
   useSettingsPolicyQuery,
 } from "../../operations/hooks/useSettingsPolicyQueries.js";
 import { useUpdateAiExecutionPolicyMutation } from "../hooks/useUpdateAiExecutionPolicyMutation.js";
+import { CodexReasoningEffortFields } from "./CodexReasoningEffortFields.js";
 
 const LEG_OPTIONS: Array<{ value: ProviderId; label: string }> = [
   { value: "claude", label: "Claude" },
@@ -66,12 +67,15 @@ export function AiExecutionPolicyPanel() {
   const generators = response?.settings.tailoringGeneratorModels ?? [];
   const form = useForm({
     defaultValues: {
+      defaultLlmModel: response?.settings.defaultLlmModel ?? "",
+      codexReasoningEfforts: response?.settings.codexReasoningEfforts ?? {} as Record<string, string>,
       analysisLegs:
         response?.settings.analysisLegs ??
         (["claude", "codex", "google"] as ProviderId[]),
       generatorPrimary: generators[0] ?? "",
       generatorFallback: generators[1] ?? "",
       tailoringJudgeModel: response?.settings.tailoringJudgeModel ?? "",
+      resumeVoicePolish: response?.settings.resumeVoicePolish ?? false,
     },
     onSubmit: async ({ value, formApi }) => {
       if (!response) return;
@@ -80,19 +84,35 @@ export function AiExecutionPolicyPanel() {
         value.generatorPrimary,
         value.generatorFallback,
       ].filter((model, index, all) => model && all.indexOf(model) === index);
+      const effortChanges = Object.fromEntries(
+        [...new Set([...Object.keys(response.settings.codexReasoningEfforts), ...Object.keys(value.codexReasoningEfforts)])]
+          .filter((model) => response.settings.codexReasoningEfforts[model] !== value.codexReasoningEfforts[model])
+          .map((model) => [model, value.codexReasoningEfforts[model] || null]),
+      );
       const request = {
-        ...(response.effectiveSettings.analysisLegs.editable
+        ...(response.effectiveSettings.defaultLlmModel.editable &&
+          (value.defaultLlmModel || null) !== response.settings.defaultLlmModel
+          ? { defaultLlmModel: value.defaultLlmModel || null }
+          : {}),
+        ...(response.effectiveSettings.codexReasoningEfforts.editable && Object.keys(effortChanges).length
+          ? { codexReasoningEfforts: effortChanges }
+          : {}),
+        ...(response.effectiveSettings.analysisLegs.editable &&
+          JSON.stringify(value.analysisLegs) !== JSON.stringify(response.settings.analysisLegs)
           ? { analysisLegs: value.analysisLegs }
           : {}),
-        ...(response.effectiveSettings.tailoringGeneratorModels.editable
-          ? {
-              tailoringGeneratorModels: generatorModels.length
-                ? generatorModels
-                : null,
-            }
+        ...(response.effectiveSettings.tailoringGeneratorModels.editable &&
+          (value.generatorPrimary !== (generators[0] ?? "") ||
+            value.generatorFallback !== (generators[1] ?? ""))
+          ? { tailoringGeneratorModels: generatorModels.length ? generatorModels : null }
           : {}),
-        ...(response.effectiveSettings.tailoringJudgeModel.editable
+        ...(response.effectiveSettings.tailoringJudgeModel.editable &&
+          (value.tailoringJudgeModel || null) !== response.settings.tailoringJudgeModel
           ? { tailoringJudgeModel: value.tailoringJudgeModel || null }
+          : {}),
+        ...(response.effectiveSettings.resumeVoicePolish.editable &&
+          value.resumeVoicePolish !== response.settings.resumeVoicePolish
+          ? { resumeVoicePolish: value.resumeVoicePolish }
           : {}),
       };
       const parsed = SettingsUpdateRequestSchema.safeParse(request);
@@ -107,10 +127,13 @@ export function AiExecutionPolicyPanel() {
         const saved = await updateSettings.mutateAsync(parsed.data);
         const savedGenerators = saved.settings.tailoringGeneratorModels ?? [];
         formApi.reset({
+          defaultLlmModel: saved.settings.defaultLlmModel ?? "",
+          codexReasoningEfforts: saved.settings.codexReasoningEfforts,
           analysisLegs: saved.settings.analysisLegs,
           generatorPrimary: savedGenerators[0] ?? "",
           generatorFallback: savedGenerators[1] ?? "",
           tailoringJudgeModel: saved.settings.tailoringJudgeModel ?? "",
+          resumeVoicePolish: saved.settings.resumeVoicePolish,
         });
         setStatus({
           kind: "success",
@@ -129,10 +152,13 @@ export function AiExecutionPolicyPanel() {
     if (!response || form.state.isDirty) return;
     const savedGenerators = response.settings.tailoringGeneratorModels ?? [];
     form.reset({
+      defaultLlmModel: response.settings.defaultLlmModel ?? "",
+      codexReasoningEfforts: response.settings.codexReasoningEfforts,
       analysisLegs: response.settings.analysisLegs,
       generatorPrimary: savedGenerators[0] ?? "",
       generatorFallback: savedGenerators[1] ?? "",
       tailoringJudgeModel: response.settings.tailoringJudgeModel ?? "",
+      resumeVoicePolish: response.settings.resumeVoicePolish,
     });
   }, [form, response]);
 
@@ -157,15 +183,20 @@ export function AiExecutionPolicyPanel() {
 
   const effective = response.effectiveSettings;
   const initialValues = {
+    defaultLlmModel: response.settings.defaultLlmModel ?? "",
+    codexReasoningEfforts: response.settings.codexReasoningEfforts,
     analysisLegs: response.settings.analysisLegs,
     generatorPrimary: generators[0] ?? "",
     generatorFallback: generators[1] ?? "",
     tailoringJudgeModel: response.settings.tailoringJudgeModel ?? "",
+    resumeVoicePolish: response.settings.resumeVoicePolish,
   };
   const allReadOnly =
+    !effective.defaultLlmModel.editable &&
     !effective.analysisLegs.editable &&
     !effective.tailoringGeneratorModels.editable &&
-    !effective.tailoringJudgeModel.editable;
+    !effective.tailoringJudgeModel.editable &&
+    !effective.resumeVoicePolish.editable;
 
   function clearSaveStatus() {
     setStatus(null);
@@ -207,6 +238,22 @@ export function AiExecutionPolicyPanel() {
             {status.message}
           </div>
         ) : null}
+        <form.Field name="defaultLlmModel">
+          {(field) => (
+            <ModelSelectControl
+              name="defaultLlmModel"
+              label="Default model"
+              models={models}
+              value={field.state.value}
+              readOnly={!effective.defaultLlmModel.editable || catalogQuery.isPending || Boolean(catalogQuery.error)}
+              help="Used by newly started model calls and the writing pass. Explicit analysis, generator, and judge choices take precedence."
+              onChange={(value) => {
+                clearSaveStatus();
+                field.handleChange(value);
+              }}
+            />
+          )}
+        </form.Field>
         <form.Field name="analysisLegs">
           {(field) => (
             <FieldSet
@@ -258,7 +305,7 @@ export function AiExecutionPolicyPanel() {
               label="Primary tailoring generator"
               models={models}
               value={field.state.value}
-              readOnly={!effective.tailoringGeneratorModels.editable}
+              readOnly={!effective.tailoringGeneratorModels.editable || catalogQuery.isPending || Boolean(catalogQuery.error)}
               help={context(
                 effective.tailoringGeneratorModels.source,
                 "next tailoring workflow",
@@ -277,7 +324,7 @@ export function AiExecutionPolicyPanel() {
               label="Fallback tailoring generator"
               models={models}
               value={field.state.value}
-              readOnly={!effective.tailoringGeneratorModels.editable}
+              readOnly={!effective.tailoringGeneratorModels.editable || catalogQuery.isPending || Boolean(catalogQuery.error)}
               help="Optional second choice; used after the primary."
               onChange={(value) => {
                 clearSaveStatus();
@@ -293,7 +340,7 @@ export function AiExecutionPolicyPanel() {
               label="Tailoring judge"
               models={models}
               value={field.state.value}
-              readOnly={!effective.tailoringJudgeModel.editable}
+              readOnly={!effective.tailoringJudgeModel.editable || catalogQuery.isPending || Boolean(catalogQuery.error)}
               help={context(
                 effective.tailoringJudgeModel.source,
                 "next tailoring workflow",
@@ -305,6 +352,56 @@ export function AiExecutionPolicyPanel() {
             />
           )}
         </form.Field>
+        <form.Field name="resumeVoicePolish">
+          {(field) => (
+            <FieldSet>
+              <FieldLegend>Résumé finishing</FieldLegend>
+              <Field className="choice target-choice" orientation="horizontal">
+                <Checkbox
+                  id="resume-voice-polish"
+                  name="resumeVoicePolish"
+                  aria-describedby="resume-voice-polish-help"
+                  disabled={!effective.resumeVoicePolish.editable}
+                  checked={field.state.value}
+                  onCheckedChange={(checked) => {
+                    clearSaveStatus();
+                    field.handleChange(checked === true);
+                  }}
+                />
+                <FieldLabel htmlFor="resume-voice-polish">Extra résumé polish</FieldLabel>
+              </Field>
+              <FieldDescription id="resume-voice-polish-help">
+                Off by default. Required reviews always run. An extra writing pass can refine wording
+                and takes longer; any changes are reviewed again.
+              </FieldDescription>
+              <FieldDescription>
+                {context(effective.resumeVoicePolish.source, "next résumé generation")}
+              </FieldDescription>
+            </FieldSet>
+          )}
+        </form.Field>
+        <form.Subscribe
+          selector={(state) => ({
+            specs: [state.values.defaultLlmModel, state.values.generatorPrimary, state.values.generatorFallback, state.values.tailoringJudgeModel],
+            codexAnalysis: state.values.analysisLegs.includes("codex"),
+          })}
+        >
+          {({ specs, codexAnalysis }) => (
+            <form.Field name="codexReasoningEfforts">
+              {(field) => (
+                <CodexReasoningEffortFields
+                  models={catalogQuery.data?.providers.find((provider) => provider.provider === "codex" && provider.ready)?.models ?? []}
+                  modelSpecs={specs}
+                  analysisModel={codexAnalysis ? response.settings.preferredModels.codex ?? null : null}
+                  includeDefaultAnalysisModel={codexAnalysis}
+                  value={field.state.value}
+                  readOnly={catalogQuery.isPending || Boolean(catalogQuery.error) || !effective.codexReasoningEfforts.editable}
+                  onChange={(value) => { clearSaveStatus(); field.handleChange(value); }}
+                />
+              )}
+            </form.Field>
+          )}
+        </form.Subscribe>
         <form.Subscribe
           selector={(state) => ({
             canSubmit: state.canSubmit,
@@ -349,7 +446,7 @@ function ModelSelectControl({
   help,
   onChange,
 }: {
-  name: "generatorPrimary" | "generatorFallback" | "tailoringJudgeModel";
+  name: "defaultLlmModel" | "generatorPrimary" | "generatorFallback" | "tailoringJudgeModel";
   label: string;
   models: Array<{ value: string; label: string }>;
   value: string;
@@ -357,15 +454,12 @@ function ModelSelectControl({
   help: string;
   onChange: (value: string) => void;
 }) {
-  const options =
-    value && !models.some((model) => model.value === value)
-      ? [{ value, label: `${value} — saved` }, ...models]
-      : models;
+  const savedModelUnlisted = Boolean(value && !models.some((model) => model.value === value));
   const helpId = `ai-policy-${name}-help`;
   const defaultValue = `__${name}-default__`;
   const items = [
     { value: defaultValue, label: "Provider/default policy" },
-    ...options,
+    ...models,
   ];
   return (
     <Field className="field">
@@ -374,7 +468,7 @@ function ModelSelectControl({
         name={name}
         disabled={readOnly}
         items={items}
-        value={value || defaultValue}
+        value={savedModelUnlisted ? null : value || defaultValue}
         onValueChange={(nextValue) => {
           if (nextValue !== null) {
             onChange(nextValue === defaultValue ? "" : nextValue);
@@ -387,7 +481,7 @@ function ModelSelectControl({
           aria-describedby={helpId}
           className="w-full"
         >
-          <SelectValue />
+          <SelectValue placeholder="Select a currently offered model" />
         </SelectTrigger>
         <SelectContent>
           <SelectGroup>
@@ -399,7 +493,10 @@ function ModelSelectControl({
           </SelectGroup>
         </SelectContent>
       </Select>
-      <FieldDescription id={helpId}>{help}</FieldDescription>
+      <FieldDescription id={helpId}>
+        {help}
+        {savedModelUnlisted && !readOnly ? ` Saved choice ${value} is not in the current provider catalog. Choose a currently offered model.` : ""}
+      </FieldDescription>
     </Field>
   );
 }

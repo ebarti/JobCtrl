@@ -147,7 +147,7 @@ def analysis_sdk_set_version(
     safe_provider = "".join(
         char for char in synthesizer_provider.strip().lower() if char.isalnum() or char in {"-", "_"}
     ) or "default"
-    return f"{'+'.join(selected)}-v2-synth-{safe_provider}"
+    return f"{'+'.join(selected)}-v3-verified-single-synth-{safe_provider}"
 
 
 def effective_codex_home(env: Mapping[str, str] | None = None) -> Path:
@@ -938,7 +938,9 @@ def ready_llm_providers(env: Mapping[str, str] | None = None) -> tuple[str, ...]
     google_auth = probe_antigravity_auth(values)
     if google_auth.ok and probe_antigravity_sdk().ok:
         ready.append("google")
-    return tuple(ready)
+    from jobctrl.infrastructure.llm.provider_availability import provider_route_available
+
+    return tuple(provider for provider in ready if provider_route_available(provider))
 
 
 def core_llm_ready(env: Mapping[str, str] | None = None) -> bool:

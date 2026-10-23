@@ -20,7 +20,41 @@ import pytest
 
 from jobctrl.domain.materials.voice import VoiceRequest
 from jobctrl.infrastructure.materials import voice_adapter
-from jobctrl.infrastructure.materials.voice_adapter import ClaudeVoiceAdapter
+from jobctrl.infrastructure.materials.voice_adapter import ClaudeVoiceAdapter, LlmVoiceAdapter
+
+
+@pytest.mark.asyncio
+async def test_saved_core_voice_adapter_retains_model_schema_and_source_identity():
+    calls = []
+
+    class Llm:
+        def chat_json(self, messages, **kwargs):
+            from jobctrl.llm_lanes import current_llm_lane
+
+            calls.append((messages, kwargs, current_llm_lane()))
+            return {"executive_profile": "Synthetic.", "executive_profile_sentences": ["Synthetic."], "experience_updates": [{"id": "owned-source", "bullets": ["Synthetic."]}]}
+
+    port = LlmVoiceAdapter(llm=Llm(), provider_id="codex", model="gpt-6.1-sol")
+    result = await port.rewrite("System instruction", VoiceRequest(executive_profile="Synthetic.", experience_bullets=(("owned-source", ("Synthetic.",)),), executive_profile_sentences=("Synthetic.",)))
+    assert port.model_id == "codex:gpt-6.1-sol"
+    assert result.experience_bullets == (("owned-source", ("Synthetic.",)),)
+    assert calls[0][0][0].content == "System instruction"
+    assert calls[0][1]["response_schema"]["title"] == "VoicePayload"
+    assert calls[0][2] == "tailoring"
+
+
+@pytest.mark.asyncio
+async def test_saved_core_voice_adapter_preserves_provider_failure():
+    failure = RuntimeError("synthetic provider failure")
+
+    class Llm:
+        def chat_json(self, messages, **kwargs):
+            raise failure
+
+    port = LlmVoiceAdapter(llm=Llm(), provider_id="codex", model="gpt-6.1-sol")
+    with pytest.raises(RuntimeError) as raised:
+        await port.rewrite("System instruction", VoiceRequest(executive_profile="Synthetic.", experience_bullets=()))
+    assert raised.value is failure
 
 
 class ResultMessage:

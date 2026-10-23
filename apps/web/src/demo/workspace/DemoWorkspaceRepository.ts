@@ -253,7 +253,7 @@ export class DemoWorkspaceRepository {
           );
         }
 
-        const draft = clone(current);
+        const draft = clone(withCurrentSettingsDefaults(current));
         const appendedEvents: DomainEventUnion[] = [];
         const context: DemoWorkspaceMutationContext = {
           putBlob: (blobId, value) => {
@@ -658,12 +658,12 @@ export class DemoWorkspaceRepository {
       durableBlobs.has(blobId),
     );
     const { pendingScenarios: _discardedOperations, ...savedState } = snapshot as DemoWorkspaceSnapshot & { pendingScenarios?: unknown };
-    const memorySnapshot: DemoWorkspaceSnapshot = {
+    const memorySnapshot = withCurrentSettingsDefaults({
       ...savedState,
       schemaVersion: DEMO_WORKSPACE_SCHEMA_VERSION,
       eventLog: snapshot.eventLog ?? [],
       blobIds: copiedBlobIds,
-    };
+    });
     if (this.channel) {
       this.channel.removeEventListener("message", this.onChannelMessage);
       this.channel.close();
@@ -685,23 +685,25 @@ export class DemoWorkspaceRepository {
   }
 
   private async readAuthoritativeSnapshot(): Promise<DemoWorkspaceSnapshot> {
-    const snapshot = await this.store.readSnapshot();
-    if (!snapshot) {
+    const stored = await this.store.readSnapshot();
+    if (!stored) {
       throw new Error("Demo workspace disappeared after initialization.");
     }
-    const upgrade = workspaceUpgrade(snapshot);
+    const upgrade = workspaceUpgrade(stored);
     if (upgrade) {
       this.setUpgrade(upgrade);
       throw new DemoWorkspaceUpgradeRequiredError(upgrade);
     }
+    const snapshot = withCurrentSettingsDefaults(stored);
     this.adoptAuthoritativeSnapshot(snapshot, false);
     return snapshot;
   }
 
   private adoptAuthoritativeSnapshot(
-    snapshot: DemoWorkspaceSnapshot,
+    stored: DemoWorkspaceSnapshot,
     advanceWatermark: boolean,
   ): void {
+    const snapshot = withCurrentSettingsDefaults(stored);
     this.authoritativeSnapshot = snapshot;
     this.receiptsSnapshot = snapshot.state.receipts;
     for (const listener of this.receiptListeners) {
@@ -847,7 +849,8 @@ export class DemoWorkspaceRepository {
     }
   }
 
-  private setReady(snapshot: DemoWorkspaceSnapshot): DemoWorkspaceReady {
+  private setReady(stored: DemoWorkspaceSnapshot): DemoWorkspaceReady {
+    const snapshot = withCurrentSettingsDefaults(stored);
     this.authoritativeSnapshot = snapshot;
     this.installChannel();
     const ready: DemoWorkspaceReady = {
@@ -937,6 +940,51 @@ export class DemoWorkspaceRepository {
       },
     };
   }
+}
+
+/** Additive defaults interpret retained current-seed state without a read-time commit. */
+function withCurrentSettingsDefaults(
+  snapshot: DemoWorkspaceSnapshot,
+): DemoWorkspaceSnapshot {
+  if (
+    snapshot.schemaVersion > DEMO_WORKSPACE_SCHEMA_VERSION ||
+    snapshot.seedVersion !== DEMO_SEED.seedVersion
+  ) {
+    return snapshot;
+  }
+  const response = snapshot.state.readModel.settings;
+  const hasValue = Object.hasOwn(response.settings, "resumeVoicePolish");
+  const hasMetadata = Object.hasOwn(response.effectiveSettings, "resumeVoicePolish");
+  if (hasValue && hasMetadata) {
+    return snapshot;
+  }
+  // A retained boolean in either half wins over the absent-setting default.
+  // Present malformed properties stay malformed for the strict response schema.
+  const value = hasValue
+    ? response.settings.resumeVoicePolish
+    : hasMetadata ? response.effectiveSettings.resumeVoicePolish?.value : false;
+  return {
+    ...snapshot,
+    state: {
+      ...snapshot.state,
+      readModel: {
+        ...snapshot.state.readModel,
+        settings: {
+          ...response,
+          settings: hasValue ? response.settings : { ...response.settings, resumeVoicePolish: value },
+          effectiveSettings: hasMetadata ? response.effectiveSettings : {
+            ...response.effectiveSettings,
+            resumeVoicePolish: {
+              value,
+              source: hasValue ? "persisted" : "default",
+              activation: "next_workflow",
+              editable: true,
+            },
+          },
+        },
+      },
+    },
+  };
 }
 
 export const DEMO_WORKSPACE_TENANT = LOCAL_TENANT;

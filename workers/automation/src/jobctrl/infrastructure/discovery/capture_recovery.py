@@ -14,6 +14,7 @@ from jobctrl.domain.discovery.use_cases import DiscoverJobsUseCase
 from jobctrl.domain.ports.discovery import ScrapedJobPosting
 from jobctrl.domain.tenant import TenantId
 from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
+from jobctrl.infrastructure.discovery.result_budget import DiscoveryResultLimitReached
 
 _CAPTURE_FAILURE_CODES = ("captured_posting_invalid", "captured_posting_source_mismatch")
 
@@ -29,6 +30,7 @@ def recover_captured_postings(
     discovery_execution=None,
     limit=0,
     cancel_event=None,
+    result_budget=None,
 ):
     """Consume at most 100 archived captures, counting only new jobs toward limit."""
     from jobctrl.infrastructure.discovery.production_wiring import DurableJobEventPublisher
@@ -50,11 +52,16 @@ def recover_captured_postings(
         discovery_execution=discovery_execution,
         source_family=source_family if discovery_execution is not None else None,
     )
+    smart_clients = {}
     for listing_id, snapshot, target, source_id, payload in rows:
         if cancel_event is not None and cancel_event.is_set():
             break
         if limit > 0 and result["new"] >= limit:
             break
+        if result_budget is not None and (
+            result_budget.run_exhausted() or result_budget.source_exhausted(source_id)
+        ):
+            continue
         capture_key = hashlib.sha256(
             json.dumps([str(tenant_id), listing_id, snapshot, target]).encode()
         ).hexdigest()
@@ -89,21 +96,61 @@ def recover_captured_postings(
                 raise
             result["recovered_capture_failures"] += 1
             continue
-        summary = DiscoverJobsUseCase(
-            repository=repository,
-            publisher=DurableJobEventPublisher(conn, stage="discover", idempotency_prefix=f"capture:{capture_key}"),
-            exact_title_exclusions=tuple(search_cfg.get("exact_title_exclusions") or ()),
-            observation_id_factory=lambda key=capture_key: f"capture:{key}",
-            refresh_existing_job=False,
-        ).execute(tenant_id=TenantId(str(tenant_id)), postings=[posting], run_id=run_id)
+        if source_family == "smartextract":
+            from jobctrl.discovery.smartextract import _smart_extract_session, _store_jobs
+            from jobctrl.infrastructure.discovery.live_browser import (
+                LiveChromeDiscoveryClient, PoliteLiveChromeHttpClient, prefer_live_browser,
+            )
+
+            if source_id not in smart_clients:
+                selected = None
+                if discovery_execution is not None:
+                    client = LiveChromeDiscoveryClient(
+                        discovery_execution, source_family=source_family, source_id=source_id, cancel_event=cancel_event,
+                    )
+                    if prefer_live_browser(client, cancel_event=cancel_event) is not None:
+                        selected = PoliteLiveChromeHttpClient(
+                            _smart_extract_session(source_id=source_id, run_id=run_id, browser=client), client,
+                        )
+                smart_clients[source_id] = selected
+            new, existing = _store_jobs(
+                conn, [{"url": posting.posting_url.value, "title": posting.metadata.title,
+                        "company": posting.employer.name, "description": posting.metadata.description,
+                        "location": posting.metadata.location}], posting.source.board, posting.strategy.value,
+                search_cfg=search_cfg, limit=max(limit - result["new"], 0) if limit > 0 else 0, run_id=run_id,
+                discovery_execution=discovery_execution, cancel_event=cancel_event, source_id=source_id,
+                source_native_id=posting.source_native_id, tenant_id=TenantId(str(tenant_id)),
+                refresh_existing_job=False, observation_id_factory=lambda key=capture_key: f"capture:{key}",
+                idempotency_prefix=f"capture:{capture_key}", browser_client=smart_clients[source_id],
+            )
+            excluded = not (new or existing)
+        else:
+            if result_budget is not None:
+                repository = SqliteJobRepository(
+                    conn, discovery_execution=discovery_execution, source_family=source_family,
+                    result_budget=result_budget, result_budget_source_id=source_id,
+                )
+            try:
+                summary = DiscoverJobsUseCase(
+                    repository=repository,
+                    publisher=DurableJobEventPublisher(conn, stage="discover", idempotency_prefix=f"capture:{capture_key}"),
+                    exact_title_exclusions=tuple(search_cfg.get("exact_title_exclusions") or ()),
+                    observation_id_factory=lambda key=capture_key: f"capture:{key}",
+                    refresh_existing_job=False,
+                ).execute(tenant_id=TenantId(str(tenant_id)), postings=[posting], run_id=run_id)
+            except DiscoveryResultLimitReached:
+                # The canonical insert rolled back after a competing writer
+                # used the allowance. Leave this archived capture unconsumed.
+                continue
+            new, existing, excluded = summary.new_jobs, summary.observed, not summary.total
         conn.execute(
             "UPDATE posting_triage SET consumed_at=? WHERE tenant_id=? AND listing_id=? "
             "AND snapshot_fingerprint=? AND target_fingerprint=? AND consumed_at IS NULL",
             (datetime.now(timezone.utc).isoformat(), str(tenant_id), listing_id, snapshot, target),
         )
         conn.commit()
-        result["new"] += summary.new_jobs
-        result["existing"] += summary.observed
+        result["new"] += new
+        result["existing"] += existing
         result["recovered_captures"] += 1
-        result["recovered_exclusions"] += not summary.total
+        result["recovered_exclusions"] += excluded
     return result

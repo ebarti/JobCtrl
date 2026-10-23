@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 from jobctrl.domain.determinations import DeterminationFailure
-from jobctrl.domain.compensation.classification import ModelBenchmarkClassifier
+from jobctrl.domain.compensation.classification import benchmark_classification_source
 from jobctrl.domain.compensation.benchmarks import BenchmarkGeography
 from jobctrl.infrastructure.determinations import determination_dependencies
 from jobctrl.infrastructure.enrichment.interpretation import read_job_interpretation
@@ -25,12 +25,27 @@ def job_interpretation_for_id(conn, tenant_id, job_id):
     return accepted[0]
 
 
-def classify_observations(conn, observations, *, tenant_id, dependencies=None):
+def classify_observations(
+    conn, observations, *, tenant_id, dependencies=None, execution_guard=None, on_abort=None, cancel_event=None,
+):
+    observations = tuple(observations)
+    if not observations:
+        if execution_guard is not None:
+            execution_guard()
+        return ()
     dependencies = dependencies or determination_dependencies(conn, tenant_id=tenant_id, lane="compensation")
-    classifier = ModelBenchmarkClassifier(**dependencies)
+    identities = [benchmark_classification_source(row)[0] for row in observations]
+    unique = dict(zip(identities, observations))
+    from jobctrl.infrastructure.temporal.concurrency import resolve_max_concurrent_activities
+    capacity = resolve_max_concurrent_activities().value
+    from jobctrl.infrastructure.compensation.classification_batch import classify_batch
+    results = classify_batch(
+        conn, unique, dependencies, capacity=capacity, execution_guard=execution_guard, on_abort=on_abort,
+        cancel_event=cancel_event,
+    )
     classified = []
-    for row in observations:
-        result, envelope = classifier.classify(row)
+    for identity, row in zip(identities, observations):
+        result, envelope = results[identity]
         classified.append(
             replace(
                 row,

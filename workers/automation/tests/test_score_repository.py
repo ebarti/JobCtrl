@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -471,6 +472,33 @@ def test_requirement_fit_report_round_trips_with_canonical_job_id(
     assert loaded.assessments[0].tailoring.action == "double_down"
     assert loaded.assessments[0].artifact_coverage is not None
     assert loaded.assessments[0].artifact_coverage.state == "covered"
+
+
+def test_scoped_contributions_and_their_recorded_source_survive_sqlite(conn: sqlite3.Connection) -> None:
+    from jobctrl.domain.scoring import resolve_requirement_fit_report
+
+    job_id = _seed_job(conn, job_id=_job_id(25), url="https://example.com/jobs/scoped")
+    matched = _requirement_assessment("capability")
+    condition = _requirement_assessment("condition", status="missing")
+    condition = replace(
+        condition,
+        contribution=replace(
+            condition.contribution,
+            scope="logistics",
+            scope_source_id="1" * 64,
+        ),
+    )
+    report = resolve_requirement_fit_report(_requirement_report(job_id, assessments=(matched, condition)))
+    SqliteScoreRepository(conn).save(_build_score(job_id, fit=report.resolved_fit_score.value))
+    repo = SqliteRequirementFitReportRepository(conn)
+    repo.save(LOCAL_TENANT, report)
+    assert repo.load(LOCAL_TENANT, job_id, score_version=1) == report
+    raw = conn.execute(
+        "SELECT contribution_json FROM job_requirement_fit_items WHERE job_id=? AND requirement_id='condition'",
+        (str(job_id),),
+    ).fetchone()[0]
+    assert '"scope": "logistics"' in raw
+    assert '"scope_source_id": "' + "1" * 64 + '"' in raw
 
 
 def test_requirement_fit_report_replaces_item_rows(conn: sqlite3.Connection) -> None:

@@ -23,6 +23,14 @@ tenant, deterministic workflow ID, and Temporal run ID. That exact identity is
 threaded through every stage below. Source-run IDs describe observations; they
 do not identify the Discover execution.
 
+Retained broad-board registry entries recover their provider board from the
+canonical source ID independently of the saved default board subset. Explicit
+selection therefore carries every runnable selected board through scheduling
+and provider-unit compilation. The family runner rejects missing or malformed
+board identity with `ConfigurationError` before provider dispatch; it never
+silently omits a board while retaining its allocated budget. Registry state,
+budgets and saved defaults are not rewritten during loading.
+
 `DiscoverWorkflow` decomposes into **four activities**, not one monolithic run:
 
 ```mermaid
@@ -75,7 +83,7 @@ Key facts about the four activities:
   progress totals, and the starting job count) from the source registry, source
   quality, and the global limit. Literal saved roles and location/work-model controls
   become board parameters without a model or a second approval. The captured
-  execution settings remain stable on retries. JobStreaming owns execution of supported provider search/filter parameters. Fetched, structurally valid postings proceed to canonical ingestion; no metadata-only model decides admission. Full-posting analysis/scoring assess meaning. Page or extraction determination failures retain typed `ApplicationError` values with their retry policy.
+  execution settings remain stable on retries. JobStreaming owns execution of supported provider search/filter parameters. Fetched, structurally valid postings proceed to canonical ingestion; no metadata-only model decides admission. Smart Extract first resolves arbitrary-site cards to full individual postings: cited page/extraction/qualification determinations establish the actual role, employer, description quality and saved location/work-model compatibility before canonical ingestion. Unknown captures remain in Manual Capture; confirmed mismatches remain outside Jobs with durable progress evidence. Accepted captures seed snapshots/enrichment and retain all three determination IDs. Archived Smart Extract captures use the same qualification; source wrappers preserve typed determination failure retryability. Full-posting analysis/scoring assess role fit. Page or extraction determination failures retain typed `ApplicationError` values with their retry policy.
 - **`discovery_source_family`** runs *one* source family under
   `run_blocking_with_heartbeat` with a cooperative `cancel_event` and a 6-hour
   window (crawls legitimately run long). Each family is isolated: a broad-board, ATS,
@@ -204,13 +212,20 @@ Two truths correct the old diagram:
   `EnrichmentFailed` — those come from that unused use case and from the separate
   protected-source manual-capture snapshot path.
 
-Within `DiscoverWorkflow`, detail rendering uses only the paired extension in
-the current profile and the shared extraction cascade. It does not start the
-legacy Playwright browser or the separately consented copied-profile LinkedIn
-resolver, and it never clicks an apply control. The copied-profile resolver is
-retained only for standalone maintenance compatibility outside integrated
-Discovery. Application-target outcomes remain distinct from description
-confidence and cannot quarantine otherwise trustworthy posting content.
+Within `DiscoverWorkflow`, detail rendering prefers the selected paired
+extension in the current profile. If the setup availability probe reports it
+offline, the batch selects guarded anonymous Playwright before acquisition.
+An acquisition error never switches transports. Integrated Discovery does not
+start the separately consented copied-profile LinkedIn resolver or click an
+apply control; that resolver remains standalone maintenance compatibility.
+Both anonymous intake and batch capture wait for DOM content and retain a
+readable document after a typed retryable subresource timeout or DNS failure.
+The captured `DetailPage` then carries incomplete status evidence and its
+acquisition reason, so availability stays unknown. Failed documents, unsafe
+destinations and response-size violations still prevent extraction. The shared
+independent interpretation and description-quality gates remain authoritative.
+Application-target outcomes remain distinct from description confidence and
+cannot quarantine otherwise trustworthy posting content.
 Detail enrichment isolates faults at two levels. A crash while processing one
 site's batch is recorded in `site_errors`, healthy sites keep running, and the
 enrichment run ends `partial` rather than `failed`. Within a site, a single
@@ -235,6 +250,17 @@ decision, the membership stores the required steps and preparation workflow ID;
 the terminal fan-out step closes execution membership for phase and overall ETA
 calculation. Existing-backlog work remains visibly separate from jobs observed
 by this run even though both use the same preparation workflow implementation.
+
+A successful per-job Score activity also returns whether its accepted score's
+existing eligibility verdict blocks material preparation. If a later requested
+step is Tailor or Cover, the current workflow records that first material step
+as skipped and finishes without queueing a redundant material activity. Score
+already owns the canonical eligibility stage reconciliation. This workflow
+shortcut writes no stage or score state and cannot veto a newer accepted score
+or a separate material preparation. Explicit Tailor-only, Score-only and
+PDF-only requests retain their existing entry-point guards. Missing flags in
+older results retain the old path, and a Temporal patch marker preserves replay
+of histories that already scheduled the material check.
 
 Targets are derived in `pipeline/preparation.py` from stage state:
 
@@ -278,7 +304,13 @@ Behavior notes:
   approved material input.
 - Threshold changes are **live eligibility changes**, not scoring changes:
   lowering the threshold can derive new `tailor`/`cover`/`pdf` work from
-  persisted scores; raising it suppresses active artifacts. Neither path invokes
+  persisted scores; raising it suppresses active artifacts except generations
+  accepted under the explicit low-fit override. The accepted resume records a
+  literal boolean bound to its tenant/job/generation. Suppression honors that
+  flag only for the fit-floor branch; missing scores and current hard blockers
+  remain authoritative. Eligibility selection and suppression share the
+  reconciliation write transaction, serializing concurrent material approval. A replacement generation does not inherit the request.
+  Neither path invokes
   the scoring LLM. Scoring-policy and tailoring-policy changes never silently
   rescore or regenerate — that is what the explicit `rescore_*` / `retailor_*`
   actions are for.
@@ -594,7 +626,7 @@ survive failed refreshes. These gates grant no submission authority.
 
 ## Semantic Determination Authority
 
-Search planning uses saved controls directly and JobStreaming executes provider filtering. Fetched listings proceed to canonical ingestion without a separate intake model. Semantic calls run only in activities/sync RPC and pass lane/spend preflight. Scoring preselection uses recency/ID order. Job interpretation and typed blockers supply constraint meaning. Replay reads persisted results and makes no provider call.
+Search planning uses saved controls directly and JobStreaming executes provider filtering. Structured board/ATS listings proceed to canonical ingestion without a separate metadata-only intake model. Arbitrary-site Smart Extract links require the full-posting qualification described above. Semantic calls run only in activities/sync RPC and pass lane/spend preflight. Scoring preselection uses recency/ID order. Job interpretation and typed blockers supply constraint meaning. Replay reads persisted results and makes no provider call.
 
 See [the decision](../../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
 

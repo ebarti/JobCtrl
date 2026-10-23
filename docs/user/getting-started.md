@@ -65,6 +65,10 @@ brew install ebarti/tap/jobctrl
 
 Homebrew installs the same signed release identity. It does not build JobCtrl
 from source or install a separate developer toolchain.
+Homebrew verifies strict Developer ID signatures in its build sandbox. When a
+cached release is first activated, the normal-user bootstrap checks Apple
+notarization before running the installer; the installer verifies the complete
+runtime before activation. No Homebrew sandbox patch is required.
 
 ### Build and run from source
 

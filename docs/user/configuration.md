@@ -225,23 +225,74 @@ runtime model ID alongside a friendly name when they differ. Only provider and
 model IDs are written to `config.json`; credentials remain on the credential
 boundary. A model absent from the active runtime catalog is intentionally not
 selectable, even if that model exists in the provider's broader product lineup.
+The pickers refresh the catalog every minute while visible. A saved ID missing
+from that catalog is explained beside the control and is never added to its
+options. A pinned provider client can expose a different catalog from a newer
+installed client using the same account; check the active JobCtrl runtime before
+concluding the account lacks a model.
 
 A saved preference is scoped to its provider and cannot change which provider
 JobCtrl selects. Newly constructed adapters use this precedence:
 
 1. explicit non-default workflow model;
-2. saved preference for the selected ready provider;
-3. that provider's default.
+2. **Default model** saved under Settings → Model selection;
+3. saved preference for the selected ready provider;
+4. that provider's default.
 
-Provider selection itself keeps the default readiness order Claude, then
+The saved default is a provider-qualified route such as `codex:gpt-6.1-sol`.
+It also selects the optional writing pass's provider and model. Clear it to
+restore automatic provider selection. Employer-analysis perspectives and
+explicit generator/judge choices remain separate overrides; to use one model
+throughout analysis and materials, select only its provider perspective and set
+those roles to the same model. A pinned default fails visibly on provider
+failure rather than silently selecting a different model.
+
+**Extra résumé polish** is off by default under Settings → Model selection.
+A résumé is saved once its required factual, quality and applicable persona
+reviews approve it. Enable the option for an additional wording pass; any
+changed text receives fresh reviews, so this takes more time. The setting
+is read when each résumé generation starts. An already-started résumé generation
+keeps its choice; queued or later Tailor steps use the newly saved value, even
+within an existing workflow. Accepted materials are not rewritten. Saving this
+option alone does not require a live model catalog or change your model choices.
+
+**Reasoning effort** appears for each selected Codex model whose live catalog
+reports supported efforts. Options come from that model's
+`supportedReasoningEfforts`; JobCtrl does not invent options from another model.
+The selected effort applies to every new call using that model, including
+analysis, generation, review and the writing pass. Higher efforts may take more
+time and tokens. The provider's option description is shown beside the choice.
+
+**Existing call settings** clears the override and preserves the earlier policy:
+High for Codex analysis and ordinary model calls, and Low for tailoring drafts
+whose generation policy supplies a zero thinking budget. A selected effort
+overrides that numeric-budget mapping. Existing adapters retain their captured
+effort; newly acquired adapters use the saved choice without a worker restart.
+Determinations record an explicit effort and bind their cache identity to it;
+changing effort never relabels or erases an accepted result. Other providers
+retain their existing SDK controls.
+
+Without a saved default, provider selection keeps the readiness order Claude, then
 Codex, then Google. Explicit `provider:model` workflow values select the named
 provider. Existing adapters and in-flight work keep their resolved model. Newly
 started work rechecks the effective selection when it acquires the shared
 adapter and receives a new adapter object when the saved preference changed; no worker
 restart is required for a preferred-model edit. The initially selected ready
 provider stays process-stable on warm acquisitions so status checks do not rerun
-for every workflow. Provider credential/readiness changes retain their existing
-restart requirement (or require an explicit adapter reset).
+for every workflow until a real SDK call reports an availability failure.
+Authentication rejection excludes that provider from subsequent automatic
+attempts in the same process. Rate limits, transport failures and service
+outages exclude the failed model route. A durable retry acquires a fresh
+adapter through another ready route. Claude SDK query and message-collection
+exceptions are classified at that execution boundary, including otherwise
+untyped SDK exceptions; the current analysis leg stops after that failure.
+Parsing and reviewing returned content remain outside this boundary. The
+retry's recorded provider/model identify the call that actually ran. Existing
+adapters and accepted determinations are never relabeled. Explicit model pins
+remain bound and fail visibly when their
+route is unavailable. Response/schema/citation failures and spend denial do
+not discard a provider. Restart or an explicit adapter reset clears observed
+availability failures; credential changes retain their restart requirement.
 
 The **Employer analysis perspectives** selection is also saved here. Its
 execution behavior belongs to the Discover preparation workflow and is
@@ -265,6 +316,9 @@ revoked credentials.
 
 Advanced operators can set `JOBCTRL_CODEX_BIN` to override the Codex runtime.
 By default, JobCtrl uses its pinned, bundled `openai-codex-cli-bin` binary.
+Authentication reuse copies only `auth.json`. Generation chats are ephemeral;
+provider databases and logs use private temporary storage removed when the
+client closes, while authentication remains in the stable JobCtrl home.
 
 ### Claude
 
@@ -319,6 +373,17 @@ therefore finish above its lane threshold because JobCtrl has no proven maximum
 token cost for an in-flight call. The limit is not a reservation or strict
 in-flight cap. `GET /v1/health` and `jobctrl doctor` report the global USD total
 and each lane's observed tokens, configured threshold, and status.
+
+## Provider sessions
+
+JobCtrl uses agent-runtime-kit to execute provider requests. Codex can keep its
+SDK process warm while each request starts a fresh conversation. This preserves
+independent generation and review. Saved models, reasoning effort, budgets and
+provider availability still determine which requests run.
+
+The runtime keeps a bounded number of idle clients. It does not add another
+queue below the pipeline's configured concurrency. Model reasoning and required
+artifact reviews can still take time even when the SDK process is already warm.
 
 ## Execution Concurrency
 

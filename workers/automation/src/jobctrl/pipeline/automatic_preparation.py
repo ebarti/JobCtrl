@@ -25,6 +25,7 @@ from jobctrl import database
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.enrichment.sqlite_repository import SqliteEnrichmentRepository
+from jobctrl.infrastructure.preparation_recovery import MANUAL_APPLY_DECLINE_SQL
 from jobctrl.pipeline.public_fetch_recovery import reconcile_public_fetch_failures
 from jobctrl.state import record_job_event, set_stage_state
 
@@ -331,6 +332,10 @@ def reserve_recovery_batch(
     now = now or datetime.now(timezone.utc)
     conn.execute("BEGIN IMMEDIATE")
     try:
+        from jobctrl.infrastructure.materials.manual_decline import release_manual_material_skips
+
+        release_manual_material_skips(conn, tenant_id=LOCAL_TENANT)
+        _release_declined_material_reservations(conn)
         existing = conn.execute(
             "SELECT metadata_json FROM job_stage_states "
             "WHERE tenant_id = ? AND state = 'queued' "
@@ -416,6 +421,37 @@ def reserve_recovery_batch(
         raise
 
 
+
+def _release_declined_material_reservations(conn: sqlite3.Connection) -> None:
+    """Release unstarted automatic material ownership after a manual decline."""
+    rows = conn.execute(
+        f"SELECT s.* FROM job_stage_states s WHERE s.tenant_id = ? "
+        "AND s.stage IN ('tailor', 'cover') AND s.state = 'queued' "
+        "AND json_extract(s.metadata_json, '$.automaticPreparation.workflowId') IS NOT NULL "
+        f"AND ({MANUAL_APPLY_DECLINE_SQL})",
+        (str(LOCAL_TENANT),),
+    ).fetchall()
+    for row in rows:
+        previous = json.loads(row["metadata_json"])
+        reservation = previous.pop("automaticPreparation")
+        previous.pop("workflowId", None)
+        metadata = {
+            **previous, "releasedAutomaticPreparation": reservation,
+            "reason": "manual_apply_decline",
+        }
+        job_id = canonical_job_id(row["job_id"])
+        set_stage_state(
+            conn, job_id, row["stage"], "pending", attempt_count=row["attempt_count"],
+            max_attempts=row["max_attempts"], retryable=bool(row["retryable"]),
+            metadata=metadata, validate_transition=False, expected_version=row["version"],
+        )
+        record_job_event(
+            conn, job_id, row["stage"], "StageReset",
+            message="Unstarted automatic material reservation released after this job was marked skipped.",
+            payload={"reason": "manual_apply_decline", "workflowId": reservation["workflowId"]},
+        )
+
+
 def _repair_completed_discovery_handoff(conn: sqlite3.Connection) -> None:
     """Repair only the historical consumer-stop bug with exact-run evidence.
 
@@ -490,7 +526,7 @@ def _repair_completed_discovery_handoff(conn: sqlite3.Connection) -> None:
 
 def _candidates(conn: sqlite3.Connection, *, min_score: int) -> dict[str, list[dict[str, Any]]]:
     rows = conn.execute(
-        """
+        f"""
         SELECT j.job_id, j.discovered_at, e.current_status, e.full_description,
                COALESCE(json_array_length(e.attempts_json), 0) AS enrich_attempts,
                s.stage, COALESCE(s.state, 'pending') AS state,
@@ -507,6 +543,7 @@ def _candidates(conn: sqlite3.Connection, *, min_score: int) -> dict[str, list[d
         LEFT JOIN posting_snapshot_sets p ON p.tenant_id = j.tenant_id AND p.job_id = j.job_id
         WHERE j.tenant_id = ? AND s.stage IN ('enrich', 'score', 'tailor', 'cover')
           AND COALESCE(p.latest_active_state, '') NOT IN ('closed', 'expired', 'removed', 'location_incompatible')
+          AND NOT (s.stage IN ('tailor', 'cover') AND ({MANUAL_APPLY_DECLINE_SQL}))
           AND NOT EXISTS (
             SELECT 1 FROM jobctrl_deleted_jobs d
             WHERE d.tenant_id = j.tenant_id AND d.job_id = j.job_id

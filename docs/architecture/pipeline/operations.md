@@ -61,6 +61,18 @@ approved materials are reused. Attempts are preserved, capped by the smaller
 of the stage limit and five, and delayed by `min(1800, 60 * 2^attempts)` seconds.
 Both dispatch and the workflow enforce the normal spend preflight.
 
+Automatic Tailor/Cover also respect a canonical manual Apply decline: `skipped`,
+no error code, and non-retryable. This differs from a `MIN_SCORE` policy skip;
+legacy fields and retained reason metadata do not decide the outcome. New
+selection, activity filtering and the locked per-job claim share this veto.
+Before reusing a frozen reservation, the coordinator releases only declined,
+unstarted queued automatic material ownership to pending, recording its former
+reservation without consuming an attempt. Surviving members retain the original
+frozen cohort/workflow identity; an all-declined cohort cannot block unrelated
+work. The Apply outcome and accepted materials remain intact. Resetting Apply
+can restore normal automatic eligibility. Explicit foreground generation and
+Enrich/Score are unchanged; cooperative Cancel stops already-admitted work.
+
 `pipeline/public_fetch_recovery.py` is a narrow exception for a still-current
 non-retryable `DETAIL_UNSAFE_URL`: the canonical stage, enrichment attempt, and
 latest `StageFailed` event must agree. It accepts typed `dns_non_public` evidence
@@ -381,8 +393,24 @@ Likewise, while the Discover workflow is starting or in progress, a planned
 source family whose bounded batch has not been scheduled yet is **waiting**.
 Once that workflow is terminal, a planned family with no durable lifecycle is
 **unknown** because it is then a genuine projection gap.
-Missing stage state after work-plan resolution remains **unknown** and therefore
-actionable; the read model does not hide a genuine projection gap.
+An unrecorded planned PDF is **waiting** while a recorded prerequisite in its
+required-step list is pending, queued or running, provided its preparation owner
+is not already terminal. A recorded PDF lifecycle always takes precedence.
+A missing PDF is **skipped** only when a run-owned
+`PreparationWorkflowOutcomeObserved` receipt proves that the exact successful
+preparation execution stopped at an earlier required step. The worker derives
+that bounded receipt from the exact Temporal run's start input and completed
+result, binding tenant, job, idempotency key, required plan and Discover run. The
+API joins its recorded owner/run and indexed event identity; current unowned
+`MIN_SCORE` rows or successful preparation alone cannot supply this proof. The
+same classification resolves cohort completion and removes PDF demand from
+remaining paths and swept-backlog contention. It does not change the immutable
+plan, create a PDF lifecycle or claim that a document was generated.
+
+Without that exact receipt, missing prerequisites, a terminal owner, or no
+unfinished required prerequisite leave the missing PDF **unknown**. Other missing stage state after work-plan
+resolution remains **unknown** and actionable; a genuinely missing or failed PDF
+is never hidden by unrelated work.
 The producer-lifetime live enrichment activity is runtime telemetry, not a
 durable `enrichment_pass` projection: it ends by intentional cancellation and
 the lifecycle schema has no canceled terminal state. Per-job stage rows record
@@ -496,7 +524,14 @@ resolved database/app-dir identity, selects the task queue named by the newest
 matching heartbeat, and aggregates fresh schema-valid workers from that queue.
 Active slots count every activity; active-item detail is a separate
 oldest-first list capped at 20 with an exact allowlisted total and truncation
-marker.
+marker. This global runtime inventory remains available when no Discover
+execution is selected, including manual URL intake and preparation activity.
+URL imports appear as `job_url_import` / `job-url-import` runtime items with
+the label **Import job URL**. Intake does not invent a pipeline stage or
+selected Discover membership. Fresh empty
+inventory reports zero; unavailable or stale inventory reports unknown.
+Selected-execution membership and exact workflow/run matches only enrich the
+runtime items; their absence does not erase worker activity.
 
 This boundary is deliberately privacy-safe. The interceptor never reads
 activity arguments. It retains only allowlisted activity kinds, validated safe
@@ -678,6 +713,17 @@ defensive dashboard read keep them truthful on existing databases:
 - **Nothing stays "running" forever.** Finalize records the terminal outcome on
   every normal/cancel path; the describe-based reconciler backstops killed
   workers, timeouts, and dev-server history loss.
+  Short lifecycle writes use bounded local capacity independent of the remote
+  model-work pool, so completed intake can acknowledge its result while scoring
+  remains busy. Exact execution/event keys make those writes safe to repeat;
+  versioned replay retains the old remote lifecycle history.
+  Spend preflight and owner-scoped preparation cancellation share that same
+  two-slot local control pool with independent patch markers. Their SQLite work
+  runs off the worker event loop, each attempt is limited to 30 seconds, and
+  scheduling plus retries is limited to three minutes. Old remote control
+  histories retain their original commands. This removes dependence on remote
+  model-slot occupancy; it does not shorten model calls or bypass spend,
+  cancellation ownership, or accepted-result preservation checks.
 
 ## Recurring Saved Posting Checks
 

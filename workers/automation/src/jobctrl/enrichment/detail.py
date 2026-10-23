@@ -35,6 +35,7 @@ import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import nullcontext
+from dataclasses import replace
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, urljoin, urlparse
 
@@ -91,10 +92,13 @@ from jobctrl.infrastructure.enrichment.sqlite_repository import (
     SqlitePostingSnapshotSetRepository,
 )
 from jobctrl.infrastructure.enrichment.playwright_fetcher import (
+    _assert_capture_url,
     _clean_content_html,
     _collect_json_ld,
     _collect_main_content,
     _collect_status_html,
+    _dismiss_optional_linkedin_dialog,
+    _partial_resource_failure,
 )
 from jobctrl.infrastructure.enrichment.linkedin_apply_resolver import (
     LinkedInApplyResolution,
@@ -408,6 +412,7 @@ def _page_to_detail_page(page, url: str, status: int | None = None) -> DetailPag
     the fields the extractors need so the cascade can run as pure
     functions over the value object.
     """
+    _dismiss_optional_linkedin_dialog(page)
     fetched_at = datetime.now(timezone.utc).isoformat()
     final_url = page.url
     page_title = ""
@@ -419,6 +424,7 @@ def _page_to_detail_page(page, url: str, status: int | None = None) -> DetailPag
     html = _collect_main_content(page)
     visibility = []
     status_html, status_complete, raw_hash = _collect_status_html(page, visibility_out=visibility)
+    _assert_capture_url(page, final_url)
     return DetailPage(
         url=url,
         final_url=final_url,
@@ -576,7 +582,7 @@ def _scrape_detail_page_body(page, url: str, result: dict, t0: float, *, page_in
     status_code: int | None = None
     try:
         try:
-            resp = page.goto(url, timeout=45000)
+            resp = page.goto(url, wait_until="domcontentloaded", timeout=45000)
             if resp is not None:
                 status_code = resp.status
             page.wait_for_load_state("domcontentloaded", timeout=15000)
@@ -585,7 +591,7 @@ def _scrape_detail_page_body(page, url: str, result: dict, t0: float, *, page_in
             except Exception:
                 pass
         except Exception as exc:
-            if route_guard.blocked:
+            if route_guard.blocked and not _partial_resource_failure(route_guard):
                 decision = _route_failure_decision(route_guard)
                 return _mark_public_fetch_failure(
                     result,
@@ -593,12 +599,13 @@ def _scrape_detail_page_body(page, url: str, result: dict, t0: float, *, page_in
                     blocked_url=route_guard.blocked_url or url,
                     t0=t0,
                 )
-            err_str = str(exc)
-            result["error"] = "timeout" if "timeout" in err_str.lower() else err_str[:200]
-            result["elapsed"] = time.time() - t0
-            return result
+            if not _partial_resource_failure(route_guard):
+                err_str = str(exc)
+                result["error"] = "timeout" if "timeout" in err_str.lower() else err_str[:200]
+                result["elapsed"] = time.time() - t0
+                return result
 
-        if route_guard.blocked:
+        if route_guard.blocked and not _partial_resource_failure(route_guard):
             decision = _route_failure_decision(route_guard)
             return _mark_public_fetch_failure(
                 result,
@@ -617,13 +624,19 @@ def _scrape_detail_page_body(page, url: str, result: dict, t0: float, *, page_in
             )
 
         detail_page = _page_to_detail_page(page, url, status=status_code)
-        if route_guard.blocked:
+        if route_guard.blocked and not _partial_resource_failure(route_guard):
             decision = _route_failure_decision(route_guard)
             return _mark_public_fetch_failure(
                 result,
                 decision,
                 blocked_url=route_guard.blocked_url or url,
                 t0=t0,
+            )
+        if _partial_resource_failure(route_guard):
+            detail_page = replace(
+                detail_page,
+                status_evidence_complete=False,
+                status_evidence_reason=f"public_resource_{route_guard.failure_kind.value}",
             )
     finally:
         route_guard.close()

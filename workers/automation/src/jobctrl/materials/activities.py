@@ -14,6 +14,8 @@ from jobctrl.domain.errors import (
     AttemptBudgetExhaustedError,
     JobCtrlError,
     LlmTransientError,
+    MATERIAL_REJECTION_STATUSES,
+    MaterialRejectedError,
     to_application_error,
 )
 from jobctrl.domain.identifiers import JobId, canonical_job_id
@@ -79,7 +81,11 @@ class TailorJobActivityInput:
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     workflow_id: str | None = None
 
+    explicit_material_request: bool = False
+
     def __post_init__(self) -> None:
+        if type(self.explicit_material_request) is not bool:
+            raise ValueError("explicit_material_request must be a boolean")
         object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
 
 
@@ -283,6 +289,7 @@ def _run_selected_tailoring(
             tailor_judge_model=payload.tailor_judge_model,
             workflow_id=payload.workflow_id,
             cancel_event=cancel_event,
+            explicit_material_request=not bool(payload.recovery_workflow_id),
             **({"recovery_workflow_id": payload.recovery_workflow_id} if payload.recovery_workflow_id else {}),
         )
 
@@ -364,6 +371,8 @@ async def tailor_job_activity(payload: TailorJobActivityInput) -> TailorJobActiv
         status = str(result.get("status") or "error")
         if status == "exhausted":
             raise AttemptBudgetExhaustedError(str(result.get("error") or "Tailor durable attempt budget exhausted"))
+        if status in MATERIAL_REJECTION_STATUSES:
+            raise MaterialRejectedError(str(result.get("error") or f"Tailoring ended with status {status}"))
         if status not in {"approved", "skipped", "not_eligible", "already_done"}:
             raise LlmTransientError(str(result.get("error") or f"Tailoring ended with status {status}"))
         materials = result.get("materials")
@@ -398,6 +407,7 @@ def _tailor_one_job(
         llm_model=payload.llm_model,
         suppress_existing_artifacts=payload.suppress_existing_artifacts,
         allow_low_fit_override=payload.allow_low_fit_override,
+        explicit_material_request=payload.explicit_material_request,
         tailor_models=payload.tailor_models,
         tailor_judge_model=payload.tailor_judge_model,
         workflow_id=payload.workflow_id,
@@ -426,6 +436,7 @@ class CoverActivityInput:
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     workflow_id: str | None = None
     recovery_workflow_id: str | None = None
+    allow_low_fit_override: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "job_ids", _canonical_job_ids(self.job_ids))
@@ -447,8 +458,13 @@ class CoverLetterActivityInput:
     validation_mode: str = "normal"
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     workflow_id: str | None = None
+    allow_low_fit_override: bool = False
+
+    explicit_material_request: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.explicit_material_request) is not bool:
+            raise ValueError("explicit_material_request must be a boolean")
         object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
 
 
@@ -552,6 +568,7 @@ async def cover_activity(payload: CoverActivityInput) -> CoverActivityOutput:
                     "llm_model": payload.llm_model,
                     "workflow_id": payload.workflow_id,
                     "cancel_event": cancel_event,
+                    "allow_low_fit_override": payload.allow_low_fit_override,
                 },
                 mode="workflow",
                 pass_number=1,
@@ -627,6 +644,8 @@ def _run_selected_cover(
             tenant_id=TenantId(payload.tenant_id),
             workflow_id=payload.workflow_id,
             cancel_event=cancel_event,
+            allow_low_fit_override=payload.allow_low_fit_override,
+            explicit_material_request=not bool(payload.recovery_workflow_id),
             **({"recovery_workflow_id": payload.recovery_workflow_id} if payload.recovery_workflow_id else {}),
         )
 
@@ -701,6 +720,8 @@ async def cover_letter_activity(payload: CoverLetterActivityInput) -> CoverLette
             activity_name="cover_letter",
         )
         status = str(result.get("status") or "error")
+        if status in MATERIAL_REJECTION_STATUSES:
+            raise MaterialRejectedError(str(result.get("error") or f"Cover ended with status {status}"))
         if status not in {"ok", "skipped", "already_done"}:
             raise LlmTransientError(str(result.get("error") or f"Cover ended with status {status}"))
         return CoverLetterActivityOutput(
@@ -731,6 +752,8 @@ def _cover_one_job(
         tenant_id=TenantId(payload.tenant_id),
         workflow_id=payload.workflow_id,
         cancel_event=cancel_event,
+        allow_low_fit_override=payload.allow_low_fit_override,
+        explicit_material_request=payload.explicit_material_request,
     )
 
 

@@ -45,7 +45,9 @@ Langfuse instance for LLM tracing. The wiring lives under
   `gen_ai.response.model`, `gen_ai.usage.input_tokens`,
   `gen_ai.usage.output_tokens`) so OTel-native dashboards work too. Exported
   LLM attributes are metadata-only: provider/model, operation/scope, outcome,
-  token counts, and safe request/response sizes. Typed provider failures add
+  token counts, safe request/response sizes, and known reasoning-effort protocol
+  values in `gen_ai.request.reasoning_effort`. Arbitrary parameter values remain
+  excluded. Typed provider failures add
   bounded `jobctrl.llm.failure.*` dimensions for provider, model, operation,
   category, type, code, retryability, and an allowlisted provider code or HTTP
   status; structured calls also carry a schema fingerprint. Raw messages,
@@ -147,6 +149,18 @@ The `TracingInterceptor` is registered both client-side
 (`infrastructure/temporal/client.py`) and worker-side
 (`infrastructure/temporal/worker.py`) so trace context propagates from the
 JSON-RPC handler that starts a workflow into the worker that runs it.
+
+Blocking executor and nested stage fan-out use
+`infrastructure/workflow_run_context.py` to transfer the resolved canonical
+workflow ID and the submitting OpenTelemetry context together. Each invocation
+attaches and restores its tracing context independently, including on failure;
+concurrent jobs and reused pool threads cannot inherit a previous job's parent.
+Other Python context variables, including the Temporal activity context, are
+not copied. This preserves the existing metadata-only span attributes and
+keeps generation/scoring spans joined to their actual workflow trace rather
+than associating calls by timestamps. Cancellation and executor retirement
+retain the original parent for calls still settling while replacement work
+uses its own submitting parent.
 
 `init_otel()` is called from `jobctrl.cli._bootstrap()`, so every CLI
 command (notably `jobctrl worker` and `jobctrl rpc`) configures

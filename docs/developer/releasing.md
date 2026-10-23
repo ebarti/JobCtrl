@@ -21,6 +21,9 @@ stable Python package. A source version or pushed tag alone is not a release.
    guides rather than treating every commit title or design document as a shipped
    feature. Inspect exact-source CI, known blockers, and the applicable release,
    data, migration, and product evidence in [Reliability & QA](../local-reliability-qa.md).
+   Respect the owner's requested release scope. An upgrade or rollback repair
+   does not require a minor-version bump; its signed security sequence advances
+   independently of the application version.
 3. Check for an existing release run before starting another:
 
    ```bash
@@ -139,6 +142,11 @@ corrected tag; the failed run remains evidence for its original source. Remove
 an abandoned unpublished version tag only with the owner's authorization. A
 published or partially published candidate requires reconciling its existing
 immutable state rather than this unpublished-tag correction procedure.
+If the earlier attempt already emitted a signed descriptor, keep the application
+version but choose a sequence above that signed candidate as well as the current
+published pointer. Never sign a different build at an already signed sequence:
+clients that saw the first candidate retain its sequence-to-build binding even
+when publication was held. Retain the earlier run and tag object as evidence.
 
 For Apple HTTP 403 reporting a missing or expired agreement, stop retries until
 the Apple Developer Account Holder reviews and accepts the required agreement.
@@ -169,18 +177,36 @@ Update and rollback verification must also exercise the real launcher entry
 point with a resumable transition journal, including the detached supervisor.
 A fresh installation and tests that replace the readiness-start function do not
 prove that an authenticated candidate can start before the journal is finalized.
-The protected release workflow also runs `scripts/released-upgrade-smoke.mjs`
-against the actual published 0.1.0, 0.1.1, 0.2.0, 0.2.1 and 0.3.0 executables and the signed
-candidate before any immutable publication or stable promotion. Its isolated signed formula-cache adapter
-replaces only Homebrew acquisition; native installers, migrations, services,
-readiness failure, explicit rollback, interrupted recovery, paired backups and
-repeated update execute through the real binaries. Retain the credential-free
-`released-upgrade-smoke.json` evidence and require every matrix case to pass.
-Include a separate workspace that first reproduces the released 0.2.1-to-0.3.0
-failure, then recovers it using the new authenticated formula controller.
-Also upgrade a real 0.2.1 installation that has never started or created either
-database, then roll back its initialized predecessor pair. Partial pairs and
-orphaned sidecars must fail before any selection change in the native suite.
+The protected release workflow runs `scripts/released-upgrade-smoke.mjs` against
+actual released executables before immutable publication. One case upgrades from
+**the latest published stable version before the candidate**, rolls back to that
+version with its paired data backup, then explicitly upgrades again. It checks
+real service readiness, retained job data and Temporal history throughout.
+
+The harness resolves that source from GitHub's published stable releases, so the
+source advances automatically after each release. Drafts, prereleases and the
+candidate itself are excluded; a rerun after publication still tests the previous
+release. Its signed descriptor and artifact hashes must verify against protected
+release trust, and its signed sequence must precede the candidate's.
+
+Historical source schemas, detailed readiness-fault injection, old failed
+transitions, never-started installations, partial pairs and orphaned sidecars
+remain covered by the native suite. Do not repeat that compatibility matrix in
+every release's publication gate.
+
+The single case retains its report and elapsed time, with a 20-minute limit.
+Publication depends directly on its success. It uses the existing self-contained
+verification bundle and actual bundled runtimes without installing application
+development dependencies. The signed formula-cache adapter replaces only
+Homebrew acquisition. Keep installers, migrations, services and data/history
+checks real; use only owned synthetic workspaces.
+
+Verify the Homebrew formula with unmodified Homebrew: strict Developer ID checks
+must accept the actual released executables and reject an ad-hoc control inside
+the build sandbox. Live notarization belongs to the normal-user bootstrap before
+installer execution and to the full-payload installer before activation. Inject
+failures for both bootstrap executables and require that the installer never
+runs. Do not add a global Mach-service exception or disable Homebrew's sandbox.
 
 Report the release URL, version, exact source SHA, run result, channel sequence,
 registry verification, upgrade consequences, and any unresolved limitation.

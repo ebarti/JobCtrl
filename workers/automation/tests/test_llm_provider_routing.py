@@ -216,6 +216,15 @@ class _GoogleTypes:
     class BuiltinTools:
         FINISH = "finish"
 
+        @classmethod
+        def read_only(cls):
+            return [cls.FINISH]
+
+    Text = type("Text", (), {})
+    Thought = type("Thought", (), {})
+    ToolCall = type("ToolCall", (), {})
+    ToolResult = type("ToolResult", (), {})
+
     class CapabilitiesConfig:
         def __init__(self, **kwargs: Any) -> None:
             self.kwargs = kwargs
@@ -354,10 +363,32 @@ def test_codex_sdk_maps_thinking_to_effort_and_normalizes_unsupported_controls()
             thinking_budget=2048,
         ) == "plain codex"
 
+    assert calls["thread_start"]["ephemeral"] is True
     assert calls["thread_start"]["config"] == {"model_reasoning_effort": "medium"}
     assert calls["run"]["effort"] == "medium"
     assert "temperature" not in calls["run"]
     assert "max_tokens" not in calls["run"]
+
+
+@pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh", "max", "ultra"])
+@pytest.mark.parametrize("budget", [None, 0])
+def test_saved_codex_effort_overrides_legacy_budget_at_both_sdk_boundaries(monkeypatch, effort, budget):
+    monkeypatch.setattr("jobctrl.infrastructure.scoring.criteria_provider.read_config_settings", lambda _path=None: {"codex_reasoning_efforts": {"gpt-6.1-sol": effort}})
+    calls = {}
+    backend = CodexSdkBackend(model="gpt-6.1-sol", async_codex_factory=lambda: _Codex(calls), approval_mode_factory=lambda: "deny")
+    assert backend.chat_json([{"role": "user", "content": "synthetic"}], response_schema={"type": "object"}, thinking_budget=budget) == {"answer": 42}
+    assert calls["thread_start"]["config"] == {"model_reasoning_effort": effort}
+    assert calls["run"]["effort"] == effort
+
+
+def test_constructed_backend_retains_its_effort_after_preference_edit(monkeypatch):
+    settings = {"codex_reasoning_efforts": {"gpt-6.1-sol": "high"}}
+    monkeypatch.setattr("jobctrl.infrastructure.scoring.criteria_provider.read_config_settings", lambda _path=None: settings)
+    before = CodexSdkBackend(model="gpt-6.1-sol")
+    settings["codex_reasoning_efforts"]["gpt-6.1-sol"] = "max"
+    after = CodexSdkBackend(model="gpt-6.1-sol")
+    assert before.reasoning_effort == "high"
+    assert after.reasoning_effort == "max"
 
 
 def test_codex_sdk_retains_safe_builder_error_fields_and_usage_from_failed_turn(

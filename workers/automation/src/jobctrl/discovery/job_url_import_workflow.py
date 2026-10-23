@@ -4,19 +4,20 @@ from __future__ import annotations
 from jobctrl.domain.enrichment.snapshot_services import ActiveStateVerifier
 
 import hashlib
-import math
-import json
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import urljoin, urlsplit, urlunsplit
 
-from bs4 import BeautifulSoup
+from jobctrl.infrastructure.enrichment.posting_sources import (
+    posting_page_sources as _posting_page_sources,
+    rendered_page_text as _rendered_page_text,
+)
+
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
+from temporalio.exceptions import ActivityError, ApplicationError, CancelledError, is_cancelled_exception
 
 with workflow.unsafe.imports_passed_through():
     from jobctrl.infrastructure.temporal.finalize import (
@@ -194,6 +195,20 @@ def execute_job_url_import(
     tenant_id = TenantId(payload.tenant_id)
     repository = SqliteJobRepository(connection)
     existing = repository.resolve_by_posting_url(tenant_id, PostingUrl(value=url))
+    if existing is None:
+        captured = connection.execute(
+            """
+            SELECT DISTINCT j.job_id
+            FROM manual_capture_queue m
+            JOIN jobs j ON j.tenant_id=m.tenant_id AND j.job_id=m.job_id
+            WHERE m.tenant_id=? AND m.originating_url=? AND m.status='imported'
+            """,
+            (str(tenant_id), url),
+        ).fetchall()
+        if len(captured) == 1:
+            return _imported_output(
+                captured[0][0], already_existed=True, conn=connection, resolved_urls=(url,),
+            )
     if existing is not None:
         source_native_id = _manual_import_source_native_id(
             connection,
@@ -292,6 +307,11 @@ def execute_job_url_import(
         raise ApplicationError(
             "Only public HTTP or HTTPS job URLs can be imported.", type="invalid_url", non_retryable=True
         )
+    for frame in getattr(page, "embedded_pages", ()):
+        if not active_url_validator(frame.final_url or frame.url).allowed:
+            raise ApplicationError(
+                "The embedded posting source is not public HTTP or HTTPS.", type="invalid_url", non_retryable=True,
+            )
     redirected_existing = repository.resolve_by_posting_url(tenant_id, PostingUrl(value=final_url))
     if redirected_existing is not None and final_url != url:
         native_id = _manual_import_source_native_id(
@@ -330,6 +350,7 @@ def execute_job_url_import(
     )
     rendered = _rendered_page_text(page)
     try:
+        prepared_sources = _posting_page_sources(page, entity_id=url)
         page_result, _ = ModelPageInterpreter(**dependencies).interpret(
             entity_id=url,
             text=rendered,
@@ -337,10 +358,19 @@ def execute_job_url_import(
                 "url": url,
                 "final_url": str(getattr(page, "final_url", url)),
                 "http_status": getattr(page, "status", None),
+                "status_evidence_complete": getattr(page, "status_evidence_complete", True),
+                "status_evidence_reason": getattr(page, "status_evidence_reason", ""),
+                "visibility_verified": getattr(page, "status_visibility_verified", False),
+                "structured_postings": getattr(page, "json_ld", ()),
+                "embedded_pages": [{
+                    "url": frame.final_url or frame.url,
+                    "status_evidence_complete": frame.status_evidence_complete,
+                } for frame in getattr(page, "embedded_pages", ())],
             },
+            additional_sources=[source for source in prepared_sources[0] if source.source_id != "rendered_page"],
         )
         if (
-            page_result.access_state.value != "clear"
+            page_result.access_state.value in {"login_required", "challenge"}
             or page_result.page_kind.value != "posting"
             or page_result.availability.value in {"closed", "expired", "removed"}
         ):
@@ -353,9 +383,11 @@ def execute_job_url_import(
                 url=url,
                 reason=reasons.get(page_result.access_state.value, ManualActionReason.AMBIGUOUS_CAREER_SYSTEM),
             )
-        extracted = _extract_posting_page(page, dependencies=dependencies, entity_id=url)
+        extracted = _extract_posting_page(page, dependencies=dependencies, entity_id=url, prepared_sources=prepared_sources)
     except DeterminationFailure as error:
-        raise ApplicationError(error.code, type="semantic_determination_" + error.code, non_retryable=True) from None
+        raise ApplicationError(
+            error.code, type="semantic_determination_" + error.code, non_retryable=not error.retryable,
+        ) from None
 
     final_url = str(getattr(page, "final_url", "") or url).strip()
     final_safety = active_url_validator(final_url)
@@ -768,6 +800,9 @@ def _ensure_posted_compensation_fact(
         posted_compensation_source_from_job,
     )
 
+    # Canonical intake and its idempotent events are a completed import phase.
+    # Optional posted-pay inference must not keep that phase's writer reserved.
+    conn.commit()
     row = conn.execute(
         """
         SELECT job_id, salary, full_description, description
@@ -1132,6 +1167,7 @@ def _fetch_block_reason(reason_code: str) -> Any | None:
         "rate_limited": ManualActionReason.RATE_LIMIT,
         "rate_limit": ManualActionReason.RATE_LIMIT,
         "bot_detection": ManualActionReason.BOT_DETECTION,
+        "response_limit": ManualActionReason.AMBIGUOUS_CAREER_SYSTEM,
     }.get(reason_code)
 
 
@@ -1185,108 +1221,6 @@ def _transient_acquisition_failure(page: Any) -> bool:
     )
 
 
-def _find_job_postings(value: Any) -> tuple[dict[str, Any], ...]:
-    found: list[dict[str, Any]] = []
-    if isinstance(value, dict):
-        type_value = value.get("@type")
-        types = type_value if isinstance(type_value, list) else [type_value]
-        if "JobPosting" in types:
-            found.append(value)
-        graph = value.get("@graph")
-        if isinstance(graph, list):
-            found.extend(_find_job_postings(graph))
-    elif isinstance(value, (list, tuple)):
-        for item in value:
-            found.extend(_find_job_postings(item))
-    return tuple(found)
-
-
-def _comparable_url(value: str) -> str:
-    text = value.strip()
-    if not text:
-        return ""
-    try:
-        parsed = urlsplit(text)
-    except ValueError:
-        return text
-    if not parsed.scheme or not parsed.netloc:
-        return text
-    path = parsed.path.rstrip("/") or "/"
-    return urlunsplit((parsed.scheme.casefold(), parsed.netloc.casefold(), path, parsed.query, ""))
-
-
-def _employer_name(posting: dict[str, Any] | None) -> str:
-    if not posting:
-        return ""
-    organization = posting.get("hiringOrganization")
-    return _text(organization.get("name")) if isinstance(organization, dict) else ""
-
-
-def _location_text(posting: dict[str, Any] | None) -> str:
-    if not posting:
-        return ""
-    if _text(posting.get("jobLocationType")).casefold() == "telecommute":
-        return "Remote"
-    locations = posting.get("jobLocation")
-    values = locations if isinstance(locations, list) else [locations]
-    parts: list[str] = []
-    for value in values:
-        if not isinstance(value, dict):
-            continue
-        address = value.get("address")
-        if not isinstance(address, dict):
-            continue
-        formatted = ", ".join(
-            part
-            for part in (
-                _text(address.get("addressLocality")),
-                _text(address.get("addressRegion")),
-                _text(address.get("addressCountry")),
-            )
-            if part
-        )
-        if formatted and formatted not in parts:
-            parts.append(formatted)
-    return "; ".join(parts)
-
-
-def _salary_text(posting: dict[str, Any] | None) -> str:
-    if not posting:
-        return ""
-    salary = posting.get("baseSalary")
-    if not isinstance(salary, dict):
-        return ""
-    currency = _text(salary.get("currency"))
-    value = salary.get("value")
-    if isinstance(value, dict):
-        minimum = _number_text(value.get("minValue"))
-        maximum = _number_text(value.get("maxValue"))
-        exact = _number_text(value.get("value"))
-        amount = f"{minimum}-{maximum}" if minimum and maximum else minimum or maximum or exact
-        unit = _text(value.get("unitText")).casefold()
-    else:
-        amount = _number_text(value)
-        unit = ""
-    if not amount:
-        return ""
-    period = {"year": "year", "month": "month", "week": "week", "day": "day", "hour": "hour"}.get(unit)
-    priced = " ".join(part for part in (currency, amount) if part)
-    return f"{priced}/{period}" if period else priced
-
-
-def _number_text(value: Any) -> str:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return ""
-    numeric = float(value)
-    if not math.isfinite(numeric):
-        return ""
-    return str(int(value)) if numeric.is_integer() else str(value)
-
-
-def _text(value: Any) -> str:
-    return BeautifulSoup(str(value or ""), "html.parser").get_text(" ", strip=True)
-
-
 @workflow.defn(name="JobUrlImportWorkflow")
 class JobUrlImportWorkflow:
     @workflow.run
@@ -1307,19 +1241,20 @@ class JobUrlImportWorkflow:
                 start_to_close_timeout=_DEFAULT_TIMEOUT,
                 retry_policy=_IMPORT_RETRY,
             )
-        except CancelledError:
-            await emit_workflow_outcome(
-                tenant_id=payload.tenant_id,
-                workflow_type="JobUrlImportWorkflow",
-                status="canceled",
-                started_at=started_at,
-                error_code="workflow_canceled",
-                error_message="Workflow canceled by request.",
-                expected_app_dir=payload.expected_app_dir,
-                expected_db_path=payload.expected_db_path,
-            )
-            raise
-        except ActivityError as exc:
+        except (CancelledError, ActivityError) as exc:
+            if is_cancelled_exception(exc):
+                await emit_workflow_outcome(
+                    tenant_id=payload.tenant_id,
+                    workflow_type="JobUrlImportWorkflow",
+                    status="canceled",
+                    started_at=started_at,
+                    error_code="workflow_canceled",
+                    error_message="Workflow canceled by request.",
+                    expected_app_dir=payload.expected_app_dir,
+                    expected_db_path=payload.expected_db_path,
+                )
+                raise CancelledError("Workflow canceled by request.") from exc
+            assert isinstance(exc, ActivityError)
             error_code = _activity_error_code(exc) or "job_url_import_failed"
             message = (
                 "Job URL import failed on the worker."
@@ -1381,48 +1316,11 @@ __all__ = [
 ]
 
 
-def _rendered_page_text(page):
-    soup = BeautifulSoup(str(getattr(page, "html", "") or ""), "html.parser")
-    for element in soup.select("script,style,template,[hidden],[aria-hidden='true']"):
-        element.decompose()
-    return str(getattr(page, "page_title", "") or "") + "\n" + soup.get_text("\n", strip=True)
-
-
-def _extract_posting_page(page, *, dependencies, entity_id):
+def _extract_posting_page(page, *, dependencies, entity_id, prepared_sources=None):
     from jobctrl.domain.enrichment.page_interpretation import ModelPagePostingExtractor
-    from jobctrl.domain.determinations import Source
 
-    sources = [
-        Source(source_id="rendered_page", text=_rendered_page_text(page)),
-        Source(source_id="page_url", text=str(getattr(page, "final_url", None) or entity_id)),
-    ]
-    # These are explicit structured fields. Formatting them is mechanical;
-    # selecting the posting and interpreting each field remains the model's
-    # determination. URL identity fences neighboring structured postings.
-    for index, posting in enumerate(_find_job_postings(getattr(page, "json_ld", ()) or ())):
-        posting_url = _text(posting.get("url"))
-        if posting_url and _comparable_url(posting_url) != _comparable_url(
-            str(getattr(page, "final_url", None) or entity_id)
-        ):
-            continue
-        sources.append(Source(source_id=f"posting:{index}:structured", text=json.dumps(posting, ensure_ascii=False)))
-        fields = {
-            "title": _text(posting.get("title")),
-            "employer": _employer_name(posting),
-            "description": _text(posting.get("description")),
-            "location": _location_text(posting),
-            "salary": _salary_text(posting),
-        }
-        sources.extend(
-            Source(source_id=f"posting:{index}:{name}", text=value) for name, value in fields.items() if value
-        )
-    soup = BeautifulSoup(getattr(page, "html", "") or "", "html.parser")
-    for index, link in enumerate(soup.find_all("a", href=True)[:100]):
-        sources.append(Source(source_id=f"link:{index}:url", text=urljoin(entity_id, str(link["href"]))))
-        label = link.get_text(" ", strip=True)
-        if label:
-            sources.append(Source(source_id=f"link:{index}:label", text=label))
-    result, _ = ModelPagePostingExtractor(**dependencies).extract(entity_id=entity_id, sources=sources)
+    sources, origins = prepared_sources or _posting_page_sources(page, entity_id=entity_id)
+    result, _ = ModelPagePostingExtractor(**dependencies).extract(entity_id=entity_id, sources=sources, source_urls=origins)
     return {name: getattr(result, name).value for name in type(result).model_fields}
 
 

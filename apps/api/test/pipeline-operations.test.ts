@@ -62,28 +62,65 @@ describe("pipeline operations read model", () => {
     const fixture = createFixture();
     insertHeartbeat(fixture, { activeSlots: 0, counts: {}, details: [] });
 
-    expect(snapshot(fixture).projectionCoverage).toBeNull();
+    const result = snapshot(fixture);
+    expect(result.projectionCoverage).toBeNull();
+    expect(result.activeItems).toEqual([]);
+    expect(result.activeItemsTotal).toBe(0);
+    expect(result.activeItemsTruncated).toBe(false);
   });
 
   it("reports recovering coverage when no selected execution has unavailable telemetry", () => {
     const fixture = createFixture();
 
-    expect(snapshot(fixture).projectionCoverage).toMatchObject({
+    const result = snapshot(fixture);
+    expect(result.projectionCoverage).toMatchObject({
       status: "recovering",
       persistedMembershipCount: 0,
       persistedStepCount: 0,
     });
+    expect(result.activeItems).toEqual([]);
+    expect(result.activeItemsTotal).toBeNull();
+    expect(result.activeItemsTruncated).toBeNull();
   });
 
   it("reports recovering coverage when occupied slots have no allowlisted runtime details", () => {
     const fixture = createFixture();
     insertHeartbeat(fixture, { activeSlots: 1, counts: {}, details: [] });
 
-    expect(snapshot(fixture).projectionCoverage).toMatchObject({
+    const result = snapshot(fixture);
+    expect(result.projectionCoverage).toMatchObject({
       status: "recovering",
       persistedMembershipCount: 0,
       persistedStepCount: 0,
     });
+    expect(result.activeItems).toEqual([]);
+    expect(result.activeItemsTotal).toBe(0);
+    expect(result.activeItemsTruncated).toBe(true);
+  });
+
+  it("reports four standalone URL imports without inventing pipeline stages or a Discover execution", () => {
+    const fixture = createFixture();
+    insertHeartbeat(fixture, {
+      activeSlots: 4, counts: { job_url_import: 4 },
+      details: Array.from({ length: 4 }, (_, index) => ({
+        ...activityDetail("job_url_import", `op_${String(index).padStart(24, "0")}`, unmatchedWorkflowRef("intake")),
+        workflowRef: null,
+      })),
+    });
+    const result = snapshot(fixture);
+    expect(result.execution).toBeNull();
+    expect(result.capacity).toMatchObject({ activeSlots: 4 });
+    expect(result.activeItemsTotal).toBe(4);
+    expect(result.activeItemsTruncated).toBe(false);
+    expect(result.activeStageCounts).toEqual([]);
+    expect(result.activeItems).toHaveLength(4);
+    for (const item of result.activeItems) {
+      expect(item).toMatchObject({
+        kind: "unresolved_runtime_activity", activityType: "job_url_import", stage: null,
+        workflowId: null, attempt: 1,
+      });
+    }
+    expect(result.projectionCoverage?.status).toBe("recovering");
   });
 
   it("reports recovering coverage when fresh runtime work has no selected execution", () => {
@@ -96,11 +133,56 @@ describe("pipeline operations read model", () => {
       ],
     });
 
-    expect(snapshot(fixture).projectionCoverage).toMatchObject({
+    const result = snapshot(fixture);
+    expect(result.projectionCoverage).toMatchObject({
       status: "recovering",
       persistedMembershipCount: 0,
       persistedStepCount: 0,
     });
+    expect(result.activeStageCounts).toEqual([{ stage: "tailor", count: 1 }]);
+    expect(result.activeItems).toEqual([{
+      kind: "unresolved_runtime_activity",
+      activityType: "tailor_job",
+      workflowId: unmatchedWorkflowRef("unselected"),
+      executionId: DISCOVER_RUN_ID,
+      attempt: 1,
+      startedAt: "2026-07-14T11:05:00.000Z",
+      opaqueId: "op_000000000000000000000041",
+      stage: "tailor",
+    }]);
+    expect(result.activeItemsTotal).toBe(1);
+    expect(result.activeItemsTruncated).toBe(false);
+  });
+
+  it("preserves a truncated standalone runtime inventory without a selected execution", () => {
+    const fixture = createFixture();
+    insertHeartbeat(fixture, {
+      activeSlots: 2,
+      counts: { tailor_job: 2 },
+      details: [activityDetail("tailor_job", "op_000000000000000000000042", unmatchedWorkflowRef("truncated"))],
+    });
+
+    const result = snapshot(fixture);
+    expect(result.activeItems).toHaveLength(1);
+    expect(result.activeItemsTotal).toBe(2);
+    expect(result.activeItemsTruncated).toBe(true);
+  });
+
+  it("withholds stale standalone activity details without a selected execution", () => {
+    const fixture = createFixture();
+    insertHeartbeat(fixture, {
+      activeSlots: 1,
+      counts: { tailor_job: 1 },
+      details: [activityDetail("tailor_job", "op_000000000000000000000043", unmatchedWorkflowRef("stale"))],
+    });
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET last_seen_at = ?")
+      .run(new Date(NOW.getTime() - 60_000).toISOString());
+
+    const result = snapshot(fixture);
+    expect(result.activeItems).toEqual([]);
+    expect(result.activeItemsTotal).toBeNull();
+    expect(result.activeItemsTruncated).toBeNull();
+    expect(result.activeStageCounts).toBeNull();
   });
 
   it.each([
@@ -558,6 +640,235 @@ describe("pipeline operations read model", () => {
       waiting: 1,
       unknown: 0,
     });
+  });
+
+  it.each(["pending", "queued", "running"])("keeps unrecorded PDFs waiting while required scoring is %s in both cohorts", (state) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    for (const cohort of ["observed_this_run", "existing_backlog"] as const) {
+      const key = `pdf-awaits-${cohort}-${state}`;
+      insertMember(fixture, { key, cohort, requiredSteps: ["score", "pdf"] });
+      insertStageState(fixture, key, "score", state);
+    }
+    const result = snapshot(fixture);
+    expect(stage(result, "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, waiting: 1, unknown: 0,
+    });
+    expect(stage(result, "pdf_render", "execution_sweep").existingBacklog).toMatchObject({
+      kind: "domain_jobs", counts: { eligible: 1, waiting: 1, unknown: 0 },
+    });
+  });
+
+  it.each(["tailor", "cover"])("keeps unrecorded PDFs waiting for required %s work", (upstream) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertMember(fixture, { key: "pdf-awaits-material", requiredSteps: [upstream, "pdf"] });
+    insertStageState(fixture, "pdf-awaits-material", upstream, "running");
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, waiting: 1, unknown: 0,
+    });
+  });
+
+  it.each(["succeeded", "failed", "blocked", "canceled"])("retains an unrecorded PDF gap after required scoring is %s", (state) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertMember(fixture, { key: "pdf-gap", requiredSteps: ["score", "pdf"] });
+    insertStageState(fixture, "pdf-gap", "score", state);
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, waiting: 0, unknown: 1,
+    });
+  });
+
+  it.each(["succeeded", "failed", "canceled"])("retains a PDF gap when its owner is %s despite stale pending prerequisites", (status) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    const member = insertMember(fixture, { key: "pdf-closed-owner", requiredSteps: ["score", "pdf"] });
+    insertStageState(fixture, "pdf-closed-owner", "score", "pending");
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, status);
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, waiting: 0, unknown: 1,
+    });
+  });
+
+  it("retains a PDF gap when its required prerequisite has no recorded state", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertMember(fixture, { key: "pdf-missing-prerequisite", requiredSteps: ["score", "pdf"] });
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, waiting: 0, unknown: 1,
+    });
+  });
+
+  it("does not use unrelated running work to explain an unrecorded PDF", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertMember(fixture, { key: "pdf-only", requiredSteps: ["pdf"] });
+    insertStageState(fixture, "pdf-only", "score", "running");
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, waiting: 0, unknown: 1,
+    });
+  });
+
+  it.each([
+    ["queued", "waiting"], ["running", "processing"], ["succeeded", "succeeded"], ["failed", "failed"],
+  ])("keeps the recorded PDF %s state authoritative over pending prerequisites", (state, bucket) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    const member = insertMember(fixture, { key: "pdf-recorded", requiredSteps: ["score", "pdf"] });
+    insertStageState(fixture, "pdf-recorded", "score", "pending");
+    insertStep(fixture, { stepKind: "pdf_render", itemKey: pdfItemKey(member.preparationWorkflowId), state });
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, [bucket]: 1, unknown: 0,
+    });
+  });
+
+  it("settles conditionally unexecuted PDFs from exact successful preparation results in both cohorts", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    for (const cohort of ["observed_this_run", "existing_backlog"] as const) {
+      const key = `pdf-skipped-${cohort}`;
+      const member = insertMember(fixture, { key, cohort, requiredSteps: ["score", "tailor", "cover", "pdf"] });
+      insertStageState(fixture, key, "score", "succeeded");
+      insertStageState(fixture, key, "tailor", "skipped");
+      insertStageState(fixture, key, "cover", "skipped");
+      insertWorkflowProjection(fixture, member.preparationWorkflowId, "succeeded", PREPARATION_RUN_ID);
+      insertPreparationOutcomeObservation(fixture, member);
+    }
+    const result = snapshot(fixture);
+    expect(result.execution).toMatchObject({
+      phase: "completed", currentExecution: { terminal: 1, remaining: 0 },
+      sweptExistingBacklog: { terminal: 1, remaining: 0 },
+    });
+    expect(stage(result, "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, skipped: 1, succeeded: 0, waiting: 0, unknown: 0,
+    });
+    expect(stage(result, "pdf_render", "execution_sweep").existingBacklog).toMatchObject({
+      kind: "domain_jobs", counts: { eligible: 1, skipped: 1, succeeded: 0, unknown: 0 },
+    });
+    expect(fixture.db.prepare("SELECT count(*) AS n FROM pipeline_step_projections WHERE step_kind = 'pdf_render'").get()).toEqual({ n: 0 });
+    expect(fixture.db.prepare("SELECT DISTINCT required_steps_json FROM discovery_execution_jobs").all())
+      .toEqual([{ required_steps_json: '["score","tailor","cover","pdf"]' }]);
+  });
+
+  it("does not infer a conditional PDF skip from current MIN_SCORE-like rows without an exact outcome receipt", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    const member = insertMember(fixture, { key: "pdf-no-outcome", requiredSteps: ["score", "tailor", "cover", "pdf"] });
+    insertStageState(fixture, "pdf-no-outcome", "score", "succeeded");
+    insertStageState(fixture, "pdf-no-outcome", "tailor", "skipped");
+    insertStageState(fixture, "pdf-no-outcome", "cover", "skipped");
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, "succeeded", PREPARATION_RUN_ID);
+    const result = snapshot(fixture);
+    expect(stage(result, "pdf_render", "current_execution").currentExecution).toMatchObject({ skipped: 0, unknown: 1 });
+    expect(result.execution?.currentExecution).toMatchObject({ terminal: 0, remaining: 1 });
+  });
+
+  it.each(["in_progress", "failed", "canceled", "timed_out", "terminated"])("rejects conditional PDF receipts while the current preparation owner is %s", (status) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    const member = insertMember(fixture, { key: "pdf-owner-outcome", requiredSteps: ["score", "tailor", "cover", "pdf"] });
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, status, PREPARATION_RUN_ID);
+    insertPreparationOutcomeObservation(fixture, member);
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({ skipped: 0, unknown: 1 });
+  });
+
+  it.each([
+    ["decoder", { decoderVersion: 2 }],
+    ["evidence", { evidenceKind: "request_intent" }],
+    ["tenant", { tenantId: "other" }],
+    ["workflow type", { workflowType: "ApplyWorkflow" }],
+    ["workflow", { workflowId: "prep-other" }],
+    ["run", { temporalRunId: "other-run" }],
+    ["job", { jobId: "other-job" }],
+    ["key", { idempotencyKey: "other-key" }],
+    ["plan", { requiredSteps: ["score", "pdf"] }],
+    ["discovery", { discoveryExecution: { tenantId: "local", workflowId: DISCOVER_WORKFLOW_ID, temporalRunId: "old-run" } }],
+    ["terminal event", { terminalHistoryEventId: 0 }],
+    ["failed result", { result: { stepsCompleted: ["score"], stepsSkipped: ["tailor"], stepsFailed: ["cover"], failure: "failed", errorCode: "failed" } }],
+    ["unrelated skip", { result: { stepsCompleted: ["score"], stepsSkipped: ["apply"], stepsFailed: [], failure: null, errorCode: null } }],
+    ["out-of-order result", { result: { stepsCompleted: ["cover"], stepsSkipped: ["tailor"], stepsFailed: [], failure: null, errorCode: null } }],
+    ["no skip", { result: { stepsCompleted: ["score", "tailor", "cover", "pdf"], stepsSkipped: [], stepsFailed: [], failure: null, errorCode: null } }],
+  ] as const)("keeps a missing PDF unknown for a foreign or invalid %s receipt", (_name, override) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    const member = insertMember(fixture, { key: "pdf-invalid-outcome", requiredSteps: ["score", "tailor", "cover", "pdf"] });
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, "succeeded", PREPARATION_RUN_ID);
+    insertPreparationOutcomeObservation(fixture, member, override);
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({ skipped: 0, unknown: 1 });
+  });
+
+  it.each([
+    ["tailor", "score", "cover", "pdf"],
+    ["score", "score", "tailor", "pdf"],
+  ])("rejects a receipt whose frozen plan has a noncanonical step order (%j)", (...required) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    const member = insertMember(fixture, { key: "pdf-noncanonical-plan", requiredSteps: required });
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, "succeeded", PREPARATION_RUN_ID);
+    insertPreparationOutcomeObservation(fixture, member, {
+      requiredSteps: required,
+      result: { stepsCompleted: [], stepsSkipped: [required[0]], stepsFailed: [], failure: null, errorCode: null },
+    });
+    const result = snapshot(fixture);
+    expect(stage(result, "pdf_render", "current_execution").currentExecution).toMatchObject({ skipped: 0, unknown: 1 });
+    expect(result.execution?.currentExecution).toMatchObject({ terminal: 0, remaining: 1 });
+  });
+
+  it.each(["missing owner", "missing run", "foreign owner type", "foreign row job", "foreign row owner", "foreign row key", "malformed payload"])("keeps a missing PDF unknown with %s", (fault) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    const member = insertMember(fixture, { key: "pdf-row-binding", requiredSteps: ["score", "tailor", "cover", "pdf"] });
+    if (fault !== "missing owner") {
+      insertWorkflowProjection(fixture, member.preparationWorkflowId, "succeeded", fault === "missing run" ? null : PREPARATION_RUN_ID);
+    }
+    insertPreparationOutcomeObservation(fixture, member);
+    if (fault === "foreign owner type") fixture.db.prepare("UPDATE workflow_run_projections SET workflow_type = 'ApplyWorkflow' WHERE workflow_id = ?").run(member.preparationWorkflowId);
+    if (fault === "foreign row job") {
+      fixture.db.prepare("INSERT INTO jobs (tenant_id, job_id, url) VALUES ('local', ?, ?)")
+        .run(jobIdFor("unrelated-outcome"), "https://private.invalid/unrelated-outcome");
+      fixture.db.prepare("UPDATE job_events SET job_id = ?").run(jobIdFor("unrelated-outcome"));
+    }
+    if (fault === "foreign row owner") fixture.db.prepare("UPDATE job_events SET entity_ref = 'prep-other'").run();
+    if (fault === "foreign row key") fixture.db.prepare("UPDATE job_events SET idempotency_key = 'unrelated-key'").run();
+    if (fault === "malformed payload") fixture.db.prepare("UPDATE job_events SET payload_json = '{'").run();
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({ skipped: 0, unknown: 1 });
+  });
+
+  it("does not expose private observation payload fields in the progress response", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    const member = insertMember(fixture, { key: "pdf-private-outcome", requiredSteps: ["score", "tailor", "cover", "pdf"] });
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, "succeeded", PREPARATION_RUN_ID);
+    insertPreparationOutcomeObservation(fixture, member, { privateNote: "private-receipt-content-sentinel" });
+    const result = snapshot(fixture);
+    expect(stage(result, "pdf_render", "current_execution").currentExecution).toMatchObject({ skipped: 1, unknown: 0 });
+    expect(JSON.stringify(result)).not.toContain("private-receipt-content-sentinel");
+  });
+
+  it.each([
+    ["queued", "waiting"], ["running", "processing"], ["succeeded", "succeeded"], ["failed", "failed"],
+  ])("keeps recorded PDF %s authoritative over a conditional outcome receipt", (state, bucket) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    const member = insertMember(fixture, { key: "pdf-observed-outcome", requiredSteps: ["score", "tailor", "cover", "pdf"] });
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, "succeeded", PREPARATION_RUN_ID);
+    insertPreparationOutcomeObservation(fixture, member);
+    insertStep(fixture, { stepKind: "pdf_render", itemKey: pdfItemKey(member.preparationWorkflowId), state });
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({ skipped: 0, [bucket]: 1, unknown: 0 });
+  });
+
+  it("keeps refreshed pending prerequisite work unresolved even when the prior owner skipped PDF", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    const member = insertMember(fixture, { key: "pdf-reset-prerequisite", requiredSteps: ["score", "tailor", "cover", "pdf"] });
+    insertStageState(fixture, "pdf-reset-prerequisite", "score", "succeeded");
+    insertStageState(fixture, "pdf-reset-prerequisite", "tailor", "pending");
+    insertStageState(fixture, "pdf-reset-prerequisite", "cover", "skipped");
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, "succeeded", PREPARATION_RUN_ID);
+    insertPreparationOutcomeObservation(fixture, member);
+    const result = snapshot(fixture);
+    expect(result.execution?.currentExecution).toMatchObject({ terminal: 0, remaining: 1 });
   });
 
   it("uses exact PDF joins, merges safe runtime activity inventory, and omits private input data", () => {
@@ -1629,6 +1940,30 @@ function insertMember(
   return { preparationWorkflowId, jobId };
 }
 
+function insertPreparationOutcomeObservation(
+  fixture: Fixture,
+  member: { preparationWorkflowId: string; jobId: string },
+  override: Record<string, unknown> = {},
+): void {
+  const workflowId = member.preparationWorkflowId;
+  const payload = {
+    tenantId: "local", decoderVersion: 1, evidenceKind: "temporal_history", workflowType: "JobPreparationWorkflow",
+    workflowId, temporalRunId: PREPARATION_RUN_ID, jobId: member.jobId,
+    idempotencyKey: workflowId.slice("prep-".length), requiredSteps: ["score", "tailor", "cover", "pdf"],
+    discoveryExecution: { tenantId: "local", workflowId: DISCOVER_WORKFLOW_ID, temporalRunId: DISCOVER_RUN_ID },
+    terminalHistoryEventId: 42,
+    result: { stepsCompleted: ["score"], stepsSkipped: ["tailor"], stepsFailed: [], failure: null, errorCode: null },
+    ...override,
+  };
+  fixture.db.prepare(
+    `INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message,
+        occurred_at, payload_json, entity_kind, entity_ref, idempotency_key)
+     VALUES ('local', ?, 1, 'workflow', 'PreparationWorkflowOutcomeObserved', 'info',
+        'Preparation outcome observed.', ?, ?, 'workflow_run', ?, ?)`,
+  ).run(member.jobId, NOW.toISOString(), JSON.stringify(payload), workflowId,
+    `preparation-outcome:1:local:${workflowId}:${PREPARATION_RUN_ID}`);
+}
+
 function insertStageState(
   fixture: Fixture,
   key: string,
@@ -1741,6 +2076,7 @@ function activityDetail(
   executionRef = DISCOVER_RUN_ID,
 ): Record<string, unknown> {
   const kinds: Record<string, string> = {
+    job_url_import: "job-url-import",
     render_pdf: "job-pdf-render",
     score_job: "job-scoring",
     tailor_job: "job-tailoring",

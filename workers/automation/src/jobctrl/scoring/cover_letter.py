@@ -105,6 +105,11 @@ def _build_use_case(
     deps = determination_dependencies(
         conn, tenant_id=tenant_id, lane="tailoring", adapter=llm_port, model_spec=llm_model
     )
+    from jobctrl.infrastructure.materials.letter_reviews import ParallelLetterReviews
+
+    database = conn.execute("PRAGMA database_list").fetchone()[2]
+    # A caller-owned in-memory DB cannot be reopened safely on another thread.
+    letter_reviews = ParallelLetterReviews(Path(database).resolve(), deps) if database else None
     return GenerateCoverLetterUseCase(
         repository=repository,
         llm=deps["llm"],
@@ -112,6 +117,7 @@ def _build_use_case(
         claim_verifier=ModelClaimVerifier(**deps),
         quality_judge=ModelArtifactQualityJudge(**deps),
         preflight=deps["preflight"],
+        letter_reviews=letter_reviews,
         publisher=publisher,
         analysis_repository=analysis_repository,
         unit_of_work=(shared_unit_of_work if default_repository or unit_of_work is not None else None),
@@ -198,10 +204,19 @@ def cover_letter_by_id(
     workflow_id: str | None = None,
     cancel_event: threading.Event | None = None,
     recovery_workflow_id: str | None = None,
+    allow_low_fit_override: bool = False,
+    explicit_material_request: bool = True,
 ) -> dict:
     """Generate exactly one eligible cover letter by tenant-scoped JobId."""
     stable_job_id = canonical_job_id(str(job_id))
     conn = get_connection()
+    from jobctrl.infrastructure.materials.manual_decline import material_request_declined
+
+    if material_request_declined(
+        conn, tenant_id=tenant_id, job_id=stable_job_id, stage="cover",
+        explicit_material_request=explicit_material_request, workflow_id=workflow_id,
+    ):
+        return {"job_id": str(stable_job_id), "status": "skipped", "reason": "manual_apply_decline"}
     job = SqlitePreparationTargetReader(conn).load(tenant_id, stable_job_id)
     if job is None:
         return _skipped_result(stable_job_id, reason="job_not_found")
@@ -213,7 +228,7 @@ def cover_letter_by_id(
             conn,
             unit_of_work=material_unit_of_work,
         )
-    min_score = effective_tailoring_min_score(min_score)
+    min_score = 0 if allow_low_fit_override else effective_tailoring_min_score(min_score)
 
     eligibility_reason = _cover_eligibility_reason(
         conn,
@@ -275,6 +290,11 @@ def cover_letter_by_id(
         cancel_event=cancel_event,
         expected_posting_url=expected_posting_url,
     ):
+        if material_request_declined(
+            conn, tenant_id=tenant_id, job_id=stable_job_id, stage="cover",
+            explicit_material_request=explicit_material_request, workflow_id=workflow_id,
+        ):
+            return {"job_id": str(stable_job_id), "status": "skipped", "reason": "manual_apply_decline"}
         job = SqlitePreparationTargetReader(conn).load(tenant_id, stable_job_id)
     if job is None:
         return _skipped_result(stable_job_id, reason="availability_candidate_changed")
@@ -310,6 +330,11 @@ def cover_letter_by_id(
         cancel_event=cancel_event,
         expected_posting_url=expected_posting_url,
     ):
+        if material_request_declined(
+            conn, tenant_id=tenant_id, job_id=stable_job_id, stage="cover",
+            explicit_material_request=explicit_material_request, workflow_id=workflow_id,
+        ):
+            return {"job_id": str(stable_job_id), "status": "skipped", "reason": "manual_apply_decline"}
         ensure_job_stage_rows(
             conn,
             stable_job_id,

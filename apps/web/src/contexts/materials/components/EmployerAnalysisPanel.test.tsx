@@ -25,6 +25,22 @@ describe("<EmployerAnalysisPanel>", () => {
     expect(explanation).toHaveTextContent("does not establish factual support");
   });
 
+  it("retains a separately assessed condition and explains its zero score contribution", () => {
+    const rationale = "Recorded logistics condition; assessed separately from capability fit.";
+    const report = {
+      ...populatedRequirementFitReport, resolvedFitScore: 10, formulaVersion: "requirement-fit-v2-scoped",
+      summary: { weightedFit: 1, mustHaveCoverage: 1, blockerCount: 0, missingHighWeightCount: 0 },
+      assessments: populatedRequirementFitReport.assessments.map((row, index) => index ? {
+        ...row, contribution: { maxPoints: 0, awardedPoints: 0, weightedImpact: 0,
+          scope: "logistics" as const, scopeSourceId: "1".repeat(64), rationale },
+      } : row),
+    };
+    render(<EmployerAnalysisPanel analysis={populatedEmployerAnalysis} requirementFitReport={report} />);
+    expect(screen.getByText(rationale)).toBeVisible();
+    expect(screen.getByText("0 / 0 points")).toBeVisible();
+    expect(screen.getByRole("article", { name: `Requirement: ${populatedEmployerAnalysis.requirements[1]!.text}` })).toBeVisible();
+  });
+
   it("shows requirement evidence initially and toggles requirements independently with mouse and keyboard", async () => {
     const user = userEvent.setup();
     const view = render(<EmployerAnalysisPanel analysis={populatedEmployerAnalysis} requirementFitReport={populatedRequirementFitReport} />);

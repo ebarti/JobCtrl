@@ -128,6 +128,9 @@ def derive_preparation_targets(payload: DerivePreparationTargetsInput) -> list[P
     # writes before entering the rollback scope so their caller keeps control.
     conn.execute("BEGIN IMMEDIATE")
     try:
+        from jobctrl.infrastructure.materials.manual_decline import release_manual_material_skips
+
+        release_manual_material_skips(conn, tenant_id=tenant_id)
         reconcile_all_score_threshold_skips(
             conn,
             tenant_id=tenant_id,
@@ -137,11 +140,13 @@ def derive_preparation_targets(payload: DerivePreparationTargetsInput) -> list[P
             conn,
             tenant_id=tenant_id,
         )
+        # Keep eligibility selection and artifact mutation under this write
+        # owner, so a concurrent approval cannot replace the selected generation.
+        _suppress_ineligible_artifacts(conn, tenant_id=tenant_id, min_score=min_score)
         conn.commit()
     except Exception:
         conn.rollback()
         raise
-    _suppress_ineligible_artifacts(conn, tenant_id=tenant_id, min_score=min_score)
     targets = _derive_targets(
         conn,
         tenant_id=tenant_id,
@@ -350,6 +355,7 @@ def build_preparation_workflow_spec(
     retailor: bool = False,
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
+    explicit_material_request: bool = False,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
@@ -375,6 +381,7 @@ def build_preparation_workflow_spec(
         kind=kind,
         target_version=target_version,
         source_event_id=source_event,
+        explicit_material_request=explicit_material_request,
     )
     payload = JobPreparationInput(
         tenant_id=str(tenant_id),
@@ -389,6 +396,7 @@ def build_preparation_workflow_spec(
         retailor=retailor,
         suppress_existing_artifacts=suppress_existing_artifacts,
         allow_low_fit_override=allow_low_fit_override,
+        explicit_material_request=explicit_material_request,
         tailor_models=tailor_models,
         tailor_judge_model=tailor_judge_model,
         llm_model=llm_model or DEFAULT_PIPELINE_LLM_MODEL_SPEC,
@@ -1063,7 +1071,7 @@ def _suppress_active_artifacts(
         """,
         (reason, suppressed_at, suppressed_at, str(tenant_id), str(job_id), generation),
     )
-    conn.commit()
+    # derive_preparation_targets owns commit/rollback for the complete sweep.
     return 1
 
 
@@ -1096,7 +1104,14 @@ def _jobs_needing_artifact_suppression(
           AND tailored_resume.artifact_id IS NOT NULL
           AND (
             score.fit_score IS NULL
-            OR score.fit_score < ?
+            OR (
+              score.fit_score < ?
+              AND CASE
+                WHEN json_valid(tailored_resume.metadata_json)
+                  THEN COALESCE(json_type(tailored_resume.metadata_json, '$.allow_low_fit_override'), '')
+                ELSE ''
+              END != 'true'
+            )
             OR score.eligible_for_downstream = 0
           )
         ORDER BY jobs.discovered_at DESC, jobs.job_id

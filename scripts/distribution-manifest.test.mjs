@@ -99,7 +99,7 @@ test("distribution contracts are complete and every version source resolves", as
   assert.equal(report.nodeLicenseEvidenceCount, 13);
   assert.equal(report.capabilityCount, 3);
   assert.deepEqual(report.platforms, ["darwin-arm64"]);
-  assert.equal(report.versions["jobctrl-launcher"], "0.4.0");
+  assert.equal(report.versions["jobctrl-launcher"], "0.3.1");
   assert.equal(report.versions["playwright-python"], "1.58.0");
   assert.equal(report.versions["font-geist"], "5.2.9");
   assert.equal(report.versions["font-jetbrains-mono"], "5.2.8");
@@ -471,7 +471,7 @@ test("source measurement reports dependency, lockfile, and environment presence"
   assert.equal(report.schemaVersion, 1);
   assert.ok(report.source.javascript.uniqueDirect > 0);
   assert.ok(report.source.javascript.uniqueRuntimeDirect > 0);
-  assert.equal(report.source.python.coreRuntimeDirect, 20);
+  assert.equal(report.source.python.coreRuntimeDirect, 21);
   assert.equal(report.source.python.providerRuntimeDirect, 4);
   assert.ok(report.source.locks.pnpmPackageRecords > 0);
   assert.ok(report.source.locks.uvPackageRecords > 0);

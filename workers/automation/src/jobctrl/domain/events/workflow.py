@@ -24,8 +24,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from jobctrl.domain.tenant import TenantId
+from jobctrl.domain.discovery.execution import DISCOVERY_PREPARATION_STEPS, DiscoveryExecutionRef
 from jobctrl.domain.events.base import DomainEvent, create_domain_event
+from jobctrl.domain.identifiers import JobId, canonical_job_id
+from jobctrl.domain.tenant import TenantId
 
 # Terminal status strings live inside the 12-state ``WORKFLOW_RUN_STATUSES``
 # contract (packages/contracts/src/schemas.ts). Kept here so the finalize
@@ -256,5 +258,84 @@ def create_workflow_terminated(tenant_id: TenantId, payload: WorkflowTerminatedP
             "finishedAt": payload.finished_at,
             "durationMs": payload.duration_ms,
             "temporalRunId": payload.temporal_run_id,
+        },
+    )
+
+
+@dataclass(frozen=True)
+class PreparationWorkflowOutcomeObservedPayload:
+    """Bounded successful result read from one exact preparation execution."""
+
+    workflow_id: str
+    temporal_run_id: str
+    job_id: JobId
+    idempotency_key: str
+    required_steps: tuple[str, ...]
+    discovery_execution: DiscoveryExecutionRef
+    terminal_history_event_id: int
+    steps_completed: tuple[str, ...]
+    steps_skipped: tuple[str, ...]
+
+
+def create_preparation_workflow_outcome_observed(
+    tenant_id: TenantId,
+    payload: PreparationWorkflowOutcomeObservedPayload,
+) -> DomainEvent:
+    if (
+        not isinstance(payload.discovery_execution, DiscoveryExecutionRef)
+        or payload.discovery_execution.tenant_id != str(tenant_id)
+        or any(
+            not isinstance(value, str) or not value or value != value.strip() or len(value) > 1024
+            for value in (
+                payload.workflow_id, payload.temporal_run_id, payload.idempotency_key,
+                payload.discovery_execution.tenant_id, payload.discovery_execution.workflow_id,
+                payload.discovery_execution.temporal_run_id,
+            )
+        )
+        or payload.workflow_id != "prep-" + payload.idempotency_key
+        or type(payload.terminal_history_event_id) is not int
+        or payload.terminal_history_event_id <= 0
+    ):
+        raise ValueError("invalid preparation outcome identity")
+    required, done, skipped = payload.required_steps, payload.steps_completed, payload.steps_skipped
+    for steps in (required, done, skipped):
+        if (
+            not isinstance(steps, tuple)
+            or len(steps) > 4
+            or any(step not in DISCOVERY_PREPARATION_STEPS for step in steps)
+            or len(set(steps)) != len(steps)
+        ):
+            raise ValueError("invalid preparation outcome steps")
+    if (
+        not required
+        or "pdf" not in required
+        or tuple(step for step in DISCOVERY_PREPARATION_STEPS if step in required) != required
+        or len(skipped) > 1
+        or (skipped and (skipped[0] not in required or done != required[: required.index(skipped[0])]))
+        or (not skipped and done != required)
+    ):
+        raise ValueError("contradictory preparation outcome result")
+    return create_domain_event(
+        "PreparationWorkflowOutcomeObserved",
+        tenant_id,
+        {
+            "tenantId": str(tenant_id),
+            "decoderVersion": 1,
+            "evidenceKind": "temporal_history",
+            "workflowType": "JobPreparationWorkflow",
+            "workflowId": payload.workflow_id,
+            "temporalRunId": payload.temporal_run_id,
+            "jobId": str(canonical_job_id(str(payload.job_id))),
+            "idempotencyKey": payload.idempotency_key,
+            "requiredSteps": list(required),
+            "discoveryExecution": payload.discovery_execution.safe_summary(),
+            "terminalHistoryEventId": payload.terminal_history_event_id,
+            "result": {
+                "stepsCompleted": list(done),
+                "stepsSkipped": list(skipped),
+                "stepsFailed": [],
+                "failure": None,
+                "errorCode": None,
+            },
         },
     )

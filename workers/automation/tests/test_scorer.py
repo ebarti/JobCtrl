@@ -188,6 +188,7 @@ def determination_ports(monkeypatch):
         )
 
         def interpreted(job):
+            requirements = _employer_analysis(str(job["url"]), job_id=JobId(str(job["job_id"])), job=job).canonical.requirements
             interpreter = ModelJobInterpreter(
                 llm=ClassificationModel(),
                 repository=repo,
@@ -197,12 +198,14 @@ def determination_ports(monkeypatch):
                 lane="enrichment",
                 preflight=lambda: None,
             )
-            return interpreter.interpret(
+            result, envelope = interpreter.interpret(
                 entity_id=job["job_id"],
                 posting=Source(source_id="posting", text=build_jd_snapshot(job)),
                 fields=[],
-                requirements=[],
-            )[0]
+                requirements=[Source(source_id=row.id, text=row.evidence_span) for row in requirements],
+            )
+            result._determination_id = envelope.determination_id
+            return result
 
         kwargs["job_interpretation_reader"] = interpreted
         kwargs["confirmed_preferences_reader"] = lambda snapshot, criteria: [
@@ -1207,6 +1210,37 @@ def test_run_scoring_records_safe_per_leg_causes_when_analysis_ensemble_fails(
     )
     assert "provider timed out" not in stage_row["error_message"]
     assert "private raw output" not in stage_row["error_message"]
+
+
+@pytest.mark.parametrize("code", [
+    "mismatched_value", "non_verbatim_quote", "schema_violation", "provider_unavailable", "provider_error",
+])
+def test_employer_analysis_keeps_typed_failure_through_score_and_temporal(
+    conn: sqlite3.Connection, profile_snapshot, monkeypatch, code,
+) -> None:
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.domain.errors import LlmTransientError, to_application_error
+    from jobctrl.scoring.activities import _raise_on_failure
+
+    url = "https://example.test/typed-analysis-failure"
+    _seed_pending_job(conn, url)
+    llm = _ScriptedLlm({"score": 9, "keywords": [], "reasoning": "not called"})
+    monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
+    outcome = scorer_module.run_scoring(
+        profile_snapshot=profile_snapshot, repository=SqliteScoreRepository(conn), llm_port=llm,
+        resume_text="Synthetic profile", analyze_use_case=_FailingAnalyzeUseCase(DeterminationFailure(code)),
+    )
+    assert outcome["errors"] == 1
+    assert llm.calls == 0
+    stage = _stage_row(conn, url, "score")
+    assert stage["state"] == ("failed" if code == "provider_error" else "blocked")
+    assert stage["error_code"] == "SEMANTIC_" + code.upper()
+    assert stage["error_message"] == "semantic_determination:" + code
+    with pytest.raises(DeterminationFailure) as error:
+        _raise_on_failure("score", {"status": "failed", "error": stage["error_message"]}, LlmTransientError)
+    temporal_error = to_application_error(error.value)
+    assert temporal_error.type == code
+    assert temporal_error.non_retryable == (code != "provider_error")
 
 
 def test_run_scoring_reuses_same_content_score_for_duplicate_jobs(

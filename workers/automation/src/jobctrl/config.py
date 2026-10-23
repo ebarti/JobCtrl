@@ -955,7 +955,7 @@ def _jobspy_sources(search_cfg: dict | None) -> list[SourceRegistryEntry]:
                     display_name=_jobstreaming_source_display_name(board),
                     owner="system",
                     priority=SourcePriority.LEAD_GENERATOR,
-                    state=SourceState.EXPERIMENTAL,
+                    state=SourceState.ACTIVE,
                     policy=BROAD_BOARD_LEAD_POLICY,
                     adapter_config={"board": board},
                 )
@@ -1067,17 +1067,26 @@ def _local_source_registry_rows() -> list[sqlite3.Row]:
 
 
 def _adapter_config_from_row(row: sqlite3.Row) -> dict:
+    adapter_config: dict[str, str] = {}
+    # Retained boards remain selectable independently of the saved default list.
+    # Recover literal provider identity from the canonical ID, never its label.
+    if row["kind"] == SourceKind.BROAD_BOARD.value:
+        source_id = str(row["source_id"] or "").strip()
+        for board in _JOBSTREAMING_BOARD_DISPLAY_NAMES:
+            if source_id == f"jobspy:{_source_slug(board)}":
+                adapter_config["board"] = board
+                break
     seed_url = str(row["seed_url"] or "").strip()
-    if not seed_url:
-        return {}
-    display_name = str(row["display_name"] or row["source_id"]).strip()
-    source_type = "search" if _url_has_search_placeholder(seed_url) else "static"
-    return {
-        "name": display_name,
-        "url": seed_url,
-        "type": source_type,
-        "base_url": seed_url,
-    }
+    if seed_url:
+        display_name = str(row["display_name"] or row["source_id"]).strip()
+        source_type = "search" if _url_has_search_placeholder(seed_url) else "static"
+        adapter_config.update({
+            "name": display_name,
+            "url": seed_url,
+            "type": source_type,
+            "base_url": seed_url,
+        })
+    return adapter_config
 
 
 def _url_has_search_placeholder(url: str) -> bool:
@@ -1121,6 +1130,11 @@ def _merge_local_source_registry(
         adapter_config = dict(existing.adapter_config) if existing else {}
         if _row_overrides_adapter_config(row, existing):
             adapter_config.update(_adapter_config_from_row(row))
+        # Built-in JobStreaming adapters are supported sources. Retained rows
+        # from older defaults must not keep an artificial experimental probe.
+        if (kind == SourceKind.BROAD_BOARD and state == SourceState.EXPERIMENTAL
+                and any(source_id == f"jobspy:{_source_slug(board)}" for board in _JOBSTREAMING_BOARD_DISPLAY_NAMES)):
+            state = SourceState.ACTIVE
         owner = str(row["owner"] or (existing.owner if existing else "user"))
         display_name = (
             existing.display_name
@@ -1345,6 +1359,11 @@ def get_analysis_legs() -> tuple[str, ...]:
 def get_tailoring_generator_models() -> tuple[str, ...]:
     saved = _config_setting("tailoring_generator_models")
     return tuple(str(item).strip() for item in saved if str(item).strip()) if isinstance(saved, list) else ()
+
+
+def get_resume_voice_polish_enabled() -> bool:
+    """Extra post-approval rewriting is opt-in; required reviews always run."""
+    return _config_setting("resume_voice_polish") is True
 
 
 def get_tailoring_judge_model() -> str | None:

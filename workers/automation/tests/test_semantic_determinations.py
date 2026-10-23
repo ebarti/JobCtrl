@@ -106,6 +106,32 @@ def test_same_sources_bind_opposite_valid_model_decisions() -> None:
         assert len(model.calls) == 1
 
 
+def test_effort_is_persisted_and_changes_cache_identity_without_relabeling_history():
+    repository = Repository()
+    high = Model(response("accept"))
+    high.reasoning_effort = "high"
+    _, first = call(high, repository)
+    low = Model(response("reject"))
+    low.reasoning_effort = "low"
+    second_result, second = call(low, repository)
+    assert second_result.verdict == "reject"
+    assert first.determination_id != second.determination_id
+    assert first.reasoning_effort == "high"
+    assert second.reasoning_effort == "low"
+    assert first.result["verdict"] == "accept"
+    _, cached = call(high, repository)
+    assert cached == first
+    assert len(high.calls) == 1
+    assert len(repository.rows) == 2
+
+
+def test_legacy_receipts_without_recorded_effort_remain_readable():
+    _, envelope = call(Model(response()), Repository())
+    legacy = envelope.model_dump()
+    legacy.pop("reasoning_effort")
+    assert DeterminationEnvelope.model_validate(legacy).reasoning_effort is None
+
+
 @pytest.mark.parametrize("quote", ["alpha, beta", "alpha. beta", "alpha,beta", "1,alpha,beta,2"])
 def test_literal_values_accept_punctuation_delimiters_without_deciding_the_verdict(quote):
     for verdict in ("accept", "reject"):
@@ -234,6 +260,94 @@ def test_unavailable_and_budget_denial_are_distinct_and_do_not_call() -> None:
         call(model, repository, denied)
     assert model.calls == []
     assert repository.rows == {}
+
+
+def test_invalid_evidence_is_reasked_under_the_same_sources_and_budget():
+    class CorrectingModel(Model):
+        def chat_json(self, messages, **kwargs):
+            self.output = response() if self.calls else {
+                **response(), "citations": [{"source_id": "canonical:1", "quote": "invented"}],
+            }
+            return super().chat_json(messages, **kwargs)
+
+    model, repository = CorrectingModel(None), Repository()
+    admissions = []
+    result, envelope = call(model, repository, lambda: admissions.append(current_llm_lane()))
+    assert result.verdict == "accept"
+    assert admissions == ["interview", "interview"]
+    assert model.calls[0][0][:2] == model.calls[1][0][:2]
+    assert "non_verbatim_quote" in model.calls[1][0][-1].content
+    feedback = json.loads(model.calls[1][0][-1].content.split("\n", 1)[1])
+    rejected = feedback["rejected_response"]
+    assert rejected["citations"][0]["quote"] == "invented"
+    assert feedback["binding_failure"]["citation"]["quote"] == "invented"
+    assert "untrusted data" in model.calls[1][0][-1].content
+    assert len(repository.rows) == 1
+    assert call(model, repository)[1] == envelope
+    assert len(model.calls) == 2
+
+
+def test_provider_failure_is_not_reasked_as_a_response_repair():
+    model = Model(RuntimeError("private provider details"))
+    with pytest.raises(DeterminationFailure, match="provider_error"):
+        call(model, Repository())
+    assert len(model.calls) == 1
+
+
+def test_exact_value_repair_identifies_the_literal_without_disclosing_it_in_failure_state():
+    class RecordingRepository(Repository):
+        def record_state(self, **kwargs):
+            self.last_state = kwargs
+
+    invalid = {**response(), "citations": [
+        {"source_id": "canonical:1", "quote": "value 10%", "exact_values": ["private invalid value"]},
+    ]}
+    repository, model = RecordingRepository(), Model(invalid)
+    with pytest.raises(DeterminationFailure) as caught:
+        call(model, repository)
+    assert str(caught.value) == "semantic_determination:mismatched_value"
+    assert "private invalid value" not in json.dumps(repository.last_state)
+    feedback = json.loads(model.calls[1][0][-1].content.split("\n", 1)[1])
+    assert feedback["binding_failure"]["invalid_exact_value"] == "private invalid value"
+    assert feedback["binding_failure"]["citation"] == invalid["citations"][0]
+    assert len(model.calls) == 3
+
+
+@pytest.mark.parametrize("code", ["claim_line_binding_invalid", "missing_compensation_citation", "inconsistent_verdict"])
+def test_domain_structural_binding_failure_receives_bounded_response_repair(code):
+    model = Model(response())
+    checked = []
+
+    def validate(result):
+        checked.append(result)
+        if len(checked) == 1:
+            raise DeterminationFailure(code)
+
+    result, _ = call(model, Repository(), validate=validate)
+    assert result.verdict == "accept"
+    assert len(model.calls) == 2
+    assert code in model.calls[1][0][-1].content
+
+
+def test_valid_semantic_rejection_is_not_reasked_as_a_binding_repair():
+    model = Model(response("reject"))
+
+    def validate(result):
+        raise DeterminationFailure("claim_verification_failed")
+
+    with pytest.raises(DeterminationFailure, match="claim_verification_failed"):
+        call(model, Repository(), validate=validate)
+    assert len(model.calls) == 1
+
+
+def test_evidence_repairs_are_bounded_and_preserve_an_accepted_result():
+    repository = Repository()
+    accepted = call(Model(response()), repository)[1]
+    invalid = Model({**response(), "citations": [{"source_id": "canonical:1", "quote": "invented"}]})
+    with pytest.raises(DeterminationFailure, match="non_verbatim_quote"):
+        call(invalid, repository, entity_id="synthetic:2")
+    assert len(invalid.calls) == 3
+    assert list(repository.rows.values()) == [accepted]
 
 
 def test_concurrent_identical_requests_make_one_paid_call():

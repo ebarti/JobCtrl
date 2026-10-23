@@ -197,6 +197,17 @@ not merge the jobs or turn either record into application history. See
 
 ## Launch And Observe Discovery
 
+Explicit source selection uses each retained registry entry's provider identity,
+even when that board is absent from the saved default board list. Planning
+preserves disabled and quarantined choices: disabled entries stay skipped and
+quarantined entries retain their bounded allowance. Built-in JobStreaming boards
+are supported, active sources. Older experimental defaults are upgraded when the
+registry is loaded and seeded; they do not impose a ten-job probe cap. The run's
+result limit bounds new canonical jobs across the selected sources. A runnable
+broad-board entry without a known
+provider identity fails with a configuration error instead of being silently
+omitted from the requested run.
+
 Discovery owns the controls that decide what may enter a run; **Pipelines** owns
 starting and observing that run. In Pipelines, choose the Discover action, set a
 bounded result limit, internal source concurrency, optional sources, and dry-run
@@ -303,11 +314,19 @@ bounded active-work inventory show whether the operational facts are current.
 Exact selected-run stage tracking is durable. New executions record their
 membership and stage lineage natively. For an execution created by an older
 JobCtrl version, worker startup and heartbeats rebuild the same lineage from the
-exact Temporal workflow/run history. During that bounded check, Pipelines shows
-**Checking previous run records**, keeps fresh shared-worker and queue facts
-visible, and hides selected-run counts and ETAs until the recovered key sets have
-been verified. The check finishes automatically and needs no restart. Partial
-rows or live-worker telemetry never become a false completion claim.
+exact Temporal workflow/run history. Pipelines identifies whether it is checking
+the current or previous run, shows how many linked jobs and stage records have
+been stored, and reports the last record update time. Unknown totals and a missing
+update time stay explicit. These record counts describe tracking coverage rather
+than completed job tasks. While a check or retry is pending, the visible page
+refreshes every 15 seconds, including before execution details are available.
+Fresh shared-worker and queue facts remain visible; selected-run completion
+counts and ETAs appear only after the exact record sets have been verified.
+Partial rows or live-worker telemetry never become a false completion claim.
+If no Discover execution has been identified, Pipelines says so instead of
+claiming that a run is being verified. Standalone preparation of imported jobs
+may still occupy workers. Current activity counts remain visible, and a missing
+activity-detail inventory stays unavailable rather than becoming zero work.
 
 ### Stop Or Recover A Discover Run
 
@@ -319,8 +338,18 @@ already-admitted work is not presented as stoppable.
 When an execution fails, Pipelines reports whether the runtime inventory shows
 active work before suggesting another run. A positive total tells you to review
 that work first; unavailable inventory is reported as unknown, never as idle.
+The disabled Discover action reports the occupied worker-slot count and known
+active stages, and links to Runs to inspect progress or cancel work. Saved-posting
+checks and manual URL imports appear in the active-work inventory alongside
+pipeline stages. URL intake is labeled **Import job URL**, including before
+the Job row exists; its private URL is excluded from runtime telemetry. These
+checks use shared worker slots even when the selected Discover run has already
+ended. The selected closed run's end time distinguishes its historical outcomes
+from today's active work. The action refreshes automatically and becomes
+available when fresh runtime observations confirm idle capacity; this does not
+promise a finish time for running work.
 If an authoritative history read is temporarily unavailable or cannot yet be
-mapped unambiguously, JobCtrl says that the previous-run check will retry
+mapped unambiguously, JobCtrl says that the run record check will retry
 automatically.
 It does not present permanent missing tracking, infer completion from partial
 rows, or require a manual retry. Reconnecting to the exact history restores that
@@ -351,8 +380,15 @@ is delivered again and the durable receipt makes the replay harmless. Results
 excluded by a literal saved whole-title filter get a separate hashed receipt
 before acknowledgement. Accepted new/existing counts, filtered counts, and the
 run-wide new-job limit are therefore read from durable receipts, so a retry
-cannot lose progress or start the limit over. This intake admission remains
-separate from the later score and relevance decision.
+cannot lose progress or start the limit over. New bounded workflows freeze each
+source's result allowance in their plan and compare cumulative admissions with
+the absolute run limit. Canonical insertion, its admission receipt, search-unit
+acceptance and execution membership commit atomically. Archived captures use the
+same allowance; existing jobs consume none. Reaching one board's allowance closes
+only that board's remaining units, allowing other selected boards to continue.
+Disabling a board before a retry closes its frozen units without another provider
+request. This intake admission remains separate from the later score and
+relevance decision.
 
 Temporal retries reclaim only unfinished units with a newer activity-attempt
 fence. Retryable board errors resume from their checkpoint; an expired board
@@ -387,9 +423,11 @@ Saving Target search is sufficient to authorize those settings. Discovery execut
 
 Each location row uses only the work models checked in that row. Multiple checked models produce the board's remote and non-remote parameters as needed; a Remote row with no location searches without a place restriction. Invalid saved work-model controls block Discovery planning with an actionable settings error. They do not prevent fetching, scoring or reading saved sources.
 
-JobStreaming executes the saved title, location, remote and lookback parameters supported by each board. Provider support for location, remote and lookback filters varies by board. JobStreaming emits capability warnings, but JobCtrl currently does not display them. JobCtrl stores fetched listings under exact canonical identity and sends them to full-posting analysis and scoring. There is no separate intake model call, listing-decision queue or second search confirmation. Direct company ATS adapters may return a whole company feed; full-posting scoring assesses those jobs too.
+JobStreaming executes the saved title, location, remote and lookback parameters supported by each board. Provider support for location, remote and lookback filters varies by board. JobStreaming emits capability warnings, but JobCtrl currently does not display them. JobCtrl stores fetched listings under exact canonical identity and sends them to full-posting analysis and scoring. Those structured board and company-ATS results use no separate metadata-only intake model or second search confirmation. Direct company ATS adapters may return a whole company feed; full-posting scoring assesses those jobs too.
 
-Broad-board captures are durable before checkpoint acknowledgement and canonical ingestion is idempotent across retry. Limits, leases, source listing flags and literal exact-title exclusions remain mechanical. Historical intake captures and model receipts remain preserved. Each runnable source family recovers up to 100 unconsumed raw posting captures before fetching, using canonical ingestion, current literal exclusions and the remaining new-job limit. Successful ingestion marks a capture consumed; interruption retains it for an idempotent retry. The retired model status, preferences and envelope are never read.
+Smart Extract treats arbitrary-site cards as links to investigate. Before a link can create a Job, JobCtrl captures the individual posting and records model determinations for page identity, source-bound field extraction, the actual specific role title, description completeness, and compatibility with the saved location/work-model rows. A hiring announcement cannot become a role title merely because it appeared in a feed. The employer comes from the posting, never the source name or URL. Confirmed location mismatches stay outside Jobs with a recorded reason; uncertain identity, missing employer, incomplete content or unknown location compatibility stays in Manual Capture with its original card and determination references. The accepted full capture seeds the posting snapshot and enrichment without a second fetch. Model, spend or validation failures create no unverified Job. Explicit manual URL imports retain their separate user-requested intake behavior.
+
+Broad-board captures are durable before checkpoint acknowledgement and canonical ingestion is idempotent across retry. Limits, leases, source listing flags and literal exact-title exclusions remain mechanical. Historical intake captures and model receipts remain preserved. Each runnable source family recovers up to 100 unconsumed raw posting captures before fetching, using canonical ingestion, current literal exclusions and the remaining new-job limit. Successful ingestion marks a capture consumed; interruption retains it for an idempotent retry. The retired model status, preferences and envelope are never read. Archived Smart Extract cards go through the same current full-posting qualification before consumption; their old verdict cannot admit them. Recovery preserves newer accepted job content and deleted-job state.
 
 A structurally invalid archived capture stays stored with its safe failure code
 and a warning in Activity. It is excluded from automatic recovery so valid
@@ -408,9 +446,12 @@ Literal user-approved exact-title exclusions remain literal. Saved free-text cri
 After Discovery accepts a posting, the Discover preparation workflow turns it
 into one structured, inspectable reading of the employer's requirements,
 priorities, and ideal candidate. Each enabled provider first analyzes the
-posting independently. JobCtrl compares those drafts, records agreement and
-provider failures, and asks a ready provider to synthesize the surviving drafts
-into the canonical analysis used by scoring and tailoring.
+posting independently and receives source-bound verification. With one admitted
+provider, that verified draft becomes the canonical analysis used by scoring and
+tailoring without another rewrite. With multiple admitted providers, JobCtrl
+compares their drafts, records agreement and failures, and asks a ready provider
+to synthesize the surviving drafts. A partial failure retains that synthesis
+path. Canonical verification and requirement interpretation remain required.
 
 Choose the participating providers under **Settings → Model selection →
 Employer analysis perspectives**. This provider policy is a non-secret Settings

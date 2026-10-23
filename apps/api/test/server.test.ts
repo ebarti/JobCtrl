@@ -352,6 +352,7 @@ describe("local TypeScript API", () => {
       "tailoringGeneratorModels",
       "tailoringJudgeModel",
       "tailoringJudgeMinScore",
+      "resumeVoicePolish",
       "applyMaxBudgetUsd",
       "applyTimeoutSeconds",
     ]) {
@@ -10401,13 +10402,15 @@ describe("local TypeScript API", () => {
   it.skipIf(!SOURCE_PYTHON_RPC_AVAILABLE)(
     "rejects a real suggestion worker connected to a different same-version database",
     async () => {
-      const seedApp = buildApp(options);
+      const placeValidator = vi.fn(async (place: string) => place === "Barcelona");
+      const seedApp = buildApp({ ...options, placeValidator });
       const seeded = await seedApp.inject({
         method: "PATCH",
         url: "/v1/profile",
         payload: { profile: profileWithTargetSearch("API Database", "Barcelona", "Remote") },
       });
       expect(seeded.statusCode, seeded.body).toBe(200);
+      expect(placeValidator).toHaveBeenCalledWith("Barcelona");
       const version = seeded.json().profileVersion as number;
       await seedApp.close();
 
@@ -11146,6 +11149,86 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("records a terminal failed profile continuation once and permits newer revisions", async () => {
+    const db = new Database(options.dbPath);
+    const insert = db.prepare(
+      `INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json)
+       VALUES ('local', NULL, 1, NULL, 'ProfileUpdated', 'info', 'Synthetic profile update', ?, ?)`,
+    );
+    const firstId = Number(insert.run("2026-08-04T20:00:00.000Z", JSON.stringify({ changedSections: ["profile"] })).lastInsertRowid);
+    const secondId = Number(insert.run("2026-08-04T20:00:01.000Z", JSON.stringify({ changedSections: ["profile"] })).lastInsertRowid);
+    db.prepare(
+      `INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json, idempotency_key)
+       VALUES ('local', NULL, 1, NULL, 'ProfileContinuationDispatchIntended', 'info', 'Synthetic intent', ?, ?, ?)`,
+    ).run("2026-08-04T20:00:00.500Z", JSON.stringify({ sourceEventId: firstId }), `profile-continuation-dispatch-intended:${firstId}`);
+    db.close();
+    const rpc: JsonRpcDispatcher = {
+      call: vi.fn(async (_method, params) => ({
+        jsonrpc: "2.0" as const, id: 1,
+        result: params.reason === `profile_updated:${firstId}`
+          ? { runId: "run-failed", workflowId: "profile-failed", result: { stages_completed: ["score"], stages_failed: ["tailor"], failure: "Private synthetic failure", error_code: "missing_input" } }
+          : { runId: "run-newer", workflowId: "profile-newer", result: { stages_completed: ["score", "tailor", "cover"], stages_failed: [], failure: null, error_code: null } },
+      })),
+      close: vi.fn(async () => undefined),
+    };
+    const providerDispatcher: JsonRpcDispatcher = {
+      call: vi.fn(async () => ({ jsonrpc: "2.0" as const, id: 1, result: { capabilities: [], detectedBrowsers: [] } })),
+      close: vi.fn(async () => undefined),
+    };
+    const dispatch = createActionDispatcher(rpc);
+    const app = buildApp({ ...options, providerDispatcher, actionDispatcher: dispatch });
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    await vi.waitFor(() => {
+      const read = new Database(options.dbPath, { readonly: true });
+      try {
+        const failed = read.prepare("SELECT payload_json FROM job_events WHERE event_type = 'ProfileContinuationFailed'").all() as Array<{ payload_json: string }>;
+        expect(failed).toHaveLength(1);
+        expect(JSON.parse(failed[0]!.payload_json)).toEqual({ sourceEventId: firstId, status: "failed", runId: "run-failed", workflowId: "profile-failed", errorCode: "missing_input" });
+        const handled = read.prepare("SELECT json_extract(payload_json, '$.sourceEventId') AS source_id FROM job_events WHERE event_type = 'ProfileContinuationHandled'").all();
+        expect(handled).toEqual([{ source_id: secondId }]);
+      } finally { read.close(); }
+    });
+    expect(rpc.call).toHaveBeenCalledTimes(2);
+    await app.close();
+
+    const restarted = buildApp({ ...options, providerDispatcher, actionDispatcher: dispatch });
+    await restarted.listen({ host: "127.0.0.1", port: 0 });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(rpc.call).toHaveBeenCalledTimes(2);
+    await restarted.close();
+  });
+
+  it("keeps an uncertain failed profile dispatch pending for startup reattachment", async () => {
+    const db = new Database(options.dbPath);
+    const inserted = db.prepare(
+      `INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json)
+       VALUES ('local', NULL, 1, NULL, 'ProfileUpdated', 'info', 'Synthetic profile update', ?, ?)`,
+    ).run("2026-08-04T20:00:00.000Z", JSON.stringify({ changedSections: ["profile"] }));
+    db.close();
+    const dispatch = vi.fn<ActionDispatcher>()
+      .mockResolvedValueOnce({ status: "failed", message: "Synthetic transport failure" })
+      .mockResolvedValue({ status: "queued", runId: "reattached" });
+    const providerDispatcher: JsonRpcDispatcher = {
+      call: vi.fn(async () => ({ jsonrpc: "2.0" as const, id: 1, result: { capabilities: [], detectedBrowsers: [] } })),
+      close: vi.fn(async () => undefined),
+    };
+    const app = buildApp({ ...options, providerDispatcher, actionDispatcher: dispatch });
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1));
+    const read = new Database(options.dbPath, { readonly: true });
+    expect(read.prepare("SELECT COUNT(*) AS n FROM job_events WHERE event_type IN ('ProfileContinuationHandled', 'ProfileContinuationFailed')").get()).toEqual({ n: 0 });
+    read.close();
+    await app.close();
+    const restarted = buildApp({ ...options, providerDispatcher, actionDispatcher: dispatch });
+    await restarted.listen({ host: "127.0.0.1", port: 0 });
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(2));
+    expect(dispatch.mock.calls.map(([command]) => command.reason)).toEqual([
+      `profile_updated:${Number(inserted.lastInsertRowid)}`, `profile_updated:${Number(inserted.lastInsertRowid)}`,
+    ]);
+    await restarted.close();
+  });
+
   it("does not launch startup continuations before the health-only database exists", async () => {
     fs.rmSync(options.dbPath, { force: true });
     const providerCall = vi.fn<JsonRpcDispatcher["call"]>(async () => ({
@@ -11644,6 +11727,32 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("saves extra resume polish without probing unavailable model providers", async () => {
+    const call = vi.fn(async () => { throw new Error("Synthetic unavailable provider"); });
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const original = JSON.parse(fs.readFileSync(options.configPath, "utf8"));
+    for (const enabled of [true, false]) {
+      const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: { resumeVoicePolish: enabled } });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json()).toMatchObject({
+        settings: { resumeVoicePolish: enabled },
+        effectiveSettings: { resumeVoicePolish: { value: enabled, source: "persisted", activation: "next_workflow", editable: true } },
+      });
+      expect(JSON.parse(fs.readFileSync(options.configPath, "utf8"))).toEqual({ ...original, resume_voice_polish: enabled });
+    }
+    expect(call).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it.each([null, "true", 1])("rejects a non-boolean extra-polish update %s without writing", async (value) => {
+    const app = buildApp(options);
+    const before = fs.readFileSync(options.configPath, "utf8");
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: { resumeVoicePolish: value } });
+    expect(response.statusCode).toBe(400);
+    expect(fs.readFileSync(options.configPath, "utf8")).toBe(before);
+    await app.close();
+  });
+
   it("falls back to defaults when settings are missing", async () => {
     fs.rmSync(options.configPath);
     const app = buildApp(options);
@@ -11670,6 +11779,7 @@ describe("local TypeScript API", () => {
         analysisLegs: ["claude", "codex", "google"],
         tailoringGeneratorModels: null,
         tailoringJudgeModel: null,
+        resumeVoicePolish: false,
         applyMaxBudgetUsd: 5,
         applyTimeoutSeconds: 900,
         scoreCriteria: "",
@@ -11682,7 +11792,10 @@ describe("local TypeScript API", () => {
   });
 
   it("persists editable runtime settings", async () => {
-    const app = buildApp(options);
+    const app = buildApp({ ...options, providerDispatcher: {
+      call: vi.fn(async () => ({ jsonrpc: "2.0" as const, id: 1, result: providerModelsResult })),
+      close: vi.fn(async () => undefined),
+    } });
     const response = await app.inject({
       method: "PATCH",
       url: "/v1/settings",
@@ -11693,8 +11806,8 @@ describe("local TypeScript API", () => {
         dailyBudgetUsd: 19.75,
         laneTokenLimits: { scoring: 2500, tailoring: 5000 },
         analysisLegs: ["claude", "google"],
-        tailoringGeneratorModels: ["claude:sonnet", "codex:gpt-5.5"],
-        tailoringJudgeModel: "claude:opus",
+        tailoringGeneratorModels: ["codex:synthetic-model"],
+        tailoringJudgeModel: "default",
         applyMaxBudgetUsd: 7.5,
         applyTimeoutSeconds: 1200,
         scoreCriteria: "Prioritize platform security, DevSecOps, and leadership scope.",
@@ -11721,8 +11834,8 @@ describe("local TypeScript API", () => {
       daily_budget_usd: 19.75,
       lane_token_limits: { scoring: 2500, tailoring: 5000 },
       analysis_legs: ["claude", "google"],
-      tailoring_generator_models: ["claude:sonnet", "codex:gpt-5.5"],
-      tailoring_judge_model: "claude:opus",
+      tailoring_generator_models: ["codex:synthetic-model"],
+      tailoring_judge_model: "default",
       apply_max_budget_usd: 7.5,
       apply_timeout_seconds: 1200,
       score_criteria: "Prioritize platform security, DevSecOps, and leadership scope.",
@@ -12575,6 +12688,128 @@ describe("local TypeScript API", () => {
     expect(response.json().settings.preferredModels).toEqual({});
     expect(JSON.parse(fs.readFileSync(options.configPath, "utf8")).preferred_models).toEqual({});
     expect(call).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it.each([
+    { patch: { defaultLlmModel: "codex:unoffered" }, status: 400, error: "invalid_default_model" },
+    { patch: { defaultLlmModel: "claude:synthetic-model" }, status: 409, error: "provider_not_ready" },
+    { patch: { tailoringGeneratorModels: ["codex:synthetic-model", "codex:unoffered"] }, status: 400, error: "invalid_tailoring_model" },
+    { patch: { tailoringJudgeModel: "codex:unoffered", preferredModels: { codex: "synthetic-model" } }, status: 400, error: "invalid_tailoring_model" },
+    { patch: { tailoringGeneratorModels: ["claude:unoffered"] }, status: 409, error: "provider_not_ready" },
+    { patch: { tailoringJudgeModel: "claude:default" }, status: 409, error: "provider_not_ready" },
+    { patch: { tailoringJudgeModel: "unknown:unoffered" }, status: 400, error: "invalid_tailoring_model" },
+    { patch: { tailoringGeneratorModels: ["unoffered"] }, status: 400, error: "invalid_tailoring_model" },
+  ])("rejects unsupported material model choices atomically: $patch", async ({ patch, status, error }) => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({ jsonrpc: "2.0", id: 1, result: providerModelsResult }));
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const before = fs.readFileSync(options.configPath, "utf8");
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: { ...patch, dailyBudgetUsd: 17 } });
+    expect(response.statusCode, response.body).toBe(status);
+    expect(response.json().error).toBe(error);
+    expect(fs.readFileSync(options.configPath, "utf8")).toBe(before);
+    await app.close();
+  });
+
+  it("validates material and preferred choices against one current provider catalog", async () => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({ jsonrpc: "2.0", id: 1, result: providerModelsResult }));
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: {
+      defaultLlmModel: "synthetic-model",
+      tailoringGeneratorModels: ["default", "codex:synthetic-model"], tailoringJudgeModel: "codex:synthetic-model",
+      preferredModels: { codex: "synthetic-model" },
+    } });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().settings.defaultLlmModel).toBe("codex:synthetic-model");
+    expect(response.json().effectiveSettings.defaultLlmModel).toEqual({ value: "codex:synthetic-model", source: "persisted", activation: "next_workflow", editable: true });
+    expect(JSON.parse(fs.readFileSync(options.configPath, "utf8")).default_llm_model).toBe("codex:synthetic-model");
+    expect(response.json().settings).toMatchObject({ tailoringGeneratorModels: ["default", "codex:synthetic-model"], tailoringJudgeModel: "codex:synthetic-model" });
+    expect(call).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it.each(["high", "max"])("saves a current Codex effort and reads it back (%s)", async (effort) => {
+    const catalog = { providers: providerModelsResult.providers.map(provider => provider.provider === "codex" ? { ...provider, models: provider.models.map(model => ({ ...model, supportedReasoningEfforts: [{ reasoningEffort: "high" }, { reasoningEffort: "max" }] })) } : provider) };
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({ jsonrpc: "2.0", id: 1, result: catalog }));
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: { codexReasoningEfforts: { "synthetic-model": effort } } });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().settings.codexReasoningEfforts).toEqual({ "synthetic-model": effort });
+    expect(response.json().effectiveSettings.codexReasoningEfforts).toEqual({ value: { "synthetic-model": effort }, source: "persisted", activation: "next_workflow", editable: true });
+    expect(JSON.parse(fs.readFileSync(options.configPath, "utf8")).codex_reasoning_efforts).toEqual({ "synthetic-model": effort });
+    expect(call).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it.each([
+    { model: "synthetic-model", effort: "unoffered", ready: true, empty: false, status: 400 },
+    { model: "unoffered-model", effort: "high", ready: true, empty: false, status: 400 },
+    { model: "synthetic-model", effort: "high", ready: false, empty: false, status: 409 },
+    { model: "synthetic-model", effort: "high", ready: true, empty: true, status: 503 },
+  ])("rejects an unsupported effort atomically: $model/$effort ($status)", async ({ model, effort, ready, empty, status }) => {
+    const catalog = { providers: providerModelsResult.providers.map(provider => provider.provider === "codex" ? { ...provider, ready, models: empty || !ready ? [] : provider.models, ...(empty ? { message: "Catalog unavailable" } : {}) } : provider) };
+    const app = buildApp({ ...options, providerDispatcher: { call: vi.fn(async () => ({ jsonrpc: "2.0" as const, id: 1, result: catalog })), close: vi.fn(async () => undefined) } });
+    const before = fs.readFileSync(options.configPath, "utf8");
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: { codexReasoningEfforts: { [model]: effort }, dailyBudgetUsd: 17 } });
+    expect(response.statusCode, response.body).toBe(status);
+    expect(fs.readFileSync(options.configPath, "utf8")).toBe(before);
+    await app.close();
+  });
+
+  it("clears a saved effort offline without losing another model's choice", async () => {
+    fs.writeFileSync(options.configPath, JSON.stringify({ codex_reasoning_efforts: { "model-a": "high", "model-b": "max" } }));
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => { throw new Error("No catalog for offline clearing"); });
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: { codexReasoningEfforts: { "model-a": null } } });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().settings.codexReasoningEfforts).toEqual({ "model-b": "max" });
+    expect(call).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it("permits offline clearing and default material model selection", async () => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => { throw new Error("offline catalog"); });
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    for (const patch of [{ defaultLlmModel: null, tailoringGeneratorModels: ["default"], tailoringJudgeModel: null }, { defaultLlmModel: "default", tailoringGeneratorModels: null, tailoringJudgeModel: "default" }]) {
+      const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: patch });
+      expect(response.statusCode, response.body).toBe(200);
+    }
+    expect(call).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it.each([false, true])("binds a legacy bare material model only to a unique ready provider (ambiguous=%s)", async (ambiguous) => {
+    const app = buildApp({ ...options, providerDispatcher: {
+      call: vi.fn(async () => ({ jsonrpc: "2.0" as const, id: 1, result: {
+        providers: providerModelsResult.providers.map(provider => ambiguous && provider.provider === "google"
+          ? { ...provider, configured: true, ready: true, models: [{ id: "synthetic-model", displayName: "Synthetic model" }] } : provider),
+      } })),
+      close: vi.fn(async () => undefined),
+    } });
+    const before = fs.readFileSync(options.configPath, "utf8");
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: {
+      tailoringGeneratorModels: ["synthetic-model"], tailoringJudgeModel: "synthetic-model",
+    } });
+    expect(response.statusCode, response.body).toBe(ambiguous ? 400 : 200);
+    if (ambiguous) {
+      expect(response.json().error).toBe("invalid_tailoring_model");
+      expect(fs.readFileSync(options.configPath, "utf8")).toBe(before);
+    } else {
+      expect(response.json().settings).toMatchObject({ tailoringGeneratorModels: ["codex:synthetic-model"], tailoringJudgeModel: "codex:synthetic-model" });
+    }
+    await app.close();
+  });
+
+  it.each(["defaultLlmModel", "tailoringGeneratorModels", "tailoringJudgeModel", "bare"])("preserves settings when the %s live catalog fails", async (field) => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({ jsonrpc: "2.0", id: 1, result: {
+      providers: providerModelsResult.providers.map(provider => provider.provider === "codex" ? { ...provider, models: [], message: "private catalog failure" } : provider),
+    } }));
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const before = fs.readFileSync(options.configPath, "utf8");
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: field === "bare" ? { tailoringJudgeModel: "synthetic-model" } : { [field]: field === "tailoringGeneratorModels" ? ["codex:synthetic-model"] : "codex:synthetic-model" } });
+    expect(response.statusCode, response.body).toBe(503);
+    expect(response.body).not.toContain("private catalog failure");
+    expect(fs.readFileSync(options.configPath, "utf8")).toBe(before);
     await app.close();
   });
 
@@ -14110,7 +14345,7 @@ describe("enforcing route to registered worker handoffs", () => {
     } finally { fixture.mode("success"); fixture.retain("profile-serialization", observations); await app.close(); await fixture.adapter.close(); }
   });
 
-  it.each(["start_failure", "wait_failure", "invalid_result", "wrong_result_family", "invalid_ack", "invalid_envelope", "transport_failure", "stage_failure", "stage_failure_without_message"])("keeps %s pending and startup reattaches the deterministic identity", async (mode) => {
+  it.each(["start_failure", "wait_failure", "invalid_result", "wrong_result_family", "invalid_ack", "invalid_envelope", "transport_failure"])("keeps %s pending and startup reattaches the deterministic identity", async (mode) => {
     const fixture = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
     fixture.mode(mode === "transport_failure" ? "hold" : mode);
     const controls = rpcPreservationControls(true);
@@ -14122,8 +14357,13 @@ describe("enforcing route to registered worker handoffs", () => {
       expect(response.statusCode, response.body).toBe(200);
       await vi.waitFor(() => expect(fixture.rows().some(row => row.kind === "start")).toBe(true), { timeout: 10000 });
       const firstStart = fixture.rows().find(row => row.kind === "start");
-      if (mode === "transport_failure") await fixture.adapter.close();
-      if (mode === "start_failure" || mode === "wait_failure" || mode.startsWith("stage_failure")) await expect(dispatch.mock.results[0]!.value).resolves.toMatchObject({ status: "failed" });
+      if (mode === "transport_failure") {
+        // Disconnect after durable start, not between the attempted-start trace
+        // and the synthetic starter's registry write.
+        await vi.waitFor(() => expect(fixture.rows().some(row => row.kind === "waiting")).toBe(true), { timeout: 10000 });
+        await fixture.adapter.close();
+      }
+      if (mode === "start_failure" || mode === "wait_failure") await expect(dispatch.mock.results[0]!.value).resolves.toMatchObject({ status: "failed" });
       else await expect(dispatch.mock.results[0]!.value).rejects.toThrow();
       expect(rpcContinuationMarkers()).toEqual([]);
       const saved = (await app.inject({ method: "GET", url: "/v1/profile" })).json();
@@ -14154,6 +14394,45 @@ describe("enforcing route to registered worker handoffs", () => {
         observations.push({ restartedStart: starts.at(-1), settledMarkers: rpcContinuationMarkers(), preservation: controls });
       } finally { restarted.mode("success"); await restarted.adapter.close(); }
     } finally { fixture.retain("profile-restart-" + mode, observations); await app.close(); await fixture.adapter.close(); }
+  });
+
+  it.each(["stage_failure", "stage_failure_without_message"])("retains %s as a terminal failure without replaying it on startup", async (mode) => {
+    const fixture = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
+    fixture.mode(mode);
+    const controls = rpcPreservationControls(true);
+    const dispatch = vi.fn(createActionDispatcher(fixture.adapter));
+    let app = buildApp({ ...options, actionDispatcher: dispatch });
+    const failures = () => {
+      const db = new Database(options.dbPath, { readonly: true });
+      try {
+        return db.prepare("SELECT payload_json FROM job_events WHERE event_type = 'ProfileContinuationFailed'").all() as Array<{ payload_json: string }>;
+      } finally { db.close(); }
+    };
+    try {
+      const response = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: validProfileFixture("Saved Through Terminal Failure") } });
+      expect(response.statusCode, response.body).toBe(200);
+      await vi.waitFor(() => expect(failures()).toHaveLength(1), { timeout: 10000 });
+      await expect(dispatch.mock.results[0]!.value).resolves.toMatchObject({ status: "failed", completedWorkflowFailure: { errorCode: mode === "stage_failure" ? "synthetic" : "workflow_stage_failed" } });
+      const firstFailure = failures();
+      const failed = JSON.parse(firstFailure[0]!.payload_json);
+      expect(failed).toMatchObject({ status: "failed", workflowId: fixture.rows().find(row => row.kind === "start")?.workflowId });
+      expect(rpcContinuationMarkers()).toEqual([]);
+      expect(rpcPreservationControls()).toEqual(controls);
+      await app.close();
+      await fixture.adapter.close();
+      const restarted = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
+      const priorRequests = restarted.rows().filter(row => row.kind === "request").length;
+      app = buildApp({ ...options, actionDispatcher: createActionDispatcher(restarted.adapter) });
+      try {
+        await app.listen({ host: "127.0.0.1", port: 0 });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(restarted.rows().filter(row => row.kind === "request")).toHaveLength(priorRequests);
+        expect(failures()).toEqual(firstFailure);
+        expect(rpcContinuationMarkers()).toEqual([]);
+        expect(rpcPreservationControls()).toEqual(controls);
+      } finally { await restarted.adapter.close(); }
+    } finally { fixture.retain("profile-terminal-" + mode, failures()); await app.close(); await fixture.adapter.close(); }
   });
 });
 

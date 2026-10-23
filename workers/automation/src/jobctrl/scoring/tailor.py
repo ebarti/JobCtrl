@@ -157,20 +157,29 @@ def _build_analyze_use_case(
 
 
 def _build_voice_port():
-    """Construct the optional Claude voice pass only when provider auth is ready.
-
-    Mirrors ``_build_analyze_use_case``'s SDK wiring: the voice pass is a NEW AI
-    transform, so it runs through the Claude Agent SDK behind the ``VoicePort``
-    seam, not the legacy httpx client (the all-new-AI-via-SDK directive).
-    """
+    """Honor a saved core route; retain the legacy optional Claude default."""
     from jobctrl.infrastructure.setup_probes import probe_claude_auth
+    from jobctrl.infrastructure.llm.provider_availability import provider_route_available
+    from jobctrl.infrastructure.scoring.criteria_provider import read_default_llm_model, read_preferred_model
+
+    if read_default_llm_model():
+        from jobctrl.infrastructure.llm import get_llm_adapter
+        from jobctrl.infrastructure.materials.voice_adapter import LlmVoiceAdapter
+
+        llm = get_llm_adapter()
+        if not provider_route_available(llm.provider_id, llm.model):
+            return None
+        return LlmVoiceAdapter(llm=llm, provider_id=llm.provider_id, model=llm.model)
 
     if not probe_claude_auth().ok:
         return None
 
-    from jobctrl.infrastructure.materials.voice_adapter import ClaudeVoiceAdapter
+    from jobctrl.infrastructure.materials.voice_adapter import CLAUDE_VOICE_MODEL, ClaudeVoiceAdapter
 
-    return ClaudeVoiceAdapter()
+    selected_model = read_preferred_model("claude") or CLAUDE_VOICE_MODEL
+    if not provider_route_available("claude", selected_model):
+        return None
+    return ClaudeVoiceAdapter(model=selected_model)
 
 
 def _build_use_case(
@@ -183,6 +192,7 @@ def _build_use_case(
     claim_verifier=None,
     quality_judge=None,
     job_interpreter=None,
+    evidence_selector=None,
     preflight=None,
     assembler: ResumeAssembler | None = None,
     llm_policy: TailoringLlmPolicy | None = None,
@@ -225,28 +235,46 @@ def _build_use_case(
         llm_policy = _build_llm_policy()
     if analyze_use_case is None:
         analyze_use_case = _build_analyze_use_case(conn=conn, tenant_id=tenant_id, publisher=publisher)
+    voice_skip_reason = "no_voice_port"
     if voice is None:
-        voice = _build_voice_port()
+        if config.get_resume_voice_polish_enabled():
+            voice = _build_voice_port()
+        else:
+            voice_skip_reason = "optional_voice_polish_disabled"
     if pdf_renderer is None:
         pdf_renderer = _build_pdf_renderer()
     from jobctrl.infrastructure.determinations import determination_dependencies
     from jobctrl.domain.materials.claim_verification import ModelClaimVerifier
 
     deps = determination_dependencies(conn, tenant_id=tenant_id, lane="tailoring", adapter=llm_port)
+    review_deps = deps
+    if (claim_verifier is None or quality_judge is None) and llm_policy.effective_judge_model != DEFAULT_PIPELINE_LLM_MODEL_SPEC:
+        review_deps = determination_dependencies(
+            conn, tenant_id=tenant_id, lane="tailoring", model_spec=llm_policy.effective_judge_model,
+        )
     from jobctrl.domain.materials.artifact_quality import ModelArtifactQualityJudge
+    from jobctrl.domain.materials.evidence_selection import DeferredMaterialEvidenceSelector, ModelMaterialEvidenceSelector
     from jobctrl.infrastructure.enrichment.interpretation import PersistedJobInterpreter
+
+    def build_evidence_selector():
+        primary = llm_policy.effective_candidate_models[0]
+        selection_deps = deps if primary == DEFAULT_PIPELINE_LLM_MODEL_SPEC else determination_dependencies(
+            conn, tenant_id=tenant_id, lane="tailoring", model_spec=primary,
+        )
+        return ModelMaterialEvidenceSelector(**selection_deps)
 
     return TailorResumeUseCase(
         repository=repository,
         llm=llm_port,
         validator=validator,
-        claim_verifier=claim_verifier if claim_verifier is not None else ModelClaimVerifier(**deps),
+        claim_verifier=claim_verifier if claim_verifier is not None else ModelClaimVerifier(**review_deps),
         preflight=preflight if preflight is not None else deps["preflight"],
         assembler=assembler,
         job_interpreter=job_interpreter
         if job_interpreter is not None
         else PersistedJobInterpreter(conn, tenant_id=tenant_id),
-        quality_judge=quality_judge if quality_judge is not None else ModelArtifactQualityJudge(**deps),
+        quality_judge=quality_judge if quality_judge is not None else ModelArtifactQualityJudge(**review_deps),
+        evidence_selector=evidence_selector if evidence_selector is not None else DeferredMaterialEvidenceSelector(build_evidence_selector),
         publisher=publisher,
         llm_policy=llm_policy,
         artifact_writer=artifact_writer if artifact_writer is not None else LocalArtifactTextWriter(),
@@ -255,6 +283,7 @@ def _build_use_case(
         requirement_fit_repository=requirement_fit_repository,
         analyze_use_case=analyze_use_case,
         voice=voice,
+        voice_skip_reason=voice_skip_reason,
         pdf_renderer=pdf_renderer,
         unit_of_work=unit_of_work if default_flip_repositories else None,
     )
@@ -354,6 +383,7 @@ def _tailor_one_job(
     pdf_renderer: PdfRendererPort | None = None,
     retailor: bool = False,
     suppress_existing_artifacts: bool = False,
+    allow_low_fit_override: bool = False,
     tenant_id: TenantId = LOCAL_TENANT,
     llm_policy: TailoringLlmPolicy | None = None,
     commit_guard=None,
@@ -389,6 +419,7 @@ def _tailor_one_job(
         tenant_id=tenant_id,
         retailor=retailor,
         suppress_existing_artifacts=suppress_existing_artifacts,
+        allow_low_fit_override=allow_low_fit_override,
         requirement_fit_report=requirement_fit_report,
         commit_guard=commit_guard,
         audit_execution_id=audit_execution_id,
@@ -639,6 +670,7 @@ def tailor_job_by_id(
     llm_policy: TailoringLlmPolicy | None = None,
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
+    explicit_material_request: bool = True,
     workflow_id: str | None = None,
     cancel_event: threading.Event | None = None,
     recovery_workflow_id: str | None = None,
@@ -654,6 +686,13 @@ def tailor_job_by_id(
         raise RuntimeError("tailor activity canceled before dispatch")
     stable_job_id = canonical_job_id(str(job_id))
     conn = get_connection()
+    from jobctrl.infrastructure.materials.manual_decline import material_request_declined
+
+    if material_request_declined(
+        conn, tenant_id=tenant_id, job_id=stable_job_id, stage="tailor",
+        explicit_material_request=explicit_material_request, workflow_id=workflow_id,
+    ):
+        return {"job_id": str(stable_job_id), "status": "skipped", "reason": "manual_apply_decline"}
     if recovery_workflow_id and not owns_preparation_reservation(
         conn,
         tenant_id=tenant_id,
@@ -782,6 +821,11 @@ def tailor_job_by_id(
         cancel_event=cancel_event,
         expected_posting_url=expected_posting_url,
     ):
+        if material_request_declined(
+            conn, tenant_id=tenant_id, job_id=stable_job_id, stage="tailor",
+            explicit_material_request=explicit_material_request, workflow_id=workflow_id,
+        ):
+            return {"job_id": str(stable_job_id), "status": "skipped", "reason": "manual_apply_decline"}
         job = target_reader.load(tenant_id, stable_job_id)
     if job is None:
         return {"job_id": str(stable_job_id), "status": "skipped", "reason": "availability_candidate_changed"}
@@ -815,6 +859,11 @@ def tailor_job_by_id(
         cancel_event=cancel_event,
         expected_posting_url=expected_posting_url,
     ):
+        if material_request_declined(
+            conn, tenant_id=tenant_id, job_id=stable_job_id, stage="tailor",
+            explicit_material_request=explicit_material_request, workflow_id=workflow_id,
+        ):
+            return {"job_id": str(stable_job_id), "status": "skipped", "reason": "manual_apply_decline"}
         ensure_job_stage_rows(
             conn,
             stable_job_id,
@@ -880,6 +929,7 @@ def tailor_job_by_id(
             pdf_renderer=pdf_renderer,
             retailor=retailor,
             suppress_existing_artifacts=suppress_existing_artifacts,
+            allow_low_fit_override=allow_low_fit_override,
             tenant_id=tenant_id,
             llm_policy=llm_policy,
             commit_guard=commit_guard,

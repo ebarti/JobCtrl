@@ -19,6 +19,7 @@ from temporalio.exceptions import ActivityError, ApplicationError
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 
 with workflow.unsafe.imports_passed_through():
+    from jobctrl.infrastructure.temporal.control import execute_control_activity
     from jobctrl.apply.activities import (
         ApplyActivityInput,
         ApplyActivityOutput,
@@ -100,7 +101,7 @@ class ApplyWorkflow:
         # record here (Temporal cancels newly-scheduled activities during
         # cancellation); the describe-reconciler terminalizes WorkflowCanceled.
         try:
-            await workflow.execute_activity(
+            await execute_control_activity(
                 check_spend_budget,
                 SpendBudgetInput(tenant_id=payload.tenant_id, lane="apply"),
                 start_to_close_timeout=timedelta(seconds=30),

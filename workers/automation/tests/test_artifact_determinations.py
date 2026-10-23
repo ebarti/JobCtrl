@@ -154,6 +154,40 @@ def ports(conn, model, preflight=lambda: None, lane="tailoring"):
     return ModelClaimVerifier(**deps), ModelArtifactQualityJudge(**deps)
 
 
+@pytest.mark.parametrize("admitted", [False, True])
+def test_quality_correction_requires_revision_authority_even_when_source_exists(admitted):
+    class CorrectionModel(Model):
+        def chat_json(self, messages, *, response_schema, **kwargs):
+            result = super().chat_json(messages, response_schema=response_schema, **kwargs)
+            result.update(
+                verdict="fail",
+                evidence_corrections=[{"source_id": "addition", "quote": "Saved additional fact", "exact_values": []}],
+            )
+            return result
+
+    conn, model = connection(), CorrectionModel()
+    _, judge = ports(conn, model)
+    allowed = ["current", "addition"] if admitted else ["current"]
+    kwargs = dict(
+        artifact_kind="resume", entity_id="owned",
+        lines=[ArtifactLine(line_id="owned", text="Owned current line", allowed_evidence_ids=allowed, allowed_requirement_ids=[])],
+        sources=[Source(source_id="current", text="Current fact"), Source(source_id="addition", text="Saved additional fact")],
+        rubric={},
+    )
+    if admitted:
+        result, _ = judge.judge(**kwargs)
+        assert result.verdict == "fail"
+        assert len(model.calls) == 1
+    else:
+        with pytest.raises(DeterminationFailure, match="foreign_source_id") as error:
+            judge.judge(**kwargs)
+        assert error.value.repair_context["allowed_evidence_correction_ids"] == ["current"]
+        assert len(model.calls) == 3
+        assert conn.execute("SELECT COUNT(*) FROM semantic_determinations").fetchone()[0] == 0
+    supplied = json.loads(model.calls[0][2][1].content)
+    assert supplied["context"]["allowed_evidence_correction_ids"] == sorted(allowed)
+
+
 @pytest.mark.parametrize("artifact_kind", ["resume", "cover_letter", "outreach", "employer_analysis"])
 def test_same_text_opposite_verdicts_control_each_artifact_kind(artifact_kind):
     outcomes = []
@@ -182,7 +216,7 @@ def test_same_text_opposite_verdicts_control_each_artifact_kind(artifact_kind):
     assert outcomes == ["pass", "fail"]
 
 
-def cover_case(conn, model, preflight=lambda: None):
+def cover_case(conn, model, preflight=lambda: None, *, retries=0):
     verifier, quality = ports(conn, model, preflight)
     return GenerateCoverLetterUseCase(
         repository=SqliteMaterialsRepository(conn),
@@ -191,7 +225,7 @@ def cover_case(conn, model, preflight=lambda: None):
         quality_judge=quality,
         preflight=preflight,
         validator=ContentValidator(),
-        max_retries=0,
+        max_retries=retries,
     )
 
 
@@ -277,6 +311,64 @@ def test_cover_budget_preflight_precedes_generation_and_uses_lane(tmp_path):
     assert model.calls == []
 
 
+
+@pytest.mark.parametrize("verdict", ["pass", "fail"])
+@pytest.mark.parametrize("source_value,claim_value", [("12345", "12345"), ("1,234.50", "1234.5")])
+def test_sentence_final_numeric_evidence_does_not_override_a_valid_model_verdict(verdict, source_value, claim_value):
+    conn = connection()
+    model = _SentenceNumberModel(verdict, f"Recorded {source_value}.", f"Recorded {claim_value}; verified.")
+    verifier, _ = ports(conn, model)
+    result, envelope = verifier.verify(
+        artifact_kind="resume", entity_id="owned-sentence-number",
+        lines=[ArtifactLine(line_id="line", text=model.claim, allowed_evidence_ids=["fact"], allowed_requirement_ids=[])],
+        evidence=[Source(source_id="fact", text=model.source)], requirements=[], rubric={},
+    )
+    assert result.verdict == envelope.result["verdict"] == verdict
+    assert len(model.calls) == 1
+    assert SqliteDeterminationRepository(conn).find("local", envelope.determination_id).result == result.model_dump()
+
+
+def test_sentence_final_numeric_claim_cannot_hide_a_different_value_and_preserves_accepted_review():
+    conn = connection()
+    model = _SentenceNumberModel("pass", "Recorded 12345.", "Recorded 12345.")
+    verifier, _ = ports(conn, model)
+    arguments = dict(
+        artifact_kind="resume", entity_id="owned-sentence-number",
+        lines=[ArtifactLine(line_id="line", text=model.claim, allowed_evidence_ids=["fact"], allowed_requirement_ids=[])],
+        evidence=[Source(source_id="fact", text=model.source)], requirements=[], rubric={},
+    )
+    _, accepted = verifier.verify(**arguments)
+    model.claim = "Recorded 12346."
+    arguments["lines"] = [
+        ArtifactLine(line_id="line", text=model.claim, allowed_evidence_ids=["fact"], allowed_requirement_ids=[]),
+    ]
+    with pytest.raises(DeterminationFailure, match="mismatched_value"):
+        verifier.verify(**arguments)
+    assert len(model.calls) == 4  # Accepted call, then the existing three-call correction budget.
+    repository = SqliteDeterminationRepository(conn)
+    assert repository.find("local", accepted.determination_id) == accepted
+    assert conn.execute("SELECT COUNT(*) FROM semantic_determinations").fetchone()[0] == 1
+
+
+class _SentenceNumberModel:
+    def __init__(self, verdict, source, claim):
+        self.verdict, self.source, self.claim, self.calls = verdict, source, claim, []
+
+    def chat_json(self, messages, **kwargs):
+        self.calls.append(messages)
+        evidence = {"source_id": "fact", "quote": self.source, "exact_values": []}
+        return {
+            "verdict": self.verdict, "rationale": "Synthetic model decision", "lines": [{
+                "line_id": "line", "verdict": self.verdict, "source_evidence": [evidence],
+                "served_requirements": [], "findings": [], "claims": [{
+                    "kind": "candidate_fact", "support": "supported",
+                    "text": {"source_id": "line:line", "quote": self.claim, "exact_values": []},
+                    "evidence": [evidence], "rationale": "Synthetic model support decision",
+                }],
+            }],
+        }
+
+
 def test_supported_numeric_claim_cannot_borrow_values_from_another_source():
     conn = connection()
 
@@ -317,3 +409,61 @@ def test_supported_numeric_claim_cannot_borrow_values_from_another_source():
             requirements=[],
             rubric={},
         )
+
+
+@pytest.mark.parametrize("kind,expected_calls", [("candidate_fact", 2), ("advice", 1)])
+def test_supported_candidate_citation_must_be_in_its_declared_contributions(kind, expected_calls):
+    class ContributionModel:
+        calls = 0
+
+        def chat_json(self, messages, **kwargs):
+            self.calls += 1
+            fact = {"source_id": "fact", "quote": "3 units", "exact_values": []}
+            return {"verdict": "pass", "rationale": "Synthetic model decision", "lines": [{
+                "line_id": "line", "verdict": "pass", "served_requirements": [], "findings": [],
+                "source_evidence": [fact] if self.calls > 1 else [],
+                "claims": [{"kind": kind, "support": "supported", "rationale": "Synthetic reason",
+                            "text": {"source_id": "line:line", "quote": "3 units", "exact_values": []},
+                            "evidence": [fact]}],
+            }]}
+
+    conn, model = connection(), ContributionModel()
+    verifier, _ = ports(conn, model)
+    result, _ = verifier.verify(
+        artifact_kind="resume", entity_id="owned",
+        lines=[ArtifactLine(line_id="line", text="3 units", allowed_evidence_ids=["fact"], allowed_requirement_ids=[])],
+        evidence=[Source(source_id="fact", text="3 units")], requirements=[], rubric={},
+    )
+    assert result.verdict == "pass"
+    assert model.calls == expected_calls
+
+
+@pytest.mark.parametrize("persona", [False, True])
+def test_quality_and_persona_finding_slots_repair_without_overriding_a_failed_verdict(persona):
+    class FindingModel(Model):
+        def chat_json(self, messages, *, response_schema, **kwargs):
+            result = super().chat_json(messages, response_schema=response_schema, **kwargs)
+            data = json.loads(messages[1].content)
+            assert data["context"]["line_ids"] == ["owned:line"]
+            result["verdict"] = "fail"
+            target = result["personas"][0] if persona else result
+            target["verdict"] = "fail"
+            target["findings"] = [{
+                "line_id": "owned:line", "category": "clarity",
+                "citation": {"source_id": "source:1" if len(self.calls) == 1 else "line:owned:line",
+                             "quote": "Synthetic text", "exact_values": []},
+                "rationale": "Synthetic model rejection", "repair_instruction": "Synthetic repair",
+            }]
+            return result
+
+    conn, model = connection(), FindingModel()
+    _, judge = ports(conn, model)
+    kwargs = dict(entity_id="owned", lines=[ArtifactLine(
+        line_id="owned:line", text="Synthetic text", allowed_evidence_ids=["source:1"], allowed_requirement_ids=[],
+    )], sources=[Source(source_id="source:1", text="Synthetic text")], rubric={})
+    result, _ = judge.review_adversarial(**kwargs) if persona else judge.judge(artifact_kind="resume", **kwargs)
+    assert result.verdict == "fail"
+    assert len(model.calls) == 2
+    feedback = json.loads(model.calls[1][2][-1].content.split("\n", 1)[1])["binding_failure"]
+    assert feedback["finding"]["citation"]["source_id"] == "source:1"
+    assert feedback["expected_citation_source_id"] == "line:owned:line"

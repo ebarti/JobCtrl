@@ -23,6 +23,7 @@ import { jobsSearchSchema } from "../../routes/-jobs.search.js";
 import { server } from "../../test/msw/server.js";
 import { buildProviderHarness } from "../../test/render.js";
 import {
+  blockedRequirementFitReport,
   populatedEmployerAnalysis,
   populatedRequirementFitReport,
 } from "../../test/fixtures/materials-inspector.js";
@@ -82,10 +83,33 @@ function renderJobDetailDrawer(jobId: string) {
   };
 }
 
+async function expandDetailSections() {
+  fireEvent.click(await screen.findByRole("button", { name: "Sections" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Expand all" }));
+}
+
 describe("<JobDetailDrawer>", () => {
+  it("shows requirement coverage and the recorded blocker beside a capped score with sections collapsed", async () => {
+    server.use(http.get("*/v1/jobs/:jobKey", () => HttpResponse.json(makeJobDetail(
+      { ...sampleJob, jobKey: "job-1", scoreVersion: 4, fitScore: 4 },
+      { requirementFitReport: blockedRequirementFitReport },
+    ))));
+    const user = userEvent.setup();
+    renderJobDetailDrawer("job-1");
+    const context = await screen.findByRole("note", { name: "Requirement score context" });
+    expect(context).toBeVisible();
+    expect(context).toHaveTextContent("80% weighted requirement coverage");
+    expect(context).toHaveTextContent("The posting requires a current clearance.");
+    expect(context).toHaveTextContent("caps scores with blocked requirements at 4/10");
+    expect(screen.getByRole("button", { name: /01 · Description/ })).toHaveAttribute("aria-expanded", "false");
+    await user.click(screen.getByRole("button", { name: "Help for Fit score" }));
+    expect(await screen.findByRole("dialog", { name: "Fit score explanation" })).toHaveTextContent(context.textContent!);
+  });
+
   it("keeps a score-correction draft mounted across collapse and detail refetch", async () => {
     const user = userEvent.setup();
     const { queryClient } = renderJobDetailDrawer("job-1");
+    await expandDetailSections();
     const fitSection = await waitFor(() => {
       const section = document.getElementById("job-detail-fit-evidence");
       expect(section).not.toBeNull();
@@ -94,7 +118,7 @@ describe("<JobDetailDrawer>", () => {
     await user.click(within(fitSection).getByText("Score evidence and controls"));
     const reason = within(fitSection).getByRole("textbox", { name: "Reason" });
     await user.type(reason, "Keep this local draft");
-    const trigger = within(fitSection).getByRole("button", { name: /01 · Fit & evidence/ });
+    const trigger = within(fitSection).getByRole("button", { name: /02 · Fit & evidence/ });
     await user.click(trigger);
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     expect(reason).toBeInTheDocument();
@@ -112,6 +136,7 @@ describe("<JobDetailDrawer>", () => {
       ),
     );
     renderJobDetailDrawer("https://example.com/jobs/1");
+    await expandDetailSections();
 
     await screen.findByRole("heading", { name: "Artifacts" });
     for (const label of [
@@ -147,6 +172,7 @@ describe("<JobDetailDrawer>", () => {
       ),
     );
     renderJobDetailDrawer("https://example.com/jobs/corrected");
+    await expandDetailSections();
 
     expect(await screen.findByText("9/10")).toBeInTheDocument();
     expect(screen.getByText("stretch")).toBeInTheDocument();
@@ -194,6 +220,7 @@ describe("<JobDetailDrawer>", () => {
     );
 
     renderJobDetailDrawer("https://example.com/jobs/1");
+    await expandDetailSections();
 
     const section = (await screen.findByRole("heading", { name: "Artifacts" })).closest("section");
     expect(section).not.toBeNull();
@@ -238,6 +265,7 @@ describe("<JobDetailDrawer>", () => {
     );
 
     renderJobDetailDrawer("https://example.com/jobs/1");
+    await expandDetailSections();
 
     const section = (await screen.findByRole("heading", { name: "Artifacts" })).closest("section");
     expect(section).not.toBeNull();
@@ -367,6 +395,7 @@ describe("<JobDetailDrawer>", () => {
     );
 
     renderJobDetailDrawer("job-source-conflict");
+    await expandDetailSections();
 
     const compensation = await screen.findByRole("region", {
       name: "Compensation evidence",
@@ -455,6 +484,7 @@ describe("<JobDetailDrawer>", () => {
     );
 
     renderJobDetailDrawer("https://example.com/jobs/1");
+    await expandDetailSections();
 
     await screen.findByRole("region", { name: "Compensation evidence" });
     expect(
@@ -563,6 +593,24 @@ describe("<JobDetailDrawer>", () => {
     );
 
     renderJobDetailDrawer("https://example.com/jobs/1");
+    const initialWorkspace = await screen.findByRole("article", { name: "Job details" });
+    const initialSections = initialWorkspace.querySelectorAll(".job-detail-major-section");
+    expect(initialSections[0]).toHaveAttribute("id", "job-detail-description");
+    expect(within(initialSections[0] as HTMLElement).getByRole("button", { name: /01 · Description/ })).toHaveAttribute("aria-expanded", "false");
+    for (const section of initialSections) {
+      expect(section.querySelector("[data-slot='collapsible-trigger']")).toHaveAttribute("aria-expanded", "false");
+    }
+    fireEvent.click(within(initialWorkspace).getByRole("button", { name: "Sections" }));
+    const initialMenu = await screen.findByRole("navigation", { name: "Job detail sections" });
+    for (const button of within(initialMenu).getAllByRole("button")) {
+      expect(button).toHaveAttribute("aria-expanded", "false");
+    }
+    fireEvent.click(within(initialMenu).getByRole("button", { name: "Description" }));
+    const descriptionTrigger = within(initialSections[0] as HTMLElement).getByRole("button", { name: /01 · Description/ });
+    await waitFor(() => expect(descriptionTrigger).toHaveFocus());
+    expect(descriptionTrigger).toHaveAttribute("aria-expanded", "true");
+    expect(initialWorkspace.querySelectorAll(".job-detail-major-section > .configuration-section__header [aria-expanded='true']")).toHaveLength(1);
+    await expandDetailSections();
 
     const triage = await screen.findByRole("region", {
       name: "Job audit triage",
@@ -584,12 +632,12 @@ describe("<JobDetailDrawer>", () => {
     fireEvent.click(sectionsTrigger);
     const sectionsMenu = await screen.findByRole("navigation", { name: "Job detail sections" });
     expect(within(sectionsMenu).getAllByRole("button").map((button) => button.textContent)).toEqual([
-      "Fit & evidence", "Preparation diagnostics", "Artifacts", "Compensation", "Locale variants",
-      "Description", "Role Analysis", "Screening answers", "Interview prep", "Apply history",
+      "Description", "Fit & evidence", "Preparation diagnostics", "Artifacts", "Compensation",
+      "Locale variants", "Role Analysis", "Screening answers", "Interview prep", "Apply history",
       "Application outcomes", "Contacts", "Audit history",
     ]);
     fireEvent.click(within(sectionsMenu).getByRole("button", { name: "Artifacts" }));
-    expect(within(workspace.querySelector("#job-detail-artifacts") as HTMLElement).getByRole("button", { name: /03 · Artifacts/ })).toHaveAttribute("aria-expanded", "true");
+    expect(within(workspace.querySelector("#job-detail-artifacts") as HTMLElement).getByRole("button", { name: /04 · Artifacts/ })).toHaveAttribute("aria-expanded", "true");
     const commandTrigger = within(workspace).getByRole("button", {
       name: "More job actions",
     });
@@ -752,7 +800,7 @@ describe("<JobDetailDrawer>", () => {
     expect(description).not.toBeNull();
     expect(description).toHaveClass("job-detail-description");
     expect(
-      triage.compareDocumentPosition(description as HTMLElement) &
+      (description as HTMLElement).compareDocumentPosition(triage) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
@@ -826,6 +874,7 @@ describe("<JobDetailDrawer>", () => {
     );
 
     renderJobDetailDrawer("https://example.com/jobs/compensation");
+    await expandDetailSections();
 
     const compensation = await screen.findByRole("region", {
       name: "Compensation evidence",
@@ -1110,6 +1159,7 @@ describe("<JobDetailDrawer>", () => {
     );
 
     renderJobDetailDrawer("job-privacy-director");
+    await expandDetailSections();
 
     const compensation = await screen.findByRole("region", {
       name: "Compensation evidence",
@@ -1206,6 +1256,7 @@ describe("<JobDetailDrawer>", () => {
     );
 
     renderJobDetailDrawer("https://example.com/jobs/1");
+    await expandDetailSections();
 
     const requirement = await screen.findByRole("article", {
       name: "Requirement: Lead platform reliability programs across multiple teams",
@@ -1264,6 +1315,7 @@ describe("<JobDetailDrawer>", () => {
     );
 
     renderJobDetailDrawer("https://example.com/jobs/legacy-fit");
+    await expandDetailSections();
 
     const callout = await screen.findByRole("region", {
       name: "Requirement fit not assessed",
@@ -1321,6 +1373,7 @@ describe("<JobDetailDrawer>", () => {
       ),
     );
     renderJobDetailDrawer("https://example.com/jobs/outdated-fit");
+    await expandDetailSections();
     const callout = await screen.findByRole("region", { name: "Requirement fit is outdated" });
     expect(within(callout).getByText(/different employer-analysis generation or score version/i)).toBeInTheDocument();
     expect(within(callout).getByRole("button", { name: "re-score requirement fit" })).toBeInTheDocument();
@@ -1346,6 +1399,7 @@ describe("<JobDetailDrawer>", () => {
       ),
     );
     renderJobDetailDrawer("https://example.com/jobs/corrected-score");
+    await expandDetailSections();
     const callout = await screen.findByRole("region", { name: "Requirement fit is outdated" });
     expect(within(callout).getByText(/different employer-analysis generation or score version/i)).toBeInTheDocument();
     expect(within(callout).queryByText(/earlier employer analysis/i)).not.toBeInTheDocument();
@@ -1381,6 +1435,7 @@ describe("<JobDetailDrawer>", () => {
       }),
     );
     renderJobDetailDrawer(jobUrl);
+    await expandDetailSections();
     const callout = await screen.findByRole("region", { name: "Application target refresh" });
     expect(within(callout).getByText(/saved description, score, and materials stay available/i)).toBeInTheDocument();
     await user.click(within(callout).getByRole("button", { name: "Refresh application target" }));
@@ -1405,6 +1460,7 @@ describe("<JobDetailDrawer>", () => {
       }),
     );
     renderJobDetailDrawer("https://m.linkedin.com/jobs/view/synthetic-mobile");
+    await expandDetailSections();
     await screen.findByRole("article", { name: "Job details" });
     expect(screen.queryByRole("button", { name: "Refresh application target" })).not.toBeInTheDocument();
   });
@@ -1412,6 +1468,7 @@ describe("<JobDetailDrawer>", () => {
   it("returns to the jobs list from the route-level workspace", async () => {
     const user = userEvent.setup();
     const { container, router } = renderJobDetailDrawer("job-1");
+    await expandDetailSections();
 
     await waitFor(() =>
       expect(
@@ -1429,6 +1486,7 @@ describe("<JobDetailDrawer>", () => {
   it("renders user-facing audit history as the collapsed final drawer section", async () => {
     const user = userEvent.setup();
     renderJobDetailDrawer("job-1");
+    await expandDetailSections();
 
     const auditSummary = await screen.findByText("Technical details");
     const auditDisclosure = auditSummary.closest("details");
@@ -1441,7 +1499,7 @@ describe("<JobDetailDrawer>", () => {
     expect(sections).toHaveLength(13);
     expect(sections.at(-1)).toContainElement(auditDisclosure);
     expect(sections.at(-1)).toHaveTextContent("Technical details");
-    expect(sections[3]).toHaveTextContent("Compensation");
+    expect(sections[4]).toHaveTextContent("Compensation");
     expect(workspace.querySelector("#job-detail-description")).toHaveTextContent("Description");
 
     await user.click(auditSummary);
@@ -1494,6 +1552,7 @@ describe("<JobDetailDrawer>", () => {
     );
 
     renderJobDetailDrawer("https://example.com/jobs/1");
+    await expandDetailSections();
 
     await screen.findByText(sampleJob.title);
     const workspace = screen.getByRole("article", { name: "Job details" });
@@ -1556,6 +1615,7 @@ describe("<JobDetailDrawer>", () => {
     );
 
     renderJobDetailDrawer("https://example.com/jobs/1");
+    await expandDetailSections();
 
     await user.click(
       await screen.findByRole("button", { name: "More job actions" }),

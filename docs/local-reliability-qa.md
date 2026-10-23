@@ -63,7 +63,8 @@ guidance.
 | Extension | `extension:check`, `extension:test`, `extension:build`, `extension:e2e` through Corepack |
 | Worker | Locked focused Ruff/pytest; full worker suite for worker-wide changes |
 | Native launcher / migrations | `JOBCTRL_MIGRATION_TEST_PYTHON="$PWD/workers/automation/.venv/bin/python" JOBCTRL_MIGRATION_TEST_NODE="$(command -v node)" corepack pnpm launcher:test`; bind the locked Python and installed Node runtimes so the cross-runtime migration checks run |
-| Dense resume pagination (#907) | Locked Ruff for `workers/automation/tests/test_pdf_renderer_ports.py`; explicit `JOBCTRL_RUN_DENSE_HTML_PAGINATION_TESTS=1` locked pytest for that module (focused selector `-k dense_resume_pagination_trial`); eight required real-browser cases, 48 measured PDFs, JUnit and every-page visual QA per the [owning protocol](developer/qa/regression-catalog.md#dense-html-resume-pagination-907) |
+| Homebrew acquisition trust | Install the actual signed artifact through the formula with unmodified Homebrew. Inside its sandbox, strict Developer ID requirements must reject ad-hoc code. At normal-user bootstrap, rejected launcher or installer notarization must prevent installer execution; retain the installer's complete payload notarization checks before activation |
+| Dense resume pagination (#907) | Locked Ruff for `workers/automation/tests/test_pdf_renderer_ports.py`; explicit `JOBCTRL_RUN_DENSE_HTML_PAGINATION_TESTS=1` locked pytest for that module; eight repeated trial cases (48 PDFs) plus four continuation-inset cases (eight PDFs), JUnit and every-page visual QA per the [owning protocol](developer/qa/regression-catalog.md#dense-html-resume-pagination-907) |
 | Scripts | `node --test scripts/<name>.test.mjs` |
 | Bundled capture smoke | Script suite; locked pytest for `workers/automation/tests/test_distribution_smoke_model.py`; then the real bundled-payload build through [Local Development](local-development.md#build-the-bundled-payload). Keep actual API/RPC/Temporal/worker/persistence and restart checks; only the model port uses explicit synthetic choices, recorded in smoke evidence. This does not prove semantic accuracy or provider authentication |
 | Docs | `corepack pnpm docs:build`, diff check |
@@ -175,6 +176,50 @@ workflow dispatch are synthetic; it does not exercise personal Chrome, external
 sources, scoring or material generation. Pair this with the applicable live
 Discovery proof from the regression catalog before claiming runtime recovery.
 
+## Accepted Low-Fit Material Retention
+
+Run locked `pytest tests/test_material_override_retention.py` with the
+canonical single-job Tailor, material use-case, preparation fan-out and real
+Temporal preparation checks. Exercise the actual writer with opposed explicit
+request booleans, then repeat normal Discover target derivation. An accepted
+manual generation remains approved at an unchanged automatic floor without
+admitting new automatic work or changing its score; a normal generation is
+suppressed. Reject string/numeric flag substitutes, another tenant or generation,
+a missing score and a newly recorded hard blocker. A failed automatic replacement
+must preserve the prior accepted generation and its request flag. Use two real
+SQLite connections to prove a concurrent approval cannot cross the suppression
+eligibility/mutation window, and inject a post-mutation failure to prove the
+complete reconciliation and suppression sweep rolls back.
+
+## Agent Runtime Integration
+
+Run the pool and actual-kit adapter checks together with existing provider
+routing, failure recovery, analysis, voice and Codex isolation cases. Preserve
+parallel admitted requests above the idle-cache count, fresh conversation IDs,
+model/effort and named permissions, partial-usage accounting, original typed
+failures, startup-publication ordering and complete cancellation cleanup.
+
+Use a configured provider only in an owned synthetic workspace. Repeat calls
+through the production LlmPort and inspect actual kit process-start/reuse
+metadata and distinct conversation IDs. A reused Python adapter object is not
+proof of a reused SDK process. Verify source-installed and bundled dependency
+closure: a package moved into core must leave generated provider deltas, and
+core-overlap rejection stays enabled. Follow
+[Agent Runtime Ownership](architecture/agent-runtime.md) and the
+[Auditability Checks](developer/qa/regression-catalog.md#auditability-checks).
+
+For Codex isolation, place the owned runtime beneath a synthetic user-home
+ancestor containing conflicting legacy Codex settings. Require real-kit
+validation and the public app-server `config/read` to exclude that ancestor
+while preserving isolated-home, workspace-local and system configuration
+inspection. Verify the generated Git root without a runtime Git dependency,
+concurrent initialization, failed-publication cleanup, and refusal/preservation
+of symlinks, Windows junctions/reparse points, gitfiles and unfamiliar or partial metadata. Repeat real configured
+provider calls through the normal typed adapter in this home-shaped workspace;
+use fresh conversations and verify that process reuse and subsequent workspace
+preparation remain valid. A plain temporary-root probe does not cover retained
+home ancestry.
+
 ## Safe QA Data
 
 Use uniquely owned synthetic workspaces. Never point QA at real profiles,
@@ -207,6 +252,18 @@ incomplete, not a pass; deterministic external fixtures do not certify live ATS
 reliability.
 
 
+## Automatic Material Declines
+
+Use owned SQLite and real Temporal fixtures to prove a canonical manual Apply
+skip prevents new automatic Tailor/Cover admission. Exercise fresh selection,
+frozen reservations, activity execution and a second-writer change before the
+locked claim. Keep the original survivor cohort identity, release only
+unstarted automatic queued ownership, preserve attempts and accepted materials,
+and prove an empty filtered cohort cannot select unrelated jobs. Another
+tenant, legacy apply fields, stale reason metadata and `MIN_SCORE` must not
+become manual-decline authority. Clearing the canonical decline permits normal
+eligibility, and an explicit foreground request retains its existing contract.
+
 ## Semantic Determinations
 
 Use an owned synthetic workspace for these risk-tier 2/3 paths. Do not grade model
@@ -219,7 +276,12 @@ malformed JSON, forbidden extra fields, unknown enums, foreign IDs, non-verbatim
 quotes and mismatched values. Each failure has a distinct safe status, makes no
 lexical substitute and leaves accepted artifacts current. Capture the canonical
 prompt, lane and preflight order. Re-running unchanged inputs must make zero
-additional calls, including concurrent requests for one fingerprint.
+additional calls, including concurrent requests for one fingerprint. Numeric
+format coverage must include equal source/claim values before different sentence
+punctuation and changed values ending in a period. Prove the actual claim
+verifier preserves opposing valid model verdicts and rejects changed numbers
+without replacing an accepted review. Dotted-token and malformed-number
+fragments must remain invalid.
 
 Run synthetic broad-board and company-ATS source paths with saved controls. Inspect exact provider request parameters and canonical ingestion, including a result that does not resemble the query. No separate intake model call may block or reject it. Exercise literal exclusions, limits, capture/checkpoint interruption and retry idempotency; verify provider filter support without expecting a product capability-warning view. Exercise profile import/save and explicit confirmation without
 writing inferred facts into achievement evidence. Exercise actual artifact
@@ -276,3 +338,22 @@ board parameters. Invalid work-model controls must produce a typed planning
 failure while fetching, scoring and raw source reads remain available. Native
 interruption checks capture stage names from the actual composite executors and
 prove recovery removes every staged candidate and SQLite sidecar.
+
+## Smart Extract Posting Qualification
+
+Run locked `pytest tests/test_smart_posting_intake.py` with the captured-posting recovery, Smart Extract, limits, live-browser/optional-extension, source-activity reliability and direct URL-import suites. Prove actual role/employer/location writes from the captured posting, full snapshot/enrichment convergence, canonical cross-source deduplication, literal exclusions and the new-job cap. Opposite valid model verdicts for identical sources must control location admission and specific-role acceptance. Listing pages, announcements, absent employers, incomplete descriptions and unknown location compatibility must create no Job and retain unresolved capture evidence. Confirmed mismatches retain their decision references without creating a Job. Exercise provider, budget, JSON/schema/enum, citation/value/field-binding faults, cancellation and unsafe redirects; existing accepted jobs and enrichment must survive every failed refresh. Verify identical determinations, including concurrent calls, reuse the accepted receipt without another provider call. Archived Smart Extract recovery must use the same qualification, retain source/tenant identity, preserve owner deletions and newer content, and recover interruptions without duplicate observations/events. The source activity must preserve exhausted schema/citation failure authority and retain retryability only for transient provider failures. Also run one configured-provider call with owned synthetic posting sources and inspect its actual model, effort, discovery lane and persisted source bindings. Do not build a semantic eval corpus.
+
+## Short workflow controls under model load
+
+For changes to local control scheduling, run locked pytest for
+`workers/automation/tests/test_workflow_control_capacity.py`, the spend-budget
+and material-recovery tests, then the full worker suite. Use a real independent
+Temporal test server and an owned synthetic SQLite workspace. Hold every remote
+activity slot with synthetic blocking work at both one and four slots. Prove
+that a denied spend preflight and owner-scoped preparation cancellation finish
+before that work is released, while an extra queued heavy activity stays queued
+and reported remote concurrency remains unchanged. Preserve a successor owner's
+stage and committed results. Replay generated old remote histories and new local
+histories. Check that control database work runs off the worker event loop and
+closes thread-local connections on success and failure. No provider calls or
+personal workspace data belong in this regression.

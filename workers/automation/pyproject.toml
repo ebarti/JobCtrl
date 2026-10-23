@@ -1,6 +1,6 @@
 [project]
 name = "jobctrl"
-version = "0.4.0"
+version = "0.3.1"
 description = "AI-powered end-to-end job application pipeline"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -18,6 +18,8 @@ classifiers = [
 ]
 
 dependencies = [
+    # Shared lifecycle, capability and process-reuse boundary for agent SDKs.
+    "agent-runtime-kit>=0.5.4,<0.6",
     "certifi>=2024.2.2",
     "typer>=0.9.0",
     "click>=8.3.3",
@@ -67,8 +69,8 @@ dev = [
 providers = [
     "claude-agent-sdk==0.2.115",
     "mcp>=1.28.1",
-    "openai-codex==0.144.4",
-    "openai-codex-cli-bin==0.144.4",
+    "openai-codex==0.163.0",
+    "openai-codex-cli-bin==0.163.0",
     "google-antigravity==0.1.2",
     "pyasn1>=0.6.4",
 ]
@@ -79,8 +81,8 @@ providers = [
 [dependency-groups]
 provider-runtime = [
     "claude-agent-sdk==0.2.115",
-    "openai-codex==0.144.4",
-    "openai-codex-cli-bin==0.144.4",
+    "openai-codex==0.163.0",
+    "openai-codex-cli-bin==0.163.0",
     "google-antigravity==0.1.2",
 ]
 release-build = ["build==1.4.3", "hatchling==1.29.0"]

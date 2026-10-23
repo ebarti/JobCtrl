@@ -32,14 +32,15 @@ this:
    from 0 to 1, and tier: must-have or nice-to-have. The structured scorer
    returns those fields with its assessment.
 2. **Classify the returned evidence.** A matched or transferable row must carry
-   at least one non-empty Candidate Profile evidence ID. The current parser
-   checks that an ID is present, but it does not yet verify that every returned
-   ID exists in the saved profile or reconcile every returned requirement
-   field with the accepted analysis. The formula therefore resolves the
-   scorer's validated structured response; inspect the evidence links, and
-   treat any **Unavailable evidence** label as a reason to correct or re-score.
+   at least one supplied Candidate Profile evidence ID. Strict determination
+   validation rejects foreign requirement/evidence IDs and unsupported quotes.
+   Scoring joins each requirement to its recorded scope in the accepted job
+   interpretation, retaining the determination ID with its contribution.
+   It does not infer scope from wording. Inspect the evidence links, and treat
+   any **Unavailable evidence** label as a reason to correct or re-score.
 3. **Apply evidence credit and requirement priority.** The current
-   `requirement-fit-v1` formula uses these values:
+   `requirement-fit-v2-scoped` formula uses these values for requirements whose
+   recorded scope is **resume** (candidate capabilities):
 
    | Evidence classification | Credit |
    | --- | ---: |
@@ -48,7 +49,12 @@ this:
    | Transferable evidence | 60% |
    | Missing, blocked, or not assessed | 0% |
 
-   A must-have requirement counts **1.25×** its saved weight; a nice-to-have
+   Eligibility, logistics and employer conditions remain assessed and visible,
+   with zero contribution to both the numerator and denominator. Their unmet
+   or unconfirmed status does not lower capability fit. Eligibility warnings
+   and hard blockers still control downstream readiness separately.
+
+   A must-have capability requirement counts **1.25×** its saved weight; a nice-to-have
    counts **1.0×**. JobCtrl then calculates weighted coverage and maps it to the
    1–10 scale:
 
@@ -62,10 +68,16 @@ this:
    places before JobCtrl totals them.
 
    Rounding is to the nearest whole number, with halves rounded up, and the
-   result is limited to 1–10. If any requirement is classified as blocked, the
+   result is limited to 1–10. If a capability requirement is classified as blocked, the
    final score is capped at 4 after the weighted calculation.
 4. **Assign the display band.** Scores 9–10 are **Excellent**, 7–8 **Strong**,
    5–6 **Plausible**, 3–4 **Stretch**, and 1–2 **Poor**.
+
+Missing or foreign scope bindings, an unrecorded interpretation source, or a
+posting with no weighted capability requirements cannot create a replacement
+score. Failed refreshes preserve the accepted score. Historical `requirement-fit-v1`
+reports keep their original calculation until an explicit successful rescore;
+that earlier formula included every requirement and capped any blocked row.
 
 For example, suppose a must-have with weight `1.0` is a direct match and a
 nice-to-have with weight `0.5` has transferable evidence:
@@ -80,6 +92,12 @@ Coverage is `1.55 / 1.75 = 0.886`, so the score is
 shows the persisted assessment, evidence links, and contribution for every
 row. Resolved profile evidence is the support you can audit; an unavailable
 reference is not proof of a match.
+
+Job Detail also shows the saved weighted coverage beside the score, including
+the recorded blocking requirements and the formula's cap when applicable. This
+context remains visible while the detail sections are collapsed. It appears
+only for the matching job and score version; a manual correction keeps its own
+explanation instead of being attributed to the earlier requirement report.
 
 ### When Requirement Rows Are Unavailable
 
@@ -198,8 +216,8 @@ does not add, remove, or rename those search targets.
 - **The Candidate Profile owns candidate claims.** Scoring receives an immutable
   profile snapshot; neither analysis nor scoring can add experience or skills.
 - **Discovery supplies the canonical requirement reading.** It records role
-  framing, requirements, priorities, keywords, posting evidence, synthesis,
-  and generation identity. Scoring and Tailoring consume that accepted record;
+  framing, requirements, priorities, keywords, posting evidence, canonicalization
+  policy and generation identity. Scoring and Tailoring consume that accepted record;
   its perspective and recovery rules stay in
   [Discovery](discovery.md#employer-analysis-perspectives).
 - **Scoring owns the decision record.** Versioned `job_scores` rows hold the

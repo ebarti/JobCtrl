@@ -758,8 +758,19 @@ export function writeSettingsConfig(
     if (request.dailyBudgetUsd !== undefined) assign("daily_budget_usd", request.dailyBudgetUsd);
     if (request.laneTokenLimits !== undefined) assign("lane_token_limits", request.laneTokenLimits);
     if (request.analysisLegs !== undefined) assign("analysis_legs", request.analysisLegs);
+    if (request.defaultLlmModel !== undefined) assign("default_llm_model", request.defaultLlmModel);
+    if (request.codexReasoningEfforts !== undefined) {
+      const current = isRecord(next.codex_reasoning_efforts) ? next.codex_reasoning_efforts : {};
+      const efforts = new Map(Object.entries(current).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+      for (const [model, effort] of Object.entries(request.codexReasoningEfforts)) {
+        if (effort === null) efforts.delete(model);
+        else efforts.set(model, effort);
+      }
+      assign("codex_reasoning_efforts", Object.fromEntries(efforts));
+    }
     if (request.tailoringGeneratorModels !== undefined) assign("tailoring_generator_models", request.tailoringGeneratorModels);
     if (request.tailoringJudgeModel !== undefined) assign("tailoring_judge_model", request.tailoringJudgeModel);
+    if (request.resumeVoicePolish !== undefined) assign("resume_voice_polish", request.resumeVoicePolish);
     if (request.applyMaxBudgetUsd !== undefined) assign("apply_max_budget_usd", request.applyMaxBudgetUsd);
     if (request.applyTimeoutSeconds !== undefined) assign("apply_timeout_seconds", request.applyTimeoutSeconds);
     if (request.scoreCriteria !== undefined) assign("score_criteria", request.scoreCriteria);

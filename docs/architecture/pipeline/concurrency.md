@@ -3,7 +3,7 @@
 Where parallelism actually lives in the pipeline, what bounds it, and which
 knobs are real. The short version: the normal local stack starts one Python
 worker, all matching workers share one Temporal (the workflow engine) task
-queue, activity slots are the execution-capacity boundary, and workflows fan
+queue, remote activity slots bound long-running execution, and workflows fan
 out primarily for isolation.
 
 **Read this if** you are tuning worker capacity, wondering why two stages are not
@@ -41,19 +41,56 @@ flowchart LR
 The normal local stack runs one long-lived worker process (`jobctrl worker`) on
 the `jobctrl-default` task queue. If more matching workers are running, Temporal
 may dispatch activities to any of them and the Operations read model aggregates
-their fresh capacity. Two numbers define each worker's capacity, both fixed at
+their fresh remote capacity. These limits are fixed at
 worker startup in
 `infrastructure/temporal/worker.py`:
 
-- **Activity slots** — the `worker_activity_slots` Setting in `config.json`
-  (default `4`): the maximum number of Temporal activities running at once,
+- **Remote activity slots** — the `worker_activity_slots` Setting in `config.json`
+  (default `4`): the maximum number of server-dispatched activities running at once,
   across all workflows.
+- **Local control slots** — two independent SDK slots shared by short workflow
+  start/outcome writes, spend preflight and owner-scoped preparation cancellation.
+  They bypass the remote queue, so these controls do not wait for a model slot.
+  Each control attempt has a 30-second limit and its scheduling plus retries has
+  a three-minute limit. Existing retry policies and cancellation ownership checks
+  still apply. The two reserve executor threads serve this pool; remote
+  activity-slot telemetry excludes it.
 - **Executor threads** — separate worker-owned Temporal-sync and blocking-stage
   `ThreadPoolExecutor` pools, each sized `slots + 2`, so blocking stage work
   never spills into the process default executor or starves Temporal's own
   synchronous activities. Cancellation retires the affected blocking pool
   generation before its grace wait, so a fresh bounded generation accepts an
   immediate retry even when the old provider call ignores cancellation.
+
+Cover-letter factual and quality reviews use a third, separate executor. Its
+running-leaf limit is the startup activity setting `N`; each pair submits exactly
+two independent reviews and at most `N` pairs / `2N` leaves are outstanding in
+that process. A capacity of one executes a pair sequentially. Waiting coordinators
+continue checking their owner guards; they never consume this executor's threads.
+This is a review bound, not a global provider-call limit: other admitted stages
+can generate concurrently. It does not add Temporal activity slots or use the
+local-control reserve.
+
+Each review opens and closes its own connection to the captured runtime database;
+a mismatch with the process database fails before review model work. Cancellation
+or a terminal review failure stops queued work and new application-level model
+attempts. The first failure remains authoritative, including while its blocked
+state is saved. Already-admitted SDK calls may settle and record usage; their
+permits remain occupied until cleanup. SDK-internal wire retries are outside this
+admission boundary. No partial pair can accept an artifact. Worker shutdown stops
+admission, drains reviews, then closes agent runtimes and flushes telemetry.
+
+Compensation provider-row classification has a separate per-refresh bound of
+`N` independent determinations. The coordinator deduplicates the existing exact
+source identity, admits at most `N` leaves, retains input order and reuses
+accepted cache IDs. Every leaf has its own SQLite connection and the captured
+model, effort, product lane and spend preflight. Publication-owner guards run
+only on the coordinator; model-attempt cancellation uses a thread-safe stop
+signal. An aborted batch releases its still-owned refresh leases before waiting
+for admitted calls to settle and account usage. Those calls can retain valid
+classification cache results but cannot publish the canceled refresh. Healthy
+classification renews live leases; an expired or replaced owner cannot renew or
+publish. This is a per-refresh leaf bound and does not add Temporal activity slots.
 
 Both activity pools and direct blocking activity runners using the default
 asyncio pool close their thread-local SQLite connections before reusing a thread. Committed artifacts remain durable; unfinished writes are rolled back.
@@ -64,9 +101,15 @@ current lease and stage version are checked again before atomic persistence.
 Snapshot recorders also compare the accepted snapshot set under the writer
 reservation. A concurrent availability or content change rejects the stale
 result, preserves the newer state, and leaves downstream preparation blocked.
-Workflow lifecycle activities also offload SQLite writes and close their
-connection on every exit. A failed projection refresh retains its committed
+Workflow lifecycle and short control activities also offload SQLite work and
+close their connection on every exit. A failed projection refresh retains its committed
 canonical event for the next refresh.
+Lifecycle events have exact tenant/workflow/run/event-type idempotency keys,
+including across retries after a committed write. New histories use versioned
+[local activities](https://github.com/temporalio/documentation/blob/main/docs/design-patterns/local-activities.mdx);
+existing remote lifecycle and control histories retain their replay paths.
+Only the explicit spend-preflight and preparation-cancellation allowlist enters
+the local control helper; model work keeps the saved remote activity limit.
 
 The worker heartbeat records the activity slots and configured executor width.
 `GET /v1/health` exposes the health
@@ -137,20 +180,25 @@ Two knobs that look like Temporal concurrency but are not:
   scored-but-not-tailored work and cannot race a fresh job's in-flight SCORE_JOB
   workflow. Every family + terminal fan-out is score-only, so a fresh job
   crossing `pending_score` -> `pending_tailor` mid-tailor is never double-fanned.
-- **Per-job handoff (R9 Phase 2).** The live enrichment activity runs with
-  `per_job_handoff=True`: as each job is individually enriched (committed to
-  `pending_score`), the enrichment worker starts that job's `SCORE_JOB`
+- **Per-job handoff (R9 Phase 2).** Live enrichment and terminal reconciliation
+  both run with `per_job_handoff=True`: as each job is individually enriched
+  (committed to `pending_score`), the enrichment worker starts that job's `SCORE_JOB`
   preparation workflow **immediately**, before its siblings in the same family
   are even scraped, tightening Time To First Score to per-job granularity. This
   is a side effect **inside** the enrichment activity (`on_job_enriched`
-  callback threaded to `enrichment/detail.py`), so `DiscoverWorkflow`'s command
-  history is unchanged (determinism/replay safe). Starts use the same
+  callback threaded to `enrichment/detail.py`); it does not add a workflow
+  command for each job. Starts use the same
   deterministic `prep-{idempotency_key}` id as the fan-out, so the per-job
   handoff and the reconciling fan-outs converge on exactly one execution per job
   (`USE_EXISTING`). Per-job starts are serialized by a lock because
   `_run_detail_scraper` may enrich sites in parallel threads, and the handoff is
   best-effort (a start failure is logged and left for the fan-out backstop,
-  never mistaken for an enrichment failure).
+  never mistaken for an enrichment failure). Terminal reconciliation therefore
+  does not hold ready jobs behind sibling captures or automatic compensation
+  refresh. The `discover-terminal-enrichment-handoff-v1` workflow marker retains
+  the old terminal activity input when replaying histories without that marker;
+  already scheduled activities keep their recorded input. Final score-only
+  fan-out still catches missing starts and closes work planning.
 - **Parallel source families (R9 Phase 3, gated, default off).** Families are
   processed in batches of the Discovery Runtime `max_parallel_families` value
   (default `1` = sequential = today's behavior). With a value > 1, that many families'
