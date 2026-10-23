@@ -16,6 +16,20 @@ class PreparationReservationLost(RuntimeError):
     """One job's reservation was revoked before its attempt began."""
 
 
+
+# Canonical shape written by mark-skipped. Metadata may retain an old policy
+# reason, so only the current state/code/retryability identify this manual stop.
+# Callers bind their job-stage row to the fixed SQL alias `s`.
+MANUAL_APPLY_DECLINE_SQL = """
+EXISTS (
+    SELECT 1 FROM job_stage_states declined
+    WHERE declined.tenant_id = s.tenant_id AND declined.job_id = s.job_id
+      AND declined.stage = 'apply' AND declined.state = 'skipped'
+      AND declined.error_code IS NULL AND declined.retryable = 0
+)
+"""
+
+
 def owns_preparation_reservation(conn, *, tenant_id, job_id, stage, workflow_id) -> bool:
     """A queued automatic stage is admitted only by its reserved workflow."""
     if not workflow_id:
@@ -25,6 +39,7 @@ def owns_preparation_reservation(conn, *, tenant_id, job_id, stage, workflow_id)
             "SELECT 1 FROM job_stage_states s WHERE tenant_id = ? AND job_id = ? AND stage = ? "
             "AND state = 'queued' AND retryable = 1 AND attempt_count < MIN(5, max_attempts) "
             "AND json_extract(metadata_json, '$.automaticPreparation.workflowId') = ? "
+            f"AND NOT (s.stage IN ('tailor', 'cover') AND ({MANUAL_APPLY_DECLINE_SQL})) "
             "AND NOT EXISTS (SELECT 1 FROM jobctrl_deleted_jobs d "
             "WHERE d.tenant_id = s.tenant_id AND d.job_id = s.job_id "
             "AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at)))",

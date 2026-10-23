@@ -21,6 +21,12 @@ When a posting becomes unavailable after batch selection, that member is skipped
 while the other selected jobs continue. A temporarily unavailable source remains
 a reported item error; it does not prevent its peers from finishing.
 
+Marking a job skipped stops new automatic resume and cover-letter generation
+for that job. Explicit generation requests still use their normal prerequisites.
+Use **Cancel** to stop work already in progress. Resetting the Apply outcome
+allows normal automatic eligibility again. A minimum-score policy skip remains
+a separate decision controlled by the score and materials threshold.
+
 A cover letter's factual and quality reviews can run together because they inspect
 the same unchanged draft. Both must pass before acceptance. Corrections still
 wait for their findings, and revised text receives fresh checks. Model reasoning,
