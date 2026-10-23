@@ -192,15 +192,17 @@ A few catalog details worth calling out:
 
 - **`DiscoverWorkflow` streams scoring as it discovers (R9 Phase 1–2).** One
   execution-scoped enrichment activity consumes durable job memberships while
-  source activities are still crawling. Phase 2 hands off per job: the live
-  enrichment pass runs with `per_job_handoff=True`, so a
+  source activities are still crawling. Phase 2 hands off per job: live and
+  terminal enrichment run with `per_job_handoff=True`, so a
   job starts its `SCORE_JOB` preparation the moment it is individually enriched
-  (a side effect inside the enrichment activity — the workflow command history is
-  unchanged). Per-family score-only fan-outs catch already-enriched jobs and
+  (a side effect inside the existing enrichment activity). Per-family score-only fan-outs catch already-enriched jobs and
   missed handoffs. A terminal reconcile enrichment + fan-out runs last and stays
-  authoritative for the tolerated-partial-failure folding (succeed if ≥1 family
-  completed; fail as `discovery_source_failed` only if every family failed) and
-  progress finalization. Repeated starts are deduped by the deterministic
+  authoritative for the tolerated-partial-failure folding. Terminal per-job starts
+  overlap later enrichment and compensation refresh; final fan-out remains the
+  deduplicated backstop. A workflow marker preserves the old activity input on
+  replay. Source handling succeeds if ≥1 family completed and fails as
+  `discovery_source_failed` only if every family failed. Terminal reconciliation
+  owns progress finalization. Repeated starts are deduped by the deterministic
   `prep-{idempotency_key}` id + `USE_EXISTING`; a one-time straggler sweep runs
   before the family loop and every family/terminal fan-out is score-only. See
   [Concurrency & Fan-out](concurrency.md#where-fan-out-happens-and-why).

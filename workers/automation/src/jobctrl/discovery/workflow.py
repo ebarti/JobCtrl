@@ -101,6 +101,7 @@ _DISCOVERY_TIMEOUT = timedelta(hours=6)
 _LIVE_ENRICH_HEARTBEAT_TIMEOUT = timedelta(seconds=5)
 _DEFAULT_HEARTBEAT_TIMEOUT = timedelta(minutes=2)
 _AUTOMATIC_COMPENSATION_REFRESH_PATCH = "discover-automatic-compensation-refresh-v1"
+_TERMINAL_ENRICHMENT_HANDOFF_PATCH = "discover-terminal-enrichment-handoff-v1"
 
 
 @workflow.defn(name="DiscoverWorkflow")
@@ -273,6 +274,7 @@ class DiscoverWorkflow:
                 progress_total=plan.progress_total,
                 pipeline_step_item_key="terminal",
                 pipeline_step_detail_code="terminal_reconciliation",
+                per_job_handoff=workflow.patched(_TERMINAL_ENRICHMENT_HANDOFF_PATCH),
             )
             enrichment_status = enrichment_result.status
             enrichment_site_errors = dict(enrichment_result.site_errors)

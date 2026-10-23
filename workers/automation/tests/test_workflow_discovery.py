@@ -15,7 +15,7 @@ from temporalio import activity
 from temporalio.client import ScheduleOverlapPolicy, WorkflowFailureError
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
 from .temporal_env import time_skipping_env
-from temporalio.worker import UnsandboxedWorkflowRunner, Worker
+from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
 
 from jobctrl.cli import _reconcile_discovery_schedule
 from jobctrl.config import DEFAULT_DISCOVERY_SEARCH_CONFIG, load_discovery_schedule_settings
@@ -41,6 +41,7 @@ from jobctrl.discovery.workflow import (
     DiscoverWorkflowInput,
     DiscoverWorkflowResult,
     _AUTOMATIC_COMPENSATION_REFRESH_PATCH,
+    _TERMINAL_ENRICHMENT_HANDOFF_PATCH,
     _activity_error_was_cancelled,
     _cancel_owned_enrichment,
     _run_automatic_compensation_refresh_activity,
@@ -313,6 +314,7 @@ async def _discovery_enrichment(payload: DiscoveryEnrichmentActivityInput) -> Di
             payload.limit,
             payload.stream_while_discovering,
             payload.pipeline_step_item_key,
+            payload.per_job_handoff,
         )
     )
     return DiscoveryEnrichmentActivityOutput(status="ok", passes=1, pending=0)
@@ -581,8 +583,18 @@ def test_build_per_job_handoff_starts_scored_prep_with_params(
 
 
 @pytest.mark.asyncio
-async def test_discover_workflow_runs_sources_then_enrichment_and_fanout() -> None:
+@pytest.mark.parametrize("legacy_history", [False, True])
+async def test_discover_workflow_runs_sources_then_enrichment_and_fanout(monkeypatch, legacy_history) -> None:
+    from jobctrl.discovery import workflow as discovery_workflow
+
     _reset_state()
+    patched = discovery_workflow.workflow.patched
+    if legacy_history:
+        # Generate the pre-change branch with no terminal-handoff marker.
+        monkeypatch.setattr(
+            discovery_workflow.workflow, "patched",
+            lambda patch_id: False if patch_id == _TERMINAL_ENRICHMENT_HANDOFF_PATCH else patched(patch_id),
+        )
     _TARGETS.append(
         _Target(
             job_url="https://example.com/job/1",
@@ -601,7 +613,7 @@ async def test_discover_workflow_runs_sources_then_enrichment_and_fanout() -> No
             activities=_discovery_activities(),
             workflow_runner=UnsandboxedWorkflowRunner(),
         ):
-            result = await env.client.execute_workflow(
+            handle = await env.client.start_workflow(
                 DiscoverWorkflow.run,
                 DiscoverWorkflowInput(
                     tenant_id="local",
@@ -612,7 +624,14 @@ async def test_discover_workflow_runs_sources_then_enrichment_and_fanout() -> No
                 id=f"discover-success-{uuid.uuid4()}",
                 task_queue=queue,
             )
+            result = await handle.result()
+            history = await handle.fetch_history()
 
+    # The current workflow must replay both its marker and the old no-marker branch.
+    monkeypatch.setattr(discovery_workflow.workflow, "patched", patched)
+    await Replayer(
+        workflows=[DiscoverWorkflow], workflow_runner=UnsandboxedWorkflowRunner(),
+    ).replay_workflow(history)
     assert result.families_completed == ["jobspy", "workday", "smartextract"]
     assert result.families_failed == []
     assert result.preparation_started == 1
@@ -624,6 +643,7 @@ async def test_discover_workflow_runs_sources_then_enrichment_and_fanout() -> No
     enrichment_events = [event for event in _EVENTS if event[0] == "enrichment"]
     assert [event[2] for event in enrichment_events] == [True, False]
     assert [event[3] for event in enrichment_events] == ["streaming:live", "terminal"]
+    assert [event[4] for event in enrichment_events] == [True, not legacy_history]
     live_enrichment = _EVENTS.index(enrichment_events[0])
     first_source = kinds.index("source")
     second_source = kinds.index("source", first_source + 1)
@@ -752,7 +772,8 @@ async def test_discover_workflow_starts_enrichment_before_source_family_complete
 
 
 @pytest.mark.asyncio
-async def test_discovery_source_finish_during_capture_reclaims_real_sqlite_job(monkeypatch, tmp_path):
+@pytest.mark.parametrize("with_sibling", [False, True])
+async def test_discovery_source_finish_during_capture_reclaims_real_sqlite_job(monkeypatch, tmp_path, with_sibling):
     """Real Temporal cancellation must drain the interrupted job, not cancel it."""
     from jobctrl import database
     from jobctrl.discovery import activities as discovery_activities
@@ -781,15 +802,18 @@ async def test_discovery_source_finish_during_capture_reclaims_real_sqlite_job(m
         assert execution is not None
         job_id = _seed_pending(conn, "https://example.test/temporal-capture-race", "Example")
         job_ids.append(job_id)
-        conn.execute(
-            "INSERT INTO discovery_execution_jobs (tenant_id, discover_workflow_id, discover_run_id, "
-            "job_id, cohort_kind, source_family, work_plan_state, linked_at) "
-            "VALUES ('local', ?, ?, ?, 'observed_this_run', 'jobspy', 'pending', '2026-09-04T20:00:00Z')",
-            (execution.workflow_id, execution.temporal_run_id, str(job_id)),
-        )
+        if with_sibling:
+            job_ids.append(_seed_pending(conn, "https://example.test/temporal-capture-sibling", "Example"))
+        for job_id in job_ids:
+            conn.execute(
+                "INSERT INTO discovery_execution_jobs (tenant_id, discover_workflow_id, discover_run_id, "
+                "job_id, cohort_kind, source_family, work_plan_state, linked_at) "
+                "VALUES ('local', ?, ?, ?, 'observed_this_run', 'jobspy', 'pending', '2026-09-04T20:00:00Z')",
+                (execution.workflow_id, execution.temporal_run_id, str(job_id)),
+            )
         conn.commit()
         assert await asyncio.to_thread(capture_started.wait, 10)
-        return DiscoverySourceActivityOutput(family="jobspy", status="ok", result={"new": 1})
+        return DiscoverySourceActivityOutput(family="jobspy", status="ok", result={"new": len(job_ids)})
 
     def capture(browser, _url, **_kwargs):
         captures.append("capture")
@@ -797,6 +821,8 @@ async def test_discovery_source_finish_during_capture_reclaims_real_sqlite_job(m
             capture_started.set()
             assert browser.cancel_event.wait(10)
             raise TransientNetworkError("rendered_page interrupted by producer stop")
+        if with_sibling and len(captures) == 3:
+            assert len(handed_off) == 1, "first committed job must start preparation before its sibling is captured"
         return {
             "status": "ok",
             "tier_used": 1,
@@ -809,7 +835,16 @@ async def test_discovery_source_finish_during_capture_reclaims_real_sqlite_job(m
             "http_status": 200,
         }
 
-    monkeypatch.setattr(discovery_activities, "_build_per_job_handoff", lambda _payload: handed_off.append)
+    def start_preparation(job_id, **kwargs):
+        conn = database.get_connection()
+        assert conn.execute(
+            "SELECT state FROM job_stage_states WHERE job_id = ? AND stage = 'enrich'", (str(job_id),)
+        ).fetchone()[0] == "succeeded"
+        assert kwargs["discovery_execution"].temporal_run_id
+        assert kwargs["discovery_cohort_kind"] == "observed_this_run"
+        handed_off.append(job_id)
+
+    monkeypatch.setattr("jobctrl.pipeline.preparation.start_job_preparation_workflow", start_preparation)
     monkeypatch.setattr(runner, "_DISCOVERY_ENRICH_POLL_INTERVAL", 0.05)
     monkeypatch.setattr(detail, "PolitenessGateway", lambda: offline_gateway())
     monkeypatch.setattr(
@@ -845,7 +880,7 @@ async def test_discovery_source_finish_during_capture_reclaims_real_sqlite_job(m
                 result = await asyncio.wait_for(
                     env.client.execute_workflow(
                         DiscoverWorkflow.run,
-                        DiscoverWorkflowInput(tenant_id="local", limit=1),
+                        DiscoverWorkflowInput(tenant_id="local", limit=2 if with_sibling else 1),
                         id=f"{queue}-wf",
                         task_queue=queue,
                     ),
@@ -853,8 +888,9 @@ async def test_discovery_source_finish_during_capture_reclaims_real_sqlite_job(m
                 )
 
         assert result.enrichment_status == "ok"
-        assert len(captures) == 2
-        assert handed_off == job_ids
+        assert len(captures) == (3 if with_sibling else 2)
+        assert len(handed_off) == len(job_ids)
+        assert set(handed_off) == set(job_ids)
         conn = database.get_connection()
         row = conn.execute(
             "SELECT state FROM job_stage_states WHERE job_id = ? AND stage = 'enrich'", (str(job_ids[0]),)
