@@ -25,7 +25,7 @@ from temporalio.exceptions import (
     TimeoutError as TemporalTimeoutError,
     TimeoutType,
 )
-from .temporal_env import time_skipping_env
+from .temporal_env import local_env, time_skipping_env
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from jobctrl.database import init_db
@@ -134,6 +134,63 @@ _cooperative_observed_cancel = threading.Event()
 _ignore_cancel_released = threading.Event()
 _timeout_ignore_cancel_released = threading.Event()
 _timeout_observed_cancel = threading.Event()
+_drain_started = threading.Event()
+_drain_cancel_observed = threading.Event()
+_drain_released = threading.Event()
+
+
+@workflow.defn(name="P1bCancellationHeartbeatWorkflow")
+class _P1bCancellationHeartbeatWorkflow:
+    def __init__(self) -> None:
+        self._stop = False
+
+    @workflow.signal
+    def stop(self) -> None:
+        self._stop = True
+
+    @workflow.run
+    async def run(self) -> str:
+        handle = workflow.start_activity(
+            _p1b_cancellation_heartbeat_activity,
+            start_to_close_timeout=timedelta(seconds=15),
+            heartbeat_timeout=timedelta(seconds=1),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+            cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+        )
+        await workflow.wait_condition(lambda: self._stop)
+        handle.cancel()
+        try:
+            await handle
+        except (asyncio.CancelledError, CancelledError):
+            return "handoff canceled"
+        except ActivityError as error:
+            if isinstance(error.cause, CancelledError):
+                return "handoff canceled"
+            raise
+        raise AssertionError("the activity must acknowledge cancellation")
+
+
+@activity.defn(name="p1b_cancellation_heartbeat_activity")
+async def _p1b_cancellation_heartbeat_activity() -> str:
+    stop = threading.Event()
+
+    def blocking() -> str:
+        _drain_started.set()
+        if not stop.wait(timeout=5):
+            raise AssertionError("cancellation was not delivered")
+        _drain_cancel_observed.set()
+        if not _drain_released.wait(timeout=5):
+            raise AssertionError("test did not release cleanup")
+        return "stopped"
+
+    return await run_blocking_with_heartbeat(
+        blocking,
+        starting_message="owned cancellation heartbeat test",
+        poll_interval=0.1,
+        on_cancel=stop.set,
+        cancel_wait_seconds=5,
+        activity_name="owned-cancellation-drain",
+    )
 
 
 @workflow.defn(name="P1bRunInActivityWorkflow")
@@ -434,6 +491,45 @@ async def test_run_in_activity_cancel_event_stops_cooperative_thread() -> None:
 
     assert isinstance(exc_info.value.cause, CancelledError)
     assert _cooperative_observed_cancel.is_set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("environment_factory", [time_skipping_env, local_env], ids=["time-skipping", "local"])
+async def test_cancellation_drain_keeps_heartbeating_until_thread_stops(environment_factory) -> None:
+    """A live-consumer handoff must cancel rather than expire during cleanup."""
+    for gate in (_drain_started, _drain_cancel_observed, _drain_released):
+        gate.clear()
+    queue = f"cancel-heartbeat-{uuid.uuid4()}"
+    try:
+        async with environment_factory() as env:
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[_P1bCancellationHeartbeatWorkflow],
+                activities=[_p1b_cancellation_heartbeat_activity],
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                handle = await env.client.start_workflow(
+                    _P1bCancellationHeartbeatWorkflow.run,
+                    id=f"cancel-heartbeat-wf-{uuid.uuid4()}",
+                    task_queue=queue,
+                )
+                assert await asyncio.to_thread(_drain_started.wait, 5)
+                await handle.signal(_P1bCancellationHeartbeatWorkflow.stop)
+                assert await asyncio.to_thread(_drain_cancel_observed.wait, 5)
+                # Longer than the heartbeat, shorter than the bounded drain.
+                # The activity stays alive until its blocking thread settles.
+                await asyncio.sleep(2.5)
+                _drain_released.set()
+                assert await asyncio.wait_for(handle.result(), 5) == "handoff canceled"
+                history = await handle.fetch_history()
+                assert sum(event.HasField("activity_task_canceled_event_attributes")
+                           for event in history.events) == 1
+                assert not any(event.HasField("activity_task_timed_out_event_attributes")
+                               for event in history.events)
+    finally:
+        _drain_released.set()
+        shutdown_activity_executors()
 
 
 @pytest.mark.asyncio
