@@ -323,6 +323,11 @@ def run_scoring(
         repository = SqliteScoreRepository(conn)
     if policy_repository is None:
         policy_repository = SqliteScoringPolicyRepository(conn)
+    if requirement_fit_repository is None and isinstance(repository, SqliteScoreRepository):
+        requirement_fit_repository = SqliteRequirementFitReportRepository(repository.connection)
+    score_repository = repository
+    # Global sweeps must use the same publication fence as selected scoring.
+    repository = _OwnedScoreRepository(repository, conn, workflow_id, None)
     if employer_analysis_repository is None:
         employer_analysis_repository = SqliteEmployerAnalysisRepository(conn)
     if analyze_use_case is None and require_employer_analysis:
@@ -388,10 +393,17 @@ def run_scoring(
 
     conn.commit()
     from jobctrl.enrichment.availability import require_fresh_active
+    from jobctrl.infrastructure.preparation_recovery import PreparationReservationLost
 
+    ownership_skipped: set[str] = set()
     available_jobs = []
     availability_deferred = 0
     for job in jobs:
+        try:
+            _assert_direct_score_admission(conn, tenant_id, job["job_id"], workflow_id, None)
+        except PreparationReservationLost:
+            ownership_skipped.add(str(job["job_id"]))
+            continue
         try:
             require_fresh_active(
                 str(job["job_id"]),
@@ -424,6 +436,7 @@ def run_scoring(
                 expected_posting_url=job["url"],
             ):
                 job_id = canonical_job_id(str(job["job_id"]))
+                _assert_direct_score_admission(conn, tenant_id, job_id, workflow_id, None)
                 ensure_job_stage_rows(
                     conn,
                     job_id,
@@ -469,6 +482,9 @@ def run_scoring(
                     tenant_id=tenant_id,
                     message="Scoring started",
                 )
+        except PreparationReservationLost:
+            ownership_skipped.add(str(job["job_id"]))
+            continue
         except MissingInputError:
             availability_deferred += 1
             continue
@@ -505,6 +521,9 @@ def run_scoring(
                     job=job,
                     source_score=reusable_score,
                 )
+            except PreparationReservationLost:
+                ownership_skipped.add(str(job["job_id"]))
+                continue
             except Exception as exc:  # noqa: BLE001 — surface as a stage failure
                 log.error("Score reuse failed for %r: %s", job.get("title", "?"), exc)
                 outcome = ScoreJobOutcome(
@@ -523,6 +542,7 @@ def run_scoring(
 
     t0 = time.time()
     results: list[tuple[dict[str, Any], ScoreJobOutcome]] = list(reused_results)
+    independently_recorded: list[tuple[dict[str, Any], ScoreJobOutcome]] = []
     errors = 0
     conn.commit()
     analyses_by_job: dict[str, EmployerAnalysis] = {}
@@ -584,6 +604,9 @@ def run_scoring(
                         parse=parse,
                         tenant_id=tenant_id,
                     )
+                except PreparationReservationLost:
+                    ownership_skipped.add(str(job["job_id"]))
+                    outcome = None
                 except Exception as exc:  # noqa: BLE001 — surface as a stage failure
                     log.error("Score persistence failed for %r: %s", job.get("title", "?"), exc)
                     outcome = ScoreJobOutcome(
@@ -592,8 +615,33 @@ def run_scoring(
                         error=f"Score persistence failed: {exc}",
                     )
 
-            results.append((job, outcome))
+            if outcome is not None:
+                results.append((job, outcome))
             for duplicate_job in duplicate_jobs_by_representative.get(job["url"], ()):
+                if outcome is None:
+                    # The shared donor lost ownership. Independently admitted
+                    # duplicates still own their work; compute them through the
+                    # normal per-job entry instead of dropping them or reusing an
+                    # unpublished donor. That entry also owns terminal writes.
+                    try:
+                        independent = score_job_by_id(
+                            canonical_job_id(str(duplicate_job["job_id"])),
+                            tenant_id=tenant_id, rescore=rescore, llm_model=llm_model,
+                            profile_snapshot=profile_snapshot, resume_text=resume_text,
+                            criteria=criteria, repository=score_repository,
+                            policy_repository=policy_repository,
+                            requirement_fit_repository=requirement_fit_repository,
+                            llm_port=llm_port, publisher=publisher, use_case=use_case,
+                            employer_analysis_repository=employer_analysis_repository,
+                            analyze_use_case=analyze_use_case,
+                            require_employer_analysis=require_employer_analysis,
+                            workflow_id=workflow_id,
+                        )
+                    except PreparationReservationLost:
+                        ownership_skipped.add(str(duplicate_job["job_id"]))
+                    else:
+                        independently_recorded.append((duplicate_job, independent))
+                    continue
                 if outcome.ok and outcome.score is not None:
                     try:
                         duplicate_outcome = _persist_reused_score(
@@ -602,6 +650,9 @@ def run_scoring(
                             job=duplicate_job,
                             source_score=outcome.score,
                         )
+                    except PreparationReservationLost:
+                        ownership_skipped.add(str(duplicate_job["job_id"]))
+                        continue
                     except Exception as exc:  # noqa: BLE001 — surface as a stage failure
                         log.error(
                             "Score reuse failed for duplicate %r: %s",
@@ -620,7 +671,7 @@ def run_scoring(
                         error=outcome.error or "Scoring failed",
                     )
                 results.append((duplicate_job, duplicate_outcome))
-            score_value = outcome.score.fit_score.value if outcome.ok and outcome.score else 0
+            score_value = outcome.score.fit_score.value if outcome and outcome.ok and outcome.score else 0
             log.info(
                 "[%d/%d] score=%d  %s",
                 completed,
@@ -629,73 +680,30 @@ def run_scoring(
                 str(job.get("title", "?"))[:60],
             )
 
-    errors = sum(1 for _, outcome in results if not outcome.ok)
-    scored_count = len(results) - errors
-    errors += availability_deferred
-
     finished_at = utc_now()
+    committed_results = list(independently_recorded)
     for job, outcome in results:
-        url = job["url"]
-        job_id = canonical_job_id(str(job["job_id"]))
+        metadata = activity_metadata.get(str(job["job_id"]))
         if outcome.ok and outcome.score is not None:
-            set_stage_state(
-                conn,
-                job_id,
-                "score",
-                "succeeded",
-                tenant_id=tenant_id,
-                attempt_count=1,
-                started_at=started_ats.get(url),
-                finished_at=finished_at,
-                metadata=activity_metadata.get(str(job_id)) or None,
-            )
-            record_job_event(
-                conn,
-                job_id,
-                "score",
-                "StageCompleted",
-                tenant_id=tenant_id,
-                message=f"Fit score {outcome.score.fit_score.value}/10",
-                payload={"keywords": list(outcome.score.matched_keywords)},
-            )
-            _sync_score_eligibility_stage_state(
-                conn,
-                tenant_id=tenant_id,
-                job_id=outcome.score.job_id,
-                score=outcome.score,
-                now=finished_at,
+            recorded = _record_score_stage_succeeded(
+                conn, job=job, score=outcome.score, tenant_id=tenant_id,
+                started_at=started_ats.get(job["url"]), finished_at=finished_at,
+                metadata=metadata, require_ownership=True,
             )
         else:
-            failure = serialized_determination_failure(outcome.error)
-            set_stage_state(
-                conn,
-                job_id,
-                "score",
-                "blocked" if failure and not failure.retryable else "failed",
-                tenant_id=tenant_id,
-                attempt_count=_score_attempt_count(
-                    conn,
-                    tenant_id=tenant_id,
-                    job_id=job_id,
-                )
-                + 1,
-                started_at=started_ats.get(url),
-                finished_at=finished_at,
-                error_code=f"SEMANTIC_{failure.code.upper()}" if failure else "SCORE_FAILED",
-                error_message=str(failure) if failure else outcome.error or "Scoring failed",
-                retryable=failure.retryable if failure else True,
-                next_action=f"jobctrl retry score {url}",
+            recorded = _record_score_stage_failed(
+                conn, job=job, tenant_id=tenant_id,
+                started_at=started_ats.get(job["url"]) or finished_at,
+                metadata=metadata, error=outcome.error or "Scoring failed",
+                require_ownership=True,
             )
-            record_job_event(
-                conn,
-                job_id,
-                "score",
-                "StageFailed",
-                tenant_id=tenant_id,
-                level="error",
-                message=outcome.error or "Scoring failed",
-            )
-    conn.commit()
+        if recorded:
+            committed_results.append((job, outcome))
+        else:
+            ownership_skipped.add(str(job["job_id"]))
+    results = committed_results
+    errors = sum(1 for _, outcome in results if not outcome.ok) + availability_deferred
+    scored_count = sum(outcome.ok for _, outcome in results)
 
     elapsed = time.time() - t0
     log.info(
@@ -724,6 +732,12 @@ def run_scoring(
         "elapsed": elapsed,
         "distribution": distribution,
         "scoredJobIds": scored_job_ids,
+        "skipped": len(ownership_skipped),
+        "skippedJobIds": sorted(ownership_skipped),
+        "errorDetails": {
+            str(job["job_id"]): outcome.error or "Scoring failed"
+            for job, outcome in results if not outcome.ok
+        },
     }
 
 
@@ -877,7 +891,7 @@ def score_job_by_id(
             or (cancel_event is not None and cancel_event.is_set())
         ):
             conn.rollback()
-            return ScoreJobOutcome(ok=False, score=None, error="Score reservation no longer owned")
+            raise PreparationReservationLost("Score reservation no longer owned")
         owned_metadata = _score_activity_metadata(
             conn,
             tenant_id=tenant_id,
@@ -1112,19 +1126,19 @@ class _OwnedScoreRepository:
 
 def _assert_direct_score_admission(conn, tenant_id, job_id, owner, cancel_event):
     """A direct request may not acquire stopped work or another live owner."""
-    if not owner:
-        return
     from jobctrl.infrastructure.preparation_recovery import PreparationReservationLost
 
     if cancel_event is not None and cancel_event.is_set():
         raise PreparationReservationLost("Score activity canceled before admission")
     row = conn.execute(
-        "SELECT state, json_extract(metadata_json, '$.activityOwner') FROM job_stage_states "
+        "SELECT state, json_extract(metadata_json, '$.activityOwner'), "
+        "json_extract(metadata_json, '$.automaticPreparation.workflowId') FROM job_stage_states "
         "WHERE tenant_id=? AND job_id=? AND stage='score'", (str(tenant_id), str(job_id)),
     ).fetchone()
     if row is not None and (
         row[0] == "canceled"
         or (row[0] in {"pending", "queued", "running"} and row[1] and row[1] != owner)
+        or (row[0] == "queued" and row[2] and row[2] != owner)
     ):
         raise PreparationReservationLost("Score activity no longer owns admission")
 
@@ -1218,12 +1232,13 @@ def _record_score_stage_succeeded(
     validate_transition: bool = False,
     metadata: dict[str, Any] | None = None,
     cancel_event: Any | None = None,
+    require_ownership: bool = False,
 ) -> bool:
     job_id = canonical_job_id(str(score.job_id))
-    owned = bool(metadata and metadata.get("activityOwner"))
+    owned = require_ownership or bool(metadata and metadata.get("activityOwner"))
     if owned:
         conn.execute("BEGIN IMMEDIATE")
-        if not _score_activity_may_write(conn, tenant_id, job_id, metadata.get("activityOwner"), cancel_event):
+        if not _score_activity_may_write(conn, tenant_id, job_id, (metadata or {}).get("activityOwner"), cancel_event):
             conn.rollback()
             return False
     finished_at = finished_at or utc_now()
@@ -1275,13 +1290,14 @@ def _record_score_stage_failed(
     metadata: dict[str, Any] | None,
     error: str,
     cancel_event: Any | None = None,
+    require_ownership: bool = False,
 ) -> bool:
     """Persist one bounded, retryable scoring attempt failure."""
 
     job_id = canonical_job_id(str(job["job_id"]))
-    if metadata and metadata.get("activityOwner"):
+    if require_ownership or (metadata and metadata.get("activityOwner")):
         conn.execute("BEGIN IMMEDIATE")
-        if not _score_activity_may_write(conn, tenant_id, job_id, metadata.get("activityOwner"), cancel_event):
+        if not _score_activity_may_write(conn, tenant_id, job_id, (metadata or {}).get("activityOwner"), cancel_event):
             conn.rollback()
             return False
     finished_at = utc_now()

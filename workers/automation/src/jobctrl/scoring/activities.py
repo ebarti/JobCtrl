@@ -214,6 +214,7 @@ def _run_selected_scores(
     from jobctrl.domain.tenant import TenantId
     from jobctrl.scoring.scorer import score_job_by_id
     from jobctrl.pipeline.automatic_preparation import automatic_recovery_job_ids
+    from jobctrl.infrastructure.preparation_recovery import PreparationReservationLost
 
     job_ids = _limited_job_ids(automatic_recovery_job_ids(payload, "score"), payload.limit)
     if payload.dry_run:
@@ -239,22 +240,27 @@ def _run_selected_scores(
     def score_one(job_id: JobId):
         if cancel_event is not None and cancel_event.is_set():
             raise LlmTransientError("score activity canceled")
-        return job_id, score_job_by_id(
-            job_id,
-            tenant_id=TenantId(payload.tenant_id),
-            rescore=payload.rescore,
-            llm_model=payload.llm_model,
-            workflow_id=payload.workflow_id,
-            **(
-                {
-                    "enforce_workflow_ownership": True,
-                    "cancel_event": cancel_event,
-                    "recovery_workflow_id": payload.recovery_workflow_id,
-                }
-                if payload.recovery_workflow_id
-                else {}
-            ),
-        )
+        try:
+            outcome = score_job_by_id(
+                job_id,
+                tenant_id=TenantId(payload.tenant_id),
+                rescore=payload.rescore,
+                llm_model=payload.llm_model,
+                workflow_id=payload.workflow_id,
+                **(
+                    {
+                        "enforce_workflow_ownership": True,
+                        "cancel_event": cancel_event,
+                        "recovery_workflow_id": payload.recovery_workflow_id,
+                    }
+                    if payload.recovery_workflow_id
+                    else {}
+                ),
+            )
+        except PreparationReservationLost:
+            # A reset or successor invalidates this job, not its independent peers.
+            return job_id, None
+        return job_id, outcome
 
     worker_count = max(1, int(payload.workers or 1))
     if worker_count == 1 or len(job_ids) <= 1:
@@ -274,6 +280,8 @@ def _run_selected_scores(
     for job_id, outcome in results:
         if cancel_event is not None and cancel_event.is_set():
             raise LlmTransientError("score activity canceled")
+        if outcome is None:
+            continue
         if outcome.ok:
             scored += 1
         else:
@@ -292,6 +300,8 @@ def _run_selected_scores(
                 "elapsed": elapsed,
                 "selected": len(job_ids),
                 "scored": scored,
+                "skipped": sum(outcome is None for _, outcome in results),
+                "skippedJobIds": sorted(str(job_id) for job_id, outcome in results if outcome is None),
             }
         ],
     }
