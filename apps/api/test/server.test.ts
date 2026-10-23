@@ -11753,6 +11753,35 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("defaults browser headers off, persists both modes, and preserves the legacy identity", async () => {
+    const app = buildApp(options);
+    const initial = await app.inject({ method: "GET", url: "/v1/discovery/settings" });
+    expect(initial.json()).toMatchObject({
+      settings: { useBrowserHeaders: false },
+      effectiveSettings: { useBrowserHeaders: { value: false, source: "default", activation: "next_source_family", editable: true } },
+    });
+    await app.inject({ method: "PATCH", url: "/v1/discovery/settings", payload: {
+      crawlUserAgentProduct: "SyntheticResearch", crawlUserAgentContact: "https://example.test/contact",
+    } });
+    for (const invalid of ["true", 1, null]) {
+      const response = await app.inject({ method: "PATCH", url: "/v1/discovery/settings", payload: { useBrowserHeaders: invalid } });
+      expect(response.statusCode).toBe(400);
+    }
+    for (const enabled of [true, false]) {
+      const response = await app.inject({ method: "PATCH", url: "/v1/discovery/settings", payload: { useBrowserHeaders: enabled } });
+      expect(response.statusCode, response.body).toBe(200);
+      const read = await app.inject({ method: "GET", url: "/v1/discovery/settings" });
+      expect(read.json()).toMatchObject({
+        settings: { useBrowserHeaders: enabled, crawlUserAgentProduct: "SyntheticResearch", crawlUserAgentContact: "https://example.test/contact" },
+        effectiveSettings: { useBrowserHeaders: { value: enabled, source: "persisted", activation: "next_source_family", editable: true } },
+      });
+    }
+    await app.close();
+    const restarted = buildApp(options);
+    expect((await restarted.inject({ method: "GET", url: "/v1/discovery/settings" })).json().settings.useBrowserHeaders).toBe(false);
+    await restarted.close();
+  });
+
   it("keeps discovery settings SQLite-owned when a legacy environment variable is present", async () => {
     vi.stubEnv("JOBCTRL_MAX_PARALLEL_DISCOVERY_FAMILIES", "4");
     const app = buildApp(options);

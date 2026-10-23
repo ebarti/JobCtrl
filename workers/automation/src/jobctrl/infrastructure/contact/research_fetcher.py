@@ -17,7 +17,7 @@ import socket
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 from bs4 import BeautifulSoup
 
@@ -95,9 +95,12 @@ class GatewayContactResearchFetcher:
         with self._session.guard(url) as decision:
             if not decision.allowed:
                 return ResearchPageFetch(outcome=decision.outcome.value)
-            return self._get(url, decision.user_agent, redirects_remaining=redirects_remaining)
+            return self._get(
+                url, {**decision.request_headers, "User-Agent": decision.user_agent},
+                redirects_remaining=redirects_remaining,
+            )
 
-    def _get(self, url: str, user_agent: str, *, redirects_remaining: int) -> ResearchPageFetch:
+    def _get(self, url: str, request_headers: Mapping[str, str], *, redirects_remaining: int) -> ResearchPageFetch:
         public_decision = validate_public_http_url(url, resolver=self._resolver)
         if not public_decision.allowed:
             log.warning(
@@ -107,7 +110,8 @@ class GatewayContactResearchFetcher:
             )
             return ResearchPageFetch(outcome=ResearchSourceOutcome.REJECTED.value, final_url=url)
         request = urllib.request.Request(url, method="GET")
-        request.add_header("User-Agent", user_agent)
+        for key, value in request_headers.items():
+            request.add_header(key, value)
         request.add_header("Accept", "text/html, */*;q=0.8")
         try:
             with self._opener.open(request, timeout=self._timeout) as response:

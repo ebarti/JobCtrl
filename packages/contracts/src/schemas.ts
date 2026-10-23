@@ -5210,6 +5210,7 @@ export const DiscoverySettingsUpdateRequestSchema = z
     schedulingEnabled: z.boolean().optional(),
     scheduleCron: z.string().min(1).optional(),
     maxParallelFamilies: z.coerce.number().int().min(1).max(4).optional(),
+    useBrowserHeaders: z.boolean().optional(),
     crawlUserAgentProduct: z.string().trim().min(1).max(80).optional(),
     crawlUserAgentContact: z.string().trim().max(240).optional(),
   })
@@ -5226,6 +5227,7 @@ export interface DiscoverySettings {
   schedulingEnabled: boolean;
   scheduleCron: string;
   maxParallelFamilies: number;
+  useBrowserHeaders: boolean;
   crawlUserAgentProduct: string;
   crawlUserAgentContact: string;
   source: "database";
@@ -5241,6 +5243,7 @@ export interface EffectiveDiscoverySettings {
   schedulingEnabled: EffectiveSetting<boolean>;
   scheduleCron: EffectiveSetting<string>;
   maxParallelFamilies: EffectiveSetting<number>;
+  useBrowserHeaders: EffectiveSetting<boolean>;
   crawlUserAgentProduct: EffectiveSetting<string>;
   crawlUserAgentContact: EffectiveSetting<string>;
 }
@@ -5259,6 +5262,7 @@ export const DiscoverySettingsResponseSchema = z
         schedulingEnabled: z.boolean(),
         scheduleCron: z.string(),
         maxParallelFamilies: z.number(),
+        useBrowserHeaders: z.boolean(),
         crawlUserAgentProduct: z.string(),
         crawlUserAgentContact: z.string(),
         source: z.literal("database"),
@@ -5277,6 +5281,7 @@ export const DiscoverySettingsResponseSchema = z
         schedulingEnabled: effectiveSettingSchema(z.boolean()),
         scheduleCron: effectiveSettingSchema(z.string()),
         maxParallelFamilies: effectiveSettingSchema(z.number()),
+        useBrowserHeaders: effectiveSettingSchema(z.boolean()),
         crawlUserAgentProduct: effectiveSettingSchema(z.string()),
         crawlUserAgentContact: effectiveSettingSchema(z.string()),
       })

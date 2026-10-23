@@ -68,6 +68,10 @@ function patchDiscoverySettings(
       current.effectiveSettings.maxParallelFamilies,
       body.maxParallelFamilies,
     ),
+    useBrowserHeaders: persistedValue(
+      current.effectiveSettings.useBrowserHeaders,
+      body.useBrowserHeaders,
+    ),
     crawlUserAgentProduct: persistedValue(
       current.effectiveSettings.crawlUserAgentProduct,
       body.crawlUserAgentProduct,
@@ -96,6 +100,7 @@ function patchDiscoverySettings(
       ...(body.maxParallelFamilies !== undefined
         ? { maxParallelFamilies: body.maxParallelFamilies }
         : {}),
+      ...(body.useBrowserHeaders !== undefined ? { useBrowserHeaders: body.useBrowserHeaders } : {}),
       ...(body.crawlUserAgentProduct !== undefined
         ? { crawlUserAgentProduct: body.crawlUserAgentProduct }
         : {}),

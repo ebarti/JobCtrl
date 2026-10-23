@@ -362,6 +362,7 @@ DEFAULT_DISCOVERY_SEARCH_CONFIG: dict = {
     "role_filter": {"mode": "auto", "model": None},
     "max_parallel_families": 1,
     "crawl_user_agent": {
+        "use_browser_headers": False,
         "product": "JobCtrl",
         "contact": "https://github.com/ebarti/JobCtrl",
     },
@@ -471,6 +472,7 @@ def effective_discovery_search_config(
     )
 
     crawl_user_agent = dict(effective.get("crawl_user_agent") or {})
+    crawl_user_agent["use_browser_headers"] = crawl_user_agent.get("use_browser_headers") is True
     crawl_user_agent["product"] = str(crawl_user_agent.get("product") or "").strip() or "JobCtrl"
     crawl_user_agent["contact"] = str(crawl_user_agent.get("contact") or "").strip()
     effective["crawl_user_agent"] = crawl_user_agent

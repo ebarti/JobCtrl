@@ -344,8 +344,8 @@ def resolve_wttj_urls(conn: sqlite3.Connection) -> int:
             return 0
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            # Present the gateway-resolved honest UA, never an import-time constant.
-            page = browser.new_page(user_agent=decision.user_agent)
+            # Present the gateway session identity, including optional client hints.
+            page = browser.new_page(user_agent=decision.user_agent, extra_http_headers=dict(decision.request_headers))
             page.on("response", capture_algolia)
             page.goto(listing_url, timeout=60000)
             page.wait_for_load_state("networkidle")
@@ -1613,7 +1613,7 @@ def scrape_site_batch(
                 if _PROXY_CONFIG is not None:
                     launch_opts["proxy"] = _PROXY_CONFIG.playwright
                 browser = p.chromium.launch(**launch_opts)
-                context = browser.new_context(user_agent=base_gateway.user_agent)
+                context = browser.new_context(user_agent=base_gateway.user_agent, extra_http_headers=dict(base_gateway.request_headers))
                 anonymous_page = context.new_page()
                 return anonymous_page
 
