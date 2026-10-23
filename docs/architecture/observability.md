@@ -150,6 +150,18 @@ The `TracingInterceptor` is registered both client-side
 (`infrastructure/temporal/worker.py`) so trace context propagates from the
 JSON-RPC handler that starts a workflow into the worker that runs it.
 
+Blocking executor and nested stage fan-out use
+`infrastructure/workflow_run_context.py` to transfer the resolved canonical
+workflow ID and the submitting OpenTelemetry context together. Each invocation
+attaches and restores its tracing context independently, including on failure;
+concurrent jobs and reused pool threads cannot inherit a previous job's parent.
+Other Python context variables, including the Temporal activity context, are
+not copied. This preserves the existing metadata-only span attributes and
+keeps generation/scoring spans joined to their actual workflow trace rather
+than associating calls by timestamps. Cancellation and executor retirement
+retain the original parent for calls still settling while replacement work
+uses its own submitting parent.
+
 `init_otel()` is called from `jobctrl.cli._bootstrap()`, so every CLI
 command (notably `jobctrl worker` and `jobctrl rpc`) configures
 exporting on startup. The `worker` command calls `shutdown_otel()` on

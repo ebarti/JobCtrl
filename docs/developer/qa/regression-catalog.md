@@ -529,6 +529,19 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For workflow/model trace joins, run locked
+`pytest tests/test_worker_trace_context.py tests/test_workflow_run_context.py tests/test_activity_connection_lifetime.py tests/test_p1b_error_inversion.py`
+and the existing OTel/RPC span tests. Use in-memory export and synthetic sources
+to prove actual activity-to-blocking-to-fan-out parent IDs with both default and
+owned executors, distinct concurrent jobs, concurrent reuse of one wrapper,
+thread reuse after success/error, and cancellation while a retired generation
+settles. Unrelated Python context variables and Temporal activity context must
+not cross the handoff. Preserve canonical workflow event ownership, connection
+cleanup, heartbeats and cancellation behavior. Prompts, completions, arbitrary
+parameters and private exception messages must remain absent from model span
+attributes/events/status. Verify a fresh owned operation's actual exported
+parent links after activation; a time-window match is not a workflow join.
+
 For anonymous enrichment capture, run locked
 `pytest tests/test_enrichment_visible_capture.py tests/test_enrichment_extractors.py tests/test_optional_extension.py`.
 Exercise real owned browser DOMs with hidden dialog/comment preambles longer than
