@@ -159,7 +159,8 @@ class JobPreparationWorkflow:
         failed: list[str] = []
         failure: str | None = None
         error_code: str | None = None
-        for step in _ordered_steps(payload.steps):
+        ordered_steps = _ordered_steps(payload.steps)
+        for index, step in enumerate(ordered_steps):
             try:
                 output = await _execute_step(step, payload)
             except CancelledError:
@@ -188,6 +189,17 @@ class JobPreparationWorkflow:
                 failure = f"{step}: {detail}"
                 break
             completed.append(step)
+            if step == "score" and _activity_output_blocks_materials(output):
+                next_generation_step = next(
+                    (candidate for candidate in ordered_steps[index + 1:] if candidate in {"tailor", "cover"}),
+                    None,
+                )
+                if next_generation_step and workflow.patched("preparation-score-material-block-v1"):
+                    # Match the existing not_eligible material result without
+                    # queueing a no-op behind model work. The Score result is
+                    # versioned; do not rewrite a newer score or stage state.
+                    skipped.append(next_generation_step)
+                    break
         return JobPreparationResult(
             steps_completed=completed,
             steps_skipped=skipped,
@@ -251,6 +263,12 @@ def _activity_output_status(output: Any) -> str:
     if isinstance(output, dict):
         return str(output.get("status") or "ok").strip().lower()
     return str(getattr(output, "status", "ok") or "ok").strip().lower()
+
+
+def _activity_output_blocks_materials(output: Any) -> bool:
+    if isinstance(output, dict):
+        return output.get("material_preparation_blocked") is True
+    return getattr(output, "material_preparation_blocked", False) is True
 
 
 def _activity_output_detail(output: Any) -> str:

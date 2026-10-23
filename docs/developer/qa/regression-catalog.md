@@ -529,6 +529,18 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For known eligibility blocks in preparation, run locked
+`pytest tests/test_preparation_score_material_block.py tests/test_workflow_control_capacity.py tests/test_workflow_job_preparation.py tests/test_score_eligibility_stage_state.py tests/test_automatic_material_decline.py tests/test_v7_score_runtime.py`.
+Exercise the actual Score activity and Temporal payload conversion with the
+existing typed eligibility predicate, including absent legacy fields and
+non-boolean flags. In a real independent Temporal server, finish Score, then
+hold every main activity slot at both one and four slots. The blocked preparation
+must settle without scheduling Tailor, Cover or PDF while those holds remain.
+Replay old histories both with and without the additive field, plus new
+short-circuit histories. Preserve low-fit override semantics, separate explicit
+material work, accepted newer state, and existing source/profile staleness fences.
+Use owned synthetic workspaces and no provider calls or personal data.
+
 For selected broad-board routing, run locked
 `pytest tests/test_selected_board_wiring.py tests/test_source_registry.py tests/test_discovery_scheduler_pr4.py tests/test_discover_reliability.py`.
 Use owned exact-schema SQLite registry entries with a selected retained board

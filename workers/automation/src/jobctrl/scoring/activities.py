@@ -60,6 +60,8 @@ class ScoreJobActivityOutput:
     status: str
     score_version: int | None = None
     error: str = ""
+    # This execution's accepted score; never a persisted admission veto.
+    material_preparation_blocked: bool = False
 
 
 @activity.defn(name="score")
@@ -360,6 +362,7 @@ async def score_job_activity(payload: ScoreJobActivityInput) -> ScoreJobActivity
             status=status,
             score_version=result.get("score_version"),
             error=str(result.get("error") or ""),
+            material_preparation_blocked=result.get("material_preparation_blocked") is True,
         )
     except JobCtrlError as exc:
         raise to_application_error(exc) from exc
@@ -373,6 +376,7 @@ def _score_one_job(
     workflow_id: str | None = None,
 ) -> dict[str, Any]:
     from jobctrl.domain.errors import MissingInputError
+    from jobctrl.domain.scoring.eligibility import eligibility_blocks_downstream
     from jobctrl.domain.tenant import TenantId
     from jobctrl.scoring.scorer import score_job_by_id
 
@@ -387,6 +391,9 @@ def _score_one_job(
         return {
             "status": "ok",
             "score_version": outcome.score.version if outcome.score is not None else None,
+            "material_preparation_blocked": (
+                outcome.score is not None and eligibility_blocks_downstream(outcome.score.breakdown.eligibility)
+            ),
         }
     error = outcome.error or "scoring failed"
     if "not found" in error.lower() or "not enriched" in error.lower():

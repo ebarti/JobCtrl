@@ -251,6 +251,17 @@ the terminal fan-out step closes execution membership for phase and overall ETA
 calculation. Existing-backlog work remains visibly separate from jobs observed
 by this run even though both use the same preparation workflow implementation.
 
+A successful per-job Score activity also returns whether its accepted score's
+existing eligibility verdict blocks material preparation. If a later requested
+step is Tailor or Cover, the current workflow records that first material step
+as skipped and finishes without queueing a redundant material activity. Score
+already owns the canonical eligibility stage reconciliation. This workflow
+shortcut writes no stage or score state and cannot veto a newer accepted score
+or a separate material preparation. Explicit Tailor-only, Score-only and
+PDF-only requests retain their existing entry-point guards. Missing flags in
+older results retain the old path, and a Temporal patch marker preserves replay
+of histories that already scheduled the material check.
+
 Targets are derived in `pipeline/preparation.py` from stage state:
 
 - Jobs at `pending_score` get steps `["score","tailor","cover","pdf"]` keyed to

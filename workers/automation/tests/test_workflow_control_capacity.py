@@ -261,3 +261,86 @@ async def test_model_work_cannot_enter_the_local_control_pool():
     from jobctrl.infrastructure.temporal.control import execute_control_activity
     with pytest.raises(ValueError, match="not an allowlisted workflow control"):
         await execute_control_activity(object(), None)
+
+
+@pytest.mark.parametrize("slots", [1, 4])
+@pytest.mark.asyncio
+async def test_known_score_block_finishes_while_main_capacity_remains_full(monkeypatch, tmp_path, slots):
+    """Score really finishes first; queued model work then occupies all slots."""
+    init_db(tmp_path / "known-block.db")
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"daily_budget_usd": 0.0}))
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(config))
+    score_started = threading.Event()
+    release_score = threading.Event()
+    release_holds = threading.Event()
+    holds_started = []
+    lock = threading.Lock()
+    inventory = ActiveActivityInventory()
+
+    from jobctrl.scoring.activities import score_job_activity
+
+    def accepted_score(_payload, **_kwargs):
+        score_started.set()
+        assert release_score.wait(20), "test did not release accepted Score"
+        return {"status": "ok", "score_version": 1, "material_preparation_blocked": True}
+
+    monkeypatch.setattr("jobctrl.scoring.activities._score_one_job", accepted_score)
+
+    @activity.defn(name="hold_remote")
+    async def hold_remote():
+        def hold():
+            with lock:
+                holds_started.append(threading.get_ident())
+            assert release_holds.wait(20), "test did not release model work"
+        await run_blocking_with_heartbeat(hold, starting_message="held", poll_interval=0.1)
+
+    queue = f"known-block-capacity-{uuid.uuid4()}"
+    async with local_env() as env:
+        worker = build_worker(
+            env.client, task_queue=queue, workflows=[_HoldRemoteWorkflow, JobPreparationWorkflow],
+            activities=[score_job_activity, hold_remote, check_spend_budget, record_workflow_started, record_workflow_outcome],
+            max_concurrent_activities=slots, activity_inventory=inventory,
+        )
+        holds = []
+        handle = None
+        try:
+            async with worker:
+                try:
+                    handle = await env.client.start_workflow(
+                        JobPreparationWorkflow.run,
+                        JobPreparationInput(tenant_id="local", job_id=canonical_job_id(str(uuid.uuid4())),
+                                            steps=["score", "tailor", "cover", "pdf"],
+                                            target_version="1", idempotency_key="known-block"),
+                        id=f"known-block-{uuid.uuid4()}", task_queue=queue,
+                    )
+                    await _until(score_started.is_set)
+                    # Fill spare slots and enqueue another held activity before
+                    # Score releases its own slot. No material stub is registered.
+                    for _ in range(slots + 1):
+                        holds.append(await env.client.start_workflow(
+                            _HoldRemoteWorkflow.run, id=f"hold-{uuid.uuid4()}", task_queue=queue,
+                        ))
+                    await _until(lambda: len(holds_started) == slots - 1)
+                    release_score.set()
+                    await _until(lambda: len(holds_started) == slots)
+                    result = await asyncio.wait_for(handle.result(), timeout=3)
+                    assert result.steps_completed == ["score"] and result.steps_skipped == ["tailor"]
+                    assert result.steps_failed == [] and result.failure is None
+                    assert len(holds_started) == slots and not release_holds.is_set()
+                    assert inventory.snapshot().active_activity_count == slots
+                    history = await handle.fetch_history()
+                    names = [e.activity_task_scheduled_event_attributes.activity_type.name
+                             for e in history.events if e.HasField("activity_task_scheduled_event_attributes")]
+                    assert names == ["score_job"]
+                    await Replayer(workflows=[JobPreparationWorkflow],
+                                   workflow_runner=UnsandboxedWorkflowRunner()).replay_workflow(history)
+                finally:
+                    release_score.set()
+                    release_holds.set()
+                    if handle is not None:
+                        await asyncio.wait_for(handle.result(), timeout=5)
+                    for hold in holds:
+                        await asyncio.wait_for(hold.result(), timeout=5)
+        finally:
+            shutdown_activity_executors()
