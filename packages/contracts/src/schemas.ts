@@ -3104,6 +3104,22 @@ export interface ScoreStaleness {
   pendingExplicitRescore: boolean;
 }
 
+/** Profile edits never schedule scoring. Reviews retain the score's original sources. */
+export interface ScoreProfileFreshness {
+  status: "not_scored" | "unknown" | "current" | "profile_updated" | "reviewed_unchanged";
+  scoredProfileVersion: number | null;
+  currentProfileVersion: number | null;
+  review: {
+    determinationId: string;
+    verdict: "significant" | "insignificant";
+    rationale: string;
+    provider: string;
+    model: string;
+    reasoningEffort: string | null;
+    reviewedAt: string;
+  } | null;
+}
+
 /** Whether the saved requirement-fit assessment belongs to the current analysis and score. */
 export interface ScoreAnalysisFreshness {
   status: "no_analysis" | "not_assessed" | "outdated" | "current";
@@ -3214,6 +3230,7 @@ export interface JobSummary {
   scoreCorrection: ScoreCorrection | null;
   scoreStaleness: ScoreStaleness;
   scoreAnalysisFreshness?: ScoreAnalysisFreshness;
+  scoreProfileFreshness?: ScoreProfileFreshness;
   currentStage: Stage;
   currentSubstage: Stage;
   currentState: StageState;

@@ -219,6 +219,7 @@ class ScoreJobOutcome:
     ok: bool
     score: JobScore | None
     error: str = ""
+    retained: bool = False
 
 
 class ScoreJobUseCase:
@@ -270,6 +271,7 @@ class ScoreJobUseCase:
         resume_text: str | None = None,
         criteria: ScoringCriteria | None = None,
         employer_analysis: EmployerAnalysis | None = None,
+        previous_score: JobScore | None = None,
     ) -> ScoreJobOutcome:
         """**Preferred entry point** for single-threaded callers.
 
@@ -285,7 +287,7 @@ class ScoreJobUseCase:
         used. Either way the LLM only sees the resume text — the snapshot
         carries the published candidate language.
         """
-        if _job_tenant_id(job) != tenant_id:
+        if _job_tenant_id(job) != tenant_id or profile_snapshot.tenant_id != tenant_id:
             raise ValueError("Scoring input tenant_id does not match the requested tenant")
         parse_result = self.compute(
             job=job,
@@ -294,6 +296,7 @@ class ScoreJobUseCase:
             resume_text=resume_text,
             criteria=criteria,
             employer_analysis=employer_analysis,
+            previous_score=previous_score,
         )
         return self.persist_outcome(job=job, parse=parse_result, tenant_id=tenant_id)
 
@@ -306,6 +309,7 @@ class ScoreJobUseCase:
         resume_text: str | None = None,
         criteria: ScoringCriteria | None = None,
         employer_analysis: EmployerAnalysis | None = None,
+        previous_score: JobScore | None = None,
     ) -> ScoreParseResult:
         """LLM call + parse only — does NOT touch the repository.
 
@@ -319,19 +323,52 @@ class ScoreJobUseCase:
         each parse via :meth:`persist_outcome`.
         """
         _job_id(job)
-        if _job_tenant_id(job) != tenant_id:
+        if _job_tenant_id(job) != tenant_id or profile_snapshot.tenant_id != tenant_id:
             raise ValueError("Scoring input tenant_id does not match the requested tenant")
         text = resume_text or profile_snapshot.as_dict().get("resume", {}).get("executive_profile", {}).get(
             "baseline_text", ""
         )
         scoring_criteria = criteria or ScoringCriteria.from_profile_snapshot(profile_snapshot)
-        return self._call_llm(
+        from jobctrl.domain.scoring.profile_impact import profile_inputs, review_profile_impact
+
+        review = {}
+        if previous_score is not None and previous_score.trace.profile_snapshot_version < profile_snapshot.version:
+            try:
+                current = profile_inputs(profile_snapshot, scoring_criteria,
+                    self._confirmed_preferences_reader(profile_snapshot, scoring_criteria), job)
+                decision, envelope = review_profile_impact(
+                    score=previous_score, current=current, job=job,
+                    dependencies={**self._determination_dependencies, "tenant_id": str(tenant_id)},
+                )
+                review = {"determination_id": envelope.determination_id,
+                    "entity_version": f"{previous_score.version}:{profile_snapshot.profile_id}:{profile_snapshot.version}",
+                    "score_version": str(previous_score.version)}
+                # Profile-only retention cannot conceal changed posting/configuration/policy.
+                old = previous_score.trace.profile_inputs
+                comparable = (
+                    previous_score.trace.prompt_version == SCORE_PROMPT_VERSION
+                    and previous_score.trace.schema_version == SCORE_SCHEMA_VERSION
+                    and previous_score.trace.model == str(getattr(self._llm, "model", "llm-port-default"))
+                    and all(old.get(key) == current.model_dump()[key] for key in (
+                        "posting_hash", "criteria_text", "target_criteria", "min_fit_score"))
+                )
+                if decision.verdict == "insignificant" and comparable:
+                    return ScoreParseResult(ok=True, fit_score=previous_score.fit_score,
+                        breakdown=previous_score.breakdown, keywords=previous_score.matched_keywords,
+                        criteria=previous_score.criteria, trace=previous_score.trace,
+                        retained_score_version=previous_score.version, profile_review=review)
+            except DeterminationFailure as failure:
+                return ScoreParseResult(ok=False, fit_score=None, breakdown=ScoreBreakdown(),
+                    keywords=MatchedKeywords(), criteria=scoring_criteria,
+                    error=str(failure))
+        parsed = self._call_llm(
             job=job,
             resume_text=text,
             profile_snapshot=profile_snapshot,
             criteria=scoring_criteria,
             employer_analysis=employer_analysis,
         )
+        return replace(parsed, profile_review=review)
 
     def persist_outcome(
         self,
@@ -351,6 +388,19 @@ class ScoreJobUseCase:
         version conflict or a real persistence failure and the caller
         wants both surfaced.
         """
+        retained = None
+        if parse.profile_review:
+            retained = self._repository.load(tenant_id, _job_id(job))
+            if retained is None or str(retained.version) != parse.profile_review["score_version"]:
+                raise DeterminationFailure("score_profile_binding_invalid")
+            self._repository.record_profile_review(retained,
+                entity_version=parse.profile_review["entity_version"],
+                determination_id=parse.profile_review["determination_id"])
+        if parse.retained_score_version is not None:
+            if retained is None or retained.version != parse.retained_score_version:
+                raise DeterminationFailure("score_profile_binding_invalid")
+            return ScoreJobOutcome(ok=True, score=retained, retained=True)
+
         if not parse.ok or parse.fit_score is None:
             return ScoreJobOutcome(
                 ok=False,
@@ -470,6 +520,11 @@ class ScoreJobUseCase:
                 if requirements and "resume" not in scopes.values():
                     raise DeterminationFailure("no_capability_requirements")
                 confirmed_preferences = self._confirmed_preferences_reader(profile_snapshot, criteria)
+                from jobctrl.domain.scoring.profile_impact import profile_inputs
+
+                trace = replace(trace, profile_inputs=profile_inputs(
+                    profile_snapshot, criteria, confirmed_preferences, job,
+                ).model_dump())
                 sources = [
                     Source(source_id="posting", text=build_jd_snapshot(job)),
                     *authored,

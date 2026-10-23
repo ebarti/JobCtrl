@@ -158,13 +158,16 @@ suggestion against the saved profile version in the same transaction. Historical
 locations and work models remain suggestions until accepted. The offline demo
 reports this capability unavailable.
 
-Profile-data writes also record `ProfileUpdated` in `job_events`. When existing
-tailored resumes are present, the API handles that event by dispatching a
-background `tailor -> cover` pipeline run with `retailor=true`, `dryRun=false`,
-and no item limit. The Python materials generation path creates a new materials
-generation for each re-tailored job, immediately follows it with cover-letter
-generation for jobs that are ready, and preserves older generations as
-superseded artifact data.
+Profile-data writes record `ProfileUpdated` in `job_events` atomically with the
+profile version. They never dispatch Score, Tailor or Cover or reset accepted
+scores/materials. API startup does not replay historical profile-update
+continuations. Jobs list/detail expose `scoreProfileFreshness` from the canonical
+saved profile and score trace; absent source versions remain `unknown`.
+Explicit score refresh checks older-profile inputs through a cited LLM
+`score_profile_impact` determination. Insignificant edits retain the original score
+and attach its exact review ID; significant edits run a full score. Failed checks
+preserve the previous score. New profile versions require a new review; identical
+inputs reuse the accepted determination. See [Scoring](../architecture/scoring.md#profile-edits-and-explicit-refresh).
 The web Profile, Profile Target Search, Preferences, Discovery, and Settings forms
 autosave five seconds after the last edit using the same profile/settings
 mutation paths as the explicit Save buttons; failed validation or mutation

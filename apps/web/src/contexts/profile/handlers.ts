@@ -14,7 +14,7 @@ import { profileKeys } from "./queryKeys.js";
 
 export const profileUpdatedHandler = (
   event: ProfileUpdated,
-): readonly InvalidationItem[] => [invalidate(profileKeys.profile(event.tenantId)), invalidate(evidenceMapKeys.list(event.tenantId)), invalidate(interviewKeys.jobs(event.tenantId)), invalidate(jobsKeys.details(event.tenantId))];
+): readonly InvalidationItem[] => [invalidate(profileKeys.profile(event.tenantId)), invalidate(evidenceMapKeys.list(event.tenantId)), invalidate(interviewKeys.jobs(event.tenantId)), invalidate(jobsKeys.details(event.tenantId)), invalidate(jobsKeys.lists(event.tenantId))];
 
 export const profileImportedHandler = (
   event: ProfileImported,

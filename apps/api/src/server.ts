@@ -379,10 +379,6 @@ import {
 } from "@jobctrl/domain-types";
 import { validateProfileTargetPlaces, type PlaceValidator } from "./place-validation.js";
 import {
-  claimNextProfileContinuationEvent,
-  handleProfileUpdatedEvent,
-  markProfileContinuationEventsHandled,
-  markProfileContinuationFailed,
   persistProfileUpdate,
 } from "./profile-events.js";
 import { dbFileIdentity, readLlmSpendHealth, readWorkerHealth } from "./worker-health.js";
@@ -509,7 +505,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     options.providerDispatcher ??
     createRuntimeJsonRpcDispatcherFactory(pythonRuntime)(actionContext);
   let discoveryBrowserContinuation: Promise<void> | null = null;
-  let profileContinuation: Promise<void> | null = null;
   const continueDiscoveryBrowserPreparation = (): Promise<void> => {
     if (discoveryBrowserContinuation) return discoveryBrowserContinuation;
     const continuation = dispatchDiscoveryBrowserContinuation(actionDispatcher, actionContext)
@@ -519,20 +514,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         }
       });
     discoveryBrowserContinuation = continuation;
-    return continuation;
-  };
-  const continueProfilePreparation = (): Promise<void> => {
-    if (profileContinuation) return profileContinuation;
-    const continuation = dispatchPendingProfileContinuations(
-      options.dbPath,
-      actionDispatcher,
-      actionContext,
-    ).finally(() => {
-      if (profileContinuation === continuation) {
-        profileContinuation = null;
-      }
-    });
-    profileContinuation = continuation;
     return continuation;
   };
   const manualCaptureImporter =
@@ -548,16 +529,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const requireHealthyWorkerForActions =
     options.requireHealthyWorkerForActions ?? !options.actionDispatcher;
   ensureLocalCapabilityToken(appDir);
-
-  app.addHook("onListen", async () => {
-    // Health-only startup is allowed before initialization creates the exact
-    // database. Do not launch the Python RPC bootstrap or any continuation
-    // reader against a path that the initializer still owns.
-    if (!databaseExists(options.dbPath)) return;
-    void continueProfilePreparation().catch((error: unknown) => {
-      app.log.error({ err: error }, "Failed to reconcile profile-triggered preparation during startup");
-    });
-  });
 
   void app.register(cors, {
     delegator: (request, callback) => {
@@ -3079,12 +3050,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     const db = openDatabase(options.dbPath);
     let profileResponse: ProfileConfigResponse | undefined;
     let profileUpdatedEvent: ReturnType<typeof persistProfileUpdate>["recorded"] = null;
-    let queuePreparationContinuation = false;
     try {
       const update = persistProfileUpdate(db, body);
       profileResponse = update.profile;
       profileUpdatedEvent = update.recorded;
-      queuePreparationContinuation = update.continuePreparation;
     } catch (error) {
       if (error instanceof ProfileVersionConflictError) {
         void reply.code(409);
@@ -3103,11 +3072,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       throw error;
     } finally {
       db.close();
-    }
-    if (profileUpdatedEvent && queuePreparationContinuation) {
-      void continueProfilePreparation().catch((error: unknown) => {
-        request.log.error({ err: error }, "Failed to dispatch profile-update preparation continuation");
-      });
     }
     if (profileUpdatedEvent && profileResponse?.profileVersion) {
       try {
@@ -4326,42 +4290,6 @@ async function dispatchDiscoveryBrowserContinuation(
   );
   if (!command) return;
   await actionDispatcher(command, actionContext);
-}
-
-async function dispatchPendingProfileContinuations(
-  dbPath: string,
-  actionDispatcher: ActionDispatcher,
-  actionContext: ActionDispatchContext,
-): Promise<void> {
-  // Yield once so profile writes committed in the same event-loop turn can be
-  // coalesced before any spendful continuation starts.
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  while (true) {
-    const db = openDatabase(dbPath);
-    let eventId: number | null;
-    try {
-      eventId = claimNextProfileContinuationEvent(db);
-    } finally {
-      db.close();
-    }
-    if (eventId === null) return;
-
-    // The JSON-RPC adapter waits for this deterministic workflow to finish.
-    // That serializes genuine profile revisions; a restart attaches to the
-    // same Temporal execution before writing the handled marker.
-    const outcome = await handleProfileUpdatedEvent(eventId, actionDispatcher, actionContext);
-
-    const handledDb = openDatabase(dbPath);
-    try {
-      if (outcome.completedWorkflowFailure) {
-        markProfileContinuationFailed(handledDb, eventId, outcome.completedWorkflowFailure);
-      } else {
-        markProfileContinuationEventsHandled(handledDb, [eventId], eventId);
-      }
-    } finally {
-      handledDb.close();
-    }
-  }
 }
 
 type BrowserRpcMethod = "browser_capabilities_list" | "browser_capability_enable" | "browser_capability_disable" | "browser_profile_copy";

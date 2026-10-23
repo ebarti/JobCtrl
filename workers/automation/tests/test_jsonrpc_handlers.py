@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from jobctrl.domain.scoring.use_cases import ScoreJobOutcome
+
 import json
 import uuid
 from dataclasses import fields
@@ -2060,7 +2062,7 @@ def test_selected_score_activity_runs_only_requested_job_ids(monkeypatch) -> Non
 
     def fake_score_job_by_id(job_id: JobId, **kwargs: object) -> SimpleNamespace:
         calls.append((job_id, kwargs))
-        return SimpleNamespace(ok=True, error=None)
+        return ScoreJobOutcome(ok=True, score=None)
 
     monkeypatch.setattr("jobctrl.scoring.scorer.score_job_by_id", fake_score_job_by_id)
 
@@ -2117,7 +2119,7 @@ def test_selected_score_activity_uses_requested_workers(monkeypatch) -> None:
 
     def fake_score_job_by_id(job_id: JobId, **_kwargs: object) -> SimpleNamespace:
         calls.append(job_id)
-        return SimpleNamespace(ok=True, error=None)
+        return ScoreJobOutcome(ok=True, score=None)
 
     monkeypatch.setattr("jobctrl.scoring.scorer.score_job_by_id", fake_score_job_by_id)
     monkeypatch.setattr(scoring_activities_mod, "ThreadPoolExecutor", RecordingExecutor)
@@ -2191,7 +2193,7 @@ def test_current_policy_score_activity_skips_current_policy_scores(
 
     def fake_score_job_by_id(job_id: JobId, **_kwargs: object) -> SimpleNamespace:
         calls.append(job_id)
-        return SimpleNamespace(ok=True, error=None)
+        return ScoreJobOutcome(ok=True, score=None)
 
     monkeypatch.setattr("jobctrl.database.get_connection", lambda: get_connection(tmp_db))
     monkeypatch.setattr("jobctrl.scoring.scorer.score_job_by_id", fake_score_job_by_id)

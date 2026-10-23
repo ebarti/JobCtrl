@@ -1,6 +1,7 @@
 import { companyBriefingSummaries } from "./company-briefings.js";
 import { resolveJobLocator } from "./job-locators.js";
 import { EMPLOYER_ANALYSIS_PROMPT_VERSION } from "./contracts.js";
+import { scoreProfileFreshness } from "./score-profile-freshness.js";
 import { readDetermination, readArtifactLineAnchors, determinationOwnsArtifact } from "./semantic-determinations.js";
 /**
  * TS read-model — projection-backed (Phase 9 / S-33).
@@ -2665,6 +2666,7 @@ function rowToJobSummary(row: JobListProjectionRow, db?: SqliteDatabase): JobSum
     scoreCorrection: parseScoreCorrection(row.score_correction_json),
     scoreStaleness: parseScoreStaleness(row),
     scoreAnalysisFreshness: parseScoreAnalysisFreshness(row),
+    ...(db ? { scoreProfileFreshness: scoreProfileFreshness(db, jobKey, nullableNumber(row.score_version), row.score_trace_json) } : {}),
     artifactCount: Number(row.artifact_count ?? 0),
     applyStatus: row.apply_status,
     appliedAt: row.applied_at,

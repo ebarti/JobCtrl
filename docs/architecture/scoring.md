@@ -49,7 +49,7 @@ The acquisition and scheduling policy is owned by
 
 ## Activity Ownership Across Entry Points
 
-Global sweeps, including profile continuations, honor the same Score ownership
+Global explicit sweeps and legacy profile continuations honor the same Score ownership
 as per-job preparation. They skip canceled rows, foreign pending/running owners
 and queued automatic reservations before acquisition, then recheck under the
 writer lock before claiming work. Score publication and terminal stage writes
@@ -63,6 +63,40 @@ report its job IDs and count. Other exceptions and failed determinations remain
 failures. The global stage wrapper propagates its failed-job count and safe
 semantic failure codes through the normal activity error boundary; accepted
 peer results stay saved when that activity fails.
+
+## Profile Edits And Explicit Refresh
+
+Profile persistence records the new version and ProfileUpdated event atomically.
+It never admits scoring or material preparation, including during API startup.
+Previously recorded continuation events remain historical; startup does not drain
+them. Work already admitted keeps its immutable profile snapshot. Saved target
+sources are formatted from that snapshot rather than reread from the live profile.
+
+Each new score stores its minimized canonical candidate/target/condition source
+catalog, profile identity/version, posting hash and scoring guidance privately in
+trace_json. Public trace DTOs do not expose that source text. Explicit per-job and
+batch refreshes of an older-profile score use the configured Scoring lane and
+BR-050 preflight for a strict score_profile_impact determination. The model compares
+both source catalogs against the job and saved assessment, decides significant or
+insignificant, and supplies rationale and verbatim citations. There is no prose
+heuristic or fallback. Batch compute runs these reviews in its existing bounded
+pool; unchanged inputs reuse the persisted receipt without another provider call.
+
+Only an insignificant verdict with unchanged posting, policy, prompt/schema, model and guidance may
+retain the score. Retention preserves its version, date, requirements and accepted
+materials, charges no new Score attempt and admits no material work. The review
+binds to the exact previous score/determination and reviewed profile version under
+the Score ownership and latest-score writer fence. New profile versions invalidate
+that review binding. Significant changes proceed through normal full scoring and
+preserve the old score on failure. Independent policy changes require a full
+assessment even when profile changes are cosmetic.
+
+Missing historical comparison sources, an unavailable provider, spend denial and
+invalid model/binding responses remain distinct safe failures; none means the
+profile is insignificant or the old score is current. Jobs GET compares canonical
+versions and joins only the recorded review ID. Its statuses are not_scored,
+unknown, current, profile_updated and reviewed_unchanged. A retained score keeps its
+old source version visible rather than being relabeled newly scored.
 
 ## Retrieval Before Scoring
 

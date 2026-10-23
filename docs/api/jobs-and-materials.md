@@ -149,6 +149,21 @@ Unicode lowercasing: `%`, `_`, and backslash have no wildcard or escape meaning.
 Source checks the displayed source, discovery source, posting source, and posting
 URL. These rules also apply to searched lists and all-matching bulk selection.
 
+### Profile freshness and explicit score updates
+
+Jobs list/detail include `scoreProfileFreshness`: status, scored/current profile
+versions, and an optional bound review with determination ID, verdict, rationale,
+provider/model/effort and review time. Profile saves and API startup launch no
+score or material work. A score with unknown source versions is `unknown`.
+
+The existing per-job `actions/rescore-current-policy` and batch scoring actions
+remain explicit. For a changed profile on the same policy, they ask the configured
+model whether the edits affect the job. An insignificant verdict keeps the score's
+original version/date and records `reviewed_unchanged`; a significant verdict
+recomputes. Policy or posting/guidance changes can independently require a new
+score. Missing historical comparison inputs and failed checks preserve accepted
+scores and return their typed failure, without a lexical substitute.
+
 ## Saved Posting Availability
 
 `POST /v1/jobs/:jobId/actions/check-availability` accepts `{}` with no additional

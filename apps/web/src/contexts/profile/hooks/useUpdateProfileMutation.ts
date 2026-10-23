@@ -32,6 +32,7 @@ export function useUpdateProfileMutation(): UseMutationResult<
       settle: () => [
         profileKeys.profile(tenantId),
         jobsKeys.lists(tenantId),
+        jobsKeys.details(tenantId),
         dashboardKeys.summary(tenantId),
       ],
     }),
