@@ -99,6 +99,13 @@ test("Discover explains occupied slots and unlocks automatically after the runti
   await page.route("**/v1/pipeline/operations", (route) => route.fulfill({ json: idleObserved ? idle : busy }));
   await page.goto("/pipelines");
   await expect(page).toHaveTitle(/JobCtrl.*Pipelines/);
+  const preparation = page.getByRole("alert").filter({ hasText: "Source collection complete" });
+  await expect(preparation).toBeVisible();
+  await expect(preparation).toContainText("jobs remain in scoring or material preparation");
+  await expect(preparation).toContainText("progress updates automatically");
+  await expect(preparation).not.toContainText("Review active work before restarting discovery");
+  await expect(preparation.getByRole("link", { name: "Set up a new Discover run" })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath("discover-preparation-continues.png") });
   const discover = page.getByRole("button", { name: "Run Discover" });
   await expect(discover).toBeDisabled();
   await expect(page.getByRole("group", { name: "Pipeline action tools" }).getByText("waiting", { exact: true })).toBeVisible();
@@ -111,6 +118,9 @@ test("Discover explains occupied slots and unlocks automatically after the runti
   await page.screenshot({ path: testInfo.outputPath("discover-waiting-explained.png") });
   idleObserved = true;
   await expect(discover).toBeEnabled({ timeout: 20_000 });
+  await expect(preparation).toHaveCount(0);
+  const recovery = page.getByRole("alert").filter({ hasText: "This Discover run has ended" });
+  await expect(recovery.getByRole("link", { name: "Set up a new Discover run" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Review active runs" })).toHaveCount(0);
   await expect(page.locator("vite-error-overlay")).toHaveCount(0);
   await discover.scrollIntoViewIfNeeded();

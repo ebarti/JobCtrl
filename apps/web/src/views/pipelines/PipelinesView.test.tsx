@@ -918,6 +918,50 @@ describe("PipelinesView", () => {
     expect(screen.queryByRole("button", { name: "Stop discovery" })).not.toBeInTheDocument();
   });
 
+  it.each([2, null])(
+    "shows continuing preparation after source completion with active-work inventory %s",
+    async (activeItemsTotal) => {
+      await renderPipelineOperations({
+        ...pipelinesDiscoveringSnapshot,
+        execution: {
+          ...pipelinesDiscoveringSnapshot.execution!,
+          workflowStatus: "succeeded",
+          phase: "draining",
+          membershipClosed: true,
+          finishedAt: "2026-07-14T12:04:00.000Z",
+          currentExecution: {
+            members: 4, planned: 4, notEligible: 0, pending: 0,
+            failedPlan: 0, terminal: 2, remaining: 2,
+          },
+          sweptExistingBacklog: {
+            members: 3, planned: 3, notEligible: 0, pending: 0,
+            failedPlan: 0, terminal: 2, remaining: 1,
+          },
+        },
+        activeItemsTotal,
+        activeItemsTruncated: activeItemsTotal === null ? null : false,
+      });
+
+      const alert = screen.getByRole("alert");
+      expect(alert).toHaveTextContent("Source collection complete");
+      expect(alert).toHaveTextContent("3 jobs remain in scoring or material preparation");
+      expect(alert).toHaveTextContent("Follow the live stages below");
+      expect(alert).toHaveTextContent("progress updates automatically");
+      expect(alert).not.toHaveTextContent("This Discover run has ended");
+      expect(alert).not.toHaveTextContent("Review active work before restarting discovery");
+      expect(alert).not.toHaveTextContent("continue the remaining work once");
+      expect(within(alert).queryByRole("link", {
+        name: "Set up a new Discover run",
+      })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Stop discovery" })).not.toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: "Run Discover" })).toBeDisabled();
+      if (activeItemsTotal === null) {
+        expect(alert).toHaveTextContent("runtime inventory is unavailable");
+        expect(alert).not.toHaveTextContent("No work is running");
+      }
+    },
+  );
+
   it("explains that a closed draining run needs a new Discover run instead of resume", async () => {
     const user = userEvent.setup();
     const runPipelineStages = vi.fn();
