@@ -77,7 +77,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-SCORE_PROMPT_VERSION = "score-fit-assessment-v10-binding-repair"
+SCORE_PROMPT_VERSION = "score-fit-assessment-v11-single-evidence-source"
 SCORE_SCHEMA_VERSION = "score-fit-assessment-v5-determinations"
 SCORE_THINKING_BUDGET = 0
 
@@ -159,8 +159,6 @@ def _build_job_blob(job: dict[str, Any]) -> str:
 
 def _build_requirement_fit_inputs_blob(
     *,
-    job: dict[str, Any],
-    profile_snapshot: ProfileSnapshot,
     employer_analysis: EmployerAnalysis | None,
 ) -> str:
     if employer_analysis is None:
@@ -183,18 +181,8 @@ def _build_requirement_fit_inputs_blob(
     payload = {
         "employer_analysis_generation": employer_analysis.generation,
         "requirements": requirements,
-        "profile_evidence": _profile_evidence_prompt_items(profile_snapshot),
     }
     return "REQUIREMENT FIT INPUTS:\n" + json_dumps(payload)
-
-
-def _profile_evidence_prompt_items(profile_snapshot: ProfileSnapshot) -> list[dict[str, Any]]:
-    # Advertised evidence is the same inventory and verbatim text validated
-    # after the model call. Unconfirmed suggestions never become evidence.
-    return [
-        {"id": source.source_id, "source_text": source.text}
-        for source in profile_sources(profile_snapshot.as_dict())
-    ]
 
 
 def _optional_prompt_section(text: str) -> str:
@@ -450,8 +438,6 @@ class ScoreJobUseCase:
             profile_snapshot_version=profile_snapshot.version,
         )
         requirement_fit_inputs = _build_requirement_fit_inputs_blob(
-            job=job,
-            profile_snapshot=profile_snapshot,
             employer_analysis=matched_employer_analysis,
         )
         with otel_trace.get_tracer("jobctrl.scoring").start_as_current_span("scoring.score_job") as span:

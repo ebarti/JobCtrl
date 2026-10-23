@@ -1,6 +1,6 @@
 """Typed model-owned fit and eligibility judgments over canonical sources."""
 
-from typing import Literal
+from typing import ClassVar, Literal
 from pydantic import Field, StrictStr
 from jobctrl.domain.determinations import Citation, DeterminationModel, DeterminationFailure
 
@@ -63,6 +63,9 @@ class DiscoveryFeedback(DeterminationModel):
 
 
 class ScoringDecision(DeterminationModel):
+    # Removing duplicate input text does not change the accepted result contract.
+    compatible_prompt_versions: ClassVar[tuple[str, ...]] = ("score-fit-assessment-v10-binding-repair",)
+
     score: int = Field(ge=1, le=10)
     technical_fit: int = Field(ge=0, le=10)
     experience_fit: int = Field(ge=0, le=10)

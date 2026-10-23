@@ -691,7 +691,7 @@ def test_score_job_omits_structured_output_token_cap(profile_snapshot) -> None:
     assert llm.kwargs[0]["response_schema"]["additionalProperties"] is False
 
 
-def test_requirement_fit_prompt_includes_education_evidence(tmp_path) -> None:
+def test_requirement_fit_prompt_keeps_canonical_evidence_once_including_education(tmp_path) -> None:
     score_repo = _MemoryRepo()
     report_repo = _MemoryRequirementFitRepo()
     job = {
@@ -770,12 +770,24 @@ def test_requirement_fit_prompt_includes_education_evidence(tmp_path) -> None:
     assert outcome.ok is True
     captured = json.loads(llm.calls[0][1].content)
     prompt_payload = captured["context"]["requirement_fit_inputs"]
-    assert '"id": "education:security_degree"' in prompt_payload
+    from jobctrl.domain.profile.canonical_sources import profile_sources
+
+    expected = profile_sources(snapshot.as_dict())
+    evidence_ids = [source.source_id for source in expected]
+    assert captured["context"]["candidate_evidence_ids"] == evidence_ids
     canonical_sources = {row["source_id"]: row["text"] for row in captured["sources"]}
+    assert len(canonical_sources) == len(captured["sources"])
+    assert [row for row in captured["sources"] if row["source_id"] in evidence_ids] == [
+        source.model_dump() for source in expected
+    ]
     fit_inputs = json.loads(prompt_payload.split("\n", 1)[1])
-    for row in fit_inputs["profile_evidence"]:
-        assert row["source_text"] == canonical_sources[row["id"]]
-    assert set(captured["context"]["candidate_evidence_ids"]) == {row["id"] for row in fit_inputs["profile_evidence"]}
+    assert set(fit_inputs) == {"employer_analysis_generation", "requirements"}
+    assert fit_inputs["employer_analysis_generation"] == analysis.generation
+    assert fit_inputs["requirements"] == [
+        {name: getattr(requirement, name) for name in ("id", "text", "tier", "weight", "evidence_span")}
+        for requirement in analysis.canonical.requirements
+    ]
+    assert outcome.score.trace.prompt_version == "score-fit-assessment-v11-single-evidence-source"
     assert "unconfirmed-suggestion" not in llm.calls[0][1].content
     assert "Unconfirmed proposal" not in llm.calls[0][1].content
     assert "Bachelor of Science in Information Security" in canonical_sources["education:security_degree"]
@@ -852,14 +864,18 @@ def test_score_job_includes_requirement_fit_inputs_in_prompt(tmp_path) -> None:
     )
 
     assert outcome.ok is True
-    prompt_payload = json.loads(llm.calls[0][1].content)["context"]["requirement_fit_inputs"]
+    captured = json.loads(llm.calls[0][1].content)
+    prompt_payload = captured["context"]["requirement_fit_inputs"]
     assert "REQUIREMENT FIT INPUTS" in prompt_payload
     assert '"employer_analysis_generation": 3' in prompt_payload
     assert '"id": "req-platform"' in prompt_payload
     assert '"tier": "must_have"' in prompt_payload
     assert '"weight": 0.95' in prompt_payload
-    assert '"id": "ev_python_platform"' in prompt_payload
-    assert "Led Python platform reliability for distributed APIs." in prompt_payload
+    assert "ev_python_platform" in captured["context"]["candidate_evidence_ids"]
+    evidence = [row for row in captured["sources"] if row["source_id"] == "ev_python_platform"]
+    assert len(evidence) == 1
+    assert "Led Python platform reliability for distributed APIs." in evidence[0]["text"]
+    assert "profile_evidence" not in json.loads(prompt_payload.split("\n", 1)[1])
 
 
 def test_score_job_ignores_cross_tenant_employer_analysis(tmp_path) -> None:

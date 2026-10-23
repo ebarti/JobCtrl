@@ -65,6 +65,16 @@ The prompt's evidence inventory is the same canonical source inventory used
 for citation validation. Only confirmed achievements enter it. Education and
 other structured facts retain their exact source serialization; a second text
 adapter cannot advertise foreign IDs or reconstruct different citation text.
+Profile evidence appears once in canonical `sources[]`; the existing
+`candidate_evidence_ids` selects its inventory. The requirement-fit context
+retains the analysis generation and each requirement's ID, text, tier, weight
+and posting span, without a second aliased profile-evidence copy. This reduces
+request representation size without removing facts or changing citation,
+model/effort, admission or score-resolution rules. Prompt versioning and the
+full input fingerprint distinguish the revised representation; accepted
+historical scores remain intact. The generated reader registry accepts v10
+results under the unchanged strict schema while current-only reads require v11.
+Smaller payloads alone do not establish a latency or model-quality improvement.
 
 ### Deterministic Score Resolution
 
@@ -86,7 +96,7 @@ from the canonical requirement source matching `requirement_id`. Rewritten
 requirement descriptions cannot substitute for that evidence. Invalid inventory,
 span, evidence-ID and eligibility-status fields receive a complete mechanical
 repair report with exact IDs and canonical targets. Scoring uses prompt revision
-`score-fit-assessment-v10-binding-repair`; the scoring formula and independent
+`score-fit-assessment-v11-single-evidence-source`; the scoring formula and independent
 semantic decisions are unchanged. Bounded repair never accepts invalid output,
 increases its call limit or replaces an accepted score on failure.
 
