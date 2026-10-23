@@ -208,6 +208,12 @@ does not rewrite historical score versions.
 scoring work. It supplements the target-search titles owned by Discovery; it
 does not add, remove, or rename those search targets.
 
+A profile change can start preparation while other jobs are still running.
+Those jobs keep their current execution; the continuation processes other
+eligible work. If you cancel or reset a job, the older execution cannot replace
+its successor's result. A real scoring failure stays visible while accepted
+results for other jobs remain saved.
+
 ## Source Of Truth And Ownership
 
 - **The posting snapshot owns employer claims.** Analysis evidence spans must
