@@ -17,6 +17,27 @@ afterEach(() => {
 });
 
 describe("worker runtime telemetry", () => {
+  it.each([
+    `prepare-auto-local-apply-${"a".repeat(24)}`,
+    `prepare-auto-local-score-${"a".repeat(23)}`,
+    `prepare-auto-local-score-${"a".repeat(25)}`,
+    `prepare-auto-local-score-${"A".repeat(24)}`,
+    `prepare-auto-local-score-${"a".repeat(24)}\n`,
+    "https://example.test/private?token=secret",
+  ])("rejects an invalid recovery workflow reference %s", (workflowRef) => {
+    const fixture = createFixture();
+    insertHeartbeat(fixture, {
+      workerId: "worker-a", lastSeenAt: "2026-07-14T10:00:20.000Z",
+      configuredSlots: 4, activeSlots: 1, executorThreads: 6,
+      details: [{ ...activeDetails(1, 0)[0], workflowRef }],
+      queueObservation: availableObservation("2026-07-14T10:00:19.000Z", 0, 1),
+    });
+    const result = readWorkerRuntimeTelemetry(fixture.dbPath, { now: new Date("2026-07-14T10:00:30.000Z") });
+    expect(result.status).toBe("available");
+    expect(result.activeSlots).toBe(1);
+    expect(result.activeDetails).toEqual([]);
+  });
+
   it("sums exact multi-process capacity without deriving busy slots from 20 details", () => {
     const fixture = createFixture();
     const now = new Date("2026-07-14T10:00:30.000Z");

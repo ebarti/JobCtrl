@@ -82,6 +82,7 @@ const STAGE_LABELS: Record<(typeof OPERATIONAL_STAGES)[number], string> = {
 };
 
 const RUNTIME_ACTIVITY_STAGE: Record<string, string> = {
+  enrich: "enrich",
   discovery_enrichment: "enrich",
   score: "score",
   score_job: "score",
