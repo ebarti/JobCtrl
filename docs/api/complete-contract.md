@@ -707,7 +707,10 @@ jobs.
 `activeItems[]` is the oldest-first bounded view of allowlisted active activity
 kinds, with at most 20 entries. `activeItemsTotal` is the exact allowlisted
 count when available and `activeItemsTruncated` says whether detail was omitted;
-`activeSlots` still counts every activity. Active items are either resolved
+`activeSlots` still counts every activity. Manual URL intake is included as
+`job_url_import` with the fixed `job-url-import` operational kind, nullable
+safe workflow identity and no pipeline stage or Discover membership.
+Active items are either resolved
 jobs, source families, orchestration, or unresolved runtime activities. The
 worker never reads activity arguments for telemetry. It returns only validated
 safe workflow/run references and non-reversible local opaque identifiers; raw

@@ -16,7 +16,8 @@ from jobctrl.infrastructure.temporal.activity_runtime_telemetry import (
 )
 
 
-def test_inventory_is_concurrency_safe_for_parallel_starts_and_terminals():
+@pytest.mark.parametrize("activity_type", ["score_job", "job_url_import"])
+def test_inventory_is_concurrency_safe_for_parallel_starts_and_terminals(activity_type):
     inventory = ActiveActivityInventory()
     participants = 8
     started = threading.Barrier(participants + 1)
@@ -25,7 +26,7 @@ def test_inventory_is_concurrency_safe_for_parallel_starts_and_terminals():
 
     def run_activity(index: int) -> None:
         token = inventory.start(
-            activity_type="score_job",
+            activity_type=activity_type,
             activity_id=f"activity-{index}",
             workflow_id=f"workflow-{index}",
             workflow_run_id=f"run-{index}",
@@ -41,7 +42,7 @@ def test_inventory_is_concurrency_safe_for_parallel_starts_and_terminals():
         started.wait(timeout=5)
         active = inventory.snapshot()
         assert active.active_activity_count == participants
-        assert active.counts_by_type == {"score_job": participants}
+        assert active.counts_by_type == {activity_type: participants}
         release.set()
         for future in futures:
             future.result(timeout=5)
@@ -49,7 +50,7 @@ def test_inventory_is_concurrency_safe_for_parallel_starts_and_terminals():
     terminal = inventory.snapshot()
     assert terminal.active_activity_count == 0
     assert terminal.active_details == ()
-    assert terminal.durations_by_type["score_job"].completed_count == participants
+    assert terminal.durations_by_type[activity_type].completed_count == participants
 
 
 @pytest.mark.asyncio
@@ -175,10 +176,14 @@ def test_inventory_returns_exact_total_with_bounded_longest_running_safe_details
     )
 
 
-def test_saved_posting_checks_are_visible_without_exposing_job_identity():
+@pytest.mark.parametrize(("activity_type", "kind"), [
+    ("check_saved_posting_availability", "saved-posting-availability"),
+    ("job_url_import", "job-url-import"),
+])
+def test_intake_and_saved_posting_checks_are_visible_without_exposing_job_identity(activity_type, kind):
     inventory = ActiveActivityInventory()
     token = inventory.start(
-        activity_type="check_saved_posting_availability",
+        activity_type=activity_type,
         activity_id="private-job-url",
         workflow_id="availability-local-private-job-id",
         workflow_run_id="00000000-0000-4000-8000-000000000001",
@@ -187,8 +192,8 @@ def test_saved_posting_checks_are_visible_without_exposing_job_identity():
     )
     snapshot = inventory.snapshot()
     assert snapshot.active_activity_count == snapshot.active_details_total == 1
-    assert snapshot.counts_by_type == {"check_saved_posting_availability": 1}
-    assert snapshot.active_details[0].operational_ref.kind == "saved-posting-availability"
+    assert snapshot.counts_by_type == {activity_type: 1}
+    assert snapshot.active_details[0].operational_ref.kind == kind
     assert snapshot.active_details[0].workflow_ref is None
     assert "private-job" not in json.dumps(snapshot.details_json_list())
     inventory.finish(token)

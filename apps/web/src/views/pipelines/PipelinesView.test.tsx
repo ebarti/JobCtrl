@@ -507,6 +507,31 @@ describe("PipelinesView", () => {
     expect(screen.queryByText("No active work is visible in the current runtime inventory.")).not.toBeInTheDocument();
   });
 
+  it("names all active URL imports without inventing a Discover run", async () => {
+    await renderPipelineOperations({
+      ...pipelinesRecoveringProjectionSnapshot,
+      execution: null,
+      activeStageCounts: [],
+      activeItemsTotal: 4,
+      activeItemsTruncated: false,
+      activeItems: Array.from({ length: 4 }, (_, index) => ({
+        kind: "unresolved_runtime_activity" as const,
+        activityType: "job_url_import",
+        opaqueId: `op_${String(index).padStart(24, "0")}`,
+        workflowId: null,
+        executionId: null,
+        stage: null,
+        attempt: 1,
+        startedAt: "2026-07-14T11:05:00.000Z",
+      })),
+    });
+    expect(getLivePipelineMetric("Active work")).toHaveTextContent("Active work4");
+    expect(screen.getAllByRole("heading", { name: "Import job URL" })).toHaveLength(4);
+    expect(screen.getByRole("alert")).toHaveTextContent("Discover run not identified");
+    expect(screen.queryByText("No active work is visible in the current runtime inventory.")).not.toBeInTheDocument();
+    expect(screen.queryByText("No work remaining")).not.toBeInTheDocument();
+  });
+
   it("retries the run record check automatically without hiding live telemetry", async () => {
     const user = userEvent.setup();
     await renderPipelineOperations(pipelinesRetryingProjectionSnapshot);

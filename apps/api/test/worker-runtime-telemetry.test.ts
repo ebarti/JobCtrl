@@ -68,6 +68,37 @@ describe("worker runtime telemetry", () => {
     });
   });
 
+  it("includes URL intake alongside scoring without leaking private import identity", () => {
+    const fixture = createFixture();
+    const now = new Date("2026-07-14T10:00:30.000Z");
+    const privateUrl = "https://example.test/private-import?token=private-canary";
+    const imports = activeDetails(4, 0).map((detail) => ({
+      ...detail,
+      activityType: "job_url_import",
+      operationalRef: { ...detail.operationalRef as Record<string, unknown>, kind: "job-url-import" },
+      workflowRef: null,
+      ignoredPayload: privateUrl,
+    }));
+    insertHeartbeat(fixture, {
+      workerId: "worker-a", lastSeenAt: "2026-07-14T10:00:20.000Z",
+      configuredSlots: 8, activeSlots: 5, executorThreads: 10,
+      details: [...imports, ...activeDetails(1, 4)],
+      counts: { job_url_import: 4, score_job: 1 },
+      queueObservation: availableObservation("2026-07-14T10:00:19.000Z", 0, 1),
+    });
+    const snapshot = readWorkerRuntimeTelemetry(fixture.dbPath, { now });
+    expect(snapshot).toMatchObject({
+      status: "available", activeSlots: 5, activeDetailsTotal: 5,
+      activeDetailsTruncated: false, activeCountsByType: { job_url_import: 4, score_job: 1 },
+    });
+    expect(snapshot.activeDetails.filter((detail) => detail.activityType === "job_url_import")).toHaveLength(4);
+    expect(JSON.stringify(snapshot)).not.toContain(privateUrl);
+    expect(snapshot.activeDetails[0]).toMatchObject({
+      activityType: "job_url_import", workflowRef: null,
+      operationalRef: { kind: "job-url-import" },
+    });
+  });
+
   it("reports saved-posting checks alongside scoring instead of an unexplained occupied slot", () => {
     const fixture = createFixture();
     const now = new Date("2026-07-14T10:00:30.000Z");

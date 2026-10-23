@@ -1152,6 +1152,13 @@ live tailoring activities, and an approximate activity backlog of 41. Verify:
 - a non-ASCII membership and stage-key golden vector hashes identically in the
   Python recovery writer and TypeScript API validator.
 
+For manual URL intake, seed four `job_url_import` activities without a selected
+Discover execution. Prove exact slot/detail totals, bounded readable items,
+opaque identifiers, null-safe workflow identity, completion cleanup and no
+invented pipeline stage. Mix imports with Score and retain the correct Score
+counts. Exercise the TypeScript heartbeat reader and rendered **Import job URL**
+items; private URLs and arguments must remain absent.
+
 Then exercise the write-side recovery controller with legacy queued, running,
 completed, and failed activities, a mixed legacy/native history, and a true
 empty native execution. Kill the worker after a partial replay while leaving

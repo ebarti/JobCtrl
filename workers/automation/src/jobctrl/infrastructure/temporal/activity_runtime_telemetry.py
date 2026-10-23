@@ -38,6 +38,7 @@ OPERATIONAL_ACTIVITY_KINDS: Final[Mapping[str, str]] = MappingProxyType(
         "discovery_source_family": "discovery-source-family",
         "discovery_enrichment": "discovery-enrichment",
         "discovery_preparation_fanout": "discovery-preparation-fanout",
+        "job_url_import": "job-url-import",
         "enrich": "enrichment",
         "score": "scoring-batch",
         "score_job": "job-scoring",

@@ -1485,6 +1485,7 @@ function ActiveItemTitle({
     case "orchestration":
       return item.operation;
     case "unresolved_runtime_activity":
+      if (item.activityType === "job_url_import") return "Import job URL";
       if (item.activityType === "check_saved_posting_availability") return "Saved posting checks";
       return item.stage
         ? humanStageLabel(snapshot, item.stage)
