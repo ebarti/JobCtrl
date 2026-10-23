@@ -264,7 +264,12 @@ malformed JSON, forbidden extra fields, unknown enums, foreign IDs, non-verbatim
 quotes and mismatched values. Each failure has a distinct safe status, makes no
 lexical substitute and leaves accepted artifacts current. Capture the canonical
 prompt, lane and preflight order. Re-running unchanged inputs must make zero
-additional calls, including concurrent requests for one fingerprint.
+additional calls, including concurrent requests for one fingerprint. Numeric
+format coverage must include equal source/claim values before different sentence
+punctuation and changed values ending in a period. Prove the actual claim
+verifier preserves opposing valid model verdicts and rejects changed numbers
+without replacing an accepted review. Dotted-token and malformed-number
+fragments must remain invalid.
 
 Run synthetic broad-board and company-ATS source paths with saved controls. Inspect exact provider request parameters and canonical ingestion, including a result that does not resemble the query. No separate intake model call may block or reject it. Exercise literal exclusions, limits, capture/checkpoint interruption and retry idempotency; verify provider filter support without expecting a product capability-warning view. Exercise profile import/save and explicit confirmation without
 writing inferred facts into achievement evidence. Exercise actual artifact
