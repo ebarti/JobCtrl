@@ -2846,7 +2846,7 @@ class TailorResumeUseCase:
         durable_attempt: int | None,
         review_history=(),
     ) -> _TailorCandidate:
-        candidate_id = f"candidate-{abs(hash((model, len(messages), messages[-1].content[:80]))) % 10_000_000}"
+        candidate_id = f"candidate-{uuid.uuid4().hex}"
         record: dict[str, Any] = {
             "candidate_id": candidate_id,
             "model": model,
