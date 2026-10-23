@@ -22,7 +22,10 @@ while the other selected jobs continue. A temporarily unavailable source remains
 a reported item error; it does not prevent its peers from finishing.
 
 Marking a job skipped stops new automatic resume and cover-letter generation
-for that job. Explicit generation requests still use their normal prerequisites.
+for that job, including preparation chained from URL imports and Discover. The
+current Skip is checked again before each new material stage starts. An explicit
+Tailor or Re-tailor action can request materials while Apply remains skipped;
+all score, eligibility, source and review prerequisites still apply.
 Use **Cancel** to stop work already in progress. Resetting the Apply outcome
 allows normal automatic eligibility again. A minimum-score policy skip remains
 a separate decision controlled by the score and materials threshold.

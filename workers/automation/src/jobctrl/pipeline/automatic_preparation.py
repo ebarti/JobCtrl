@@ -332,6 +332,9 @@ def reserve_recovery_batch(
     now = now or datetime.now(timezone.utc)
     conn.execute("BEGIN IMMEDIATE")
     try:
+        from jobctrl.infrastructure.materials.manual_decline import release_manual_material_skips
+
+        release_manual_material_skips(conn, tenant_id=LOCAL_TENANT)
         _release_declined_material_reservations(conn)
         existing = conn.execute(
             "SELECT metadata_json FROM job_stage_states "

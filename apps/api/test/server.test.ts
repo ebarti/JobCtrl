@@ -10402,13 +10402,15 @@ describe("local TypeScript API", () => {
   it.skipIf(!SOURCE_PYTHON_RPC_AVAILABLE)(
     "rejects a real suggestion worker connected to a different same-version database",
     async () => {
-      const seedApp = buildApp(options);
+      const placeValidator = vi.fn(async (place: string) => place === "Barcelona");
+      const seedApp = buildApp({ ...options, placeValidator });
       const seeded = await seedApp.inject({
         method: "PATCH",
         url: "/v1/profile",
         payload: { profile: profileWithTargetSearch("API Database", "Barcelona", "Remote") },
       });
       expect(seeded.statusCode, seeded.body).toBe(200);
+      expect(placeValidator).toHaveBeenCalledWith("Barcelona");
       const version = seeded.json().profileVersion as number;
       await seedApp.close();
 

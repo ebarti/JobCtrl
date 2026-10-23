@@ -30,7 +30,10 @@ def make_preparation_idempotency_key(
     kind: PreparationWorkItemKind,
     target_version: int,
     source_event_id: str = "",
+    explicit_material_request: bool = False,
 ) -> str:
+    if type(explicit_material_request) is not bool:
+        raise ValueError("explicit_material_request must be a boolean")
     payload: dict[str, Any] = {
         "tenant_id": str(tenant_id),
         "job_id": str(job_id),
@@ -38,6 +41,8 @@ def make_preparation_idempotency_key(
         "target_version": int(target_version),
         "source_event_id": str(source_event_id or ""),
     }
+    if explicit_material_request:
+        payload["explicit_material_request"] = True
     digest = hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
