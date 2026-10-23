@@ -106,14 +106,15 @@ export async function handleProfileUpdatedEvent(
   actionDispatcher: ActionDispatcher,
   actionContext: ActionDispatchContext,
 ): Promise<ActionDispatchResult> {
-  const workers = actionContext.configPath
-    ? readJobCtrlSettings(actionContext.configPath).settings.pipelineInternalConcurrency
-    : DEFAULT_JOBCTRL_SETTINGS.pipelineInternalConcurrency;
+  const settings = actionContext.configPath
+    ? readJobCtrlSettings(actionContext.configPath).settings
+    : DEFAULT_JOBCTRL_SETTINGS;
+  const workers = settings.pipelineInternalConcurrency;
   const command: ActionCommandPayload = {
     action: "run_stage",
     jobKey: PIPELINE_ACTION_JOB_KEY,
     stage: "score",
-    stages: ["score", "tailor", "cover"],
+    stages: settings.coverLetterGeneration ? ["score", "tailor", "cover"] : ["score", "tailor"],
     dryRun: false,
     limit: 0,
     workers,

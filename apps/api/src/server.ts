@@ -1,3 +1,4 @@
+import { readJobCtrlSettings } from "./settings-config.js";
 import { OutreachGenerationError } from "./outreach-generation-errors.js";
 import { registerOfferRoutes } from "./offer-routes.js";
 import { readCompanyBriefing } from "./company-briefings.js";
@@ -2388,7 +2389,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       // is an explicit user re-generation, so it is not gated on the stage being
       // pending — a user may regenerate materials for a job whose tailor stage
       // already succeeded.
-      const primaryStage = body.stages[0] as Stage | undefined;
+      const { settings } = readJobCtrlSettings(options.configPath);
+      const requestedStages = body.stages ?? (settings.coverLetterGeneration ? ["tailor", "cover"] : ["tailor"]);
+      const stages = settings.coverLetterGeneration ? requestedStages : requestedStages.filter((stage) => stage !== "cover");
+      if (stages.length === 0) {
+        void reply.code(409);
+        return { ok: false, error: "cover_letter_generation_disabled", message: "Enable Generate cover letters in Settings before creating a cover letter." };
+      }
+      const primaryStage = stages[0] as Stage | undefined;
       if (!primaryStage) {
         void reply.code(400);
         return { ok: false, error: "no_material_stage_requested" };
@@ -2399,7 +2407,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         jobKey: jobId,
         jobId,
         stage: primaryStage,
-        stages: body.stages,
+        stages,
         dryRun: body.dryRun,
         limit: body.limit,
       };

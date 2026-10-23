@@ -798,11 +798,16 @@ def test_tailor_job_by_id_is_tenant_scoped_and_writes_canonical_state(
     }
 
 
+@pytest.mark.parametrize("cover_enabled", [False, True])
 def test_tailor_job_by_id_resets_tailor_owned_cover_block_exactly_once(
     conn: sqlite3.Connection,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    cover_enabled: bool,
 ) -> None:
+    setting = tmp_path / "config.json"
+    setting.write_text(json.dumps({"cover_letter_generation": cover_enabled}))
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(setting))
     _seed_job(conn, tenant_id=_TENANT_A, url="https://example.com/recovered-tailor")
     tailor_module.set_stage_state(
         conn,
@@ -844,7 +849,8 @@ def test_tailor_job_by_id_resets_tailor_owned_cover_block_exactly_once(
         "SELECT state, error_code FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'",
         (str(_TENANT_A), str(_JOB_ID)),
     ).fetchone()
-    assert tuple(cover_state) == ("pending", None)
+    assert tuple(cover_state) == (("pending", None) if cover_enabled else
+                                  ("skipped", "COVER_LETTER_GENERATION_DISABLED"))
     reset_events = conn.execute(
         """
         SELECT payload_json FROM job_events
@@ -1097,11 +1103,16 @@ def test_retailor_job_replay_reuses_generation_committed_by_same_activity_owner(
     )
 
 
+@pytest.mark.parametrize("cover_enabled", [False, True])
 def test_tailor_job_by_id_enforces_score_boundary_before_generation(
     conn: sqlite3.Connection,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    cover_enabled: bool,
 ) -> None:
+    setting = tmp_path / "config.json"
+    setting.write_text(json.dumps({"cover_letter_generation": cover_enabled}))
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(setting))
     _seed_job(conn, tenant_id=_TENANT_A, url="https://example.com/low-fit", fit_score=6)
     calls: list[str] = []
 
@@ -1161,10 +1172,12 @@ def test_tailor_job_by_id_enforces_score_boundary_before_generation(
     ).fetchall()
     assert {row["stage"]: row["state"] for row in restored_rows} == {
         "apply": "pending",
-        "cover": "pending",
+        "cover": "pending" if cover_enabled else "skipped",
         "tailor": "succeeded",
     }
-    assert {row["error_code"] for row in restored_rows} == {None}
+    assert {row["error_code"] for row in restored_rows} == (
+        {None} if cover_enabled else {None, "COVER_LETTER_GENERATION_DISABLED"}
+    )
 
 
 def test_tailor_job_by_id_skips_blocked_scores_without_generation(

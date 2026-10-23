@@ -27,8 +27,9 @@ use the checkout-prefixed commands documented in
 
 <DailyWorkflowJourney />
 
-Under the hood, Discover runs Enrich, Score, Tailor, and Cover work for each
-eligible job. Live submission approval is bound to the current materials,
+Under the hood, Discover runs Enrich, Score, Tailor, and PDF work for each
+eligible job. Cover letters are included only when **Generate cover letters**
+is enabled in Settings → Model selection; the default is off. Live submission approval is bound to the current materials,
 profile version, application URL, and dry-run evidence.
 
 <WorkflowSurfaceSelector />

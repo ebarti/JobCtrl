@@ -70,6 +70,7 @@ export function patchSettingsResponse(
       body.tailoringJudgeModel,
     ),
     resumeVoicePolish: persistedValue(current.effectiveSettings.resumeVoicePolish, body.resumeVoicePolish),
+    coverLetterGeneration: persistedValue(current.effectiveSettings.coverLetterGeneration, body.coverLetterGeneration),
     applyMaxBudgetUsd: persistedValue(
       current.effectiveSettings.applyMaxBudgetUsd,
       body.applyMaxBudgetUsd,
@@ -112,6 +113,7 @@ export function patchSettingsResponse(
         ? { tailoringJudgeModel: body.tailoringJudgeModel }
         : {}),
       ...(body.resumeVoicePolish !== undefined ? { resumeVoicePolish: body.resumeVoicePolish } : {}),
+      ...(body.coverLetterGeneration !== undefined ? { coverLetterGeneration: body.coverLetterGeneration } : {}),
       ...(body.applyMaxBudgetUsd !== undefined
         ? { applyMaxBudgetUsd: body.applyMaxBudgetUsd }
         : {}),

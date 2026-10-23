@@ -372,7 +372,7 @@ export type BulkRetailorCurrentPolicyRequest = z.infer<typeof BulkRetailorCurren
 
 export const GenerateMaterialsRequestSchema = z
   .object({
-    stages: z.array(z.enum(MATERIAL_STAGES)).min(1).default(["tailor", "cover"]),
+    stages: z.array(z.enum(MATERIAL_STAGES)).min(1).optional(),
     dryRun: z.boolean().default(false),
     limit: z.number().int().min(1).max(200).default(1),
   })
@@ -2102,6 +2102,7 @@ export const SettingsUpdateRequestSchema = z
     tailoringGeneratorModels: z.array(z.string().trim().min(1).max(160)).min(1).nullable().optional(),
     tailoringJudgeModel: z.string().trim().min(1).max(160).nullable().optional(),
     resumeVoicePolish: z.boolean().optional(),
+    coverLetterGeneration: z.boolean().optional(),
     applyMaxBudgetUsd: z.coerce.number().min(0).optional(),
     applyTimeoutSeconds: z.coerce.number().int().min(60).max(3600).optional(),
     scoreCriteria: z.string().max(8000).optional(),
@@ -4668,6 +4669,7 @@ export interface JobCtrlSettings {
   tailoringGeneratorModels: string[] | null;
   tailoringJudgeModel: string | null;
   resumeVoicePolish: boolean;
+  coverLetterGeneration: boolean;
   applyMaxBudgetUsd: number;
   applyTimeoutSeconds: number;
   scoreCriteria: string;
@@ -4716,6 +4718,7 @@ export interface EffectiveJobCtrlSettings {
   tailoringGeneratorModels: EffectiveSetting<string[] | null>;
   tailoringJudgeModel: EffectiveSetting<string | null>;
   resumeVoicePolish: EffectiveSetting<boolean>;
+  coverLetterGeneration: EffectiveSetting<boolean>;
   applyMaxBudgetUsd: EffectiveSetting<number>;
   applyTimeoutSeconds: EffectiveSetting<number>;
   scoreCriteria: EffectiveSetting<string>;
@@ -4738,6 +4741,7 @@ export const SettingsResponseSchema = z
         tailoringGeneratorModels: z.array(z.string()).nullable(),
         tailoringJudgeModel: z.string().nullable(),
         resumeVoicePolish: z.boolean(),
+        coverLetterGeneration: z.boolean(),
         applyMaxBudgetUsd: z.number(),
         applyTimeoutSeconds: z.number(),
         scoreCriteria: z.string(),
@@ -4764,6 +4768,7 @@ export const SettingsResponseSchema = z
         tailoringGeneratorModels: effectiveSettingSchema(z.array(z.string()).nullable()),
         tailoringJudgeModel: effectiveSettingSchema(z.string().nullable()),
         resumeVoicePolish: effectiveSettingSchema(z.boolean()),
+        coverLetterGeneration: effectiveSettingSchema(z.boolean()),
         applyMaxBudgetUsd: effectiveSettingSchema(z.number()),
         applyTimeoutSeconds: effectiveSettingSchema(z.number()),
         scoreCriteria: effectiveSettingSchema(z.string()),

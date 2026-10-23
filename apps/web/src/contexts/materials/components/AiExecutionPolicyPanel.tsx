@@ -76,6 +76,7 @@ export function AiExecutionPolicyPanel() {
       generatorFallback: generators[1] ?? "",
       tailoringJudgeModel: response?.settings.tailoringJudgeModel ?? "",
       resumeVoicePolish: response?.settings.resumeVoicePolish ?? false,
+      coverLetterGeneration: response?.settings.coverLetterGeneration ?? false,
     },
     onSubmit: async ({ value, formApi }) => {
       if (!response) return;
@@ -114,6 +115,10 @@ export function AiExecutionPolicyPanel() {
           value.resumeVoicePolish !== response.settings.resumeVoicePolish
           ? { resumeVoicePolish: value.resumeVoicePolish }
           : {}),
+        ...(response.effectiveSettings.coverLetterGeneration.editable &&
+          value.coverLetterGeneration !== response.settings.coverLetterGeneration
+          ? { coverLetterGeneration: value.coverLetterGeneration }
+          : {}),
       };
       const parsed = SettingsUpdateRequestSchema.safeParse(request);
       if (!parsed.success) {
@@ -134,6 +139,7 @@ export function AiExecutionPolicyPanel() {
           generatorFallback: savedGenerators[1] ?? "",
           tailoringJudgeModel: saved.settings.tailoringJudgeModel ?? "",
           resumeVoicePolish: saved.settings.resumeVoicePolish,
+          coverLetterGeneration: saved.settings.coverLetterGeneration,
         });
         setStatus({
           kind: "success",
@@ -159,6 +165,7 @@ export function AiExecutionPolicyPanel() {
       generatorFallback: savedGenerators[1] ?? "",
       tailoringJudgeModel: response.settings.tailoringJudgeModel ?? "",
       resumeVoicePolish: response.settings.resumeVoicePolish,
+      coverLetterGeneration: response.settings.coverLetterGeneration,
     });
   }, [form, response]);
 
@@ -190,13 +197,15 @@ export function AiExecutionPolicyPanel() {
     generatorFallback: generators[1] ?? "",
     tailoringJudgeModel: response.settings.tailoringJudgeModel ?? "",
     resumeVoicePolish: response.settings.resumeVoicePolish,
+    coverLetterGeneration: response.settings.coverLetterGeneration,
   };
   const allReadOnly =
     !effective.defaultLlmModel.editable &&
     !effective.analysisLegs.editable &&
     !effective.tailoringGeneratorModels.editable &&
     !effective.tailoringJudgeModel.editable &&
-    !effective.resumeVoicePolish.editable;
+    !effective.resumeVoicePolish.editable &&
+    !effective.coverLetterGeneration.editable;
 
   function clearSaveStatus() {
     setStatus(null);
@@ -350,6 +359,36 @@ export function AiExecutionPolicyPanel() {
                 field.handleChange(value);
               }}
             />
+          )}
+        </form.Field>
+        <form.Field name="coverLetterGeneration">
+          {(field) => (
+            <FieldSet>
+              <FieldLegend>Application materials</FieldLegend>
+              <Field className="choice target-choice" orientation="horizontal" data-disabled={!effective.coverLetterGeneration.editable}>
+                <Checkbox
+                  id="cover-letter-generation"
+                  name="coverLetterGeneration"
+                  aria-describedby="cover-letter-generation-help"
+                  disabled={!effective.coverLetterGeneration.editable}
+                  checked={field.state.value}
+                  onCheckedChange={(checked) => {
+                    clearSaveStatus();
+                    field.handleChange(checked === true);
+                  }}
+                />
+                <FieldLabel htmlFor="cover-letter-generation">Generate cover letters</FieldLabel>
+              </Field>
+              <FieldDescription id="cover-letter-generation-help">
+                Off by default. Prepare a reviewed résumé and PDF without creating a cover letter.
+                Turn on to include cover letters. Existing accepted letters stay available.
+              </FieldDescription>
+              <FieldDescription>
+                {effective.coverLetterGeneration.source === "default"
+                  ? "Default: off. Applies before the next letter starts."
+                  : "Saved setting. Applies before the next letter starts."}
+              </FieldDescription>
+            </FieldSet>
           )}
         </form.Field>
         <form.Field name="resumeVoicePolish">

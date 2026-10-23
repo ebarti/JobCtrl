@@ -195,6 +195,11 @@ settings, API/Vite proxy targets, or isolated stacks should use
 
 ## LLM Providers
 
+**Generate cover letters** in Settings → Model selection is off by default.
+Enable it to include new letters in material preparation. With it off, JobCtrl
+prepares the reviewed résumé and PDF; accepted letters remain available.
+See [Materials & Tailoring](materials-and-tailoring.md) for generation behavior.
+
 Local/custom endpoints are not currently supported or configurable. The
 [design-only local/custom provider contract](../plans/local-custom-provider-contract.md)
 defines the containment, capability, accounting, and product proof required

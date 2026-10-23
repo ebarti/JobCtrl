@@ -19,7 +19,8 @@
 </div>
 
 JobCtrl finds job postings, scores each one against your profile, writes a
-tailored resume and cover letter, and prepares the application for your review.
+tailored resume and PDF, and prepares the application for your review. Cover
+letters are optional and off by default.
 Your data lives in `~/.jobctrl/` on your machine; there is no account and no
 hosted backend.
 
@@ -54,7 +55,7 @@ covers first-run setup in detail. `jobctrl uninstall` removes JobCtrl and keeps
    availability without replacing saved descriptions or materials.
 3. **Score:** rates fit from 1 to 10 by checking each requirement against your
    profile evidence.
-4. **Tailor:** writes a resume and cover letter from your profile. Each resume
+4. **Tailor:** writes a resume from your profile and, when enabled, a cover letter. Each resume
    bullet links to the profile fact behind it. Drafts that invent a metric,
    date, title, or employer fail validation.
 5. **Review:** you edit the resume on the **Apply review** page and approve the

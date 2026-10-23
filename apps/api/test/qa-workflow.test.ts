@@ -328,7 +328,7 @@ describe("seeded local QA workflow", () => {
     expect(profileAfterUpdate.statusCode, profileAfterUpdate.body).toBe(200);
     expect(profileAfterUpdate.json().profile.personal.full_name).toBe("John Doe Edited");
     await vi.waitFor(() => expect(actionDispatcher).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "run_stage", stages: ["score", "tailor", "cover"] }),
+      expect.objectContaining({ action: "run_stage", stages: ["score", "tailor"] }),
       expect.objectContaining({ dbPath: workspace.dbPath }),
     ));
 
