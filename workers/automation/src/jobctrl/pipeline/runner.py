@@ -34,6 +34,7 @@ from jobctrl.domain.determinations import DeterminationFailure
 from jobctrl.domain.discovery.source_registry import SourceKind, SourcePriority, SourceState
 from jobctrl.domain.errors import (
     AttemptBudgetExhaustedError,
+    ConfigurationError,
     LlmTransientError,
     MATERIAL_REJECTION_STATUSES,
     MaterialRejectedError,
@@ -609,7 +610,7 @@ def _run_discovery_source(
                     ),
                 },
             )
-            if isinstance(exc, DeterminationFailure):
+            if isinstance(exc, (ConfigurationError, DeterminationFailure)):
                 raise
             raise SourceUnavailableError(f"{label} failed: {exc}") from exc
 
@@ -1216,9 +1217,13 @@ def _jobspy_config_for_sources(search_cfg: dict, sources: tuple[ScheduledSource,
     for source in sources:
         if not source.should_run:
             continue
-        board = str(source.adapter_config.get("board") or "").strip()
-        if board:
-            boards.append(board)
+        board = source.adapter_config.get("board")
+        if not isinstance(board, str) or not board.strip():
+            raise ConfigurationError(
+                f"Selected broad-board source {source.source_id!r} has no provider board identity. "
+                "Repair its source registry configuration before retrying Discover."
+            )
+        boards.append(board.strip())
     return {**search_cfg, "boards": boards}
 
 

@@ -1067,17 +1067,26 @@ def _local_source_registry_rows() -> list[sqlite3.Row]:
 
 
 def _adapter_config_from_row(row: sqlite3.Row) -> dict:
+    adapter_config: dict[str, str] = {}
+    # Retained boards remain selectable independently of the saved default list.
+    # Recover literal provider identity from the canonical ID, never its label.
+    if row["kind"] == SourceKind.BROAD_BOARD.value:
+        source_id = str(row["source_id"] or "").strip()
+        for board in _JOBSTREAMING_BOARD_DISPLAY_NAMES:
+            if source_id == f"jobspy:{_source_slug(board)}":
+                adapter_config["board"] = board
+                break
     seed_url = str(row["seed_url"] or "").strip()
-    if not seed_url:
-        return {}
-    display_name = str(row["display_name"] or row["source_id"]).strip()
-    source_type = "search" if _url_has_search_placeholder(seed_url) else "static"
-    return {
-        "name": display_name,
-        "url": seed_url,
-        "type": source_type,
-        "base_url": seed_url,
-    }
+    if seed_url:
+        display_name = str(row["display_name"] or row["source_id"]).strip()
+        source_type = "search" if _url_has_search_placeholder(seed_url) else "static"
+        adapter_config.update({
+            "name": display_name,
+            "url": seed_url,
+            "type": source_type,
+            "base_url": seed_url,
+        })
+    return adapter_config
 
 
 def _url_has_search_placeholder(url: str) -> bool:
