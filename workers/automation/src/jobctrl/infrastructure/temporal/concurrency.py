@@ -11,7 +11,7 @@ from jobctrl.infrastructure.scoring.criteria_provider import read_config_setting
 
 
 DEFAULT_MAX_CONCURRENT_ACTIVITIES = 4
-LOCAL_LIFECYCLE_ACTIVITY_SLOTS = 2
+LOCAL_CONTROL_ACTIVITY_SLOTS = 2
 
 # R9 Phase 3. Number of discovery source families crawled concurrently. Default
 # 1 preserves the sequential-for-isolation behavior; a value > 1 runs that many
@@ -63,4 +63,4 @@ def resolved_max_parallel_discovery_families(
 
 
 def activity_executor_max_workers(max_concurrent_activities: int) -> int:
-    return max(1, int(max_concurrent_activities)) + LOCAL_LIFECYCLE_ACTIVITY_SLOTS
+    return max(1, int(max_concurrent_activities)) + LOCAL_CONTROL_ACTIVITY_SLOTS

@@ -217,7 +217,12 @@ async def check_spend_budget(payload: SpendBudgetInput | None = None) -> SpendBu
     """Temporal preflight that blocks spendful workflows once the cap is hit."""
     if payload is None:
         raise ValueError("check_spend_budget requires an explicit product lane")
-    return enforce_spend_budget(payload.lane)
+    from jobctrl.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
+
+    return await run_blocking_with_heartbeat(
+        lambda: enforce_spend_budget(payload.lane),
+        starting_message="checking spend budget",
+    )
 
 
 def estimate_llm_cost_usd(

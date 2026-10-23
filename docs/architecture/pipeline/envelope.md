@@ -20,7 +20,9 @@ The helpers live in
    `run`, with a compact camelCase input summary.
 2. **`check_spend_budget`** runs as a preflight for spendful workflows (see
    [Spend Ceiling](operations.md#spend-ceiling)). It runs with `maximum_attempts=1`, so a
-   depleted budget fails the run before any paid work.
+   depleted budget fails the run before any paid work. New histories use the
+   independent local control pool, so a refusal need not wait for busy model
+   slots. Existing remote histories replay their original commands.
 3. **Business activities** run (stages, per-job steps, apply, import, refresh).
 4. **`WorkflowCancellationRequested`** records requester, source, optional
    reason, exact Temporal run, and whether the evidence is delivered

@@ -13,6 +13,7 @@ from temporalio.exceptions import ActivityError, ApplicationError, CancelledErro
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 
 with workflow.unsafe.imports_passed_through():
+    from jobctrl.infrastructure.temporal.control import execute_control_activity
     from jobctrl.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
     from jobctrl.discovery.workflow import DiscoverWorkflow, DiscoverWorkflowInput
     from jobctrl.domain.identifiers import JobId, canonical_job_id
@@ -387,7 +388,7 @@ async def _cancel_material_stage_state(
 
     if not workflow.patched("pipeline-material-cancellation-v1"):
         return
-    await workflow.execute_activity(
+    await execute_control_activity(
         cancel_preparation_state_activity,
         CancelPreparationStateInput(
             tenant_id=payload.tenant_id,
@@ -559,7 +560,7 @@ async def _check_spend(payload: JobPipelineWorkflowInput) -> None:
     }
     lanes = tuple(dict.fromkeys(lane_by_stage[stage] for stage in payload.stages if stage in lane_by_stage))
     for lane in lanes:
-        await workflow.execute_activity(
+        await execute_control_activity(
             check_spend_budget,
             SpendBudgetInput(tenant_id=payload.tenant_id, lane=lane),
             start_to_close_timeout=timedelta(seconds=30),

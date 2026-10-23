@@ -19,6 +19,7 @@ from temporalio.exceptions import ActivityError, ApplicationError, CancelledErro
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 
 with workflow.unsafe.imports_passed_through():
+    from jobctrl.infrastructure.temporal.control import execute_control_activity
     from jobctrl.contact.activities import (
         RunContactResearchActivityInput,
         RunContactResearchActivityOutput,
@@ -91,7 +92,7 @@ class ContactResearchWorkflow:
             expected_db_path=payload.expected_db_path,
         )
         try:
-            await workflow.execute_activity(
+            await execute_control_activity(
                 check_spend_budget,
                 SpendBudgetInput(tenant_id=payload.tenant_id, lane="contact"),
                 start_to_close_timeout=_DEFAULT_TIMEOUT,

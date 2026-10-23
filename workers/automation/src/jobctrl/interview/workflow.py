@@ -11,6 +11,7 @@ from temporalio.exceptions import ActivityError, ApplicationError, CancelledErro
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 
 with workflow.unsafe.imports_passed_through():
+    from jobctrl.infrastructure.temporal.control import execute_control_activity
     from jobctrl.domain.interview.preparation import normalize_selection
     from jobctrl.infrastructure.temporal.finalize import (
         emit_workflow_outcome,
@@ -74,7 +75,7 @@ class InterviewPrepWorkflow:
             expected_db_path=payload.expected_db_path,
         )
         try:
-            await workflow.execute_activity(
+            await execute_control_activity(
                 check_spend_budget,
                 SpendBudgetInput(tenant_id=payload.tenant_id, lane="interview"),
                 start_to_close_timeout=_DEFAULT_TIMEOUT,

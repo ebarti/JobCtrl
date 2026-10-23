@@ -11,6 +11,7 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
 
 with workflow.unsafe.imports_passed_through():
+    from jobctrl.infrastructure.temporal.control import execute_control_activity
     from jobctrl.domain.discovery.execution import (
         DiscoveryExecutionCohortKind,
         DiscoveryExecutionRef,
@@ -222,7 +223,7 @@ async def _cancel_material_stage_state(
 ) -> None:
     if not workflow.patched("preparation-material-cancellation-v1"):
         return
-    await workflow.execute_activity(
+    await execute_control_activity(
         cancel_preparation_state_activity,
         CancelPreparationStateInput(
             tenant_id=payload.tenant_id,
@@ -336,7 +337,7 @@ async def _check_spend(payload: JobPreparationInput) -> None:
         )
     )
     for lane in lanes:
-        await workflow.execute_activity(
+        await execute_control_activity(
             check_spend_budget,
             SpendBudgetInput(tenant_id=payload.tenant_id, lane=lane),
             start_to_close_timeout=timedelta(seconds=30),

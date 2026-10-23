@@ -333,7 +333,7 @@ async def test_preparation_material_cancel_activity_retries_are_bounded(
         "info",
         lambda: SimpleNamespace(run_id="run-cancel"),
     )
-    monkeypatch.setattr(prep_workflow_mod.workflow, "execute_activity", fake_execute_activity)
+    monkeypatch.setattr(prep_workflow_mod.workflow, "execute_local_activity", fake_execute_activity)
 
     await prep_workflow_mod._cancel_material_stage_state(
         "tailor",
@@ -348,6 +348,8 @@ async def test_preparation_material_cancel_activity_retries_are_bounded(
 
     retry_policy = captured["retry_policy"]
     assert retry_policy.maximum_attempts == 5
+    assert captured["start_to_close_timeout"] == timedelta(seconds=30)
+    assert captured["schedule_to_close_timeout"] == timedelta(minutes=3)
 
 
 @pytest.mark.asyncio
@@ -748,11 +750,9 @@ async def test_preparation_workflow_fails_fast_when_budget_exceeded_and_spends_n
                     task_queue=queue,
                 )
 
-    # The preflight failure surfaces as an ActivityError wrapping the
-    # non-retryable budget ApplicationError.
+    # Both local and historical remote preflights preserve the refusal authority.
     cause = excinfo.value.cause
-    assert isinstance(cause, ActivityError)
-    app_error = cause.cause
+    app_error = cause.cause if isinstance(cause, ActivityError) else cause
     assert isinstance(app_error, ApplicationError)
     assert app_error.type == "budget_exceeded"
     # No spendful step activity ran — the preflight blocked before score/tailor/cover/pdf.
