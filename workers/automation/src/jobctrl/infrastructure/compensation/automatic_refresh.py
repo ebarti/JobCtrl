@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
@@ -49,6 +50,9 @@ AUTOMATIC_REFRESH_INTERVAL = timedelta(days=7)
 AUTOMATIC_REFRESH_RETRY_INTERVAL = timedelta(days=1)
 AUTOMATIC_REFRESH_LEASE_DURATION = timedelta(hours=1)
 PRICE_LEVEL_CATEGORY = "actual_individual_consumption"
+MAX_REJECTION_RECEIPTS = 128
+MAX_TARGET_RECEIPTS = 128
+MAX_RECEIPT_LIST_BYTES = 128 * 1024
 
 AutomaticRefreshStatus = Literal["skipped", "succeeded", "completed_with_warnings"]
 ObservationLoader = Callable[[tuple[LevelsFyiPublicTarget, ...]], ReportedCompensationSourceLoad]
@@ -73,6 +77,7 @@ class AutomaticCompensationRefreshResult:
     direct_facts_saved: int
     price_level_facts_saved: int
     warnings: tuple[str, ...] = ()
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -90,6 +95,7 @@ class AutomaticCompensationRefreshResult:
             "directFactsSaved": self.direct_facts_saved,
             "priceLevelFactsSaved": self.price_level_facts_saved,
             "warnings": list(self.warnings),
+            "diagnostics": self.diagnostics,
         }
 
 
@@ -237,6 +243,7 @@ def run_automatic_compensation_refresh(
             direct_facts_saved=0,
             price_level_facts_saved=0,
             warnings=deferred_warnings,
+            diagnostics=_refresh_diagnostics(tenant_id, owner),
         )
 
     control = CompensationRefreshControl(
@@ -350,13 +357,15 @@ def run_automatic_compensation_refresh(
             benchmark_slice = original.benchmark_slice
             control.check(force=True)
             lease = control.lease(benchmark_slice)
+            slice_errors = _slice_load_errors(load_errors, source_load, benchmark_slice)
+            warnings.update(slice_errors)
             direct = direct_matches[benchmark_slice.key]
             if direct is not None:
                 # Only a failed Levels role/level lookup can turn a lower-level direct
                 # fallback into a failed slice; FX, price-level or derivation errors
                 # never did and never claim that the lookup missed its source pages.
                 lookup_error = (
-                    _levels_lookup_error(load_errors) if direct.seniority_label != benchmark_slice.seniority_label else None
+                    _levels_lookup_error(slice_errors) if direct.seniority_label != benchmark_slice.seniority_label else None
                 )
                 previous = state_repository.get(benchmark_slice)
                 if lookup_error and previous is not None and previous.last_result_kind != "none":
@@ -413,14 +422,15 @@ def run_automatic_compensation_refresh(
                 conn.rollback()
                 log.warning("Automatic compensation derivation failed for one benchmark slice")
                 missing_reason = "benchmark_derivation_failed"
-                load_errors.append(missing_reason)
+                slice_errors.append(missing_reason)
+                warnings.add(missing_reason)
 
-            if load_errors:
+            if slice_errors:
                 state_repository.mark_failed(
                     lease,
                     completed_at=_completion_timestamp(completion_clock),
                     retry_at=retry_at,
-                    error_code=load_errors[0],
+                    error_code=slice_errors[0],
                 )
                 failed_results += 1
             else:
@@ -453,7 +463,65 @@ def run_automatic_compensation_refresh(
             direct_facts_saved=len(direct_ids),
             price_level_facts_saved=len(price_ids),
             warnings=tuple(sorted(warnings)),
+            diagnostics=_refresh_diagnostics(
+                tenant_id, owner, source_load=source_load, classified=classified, rejected=batch.rejected,
+            ),
         )
+
+
+def _slice_load_errors(load_errors, source_load, benchmark_slice) -> list[str]:
+    target = LevelsFyiPublicTarget(
+        benchmark_slice.role_family_code, benchmark_slice.geography.country_code, benchmark_slice.seniority_label,
+    )
+    matching = [outcome for outcome in source_load.levels_fyi_target_outcomes if outcome.target == target]
+    # Legacy/custom loaders without target evidence remain conservative. Only an
+    # explicit supported-success or unsupported-coverage receipt scopes out an
+    # unrelated Levels error; missing diagnostics never prove source success.
+    if not matching:
+        return list(load_errors)
+    errors = [error for error in load_errors if error != "levels_fyi_public_unavailable"]
+    if any(outcome.failed for outcome in matching):
+        errors.append("levels_fyi_public_unavailable")
+    return errors
+
+
+def _refresh_diagnostics(tenant_id, owner, *, source_load=None, classified=(), rejected=()) -> dict[str, Any]:
+    from jobctrl.domain.compensation.classification import benchmark_classification_source
+
+    receipts = []
+    for rejection in rejected[:MAX_REJECTION_RECEIPTS]:
+        row = classified[rejection.observation_index]
+        fingerprint, _ = benchmark_classification_source(row)
+        receipts.append({
+            "observationIndex": rejection.observation_index, "sourceId": row.source_id,
+            "sourceSnapshotId": row.snapshot_version, "sourceFingerprint": fingerprint,
+            "classificationId": row.determination_id, "classificationEntityId": row.classification_entity_id,
+            "reason": rejection.reason,
+        })
+    targets = source_load.levels_fyi_target_outcomes if source_load else ()
+    target_receipts = _bounded_receipts([outcome.as_dict() for outcome in targets[:MAX_TARGET_RECEIPTS]])
+    receipts = _bounded_receipts(receipts)
+    return {
+        "schemaVersion": "compensation-refresh-diagnostics-v1", "tenantId": tenant_id, "owner": owner,
+        "levelsFyiTargets": target_receipts,
+        "levelsFyiTargetsOmitted": len(targets) - len(target_receipts),
+        "rejectedObservations": receipts,
+        "rejectedObservationsOmitted": max(0, len(rejected) - len(receipts)),
+    }
+
+
+def _bounded_receipts(items):
+    retained = []
+    byte_count = 2  # JSON array delimiters; each list owns an independent payload allowance.
+    for item in items:
+        # Escaped JSON and default spacing conservatively cover Temporal's
+        # compact JSON wire encoding, including non-ASCII source identifiers.
+        size = len(json.dumps(item, ensure_ascii=True).encode("utf-8")) + (2 if retained else 0)
+        if byte_count + size > MAX_RECEIPT_LIST_BYTES:
+            break
+        retained.append(item)
+        byte_count += size
+    return retained
 
 
 LEVELS_LOOKUP_ERROR_CODES: tuple[str, ...] = (
@@ -569,7 +637,7 @@ def _levels_fyi_targets(
 ) -> tuple[LevelsFyiPublicTarget, ...]:
     targets: dict[tuple[str, str, str], LevelsFyiPublicTarget] = {}
     for benchmark_slice in slices:
-        key = (benchmark_slice.title_hint, benchmark_slice.seniority_label, benchmark_slice.geography.country_code)
+        key = (benchmark_slice.role_family_code, benchmark_slice.seniority_label, benchmark_slice.geography.country_code)
         targets.setdefault(
             key,
             LevelsFyiPublicTarget(

@@ -36,6 +36,19 @@ source; Glassdoor and Levels.fyi require an explicitly permitted access mode in
 Settings. An absent Levels.fyi preference leaves it disabled. **Reads are passive:**
 opening a compensation panel neither fetches a provider nor refreshes an estimate.
 
+Levels.fyi refresh diagnostics distinguish supported targets from unsupported
+role or country coverage. A failed lookup applies only to its role, level and
+country; an unrelated target does not inherit that source error. The automatic
+activity's recorded result retains each target's request outcomes, HTTP rejection
+codes when available, source-body hashes and parsing status. Empty, blocked and
+incompatible responses do not establish that salary data is absent. The result
+also retains the source fingerprint and exact classification ID for up to 128
+rejected observations, with an explicit omitted count if that bound is reached.
+Each diagnostic list retains up to 128 entries and 128 KiB, with explicit
+omission counts. These receipts contain no response bodies, headers or exception
+messages and do not enter the public Jobs read model. Failed refreshes continue
+to preserve accepted ranges.
+
 Conversions use source-dated ECB exchange-rate snapshots. When exact-country
 evidence is missing, an auditable geographic bridge can use official Eurostat
 price levels and matched-company pay ratios. Its raw factor remains visible

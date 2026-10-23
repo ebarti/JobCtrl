@@ -8,15 +8,17 @@ payload. It never uses private APIs, credentials, or authenticated sessions.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
 import unicodedata
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from html.parser import HTMLParser
-from typing import Any
+from typing import Any, Literal
+from urllib.error import HTTPError
 from urllib.parse import urljoin, urlsplit
 
 
@@ -42,11 +44,64 @@ class LevelsFyiPublicTarget:
 
 
 @dataclass(frozen=True)
+class LevelsFyiPublicRequestOutcome:
+    url: str
+    status: Literal["available", "empty", "unavailable", "http_error", "fetch_error"]
+    http_status: int | None = None
+    error_type: str | None = None
+    snapshot_sha256: str | None = None
+    parse_status: Literal["parsed", "unparsed", "parse_error"] | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        # No exception messages, response bodies or request headers enter receipts.
+        return {
+            "url": self.url, "status": self.status, "httpStatus": self.http_status,
+            "errorType": self.error_type, "snapshotSha256": self.snapshot_sha256,
+            "parseStatus": self.parse_status,
+        }
+
+
+@dataclass(frozen=True)
+class LevelsFyiPublicTargetOutcome:
+    target: LevelsFyiPublicTarget
+    coverage: Literal["supported", "unsupported_role", "unsupported_country"]
+    requested_pages: int = 0
+    reachable_pages: int = 0
+    parsed_pages: int = 0
+    level_lookup_unavailable: bool = False
+    page_budget_exhausted: bool = False
+    requests: tuple[LevelsFyiPublicRequestOutcome, ...] = ()
+
+    @property
+    def failed(self) -> bool:
+        return self.coverage == "supported" and (
+            self.page_budget_exhausted or self.level_lookup_unavailable
+            or self.reachable_pages < self.requested_pages
+            or (self.requested_pages > 0 and self.parsed_pages == 0)
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "occupationFamilyCode": self.target.occupation_family_code,
+            "countryCode": self.target.country_code,
+            "seniorityCode": self.target.seniority_code,
+            "coverage": self.coverage,
+            "requestedPages": self.requested_pages, "reachablePages": self.reachable_pages,
+            "parsedPages": self.parsed_pages,
+            "levelLookupUnavailable": self.level_lookup_unavailable,
+            "pageBudgetExhausted": self.page_budget_exhausted,
+            "failed": self.failed,
+            "requests": [request.as_dict() for request in self.requests],
+        }
+
+
+@dataclass(frozen=True)
 class LevelsFyiPublicLoadOutcome:
     requested_pages: int
     reachable_pages: int
     parsed_pages: int
     level_lookup_unavailable: bool = False
+    targets: tuple[LevelsFyiPublicTargetOutcome, ...] = ()
 
     @property
     def unavailable(self) -> bool:
@@ -81,6 +136,7 @@ class _CachedPublicPage:
     html_attempted: bool = False
     html_reachable: bool = False
     html: str | None = None
+    requests: tuple[LevelsFyiPublicRequestOutcome, ...] = ()
 
 
 _FAMILY_SLUGS = {
@@ -155,11 +211,17 @@ def load_levels_fyi_public_observations(
 ) -> tuple[ReportedCompensationObservation, ...]:
     """Load attributed public observations for unique job-family/location pages."""
 
+    targets = tuple(dict.fromkeys(targets))
     queries: dict[tuple[str, str, str], LevelsFyiPublicTarget] = {}
+    target_outcomes: dict[LevelsFyiPublicTarget, LevelsFyiPublicTargetOutcome] = {}
     for target in targets:
         canonical_url = levels_fyi_public_url(target)
         if canonical_url:
             queries.setdefault((canonical_url, _target_level(target), target.occupation_family_code), target)
+        else:
+            target_outcomes[target] = LevelsFyiPublicTargetOutcome(
+                target, "unsupported_role" if target.occupation_family_code not in _FAMILY_SLUGS else "unsupported_country",
+            )
 
     observations: dict[tuple[Any, ...], ReportedCompensationObservation] = {}
     cache: dict[str, _CachedPublicPage] = {}
@@ -168,6 +230,9 @@ def load_levels_fyi_public_observations(
         requested_level = _target_level(target)
         queue = _geographic_routes(target)
         visited: set[str] = set()
+        target_pages: list[_CachedPublicPage] = []
+        target_lookup_unavailable = False
+        page_budget_exhausted = False
         # Each query can follow only a bounded subset of provider-published links.
         # Cached pages are shared across roles/levels in a refresh.
         while queue and len(visited) < 12:
@@ -177,25 +242,34 @@ def load_levels_fyi_public_observations(
             visited.add(canonical_url)
             if canonical_url not in cache:
                 if len(cache) >= max(0, max_pages):
+                    page_budget_exhausted = True
                     break
-                markdown, markdown_reachable = _fetch_outcome(fetch_text, _markdown_url(canonical_url))
-                page = _safe_parse(parse_levels_fyi_markdown, markdown, canonical_url) if markdown else None
-                cache[canonical_url] = _CachedPublicPage((page,) if page is not None else (), markdown_reachable)
+                markdown, request = _fetch_outcome(fetch_text, _markdown_url(canonical_url))
+                page, parse_status = _parse_outcome(parse_levels_fyi_markdown, markdown, canonical_url)
+                request = replace(request, parse_status=parse_status)
+                cache[canonical_url] = _CachedPublicPage(
+                    (page,) if page is not None else (), bool(markdown), requests=(request,),
+                )
             cached = cache[canonical_url]
             # A generic request may have needed only Markdown. Upgrade that same
             # cache entry when a later known-level request needs HTML discovery.
             if not cached.html_attempted and (not cached.pages or requested_level != "unknown"):
                 cached.html_attempted = True
-                cached.html, cached.html_reachable = _fetch_outcome(fetch_text, canonical_url)
+                cached.html, request = _fetch_outcome(fetch_text, canonical_url)
+                cached.html_reachable = bool(cached.html)
                 if cached.html:
-                    html_page = _safe_parse(parse_levels_fyi_html, cached.html, canonical_url)
+                    html_page, parse_status = _parse_outcome(parse_levels_fyi_html, cached.html, canonical_url)
+                    request = replace(request, parse_status=parse_status)
                     if html_page:
                         cached.pages = (html_page,)
                     cached.pages += _company_level_pages(cached.html, canonical_url)
+                cached.requests += (request,)
+            target_pages.append(cached)
             pages = cached.pages
             links = _salary_links(cached.html, canonical_url, target) if cached.html else ()
             if requested_level != "unknown" and not cached.html_reachable:
                 level_lookup_unavailable = True
+                target_lookup_unavailable = True
             for page in pages:
                 # Broader levels remain context; only source-labelled exact levels
                 # become level evidence, regardless of the requested route.
@@ -210,6 +284,16 @@ def load_levels_fyi_public_observations(
             if requested_level != "unknown":
                 queue.extend(link for link in links if link not in visited and link not in queue)
                 queue.sort(key=lambda url: _route_priority(url, target))
+        # Snapshot this target now: a later cache upgrade for another level must
+        # not retroactively assign its HTML failure to a successful generic read.
+        target_outcomes[target] = LevelsFyiPublicTargetOutcome(
+            target, "supported", requested_pages=len(target_pages),
+            reachable_pages=sum(page.markdown_reachable or page.html_reachable for page in target_pages),
+            parsed_pages=sum(bool(page.pages) for page in target_pages),
+            level_lookup_unavailable=target_lookup_unavailable,
+            page_budget_exhausted=page_budget_exhausted or bool(queue),
+            requests=tuple(request for page in target_pages for request in page.requests),
+        )
 
     if on_load_outcome is not None:
         on_load_outcome(
@@ -218,6 +302,7 @@ def load_levels_fyi_public_observations(
                 sum(page.markdown_reachable or page.html_reachable for page in cache.values()),
                 sum(bool(page.pages) for page in cache.values()),
                 level_lookup_unavailable,
+                tuple(target_outcomes[target] for target in targets),
             )
         )
     return tuple(observations.values())
@@ -588,26 +673,30 @@ def _page_observations(
     return tuple(observations)
 
 
-def _fetch_outcome(fetch_text: TextFetcher, url: str) -> tuple[str | None, bool]:
+def _fetch_outcome(fetch_text: TextFetcher, url: str) -> tuple[str | None, LevelsFyiPublicRequestOutcome]:
     try:
         value = fetch_text(url)
-    except Exception:  # noqa: BLE001 - one unavailable public page must not block refresh
-        return None, False
+    except HTTPError as error:
+        return None, LevelsFyiPublicRequestOutcome(url, "http_error", http_status=error.code)
+    except Exception as error:  # noqa: BLE001 - keep the failure scoped and omit sensitive messages
+        return None, LevelsFyiPublicRequestOutcome(url, "fetch_error", error_type=type(error).__name__)
     if value is None:
-        return None, False
-    text = str(value or "").strip()
-    return text or None, bool(text)
+        return None, LevelsFyiPublicRequestOutcome(url, "unavailable")
+    raw = str(value)
+    text = raw.strip()
+    return text or None, LevelsFyiPublicRequestOutcome(
+        url, "available" if text else "empty", snapshot_sha256=hashlib.sha256(raw.encode()).hexdigest(),
+    )
 
 
-def _safe_parse(
-    parser: Callable[..., _PublicSalaryPage | None],
-    text: str,
-    canonical_url: str,
-) -> _PublicSalaryPage | None:
+def _parse_outcome(parser, text, canonical_url):
+    if not text:
+        return None, None
     try:
-        return parser(text, canonical_url=canonical_url)
-    except Exception:  # noqa: BLE001 - one malformed public page must not discard other pages
-        return None
+        page = parser(text, canonical_url=canonical_url)
+        return page, "parsed" if page is not None else "unparsed"
+    except Exception:  # noqa: BLE001 - retain the structural failure without source text
+        return None, "parse_error"
 
 
 def _markdown_money(text: str, pattern: str) -> int | None:
