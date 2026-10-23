@@ -412,6 +412,19 @@ same classification resolves cohort completion and removes PDF demand from
 remaining paths and swept-backlog contention. It does not change the immutable
 plan, create a PDF lifecycle or claim that a document was generated.
 
+A successful preparation result that completed Score and stopped at Tailor may
+also resolve a recorded eligibility hold. The API requires the exact owner/run
+receipt, the current successful Score owner and accepted score version, no
+unresolved score staleness, and matching non-retryable
+`SCORE_ELIGIBILITY_BLOCKED` gate provenance for every planned material stage.
+It reads the saved typed eligibility verdict and exact blocker list; it does
+not judge the posting again. Canonical Tailor/Cover counts remain **blocked**,
+while cohort completion, issue classification, ETA demand, remaining paths and
+swept-backlog contention treat that proven policy outcome as finished. A newer
+score or owner, reset stage, foreign/missing receipt, generic setup block or
+retryable block remains unresolved. An actually recorded PDF lifecycle still
+wins. No canonical stage, score, accepted file or frozen plan is rewritten.
+
 Without that exact receipt, missing prerequisites, a terminal owner, or no
 unfinished required prerequisite leave the missing PDF **unknown**. Other missing stage state after work-plan
 resolution remains **unknown** and actionable; a genuinely missing or failed PDF
