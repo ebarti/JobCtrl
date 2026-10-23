@@ -310,6 +310,8 @@ progress. ETA is an observed range with confidence and basis when enough
 evidence exists; calibrating, paused, stale, unavailable, and no-work states
 stay explicit instead of becoming a guessed finish time. Freshness and the
 bounded active-work inventory show whether the operational facts are current.
+The explicit **No work remaining** outcome uses the completed status indicator;
+missing or unavailable telemetry retains its warning or error indicator.
 
 Exact selected-run stage tracking is durable. New executions record their
 membership and stage lineage natively. For an execution created by an older

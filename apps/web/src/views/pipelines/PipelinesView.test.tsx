@@ -63,6 +63,21 @@ describe("PipelinesView", () => {
     useStageTriggerStore.getState().reset();
   });
 
+  it.each([
+    { reason: "no_work" as const, label: "No work remaining", tone: "ok" },
+    { reason: "telemetry_stale" as const, label: "Unavailable · Telemetry stale", tone: "danger" },
+  ])("keeps the overall ETA tone faithful to $reason", async ({ reason, label, tone }) => {
+    const user = userEvent.setup();
+    await renderPipelineOperations({
+      ...pipelinesDiscoveringSnapshot,
+      overallEta: { status: "unavailable", reason, asOf: pipelinesDiscoveringSnapshot.generatedAt },
+    });
+    await user.click(screen.getByRole("button", { name: /Overall completion estimate/i }));
+    const badge = screen.getByText(label, { selector: '[data-slot="status-badge"]' });
+    expect(badge).toHaveAttribute("data-status-tone", tone);
+    expect(screen.getByLabelText("Overall ETA facts")).toHaveTextContent("StatusUnavailable");
+  });
+
   it("keeps every pipeline action inside the shared tool row", async () => {
     const user = userEvent.setup();
     await renderPipelineOperations(pipelinesDiscoveringSnapshot);
