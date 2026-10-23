@@ -873,6 +873,130 @@ describe("pipeline operations read model", () => {
       .toEqual([{ required_steps_json: '["score","tailor","cover","pdf"]' }]);
   });
 
+  it("resolves the complete 20-job cohort with nine material sets, nine threshold skips and two eligibility holds", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    insertHeartbeat(fixture, { activeSlots: 0, counts: {}, details: [] });
+    for (let index = 0; index < 18; index += 1) {
+      const key = `complete-policy-cohort-${index}`;
+      const member = insertMember(fixture, { key, requiredSteps: ["score", "tailor", "cover", "pdf"] });
+      for (const stageName of ["enrich", "score", "tailor", "cover"]) {
+        insertStageState(fixture, key, stageName, index < 9 || stageName === "score" || stageName === "enrich" ? "succeeded" : "skipped");
+      }
+      insertWorkflowProjection(fixture, member.preparationWorkflowId, "succeeded", PREPARATION_RUN_ID);
+      if (index < 9) insertStep(fixture, { stepKind: "pdf_render", itemKey: pdfItemKey(member.preparationWorkflowId), state: "succeeded" });
+      else insertPreparationOutcomeObservation(fixture, member);
+    }
+    for (let index = 0; index < 2; index += 1) insertEligibilityHold(fixture, `complete-eligibility-${index}`);
+    insertReadyRecoveryCheckpoints(fixture);
+    const before = fixture.db.prepare("SELECT type, name, sql FROM sqlite_master ORDER BY type, name").all();
+    const stateBefore = fixture.db.prepare("SELECT * FROM job_stage_states ORDER BY job_id, stage").all();
+    const planBefore = fixture.db.prepare("SELECT * FROM discovery_execution_jobs ORDER BY job_id").all();
+    const result = snapshot(fixture);
+    expect(result.execution).toMatchObject({ phase: "completed", currentExecution: { members: 20, terminal: 20, remaining: 0 } });
+    for (const stageName of ["tailor", "cover"]) {
+      const row = stage(result, stageName, "current_execution");
+      expect(row.currentExecution).toMatchObject({ succeeded: 9, skipped: 9, blocked: 2, waiting: 0, unknown: 0 });
+      expect(row.eta).toMatchObject({ status: "unavailable", reason: "no_work" });
+    }
+    expect(result.overallEta).toMatchObject({ status: "unavailable", reason: "no_work" });
+    expect(stage(result, "pdf_render", "current_execution").currentExecution).toMatchObject({ succeeded: 9, skipped: 11, unknown: 0 });
+    expect(fixture.db.prepare("SELECT * FROM job_stage_states ORDER BY job_id, stage").all()).toEqual(stateBefore);
+    expect(fixture.db.prepare("SELECT * FROM discovery_execution_jobs ORDER BY job_id").all()).toEqual(planBefore);
+    expect(fixture.db.prepare("SELECT type, name, sql FROM sqlite_master ORDER BY type, name").all()).toEqual(before);
+  });
+
+  it.each(["observed_this_run", "existing_backlog"] as const)("resolves an exact eligibility hold in the %s cohort", (cohort) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    insertEligibilityHold(fixture, "single-eligibility", cohort);
+    insertHeartbeat(fixture, { activeSlots: 0, counts: {}, details: [] });
+    const result = snapshot(fixture);
+    const summary = cohort === "observed_this_run" ? result.execution?.currentExecution : result.execution?.sweptExistingBacklog;
+    expect(summary).toMatchObject({ terminal: 1, remaining: 0 });
+    expect(result.execution?.phase).toBe("completed");
+    expect(stage(result, "tailor", cohort === "observed_this_run" ? "current_execution" : "execution_sweep").eta)
+      .toMatchObject({ status: "unavailable", reason: "no_work" });
+  });
+
+  it.each(["cached score", "rescore", "no planned PDF"])("keeps canonical eligibility completion valid with %s", (variation) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    insertEligibilityHold(fixture, "eligibility-score-reuse");
+    if (variation === "cached score") fixture.db.prepare("UPDATE job_stage_states SET metadata_json = json_set(metadata_json, '$.priorScoreVersion', 1) WHERE stage = 'score'").run();
+    if (variation === "rescore") fixture.db.prepare("UPDATE job_stage_states SET metadata_json = json_set(metadata_json, '$.rescore', json('true')) WHERE stage = 'score'").run();
+    if (variation === "no planned PDF") {
+      const plan = JSON.stringify(["score", "tailor", "cover"]);
+      fixture.db.prepare("UPDATE discovery_execution_jobs SET required_steps_json = ?").run(plan);
+      fixture.db.prepare("UPDATE job_events SET payload_json = json_set(payload_json, '$.requiredSteps', json(?))").run(plan);
+    }
+    expect(snapshot(fixture).execution).toMatchObject({ phase: "completed", currentExecution: { terminal: 1, remaining: 0 } });
+  });
+
+  it("preserves an actually queued PDF after a valid eligibility hold", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    const member = insertEligibilityHold(fixture, "eligibility-recorded-pdf");
+    insertStep(fixture, { stepKind: "pdf_render", itemKey: pdfItemKey(member.preparationWorkflowId), state: "queued" });
+    const result = snapshot(fixture);
+    expect(result.execution).toMatchObject({ phase: "draining", currentExecution: { terminal: 0, remaining: 1 } });
+    expect(stage(result, "pdf_render", "current_execution").currentExecution).toMatchObject({ waiting: 1, skipped: 0 });
+  });
+
+  it.each([
+    "missing receipt", "foreign receipt run", "replacement owner", "wrong score owner", "missing accepted score",
+    "newer accepted score", "different score version", "cleared eligibility", "score staleness", "generic block",
+    "retryable block", "missing gate provenance", "different gate blockers", "refreshed cover", "pending score",
+  ])("keeps an eligibility-like row unresolved with %s", (fault) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    const member = insertEligibilityHold(fixture, "invalid-eligibility");
+    if (fault === "missing receipt") fixture.db.prepare("DELETE FROM job_events").run();
+    if (fault === "foreign receipt run") fixture.db.prepare("UPDATE job_events SET payload_json = json_set(payload_json, '$.temporalRunId', 'other-run')").run();
+    if (fault === "replacement owner") fixture.db.prepare("UPDATE workflow_run_projections SET temporal_run_id = 'replacement-run' WHERE workflow_id = ?").run(member.preparationWorkflowId);
+    if (fault === "wrong score owner") fixture.db.prepare("UPDATE job_stage_states SET metadata_json = json_set(metadata_json, '$.activityOwner', 'other-run') WHERE stage = 'score'").run();
+    if (fault === "missing accepted score") fixture.db.prepare("DELETE FROM job_scores").run();
+    if (fault === "newer accepted score") fixture.db.prepare("UPDATE job_scores SET scored_at = ?").run(NOW.toISOString());
+    if (fault === "different score version") fixture.db.prepare("UPDATE job_scores SET version = 3").run();
+    if (fault === "cleared eligibility") fixture.db.prepare("UPDATE job_scores SET breakdown_json = ?").run(JSON.stringify({ eligibility: { status: "eligible", hard_blockers: [] } }));
+    if (fault === "score staleness") fixture.db.prepare("INSERT INTO job_score_staleness (tenant_id,job_id,stale_reason,old_policy_version,new_policy_version,marked_at,resolved) VALUES ('local',?,'synthetic',1,2,?,0)").run(member.jobId, NOW.toISOString());
+    if (fault === "generic block") fixture.db.prepare("UPDATE job_stage_states SET error_code = 'SETUP_REQUIRED' WHERE stage = 'tailor'").run();
+    if (fault === "retryable block") fixture.db.prepare("UPDATE job_stage_states SET retryable = 1 WHERE stage = 'tailor'").run();
+    if (fault === "missing gate provenance") fixture.db.prepare("UPDATE job_stage_states SET metadata_json = '{}' WHERE stage = 'tailor'").run();
+    if (fault === "different gate blockers") fixture.db.prepare("UPDATE job_stage_states SET metadata_json = json_set(metadata_json, '$.hard_blockers', json(?)) WHERE stage = 'cover'").run(JSON.stringify(["another canonical blocker"]));
+    if (fault === "refreshed cover") fixture.db.prepare("UPDATE job_stage_states SET state = 'pending' WHERE stage = 'cover'").run();
+    if (fault === "pending score") fixture.db.prepare("UPDATE job_stage_states SET state = 'pending' WHERE stage = 'score'").run();
+    const result = snapshot(fixture);
+    expect(result.execution?.currentExecution).toMatchObject({ terminal: 0, remaining: 1 });
+    expect(result.execution?.phase).toBe("draining");
+  });
+
+  it("does not reserve ETA contention for valid held sweep members while current scoring continues", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    insertMember(fixture, { key: "active-score-with-held-sweep", requiredSteps: ["score"] });
+    insertStageState(fixture, "active-score-with-held-sweep", "enrich", "succeeded");
+    insertStageState(fixture, "active-score-with-held-sweep", "score", "pending");
+    insertEligibilityHold(fixture, "held-sweep-contention", "existing_backlog");
+    for (let index = 0; index < 5; index += 1) {
+      insertStageState(fixture, `eligibility-history-${index}`, "score", "succeeded", 60_000, new Date(NOW.getTime() - index * 60_000).toISOString());
+    }
+    insertHeartbeat(fixture, {
+      activeSlots: 1, counts: { score_job: 1 },
+      details: [activityDetail("score_job", "op_000000000000000000000031", unmatchedWorkflowRef("active-eligibility-score"))],
+    });
+    const result = snapshot(fixture);
+    expect(result.execution?.sweptExistingBacklog).toMatchObject({ terminal: 1, remaining: 0 });
+    expect(stage(result, "score", "current_execution").eta).toMatchObject({ status: "available", caveat: null });
+    expect(result.overallEta).toMatchObject({ status: "available", caveat: null });
+  });
+
   it("does not infer a conditional PDF skip from current MIN_SCORE-like rows without an exact outcome receipt", () => {
     const fixture = createFixture();
     insertExecution(fixture, { status: "succeeded" });
@@ -2099,6 +2223,30 @@ function insertPreparationOutcomeObservation(
         'Preparation outcome observed.', ?, ?, 'workflow_run', ?, ?)`,
   ).run(member.jobId, NOW.toISOString(), JSON.stringify(payload), workflowId,
     `preparation-outcome:1:local:${workflowId}:${PREPARATION_RUN_ID}`);
+}
+
+function insertEligibilityHold(
+  fixture: Fixture,
+  key: string,
+  cohort: "observed_this_run" | "existing_backlog" = "observed_this_run",
+): { preparationWorkflowId: string; jobId: string } {
+  const member = insertMember(fixture, { key, cohort, requiredSteps: ["score", "tailor", "cover", "pdf"] });
+  insertWorkflowProjection(fixture, member.preparationWorkflowId, "succeeded", PREPARATION_RUN_ID);
+  insertPreparationOutcomeObservation(fixture, member);
+  insertStageState(fixture, key, "enrich", "succeeded");
+  insertStageState(fixture, key, "score", "succeeded", 60_000, "2026-07-14T11:30:00.000Z");
+  fixture.db.prepare("UPDATE job_stage_states SET metadata_json = ? WHERE job_id = ? AND stage = 'score'").run(
+    JSON.stringify({ activityOwner: PREPARATION_RUN_ID, priorScoreVersion: 0, rescore: false }), member.jobId,
+  );
+  const blockers = ["Explicit synthetic eligibility decision"];
+  for (const stageName of ["tailor", "cover"]) {
+    insertStageState(fixture, key, stageName, "blocked");
+    fixture.db.prepare("UPDATE job_stage_states SET error_code = 'SCORE_ELIGIBILITY_BLOCKED', attempt_count = 0, metadata_json = ? WHERE job_id = ? AND stage = ?")
+      .run(JSON.stringify({ reason: "score_eligibility_blocked", hard_blockers: blockers }), member.jobId, stageName);
+  }
+  fixture.db.prepare("INSERT INTO job_scores (tenant_id,job_id,version,fit_score,breakdown_json,keywords_json,scored_at,criteria_json,trace_json) VALUES ('local',?,1,6,?,'[]',?,'{}','{}')")
+    .run(member.jobId, JSON.stringify({ eligibility: { status: "blocked", hard_blockers: blockers } }), "2026-07-14T11:29:00.000Z");
+  return member;
 }
 
 function insertStageState(
