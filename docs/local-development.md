@@ -497,7 +497,11 @@ retain real servers, per-test lifecycles, startup/shutdown bounds and workflow
 execution. Unset overrides keep the SDK's normal download/cache behavior.
 Dependabot staggers package-manager batches weekly, groups compatible minor
 and patch updates, and applies a rolling cooldown before opening a candidate
-lockfile.
+lockfile. Packages with explicit reviewed UV cutoffs are excluded from routine
+version updates: advancing them requires a reviewed cutoff change and coupled
+lockfile maintenance. These type-only exclusions preserve security update
+attempts. A security fix published after a cutoff still requires that deliberate
+cutoff and lockfile update before resolution can succeed.
 
 ## Test And Documentation Workspaces
 
