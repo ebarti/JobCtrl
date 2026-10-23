@@ -1059,9 +1059,22 @@ function pdfCounts(cohortValue: Cohort, steps: PipelineStepRow[]): PipelineStage
     counts.eligible += 1;
     const step = pdfStepForMember(member, steps);
     if (step) addPipelineStepState(counts, step.state);
+    else if (pdfAwaitsRecordedPrerequisite(cohortValue, member)) counts.waiting += 1;
     else counts.unknown += 1;
   }
   return counts;
+}
+
+function pdfAwaitsRecordedPrerequisite(cohortValue: Cohort, member: MembershipRow): boolean {
+  const workflowId = nullableText(member.preparation_workflow_id);
+  if (!workflowId) return false;
+  const ownerStatus = cohortValue.preparationWorkflowStatuses.get(workflowId);
+  if (ownerStatus && isTerminalWorkflowStatus(ownerStatus)) return false;
+  return requiredSteps(member).some((prerequisite) => {
+    if (!isJobStage(prerequisite)) return false;
+    const state = cohortValue.stageStates.get(member.job_id)?.get(prerequisite)?.state;
+    return state === "pending" || state === "queued" || state === "running";
+  });
 }
 
 function projectionCounts(

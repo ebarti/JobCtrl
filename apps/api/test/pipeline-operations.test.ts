@@ -642,6 +642,86 @@ describe("pipeline operations read model", () => {
     });
   });
 
+  it.each(["pending", "queued", "running"])("keeps unrecorded PDFs waiting while required scoring is %s in both cohorts", (state) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    for (const cohort of ["observed_this_run", "existing_backlog"] as const) {
+      const key = `pdf-awaits-${cohort}-${state}`;
+      insertMember(fixture, { key, cohort, requiredSteps: ["score", "pdf"] });
+      insertStageState(fixture, key, "score", state);
+    }
+    const result = snapshot(fixture);
+    expect(stage(result, "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, waiting: 1, unknown: 0,
+    });
+    expect(stage(result, "pdf_render", "execution_sweep").existingBacklog).toMatchObject({
+      kind: "domain_jobs", counts: { eligible: 1, waiting: 1, unknown: 0 },
+    });
+  });
+
+  it.each(["tailor", "cover"])("keeps unrecorded PDFs waiting for required %s work", (upstream) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertMember(fixture, { key: "pdf-awaits-material", requiredSteps: [upstream, "pdf"] });
+    insertStageState(fixture, "pdf-awaits-material", upstream, "running");
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, waiting: 1, unknown: 0,
+    });
+  });
+
+  it.each(["succeeded", "failed", "blocked", "canceled"])("retains an unrecorded PDF gap after required scoring is %s", (state) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertMember(fixture, { key: "pdf-gap", requiredSteps: ["score", "pdf"] });
+    insertStageState(fixture, "pdf-gap", "score", state);
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, waiting: 0, unknown: 1,
+    });
+  });
+
+  it.each(["succeeded", "failed", "canceled"])("retains a PDF gap when its owner is %s despite stale pending prerequisites", (status) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    const member = insertMember(fixture, { key: "pdf-closed-owner", requiredSteps: ["score", "pdf"] });
+    insertStageState(fixture, "pdf-closed-owner", "score", "pending");
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, status);
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, waiting: 0, unknown: 1,
+    });
+  });
+
+  it("retains a PDF gap when its required prerequisite has no recorded state", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertMember(fixture, { key: "pdf-missing-prerequisite", requiredSteps: ["score", "pdf"] });
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, waiting: 0, unknown: 1,
+    });
+  });
+
+  it("does not use unrelated running work to explain an unrecorded PDF", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertMember(fixture, { key: "pdf-only", requiredSteps: ["pdf"] });
+    insertStageState(fixture, "pdf-only", "score", "running");
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, waiting: 0, unknown: 1,
+    });
+  });
+
+  it.each([
+    ["queued", "waiting"], ["running", "processing"], ["succeeded", "succeeded"], ["failed", "failed"],
+  ])("keeps the recorded PDF %s state authoritative over pending prerequisites", (state, bucket) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    const member = insertMember(fixture, { key: "pdf-recorded", requiredSteps: ["score", "pdf"] });
+    insertStageState(fixture, "pdf-recorded", "score", "pending");
+    insertStep(fixture, { stepKind: "pdf_render", itemKey: pdfItemKey(member.preparationWorkflowId), state });
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, [bucket]: 1, unknown: 0,
+    });
+  });
+
   it("uses exact PDF joins, merges safe runtime activity inventory, and omits private input data", () => {
     const fixture = createFixture();
     const current = insertMember(fixture, { key: "pdf-current", requiredSteps: ["pdf"] });

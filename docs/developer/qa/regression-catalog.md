@@ -545,6 +545,16 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For planned PDF progress counts, run
+`corepack pnpm --filter @jobctrl/api exec vitest run test/pipeline-operations.test.ts`.
+Use owned exact-schema members in both execution cohorts. Without a PDF lifecycle,
+recorded pending/queued/running required Score, Tailor or Cover prerequisites must
+report waiting. A terminal preparation owner, absent prerequisite state, unrelated
+running work, and completed/blocked/failed/canceled prerequisites must preserve an
+unknown PDF gap. Recorded queued/running/succeeded/failed PDF steps retain their
+own state even while upstream rows remain pending. Preserve exact PDF identity
+joins, projection coverage, count partitions and private-input exclusion.
+
 For optional post-approval résumé polish, run locked
 `pytest tests/test_resume_polish_policy.py tests/test_tailor_voice_audit_integration.py tests/test_tailor_judge_selection.py tests/test_saved_default_model.py tests/test_tailoring_artifact_boundary.py`.
 Prove a missing/false setting never acquires a voice provider; explicit boolean
