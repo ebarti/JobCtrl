@@ -227,7 +227,7 @@ def test_build_resume_document_reuses_tailoring_policy_helpers() -> None:
         {"kind": "phone", "label": "+1-555-0100", "href": "tel:+15550100"},
         {"kind": "email", "label": "jane@example.com", "href": "mailto:jane@example.com"},
         {"kind": "website", "label": "janedoe.dev", "href": "https://janedoe.dev"},
-        {"kind": "linkedin", "label": "janedoe", "href": "https://www.linkedin.com/in/janedoe"},
+        {"kind": "linkedin", "label": "www.linkedin.com/in/janedoe", "href": "https://www.linkedin.com/in/janedoe"},
     ]
     assert document["summary"] == "Tailored summary."
     assert document["experience"][0]["title"] == "Senior SWE"
@@ -268,7 +268,7 @@ def test_build_resume_html_matches_moderncv_contact_and_experience_layout() -> N
         in html
     )
     assert (
-        '<span class="resume-contact-item resume-contact-linkedin"><a href="https://www.linkedin.com/in/janedoe">janedoe</a></span>'
+        '<span class="resume-contact-item resume-contact-linkedin"><a href="https://www.linkedin.com/in/janedoe">www.linkedin.com/in/janedoe</a></span>'
         in html
     )
     dom = BeautifulSoup(html, "html.parser")
@@ -287,6 +287,32 @@ def test_build_resume_html_matches_moderncv_contact_and_experience_layout() -> N
     assert "Owned the distributed systems mandate." in html
     assert html.index("experience:acme_swe:heading") < html.index("experience:acme_swe:summary")
     assert html.index("experience:acme_swe:summary") < html.index("experience:acme_swe#0")
+
+
+def test_shared_handle_destinations_remain_distinct_in_text_audit_and_html() -> None:
+    from jobctrl.domain.materials.provenance_builder import rendered_lines
+    from jobctrl.domain.materials.resume_document import contact_items_from_text, contact_items_text
+
+    profile = _profile()
+    profile["personal"]["github_url"] = "https://github.com/janedoe"
+    document = build_resume_document(_payload(), profile)
+    items = document["personal"]["contact_items"]
+    professional = [row for row in items if row["kind"] in {"linkedin", "github"}]
+    assert len({row["label"] for row in professional}) == 2
+    assert [row["href"] for row in professional] == [
+        "https://www.linkedin.com/in/janedoe", "https://github.com/janedoe",
+    ]
+    contact = contact_items_text(items)
+    assert "www.linkedin.com/in/janedoe" in contact and "github.com/janedoe" in contact
+    assert contact in ResumeAssembler().assemble_resume_text(_payload(), profile)
+    audited = next(row[3] for row in rendered_lines(profile, _payload()) if row[0] == "personal:contact")
+    assert audited == contact
+    restored = [row for row in contact_items_from_text(contact) if row["kind"] in {"linkedin", "github"}]
+    assert restored == professional
+    html = BeautifulSoup(build_resume_html(document), "html.parser")
+    assert [(row["href"], row.get_text()) for row in html.select(".resume-contact-linkedin a, .resume-contact-github a")] == [
+        (row["href"], row["label"]) for row in professional
+    ]
 
 
 def test_resume_preserves_profile_experience_order_and_places_education_degree_below_institution() -> None:
@@ -761,36 +787,48 @@ class _PaginationTargets(HTMLParser):
     def __init__(self, source: str) -> None:
         super().__init__()
         self.targets: list[dict] = []
-        self.active: dict | None = None
+        self.active: list[dict] = []
         self.depth = 0
         self.feed(source)
         self.close()
+        assert not self.active, "layout targets must have matching closing tags"
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"br", "hr", "img", "input", "meta", "link"}:
+            return
+        self.depth += 1
         attributes = dict(attrs)
         if "data-resume-layout-target" in attributes:
-            assert self.active is None, "nested layout targets need explicit measurement support"
-            self.active = {"semantic_id": attributes["data-resume-layout-target"], "parts": []}
-            self.depth = 1
-        elif self.active is not None and tag not in {"br", "hr", "img", "input", "meta", "link"}:
-            self.depth += 1
+            target = {"semantic_id": attributes["data-resume-layout-target"], "text": ""}
+            self.targets.append(target)
+            self.active.append({"target": target, "parts": [], "depth": self.depth})
 
     def handle_endtag(self, tag: str) -> None:
-        if self.active is None:
+        if tag in {"br", "hr", "img", "input", "meta", "link"}:
             return
+        if self.active and self.active[-1]["depth"] == self.depth:
+            active = self.active.pop()
+            active["target"]["text"] = " ".join(active["parts"])
         self.depth -= 1
-        if self.depth == 0:
-            self.targets.append(
-                {
-                    "semantic_id": self.active["semantic_id"],
-                    "text": " ".join(self.active["parts"]),
-                }
-            )
-            self.active = None
 
     def handle_data(self, data: str) -> None:
-        if self.active is not None:
-            self.active["parts"].append(data)
+        for active in self.active:
+            active["parts"].append(data)
+
+
+def test_pagination_measurement_preserves_nested_target_ids_and_source_order() -> None:
+    parsed = _PaginationTargets(
+        '<div data-resume-layout-target="role:heading">'
+        '<span data-resume-layout-target="role:company">Same</span>'
+        '<span><b data-resume-layout-target="role:title">Same</b></span></div>'
+        '<p data-resume-layout-target="role:summary">After<br>heading</p>'
+    )
+    assert parsed.targets == [
+        {"semantic_id": "role:heading", "text": "Same Same"},
+        {"semantic_id": "role:company", "text": "Same"},
+        {"semantic_id": "role:title", "text": "Same"},
+        {"semantic_id": "role:summary", "text": "After heading"},
+    ]
 
 
 @pytest.fixture(scope="module")
@@ -1067,6 +1105,48 @@ def pagination_boundaries(pagination_environment: dict, tmp_path_factory: pytest
 
 
 @pytest.mark.parametrize("page_size", ("a4", "letter"))
+@pytest.mark.parametrize(
+    "margins",
+    (
+        {"top": 16.5, "right": 17.5, "bottom": 18, "left": 17.5},
+        {"top": 12, "right": 13, "bottom": 14, "left": 15},
+    ),
+)
+def test_resume_continuation_pages_keep_selected_template_insets(
+    page_size: str,
+    margins: dict,
+    pagination_environment: dict,
+    tmp_path: Path,
+) -> None:
+    """Check physical continuation pages, independently of pre-print DOM boxes."""
+    profile, expected_markers = _pagination_profile("dense")
+    theme = {**_pagination_theme(page_size), "marginMm": margins}
+    source = build_resume_html(build_resume_document({}, profile), theme)
+    for entry_point in ("adapter", "shared"):
+        pdf = tmp_path / f"{entry_point}.pdf"
+        if entry_point == "adapter":
+            HtmlResumePdfAdapter().render_resume_to_pdf(
+                tailored_payload={}, profile_dict=profile, output_path=str(pdf),
+                created_at="2026-10-21T00:00:00Z", resume_theme=theme,
+            )
+        else:
+            html_resume_pdf.render_resume_html_to_pdf(source, str(pdf))
+        observation = _pagination_pdf_observation(pdf, pagination_environment)
+        (tmp_path / f"{entry_point}-insets.json").write_text(json.dumps(observation, indent=2), encoding="utf-8")
+        assert observation["page_count"] >= 2
+        assert [marker for page in observation["markers_by_page"] for marker in page] == expected_markers
+        assert not observation["blank_pages"]
+        for page_number in range(2, observation["page_count"] + 1):
+            words = [word for word in observation["words"] if word["page"] == page_number]
+            assert words
+            height = observation["dimensions_pt"][page_number - 1][1]
+            # A 9.5pt heading's font ascent extends 2.85pt above its line box in
+            # Poppler; painted glyphs remain inside the inset (review the PNGs).
+            assert min(word["rect_pt"][1] for word in words) >= margins["top"] * 72 / 25.4 - 3
+            assert max(word["rect_pt"][3] for word in words) <= height - margins["bottom"] * 72 / 25.4 + 2
+
+
+@pytest.mark.parametrize("page_size", ("a4", "letter"))
 @pytest.mark.parametrize("case", _PAGINATION_CASES)
 def test_dense_resume_pagination_trial(
     case: str,
@@ -1139,6 +1219,10 @@ def test_dense_resume_pagination_trial(
         assert not render["missing_content_targets"], render["missing_content_targets"]
         assert render["reading_order_matches"], {key: render[key] for key in ("missing_markers", "duplicate_markers")}
         assert not render["blank_pages"], render["blank_pages"]
+        assert not [
+            heading for heading in render["layout_correspondence"]["orphan_heading_candidates"]
+            if heading["heading"].startswith("section:")
+        ], render["layout_correspondence"]["orphan_heading_candidates"]
         assert all(
             abs(actual - expected) <= 1
             for dims in render["dimensions_pt"]

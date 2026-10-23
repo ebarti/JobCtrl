@@ -391,7 +391,10 @@ subprocess. Method-specific calls use the shared contract boundary described in
 [Contracts, Types & API Boundaries](contracts-types-and-api-boundaries.md#typescript-to-python-json-rpc):
 parameters validate before transport and results validate before consumption.
 Awaited profile continuations require completed pipeline results before a
-handled marker is persisted. Workflow-mode handlers return a workflow spec that the RPC server
+handled marker is persisted. Confirmed terminal failures receive a separate,
+idempotent `ProfileContinuationFailed` event instead, so restarting does not
+replay an immutable failed result or block later profile revisions. Uncertain
+dispatches remain pending for reattachment. Workflow-mode handlers return a workflow spec that the RPC server
 starts on Temporal (`run_stage`,
 `rescore_job`, `rescore_jobs_not_on_current_scoring_policy`, `tailor_job`,
 `retailor_job`, `retailor_current_policy`, `refresh_compensation`, `apply`,
@@ -664,14 +667,14 @@ lives under `workers/automation/src/jobctrl/infrastructure/temporal/`:
   so workflow code can construct activity-input dataclasses at the workflow
   boundary (the sandbox proxy mechanism otherwise refuses to instantiate
   frozen dataclasses imported through `imports_passed_through()`). Activity
-  execution is bounded by the `worker_activity_slots` value saved in
+  Server-dispatched activity execution is bounded by the `worker_activity_slots` value saved in
   `config.json` (default `4`) and two worker-owned
   `ThreadPoolExecutor(max_workers = slots + 2)` pools: one for Temporal's
   synchronous activities and one for blocking stage helpers. Cancellation
   retires the affected blocking-pool generation before its grace wait, so an
   immediate retry uses fresh bounded capacity without affecting Temporal's
   synchronous pool. The worker heartbeat records the activity slots and
-  configured executor width, exact all-activity slot use, bounded active detail,
+  configured executor width, exact server-dispatched slot use, bounded active detail,
   completed-activity duration summaries, and an approximate task-queue
   observation for `GET /v1/health` and `GET /v1/pipeline/operations` (see
   [Concurrency & Fan-out](pipeline/concurrency.md)).
@@ -707,8 +710,10 @@ planning/families, reconciliation/fan-out, backlog sweep, and PDF. Per-job
 `job_stage_states` remains authoritative for enrich/score/tailor/cover.
 
 The activity telemetry interceptor never reads activity arguments. It counts
-every active slot, but retains details only for allowlisted activity kinds;
-unsafe identifiers become non-reversible local opaque hashes and only validated
+every active slot, but retains details only for allowlisted activity kinds,
+including saved-posting availability checks that can occupy shared capacity
+after a Discover run closes. Unsafe identifiers become non-reversible local
+opaque hashes and only validated
 safe workflow/run references remain readable. URLs, job/profile content,
 prompts, provider output, artifact paths, payloads, credentials, and exception
 text are excluded. Telemetry failure is caught so it cannot change business
@@ -726,6 +731,7 @@ as the durable error code:
 | `TransientNetworkError` | `transient_network` | yes |
 | `BrowserTransientError` | `browser_transient` | yes |
 | `LlmTransientError` | `llm_transient` | yes |
+| `MaterialRejectedError` | `material_rejected` | no |
 | `SourceUnavailableError` | `source_unavailable` | yes |
 | `BudgetExceededError` | `budget_exceeded` | no |
 
@@ -828,6 +834,13 @@ The pipeline package (`jobctrl/pipeline/`) is split into `runner.py`
 Temporal batch orchestrator). The deleted in-process `run_pipeline` engine is
 not re-exported; every CLI, API, and local-action entry point starts a workflow.
 
+Preparation cancellation during `check_spend_budget` records a canceled
+outcome, including when Temporal wraps cancellation in an `ActivityError`.
+No preparation step runs after that canceled preflight; real budget failures
+retain their failure code.
+URL-import cancellation likewise preserves its canceled execution and event
+instead of returning a normal failed-import workflow result.
+
 All workflows that can spend LLM tokens run `check_spend_budget` with an
 explicit product lane before their heavy activity. Provider and retry
 boundaries repeat the same check. Usage is recorded in `llm_spend` by UTC day
@@ -869,6 +882,13 @@ TypeScript Temporal SDK and without trigger-coupled reapers:
   `record_workflow_started` / `record_workflow_outcome`. Those
   activities reuse `record_job_event` + a projection refresh; workflow bodies
   stay deterministic (all SQLite/clock IO is inside the activities).
+  New histories execute these short writes as local activities in two bounded
+  SDK slots, independently of long-running remote activity capacity. Each
+  attempt retains a 30-second deadline and five-attempt retry limit; the local
+  schedule has a three-minute total bound. A version marker preserves existing
+  remote-activity histories. Local writes do not heartbeat or consume reported
+  remote slots. Events deduplicate on tenant, workflow ID, Temporal run ID and
+  event type, so a repeated committed write cannot duplicate canonical history.
 - **Describe-based reconciler** — `_reconcile_workflow_runs` runs in the worker
   heartbeat loop (15s). It pins each lookup to the exact recorded Temporal run
   ID. CLOSED executions map to their matching terminal event and RUNNING
@@ -912,6 +932,22 @@ worker/task-queue telemetry at request time. Because heartbeat state is
 ephemeral and no point-in-time lineage reconstruction is implemented,
 `GET /v1/pipeline/operations` is explicitly a current snapshot rather than a
 historical execution API.
+
+## Activity Storage Lifetimes
+
+Broad-board and explicit-URL intake commit completed canonical identity and
+intake events before optional posted-compensation inference. Model calls run
+without retaining that intake writer. Fact persistence then reserves the
+writer, rechecks the source text and any discovery lease, and preserves the
+previous accepted fact if the source changed during inference. Provider retries
+therefore cannot hold the database writer for the duration of an intake pay
+analysis.
+
+Activity cleanup closes thread-owned connections and rolls back unfinished
+writes before executor threads are reused. The Profile repository cache follows
+the live connection identity as well as its thread and reset generation; a later
+activity rebuilds a repository whose previous connection was closed. Keeping a
+pool thread alive cannot extend a repository's database lifetime.
 
 ## Saved Posting Availability Runtime
 

@@ -33,6 +33,7 @@ with workflow.unsafe.imports_passed_through():
         _COVER_RETRY,
         _DEFAULT_HEARTBEAT_TIMEOUT,
         _DEFAULT_TIMEOUT,
+        _MODEL_ACTIVITY_TIMEOUT,
         _SCORE_RETRY,
         _TAILOR_RETRY,
     )
@@ -111,29 +112,22 @@ class JobPreparationWorkflow:
             if _preparation_spends(payload):
                 await _check_spend(payload)
             result = await self._execute_steps(payload)
-        except CancelledError:
-            await emit_workflow_outcome(
-                tenant_id=payload.tenant_id,
-                workflow_type="JobPreparationWorkflow",
-                status="canceled",
-                started_at=started_at,
-                error_code="workflow_canceled",
-                error_message="Workflow canceled by request.",
-                expected_app_dir=payload.expected_app_dir,
-                expected_db_path=payload.expected_db_path,
-            )
-            raise
         except Exception as exc:  # noqa: BLE001
+            canceled = isinstance(exc, CancelledError) or (
+                isinstance(exc, ActivityError) and _activity_error_was_cancelled(exc)
+            )
             await emit_workflow_outcome(
                 tenant_id=payload.tenant_id,
                 workflow_type="JobPreparationWorkflow",
-                status="failed",
+                status="canceled" if canceled else "failed",
                 started_at=started_at,
-                error_code=_exception_error_code(exc) or "workflow_error",
-                error_message=str(exc),
+                error_code="workflow_canceled" if canceled else _exception_error_code(exc) or "workflow_error",
+                error_message="Workflow canceled by request." if canceled else str(exc),
                 expected_app_dir=payload.expected_app_dir,
                 expected_db_path=payload.expected_db_path,
             )
+            if canceled and not isinstance(exc, CancelledError):
+                raise CancelledError("Workflow canceled by request.") from exc
             raise
 
         if result.failure:
@@ -274,7 +268,7 @@ async def _execute_step(step: str, payload: JobPreparationInput) -> Any:
                 rescore=payload.rescore,
                 llm_model=payload.llm_model,
             ),
-            start_to_close_timeout=_DEFAULT_TIMEOUT,
+            start_to_close_timeout=_MODEL_ACTIVITY_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=_SCORE_RETRY,
         )
@@ -294,7 +288,7 @@ async def _execute_step(step: str, payload: JobPreparationInput) -> Any:
                 tailor_judge_model=payload.tailor_judge_model,
                 llm_model=payload.llm_model,
             ),
-            start_to_close_timeout=_DEFAULT_TIMEOUT,
+            start_to_close_timeout=_MODEL_ACTIVITY_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=_TAILOR_RETRY,
         )
@@ -307,8 +301,9 @@ async def _execute_step(step: str, payload: JobPreparationInput) -> Any:
                 min_score=payload.min_score,
                 validation_mode=payload.validation_mode,
                 llm_model=payload.llm_model,
+                allow_low_fit_override=payload.allow_low_fit_override,
             ),
-            start_to_close_timeout=_DEFAULT_TIMEOUT,
+            start_to_close_timeout=_MODEL_ACTIVITY_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=_COVER_RETRY,
         )

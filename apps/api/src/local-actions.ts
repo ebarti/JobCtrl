@@ -58,6 +58,11 @@ export interface ActionDispatchResult {
   firstExecutionRunId?: string;
   result?: unknown;
   message?: string;
+  completedWorkflowFailure?: {
+    runId: string;
+    workflowId?: string;
+    errorCode: string;
+  };
 }
 
 export type ActionDispatcher = (
@@ -170,13 +175,25 @@ export function createActionDispatcher(
         result: response.result,
       };
     }
+    const workflowStart = extractWorkflowStart(response.result);
     if (rpcCall.method === "run_stage" && "awaitResult" in rpcCall.params && rpcCall.params.awaitResult === true) {
       const completed = response.result && "result" in response.result ? response.result.result : undefined;
       if (isRecord(completed) && (completed.failure || (Array.isArray(completed.stages_failed) && completed.stages_failed.length) || (Array.isArray(completed.families_failed) && completed.families_failed.length))) {
-        return { status: "failed", message: typeof completed.failure === "string" ? completed.failure : "Profile continuation failed.", result: response.result };
+        return {
+          status: "failed",
+          message: typeof completed.failure === "string" ? completed.failure : "Profile continuation failed.",
+          result: response.result,
+          ...(workflowStart.runId ? {
+            completedWorkflowFailure: {
+              runId: workflowStart.runId,
+              ...(workflowStart.workflowId ? { workflowId: workflowStart.workflowId } : {}),
+              errorCode: typeof completed.error_code === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(completed.error_code)
+                ? completed.error_code : "workflow_stage_failed",
+            },
+          } : {}),
+        };
       }
     }
-    const workflowStart = extractWorkflowStart(response.result);
     if (hasWorkflowStart(workflowStart)) {
       const result: ActionDispatchResult = {
         status: "queued",

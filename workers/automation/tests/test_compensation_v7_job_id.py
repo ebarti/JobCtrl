@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 import pytest
 
 from jobctrl.domain.identifiers import JobId
 from jobctrl.discovery.jobspy import _upsert_posted_compensation_fact
+from jobctrl.discovery.job_url_import_workflow import _ensure_posted_compensation_fact
 from jobctrl.infrastructure.compensation.sqlite_market_repository import (
     SqliteMarketCompensationRepository,
 )
@@ -141,3 +143,65 @@ def test_compensation_repositories_reject_url_shaped_job_ids() -> None:
 
     with pytest.raises(ValueError, match="canonical UUID"):
         SqliteMarketCompensationRepository(conn).get_estimate("local", url_shaped_id)
+
+
+@pytest.mark.parametrize("producer", ["jobspy", "url_import"])
+@pytest.mark.parametrize("source_changes", [False, True])
+def test_discovery_posted_pay_inference_releases_the_intake_writer(
+    tmp_path: Path, monkeypatch, producer: str, source_changes: bool,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    create_exact_v14_schema(conn)
+    job_id = JobId("55555555-5555-4555-8555-555555555555")
+    url = "https://example.test/jobs/writer-boundary"
+    _insert_job(conn, tenant_id="local", job_id=job_id, url=url, salary="€90,000-€110,000/year")
+    if source_changes:
+        conn.execute("UPDATE jobs SET salary='€80,000-€95,000/year' WHERE job_id=?", (job_id,))
+        conn.commit()
+        SqlitePostedCompensationRepository(
+            conn, extractor=pay_extractor(conn, minimum=80000, maximum=95000),
+        ).parse_and_save_job_salary(job_id, "€80,000-€95,000/year")
+        conn.execute("UPDATE jobs SET salary='€90,000-€110,000/year' WHERE job_id=?", (job_id,))
+        conn.commit()
+    wrapped = pay_extractor(conn, minimum=90000, maximum=110000)
+    observed = []
+
+    class WriterCheckingExtractor:
+        def extract(self, *args, **kwargs):
+            assert not conn.in_transaction, "Inference must not retain the intake writer"
+            with sqlite3.connect(db_path, timeout=0) as other:
+                if source_changes:
+                    other.execute("UPDATE jobs SET salary='€100,000-€120,000/year' WHERE job_id=?", (job_id,))
+                else:
+                    other.execute("UPDATE jobs SET title=title WHERE job_id=?", (job_id,))
+            observed.append("independent_writer_committed")
+            return wrapped.extract(*args, **kwargs)
+
+    original = SqlitePostedCompensationRepository
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.compensation.SqlitePostedCompensationRepository",
+        lambda connection: original(connection, extractor=WriterCheckingExtractor()),
+    )
+    conn.execute("UPDATE jobs SET description='Completed synthetic intake' WHERE job_id=?", (job_id,))
+
+    if producer == "jobspy":
+        _upsert_posted_compensation_fact(
+            conn, tenant_id="local", job_url=url, parsed_at="2026-10-19T20:00:00Z",
+            write_fence=lambda: conn.execute("UPDATE jobs SET title=title WHERE job_id=?", (job_id,)),
+        )
+    else:
+        _ensure_posted_compensation_fact(
+            conn, tenant_id="local", job_id=job_id, source_native_id="synthetic-writer-boundary",
+        )
+
+    assert observed == ["independent_writer_committed"]
+    fact = original(conn).get_fact("local", job_id)
+    assert fact is not None
+    assert fact.minimum_amount == (80000 if source_changes else 90000)
+    assert conn.execute(
+        "SELECT COUNT(*) FROM job_events WHERE job_id=? AND event_type='CompensationFactsUpdated'", (job_id,),
+    ).fetchone()[0] == 1
+    conn.close()

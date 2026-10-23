@@ -10,11 +10,12 @@ import uuid
 
 import pytest
 from temporalio import activity
+from temporalio.api.enums.v1 import EventType, TimeoutType
 from temporalio.client import WorkflowFailureError
 from temporalio.common import RetryPolicy, WorkflowIDConflictPolicy
-from temporalio.exceptions import ActivityError, ApplicationError
+from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
 from .temporal_env import time_skipping_env
-from temporalio.worker import UnsandboxedWorkflowRunner, Worker
+from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
 
 from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.preparation import PreparationWorkItemKind
@@ -25,6 +26,7 @@ from jobctrl.preparation import workflow as prep_workflow_mod
 from jobctrl.preparation.workflow import JobPreparationInput, JobPreparationWorkflow
 from jobctrl.scoring.activities import score_job_activity
 from jobctrl.llm import SpendBudgetStatus
+from jobctrl.infrastructure.temporal.finalize import WorkflowOutcomeInput
 
 
 _JOB_ID = JobId("10000000-0000-4000-8000-000000000001")
@@ -78,6 +80,217 @@ async def test_preparation_workflow_runs_requested_steps_in_order(monkeypatch: p
     ]
     assert [payload.job_id for _fn, payload in calls] == [_JOB_ID] * 4
     assert all(not hasattr(payload, "job_url") for _fn, payload in calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["mismatched_value", "non_verbatim_quote"])
+async def test_analysis_protocol_failure_stops_score_after_one_temporal_attempt(monkeypatch, code):
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.domain.materials.analysis import AnalysisFailure, EnsembleError
+    from jobctrl.scoring.scorer import _employer_analysis_failure_message
+
+    attempts = []
+    recovered = []
+
+    @activity.defn(name="record_workflow_started")
+    async def record_started(_payload):
+        return None
+
+    @activity.defn(name="record_workflow_outcome")
+    async def record_outcome(_payload):
+        return None
+
+    @activity.defn(name="recover_preparation_state")
+    async def recover(_payload):
+        recovered.append(True)
+        return {"restored": 0, "failed": 0}
+
+    def score(_payload, **_kwargs):
+        attempts.append(len(attempts) + 1)
+        failure = EnsembleError("all ensemble legs failed", (AnalysisFailure("synthetic", code),),
+                                determination_failure=DeterminationFailure(code))
+        return {"status": "failed", "error": _employer_analysis_failure_message(failure)}
+
+    monkeypatch.setattr("jobctrl.scoring.activities._score_one_job", score)
+    async with time_skipping_env() as env:
+        queue = "typed-analysis-" + uuid.uuid4().hex
+        async with Worker(env.client, task_queue=queue, workflows=[JobPreparationWorkflow],
+                          activities=[_check_spend_budget, record_started, record_outcome, recover, score_job_activity],
+                          workflow_runner=UnsandboxedWorkflowRunner()):
+            handle = await env.client.start_workflow(JobPreparationWorkflow.run,
+                JobPreparationInput(tenant_id="local", job_id=_JOB_ID, steps=["score", "tailor"],
+                                    target_version="1", idempotency_key=queue), id=queue, task_queue=queue)
+            result = await asyncio.wait_for(handle.result(), timeout=30)
+            history = await handle.fetch_history()
+    assert attempts == [1]
+    assert recovered == [True]
+    assert result.steps_failed == ["score"] and result.steps_completed == []
+    assert result.error_code == code
+    failures = [event.activity_task_failed_event_attributes.failure.application_failure_info
+                for event in history.events if event.HasField("activity_task_failed_event_attributes")]
+    assert len(failures) == 1
+    assert failures[0].type == code and failures[0].non_retryable
+    score_events = [event.activity_task_started_event_attributes
+                    for event in history.events if event.HasField("activity_task_started_event_attributes")]
+    assert all(event.attempt == 1 for event in score_events)
+
+
+@pytest.mark.asyncio
+async def test_model_steps_have_long_work_budget_without_extending_pdf_or_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduled: dict[str, dict] = {}
+
+    async def capture(activity_fn, _payload, **kwargs):
+        scheduled[activity_fn.__name__] = kwargs
+        return {"status": "ok"}
+
+    monkeypatch.setattr(prep_workflow_mod.workflow, "execute_activity", capture)
+    result = await JobPreparationWorkflow()._execute_steps(
+        JobPreparationInput(
+            tenant_id="local", job_id=_JOB_ID, steps=["score", "tailor", "cover", "pdf"],
+            target_version="1", idempotency_key="preparation:model-deadlines",
+        )
+    )
+    assert result.steps_completed == ["score", "tailor", "cover", "pdf"]
+    for name in ("score_job_activity", "tailor_job_activity", "cover_letter_activity"):
+        assert scheduled[name]["start_to_close_timeout"] == timedelta(hours=6)
+    assert scheduled["render_pdf_activity"]["start_to_close_timeout"] == timedelta(minutes=30)
+    assert all(options["heartbeat_timeout"] == timedelta(minutes=2) for options in scheduled.values())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy_history", [False, True])
+async def test_healthy_model_work_can_finish_after_coarse_deadline_and_replay(
+    monkeypatch: pytest.MonkeyPatch, legacy_history: bool,
+) -> None:
+    """A real worker must not repeat healthy work at the old coarse deadline."""
+    queue = f"prep-model-budget-{uuid.uuid4()}"
+    attempts: list[int] = []
+    original_model_timeout = getattr(prep_workflow_mod, "_MODEL_ACTIVITY_TIMEOUT", timedelta(hours=6))
+    # Scale the two operational budgets, without replacing the workflow,
+    # heartbeat, Temporal timer, retry policy, or activity execution boundary.
+    monkeypatch.setattr(prep_workflow_mod, "_DEFAULT_TIMEOUT", timedelta(milliseconds=200))
+    monkeypatch.setattr(
+        prep_workflow_mod, "_MODEL_ACTIVITY_TIMEOUT",
+        timedelta(milliseconds=200) if legacy_history else timedelta(seconds=5), raising=False,
+    )
+
+    @activity.defn(name="record_workflow_started")
+    async def record_started(_payload) -> None:
+        return None
+
+    @activity.defn(name="record_workflow_outcome")
+    async def record_outcome(_payload) -> None:
+        return None
+
+    @activity.defn(name="recover_preparation_state")
+    async def recover(_payload) -> dict:
+        return {"recovered": 0}
+
+    @activity.defn(name="score_job")
+    async def slow_score(_payload) -> dict:
+        attempts.append(activity.info().attempt)
+        activity.heartbeat("synthetic model work")
+        await asyncio.sleep(0.01 if legacy_history else 0.5)
+        return {"status": "ok", "score_version": 1}
+
+    async with time_skipping_env() as env:
+        async with Worker(
+            env.client, task_queue=queue, workflows=[JobPreparationWorkflow],
+            activities=[_check_spend_budget, record_started, record_outcome, recover, slow_score],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            handle = await env.client.start_workflow(
+                JobPreparationWorkflow.run,
+                JobPreparationInput(
+                    tenant_id="local", job_id=_JOB_ID, steps=["score"],
+                    target_version="1", idempotency_key=f"preparation:{uuid.uuid4()}",
+                ),
+                id=f"prep-model-budget-{uuid.uuid4()}", task_queue=queue,
+            )
+            result = await handle.result()
+            history = await handle.fetch_history()
+        assert result.steps_completed == ["score"]
+        assert result.steps_failed == []
+        assert attempts == [1]
+        # Changing a scheduling timeout does not rewrite an already recorded
+        # timer or add/remove commands. Replay an old, short-budget history
+        # against the actual new scheduling policy as well as a new history.
+        monkeypatch.setattr(prep_workflow_mod, "_MODEL_ACTIVITY_TIMEOUT", original_model_timeout)
+        await Replayer(
+            workflows=[JobPreparationWorkflow], workflow_runner=UnsandboxedWorkflowRunner(),
+        ).replay_workflow(history)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop", ["heartbeat", "cancel"])
+async def test_long_model_budget_retains_heartbeat_failure_and_explicit_cancellation(
+    monkeypatch: pytest.MonkeyPatch, stop: str,
+) -> None:
+    queue = f"prep-model-stop-{uuid.uuid4()}"
+    started = asyncio.Event()
+    outcomes: list[str] = []
+    attempts: list[int] = []
+    monkeypatch.setattr(prep_workflow_mod, "_MODEL_ACTIVITY_TIMEOUT", timedelta(seconds=5))
+    monkeypatch.setattr(prep_workflow_mod, "_DEFAULT_HEARTBEAT_TIMEOUT", timedelta(milliseconds=200))
+    monkeypatch.setattr(prep_workflow_mod, "_SCORE_RETRY", RetryPolicy(maximum_attempts=1))
+
+    @activity.defn(name="record_workflow_started")
+    async def record_started(_payload) -> None:
+        return None
+
+    @activity.defn(name="record_workflow_outcome")
+    async def record_outcome(payload: WorkflowOutcomeInput) -> None:
+        outcomes.append(payload.status)
+
+    @activity.defn(name="recover_preparation_state")
+    async def recover(_payload) -> dict:
+        return {"recovered": 0}
+
+    @activity.defn(name="score_job")
+    async def held_score(_payload) -> dict:
+        attempts.append(activity.info().attempt)
+        started.set()
+        while True:
+            if stop == "cancel":
+                activity.heartbeat("synthetic live model work")
+            await asyncio.sleep(0.01)
+
+    async with time_skipping_env() as env:
+        async with Worker(
+            env.client, task_queue=queue, workflows=[JobPreparationWorkflow],
+            activities=[_check_spend_budget, record_started, record_outcome, recover, held_score],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            handle = await env.client.start_workflow(
+                JobPreparationWorkflow.run,
+                JobPreparationInput(
+                    tenant_id="local", job_id=_JOB_ID, steps=["score"], target_version="1",
+                    idempotency_key=f"preparation:{uuid.uuid4()}",
+                ),
+                id=f"prep-model-stop-{uuid.uuid4()}", task_queue=queue,
+            )
+            await asyncio.wait_for(started.wait(), timeout=5)
+            if stop == "cancel":
+                await handle.cancel()
+                with pytest.raises(WorkflowFailureError) as excinfo:
+                    await asyncio.wait_for(handle.result(), timeout=5)
+                assert isinstance(excinfo.value.cause, CancelledError)
+                assert outcomes == ["canceled"]
+            else:
+                result = await asyncio.wait_for(handle.result(), timeout=5)
+                assert result.steps_failed == ["score"]
+                assert outcomes == ["failed"]
+                history = await handle.fetch_history()
+                timed_out = [
+                    event.activity_task_timed_out_event_attributes
+                    for event in history.events
+                    if event.event_type == EventType.EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT
+                ]
+                assert len(timed_out) == 1
+                assert timed_out[0].failure.timeout_failure_info.timeout_type == TimeoutType.TIMEOUT_TYPE_HEARTBEAT
+            assert attempts == [1]
 
 
 @pytest.mark.asyncio
@@ -406,6 +619,54 @@ async def test_duplicate_preparation_workflow_start_attaches_without_duplicate_s
             assert (await second.result()).steps_completed == ["score", "tailor", "cover", "pdf"]
 
     assert calls == ["score", "tailor", "cover", "pdf"]
+
+
+@pytest.mark.asyncio
+async def test_preparation_preflight_cancellation_records_canceled_without_running_steps() -> None:
+    queue = f"prep-cancel-preflight-{uuid.uuid4()}"
+    check_started = asyncio.Event()
+    outcomes: list[WorkflowOutcomeInput] = []
+    calls: list[str] = []
+
+    @activity.defn(name="record_workflow_started")
+    async def record_started(_payload) -> None:
+        return None
+
+    @activity.defn(name="record_workflow_outcome")
+    async def record_outcome(payload: WorkflowOutcomeInput) -> None:
+        outcomes.append(payload)
+
+    @activity.defn(name="check_spend_budget")
+    async def pending_budget(_payload) -> None:
+        check_started.set()
+        await asyncio.Event().wait()
+
+    @activity.defn(name="score_job")
+    async def score_job(_payload) -> dict[str, str]:
+        calls.append("score")
+        return {"status": "ok"}
+
+    payload = JobPreparationInput(
+        tenant_id="local", job_id=_JOB_ID, steps=["score"], target_version="1",
+        idempotency_key=f"preparation:{uuid.uuid4().hex}",
+    )
+    async with time_skipping_env() as env:
+        async with Worker(
+            env.client, task_queue=queue, workflows=[JobPreparationWorkflow],
+            activities=[record_started, record_outcome, pending_budget, score_job],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            handle = await env.client.start_workflow(
+                JobPreparationWorkflow.run, payload, id=f"prep-{uuid.uuid4()}", task_queue=queue,
+            )
+            await asyncio.wait_for(check_started.wait(), timeout=5)
+            await handle.cancel()
+            with pytest.raises(WorkflowFailureError) as error:
+                await handle.result()
+            assert isinstance(error.value.cause, CancelledError)
+
+    assert calls == []
+    assert [(item.status, item.error_code) for item in outcomes] == [("canceled", "workflow_canceled")]
 
 
 @pytest.mark.asyncio

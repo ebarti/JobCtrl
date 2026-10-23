@@ -30,5 +30,5 @@ function JobDrawerRoute() {
     return <Outlet />;
   }
 
-  return <JobDetailDrawer jobId={jobId} onClose={close} />;
+  return <JobDetailDrawer key={jobId} jobId={jobId} onClose={close} />;
 }

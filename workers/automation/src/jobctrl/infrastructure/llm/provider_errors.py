@@ -250,6 +250,20 @@ def provider_exception_error(
     )
 
 
+def raise_on_claude_execution_failure(messages: list, *, model: str, operation: str) -> None:
+    """Execution failure is availability evidence, never generated content."""
+    for message in messages:
+        if (
+            type(message).__name__ == "ResultMessage"
+            and getattr(message, "is_error", False)
+            and getattr(message, "subtype", None) == "error_during_execution"
+        ):
+            raise ProviderCallError(ProviderFailureEnvelope(
+                provider="claude", model=model, operation=operation, category="provider_turn",
+                error_type="claude_result_error", code="provider_unavailable", retryable=True,
+            ))
+
+
 def codex_protocol_error(*, model: str, operation: str, code: str, retryable: bool) -> ProviderCallError:
     """Create an allowlisted error for an incomplete or malformed SDK lifecycle."""
 

@@ -102,6 +102,8 @@ body {
   inline-size: 210mm;
   min-block-size: 297mm;
   padding: 16.5mm 17.5mm 18mm;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
   background: #ffffff;
 }
 .resume-header {
@@ -186,6 +188,7 @@ body {
 }
 .resume-section-title {
   display: flex;
+  break-after: avoid;
   align-items: center;
   gap: 2.5mm;
   color: #111111;

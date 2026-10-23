@@ -40,7 +40,10 @@ profile boundary works in this order:
 5. **Propagation remains explicit and recoverable.** A profile-content change
    may queue replacement tailoring when eligible accepted resumes exist and the
    worker is healthy. The save itself does not depend on that follow-up, and a
-   failed replacement does not remove the last accepted material. An Apply
+   failed replacement does not remove the last accepted material. A completed
+   failed continuation remains visible as a failure, while newer profile
+   revisions can proceed; restarting does not retry that completed workflow.
+   Uncertain dispatches reattach to their existing workflow. An Apply
    approval bound to an older profile version becomes stale rather than being
    reused against changed evidence.
 
@@ -241,7 +244,11 @@ saved version remains the same. An edit made afterward keeps a unique Required
 pin with its bullet; ambiguous duplicate text must be resolved before saving.
 If a newer saved profile arrives while you have a draft, use
 **Rebase edits onto saved profile** to carry non-overlapping edits forward;
-resolve overlapping fields manually before saving.
+resolve overlapping fields manually before saving. In Discovery Target search,
+this action is labeled **Update draft with saved changes**. A normal save can
+update the form and its saved-profile query in either order. That brief delay
+shows saving or refresh status, rather than asking you to combine your own save
+with itself. Suggestions stay bound to a matching saved profile version.
 
 While an accepted cleanup is saving, another Save waits. If you edit that same
 bullet, its Required pin follows a unique edited text; duplicate text must be

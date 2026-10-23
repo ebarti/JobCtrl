@@ -55,6 +55,7 @@ class EvidencePlanItem:
     claim_confidence: float = 0.0
     user_confirmed: bool = False
     tags: tuple[str, ...] = ()
+    requires_generated_claim: bool = True
 
     @property
     def prompt_dict(self) -> dict[str, Any]:
@@ -71,6 +72,7 @@ class EvidencePlanItem:
             "claim_confidence": self.claim_confidence,
             "user_confirmed": self.user_confirmed,
             "tags": list(self.tags),
+            "requires_generated_claim": self.requires_generated_claim,
         }
 
     @property
@@ -83,6 +85,7 @@ class EvidencePlanItem:
             "evidence_strength": self.evidence_strength,
             "user_confirmed": self.user_confirmed,
             "tags": list(self.tags),
+            "requires_generated_claim": self.requires_generated_claim,
         }
 
 
@@ -149,6 +152,7 @@ class TailoringPlan:
     requirement_led_controls: RequirementLedTailoringControls = field(default_factory=RequirementLedTailoringControls)
     target_profile: TargetProfile | None = None
     coverage_graph: CoverageGraph | None = None
+    selection_determination_id: str | None = None
 
     @property
     def evidence_by_id(self) -> dict[str, EvidencePlanItem]:
@@ -196,6 +200,7 @@ class TailoringPlan:
 
     def to_metadata(self) -> dict[str, Any]:
         return {
+            "selection_determination_id": self.selection_determination_id,
             "claim_mode": self.claim_mode,
             "auto_approvable_claim_modes": list(self.auto_approvable_claim_modes),
             "writing_style": {
@@ -611,6 +616,7 @@ def _canonical_fact_items(profile: dict) -> tuple[EvidencePlanItem, ...]:
                     scope="",
                     action="",
                     user_confirmed=True,
+                    requires_generated_claim=False,
                 )
             )
     return tuple(items)

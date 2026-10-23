@@ -381,6 +381,7 @@ import {
   claimNextProfileContinuationEvent,
   handleProfileUpdatedEvent,
   markProfileContinuationEventsHandled,
+  markProfileContinuationFailed,
   persistProfileUpdate,
 } from "./profile-events.js";
 import { dbFileIdentity, readLlmSpendHealth, readWorkerHealth } from "./worker-health.js";
@@ -3372,7 +3373,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     const selectedModels = Object.entries(body.preferredModels ?? {}).filter(
       (entry): entry is ["codex" | "claude" | "google", string] => entry[1] !== null,
     );
-    if (selectedModels.length > 0) {
+    const materialModels = [
+      ...(body.defaultLlmModel ? [body.defaultLlmModel] : []),
+      ...(body.tailoringGeneratorModels ?? []),
+      ...(body.tailoringJudgeModel ? [body.tailoringJudgeModel] : []),
+    ].filter((model) => model.toLowerCase() !== "default");
+    const materialModelBindings = new Map<string, string>();
+    const selectedEfforts = Object.entries(body.codexReasoningEfforts ?? {}).filter((entry): entry is [string, string] => entry[1] !== null);
+    if (selectedModels.length > 0 || materialModels.length > 0 || selectedEfforts.length > 0) {
       let catalog: { providers: ProviderModelCatalogItem[] };
       try {
         catalog = await dispatchProviderModelCatalog(providerDispatcher);
@@ -3382,6 +3390,23 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           "provider_models_failed",
           "Provider models are temporarily unavailable.",
         );
+      }
+      if (selectedEfforts.length > 0) {
+        const codex = catalog.providers.find((provider) => provider.provider === "codex");
+        if (!codex?.ready) {
+          void reply.code(409);
+          return { ok: false, error: "provider_not_ready", message: "Codex must be ready before selecting reasoning effort." };
+        }
+        if (codex.models.length === 0 && codex.message) {
+          void reply.code(503);
+          return providerOperationError("provider_models_failed", "Provider models are temporarily unavailable.");
+        }
+        for (const [model, effort] of selectedEfforts) {
+          if (!codex.models.find((candidate) => candidate.id === model)?.supportedReasoningEfforts?.some((option) => option.reasoningEffort === effort)) {
+            void reply.code(400);
+            return { ok: false, error: "invalid_reasoning_effort", message: "Select a reasoning effort offered by the current Codex model." };
+          }
+        }
       }
       for (const [provider, model] of selectedModels) {
         const item = catalog.providers.find((candidate) => candidate.provider === provider);
@@ -3409,6 +3434,57 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           };
         }
       }
+      for (const spec of materialModels) {
+        const separator = spec.indexOf(":");
+        const rawProvider = separator >= 0 ? spec.slice(0, separator).trim().toLowerCase() : null;
+        const provider = rawProvider === "gemini" ? "google" : rawProvider;
+        const model = separator >= 0 ? spec.slice(separator + 1).trim() : spec;
+        const invalidChoice = () => {
+          void reply.code(400);
+          return {
+            ok: false as const,
+            error: spec === body.defaultLlmModel ? "invalid_default_model" : "invalid_tailoring_model",
+            message: "Select a model offered by a ready provider.",
+          };
+        };
+        if (provider === null) {
+          // Bind a legacy bare ID to its unique offered route so the runtime
+          // cannot send a valid model name to a different default provider.
+          const offeredBy = catalog.providers.filter((item) => item.ready && item.models.some((candidate) => candidate.id === model));
+          if (offeredBy.length === 0 && catalog.providers.some((item) => item.ready && item.source === "live" && item.models.length === 0 && item.message)) {
+            void reply.code(503);
+            return providerOperationError("provider_models_failed", "Provider models are temporarily unavailable.");
+          }
+          if (offeredBy.length !== 1) return invalidChoice();
+          materialModelBindings.set(spec, `${offeredBy[0]!.provider}:${model}`);
+          continue;
+        }
+        if (!["claude", "codex", "google"].includes(provider)) return invalidChoice();
+        const item = catalog.providers.find((candidate) => candidate.provider === provider);
+        if (!item?.ready) {
+          void reply.code(409);
+          return {
+            ok: false as const,
+            error: "provider_not_ready",
+            message: `${provider} must be ready before selecting a material model.`,
+          };
+        }
+        if (model === "" || model.toLowerCase() === "default") continue;
+        if (item.source === "live" && item.models.length === 0 && item.message) {
+          void reply.code(503);
+          return providerOperationError("provider_models_failed", "Provider models are temporarily unavailable.");
+        }
+        if (!item.models.some((candidate) => candidate.id === model)) return invalidChoice();
+      }
+    }
+    if (body.tailoringGeneratorModels) {
+      body.tailoringGeneratorModels = body.tailoringGeneratorModels.map((model) => materialModelBindings.get(model) ?? model);
+    }
+    if (body.tailoringJudgeModel) {
+      body.tailoringJudgeModel = materialModelBindings.get(body.tailoringJudgeModel) ?? body.tailoringJudgeModel;
+    }
+    if (body.defaultLlmModel) {
+      body.defaultLlmModel = materialModelBindings.get(body.defaultLlmModel) ?? body.defaultLlmModel;
     }
     try {
       return writeSettingsConfig(
@@ -4265,11 +4341,15 @@ async function dispatchPendingProfileContinuations(
     // The JSON-RPC adapter waits for this deterministic workflow to finish.
     // That serializes genuine profile revisions; a restart attaches to the
     // same Temporal execution before writing the handled marker.
-    await handleProfileUpdatedEvent(eventId, actionDispatcher, actionContext);
+    const outcome = await handleProfileUpdatedEvent(eventId, actionDispatcher, actionContext);
 
     const handledDb = openDatabase(dbPath);
     try {
-      markProfileContinuationEventsHandled(handledDb, [eventId], eventId);
+      if (outcome.completedWorkflowFailure) {
+        markProfileContinuationFailed(handledDb, eventId, outcome.completedWorkflowFailure);
+      } else {
+        markProfileContinuationEventsHandled(handledDb, [eventId], eventId);
+      }
     } finally {
       handledDb.close();
     }

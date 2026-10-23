@@ -228,12 +228,11 @@ export class SubprocessJsonRpcAdapter implements JsonRpcDispatcher {
 }
 
 /**
- * Singleton dispatcher used by the production server. Tests inject
+ * Context-scoped dispatchers used by the production server. Tests inject
  * their own dispatcher via the ``actionDispatcher`` option on
  * ``buildApp`` and never touch the singleton.
  */
-let _defaultDispatcher: SubprocessJsonRpcAdapter | null = null;
-let _defaultDispatcherKey: string | null = null;
+const defaultDispatchers = new Map<string, SubprocessJsonRpcAdapter>();
 
 function dispatcherKey(options: JsonRpcCallOptions = {}): string {
   const pythonRuntime =
@@ -251,23 +250,18 @@ function dispatcherKey(options: JsonRpcCallOptions = {}): string {
 
 export function getDefaultJsonRpcDispatcher(options: JsonRpcCallOptions = {}): SubprocessJsonRpcAdapter {
   const key = dispatcherKey(options);
-  if (_defaultDispatcher === null || _defaultDispatcherKey !== key) {
-    if (_defaultDispatcher !== null) {
-      void _defaultDispatcher.close();
-    }
-    _defaultDispatcher = new SubprocessJsonRpcAdapter(options);
-    _defaultDispatcherKey = key;
+  let dispatcher = defaultDispatchers.get(key);
+  if (!dispatcher) {
+    dispatcher = new SubprocessJsonRpcAdapter(options);
+    defaultDispatchers.set(key, dispatcher);
   }
-  return _defaultDispatcher;
+  return dispatcher;
 }
 
-/** Reset the singleton — used by tests so each test gets isolation. */
+/** Close every cached context — used by tests so each test gets isolation. */
 export function resetDefaultJsonRpcDispatcher(): void {
-  if (_defaultDispatcher) {
-    void _defaultDispatcher.close();
-  }
-  _defaultDispatcher = null;
-  _defaultDispatcherKey = null;
+  for (const dispatcher of defaultDispatchers.values()) void dispatcher.close();
+  defaultDispatchers.clear();
 }
 
 /** Enforce the same boundary for production callers and injected dispatchers. */

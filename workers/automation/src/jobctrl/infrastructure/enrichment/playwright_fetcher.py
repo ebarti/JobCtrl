@@ -37,6 +37,7 @@ from jobctrl.infrastructure.network import (
     validate_public_http_url,
 )
 from jobctrl.infrastructure.network.proxy import ProxyConfig
+from jobctrl.infrastructure.network.fetch_failures import PublicFetchFailureKind
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ _NAV_TIMEOUT_MS = 45000
 _DCL_TIMEOUT_MS = 15000
 _IDLE_TIMEOUT_MS = 10000
 _MAIN_CONTENT_HTML_LIMIT = 50000
+_EMBEDDED_PAGE_LIMIT = 8
 
 
 class DetailPageFetchBlocked(RuntimeError):
@@ -57,6 +59,23 @@ class DetailPageFetchBlocked(RuntimeError):
 
 class DetailPageFetchUnavailable(RuntimeError):
     """The browser could not acquire a page for a transient runtime reason."""
+
+
+def _route_block_error(guard: PublicHttpUrlRouteGuard) -> DetailPageFetchBlocked:
+    kind = getattr(guard, "failure_kind", None)
+    code = "unsafe_redirect" if not isinstance(kind, PublicFetchFailureKind) or kind.destination_denied else kind.value
+    return DetailPageFetchBlocked(code, guard.blocked_reason or "Public page acquisition blocked")
+
+
+def _partial_resource_failure(guard: PublicHttpUrlRouteGuard) -> bool:
+    """Retain readable content without asserting complete availability evidence."""
+    kind = getattr(guard, "failure_kind", None)
+    return (
+        isinstance(kind, PublicFetchFailureKind)
+        and kind.retryable
+        and getattr(guard, "failure_resource_type", None)
+        in {"script", "stylesheet", "image", "font", "media", "xhr", "fetch", "ping"}
+    )
 
 
 class PlaywrightDetailPageFetcher:
@@ -166,7 +185,7 @@ class PlaywrightDetailPageFetcher:
                 resp = None
                 try:
                     try:
-                        resp = page.goto(url, timeout=_NAV_TIMEOUT_MS)
+                        resp = page.goto(url, wait_until="domcontentloaded", timeout=_NAV_TIMEOUT_MS)
                         if resp is not None:
                             status = resp.status
                         page.wait_for_load_state("domcontentloaded", timeout=_DCL_TIMEOUT_MS)
@@ -178,17 +197,14 @@ class PlaywrightDetailPageFetcher:
                             # for our purposes.
                             pass
                     except Exception as exc:
-                        if route_guard.blocked:
+                        if route_guard.blocked and not _partial_resource_failure(route_guard):
                             log.warning(
                                 "PlaywrightDetailPageFetcher: unsafe navigation blocked %s: %s",
                                 route_guard.blocked_url or url,
                                 route_guard.blocked_reason,
                             )
                             if self._raise_on_unavailable:
-                                raise DetailPageFetchBlocked(
-                                    "unsafe_redirect",
-                                    route_guard.blocked_reason or "unsafe redirect blocked",
-                                )
+                                raise _route_block_error(route_guard)
                             return DetailPage(
                                 url=url,
                                 final_url=route_guard.blocked_url or url,
@@ -198,30 +214,28 @@ class PlaywrightDetailPageFetcher:
                                 status=status,
                                 fetched_at=fetched_at,
                             )
-                        log.warning("PlaywrightDetailPageFetcher: navigation error %s: %s", url, exc)
-                        if self._raise_on_unavailable:
-                            raise DetailPageFetchUnavailable("The browser could not load the posting page.") from exc
-                        return DetailPage(
-                            url=url,
-                            final_url=url,
-                            page_title="",
-                            html="",
-                            json_ld=(),
-                            status=status,
-                            fetched_at=fetched_at,
-                        )
+                        if not _partial_resource_failure(route_guard):
+                            log.warning("PlaywrightDetailPageFetcher: navigation error %s: %s", url, exc)
+                            if self._raise_on_unavailable:
+                                raise DetailPageFetchUnavailable("The browser could not load the posting page.") from exc
+                            return DetailPage(
+                                url=url,
+                                final_url=url,
+                                page_title="",
+                                html="",
+                                json_ld=(),
+                                status=status,
+                                fetched_at=fetched_at,
+                            )
 
-                    if route_guard.blocked:
+                    if route_guard.blocked and not _partial_resource_failure(route_guard):
                         log.warning(
                             "PlaywrightDetailPageFetcher: unsafe navigation blocked %s: %s",
                             route_guard.blocked_url or url,
                             route_guard.blocked_reason,
                         )
                         if self._raise_on_unavailable:
-                            raise DetailPageFetchBlocked(
-                                "unsafe_redirect",
-                                route_guard.blocked_reason or "unsafe redirect blocked",
-                            )
+                            raise _route_block_error(route_guard)
                         return DetailPage(
                             url=url,
                             final_url=route_guard.blocked_url or url,
@@ -262,18 +276,18 @@ class PlaywrightDetailPageFetcher:
 
                     json_ld_payloads = _collect_json_ld(page)
                     html = _collect_main_content(page)
+                    visibility = []
+                    status_html, status_complete, raw_hash = _collect_status_html(page, visibility_out=visibility)
+                    embedded_pages, embedded_complete = _collect_embedded_pages(page, fetched_at=fetched_at)
 
-                    if route_guard.blocked:
+                    if route_guard.blocked and not _partial_resource_failure(route_guard):
                         log.warning(
                             "PlaywrightDetailPageFetcher: unsafe navigation blocked %s: %s",
                             route_guard.blocked_url or url,
                             route_guard.blocked_reason,
                         )
                         if self._raise_on_unavailable:
-                            raise DetailPageFetchBlocked(
-                                "unsafe_redirect",
-                                route_guard.blocked_reason or "unsafe redirect blocked",
-                            )
+                            raise _route_block_error(route_guard)
                         return DetailPage(
                             url=url,
                             final_url=route_guard.blocked_url or final_url,
@@ -284,8 +298,11 @@ class PlaywrightDetailPageFetcher:
                             fetched_at=fetched_at,
                         )
 
-                    visibility = []
-                    status_html, status_complete, raw_hash = _collect_status_html(page, visibility_out=visibility)
+                    if _partial_resource_failure(route_guard):
+                        log.warning(
+                            "PlaywrightDetailPageFetcher: incomplete public resource acquisition (%s); availability remains unknown",
+                            route_guard.failure_kind.value,
+                        )
                     return DetailPage(
                         url=url,
                         final_url=final_url,
@@ -294,8 +311,18 @@ class PlaywrightDetailPageFetcher:
                         json_ld=tuple(json_ld_payloads),
                         status=status,
                         fetched_at=fetched_at,
-                        status_html=status_html, status_evidence_complete=status_complete, raw_html_hash=raw_hash,
+                        status_html=status_html,
+                        status_evidence_complete=status_complete and embedded_complete and not route_guard.blocked,
+                        status_evidence_reason=(
+                            f"public_resource_{route_guard.failure_kind.value}" if route_guard.blocked
+                            else "embedded_capture_incomplete" if not embedded_complete else ""
+                        ),
+                        raw_html_hash=(hashlib.sha256(json.dumps({
+                            "root": raw_hash,
+                            "embedded": [{"url": frame.url, "raw_html_hash": frame.raw_html_hash} for frame in embedded_pages],
+                        }, sort_keys=True).encode()).hexdigest() if embedded_pages else raw_hash),
                         status_visibility_verified=bool(visibility),
+                        embedded_pages=embedded_pages,
                     )
                 finally:
                     route_guard.close()
@@ -306,6 +333,46 @@ class PlaywrightDetailPageFetcher:
 # ---------------------------------------------------------------------------
 # Helpers — pure functions called by the fetcher
 # ---------------------------------------------------------------------------
+
+
+def _collect_embedded_pages(page: Any, *, fetched_at: str) -> tuple[tuple[DetailPage, ...], bool]:
+    """Capture bounded public child documents already loaded under the route guard."""
+    frames = getattr(page, "frames", ())
+    main = getattr(page, "main_frame", None)
+    captured = []
+    complete = True
+    for frame in frames:
+        if frame is main:
+            continue
+        url = str(getattr(frame, "url", "") or "")
+        if not url.lower().startswith(("https://", "http://")):
+            continue
+        try:
+            element = getattr(frame, "frame_element", None)
+            if callable(element) and not element().is_visible():
+                continue
+        except Exception:
+            complete = False
+            continue
+        if not validate_public_http_url(url).allowed:
+            complete = False
+            continue
+        if len(captured) >= _EMBEDDED_PAGE_LIMIT:
+            complete = False
+            break
+        try:
+            visibility = []
+            status_html, status_complete, raw_hash = _collect_status_html(frame, visibility_out=visibility)
+            captured.append(DetailPage(
+                url=url, final_url=url, page_title=frame.title(), html=_collect_main_content(frame),
+                json_ld=tuple(_collect_json_ld(frame)), fetched_at=fetched_at,
+                status_html=status_html, status_evidence_complete=status_complete,
+                status_visibility_verified=bool(visibility), raw_html_hash=raw_hash,
+            ))
+            complete = complete and status_complete
+        except Exception:
+            complete = False
+    return tuple(captured), complete
 
 
 def _collect_json_ld(page: Any) -> list[Any]:

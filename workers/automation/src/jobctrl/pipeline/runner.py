@@ -30,10 +30,13 @@ from jobctrl.domain.discovery.scheduler import (
     SourceQualitySnapshot,
 )
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
+from jobctrl.domain.determinations import DeterminationFailure
 from jobctrl.domain.discovery.source_registry import SourceKind, SourcePriority, SourceState
 from jobctrl.domain.errors import (
     AttemptBudgetExhaustedError,
     LlmTransientError,
+    MATERIAL_REJECTION_STATUSES,
+    MaterialRejectedError,
     SourceUnavailableError,
     TransientNetworkError,
 )
@@ -561,7 +564,7 @@ def _run_discovery_source(
                         "sourceIds": list(source_ids),
                         "error_class": type(exc).__name__,
                         "errorClass": type(exc).__name__,
-                        "retryable": True,
+                        "retryable": bool(getattr(exc, "retryable", True)),
                         "failed_at": failed_at,
                         "failedAt": failed_at,
                     },
@@ -606,6 +609,8 @@ def _run_discovery_source(
                     ),
                 },
             )
+            if isinstance(exc, DeterminationFailure):
+                raise
             raise SourceUnavailableError(f"{label} failed: {exc}") from exc
 
         elapsed = time.time() - t0
@@ -2130,7 +2135,7 @@ def _run_tailor(
     if errors:
         raise LlmTransientError(f"{errors} tailoring error(s), {failed} failed quality gate(s)")
     if failed:
-        raise LlmTransientError(f"{failed} tailored resume(s) failed validation or judge approval")
+        raise MaterialRejectedError(f"{failed} tailored resume(s) failed validation or judge approval")
     return {**result, "status": "ok"}
 
 
@@ -2141,6 +2146,7 @@ def _run_cover(
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     cancel_event: threading.Event | None = None,
     workflow_id: str | None = None,
+    allow_low_fit_override: bool = False,
 ) -> dict:
     """Stage: Cover letter generation."""
     if cancel_event is not None and cancel_event.is_set():
@@ -2151,12 +2157,13 @@ def _run_cover(
     jobs = get_jobs_by_stage(
         conn=get_connection(),
         stage="pending_cover",
-        min_score=min_score,
+        min_score=0 if allow_low_fit_override else min_score,
         limit=limit,
     )
     generated = 0
     skipped = 0
     errors = 0
+    rejected = 0
     for job in jobs:
         if cancel_event is not None and cancel_event.is_set():
             raise LlmTransientError("cover letter generation canceled")
@@ -2166,16 +2173,21 @@ def _run_cover(
             validation_mode=validation_mode,
             llm_model=llm_model,
             workflow_id=workflow_id,
+            allow_low_fit_override=allow_low_fit_override,
         )
         status = str(result.get("status") or "error")
         if status in {"ok", "already_done"}:
             generated += int(result.get("generated") or 0)
         elif status in {"skipped", "not_eligible"}:
             skipped += 1
+        elif status in MATERIAL_REJECTION_STATUSES:
+            rejected += 1
         else:
             errors += 1
     if errors:
         raise LlmTransientError(f"{errors} cover letter error(s)")
+    if rejected:
+        raise MaterialRejectedError(f"{rejected} cover letter(s) failed validation or review")
     return {
         "status": "ok",
         "generated": generated,

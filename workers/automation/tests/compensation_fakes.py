@@ -23,7 +23,9 @@ class ClassificationModel:
         scope="market",
         tier="unknown",
         fault=None,
+        requirement_scope="resume",
     ):
+        self.requirement_scope = requirement_scope
         self.family, self.seniority, self.country, self.locality, self.scope, self.tier, self.fault, self.calls = (
             family,
             seniority,
@@ -68,7 +70,13 @@ class ClassificationModel:
                 "occupation_family": field(self.family),
                 "work_model": field("unknown"),
                 "places": places,
-                "requirements": [],
+                "requirements": [{
+                    "requirement_id": ident, "scope": self.requirement_scope, "protected_class": False,
+                    "rationale": "Explicit synthetic model decision",
+                    "citations": [{"source_id": ident, "quote": next(
+                        row["text"] for row in data["sources"] if row["source_id"] == ident
+                    ), "exact_values": []}],
+                } for ident in data["context"]["requirement_ids"]],
                 "constraints": [],
                 "compensation": [],
             }

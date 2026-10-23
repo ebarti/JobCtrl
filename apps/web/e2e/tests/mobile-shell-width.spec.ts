@@ -181,6 +181,7 @@ test("job detail keeps evidence, diagnostics, and history in one mobile column",
   const preparation = workspace.locator("#job-detail-preparation");
   const history = workspace.locator("#job-detail-audit");
   await expect(evidence).toBeVisible({ timeout: 30_000 });
+  await preparation.locator(":scope > .configuration-section__header [data-slot='collapsible-trigger']").click();
   await expect(preparation.getByRole("list", { name: "Preparation stages" })).toBeVisible();
   await workspace.getByRole("button", { name: "Sections" }).click();
   await page.getByRole("navigation", { name: "Job detail sections" })

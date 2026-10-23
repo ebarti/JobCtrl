@@ -116,6 +116,34 @@
                     },
                     "isDefault": {
                       "type": "boolean"
+                    },
+                    "supportedReasoningEfforts": {
+                      "maxItems": 32,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "reasoningEffort": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 40
+                          },
+                          "description": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 240
+                          }
+                        },
+                        "required": [
+                          "reasoningEffort"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "defaultReasoningEffort": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 40
                     }
                   },
                   "required": [

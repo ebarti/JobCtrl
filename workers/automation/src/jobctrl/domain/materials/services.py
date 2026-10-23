@@ -390,17 +390,11 @@ def _assemble_resume_text(data: dict, profile: dict) -> str:
     lines: list[str] = []
     lines.append(personal.get("full_name", ""))
 
-    contact_parts: list[str] = []
-    if personal.get("email"):
-        contact_parts.append(personal["email"])
-    if personal.get("phone"):
-        contact_parts.append(personal["phone"])
-    if personal.get("website_url"):
-        contact_parts.append(personal["website_url"])
-    if personal.get("linkedin_url"):
-        contact_parts.append(personal["linkedin_url"])
-    if contact_parts:
-        lines.append(" | ".join(contact_parts))
+    from jobctrl.domain.materials.resume_document import contact_items_from_personal, contact_items_text
+
+    contact = contact_items_text(contact_items_from_personal(personal))
+    if contact:
+        lines.append(contact)
     lines.append("")
 
     lines.append("EXECUTIVE PROFILE")

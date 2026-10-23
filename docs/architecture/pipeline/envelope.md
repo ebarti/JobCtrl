@@ -211,6 +211,14 @@ is a describe loop inside the worker's 15-second heartbeat loop (`cli.py`,
   duplicate starts still cannot reopen terminal truth. A recovered closed run
   receives its actual terminal outcome in the same pass.
 
+The RPC dispatch acknowledgement and the workflow's own start marker can arrive
+in either order. Their input summaries merge only when both identify the same
+exact Temporal run, so a sparse acknowledgement cannot erase a recorded JobId
+or configuration field. A new execution, or a start without a provable matching
+run ID, does not inherit the previous execution's input metadata. Both start
+facts remain in the timeline; this metadata rule does not reopen a terminal run
+or relax the marked missing-history recovery requirement.
+
 The reconciler never deletes or overwrites terminal audit events. Both
 `JobPipelineWorkflow` and
 `ApplyWorkflow` encode stage/apply failure in their *return value*, so a failing
@@ -276,11 +284,19 @@ stage — defeating heartbeats and starving every other activity on the worker.
   the old call cannot consume the capacity needed for Temporal retry and owner
   reconciliation.
 
-Explicitly selected pipeline batches use a replay-versioned activity deadline:
-30 minutes per bounded worker wave, capped at 6 hours. The separate 2-minute
-heartbeat timeout remains fixed, so more legitimate batch work does not delay
-dead-worker detection. Histories created before the Temporal patch marker retain
-their recorded 30-minute timer when replayed.
+Score, Tailor and Cover use a **6-hour operational activity deadline** in both
+per-job preparation and pipeline batches. A stage owns several sequential model
+calls, source verification and bounded correction passes; a healthy Max-effort
+sequence can exceed the old 30-minute stage deadline. This limit applies to the
+whole activity, without adding a separate provider-call timeout. PDF rendering
+retains its 30-minute deadline. Explicitly selected Enrich batches retain the
+replay-versioned 30-minute-per-worker-wave deadline, capped at 6 hours.
+
+The separate **2-minute heartbeat timeout** remains fixed, as do explicit
+cancellation, spend checks and bounded retry counts. A longer stage allowance
+does not delay dead-worker detection. Changing the scheduled duration does not
+rewrite the timer of an activity already recorded in Temporal history; regression
+tests replay both old and current scheduling budgets through the new workflow.
 
 This is why the discovery source-family and enrichment activities (and the apply
 activity) accept a `threading.Event` cancel token: the workflow-level cancel
@@ -333,6 +349,7 @@ Retry behavior is driven by a small error taxonomy in
 | `TransientNetworkError` | `transient_network` | yes |
 | `BrowserTransientError` | `browser_transient` | yes |
 | `LlmTransientError` | `llm_transient` | yes |
+| `MaterialRejectedError` | `material_rejected` | no |
 | `SourceUnavailableError` | `source_unavailable` | yes |
 | unclassified exception | `unclassified` | yes |
 
@@ -342,6 +359,10 @@ Every retrying workflow lists
 configuration/precondition errors stop immediately, while transient failures
 retry up to the policy's attempt cap and then surface as a stage/workflow
 failure. `RuntimeIdentityMismatch` is also non-retryable.
+`material_rejected` carries `ApplicationError.non_retryable=true`: an exhausted
+source-bound material correction budget stops immediately, including under an
+already scheduled workflow's retry policy. Transient provider and network
+failures retain their normal retries.
 
 ## Availability Workflow Envelope
 

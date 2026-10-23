@@ -235,6 +235,18 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
   const artifactGroups = groupJobArtifacts(detail?.artifacts ?? []);
   const sections: JobDetailSectionDefinition[] = detail ? [
     {
+      id: "description",
+      title: "Description",
+      description: "Captured posting text",
+      content: <section className="section job-detail-description">
+        <div className="job-detail-section-heading">
+          <h3 aria-label="Description">Description <ContextHelp label="Description" description="Saved text captured from the original job posting. It may differ from the live posting after capture; use the original posting link to verify current wording." /></h3>
+          <span data-typography="label">Original posting text</span>
+        </div>
+        <JobDescription text={detail.job.descriptionPreview} />
+      </section>,
+    },
+    {
       id: "fit-evidence",
       title: "Fit & evidence",
       description: "Assessment, requirement fit, and apply concerns",
@@ -300,18 +312,6 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
       title: "Locale variants",
       description: "Independently reviewed resume and letter translations",
       content: <MaterialLocaleVariants jobId={detail.job.jobKey} />,
-    },
-    {
-      id: "description",
-      title: "Description",
-      description: "Captured posting text",
-      content: <section className="section job-detail-description">
-        <div className="job-detail-section-heading">
-          <h3 aria-label="Description">Description <ContextHelp label="Description" description="Saved text captured from the original job posting. It may differ from the live posting after capture; use the original posting link to verify current wording." /></h3>
-          <span data-typography="label">Original posting text</span>
-        </div>
-        <JobDescription text={detail.job.descriptionPreview} />
-      </section>,
     },
     {
       id: "role-analysis",
@@ -488,7 +488,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                     {sections.map((section) => (
                       <Button
                         aria-controls={`job-detail-${section.id}`}
-                        aria-expanded={expandedSections[section.id] ?? true}
+                        aria-expanded={expandedSections[section.id] ?? false}
                         key={section.id}
                         size="sm"
                         type="button"
@@ -523,7 +523,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                 id={`job-detail-${section.id}`}
                 key={section.id}
                 onOpenChange={(open) => setExpandedSections((current) => ({ ...current, [section.id]: open }))}
-                open={expandedSections[section.id] ?? true}
+                open={expandedSections[section.id] ?? false}
                 title={`${String(index + 1).padStart(2, "0")} · ${section.title}`}
               >
                 {section.content}

@@ -1,5 +1,5 @@
 import type { PipelineOperationsSnapshot } from "@jobctrl/contracts";
-import { screen, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -393,29 +393,33 @@ describe("PipelinesView", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps live runtime truth visible while the previous run is checked", async () => {
+  it("shows record progress and its update time while the current run is checked", async () => {
     await renderPipelineOperations(pipelinesRecoveringProjectionSnapshot);
 
     const coverageAlert = screen.getByRole("alert");
-    expect(coverageAlert).toHaveTextContent("Checking previous run records");
+    expect(coverageAlert).toHaveTextContent("Checking current run records");
     expect(coverageAlert).toHaveTextContent(
-      "15 of 72 linked jobs checked",
+      "15 of 72 linked jobs recorded",
     );
     expect(coverageAlert).toHaveTextContent(
-      "3 of 8 stage records checked",
+      "3 of 8 stage records stored",
     );
-    expect(coverageAlert).toHaveTextContent("needs no restart");
+    expect(coverageAlert).toHaveTextContent("Last record update:");
+    expect(coverageAlert.querySelector("time")).toHaveAttribute(
+      "datetime", pipelinesRecoveringProjectionSnapshot.projectionCoverage!.updatedAt,
+    );
     expect(coverageAlert).toHaveTextContent(
       "Live worker, queue, and activity facts remain visible below",
     );
+    expect(screen.getByRole("region", { name: "Live pipeline" })).not.toHaveTextContent("previous run");
     expect(coverageAlert.querySelector("svg")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Stop discovery" })).toBeEnabled();
 
     const summary = screen.getByLabelText("Pipeline operations summary");
-    expect(summary).toHaveTextContent("Current cohortChecking previous run");
-    expect(summary).toHaveTextContent("Execution sweepChecking previous run");
-    expect(summary).toHaveTextContent("Source familiesChecking previous run");
-    expect(summary).toHaveTextContent("Overall ETAChecking previous run");
+    expect(summary).toHaveTextContent("Current cohortChecking current run");
+    expect(summary).toHaveTextContent("Execution sweepChecking current run");
+    expect(summary).toHaveTextContent("Source familiesChecking current run");
+    expect(summary).toHaveTextContent("Overall ETAChecking current run");
     expect(summary).toHaveTextContent("TelemetryFresh");
 
     expect(getLivePipelineMetric("Workers online")).toHaveTextContent(
@@ -462,19 +466,60 @@ describe("PipelinesView", () => {
     expect(activeWork).toHaveTextContent("tailor-runtime-3");
   });
 
-  it("retries the previous-run check automatically without hiding live telemetry", async () => {
+  it.each([
+    { label: "known stage counts", counts: [{ stage: "score" as const, count: 4 }], summary: "Score 4" },
+    { label: "unknown stage details", counts: [], summary: "Stage breakdown unavailable" },
+  ])("does not invent a Discover run or idle inventory with $label", async ({ counts, summary }) => {
+    await renderPipelineOperations({
+      ...pipelinesRecoveringProjectionSnapshot,
+      execution: null,
+      activeItems: [],
+      activeItemsTotal: null,
+      activeItemsTruncated: null,
+      activeStageCounts: counts,
+      projectionCoverage: {
+        status: "recovering",
+        mode: null,
+        decoderVersion: null,
+        historyEventId: null,
+        expectedMembershipCount: null,
+        persistedMembershipCount: 0,
+        expectedStepCount: null,
+        persistedStepCount: 0,
+        updatedAt: null,
+      },
+    });
+
+    const coverageAlert = screen.getByRole("alert");
+    expect(coverageAlert).toHaveTextContent("Discover run not identified");
+    expect(coverageAlert).toHaveTextContent("Standalone job preparation may still be running");
+    expect(coverageAlert).toHaveTextContent("Selected-run completion counts and estimates are unavailable");
+    expect(coverageAlert).toHaveTextContent("updates every 15 seconds while visible");
+    expect(coverageAlert).not.toHaveTextContent("JobCtrl is verifying");
+    expect(coverageAlert).not.toHaveTextContent("linked jobs recorded");
+    expect(coverageAlert).not.toHaveTextContent("previous Discover run");
+    expect(coverageAlert).not.toHaveTextContent("0 of 0");
+    expect(coverageAlert.querySelector("time")).not.toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(screen.queryByText("No work remaining")).not.toBeInTheDocument();
+    expect(getLivePipelineMetric("Active work")).toHaveTextContent(`Active workUnknown${summary}`);
+    expect(screen.getByText("Active work details are unavailable.")).toBeInTheDocument();
+    expect(screen.queryByText("No active work is visible in the current runtime inventory.")).not.toBeInTheDocument();
+  });
+
+  it("retries the run record check automatically without hiding live telemetry", async () => {
     const user = userEvent.setup();
     await renderPipelineOperations(pipelinesRetryingProjectionSnapshot);
 
     const coverageAlert = screen.getByRole("alert");
     expect(coverageAlert).toHaveTextContent(
-      "Previous run check will retry automatically",
+      "Run record check will retry automatically",
     );
     expect(coverageAlert).toHaveTextContent(
       "Last check result: Recovery manifest set mismatch",
     );
     expect(coverageAlert).toHaveTextContent(
-      "This check finishes automatically and needs no restart",
+      "updates every 15 seconds while visible",
     );
     expect(coverageAlert.querySelector("svg")).toBeInTheDocument();
 
@@ -613,10 +658,10 @@ describe("PipelinesView", () => {
     await renderPipelineOperations(pipelinesPartialSweepRecoveringSnapshot);
 
     const summary = screen.getByLabelText("Pipeline operations summary");
-    expect(summary).toHaveTextContent("Current cohortChecking previous run");
-    expect(summary).toHaveTextContent("Execution sweepChecking previous run");
-    expect(summary).toHaveTextContent("Source familiesChecking previous run");
-    expect(summary).toHaveTextContent("Overall ETAChecking previous run");
+    expect(summary).toHaveTextContent("Current cohortChecking current run");
+    expect(summary).toHaveTextContent("Execution sweepChecking current run");
+    expect(summary).toHaveTextContent("Source familiesChecking current run");
+    expect(summary).toHaveTextContent("Overall ETAChecking current run");
 
     expect(screen.queryByText("41 remaining")).not.toBeInTheDocument();
     expect(screen.queryByText("83 remaining")).not.toBeInTheDocument();
@@ -969,7 +1014,7 @@ describe("PipelinesView", () => {
     const runDiscover = screen.getByRole("button", { name: "Run Discover" });
     expect(runDiscover).toBeDisabled();
     expect(runDiscover).toHaveAccessibleDescription(
-      "Wait for active pipeline work to finish before starting a new Discover run.",
+      "Discover is waiting for 1 running worker task to finish. Status updates automatically. Review active runs to inspect progress or cancel work.",
     );
     await user.click(runDiscover);
     expect(runPipelineStages).not.toHaveBeenCalled();
@@ -1042,12 +1087,71 @@ describe("PipelinesView", () => {
       expect(runDiscover).toHaveAccessibleDescription(
         capacity === "unavailable"
           ? "Shared runtime capacity must be available before starting a new Discover run."
-          : "Wait for active pipeline work to finish before starting a new Discover run.",
+          : "Discover is waiting for 1 running worker task to finish. Status updates automatically. Review active runs to inspect progress or cancel work.",
       );
       await user.click(runDiscover);
       expect(runPipelineStages).not.toHaveBeenCalled();
     },
   );
+
+  it("explains background work and automatically enables Discover after its next idle observation", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const capacity = pipelinesDiscoveringSnapshot.capacity;
+      if (capacity.status !== "available") throw new Error("Expected available fixture capacity");
+      const busy: PipelineOperationsSnapshot = {
+        ...pipelinesCompletedWithIssuesSnapshot,
+        capacity: {
+          ...capacity,
+          activeSlots: 2,
+          availableSlots: 2,
+          slotSaturation: 0.5,
+        },
+        activeItems: [{
+          kind: "unresolved_runtime_activity",
+          activityType: "check_saved_posting_availability",
+          workflowId: null,
+          executionId: null,
+          attempt: 1,
+          startedAt: "2026-07-14T12:00:00.000Z",
+          stage: null,
+          opaqueId: `op_${"1".repeat(24)}`,
+        }],
+        activeItemsTotal: 2,
+        activeItemsTruncated: true,
+        activeStageCounts: [{ stage: "score", count: 1 }],
+      };
+      const idle: PipelineOperationsSnapshot = {
+        ...busy,
+        capacity: { ...capacity, activeSlots: 0, availableSlots: capacity.configuredSlots, slotSaturation: 0 },
+        activeItems: [],
+        activeItemsTotal: 0,
+        activeItemsTruncated: false,
+        activeStageCounts: [],
+      };
+      const pipelineOperations = vi.fn().mockResolvedValueOnce(busy).mockResolvedValue(idle);
+      const runPipelineStages = vi.fn();
+      renderWithProviders(<PipelinesView />, {
+        ports: buildTestPorts({ api: { pipelineOperations, runPipelineStages } }),
+      });
+      await screen.findByRole("heading", { name: "Live pipeline" });
+      const discover = screen.getByRole("button", { name: "Run Discover" });
+      expect(discover).toBeDisabled();
+      expect(within(screen.getByRole("group", { name: "Pipeline action tools" })).getByText("waiting", { exact: true })).toBeInTheDocument();
+      expect(discover).toHaveAccessibleDescription(
+        "Discover is waiting for 2 running worker tasks to finish. Active stages: Score 1. Status updates automatically. Review active runs to inspect progress or cancel work.",
+      );
+      expect(screen.getByRole("link", { name: "Review active runs" })).toHaveAttribute("href", "/runs");
+      expect(screen.getByRole("heading", { name: "Saved posting checks" })).toBeInTheDocument();
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      await waitFor(() => expect(discover).toBeEnabled());
+      expect(pipelineOperations).toHaveBeenCalledTimes(2);
+      expect(runPipelineStages).not.toHaveBeenCalled();
+      expect(screen.queryByRole("link", { name: "Review active runs" })).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("keeps source-family progress separate from exactly two reconciliation ledgers", async () => {
     await renderPipelineOperations(pipelinesThreeSourceSixStepSnapshot);

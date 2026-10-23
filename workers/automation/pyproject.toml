@@ -67,8 +67,8 @@ dev = [
 providers = [
     "claude-agent-sdk==0.2.115",
     "mcp>=1.28.1",
-    "openai-codex==0.162.1",
-    "openai-codex-cli-bin==0.162.1",
+    "openai-codex==0.163.0",
+    "openai-codex-cli-bin==0.163.0",
     "google-antigravity==0.1.2",
     "pyasn1>=0.6.4",
 ]
@@ -79,8 +79,8 @@ providers = [
 [dependency-groups]
 provider-runtime = [
     "claude-agent-sdk==0.2.115",
-    "openai-codex==0.162.1",
-    "openai-codex-cli-bin==0.162.1",
+    "openai-codex==0.163.0",
+    "openai-codex-cli-bin==0.163.0",
     "google-antigravity==0.1.2",
 ]
 release-build = ["build==1.4.3", "hatchling==1.29.0"]

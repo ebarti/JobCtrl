@@ -381,6 +381,16 @@ class TestClaudeSynthesizer:
 
 
 class TestCodexAdapter:
+    @pytest.mark.parametrize("effort", ["low", "xhigh", "max"])
+    async def test_saved_model_effort_reaches_draft_thread_turn_and_telemetry(self, monkeypatch, in_memory_exporter, effort):
+        monkeypatch.setattr("jobctrl.infrastructure.scoring.criteria_provider.read_config_settings", lambda _path=None: {"codex_reasoning_efforts": {"gpt-6.1-sol": effort}})
+        fake = _FakeAsyncCodex(json.dumps(_grounded_dict()))
+        adapter = CodexAnalysisAdapter(async_codex_factory=lambda: fake)
+        await adapter.draft("system", JD)
+        assert fake.thread.runs[0]["effort"] == effort
+        assert fake.thread_start_calls[0]["config"]["model_reasoning_effort"] == effort
+        assert dict(in_memory_exporter.get_finished_spans()[0].attributes)["gen_ai.request.reasoning_effort"] == effort
+
     async def test_parses_final_response_into_typed_draft(self) -> None:
         adapter = CodexAnalysisAdapter(
             model="gpt-5.4",
@@ -463,6 +473,7 @@ class _StubDraftAdapter:
         self._returns = returns
         self._raises = raises
         self.calls = 0
+        self.prompts: list[str] = []
 
     @property
     def model_id(self) -> str:
@@ -470,6 +481,7 @@ class _StubDraftAdapter:
 
     async def draft(self, system_prompt: str, jd_snapshot: str) -> JobAnalysisDraft:
         self.calls += 1
+        self.prompts.append(system_prompt)
         if self._raises is not None:
             raise self._raises
         analysis = JobAnalysis.model_validate(self._returns)
@@ -480,11 +492,13 @@ class _StubSynthesizer:
     def __init__(self, *, returns: dict | None = None) -> None:
         self._returns = returns or _grounded_dict()
         self.received_drafts: tuple[JobAnalysisDraft, ...] = ()
+        self.prompts: list[str] = []
 
     async def reconcile(
         self, system_prompt: str, *, drafts: tuple[JobAnalysisDraft, ...], jd_snapshot: str
     ) -> JobAnalysis:
         self.received_drafts = drafts
+        self.prompts.append(system_prompt)
         return JobAnalysis.model_validate(self._returns)
 
 
@@ -494,6 +508,21 @@ class _StubSynthesizer:
 
 
 class TestEnsemble:
+    @pytest.mark.parametrize("code", ["provider_error", "budget_denied", "cache_binding_invalid", "persistence_error"])
+    async def test_verifier_operational_failure_does_not_redraft_on_the_same_bound_attempt(self, code) -> None:
+        from jobctrl.domain.determinations import DeterminationFailure
+        from jobctrl.infrastructure.analysis.ensemble import _draft_with_retry
+
+        adapter = _StubDraftAdapter("synthetic", returns=_grounded_dict())
+
+        def unavailable(_analysis):
+            raise DeterminationFailure(code)
+
+        with pytest.raises(DeterminationFailure, match=code):
+            await _draft_with_retry(adapter, system_prompt="sys", jd_snapshot=JD,
+                                    max_retries=2, verify_prose=unavailable)
+        assert adapter.calls == 1
+
     async def test_all_legs_succeed_produces_full_outcome(self) -> None:
         adapters = (
             _StubDraftAdapter("claude-opus-4-8", returns=_grounded_dict("claude")),
@@ -548,6 +577,11 @@ class TestEnsemble:
             max_leg_retries=2,
         )
         assert bad.calls == 3  # initial + 2 retries before giving up
+        assert bad.prompts[0] == "sys"
+        assert all('"ref_id": "r1"' in prompt and '"span": "ten years of Rust"' in prompt for prompt in bad.prompts[1:])
+        assert all("untrusted data" in prompt for prompt in bad.prompts[1:])
+        assert all('"ideal_candidate_narrative":' in prompt for prompt in bad.prompts[1:])
+        assert all("untrusted candidate" in prompt for prompt in bad.prompts[1:])
         assert len(outcome.drafts) == 1
         assert outcome.failures[0].model_id == "gpt-5.4"
         # The grounding violation is captured as raw audit output.
@@ -616,15 +650,19 @@ class TestEnsemble:
         # Synthesizer fabricates a span -> ensemble re-asks then propagates.
         fabricated = _grounded_dict()
         fabricated["keywords"][0]["evidence_span"] = "Rust async runtime"  # not in JD
+        synthesizer = _StubSynthesizer(returns=fabricated)
         with pytest.raises(Exception):  # GroundingError after retries
             await run_ensemble(
                 "sys",
                 JD,
                 adapters=(_StubDraftAdapter("claude-opus-4-8", returns=_grounded_dict()),),
-                synthesizer=_StubSynthesizer(returns=fabricated),
+                synthesizer=synthesizer,
                 synthesizer_system_prompt="synth-sys",
                 max_leg_retries=1,
             )
+        assert synthesizer.prompts[0] == "synth-sys"
+        assert '"span": "Rust async runtime"' in synthesizer.prompts[1]
+        assert '"ideal_candidate_narrative":' in synthesizer.prompts[1]
 
 
 class TestAgreement:

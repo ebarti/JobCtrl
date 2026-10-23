@@ -25,6 +25,14 @@ accepted interview prep directly from its canonical owner, independently of
 projection lag. These reads do not recompute scores, parse salary text, or replay
 events during a request.
 
+The current requirement-fit report retains each contribution's optional
+`scope` and `scopeSourceId`, bound to the recorded job-interpretation
+determination and exact requirement ID. `requirement-fit-v2-scoped` includes
+only `resume`-scope rows in capability coverage; eligibility, logistics and
+employer conditions remain visible with zero `maxPoints` and `awardedPoints`.
+These readers expose stored arithmetic without recalculating it. Legacy
+reports without a recorded scope source retain their earlier shape and formula.
+
 `POST /v1/jobs/import-url` accepts `{ url }`, validates that the destination is
 public HTTP(S), and awaits `JobUrlImportWorkflow` on the local worker. A readable
 posting returns `{ ok, status: "imported", jobKey, importedAt,
@@ -32,6 +40,21 @@ alreadyExisted }`. A blocked, login-walled, rate-limited, or ambiguous page
 returns `{ ok, status: "manual_capture_required", itemId, reason }`; that
 outcome creates no Job row. Repeating an already-imported URL resolves the same
 canonical `JobId` without another fetch.
+An identified posting with public structured content may proceed through strict
+extraction and content-quality review when visual access is unknown. Unknown
+access and availability remain recorded; they are not promoted to clear or
+active. An unknown posting identity or explicit login/challenge still requires
+Manual Capture.
+This includes an exact originating URL whose accepted Manual Capture receipt
+already points to an existing job, even when the captured canonical URL differs.
+
+Provider execution errors retain their retryable domain classification, allowing
+the workflow's bounded retry to acquire another ready route. Citation, schema
+and other source-binding failures remain distinct failures after bounded model
+correction; none can create a guessed job or replace accepted data.
+An oversized public page resource retains its acquisition-limit classification
+and opens Manual Capture. Destination denial still rejects the URL; byte caps
+and public-address checks remain enforced.
 
 Each job-detail stage may include an optional `applyUrlOutcome` object with the
 allow-listed `code`, user-facing `message`, `retryable`, and resolver `method`

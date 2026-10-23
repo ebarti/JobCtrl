@@ -161,7 +161,7 @@ class ResumeModel(Model):
 
 def resume_case(
     conn, model, *, preflight=lambda: None, retries=0, renderer=None, repository=None,
-    writer=None, llm_policy=None, assembler=None,
+    writer=None, llm_policy=None, assembler=None, voice=None, evidence_selector=None,
 ):
     verifier, quality = ports(conn, model, preflight)
     unit = SqliteUnitOfWork(conn)
@@ -191,6 +191,8 @@ def resume_case(
             candidate_models=("codex:synthetic",), judge_model="codex:synthetic",
         ),
         artifact_writer=writer if writer is not None else LocalArtifactTextWriter(),
+        voice=voice,
+        evidence_selector=evidence_selector,
     )
 
 
@@ -222,6 +224,28 @@ def request(tmp_path, *, retailor=False, profile=None):
     )
 
 
+def canonical_scored_target(conn, grade):
+    """Use the production preparation reader, including a stale legacy grade."""
+    from jobctrl.infrastructure.preparation import SqlitePreparationTargetReader
+
+    conn.execute("UPDATE jobs SET fit_score = 1 WHERE tenant_id='local' AND job_id=?", (str(JOB_ID),))
+    conn.execute(
+        """INSERT INTO job_enrichments (tenant_id,job_id,current_status,full_description,updated_at)
+           VALUES ('local',?,'enriched',?,'2026-10-01')""",
+        (str(JOB_ID), JOB["full_description"]),
+    )
+    for version, value in ((1, 10), (2, grade)):
+        conn.execute(
+            """INSERT INTO job_scores (
+                tenant_id,job_id,version,fit_score,breakdown_json,keywords_json,
+                scored_at,criteria_json,trace_json
+            ) VALUES ('local',?,?,?,'{}','[]','2026-10-01','{}','{}')""",
+            (str(JOB_ID), version, value),
+        )
+    conn.commit()
+    return SqlitePreparationTargetReader(conn).load(LOCAL_TENANT, JOB_ID)
+
+
 @pytest.mark.parametrize("verdict,expected", [("pass", "approved"), ("fail", "failed_validation")])
 def test_model_support_verdict_controls_actual_resume_path(tmp_path, verdict, expected):
     conn, model = connection(), ResumeModel(verdict=verdict)
@@ -240,17 +264,32 @@ def test_model_support_verdict_controls_actual_resume_path(tmp_path, verdict, ex
 @pytest.mark.parametrize("quality,score,approved", [("pass", 0.01, True), ("fail", 0.99, False)])
 def test_independent_quality_verdict_controls_approval_without_score_threshold(tmp_path, quality, score, approved):
     conn = connection()
-    outcome = resume_case(conn, ResumeModel(quality=quality, score=score)).execute(**request(tmp_path))
+    model = ResumeModel(quality=quality, score=score)
+    kwargs = request(tmp_path)
+    outcome = resume_case(conn, model).execute(**kwargs)
     assert outcome.materials.is_resume_approved is approved
     assert conn.execute("SELECT COUNT(*) FROM semantic_determinations WHERE kind='artifact_quality'").fetchone()[0] == 1
+    from jobctrl.domain.job_snapshot import build_jd_snapshot
+
+    messages = next(messages for title, _, messages in model.calls if title == "ArtifactQuality")
+    supplied = json.loads(messages[1].content)
+    assert next(row["text"] for row in supplied["sources"] if row["source_id"] == "posting") == build_jd_snapshot(kwargs["job"])
+    permissions = json.loads(supplied["context"]["rubric"]["generation_permissions"])
+    assert permissions["required_experience_entry_ids"] == ["entry"]
+    assert permissions["max_bullets_per_experience"] == 4
+    assert "coverage_graph" in json.loads(supplied["context"]["rubric"]["tailoring_plan"])
+    assert json.loads(supplied["context"]["rubric"]["retry_evidence_targets"]) == []
+    assert "fact" in supplied["context"]["allowed_evidence_correction_ids"]
+    assert json.loads(supplied["context"]["rubric"]["allowed_evidence_correction_ids"]) == supplied["context"]["allowed_evidence_correction_ids"]
 
 
 @pytest.mark.parametrize("verdict", ["pass", "fail"])
-def test_high_fit_resume_keeps_all_six_personas_and_their_model_verdict(tmp_path, verdict):
+@pytest.mark.parametrize("grade", [8, 9])
+def test_high_fit_resume_keeps_all_six_personas_and_their_model_verdict(tmp_path, verdict, grade):
     conn, model = connection(), ResumeModel(score=0.01)
     model.adversarial = verdict
     kwargs = request(tmp_path)
-    kwargs["job"] = {**kwargs["job"], "fit_score": 9}
+    kwargs["job"] = canonical_scored_target(conn, grade)
     outcome = resume_case(conn, model).execute(**kwargs)
     assert outcome.materials.is_resume_approved is (verdict == "pass")
     envelope = conn.execute(
@@ -260,6 +299,12 @@ def test_high_fit_resume_keeps_all_six_personas_and_their_model_verdict(tmp_path
     assert len(result["personas"]) == 6
     assert result["verdict"] == verdict
     assert result["score"] == 0.1
+    messages = next(messages for title, _, messages in model.calls if title == "ResumeAdversarialReview")
+    supplied = json.loads(messages[1].content)
+    assert any(row["source_id"] == "posting" for row in supplied["sources"])
+    assert "generation_permissions" in supplied["context"]["rubric"]
+    quality_messages = next(messages for title, _, messages in model.calls if title == "ArtifactQuality")
+    assert supplied["context"]["rubric"] == json.loads(quality_messages[1].content)["context"]["rubric"]
     if verdict == "pass":
         metadata = conn.execute(
             "SELECT metadata_json FROM job_materials_artifacts WHERE artifact_type='tailored_resume'"
@@ -274,6 +319,88 @@ def test_high_fit_resume_keeps_all_six_personas_and_their_model_verdict(tmp_path
             ).fetchone()[0]
             == envelope["determination_id"]
         )
+
+
+def test_review_uses_current_coverage_and_only_admissible_revision_evidence():
+    from types import SimpleNamespace
+    from jobctrl.domain.materials.quality import EvidencePlanItem, TailoringPlan
+    from jobctrl.domain.materials.requirement_coverage import (
+        AchievementNode, CoverageEdge, CoverageGraph, RequirementNode,
+    )
+    from jobctrl.domain.materials.use_cases import _resume_review_rubric, _resume_review_evidence_ids
+
+    selected = CoverageEdge("selected-edge", "requirement", "selected", "direct", "direct", "verified_only")
+    alternative = CoverageEdge("alternative-edge", "requirement", "alternative", "direct", "direct", "verified_only")
+    plan = TailoringPlan(
+        claim_mode="verified_only",
+        auto_approvable_claim_modes=("verified_only",),
+        allow_adjacent_achievement_drafts=False,
+        writing_style={},
+        target_seniority="senior",
+        evidence_items=tuple(
+            EvidencePlanItem(
+                evidence_id=ident, experience_entry_id="entry", source_text="Owned synthetic fact",
+                scope="Owned synthetic scope", action="Owned synthetic action",
+            )
+            for ident in ("selected", "alternative", "unlinked")
+        ),
+        coverage_graph=CoverageGraph(
+            requirements=(RequirementNode("requirement", "Owned synthetic requirement", "must_have"),),
+            achievements=tuple(
+                AchievementNode(ident, "entry", "Owned synthetic fact")
+                for ident in ("selected", "alternative", "unlinked")
+            ),
+            coverage_edges=(selected,),
+            alternative_edges=(alternative,),
+        ),
+    )
+    profile = source_profile()
+    profile["resume"]["experience_entries"][0]["achievement_evidence"] = [
+        {"id": ident, "source_text": "Owned synthetic fact", "user_confirmed": True}
+        for ident in ("selected", "alternative", "unlinked")
+    ]
+    rubric = _resume_review_rubric(profile, plan)
+    current = json.loads(rubric["tailoring_plan"])["coverage_graph"]
+    targets = json.loads(rubric["retry_evidence_targets"])
+    assert current["coverage_edges"] == [selected.to_dict()]
+    assert {row["evidence_id"] for row in targets} == {"selected", "alternative"}
+    assert next(row for row in targets if row["evidence_id"] == "alternative")["coverage_edge_ids"] == ["alternative-edge"]
+    assert "unlinked" not in {row["evidence_id"] for row in targets}
+    assert _resume_review_evidence_ids(profile, plan, ()) == ["alternative", "selected"]
+    rendered = SimpleNamespace(evidence_ids=("unlinked", "foreign"), bullet_id="experience:entry#0", source_id="entry", section="experience")
+    assert _resume_review_evidence_ids(profile, plan, (rendered,)) == ["alternative", "selected", "unlinked"]
+
+
+def test_review_declares_the_renderer_owned_skill_category_order():
+    from types import SimpleNamespace
+    from jobctrl.domain.materials.quality import TailoringPlan
+    from jobctrl.domain.materials.resume_document import build_resume_document
+    from jobctrl.domain.materials.provenance_builder import rendered_lines
+    from jobctrl.domain.materials.use_cases import _resume_review_rubric
+
+    profile = source_profile()
+    profile["resume"]["skill_categories"] = [
+        {"id": "first", "label": "First category", "items": ["First item"]},
+        {"id": "second", "label": "Second category", "items": ["Second item"]},
+    ]
+    profile["resume"]["tailoring_rules"]["required_skill_category_ids"] = ["first", "second"]
+    payload = {"skill_category_updates": [
+        {"id": "second", "items": ["Second item"]}, {"id": "first", "items": ["First item"]},
+    ]}
+    document = build_resume_document(payload, profile)
+    assert [row["id"] for row in document["skills"]] == ["first", "second"]
+    rows = tuple(
+        SimpleNamespace(bullet_id=ident, section=section, source_id=source, evidence_ids=())
+        for ident, section, source, _text in rendered_lines(profile, payload)
+    )
+    plan = TailoringPlan(
+        claim_mode="verified_only", auto_approvable_claim_modes=("verified_only",),
+        allow_adjacent_achievement_drafts=False, writing_style={}, target_seniority="senior",
+    )
+    permissions = json.loads(_resume_review_rubric(profile, plan, rows=rows)["generation_permissions"])
+    assert permissions["allow_layout_changes"] is False
+    assert permissions["allow_skill_category_reorder"] is False
+    assert permissions["fixed_skill_category_order"] == ["first", "second"]
 
 
 @pytest.mark.parametrize("mode", ["lenient", "normal", "strict"])
@@ -292,7 +419,28 @@ def test_repaired_claim_uses_cited_model_reason_and_new_generation_text(tmp_path
         messages for title, _, messages in reversed(model.calls) if title == "GeneratedResumeDraft"
     )
     assert "Model rejects support" in " ".join(row.content for row in generation_prompt)
+    feedback = next(json.loads(row.content) for row in generation_prompt if row.content.startswith('{"review_feedback"'))
+    assert feedback["review_feedback"][0]["rejected_candidate"]["experience_updates"][0]["bullets"] == ["Synthetic draft revision 1"]
     assert "revision 2" in Path(outcome.materials.tailored_resume.path).read_text()
+
+
+def test_unaffirmed_generator_anchor_identifies_the_line_and_source_for_repair(tmp_path):
+    class UnaffirmedModel(ResumeModel):
+        def chat_json(self, messages, *, response_schema, **kwargs):
+            result = super().chat_json(messages, response_schema=response_schema, **kwargs)
+            if response_schema["title"] == "ClaimVerification":
+                row = next(row for row in result["lines"] if row["line_id"] == "experience:entry#0")
+                row["source_evidence"] = []
+            return result
+
+    conn, model = connection(), UnaffirmedModel()
+    outcome = resume_case(conn, model, retries=1).execute(**request(tmp_path))
+    assert not outcome.materials.is_resume_approved
+    messages = [messages for title, _, messages in model.calls if title == "GeneratedResumeDraft"][1]
+    feedback = next(json.loads(row.content) for row in messages if row.content.startswith('{"review_feedback"'))
+    finding = next(row for row in feedback["review_feedback"][0]["claim_findings"] if row["kind"] == "source_anchor_binding_invalid")
+    assert finding["line_id"] == "experience:entry#0"
+    assert '["fact"]' in finding["rationale"]
 
 
 @pytest.mark.parametrize("stage", ["GeneratedResumeDraft", "ClaimVerification", "ArtifactQuality", "ResumeAdversarialReview"])
@@ -303,7 +451,7 @@ def test_provider_failure_preserves_last_accepted_resume(tmp_path, stage):
     model = ResumeModel(text="Changed synthetic draft", fault_at=stage, fault=RuntimeError("PRIVATE PAYLOAD"))
     kwargs = request(tmp_path, retailor=True)
     if stage == "ResumeAdversarialReview":
-        kwargs["job"] = {**kwargs["job"], "fit_score": 9}
+        kwargs["job"] = canonical_scored_target(conn, 8)
     with pytest.raises(DeterminationFailure, match="provider_error") as error:
         resume_case(conn, model).execute(**kwargs)
     assert "PRIVATE" not in str(error.value)

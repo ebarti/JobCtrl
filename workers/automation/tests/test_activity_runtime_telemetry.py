@@ -53,6 +53,28 @@ def test_inventory_is_concurrency_safe_for_parallel_starts_and_terminals():
 
 
 @pytest.mark.asyncio
+async def test_local_lifecycle_activity_does_not_consume_reported_remote_capacity(monkeypatch):
+    inventory = ActiveActivityInventory()
+    inventory.start(
+        activity_type="score_job", activity_id="busy", workflow_id="scoring",
+        workflow_run_id="scoring-run", attempt=1, started_at=datetime(2026, 7, 14, tzinfo=UTC),
+    )
+    monkeypatch.setattr(activity_runtime_telemetry.activity, "info", lambda: SimpleNamespace(
+        activity_type="record_workflow_outcome", activity_id="local-control", workflow_id="control",
+        workflow_run_id="control-run", attempt=1, started_time=datetime(2026, 7, 14, tzinfo=UTC), is_local=True,
+    ))
+
+    class Next:
+        async def execute_activity(self, _input):
+            assert inventory.snapshot().active_activity_count == 1
+            return "recorded"
+
+    inbound = ActivityRuntimeTelemetryInterceptor(inventory).intercept_activity(Next())
+    assert await inbound.execute_activity(object()) == "recorded"
+    assert inventory.snapshot().active_activity_count == 1
+
+
+@pytest.mark.asyncio
 async def test_interceptor_cleans_up_success_failure_retry_and_cancellation(monkeypatch):
     monotonic_now = [0.0]
     inventory = ActiveActivityInventory(monotonic=lambda: monotonic_now[0])
@@ -151,6 +173,26 @@ def test_inventory_returns_exact_total_with_bounded_longest_running_safe_details
         and len(detail.operational_ref.opaque_id) == 27
         for detail in snapshot.active_details
     )
+
+
+def test_saved_posting_checks_are_visible_without_exposing_job_identity():
+    inventory = ActiveActivityInventory()
+    token = inventory.start(
+        activity_type="check_saved_posting_availability",
+        activity_id="private-job-url",
+        workflow_id="availability-local-private-job-id",
+        workflow_run_id="00000000-0000-4000-8000-000000000001",
+        attempt=1,
+        started_at=datetime(2026, 7, 14, 9, 0, tzinfo=UTC),
+    )
+    snapshot = inventory.snapshot()
+    assert snapshot.active_activity_count == snapshot.active_details_total == 1
+    assert snapshot.counts_by_type == {"check_saved_posting_availability": 1}
+    assert snapshot.active_details[0].operational_ref.kind == "saved-posting-availability"
+    assert snapshot.active_details[0].workflow_ref is None
+    assert "private-job" not in json.dumps(snapshot.details_json_list())
+    inventory.finish(token)
+    assert inventory.snapshot().active_activity_count == 0
 
 
 def test_inventory_counts_non_allowlisted_slot_without_exposing_metadata():

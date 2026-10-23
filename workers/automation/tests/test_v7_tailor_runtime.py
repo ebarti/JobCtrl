@@ -1255,6 +1255,37 @@ def test_tailor_job_by_id_generates_for_model_advisory_eligibility(
     assert calls == [str(_JOB_ID)]
 
 
+@pytest.mark.parametrize("grade,manual_override", [(8, False), (6, True)])
+def test_per_job_tailor_hands_canonical_grade_to_resume_review(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    grade: int,
+    manual_override: bool,
+) -> None:
+    from jobctrl.domain.materials.adversarial import should_run_adversarial_review
+
+    _seed_job(conn, tenant_id=_TENANT_A, url="https://example.test/current-grade", fit_score=grade)
+    _seed_job(conn, tenant_id=_TENANT_B, url="https://example.test/other-grade", fit_score=10)
+    conn.execute("UPDATE jobs SET fit_score = 1")
+    conn.commit()
+    calls = []
+
+    def generate(job, *_args, **_kwargs):
+        calls.append((job["fit_score"], job["score_version"], should_run_adversarial_review(job)))
+        return _fake_approved_result(job)
+
+    monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
+    monkeypatch.setattr(tailor_module, "_tailor_one_job", generate)
+    result = tailor_module.tailor_job_by_id(
+        _JOB_ID, tenant_id=_TENANT_A, snapshot=_snapshot(_TENANT_A),
+        llm_model=None, pdf_renderer=object(), allow_low_fit_override=manual_override,
+    )
+    assert result["status"] == "approved"
+    assert calls == [(grade, 1, grade >= 8)]
+
+
 @pytest.mark.parametrize(
     ("score_state", "seed_staleness"),
     [

@@ -37,8 +37,8 @@ def test_saved_analysis_legs_control_adapters_and_cache_key(monkeypatch, tmp_pat
     use_case = build_analyze_use_case(conn=conn, event_stage="score")
 
     adapter_names = {type(adapter).__name__ for adapter in use_case._adapters}
-    assert adapter_names == {"ClaudeAnalysisAdapter", "AntigravityAnalysisAdapter"}
-    assert use_case._sdk_set_version == "claude+antigravity-v2-synth-google"
+    assert adapter_names == {"AntigravityAnalysisAdapter"}
+    assert use_case._sdk_set_version.startswith("antigravity-v2-synth-google-models-")
 
 
 def test_ready_provider_excluded_from_saved_leg_list_is_added_as_draft(monkeypatch, tmp_path) -> None:
@@ -48,11 +48,8 @@ def test_ready_provider_excluded_from_saved_leg_list_is_added_as_draft(monkeypat
 
     use_case = build_analyze_use_case(conn=sqlite3.connect(":memory:"), event_stage="score")
 
-    assert {type(adapter).__name__ for adapter in use_case._adapters} == {
-        "ClaudeAnalysisAdapter",
-        "CodexAnalysisAdapter",
-    }
-    assert use_case._sdk_set_version == "claude-v2-synth-codex"
+    assert {type(adapter).__name__ for adapter in use_case._adapters} == {"CodexAnalysisAdapter"}
+    assert use_case._sdk_set_version.startswith("codex-v2-synth-codex-models-")
 
 
 def test_synthesizer_uses_saved_model_for_selected_analysis_provider(
@@ -88,6 +85,14 @@ def test_synthesizer_uses_saved_model_for_selected_analysis_provider(
 
     assert use_case._synthesizer._provider_id == "codex"
     assert use_case._synthesizer._model == "gpt-saved"
+    assert use_case._adapters[0].model_id == "gpt-saved"
+
+    settings_path.write_text(
+        '{"analysis_legs":["codex"],"preferred_models":{"codex":"gpt-next"}}', encoding="utf-8",
+    )
+    refreshed = build_analyze_use_case(conn=sqlite3.connect(":memory:"), event_stage="score")
+    assert refreshed._adapters[0].model_id == "gpt-next"
+    assert refreshed._sdk_set_version != use_case._sdk_set_version
 
 
 def test_synthesizer_ignores_legacy_environment_route_and_uses_saved_selection(

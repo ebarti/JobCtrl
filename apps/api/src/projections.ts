@@ -1535,6 +1535,10 @@ function requirementFitStatusToReadModel(value: Record<string, unknown>): Record
 
 function requirementContributionToReadModel(value: Record<string, unknown>): Record<string, unknown> {
   return {
+    ...(value.scope_source_id || value.scopeSourceId ? {
+      scope: stringField(value.scope),
+      scopeSourceId: stringField(value.scope_source_id ?? value.scopeSourceId),
+    } : {}),
     maxPoints: nullableNumber(value.max_points ?? value.maxPoints) ?? 0,
     awardedPoints: nullableNumber(value.awarded_points ?? value.awardedPoints) ?? 0,
     weightedImpact: nullableNumber(value.weighted_impact ?? value.weightedImpact) ?? 0,

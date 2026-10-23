@@ -157,20 +157,29 @@ def _build_analyze_use_case(
 
 
 def _build_voice_port():
-    """Construct the optional Claude voice pass only when provider auth is ready.
-
-    Mirrors ``_build_analyze_use_case``'s SDK wiring: the voice pass is a NEW AI
-    transform, so it runs through the Claude Agent SDK behind the ``VoicePort``
-    seam, not the legacy httpx client (the all-new-AI-via-SDK directive).
-    """
+    """Honor a saved core route; retain the legacy optional Claude default."""
     from jobctrl.infrastructure.setup_probes import probe_claude_auth
+    from jobctrl.infrastructure.llm.provider_availability import provider_route_available
+    from jobctrl.infrastructure.scoring.criteria_provider import read_default_llm_model, read_preferred_model
+
+    if read_default_llm_model():
+        from jobctrl.infrastructure.llm import get_llm_adapter
+        from jobctrl.infrastructure.materials.voice_adapter import LlmVoiceAdapter
+
+        llm = get_llm_adapter()
+        if not provider_route_available(llm.provider_id, llm.model):
+            return None
+        return LlmVoiceAdapter(llm=llm, provider_id=llm.provider_id, model=llm.model)
 
     if not probe_claude_auth().ok:
         return None
 
-    from jobctrl.infrastructure.materials.voice_adapter import ClaudeVoiceAdapter
+    from jobctrl.infrastructure.materials.voice_adapter import CLAUDE_VOICE_MODEL, ClaudeVoiceAdapter
 
-    return ClaudeVoiceAdapter()
+    selected_model = read_preferred_model("claude") or CLAUDE_VOICE_MODEL
+    if not provider_route_available("claude", selected_model):
+        return None
+    return ClaudeVoiceAdapter(model=selected_model)
 
 
 def _build_use_case(
@@ -183,6 +192,7 @@ def _build_use_case(
     claim_verifier=None,
     quality_judge=None,
     job_interpreter=None,
+    evidence_selector=None,
     preflight=None,
     assembler: ResumeAssembler | None = None,
     llm_policy: TailoringLlmPolicy | None = None,
@@ -233,20 +243,34 @@ def _build_use_case(
     from jobctrl.domain.materials.claim_verification import ModelClaimVerifier
 
     deps = determination_dependencies(conn, tenant_id=tenant_id, lane="tailoring", adapter=llm_port)
+    review_deps = deps
+    if (claim_verifier is None or quality_judge is None) and llm_policy.effective_judge_model != DEFAULT_PIPELINE_LLM_MODEL_SPEC:
+        review_deps = determination_dependencies(
+            conn, tenant_id=tenant_id, lane="tailoring", model_spec=llm_policy.effective_judge_model,
+        )
     from jobctrl.domain.materials.artifact_quality import ModelArtifactQualityJudge
+    from jobctrl.domain.materials.evidence_selection import DeferredMaterialEvidenceSelector, ModelMaterialEvidenceSelector
     from jobctrl.infrastructure.enrichment.interpretation import PersistedJobInterpreter
+
+    def build_evidence_selector():
+        primary = llm_policy.effective_candidate_models[0]
+        selection_deps = deps if primary == DEFAULT_PIPELINE_LLM_MODEL_SPEC else determination_dependencies(
+            conn, tenant_id=tenant_id, lane="tailoring", model_spec=primary,
+        )
+        return ModelMaterialEvidenceSelector(**selection_deps)
 
     return TailorResumeUseCase(
         repository=repository,
         llm=llm_port,
         validator=validator,
-        claim_verifier=claim_verifier if claim_verifier is not None else ModelClaimVerifier(**deps),
+        claim_verifier=claim_verifier if claim_verifier is not None else ModelClaimVerifier(**review_deps),
         preflight=preflight if preflight is not None else deps["preflight"],
         assembler=assembler,
         job_interpreter=job_interpreter
         if job_interpreter is not None
         else PersistedJobInterpreter(conn, tenant_id=tenant_id),
-        quality_judge=quality_judge if quality_judge is not None else ModelArtifactQualityJudge(**deps),
+        quality_judge=quality_judge if quality_judge is not None else ModelArtifactQualityJudge(**review_deps),
+        evidence_selector=evidence_selector if evidence_selector is not None else DeferredMaterialEvidenceSelector(build_evidence_selector),
         publisher=publisher,
         llm_policy=llm_policy,
         artifact_writer=artifact_writer if artifact_writer is not None else LocalArtifactTextWriter(),

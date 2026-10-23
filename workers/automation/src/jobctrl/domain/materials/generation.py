@@ -9,8 +9,14 @@ Transform = Literal["verbatim", "rephrase", "reframe", "synthesize_from_related"
 
 class GeneratedClaim(DeterminationModel):
     claim_id: StrictStr = Field(min_length=1)
-    line_id: StrictStr = Field(min_length=1)
-    location: StrictStr = Field(min_length=1)
+    line_id: StrictStr = Field(
+        min_length=1,
+        description="Rendered line ID: executive_profile#0 for every summary sentence; experience:<entry-id>#N for zero-based bullet N; skills:<category-id>#0 for a whole selected skill group. Copy source entry/category IDs exactly.",
+    )
+    location: StrictStr = Field(
+        min_length=1,
+        description="Generated payload location: executive_profile.sentence[N], experience.<entry-id>.bullets[N], or skills.<category-id>. Summary sentence N still has line_id executive_profile#0.",
+    )
     text: StrictStr = Field(min_length=1)
     reason: StrictStr = Field(min_length=1, max_length=2000)
     transform_type: Transform

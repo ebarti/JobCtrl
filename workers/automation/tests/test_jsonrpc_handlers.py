@@ -1863,6 +1863,8 @@ def test_analyze_job_loads_the_canonical_tenant_scoped_target(
         "site": "example",
         "strategy": "search",
         "discovered_at": "2026-07-30T10:00:00+00:00",
+        "fit_score": None,
+        "score_version": None,
         "enrichment_status": "enriched",
         "full_description": "Tenant A canonical description",
         "application_url": None,

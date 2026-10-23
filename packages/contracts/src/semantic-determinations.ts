@@ -25,6 +25,7 @@ export const DeterminationEnvelopeSchema = z
     prompt_version: z.string().min(1),
     provider: z.string().min(1),
     model: z.string().min(1),
+    reasoning_effort: z.string().min(1).max(40).nullable().optional(),
     lane: z.enum([
       "discovery",
       "enrichment",

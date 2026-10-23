@@ -402,6 +402,7 @@ test("Outreach planner: seeded contacts, supervised research, draft review, send
 
   const jobDrawer = page.getByRole("article", { name: "Job details" });
   await expect(jobDrawer).toBeVisible({ timeout: 10_000 });
+  await jobDrawer.getByRole("button", { name: /· Contacts/ }).click();
 
   const contactsPanel = jobDrawer.locator(".job-contacts-section");
   await expect(contactsPanel.getByText("Casey Recruiter")).toBeVisible();

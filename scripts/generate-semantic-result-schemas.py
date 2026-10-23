@@ -56,11 +56,16 @@ def generate(*, check=False):
 
         for call in calls:
             args = {item.arg: item.value for item in call.keywords}
-            register(resolve(args["kind"]), {
+            schema = resolve(args["schema"])
+            contract = {
                 "schemaVersion": resolve(args["schema_version"]),
                 "promptVersion": resolve(args["prompt_version"]),
-                "schema": resolve(args["schema"]).model_json_schema(),
-            })
+                "schema": schema.model_json_schema(),
+            }
+            compatible = getattr(schema, "compatible_prompt_versions", ())
+            if compatible:
+                contract["compatiblePromptVersions"] = list(compatible)
+            register(resolve(args["kind"]), contract)
     from jobctrl.domain.apply.terminal_report import ApplyTerminalReport, PROMPT_VERSION
 
     register("apply_terminal_report", {

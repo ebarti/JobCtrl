@@ -3861,6 +3861,14 @@ class ProjectionBuilder:
                     )
                 ):
                     continue
+                # Dispatch acknowledgements and the workflow both emit starts.
+                # Their order is not fixed, and the acknowledgement may omit
+                # job/configuration fields. Retain recorded keys only when the
+                # exact Temporal execution matches; a new or unidentified run
+                # cannot inherit another execution's input metadata.
+                same_execution = bool(event_run_id) and event_run_id == temporal_run_id
+                if not same_execution:
+                    input_summary = {}
                 status = "in_progress"
                 error_code = None
                 error_message = None
@@ -3870,7 +3878,7 @@ class ProjectionBuilder:
                 started_at = payload.get("startedAt") or occurred_at or started_at
                 summary = payload.get("inputSummary")
                 if isinstance(summary, dict):
-                    input_summary = summary
+                    input_summary = {**input_summary, **summary}
                 if event_run_id:
                     temporal_run_id = event_run_id
             elif event_type in _WORKFLOW_TERMINAL_STATUS:

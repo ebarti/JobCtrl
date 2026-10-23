@@ -75,7 +75,7 @@ Key facts about the four activities:
   progress totals, and the starting job count) from the source registry, source
   quality, and the global limit. Literal saved roles and location/work-model controls
   become board parameters without a model or a second approval. The captured
-  execution settings remain stable on retries. JobStreaming owns execution of supported provider search/filter parameters. Fetched, structurally valid postings proceed to canonical ingestion; no metadata-only model decides admission. Full-posting analysis/scoring assess meaning. Page or extraction determination failures retain typed `ApplicationError` values with their retry policy.
+  execution settings remain stable on retries. JobStreaming owns execution of supported provider search/filter parameters. Fetched, structurally valid postings proceed to canonical ingestion; no metadata-only model decides admission. Smart Extract first resolves arbitrary-site cards to full individual postings: cited page/extraction/qualification determinations establish the actual role, employer, description quality and saved location/work-model compatibility before canonical ingestion. Unknown captures remain in Manual Capture; confirmed mismatches remain outside Jobs with durable progress evidence. Accepted captures seed snapshots/enrichment and retain all three determination IDs. Archived Smart Extract captures use the same qualification; source wrappers preserve typed determination failure retryability. Full-posting analysis/scoring assess role fit. Page or extraction determination failures retain typed `ApplicationError` values with their retry policy.
 - **`discovery_source_family`** runs *one* source family under
   `run_blocking_with_heartbeat` with a cooperative `cancel_event` and a 6-hour
   window (crawls legitimately run long). Each family is isolated: a broad-board, ATS,
@@ -204,13 +204,20 @@ Two truths correct the old diagram:
   `EnrichmentFailed` — those come from that unused use case and from the separate
   protected-source manual-capture snapshot path.
 
-Within `DiscoverWorkflow`, detail rendering uses only the paired extension in
-the current profile and the shared extraction cascade. It does not start the
-legacy Playwright browser or the separately consented copied-profile LinkedIn
-resolver, and it never clicks an apply control. The copied-profile resolver is
-retained only for standalone maintenance compatibility outside integrated
-Discovery. Application-target outcomes remain distinct from description
-confidence and cannot quarantine otherwise trustworthy posting content.
+Within `DiscoverWorkflow`, detail rendering prefers the selected paired
+extension in the current profile. If the setup availability probe reports it
+offline, the batch selects guarded anonymous Playwright before acquisition.
+An acquisition error never switches transports. Integrated Discovery does not
+start the separately consented copied-profile LinkedIn resolver or click an
+apply control; that resolver remains standalone maintenance compatibility.
+Both anonymous intake and batch capture wait for DOM content and retain a
+readable document after a typed retryable subresource timeout or DNS failure.
+The captured `DetailPage` then carries incomplete status evidence and its
+acquisition reason, so availability stays unknown. Failed documents, unsafe
+destinations and response-size violations still prevent extraction. The shared
+independent interpretation and description-quality gates remain authoritative.
+Application-target outcomes remain distinct from description confidence and
+cannot quarantine otherwise trustworthy posting content.
 Detail enrichment isolates faults at two levels. A crash while processing one
 site's batch is recorded in `site_errors`, healthy sites keep running, and the
 enrichment run ends `partial` rather than `failed`. Within a site, a single
@@ -594,7 +601,7 @@ survive failed refreshes. These gates grant no submission authority.
 
 ## Semantic Determination Authority
 
-Search planning uses saved controls directly and JobStreaming executes provider filtering. Fetched listings proceed to canonical ingestion without a separate intake model. Semantic calls run only in activities/sync RPC and pass lane/spend preflight. Scoring preselection uses recency/ID order. Job interpretation and typed blockers supply constraint meaning. Replay reads persisted results and makes no provider call.
+Search planning uses saved controls directly and JobStreaming executes provider filtering. Structured board/ATS listings proceed to canonical ingestion without a separate metadata-only intake model. Arbitrary-site Smart Extract links require the full-posting qualification described above. Semantic calls run only in activities/sync RPC and pass lane/spend preflight. Scoring preselection uses recency/ID order. Job interpretation and typed blockers supply constraint meaning. Replay reads persisted results and makes no provider call.
 
 See [the decision](../../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
 

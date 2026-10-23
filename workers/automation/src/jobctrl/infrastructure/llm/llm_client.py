@@ -21,9 +21,12 @@ import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Protocol
 
-from jobctrl.domain.ports.llm import LlmMessage
+from jobctrl.domain.ports.llm import LlmFailure, LlmMessage
+from jobctrl.infrastructure.llm.provider_availability import provider_route_available, record_provider_failure
 from jobctrl.infrastructure.llm.codex_turn import run_codex_turn
-from jobctrl.infrastructure.llm.provider_errors import ProviderCallError, provider_exception_error
+from jobctrl.infrastructure.llm.provider_errors import (
+    ProviderCallError, provider_exception_error, raise_on_claude_execution_failure,
+)
 
 _DEFAULT_MODEL_SENTINELS = {"", "default"}
 _ROUTED_PROVIDERS = {"claude", "codex", "gemini", "google"}
@@ -253,9 +256,14 @@ def _parse_model_spec(model: str | None) -> tuple[str | None, str | None, str]:
 
 
 def _resolve_default_model_spec(default_model: str | None) -> tuple[str | None, str | None, str]:
-    """Resolve an explicit workflow model or the provider-neutral default."""
+    """Resolve an explicit workflow choice before the saved default route."""
 
-    return _parse_model_spec(default_model)
+    parsed = _parse_model_spec(default_model)
+    if parsed[2] == "default" and _live_worker_smoke_provider_config() is None:
+        from jobctrl.infrastructure.scoring.criteria_provider import read_default_llm_model
+
+        return _parse_model_spec(read_default_llm_model())
+    return parsed
 
 
 def _run_sync(awaitable: Awaitable[Any]) -> Any:
@@ -340,7 +348,7 @@ class ClaudeSdkBackend:
         thinking_budget: int | None,
     ) -> str | dict:
         from jobctrl.infrastructure.analysis.claude_analysis_adapter import (
-            _aiter,
+            _collect_sdk_messages,
             _load_options_factory,
             _load_sdk_query,
             _structured_output_from_messages,
@@ -385,10 +393,15 @@ class ClaudeSdkBackend:
             },
             scope_name="jobctrl.llm.claude",
         ) as record:
-            iterator = await _aiter(query_fn(prompt=prompt, options=options_factory(**kwargs)))
-            sdk_messages = [message async for message in iterator]
+            sdk_messages = await _collect_sdk_messages(
+                query_fn, prompt=prompt, options=options_factory(**kwargs), model=self.model,
+                operation="chat_json" if response_schema else "chat",
+            )
             input_tokens, output_tokens = _usage_from_messages(sdk_messages)
             record("", input_tokens=input_tokens, output_tokens=output_tokens)
+            raise_on_claude_execution_failure(
+                sdk_messages, model=self.model, operation="chat_json" if response_schema else "chat",
+            )
             value: str | dict
             if response_schema is not None:
                 value = _structured_output_from_messages(sdk_messages)
@@ -442,6 +455,9 @@ class CodexSdkBackend:
         from jobctrl.infrastructure.analysis.codex_analysis_adapter import CODEX_ANALYSIS_MODEL
 
         self.model = model or CODEX_ANALYSIS_MODEL
+        from jobctrl.infrastructure.scoring.criteria_provider import read_codex_reasoning_effort
+
+        self.reasoning_effort = read_codex_reasoning_effort(self.model)
         self._async_codex_factory = async_codex_factory
         self._approval_mode_factory = approval_mode_factory
 
@@ -473,7 +489,7 @@ class CodexSdkBackend:
             temperature=temperature,
             max_tokens=max_tokens,
         )
-        effort = "high" if thinking_budget is None else _reasoning_level_from_budget(thinking_budget)
+        effort = self.reasoning_effort or ("high" if thinking_budget is None else _reasoning_level_from_budget(thinking_budget))
         if effort == "minimal":
             effort = "low"
         factory = self._async_codex_factory or _load_async_codex_factory()
@@ -708,7 +724,7 @@ def _default_provider() -> str:
         return LiveWorkerSmokeBackend.provider_id
     from jobctrl.infrastructure.setup_probes import ready_llm_providers
 
-    ready = ready_llm_providers()
+    ready = tuple(provider for provider in ready_llm_providers() if provider_route_available(provider))
     if not ready:
         raise RuntimeError("No core LLM provider is ready. Authenticate Claude, Codex, or Google.")
     return ready[0]
@@ -740,7 +756,9 @@ def _effective_default_selection(
     """Resolve the provider/model facts that determine a new adapter default."""
 
     provider, selected_model, label = _resolve_default_model_spec(default_model)
-    selected_provider = provider or default_provider or _default_provider()
+    selected_provider = provider or (
+        default_provider if default_provider and provider_route_available(default_provider) else None
+    ) or _default_provider()
     if label == "default":
         from jobctrl.infrastructure.scoring.criteria_provider import read_preferred_model
 
@@ -765,7 +783,9 @@ class LlmAdapter:
             self._clients: dict[str, Any] = {"default": client}
             self._default_selection: tuple[str, str | None] | None = None
             self._injected = True
+            self._pinned = False
             return
+        self._pinned = _resolve_default_model_spec(default_model)[2] != "default"
         provider, selected_model = _resolved_default or _effective_default_selection(
             default_model,
             default_provider=default_provider,
@@ -795,6 +815,10 @@ class LlmAdapter:
     def provider_id(self) -> str:
         return self._provider_id
 
+    @property
+    def reasoning_effort(self) -> str | None:
+        return getattr(self._client, "reasoning_effort", None)
+
     def _client_for_model(self, model: str | None) -> Any:
         provider, selected_model, label = _parse_model_spec(model)
         if label == "default":
@@ -807,6 +831,22 @@ class LlmAdapter:
         backend = _make_backend(provider, selected_model)
         self._clients[label] = backend
         return backend
+
+    def _invoke(self, operation: str, client: Any, payload: list[dict], kwargs: dict, *, pinned: bool) -> Any:
+        provider = str(getattr(client, "provider_id", "injected"))
+        selected_model = getattr(client, "model", None)
+        if not self._injected and not provider_route_available(provider, selected_model):
+            # The workflow retry must bind a fresh provider/model fingerprint.
+            raise LlmFailure("provider_unavailable" if pinned else "provider_error")
+        try:
+            return getattr(client, operation)(payload, **kwargs)
+        except Exception as error:
+            if not self._injected:
+                record_provider_failure(
+                    provider, selected_model, error,
+                    default_model=client is self._client and self._default_selection == (provider, None),
+                )
+            raise
 
     @staticmethod
     def _kwargs(
@@ -836,14 +876,15 @@ class LlmAdapter:
     ) -> str:
         client = self._client_for_model(model)
         payload = [{"role": message.role, "content": message.content} for message in messages]
-        return client.chat(
-            payload,
-            **self._kwargs(
+        return self._invoke(
+            "chat", client, payload,
+            self._kwargs(
                 temperature=temperature,
                 max_tokens=max_tokens,
                 response_schema=response_schema,
                 thinking_budget=thinking_budget,
             ),
+            pinned=self._pinned or _parse_model_spec(model)[2] != "default",
         )
 
     def chat_json(
@@ -858,14 +899,15 @@ class LlmAdapter:
     ) -> dict:
         client = self._client_for_model(model)
         payload = [{"role": message.role, "content": message.content} for message in messages]
-        return client.chat_json(
-            payload,
-            **self._kwargs(
+        return self._invoke(
+            "chat_json", client, payload,
+            self._kwargs(
                 temperature=temperature,
                 max_tokens=max_tokens,
                 response_schema=response_schema,
                 thinking_budget=thinking_budget,
             ),
+            pinned=self._pinned or _parse_model_spec(model)[2] != "default",
         )
 
     def ask(self, prompt: str, **kwargs: Any) -> str:
@@ -881,14 +923,22 @@ def get_llm_adapter() -> LlmAdapter:
     global _singleton, _singleton_default_provider
     with _lock:
         if _singleton is None:
-            _singleton_default_provider = _default_provider()
-            _singleton = LlmAdapter(default_provider=_singleton_default_provider)
+            _singleton = LlmAdapter()
+            _singleton_default_provider = _singleton.provider_id
         elif not getattr(_singleton, "_injected", True):
             selection = _effective_default_selection(
                 default_provider=_singleton_default_provider,
             )
-            if selection != _singleton._default_selection:
+            from jobctrl.infrastructure.scoring.criteria_provider import read_codex_reasoning_effort
+
+            effort_changed = any(
+                getattr(backend, "provider_id", None) == "codex"
+                and getattr(backend, "reasoning_effort", None) != read_codex_reasoning_effort(backend.model)
+                for backend in tuple(_singleton._clients.values())
+            )
+            if selection != _singleton._default_selection or effort_changed:
                 _singleton = LlmAdapter(_resolved_default=selection)
+                _singleton_default_provider = selection[0]
         return _singleton
 
 
@@ -897,6 +947,9 @@ def reset_llm_adapter() -> None:
     with _lock:
         _singleton = None
         _singleton_default_provider = None
+    from jobctrl.infrastructure.llm.provider_availability import reset_provider_availability
+
+    reset_provider_availability()
 
 
 __all__ = [

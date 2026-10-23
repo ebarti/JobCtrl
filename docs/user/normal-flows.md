@@ -360,7 +360,8 @@ approved artifacts remain visible. Canonically superseded artifacts are
 available under **Superseded artifacts**; expand it to inspect or open them.
 
 The sections below the Job Detail header form one full-width column at desktop
-and phone widths. Open **Sections** to jump to any section in reading order;
+and phone widths. **Description** is first, and every section starts collapsed
+when opening a job. Open **Sections** to jump to any section in reading order;
 the destination expands, scrolls into view, and receives keyboard focus. The
 same menu offers **Expand all** and **Collapse all**. Each section can also be
 collapsed from its heading without losing a draft form entry or live update.

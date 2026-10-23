@@ -160,12 +160,17 @@ function recoveryCoverage(
 }
 
 function recoveryStateLabel(snapshot: PipelineOperationsSnapshot): string {
+  const checkingLabel = snapshot.execution
+    ? snapshot.execution.workflowStatus === "in_progress"
+      ? "Checking current run"
+      : "Checking previous run"
+    : "Checking pipeline activity";
   return snapshot.projectionCoverage?.status === "incomplete"
     ? "Previous run incomplete"
     : snapshot.projectionCoverage?.status === "retrying"
     ? "Check will retry"
     : snapshot.projectionCoverage?.status === "recovering" || snapshot.execution
-      ? "Checking previous run"
+      ? checkingLabel
       : "No selected execution";
 }
 
@@ -192,7 +197,7 @@ function executionNeedsReplacement(
 
 function discoverRunBlockReason(
   snapshot: PipelineOperationsSnapshot,
-): string | null {
+): ReactNode {
   const execution = snapshot.execution;
   const needsReplacementGuard =
     (execution ? executionNeedsReplacement(execution) : false) ||
@@ -202,7 +207,19 @@ function discoverRunBlockReason(
   if (snapshot.capacity.status !== "available") {
     return "Shared runtime capacity must be available before starting a new Discover run.";
   }
-  return "Wait for active pipeline work to finish before starting a new Discover run.";
+  const activeCount = snapshot.capacity.activeSlots;
+  const stages = snapshot.activeStageCounts?.length
+    ? `Active stages: ${activeStageSummary(snapshot)}. `
+    : "";
+  return (
+    <>
+      {activeCount > 0
+        ? `Discover is waiting for ${activeCount} running worker ${activeCount === 1 ? "task" : "tasks"} to finish.`
+        : "JobCtrl cannot confirm that all active work has finished."}{" "}
+      {stages}Status updates automatically.{" "}
+      <a className="underline underline-offset-4" href="/runs">Review active runs</a> to inspect progress or cancel work.
+    </>
+  );
 }
 
 function PipelineStatus({
@@ -704,7 +721,7 @@ function StageRows({
                     title={
                       trackingReady
                         ? "No tracked work is available for an ETA."
-                        : "The estimate will appear after JobCtrl finishes checking the previous run."
+                        : "The estimate will appear after JobCtrl finishes checking the run records."
                     }
                   />
                 )}
@@ -811,7 +828,7 @@ function PipelineStageRow({
         ) : (
           <p className="pipeline-stage-row__recovery-copy" data-typography="body">
             Completion counts and estimates will appear automatically after JobCtrl
-            finishes checking the previous run.
+            finishes checking the run records.
           </p>
         )}
       </div>
@@ -897,7 +914,7 @@ function PipelineExecutionNotice({
     copy = {
       title: "This Discover run has ended",
       description:
-        "The selected workflow is closed, so there is no paused workflow to resume. Use Set up a new Discover run to continue the remaining work once shared runtime capacity is idle.",
+        `${execution.finishedAt ? `This run ended on ${formatDateTime(execution.finishedAt)}. ` : ""}The selected workflow is closed, so there is no paused workflow to resume. Use Set up a new Discover run to continue the remaining work once shared runtime capacity is idle.`,
     };
   } else {
     return null;
@@ -976,6 +993,7 @@ function humanStageLabel(
 function activeStageSummary(snapshot: PipelineOperationsSnapshot): string {
   if (snapshot.activeStageCounts === null) return "Stage breakdown unavailable";
   if (snapshot.activeStageCounts.length === 0) {
+    if (snapshot.activeItemsTotal === null) return "Stage breakdown unavailable";
     return snapshot.activeItemsTotal && snapshot.activeItemsTotal > 0
       ? `${snapshot.activeItemsTotal} unclassified runtime ${
           snapshot.activeItemsTotal === 1 ? "activity" : "activities"
@@ -1023,17 +1041,38 @@ function ProjectionCoverageNotice({
 }) {
   const coverage = recoveryCoverage(snapshot);
   if (!coverage) return null;
+  if (snapshot.execution === null) {
+    return (
+      <Alert className="pipeline-coverage-alert">
+        <IconAlertTriangle aria-hidden="true" />
+        <AlertTitle>Discover run not identified</AlertTitle>
+        <AlertDescription>
+          JobCtrl has not identified a Discover run for this activity. Standalone
+          job preparation may still be running. Selected-run completion counts and
+          estimates are unavailable until a run is identified and its records are
+          verified. This page checks for updates every 15 seconds while visible.
+          Current worker, queue, and activity counts remain visible below.
+        </AlertDescription>
+      </Alert>
+    );
+  }
   const isRetrying = coverage.status === "retrying";
   const isIncomplete = coverage.status === "incomplete";
+  const currentRun = snapshot.execution?.workflowStatus === "in_progress";
+  const runReference = snapshot.execution
+    ? currentRun
+      ? "this Discover run"
+      : "the previous Discover run"
+    : "the Discover run";
   const canStartNewRun = isIncomplete && canSafelyPrepareNewDiscoverRun(snapshot);
   const membershipProgress =
     coverage.expectedMembershipCount === null
-      ? `${coverage.persistedMembershipCount} linked jobs checked so far`
-      : `${coverage.persistedMembershipCount} of ${coverage.expectedMembershipCount} linked jobs checked`;
+      ? `${coverage.persistedMembershipCount} linked jobs recorded so far`
+      : `${coverage.persistedMembershipCount} of ${coverage.expectedMembershipCount} linked jobs recorded`;
   const stepProgress =
     coverage.expectedStepCount === null
-      ? `${coverage.persistedStepCount} stage records checked so far`
-      : `${coverage.persistedStepCount} of ${coverage.expectedStepCount} stage records checked`;
+      ? `${coverage.persistedStepCount} stage records stored so far`
+      : `${coverage.persistedStepCount} of ${coverage.expectedStepCount} stage records stored`;
   const errorCopy =
     isRetrying && coverage.errorCode
       ? ` Last check result: ${sentenceCase(coverage.errorCode)}.`
@@ -1052,8 +1091,8 @@ function ProjectionCoverageNotice({
         {isIncomplete
           ? "Previous run record is incomplete"
           : isRetrying
-          ? "Previous run check will retry automatically"
-          : "Checking previous run records"}
+          ? "Run record check will retry automatically"
+          : `${recoveryStateLabel(snapshot)} records`}
       </AlertTitle>
       <AlertDescription>
         {isIncomplete ? (
@@ -1067,10 +1106,20 @@ function ProjectionCoverageNotice({
           </>
         ) : (
           <>
-            JobCtrl is verifying the previous Discover run before showing its completion
-            counts and estimates: {membershipProgress}; {stepProgress}.{errorCopy} This
-            check finishes automatically and needs no restart. Live worker, queue, and
-            activity facts remain visible below.
+            JobCtrl is verifying {runReference} before showing its completion
+            counts and estimates: {membershipProgress}; {stepProgress}.{errorCopy}{" "}
+            {coverage.expectedMembershipCount === null || coverage.expectedStepCount === null
+              ? "The total record count is not available yet. "
+              : ""}
+            {coverage.updatedAt ? (
+              <>
+                Last record update:{" "}
+                <time dateTime={coverage.updatedAt}>{formatDateTime(coverage.updatedAt)}</time>.{" "}
+              </>
+            ) : "No record update has been reported yet. "}
+            These counts show tracking coverage. This page checks for
+            updates every 15 seconds while visible. Live worker, queue, and activity
+            facts remain visible below.
           </>
         )}
       </AlertDescription>
@@ -1118,7 +1167,7 @@ function PipelineLiveFlow({
           <p data-typography="body">
             {trackingReady
               ? "Current discovery stages, shared workers, and work that needs attention."
-              : "Shared workers, queue pressure, and active runtime work remain visible while the previous run is checked."}
+              : "Shared workers, queue pressure, and active runtime work remain visible while run records are checked."}
           </p>
         </div>
         {isActive && snapshot.execution?.discoverWorkflowId ? (
@@ -1189,7 +1238,7 @@ function PipelineLiveFlow({
                         snapshot.sourceFamilies.providerProgress,
                     }
                   : {})}
-                recoveryLabel="Checking previous run"
+                recoveryLabel={recoveryStateLabel(snapshot)}
                 stage={stage}
                 trackingReady
               />
@@ -1436,6 +1485,7 @@ function ActiveItemTitle({
     case "orchestration":
       return item.operation;
     case "unresolved_runtime_activity":
+      if (item.activityType === "check_saved_posting_availability") return "Saved posting checks";
       return item.stage
         ? humanStageLabel(snapshot, item.stage)
         : safeOperationalIdentifier(item.opaqueId);
@@ -1656,7 +1706,13 @@ function PipelineInspector({
             ))}
           </ol>
         ) : (
-          <Empty title="No active work is visible in the current runtime inventory." />
+          <Empty
+            title={snapshot.activeItemsTotal === null
+              ? "Active work details are unavailable."
+              : snapshot.activeItemsTotal > 0
+                ? "No details were returned for the active work."
+                : "No active work is visible in the current runtime inventory."}
+          />
         )}
       </DisclosureSection>
     </div>

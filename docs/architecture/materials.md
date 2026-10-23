@@ -37,6 +37,28 @@ flowchart TB
 The invariant is simple: the text audited for provenance and coverage is the
 same text rendered into the accepted artifact.
 
+Bounded resume and cover repairs also retain review continuity. Their audits
+record the exact prior determination IDs and typed results supplied to each
+later review, including changed-voice verification. These historical decisions
+enter input fingerprints as context; they never enter the current factual
+source or citation allowlist. Independent verdicts and immutable accepted
+artifacts retain their authority. See the
+[attempt-loop contract](tailoring.md#attempt-loop-and-candidate-selection).
+
+When `default_llm_model` is configured, `LlmVoiceAdapter` uses the same resolved
+core route as other default calls, including its lane/spend admission and actual
+provider/model provenance. Without a saved default, the legacy optional Claude
+voice adapter remains available. A writing-pass failure retains the already
+verified candidate; every proposed rewrite still receives the existing final
+claim, quality and source-binding checks.
+Codex adapters capture each model's saved reasoning effort when constructed.
+An explicit choice takes precedence over the numeric thinking budget in a
+tailoring policy and reaches both thread creation and the turn. Employer-analysis
+configuration fingerprints and semantic determination identities include that
+choice. Determination envelopes persist optional `reasoning_effort`; legacy
+envelopes remain valid. A later preference edit cannot change the metadata or
+execution parameters of an already constructed adapter.
+
 ## Canonical Employer Analysis
 
 A parallel Claude, Codex, and Google analysis ensemble produces drafts; a
@@ -44,6 +66,19 @@ provider-neutral synthesizer reconciles healthy legs through any ready
 provider. One failed optional leg records degraded audit data without cancelling
 the others. A single ready provider is sufficient; all-provider failure is a
 hard error.
+
+Composition excludes perspectives whose providers are unavailable and supplies
+the selected ready provider as a draft when necessary. Every draft uses that
+provider's saved preferred model, as synthesis does. The effective draft/model
+set and synthesis model participate in cache identity. A typed SDK availability
+failure stops retries of that failed leg and excludes its route from the next
+automatic attempt; a failed semantic or structural judgment does not.
+Claude SDK query and iteration exceptions receive a safe availability envelope
+before response parsing. A generic SDK execution exception therefore leaves
+the bound leg after one call. Returned structure, semantic verdicts, budget
+errors and cancellation retain their own behavior; provider text never enters
+the availability envelope. Neutral core calls and optional voice use the same
+collection boundary.
 
 The canonical, generation-versioned analysis stores:
 
@@ -61,6 +96,23 @@ otherwise verified canonical analysis.
 ### Grounding Gate
 
 Code checks requirement/evidence ID membership and verbatim employer spans. Every draft and synthesis receives source-bound claim verification, including candidate facts and process narration. The separate model quality judge remains where used. There is no process-subject grammar, protected-class phrase screen or fabrication lexicon. Job interpretation records requirement scope and protected-class flags before consumers use the analysis. Invalid or unsupported output enters repair/failure without replacing accepted analysis.
+
+Grounding retries include the rejected span and its requirement/keyword reference
+as explicitly untrusted repair data. Grounding and semantic-verification retries
+also receive the rejected typed analysis for targeted correction of the identified
+fields. The same posting remains the authority;
+the membership gate and retry bound stay unchanged for drafts and synthesis.
+An unavailable route is skipped before a direct SDK draft. Provider, budget,
+cache, persistence and invalid canonical-source failures leave the current bound
+attempt instead of causing another paid draft through this repair loop.
+The same boundary applies to exhausted verifier JSON, schema, ID, quote and
+numeric-binding repairs: these failures belong to the verifier's existing
+three-call budget and do not start a new analysis draft or synthesis. A valid
+`claim_verification_failed` verdict still supplies its recorded findings to the
+bounded analysis revision loop. When every leg fails with a typed determination
+failure, the ensemble retains the first terminal code, or a transient provider
+code if a leg can recover, alongside every leg's safe diagnostic. A healthy peer
+still permits a degraded, fully verified analysis.
 
 ### Reuse And Lifecycle
 
@@ -99,6 +151,54 @@ failed or forced generation never destroys the previous accepted rows.
 ## Source-Bound Claim Verification
 
 A strict model determination extracts each final proposition, classifies candidate fact/hypothetical/target-role/employer/advice, and judges support from allowed evidence. Findings cite exact line IDs and verbatim spans. Code verifies IDs, quotes and exact values; it does not classify English. Generators record anchors and the verifier affirms source contributions. Resume, cover letter, outreach, interview and analysis use the shared port, with separate artifact quality review. Failed refreshes preserve accepted artifacts. See [Tailoring Contract](tailoring.md#validation-layers).
+
+The shared determination owner permits at most two correction calls after a
+mechanical response failure, including invalid citation spans, line/requirement
+bindings, missing stated-pay citations or inconsistent aggregate verdicts. Each
+call repeats lane/spend admission and all existing validation. A valid semantic
+rejection remains a rejection and goes back to the generator for revision.
+Supported candidate-fact citation IDs must also appear in the line's declared
+source contributions. An inconsistent inventory is repaired as a structural
+binding failure; code never infers contribution from wording.
+Corrections receive the immediately rejected response as explicitly untrusted
+data so they can repair individual bindings against the original source inputs.
+Citation validation reports all current mechanical failures across typed model,
+sequence and mapping fields, with structural paths and the exact canonical
+sources needed for correction. Scoring inventory validation likewise identifies
+every invalid field and its canonical requirement target. The first safe error
+code and legacy first-citation slots remain available. This request-local
+feedback never enters public exception text or persisted failure-state fields.
+Code neither normalizes a rejected quote nor substitutes a source; every
+corrected response must pass the same strict checks within the existing budget.
+Supported-claim numeric mismatches identify every affected claim path, missing
+literal and line-specific source allowlist in the same request-local correction
+packet. The packet includes the canonical allowed source text so the model can
+correct its citation or support judgment. It does not change validation order,
+infer support, increase the correction budget or enter public failure messages.
+Cover-letter generation also supplies its exact candidate-evidence allowlist and
+the single `posting` requirement ID. Draft schema, duplicate-line and foreign-ID
+failures consume the existing generation retry budget and return the rejected
+draft plus exact invalid IDs for correction. Every new call repeats lane/spend
+admission; provider and budget failures leave the loop. Code never remaps invented
+IDs, and repaired drafts still require independent claim and quality review.
+Exact citation/value failures also identify the rejected citation or compensation
+row in request-local correction data; exception text and persisted failure state
+remain code-only. Rejected resume reports retain only verifier-affirmed anchors,
+while preserving the failed gate, original candidate and missing-ID findings.
+Numeric binding accepts complete comma-grouped amounts with an attached
+three-letter prefix, without deciding the prefix's meaning or matching a fragment
+inside a larger token. The model still determines whether the amount is pay.
+Quality/persona findings bind to rendered line citations; saved-evidence repairs
+use the separate candidate-evidence slot. Both namespaces are explicit in the
+prompt/schema, and malformed findings receive exact slot feedback within the
+same bounded correction loop.
+The typed owners list known compatible historical quality/persona prompt
+versions. Readers validate those recorded receipts against the same strict
+schema, entity, lane and verdict bindings; current-only reads still require the
+current prompt version. Unknown versions are refused rather than treated as
+compatible by default.
+Provider, budget, cache and persistence failures do not enter this response
+repair loop. A failed repair never replaces the accepted envelope or artifact.
 
 ## Stored Interview Preparation
 

@@ -212,7 +212,7 @@ describe("<ModelSelectionPanel>", () => {
     expect(updateSettings).not.toHaveBeenCalled();
   });
 
-  it("keeps a stale saved model visible until the user chooses a current option", async () => {
+  it("explains a stale saved model separately and only offers current provider models", async () => {
     renderWithProviders(<ModelSelectionPanel />, {
       withRouter: true,
       ports: buildTestPorts({
@@ -231,10 +231,10 @@ describe("<ModelSelectionPanel>", () => {
 
     const codex = await providerCard("Codex");
     const select = await codex.findByRole("combobox", { name: /Preferred model/ });
-    expect(select).toHaveTextContent("retired-codex-model (no longer available)");
+    expect(select).toHaveTextContent("Select a currently offered model");
+    expect(codex.getByText(/Saved: retired-codex-model — not in the current provider catalog/)).toBeInTheDocument();
     await userEvent.setup().click(select);
-    expect(await screen.findByRole("option", {
-      name: "retired-codex-model (no longer available)",
-    })).toHaveAttribute("aria-disabled", "true");
+    await screen.findAllByRole("option");
+    expect(screen.queryByRole("option", { name: /retired-codex-model/ })).not.toBeInTheDocument();
   });
 });

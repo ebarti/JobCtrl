@@ -76,6 +76,20 @@ def test_llm_generation_span_sets_langfuse_attributes(in_memory_exporter):
     assert private_sentinel not in _exported_span_text(spans[0])
 
 
+@pytest.mark.parametrize("effort", ["high", "max", "PRIVATE_EFFORT_SENTINEL"])
+def test_effort_metadata_only_exports_known_protocol_values(in_memory_exporter, effort):
+    from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
+
+    with llm_generation_span(model="gpt-6.1-sol", messages=[], params={"effort": effort}):
+        pass
+    span = in_memory_exporter.get_finished_spans()[0]
+    if effort == "PRIVATE_EFFORT_SENTINEL":
+        assert effort not in _exported_span_text(span)
+        assert "gen_ai.request.reasoning_effort" not in _attrs(span)
+    else:
+        assert _attrs(span)["gen_ai.request.reasoning_effort"] == effort
+
+
 def test_llm_generation_span_records_spend_once(monkeypatch, in_memory_exporter):
     from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
 

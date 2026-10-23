@@ -1516,6 +1516,7 @@ def _enqueue_manual_capture(
     reason: str,
     retry_context: dict[str, Any],
     required_at: str,
+    tenant_id: TenantId = LOCAL_TENANT,
 ) -> str:
     item_id = f"manual:{hashlib.sha256(originating_url.encode('utf-8')).hexdigest()[:16]}"
     conn.execute(
@@ -1541,7 +1542,7 @@ def _enqueue_manual_capture(
             END
         """,
         (
-            str(LOCAL_TENANT),
+            str(tenant_id),
             item_id,
             originating_url,
             source_id,

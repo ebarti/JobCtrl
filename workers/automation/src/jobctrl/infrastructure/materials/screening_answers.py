@@ -389,7 +389,7 @@ class ScreeningAnswerRepository:
             raise DeterminationFailure("screening_authority_missing")
         from jobctrl.domain.materials.screening_answers import ScreeningInterpretation, ScreeningDraft
         from jobctrl.domain.ports.claim_verification import ClaimVerification
-        from jobctrl.domain.ports.artifact_quality import ArtifactQuality
+        from jobctrl.domain.ports.artifact_quality import ArtifactQuality, ARTIFACT_QUALITY_SCHEMA_VERSION
 
         schemas = {
             "screening_context": ScreeningInterpretation,
@@ -398,16 +398,18 @@ class ScreeningAnswerRepository:
             "artifact_quality": ArtifactQuality,
         }
         versions = {
-            "screening_context": ("1", "screening-context-v1"),
-            "screening_draft": ("1", "screening-draft-v1"),
-            "claim_verification": ("2", "claim-verification-v2"),
-            "artifact_quality": ("2", "artifact-quality-v2"),
+            "screening_context": {("1", "screening-context-v1")},
+            "screening_draft": {("1", "screening-draft-v1")},
+            "claim_verification": {("2", "claim-verification-v2")},
+            "artifact_quality": {
+                (ARTIFACT_QUALITY_SCHEMA_VERSION, prompt) for prompt in ArtifactQuality.compatible_prompt_versions
+            },
         }
         for receipt in receipts:
             if (
                 receipt.entity_id != state["questionId"]
                 or receipt.lane != "apply"
-                or (receipt.schema_version, receipt.prompt_version) != versions[receipt.kind]
+                or (receipt.schema_version, receipt.prompt_version) not in versions[receipt.kind]
             ):
                 raise DeterminationFailure("screening_authority_missing")
             try:

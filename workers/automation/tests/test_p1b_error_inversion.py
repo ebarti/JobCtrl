@@ -50,12 +50,15 @@ from jobctrl.infrastructure.temporal.run_in_activity import (
     shutdown_activity_executors,
 )
 from jobctrl.materials.activities import (
+    CoverLetterActivityInput,
+    CoverLetterActivityOutput,
     TailorActivityInput,
     TailorActivityOutput,
     TailorJobActivityInput,
     TailorJobActivityOutput,
     tailor_activity,
     tailor_job_activity,
+    cover_letter_activity,
 )
 from jobctrl.pipeline import runner as pipeline_runner
 from jobctrl.scoring.activities import ScoreActivityInput, ScoreActivityOutput, score_activity
@@ -114,6 +117,16 @@ class _P1bTailorJobHarness:
             payload,
             start_to_close_timeout=timedelta(minutes=5),
             retry_policy=_P1B_RETRY,
+        )
+
+
+@workflow.defn(name="P1bCoverJobHarness")
+class _P1bCoverJobHarness:
+    @workflow.run
+    async def run(self, payload: CoverLetterActivityInput) -> CoverLetterActivityOutput:
+        return await workflow.execute_activity(
+            cover_letter_activity, payload,
+            start_to_close_timeout=timedelta(minutes=5), retry_policy=_P1B_RETRY,
         )
 
 
@@ -289,6 +302,43 @@ async def test_tailor_job_durable_attempt_exhaustion_is_non_retryable() -> None:
     assert attempts == 1
     assert app_error.type == "attempt_budget_exhausted"
     assert app_error.non_retryable is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage,status", [
+    ("tailor", "failed_judge"), ("tailor", "failed_validation"),
+    ("tailor", "failed_adversarial_review"), ("cover", "failed_validation"),
+])
+async def test_rejected_material_does_not_restart_its_whole_generation_budget(stage, status):
+    attempts = 0
+
+    def rejected(*_args, **_kwargs):
+        nonlocal attempts
+        attempts += 1
+        return {"status": status, "error": "Bounded source-bound review rejected the draft"}
+
+    queue = f"p1b-material-rejected-{uuid.uuid4()}"
+    input_type = TailorJobActivityInput if stage == "tailor" else CoverLetterActivityInput
+    harness = _P1bTailorJobHarness if stage == "tailor" else _P1bCoverJobHarness
+    activity_fn = tailor_job_activity if stage == "tailor" else cover_letter_activity
+    runtime_fn = "_tailor_one_job" if stage == "tailor" else "_cover_one_job"
+    payload = input_type(
+        tenant_id="local", job_id=JobId("00000000-0000-4000-8000-000000000001"),
+    )
+    with patch(f"jobctrl.materials.activities.{runtime_fn}", side_effect=rejected):
+        async with time_skipping_env() as env:
+            async with Worker(
+                env.client, task_queue=queue, workflows=[harness],
+                activities=[activity_fn], workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                with pytest.raises(WorkflowFailureError) as caught:
+                    await env.client.execute_workflow(
+                        harness.run, payload,
+                        id=f"p1b-material-rejected-wf-{uuid.uuid4()}", task_queue=queue,
+                    )
+    error = _application_error_from_failure(caught.value)
+    assert attempts == 1
+    assert error.type == "material_rejected" and error.non_retryable is True
 
 
 @pytest.mark.asyncio

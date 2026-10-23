@@ -9,6 +9,9 @@ const validators = new Map(
     {
       schemaVersion: contract.schemaVersion,
       promptVersion: contract.promptVersion,
+      compatiblePromptVersions: "compatiblePromptVersions" in contract
+        ? contract.compatiblePromptVersions
+        : [],
       schema: z.fromJSONSchema(
         contract.schema as Parameters<typeof z.fromJSONSchema>[0],
       ),
@@ -35,8 +38,13 @@ export function validDeterminationResult(envelope: {
   prompt_version: string;
   result: unknown;
 }): boolean {
-  if (!isCurrentDeterminationVersion(envelope)) return false;
-  const contract = validators.get(envelope.kind)!;
+  const contract = validators.get(envelope.kind);
+  if (
+    !contract ||
+    contract.schemaVersion !== envelope.schema_version ||
+    (contract.promptVersion !== envelope.prompt_version &&
+      !contract.compatiblePromptVersions.includes(envelope.prompt_version))
+  ) return false;
   const parsed = contract.schema.safeParse(envelope.result);
   if (!parsed.success) return false;
   if (envelope.kind === "page_interpretation") {

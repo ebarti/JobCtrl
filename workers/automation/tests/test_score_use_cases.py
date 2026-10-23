@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -46,7 +47,7 @@ from jobctrl.infrastructure.profile.factory import build_profile_repository
 from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
 
 
-def _score_case(*, llm, **kwargs):
+def _score_case(*, llm, requirements=(), interpretation=None, **kwargs):
     from jobctrl.domain.determinations import Source
     from tests.determination_fakes import job_interpretation
     from tests.test_semantic_determinations import Repository
@@ -62,7 +63,7 @@ def _score_case(*, llm, **kwargs):
             lane="scoring",
             preflight=lambda: None,
         ),
-        job_interpretation_reader=lambda job: job_interpretation(),
+        job_interpretation_reader=lambda job: interpretation or job_interpretation(requirements),
         confirmed_preferences_reader=lambda snapshot, criteria: [
             Source(source_id="target:roles:0", text="Synthetic saved target")
         ],
@@ -699,11 +700,13 @@ def test_requirement_fit_prompt_includes_education_evidence(tmp_path) -> None:
     }
     snapshot = _profile_snapshot_with_education(tmp_path)
     profile = snapshot.as_dict()
-    profile["resume"]["achievement_evidence"] = [{
-        "id": "unconfirmed-suggestion",
-        "source_text": "Unconfirmed proposal must stay outside the model's evidence",
-        "user_confirmed": False,
-    }]
+    profile["resume"]["achievement_evidence"] = [
+        {
+            "id": "unconfirmed-suggestion",
+            "source_text": "Unconfirmed proposal must stay outside the model's evidence",
+            "user_confirmed": False,
+        }
+    ]
     snapshot = ProfileSnapshot(snapshot.tenant_id, snapshot.profile_id, snapshot.version, profile)
     canonical = JobAnalysis(
         role_framing="Security leadership.",
@@ -761,6 +764,7 @@ def test_requirement_fit_prompt_includes_education_evidence(tmp_path) -> None:
         repository=score_repo,
         llm=llm,
         requirement_fit_repository=report_repo,
+        requirements=analysis.canonical.requirements,
     ).score(job=job, profile_snapshot=snapshot, employer_analysis=analysis)
 
     assert outcome.ok is True
@@ -837,7 +841,11 @@ def test_score_job_includes_requirement_fit_inputs_in_prompt(tmp_path) -> None:
     job = _job("https://example.com/job/requirement-fit-input")
     snapshot = _profile_snapshot_with_evidence(tmp_path)
 
-    outcome = _score_case(repository=repo, llm=llm).score(
+    outcome = _score_case(
+        repository=repo,
+        llm=llm,
+        requirements=_employer_analysis(JobId(job["job_id"])).canonical.requirements,
+    ).score(
         job=job,
         profile_snapshot=snapshot,
         employer_analysis=_employer_analysis(JobId(job["job_id"])),
@@ -903,6 +911,7 @@ def test_score_job_persists_resolved_requirement_fit_report(tmp_path) -> None:
         repository=score_repo,
         llm=llm,
         requirement_fit_repository=report_repo,
+        requirements=_employer_analysis(JobId(job["job_id"])).canonical.requirements,
     ).score(
         job=job,
         profile_snapshot=snapshot,
@@ -922,7 +931,7 @@ def test_score_job_persists_resolved_requirement_fit_report(tmp_path) -> None:
     assert report.employer_analysis_generation == 3
     assert report.profile_snapshot_version == snapshot.version
     assert report.scoring_policy_version == 1
-    assert report.formula_version == "requirement-fit-v1"
+    assert report.formula_version == "requirement-fit-v2-scoped"
     assert report.resolved_fit_score is not None
     assert report.resolved_fit_score.value == 10
     assert report.summary.weighted_fit == 1.0
@@ -962,6 +971,7 @@ def test_score_job_requirement_fit_missing_must_have_drives_low_score(tmp_path) 
         repository=score_repo,
         llm=llm,
         requirement_fit_repository=report_repo,
+        requirements=_employer_analysis(JobId(job["job_id"])).canonical.requirements,
     ).score(
         job=job,
         profile_snapshot=snapshot,
@@ -975,6 +985,107 @@ def test_score_job_requirement_fit_missing_must_have_drives_low_score(tmp_path) 
     assert outcome.score.breakdown.missing_signals == ("Lead Python platform reliability across distributed APIs.",)
     assert report_repo.saved[0][1].resolved_fit_score is not None
     assert report_repo.saved[0][1].resolved_fit_score.value == 1
+
+
+@pytest.mark.parametrize(
+    "scope,expected", [("resume", 4), ("eligibility", 10), ("logistics", 10), ("employer_condition", 10)]
+)
+def test_recorded_scope_controls_fit_without_changing_eligibility(tmp_path, scope, expected) -> None:
+    from tests.determination_fakes import job_interpretation
+
+    job = _job()
+    analysis = _employer_analysis(JobId(job["job_id"]))
+    first = analysis.canonical.requirements[0]
+    condition = first.model_copy(update={"id": "req-condition"})
+    analysis = replace(analysis, canonical=analysis.canonical.model_copy(update={"requirements": [first, condition]}))
+    interpretation = job_interpretation(analysis.canonical.requirements)
+    interpretation.requirements[1].scope = scope
+    citation = {"source_id": condition.id, "quote": condition.evidence_span, "exact_values": []}
+    llm = _ScriptedLlm(
+        {
+            **_strong_llm_response(),
+            "eligibility": {
+                "status": "blocked",
+                "blockers": [
+                    {
+                        "category": "qualification",
+                        "reason": "Explicit synthetic blocker",
+                        "citations": [citation],
+                    }
+                ],
+                "warnings": [],
+            },
+            "requirement_assessments": [
+                {
+                    "requirement_id": first.id,
+                    "requirement_text": first.text,
+                    "tier": first.tier,
+                    "weight": first.weight,
+                    "job_evidence_span": first.evidence_span,
+                    "fit": {"kind": "matched", "evidence_ids": ["ev_python_platform"], "strength": "direct"},
+                },
+                {
+                    "requirement_id": condition.id,
+                    "requirement_text": condition.text,
+                    "tier": condition.tier,
+                    "weight": condition.weight,
+                    "job_evidence_span": condition.evidence_span,
+                    "fit": {"kind": "blocked", "blocker": "Explicit synthetic blocker"},
+                },
+            ],
+        }
+    )
+    reports = _MemoryRequirementFitRepo()
+    outcome = _score_case(
+        llm=llm,
+        repository=_MemoryRepo(),
+        requirement_fit_repository=reports,
+        interpretation=interpretation,
+    ).score(job=job, profile_snapshot=_profile_snapshot_with_evidence(tmp_path), employer_analysis=analysis)
+    assert outcome.ok, outcome.error
+    assert outcome.score.fit_score.value == expected
+    assert outcome.score.breakdown.eligibility.hard_blockers == ("Explicit synthetic blocker",)
+    contribution = reports.saved[0][1].assessments[1].contribution
+    assert contribution.scope == scope
+    assert contribution.scope_source_id == interpretation._determination_id
+    assert contribution.max_points == (1.1875 if scope == "resume" else 0)
+
+
+@pytest.mark.parametrize("failure", ["missing", "foreign", "unbound", "context_only"])
+def test_invalid_scope_bindings_preserve_accepted_score_before_provider_work(tmp_path, failure) -> None:
+    from tests.determination_fakes import job_interpretation
+
+    job = _job()
+    analysis = _employer_analysis(JobId(job["job_id"]))
+    snapshot = _profile_snapshot_with_evidence(tmp_path)
+    repo, reports = _MemoryRepo(), _MemoryRequirementFitRepo()
+    accepted = _score_case(
+        repository=repo,
+        llm=_ScriptedLlm(_strong_llm_response()),
+        requirements=analysis.canonical.requirements,
+        requirement_fit_repository=reports,
+    ).score(job=job, profile_snapshot=snapshot, employer_analysis=analysis)
+    assert accepted.ok
+    interpretation = job_interpretation(analysis.canonical.requirements)
+    if failure == "missing":
+        interpretation.requirements = []
+    elif failure == "foreign":
+        interpretation.requirements[0].requirement_id = "foreign"
+    elif failure == "unbound":
+        interpretation._determination_id = ""
+    else:
+        interpretation.requirements[0].scope = "logistics"
+    llm = _ScriptedLlm(_strong_llm_response())
+    failed = _score_case(
+        repository=repo,
+        llm=llm,
+        interpretation=interpretation,
+        requirement_fit_repository=reports,
+    ).score(job=job, profile_snapshot=snapshot, employer_analysis=analysis)
+    assert not failed.ok
+    assert llm.calls == []
+    assert repo.load(LOCAL_TENANT, JobId(job["job_id"])) == accepted.score
+    assert len(reports.saved) == 1
 
 
 def test_score_job_keeps_hard_blockers_separate_from_high_score(profile_snapshot) -> None:
@@ -1089,13 +1200,14 @@ def test_score_job_resolves_final_score_from_policy_not_llm_overall(profile_snap
 def test_score_job_returns_error_on_unparseable_response(profile_snapshot) -> None:
     repo = _MemoryRepo()
     # Payload missing the required ``score`` field — parser flags ok=False.
-    llm = _ScriptedLlm({"keywords": ["a"], "reasoning": "missing score"})
+    llm = _ScriptedLlm(*[{"keywords": ["a"], "reasoning": "missing score"} for _ in range(3)])
     use_case = _score_case(repository=repo, llm=llm)
 
     outcome = use_case.score(job=_job(), profile_snapshot=profile_snapshot)
     assert outcome.ok is False
     assert outcome.score is None
     assert outcome.error == "semantic_determination:schema_violation"
+    assert len(llm.calls) == 3
     assert repo.load(LOCAL_TENANT, JobId(_job()["job_id"])) is None
 
 

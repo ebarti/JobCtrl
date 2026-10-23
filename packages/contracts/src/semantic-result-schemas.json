@@ -232,7 +232,11 @@
     "schemaVersion": "1"
   },
   "artifact_quality": {
-    "promptVersion": "artifact-quality-v2",
+    "compatiblePromptVersions": [
+      "artifact-quality-v2",
+      "artifact-quality-v3"
+    ],
+    "promptVersion": "artifact-quality-v3",
     "schema": {
       "$defs": {
         "Citation": {
@@ -285,9 +289,11 @@
               "type": "string"
             },
             "citation": {
-              "$ref": "#/$defs/Citation"
+              "$ref": "#/$defs/Citation",
+              "description": "Cite this rendered line: source_id must equal 'line:' + line_id and quote must be verbatim text from that line. Saved candidate evidence belongs in evidence_corrections instead."
             },
             "line_id": {
+              "description": "An exact unprefixed rendered line ID from context.line_ids, never a candidate evidence or requirement ID.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Line Id",
@@ -320,6 +326,7 @@
       "additionalProperties": false,
       "properties": {
         "evidence_corrections": {
+          "description": "Only saved candidate evidence IDs that support a proposed repair, never rendered line IDs or posting/requirement IDs. Findings cite rendered lines separately.",
           "items": {
             "$ref": "#/$defs/Citation"
           },
@@ -1355,6 +1362,7 @@
               "type": "array"
             },
             "source_evidence": {
+              "description": "Only candidate evidence IDs in this line's allowed_evidence_ids. Include every source used to support a candidate_fact in claims.evidence. When allowed_evidence_ids is empty, return []. Requirements/posting citations belong in claims.evidence or served_requirements, never in this list.",
               "items": {
                 "$ref": "#/$defs/Citation"
               },
@@ -1386,7 +1394,8 @@
           "additionalProperties": false,
           "properties": {
             "citation": {
-              "$ref": "#/$defs/Citation"
+              "$ref": "#/$defs/Citation",
+              "description": "Cite the requirement source whose source_id exactly equals this entry's requirement_id."
             },
             "rationale": {
               "maxLength": 1000,
@@ -1413,7 +1422,8 @@
           "additionalProperties": false,
           "properties": {
             "citation": {
-              "$ref": "#/$defs/Citation"
+              "$ref": "#/$defs/Citation",
+              "description": "Cite the affected final line: source_id is line:<the containing LineVerification.line_id>, with a verbatim span from that line."
             },
             "kind": {
               "enum": [
@@ -1446,6 +1456,7 @@
           "additionalProperties": false,
           "properties": {
             "evidence": {
+              "description": "Supporting source citations. For candidate_fact, use only this line's allowed_evidence_ids; other claim kinds may also use its allowed_requirement_ids. Never cite a final line as supporting evidence.",
               "items": {
                 "$ref": "#/$defs/Citation"
               },
@@ -1481,7 +1492,8 @@
               "type": "string"
             },
             "text": {
-              "$ref": "#/$defs/Citation"
+              "$ref": "#/$defs/Citation",
+              "description": "Cite the final text being verified: source_id must be exactly line:<the containing LineVerification.line_id>, and quote must be a verbatim span of that line. This slot never cites evidence or a requirement."
             }
           },
           "required": [
@@ -1743,6 +1755,175 @@
         "rationale"
       ],
       "title": "DescriptionQuality",
+      "type": "object"
+    },
+    "schemaVersion": "1"
+  },
+  "discovery_posting_qualification": {
+    "promptVersion": "discovery-posting-qualification-v1",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        },
+        "DescriptionQuality": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "confidence": {
+              "enum": [
+                "high",
+                "medium",
+                "low"
+              ],
+              "title": "Confidence",
+              "type": "string"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            }
+          },
+          "required": [
+            "confidence",
+            "citations",
+            "rationale"
+          ],
+          "title": "DescriptionQuality",
+          "type": "object"
+        },
+        "InterpretedField_Literal__match____mismatch____unknown___": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "value": {
+              "enum": [
+                "match",
+                "mismatch",
+                "unknown"
+              ],
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "value",
+            "citations",
+            "rationale"
+          ],
+          "title": "InterpretedField[Literal['match', 'mismatch', 'unknown']]",
+          "type": "object"
+        },
+        "InterpretedField_Literal__specific_role____not_specific____unknown___": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "value": {
+              "enum": [
+                "specific_role",
+                "not_specific",
+                "unknown"
+              ],
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "value",
+            "citations",
+            "rationale"
+          ],
+          "title": "InterpretedField[Literal['specific_role', 'not_specific', 'unknown']]",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "description_quality": {
+          "$ref": "#/$defs/DescriptionQuality"
+        },
+        "location_match": {
+          "$ref": "#/$defs/InterpretedField_Literal__match____mismatch____unknown___"
+        },
+        "role_title": {
+          "$ref": "#/$defs/InterpretedField_Literal__specific_role____not_specific____unknown___"
+        }
+      },
+      "required": [
+        "role_title",
+        "description_quality",
+        "location_match"
+      ],
+      "title": "PostingQualification",
       "type": "object"
     },
     "schemaVersion": "1"
@@ -2660,6 +2841,110 @@
     },
     "schemaVersion": "1"
   },
+  "material_evidence_selection": {
+    "promptVersion": "material-evidence-selection-v1",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        },
+        "RequirementEvidenceSelection": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "rationale": {
+              "maxLength": 1500,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "requirement_id": {
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Requirement Id",
+              "type": "string"
+            },
+            "selected_edge_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "One exact admitted edge ID for this requirement, or null with a reason for leaving it uncovered.",
+              "title": "Selected Edge Id"
+            }
+          },
+          "required": [
+            "requirement_id",
+            "selected_edge_id",
+            "rationale",
+            "citations"
+          ],
+          "title": "RequirementEvidenceSelection",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "decisions": {
+          "items": {
+            "$ref": "#/$defs/RequirementEvidenceSelection"
+          },
+          "maxItems": 200,
+          "title": "Decisions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "decisions"
+      ],
+      "title": "MaterialEvidenceSelection",
+      "type": "object"
+    },
+    "schemaVersion": "1"
+  },
   "material_locale_translation": {
     "promptVersion": "material-locale-translation-v1",
     "schema": {
@@ -3518,7 +3803,7 @@
     "schemaVersion": "1"
   },
   "posting_extraction": {
-    "promptVersion": "posting-extraction-v3",
+    "promptVersion": "posting-extraction-v4-source-selection",
     "schema": {
       "$defs": {
         "Citation": {
@@ -3555,6 +3840,66 @@
           "title": "Citation",
           "type": "object"
         },
+        "PostingDescriptionSelection": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "description": "Return []; the application records the exact copied source citation.",
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 20,
+              "title": "Citations",
+              "type": "array"
+            },
+            "first_line_id": {
+              "maxLength": 100,
+              "minLength": 1,
+              "title": "First Line Id",
+              "type": "string"
+            },
+            "last_line_id": {
+              "maxLength": 100,
+              "minLength": 1,
+              "title": "Last Line Id",
+              "type": "string"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "source_id": {
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "maxLength": 64000,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Return null; the application copies the validated source span.",
+              "title": "Value"
+            }
+          },
+          "required": [
+            "source_id",
+            "first_line_id",
+            "last_line_id",
+            "rationale"
+          ],
+          "title": "PostingDescriptionSelection",
+          "type": "object"
+        },
         "PostingField": {
           "additionalProperties": false,
           "properties": {
@@ -3585,6 +3930,29 @@
           ],
           "title": "PostingField",
           "type": "object"
+        },
+        "PostingSourceOrigin": {
+          "additionalProperties": false,
+          "properties": {
+            "source_id": {
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            },
+            "url": {
+              "maxLength": 64000,
+              "minLength": 1,
+              "title": "Url",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "url"
+          ],
+          "title": "PostingSourceOrigin",
+          "type": "object"
         }
       },
       "additionalProperties": false,
@@ -3593,7 +3961,7 @@
           "$ref": "#/$defs/PostingField"
         },
         "description": {
-          "$ref": "#/$defs/PostingField"
+          "$ref": "#/$defs/PostingDescriptionSelection"
         },
         "employer": {
           "$ref": "#/$defs/PostingField"
@@ -3603,6 +3971,15 @@
         },
         "salary": {
           "$ref": "#/$defs/PostingField"
+        },
+        "source_origins": {
+          "description": "Return []; the application records captured source origins.",
+          "items": {
+            "$ref": "#/$defs/PostingSourceOrigin"
+          },
+          "maxItems": 512,
+          "title": "Source Origins",
+          "type": "array"
         },
         "title": {
           "$ref": "#/$defs/PostingField"
@@ -3616,10 +3993,10 @@
         "salary",
         "application_url"
       ],
-      "title": "PostingExtraction",
+      "title": "PostingSelectionExtraction",
       "type": "object"
     },
-    "schemaVersion": "3"
+    "schemaVersion": "4"
   },
   "repeat_equivalence": {
     "promptVersion": "repeat-equivalence-v2",
@@ -3831,7 +4208,11 @@
     "schemaVersion": "1"
   },
   "resume_adversarial": {
-    "promptVersion": "resume-adversarial-v1",
+    "compatiblePromptVersions": [
+      "resume-adversarial-v1",
+      "resume-adversarial-v2"
+    ],
+    "promptVersion": "resume-adversarial-v2",
     "schema": {
       "$defs": {
         "Citation": {
@@ -3948,9 +4329,11 @@
               "type": "string"
             },
             "citation": {
-              "$ref": "#/$defs/Citation"
+              "$ref": "#/$defs/Citation",
+              "description": "Cite this rendered line: source_id must equal 'line:' + line_id and quote must be verbatim text from that line. Saved candidate evidence belongs in evidence_corrections instead."
             },
             "line_id": {
+              "description": "An exact unprefixed rendered line ID from context.line_ids, never a candidate evidence or requirement ID.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Line Id",
@@ -4358,7 +4741,7 @@
     "schemaVersion": "2"
   },
   "scoring": {
-    "promptVersion": "score-fit-assessment-v9-canonical-evidence",
+    "promptVersion": "score-fit-assessment-v10-binding-repair",
     "schema": {
       "$defs": {
         "Blocker": {
@@ -4524,6 +4907,7 @@
               "$ref": "#/$defs/RequirementFit"
             },
             "job_evidence_span": {
+              "description": "Copy a non-empty contiguous verbatim span from the outer requirement source whose source_id equals requirement_id. Preserve whitespace, case and punctuation; never substitute requirement_text or join/rewrite source fields.",
               "title": "Job Evidence Span",
               "type": "string"
             },

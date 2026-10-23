@@ -47,6 +47,7 @@ OPERATIONAL_ACTIVITY_KINDS: Final[Mapping[str, str]] = MappingProxyType(
         "cover_letter": "job-cover-letter",
         "render_pdf": "job-pdf-render",
         "derive_preparation_targets": "preparation-targets",
+        "check_saved_posting_availability": "saved-posting-availability",
     }
 )
 
@@ -304,14 +305,17 @@ class _ActivityRuntimeTelemetryInboundInterceptor(ActivityInboundInterceptor):
         token: str | None = None
         try:
             info = activity.info()
-            token = self._inventory.start(
-                activity_type=info.activity_type,
-                activity_id=info.activity_id,
-                workflow_id=info.workflow_id,
-                workflow_run_id=info.workflow_run_id,
-                attempt=info.attempt,
-                started_at=info.started_time,
-            )
+            # Local lifecycle writes use an independent SDK pool, not the
+            # configured server-dispatched activity capacity this ledger reports.
+            if not getattr(info, "is_local", False):
+                token = self._inventory.start(
+                    activity_type=info.activity_type,
+                    activity_id=info.activity_id,
+                    workflow_id=info.workflow_id,
+                    workflow_run_id=info.workflow_run_id,
+                    attempt=info.attempt,
+                    started_at=info.started_time,
+                )
         except Exception:
             # Runtime telemetry must never change activity execution behavior.
             token = None

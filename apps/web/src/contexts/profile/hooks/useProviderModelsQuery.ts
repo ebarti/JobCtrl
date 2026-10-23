@@ -11,5 +11,6 @@ export function useProviderModelsQuery(): UseQueryResult<ProviderModelCatalogRes
   return useQuery({
     queryKey: profileKeys.providerModels(tenantId),
     queryFn: () => api.providerModels(),
+    refetchInterval: 60_000,
   });
 }

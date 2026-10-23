@@ -1954,7 +1954,7 @@ test("Crawl sources keeps provider traversal separate from exact outcomes", asyn
   expect(mobile.providerBottom).toBeLessThanOrEqual(mobile.outcomesTop + 1);
 });
 
-test("pipeline recovery explains the automatic previous-run check in plain language", async ({
+test("pipeline recovery explains the current run record check in plain language", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1491, height: 1245 });
@@ -1965,15 +1965,16 @@ test("pipeline recovery explains the automatic previous-run check in plain langu
 
   const alert = page
     .getByRole("alert")
-    .filter({ hasText: "Checking previous run records" });
-  await expect(alert).toContainText("Checking previous run records");
-  await expect(alert).toContainText("15 of 72 linked jobs checked");
-  await expect(alert).toContainText("3 of 8 stage records checked");
-  await expect(alert).toContainText("finishes automatically and needs no restart");
+    .filter({ hasText: "Checking current run records" });
+  await expect(alert).toContainText("Checking current run records");
+  await expect(alert).toContainText("15 of 72 linked jobs recorded");
+  await expect(alert).toContainText("3 of 8 stage records stored");
+  await expect(alert.locator("time")).toHaveAttribute("datetime", pipelinesRecoveringProjectionSnapshot.projectionCoverage!.updatedAt!);
+  await expect(alert).toContainText("updates every 15 seconds while visible");
   await expect(alert).not.toContainText(/restoring history|terminal/i);
 
   const summary = page.getByLabel("Pipeline operations summary");
-  await expect(summary).toContainText("Checking previous run");
+  await expect(summary).toContainText("Checking current run");
   await expect(summary).not.toContainText("Restoring history");
 });
 
@@ -2507,6 +2508,8 @@ test("Job Detail requirement-fit card has visual regression coverage", async ({
   );
   const drawer = page.getByRole("article", { name: "Job details" });
   await expect(drawer).toBeVisible({ timeout: 30_000 });
+  await drawer.getByRole("button", { name: "Sections", exact: true }).click();
+  await page.getByRole("button", { name: "Expand all", exact: true }).click();
 
   const drawerRequirement = drawer
     .locator(".employer-analysis-requirement")

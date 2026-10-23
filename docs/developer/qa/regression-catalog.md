@@ -20,6 +20,17 @@ individual regression to exact test files.
 | Provider/browser setup | Environment ownership and passive detection cannot silently become credential or browser adoption. Extension pairing-token presence remains distinct from one explicitly selected installation's fresh live heartbeat; another Chrome profile with the token cannot lease. Integrated Discovery and Enrich prefer the selected connected extension or choose guarded public HTTP/anonymous Playwright before acquisition. Offline status must not block eligible dispatch. Neither mode reads a copied profile; acquisition errors and cancellation never trigger a second transport. Anonymous provider initial/redirect/recreated/detail requests retain public URL/DNS/socket checks and reject proxy routing. Connected worker tasks must not carry browser-owned cookie/user-agent headers. Hanging/canceled tasks close their tabs, active leases remain live past 45 seconds, four-way admission uses backpressure, cross-origin redirects are blocked before dispatch, and UTF-8 byte bounds stop streaming early. | Worker/API bridge tests, two-installation contention and lease-liveness tests, extension persistent-context timeout/redirect E2E, Settings/Pipelines components, and a bounded live Discovery smoke. |
 | Retry preflight | Starting a retry cannot erase failure evidence before worker readiness is known. | API state-before/state-after regression plus route smoke. |
 
+Provider recovery regressions exercise an actual adapter over explicit fake SDK
+boundaries: a rejected route is excluded from the next automatic acquisition,
+the replacement carries its own provider/model, and the failed adapter is never
+relabeled. Auth failures, model-specific rate limits, implicit SDK defaults,
+explicit reset, malformed responses and budget denial remain distinct. Use
+`test_provider_availability_recovery.py`, `test_llm_port.py`,
+`test_employer_analysis_leg_config.py` and `test_job_url_import_workflow.py`.
+Employer-analysis tests also bind each draft's preferred model and effective
+model-set cache identity. Shared determination repair tests repeat budget
+admission, retain strict citation checks and prove bounded failure preservation.
+
 ## Bounded Combined Jobs Pages (#1003)
 
 The Operations helper must make one combined list request and return its server
@@ -269,7 +280,7 @@ env -u UV_PROJECT_ENVIRONMENT -u VIRTUAL_ENV -u UV_EXCLUDE_NEWER -u UV_EXCLUDE_N
   uv run --project workers/automation --locked --all-extras --no-sync --exclude-newer false \
   pytest -q workers/automation/tests/test_pdf_renderer_ports.py \
   --basetemp="$trial_root/pytest" --junitxml="$trial_root/junit.xml" \
-  -o cache_dir="$trial_root/pytest-cache"
+  -o cache_dir="$trial_root/pytest-cache" -o tmp_path_retention_policy=all
 ```
 
 The trial comprises **eight required cases** (four cases × two paper sizes).
@@ -277,10 +288,24 @@ Each runs three adapter renders and three shared-entry renders, all with fresh
 Chromium lifecycles and separate `repeat-1`/`repeat-2`/`repeat-3` directories:
 **48 measured PDFs**, plus the boundary probes and a browser/font preflight.
 The focused selector is `-k dense_resume_pagination_trial`; it must execute
-eight cases with zero skips. Ordinary port-test runs without the explicit flag
-skip these eight browser cases and supply no trial evidence. With the flag,
+eight cases with zero skips. The full module also runs four required
+`test_resume_continuation_pages_keep_selected_template_insets` cases: A4/Letter
+with default/asymmetric margins, each through both entry points (eight more
+PDFs). Independent Poppler geometry verifies the selected top/bottom inset on
+every continuation page with 3 pt top / 2 pt bottom font-metric tolerances;
+canonical marker
+order and nonblank pages remain required. These cases reproduce the missing
+continuation inset without reading private profile data.
+The top tolerance includes the 2.85 pt ascent of a 9.5 pt section heading's
+Poppler font box; every-page PNG review still checks actual painted insets.
+The repeated trial also rejects independently located section headings whose
+following content starts on a later physical page.
+Ordinary port-test runs without the explicit flag skip these twelve browser
+cases and supply no trial evidence. With the flag,
 missing imports, Chromium, fonts or Poppler are failures. Do not count a docs
 build, fake renderer, zero-test run or skipped case as product QA.
+The retention override is required: the ordinary test configuration removes
+successful temporary cases, which would discard their PDF/PNG review evidence.
 `JOBCTRL_RUN_PAGINATION_TRIAL=1` remains an accepted alias for older invocations;
 the managed gate's `JOBCTRL_RUN_DENSE_HTML_PAGINATION_TESTS=1` enables the same
 required scenarios even when the alias is unset.
@@ -534,6 +559,64 @@ lexical fallback. Check the lane and spend preflight run before each new call;
 unchanged inputs reuse accepted determinations with zero calls. Failed refreshes
 preserve the last accepted artifact. Do not create eval sets, labeled corpora,
 baseline comparisons, English sentence corpora or recorded-output replay fixtures.
+
+For preparation review gates, seed a latest canonical grade of 8, an older grade
+of 10, a conflicting legacy `jobs` grade, and a second tenant sharing the JobId.
+The production preparation reader and per-job Tailor entry must deliver only
+the selected tenant's latest grade and version to the resume review gate. At
+grades 8 and 9, run the actual resume use case from that reader: opposing valid
+six-persona verdicts must control acceptance and persist their determination
+bindings. A persona-provider failure preserves the accepted resume. A manual
+grade-6 request retains grade 6, and an unscored target must remain readable
+without adopting the legacy grade.
+
+For material context, use the production plan builder with a synthetic fit edge
+to a role date or another canonical context field. The source remains available,
+the renderer preserves fixed fields, and omitting a generated context claim
+receives neither an inclusion error nor shipped coverage. Selected achievements
+and explicitly pinned context still require their claims. Keep the existing
+unaffirmed-source rejection checks: context must not be pruned into acceptance.
+Through real Temporal Tailor and Cover activity entry points, a bounded content
+rejection must fail once as non-retryable `material_rejected`; provider/network
+faults must still exercise their configured retries.
+
+For an overflowing initial material selection, use owned synthetic supported
+edges that require five distinct achievements under a four-bullet role ceiling.
+Exercise the production selector through the resume use case. Opposite valid
+model selections must change the selected graph, persist their source-cited
+determination IDs and expose omitted requirements. Feasible seeds and impossible
+explicit pins must make no selection call. Enforce pins, edge ownership, complete
+requirement decisions, verbatim citations and the unchanged ceiling; distinguish
+provider, spend, JSON, schema and binding failures. Unchanged inputs reuse the
+accepted determination, changed profile versions invalidate it, and a failed
+refresh preserves the prior accepted material and bytes. Prove the production
+builder uses the configured generator route and tailoring lane, then make one
+real configured-provider call using owned synthetic sources.
+
+For review continuity, run the actual resume and cover use cases through three
+synthetic model decisions. Verify exact prior determination IDs and complete
+typed findings reach later generation/review inputs and the persisted audit.
+Opposing valid final verdicts must control acceptance independently of their
+diagnostic score. Repeat an unchanged draft: review history must affect its
+determination fingerprint while unchanged claim verification remains cached.
+Exercise a rejected high-fit persona review and changed-voice review; retain
+all six independent personas and the accepted base when voice is rejected.
+Historical quotes cannot become current finding citations. Provider or spend
+failure after earlier reviews must preserve the last accepted artifact. Use
+owned synthetic sources and explicit model choices, never native prose replay.
+
+For mechanical binding repair, send multiple invalid literal quotes through the
+actual scoring/model port. One correction must receive all current violations,
+their structural paths and exact canonical sources. Opposing eligibility
+decisions remain authoritative. Exercise typed citation mappings as well as
+lists; invalid entries must never be cached as accepted. Scoring requirement
+spans receive per-field canonical targets, including whitespace-sensitive input,
+and blank spans receive no verbatim credit. Unknown requirement IDs must not hide
+independent evidence-ID errors. Stubborn invalid output still exhausts the same
+three-call limit; provider/spend failures preserve the last accepted score.
+Failure text and stored blocked-state records retain safe codes rather than
+source/model prose. Pair these owned synthetic cases with a configured-provider
+correction probe before claiming live integration.
 
 For version changes, seed an obsolete analysis projection with already-folded
 event cursors. The TypeScript detail owner must rebuild it from the current
@@ -825,6 +908,15 @@ and confirm a later timeout cannot replace stronger destination-denial evidence.
 The job drawer must show the typed cause, historical observation, current
 recheck result, and manual fallback without claiming the original denial was a
 permanent site policy or suppressing technical evidence.
+Exercise partial acquisition through both the intake fetcher and anonymous
+batch entry point. Inject typed script/ping timeout and DNS failures during
+navigation, a navigation exception, and snapshot collection. Both paths must
+retain the readable document, carry incomplete status evidence with the exact
+acquisition reason, and return unknown availability before any model call.
+Main/embedded-document failures, private destinations and resource-size limits
+must still prevent extraction. A real Chromium fault probe separately exercises
+the batch entry point with owned synthetic documents; it must not access native
+data or replace the independent interpretation/description-quality gates.
 For summary metric grounding, seed a baseline tenure estimate with no supporting
 achievement and a separately pinned verified metric. The normal Tailor use case
 must reject the tenure claim even with an unrelated citation, retain that failure
@@ -982,6 +1074,15 @@ override-ready state, and a simulated live dispatch while proving no
 `ApplicationSubmitted` fact was created.
 
 ### Pipeline history recovery and restart regression
+
+Race the real RPC dispatch-start writer against the workflow's detailed start
+marker in both orders, with empty and sparse summaries. The exact same Temporal
+run must retain its recorded job/configuration keys across projection refreshes.
+Reusing the workflow ID for another run must clear prior metadata even when the
+new summary is absent. An unidentified execution cannot merge job bindings;
+late duplicate starts preserve terminal truth, while explicitly marked
+same-run missing-history recovery retains its known inputs. Keep every start
+fact in the timeline. Use owned structural SQL fixtures and no model replay.
 
 Reproduce the human-reported partial-projection state with an active Discover
 execution, 72 expected execution members, 15 persisted members, 16 expected

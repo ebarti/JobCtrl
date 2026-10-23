@@ -4,7 +4,7 @@ import type { JobDetail } from "@jobctrl/contracts";
 import { ScoreBadge } from "../../contexts/scoring/components/ScoreBadge.js";
 import { ContextHelp } from "../../shared/ui/context-help.js";
 import { StatusBadge } from "../../shared/ui/status-badge.js";
-import { fitScoreHelp } from "./fit-score-help.js";
+import { fitScoreHelp, requirementFitScoreContext } from "./fit-score-help.js";
 
 export interface JobOverviewProps {
   detail: JobDetail;
@@ -40,6 +40,7 @@ function sentenceCase(value: string): string {
 
 export function JobOverview({ detail }: JobOverviewProps) {
   const { applyAudit, job } = detail;
+  const scoreContext = requirementFitScoreContext(detail);
   return (
     <header className="drawer-head job-overview">
       <div
@@ -48,7 +49,7 @@ export function JobOverview({ detail }: JobOverviewProps) {
       >
         <span className="job-overview-score-label" data-typography="label">
           Fit
-          <ContextHelp label="Fit score" description={fitScoreHelp(job)} />
+          <ContextHelp label="Fit score" description={fitScoreHelp(job, scoreContext)} />
         </span>
         <span data-typography="metric">
           <ScoreBadge score={job.fitScore} />
@@ -131,6 +132,11 @@ export function JobOverview({ detail }: JobOverviewProps) {
             </div>
           ) : null}
         </div>
+        {scoreContext ? (
+          <p className="muted" data-typography="body" role="note" aria-label="Requirement score context">
+            {scoreContext}
+          </p>
+        ) : null}
       </div>
     </header>
   );

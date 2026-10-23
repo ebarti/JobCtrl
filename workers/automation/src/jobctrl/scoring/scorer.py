@@ -27,7 +27,7 @@ from typing import Any, Mapping, Protocol
 
 from jobctrl.config import RESUME_PATH
 from jobctrl.database import effective_tailoring_min_score, get_connection, get_jobs_by_stage
-from jobctrl.domain.determinations import serialized_determination_failure
+from jobctrl.domain.determinations import DeterminationFailure, serialized_determination_failure
 from jobctrl.domain.discovery.value_objects import PostingUrl
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.job_content_identity import (
@@ -87,6 +87,9 @@ log = logging.getLogger(__name__)
 def _employer_analysis_failure_message(exc: Exception) -> str:
     """Describe an all-leg failure without persisting raw model output."""
 
+    failure = exc.determination_failure if isinstance(exc, EnsembleError) else exc
+    if isinstance(failure, DeterminationFailure):
+        return str(failure)
     if not isinstance(exc, EnsembleError):
         return f"Employer analysis failed: {exc}"
     leg_failures = []

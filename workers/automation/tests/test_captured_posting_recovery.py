@@ -156,3 +156,110 @@ def test_recovered_posting_belongs_to_the_selected_execution(conn):
         "owned-discovery", "owned-run", "ats_api", "capture-recovery-test",
     )
     assert row["cohort_kind"] == "observed_this_run"
+
+
+def smart_models(monkeypatch, model):
+    from jobctrl.discovery import smartextract
+    from jobctrl.infrastructure.discovery.smart_postings import SmartPostingIntake
+    from tests.smart_posting_fakes import PageFetcher, allow_url, model_dependencies, posting_page
+
+    def factory(connection, **kwargs):
+        kwargs.pop("fetcher", None)
+        return SmartPostingIntake(
+            connection, **kwargs,
+            fetcher=PageFetcher(posting_page("https://boards.greenhouse.io/acme/jobs/1")),
+            dependencies=model_dependencies(connection, model, tenant_id=str(kwargs.get("tenant_id", "local"))),
+            url_validator=allow_url,
+        )
+
+    monkeypatch.setattr(smartextract, "SmartPostingIntake", factory)
+
+
+def smart_recover(conn, **kwargs):
+    return capture_recovery.recover_captured_postings(
+        conn, tenant_id=kwargs.pop("tenant_id", "local"), source_ids=("smart_extract:synthetic",),
+        source_family="smartextract", run_id="smart-capture-recovery", search_cfg={}, **kwargs,
+    )
+
+
+@pytest.mark.parametrize("verdict,new,held", [("match", 1, 0), ("mismatch", 0, 0), ("unknown", 0, 1)])
+def test_smart_archived_cards_cannot_bypass_full_posting_qualification(conn, monkeypatch, verdict, new, held):
+    from tests.smart_posting_fakes import PostingModel
+
+    capture(conn, "1", title="Synthetic is hiring people", source="smart_extract:synthetic")
+    model = PostingModel(location=verdict)
+    smart_models(monkeypatch, model)
+    assert smart_recover(conn)["new"] == new
+    assert conn.execute("SELECT count(*) FROM jobs").fetchone()[0] == new
+    assert conn.execute("SELECT count(*) FROM manual_capture_queue").fetchone()[0] == held
+    assert conn.execute("SELECT consumed_at FROM posting_triage").fetchone()[0] is not None
+    assert [call[0] for call in model.calls] == [
+        "PageInterpretation", "PostingSelectionExtraction", "PostingQualification",
+    ]
+    if new:
+        assert tuple(conn.execute("SELECT title,company FROM jobs").fetchone()) == ("Platform Director", "Synthetic Labs")
+        assert conn.execute("SELECT source_native_id FROM job_source_observations").fetchone()[0] == "1"
+    assert smart_recover(conn)["recovered_captures"] == 0
+
+
+@pytest.mark.parametrize("deleted", [False, True])
+def test_smart_recovery_keeps_newer_content_enrichment_and_owner_deletion(conn, monkeypatch, deleted):
+    from tests.smart_posting_fakes import PostingModel
+
+    capture(conn, "1", source="smart_extract:synthetic")
+    model = PostingModel()
+    smart_models(monkeypatch, model)
+    assert smart_recover(conn)["new"] == 1
+    job_id = conn.execute("SELECT job_id FROM jobs").fetchone()[0]
+    conn.execute("UPDATE jobs SET description='Newer saved description'")
+    conn.execute("UPDATE posting_triage SET consumed_at=NULL")
+    conn.commit()
+    if deleted:
+        capture_recovery.SqliteJobRepository(conn).soft_delete(
+            LOCAL_TENANT, job_id, deleted_at="2026-10-21T00:00:00Z", reason="synthetic deletion",
+        )
+    enrichment_before = tuple(conn.execute("SELECT * FROM job_enrichments").fetchone())
+    snapshot_before = tuple(conn.execute("SELECT * FROM posting_snapshot_sets").fetchone())
+    assert smart_recover(conn)["existing"] == 1
+    assert conn.execute("SELECT description FROM jobs").fetchone()[0] == "Newer saved description"
+    assert tuple(conn.execute("SELECT * FROM job_enrichments").fetchone()) == enrichment_before
+    assert tuple(conn.execute("SELECT * FROM posting_snapshot_sets").fetchone()) == snapshot_before
+    assert capture_recovery.SqliteJobRepository(conn).load(LOCAL_TENANT, job_id).is_deleted is deleted
+    assert len(model.calls) == 3
+
+
+def test_interrupted_smart_recovery_reuses_fixed_observation_and_model_receipts(conn, monkeypatch):
+    from jobctrl.discovery import smartextract
+    from tests.smart_posting_fakes import PostingModel
+
+    capture(conn, "1", source="smart_extract:synthetic")
+    model = PostingModel()
+    smart_models(monkeypatch, model)
+    original = smartextract._store_jobs
+
+    def interrupted(*args, **kwargs):
+        original(*args, **kwargs)
+        raise RuntimeError("synthetic interruption after verified ingestion")
+
+    monkeypatch.setattr(smartextract, "_store_jobs", interrupted)
+    with pytest.raises(RuntimeError, match="synthetic interruption"):
+        smart_recover(conn)
+    assert conn.execute("SELECT consumed_at FROM posting_triage").fetchone()[0] is None
+    events = conn.execute("SELECT count(*) FROM job_events").fetchone()[0]
+    monkeypatch.setattr(smartextract, "_store_jobs", original)
+    assert smart_recover(conn)["existing"] == 1
+    assert conn.execute("SELECT count(*) FROM jobs").fetchone()[0] == 1
+    assert conn.execute("SELECT count(*) FROM job_source_observations").fetchone()[0] == 1
+    assert conn.execute("SELECT count(*) FROM job_events").fetchone()[0] == events
+    assert len(model.calls) == 3
+
+
+def test_smart_recovery_holds_unknown_capture_in_its_own_tenant(conn, monkeypatch):
+    from tests.smart_posting_fakes import PostingModel
+
+    capture(conn, "1", source="smart_extract:synthetic", tenant="other")
+    smart_models(monkeypatch, PostingModel(location="unknown"))
+    assert smart_recover(conn)["recovered_captures"] == 0
+    assert smart_recover(conn, tenant_id="other")["new"] == 0
+    assert conn.execute("SELECT tenant_id FROM manual_capture_queue").fetchone()[0] == "other"
+    assert {row[0] for row in conn.execute("SELECT tenant_id FROM semantic_determinations")} == {"other"}
