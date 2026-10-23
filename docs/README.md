@@ -196,6 +196,9 @@ These documents remain in the repository but are not separate site sections:
   proposal](plans/sensitive-artifact-retention.md) defines the unshipped local
   inventory, preservation, preview, containment, and recovery contract tracked
   by issue #887.
+- [Profile multi-source intake design (#1013)](plans/2026-09-21-profile-evidence-selective-tailoring.md#2-current-foundations-and-acceptance-map):
+  current import/editor limitation and proposed
+  source reconciliation with explicit human acceptance; not implemented.
 - [`plans/local-custom-provider-contract.md`](plans/local-custom-provider-contract.md):
   design-only, fail-closed contract and proof gates for a future local/custom
   LLM provider; the capability is currently unavailable.

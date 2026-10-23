@@ -39,7 +39,11 @@ The [profile evidence and selective resume composition program](https://github.c
 has a [reviewable integrated proposal](2026-09-21-profile-evidence-selective-tailoring.md)
 for draft evidence capture, explicit canonical promotion, opt-in selective
 composition, rendered-artifact audit, and dependent delivery slices. The plan
-is unshipped and awaits explicit user approval before implementation.
+is unshipped and awaits explicit user approval before implementation. Its
+[#1013 intake investigation](2026-09-21-profile-evidence-selective-tailoring.md#2-current-foundations-and-acceptance-map)
+reconciles shipped versioned-save/model foundations with the missing browser
+draft handoff and proposed multi-source review/promotion contract. This remains
+one docs-only issue delivery, not implementation of the program.
 
 The [demo access, consent withdrawal, and visitor erasure proposal](2026-09-22-demo-access-consent-withdrawal-proposal.md)
 is **PROPOSED** for [#885](https://github.com/ebarti/JobCtrl/issues/885).
