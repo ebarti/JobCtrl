@@ -30,6 +30,11 @@ from jobctrl.domain.compensation import (
 LEVELS_FYI_BASE_URL = "https://www.levels.fyi"
 LEVELS_FYI_ATTRIBUTION = "Data source: Levels.fyi (https://www.levels.fyi)"
 DEFAULT_LEVELS_FYI_PUBLIC_MAX_PAGES = 25
+LEVELS_FYI_PUBLIC_ERROR_CODES = (
+    "levels_fyi_public_unavailable",
+    "levels_fyi_public_unparsed",
+    "levels_fyi_public_page_budget_exhausted",
+)
 
 TextFetcher = Callable[[str], str | None]
 
@@ -73,12 +78,22 @@ class LevelsFyiPublicTargetOutcome:
     requests: tuple[LevelsFyiPublicRequestOutcome, ...] = ()
 
     @property
+    def error_codes(self) -> tuple[str, ...]:
+        """Describe observed acquisition limits without inferring source absence."""
+        if self.coverage != "supported":
+            return ()
+        errors = []
+        if self.level_lookup_unavailable or self.reachable_pages < self.requested_pages:
+            errors.append("levels_fyi_public_unavailable")
+        elif self.requested_pages > 0 and self.parsed_pages == 0:
+            errors.append("levels_fyi_public_unparsed")
+        if self.page_budget_exhausted:
+            errors.append("levels_fyi_public_page_budget_exhausted")
+        return tuple(errors)
+
+    @property
     def failed(self) -> bool:
-        return self.coverage == "supported" and (
-            self.page_budget_exhausted or self.level_lookup_unavailable
-            or self.reachable_pages < self.requested_pages
-            or (self.requested_pages > 0 and self.parsed_pages == 0)
-        )
+        return bool(self.error_codes)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -90,7 +105,7 @@ class LevelsFyiPublicTargetOutcome:
             "parsedPages": self.parsed_pages,
             "levelLookupUnavailable": self.level_lookup_unavailable,
             "pageBudgetExhausted": self.page_budget_exhausted,
-            "failed": self.failed,
+            "failed": self.failed, "errorCodes": list(self.error_codes),
             "requests": [request.as_dict() for request in self.requests],
         }
 

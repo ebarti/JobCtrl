@@ -545,6 +545,17 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For compensation lookup diagnostics, run locked
+`pytest tests/test_compensation_source_outcomes.py tests/test_automatic_compensation_refresh.py tests/test_compensation_refresh_state.py tests/test_market_compensation_repository.py tests/test_levels_fyi_public.py tests/test_compensation_refresh_temporal.py`.
+Use owned synthetic acquisition and persisted refresh paths to distinguish
+reachable budget exhaustion, reachable unparsed pages, actual HTTP failures and
+combined causes. Zero page allowance must make no request. Keep independent
+role/country outcomes isolated and unsupported coverage explicit. Require the
+same incomplete-lookup retry policy with retained new or previously accepted
+direct fallback evidence. Record each protocol reason in the bounded target
+receipt without retaining response bodies, headers or exception messages. Verify
+the actual Temporal activity result and fresh-history replay for each cause.
+
 For completed eligibility holds in pipeline operations, run
 `corepack pnpm --filter @jobctrl/api exec vitest run test/pipeline-operations.test.ts`
 and the API type/full-test gates. In owned exact-schema storage, reproduce a
