@@ -32,7 +32,6 @@ import time
 import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import nullcontext
 from datetime import datetime, timezone
 from urllib.parse import urljoin, urlparse
 
@@ -85,6 +84,7 @@ from jobctrl.infrastructure.discovery.live_browser import (
     LiveBrowserTaskError,
     LiveChromeDiscoveryClient,
     LiveChromeRobotsCache,
+    trusted_live_browser_url,
 )
 from jobctrl.infrastructure.enrichment.sqlite_repository import (
     SqlitePostingSnapshotSetRepository,
@@ -1557,7 +1557,7 @@ def scrape_site_batch(
         live_browser.ensure_available()
 
     try:
-        with (nullcontext(None) if live_browser is not None else sync_playwright()) as p:
+        with sync_playwright() as p:
             browser = None
             resolver: LinkedInApplyUrlResolver | None = None
             authenticated_page = None
@@ -1569,9 +1569,9 @@ def scrape_site_batch(
             # gateway and never share the authenticated browser/profile.
             owner_authenticated_session: PolitenessSession | None = None
             base_gateway = gateway or PolitenessGateway()
-            anonymous_gateway = base_gateway
+            live_anonymous_gateway = base_gateway
             if live_browser is not None:
-                anonymous_gateway = anonymous_gateway.with_robots(
+                live_anonymous_gateway = live_anonymous_gateway.with_robots(
                     LiveChromeRobotsCache(live_browser)
                 )
                 owner_authenticated_session = _enrichment_session(
@@ -1581,7 +1581,13 @@ def scrape_site_batch(
                     site=site,
                 )
             anonymous_session = _enrichment_session(
-                anonymous_gateway,
+                base_gateway,
+                run_budget,
+                conn,
+                site=site,
+            )
+            live_anonymous_session = _enrichment_session(
+                live_anonymous_gateway,
                 run_budget,
                 conn,
                 site=site,
@@ -1595,17 +1601,18 @@ def scrape_site_batch(
                 if _PROXY_CONFIG is not None:
                     launch_opts["proxy"] = _PROXY_CONFIG.playwright
                 browser = p.chromium.launch(**launch_opts)
-                context = browser.new_context(user_agent=anonymous_gateway.user_agent)
+                context = browser.new_context(user_agent=base_gateway.user_agent)
                 anonymous_page = context.new_page()
                 return anonymous_page
 
             def _page_and_session_for(url: str) -> tuple[object, PolitenessSession, object | None]:
                 nonlocal resolver, authenticated_page, owner_authenticated_session
                 if live_browser is not None:
-                    if _is_linkedin_job(site, url):
+                    if trusted_live_browser_url(url) and _is_linkedin_job(site, url):
                         assert owner_authenticated_session is not None
                         return None, owner_authenticated_session, None
-                    return None, anonymous_session, None
+                    if trusted_live_browser_url(url):
+                        return None, live_anonymous_session, None
                 if resolver is None and linkedin_apply_resolver_enabled() and _is_linkedin_job(site, url):
                     candidate = LinkedInApplyUrlResolver(
                         proxy=_PROXY_CONFIG,
@@ -1767,7 +1774,7 @@ def scrape_site_batch(
                         started_at=started_at,
                     )
 
-                    if live_browser is None:
+                    if live_browser is None or not trusted_live_browser_url(url):
                         scraped = scrape_detail_page(page, url, session=session)
                     else:
                         scraped = scrape_detail_page_via_live_chrome(

@@ -42,6 +42,24 @@ ApiTransport = Callable[[str, str, bytes | None, Mapping[str, str], float], tupl
 _TOKEN_FILENAME = "extension-capability-token"
 _ROBOTS_TTL_SECONDS = 3_600.0
 _ROBOTS_UNREACHABLE_TTL_SECONDS = 300.0
+_TRUSTED_LIVE_BROWSER_HOSTS = frozenset(
+    {
+        "ashbyhq.com",
+        "example.com",
+        "example.test",
+        "glassdoor.com",
+        "google.com",
+        "greenhouse.io",
+        "icims.com",
+        "indeed.com",
+        "jobvite.com",
+        "lever.co",
+        "linkedin.com",
+        "myworkdayjobs.com",
+        "smartrecruiters.com",
+        "workday.com",
+    }
+)
 _FORBIDDEN_BROWSER_HEADERS = frozenset(
     {
         "connection",
@@ -56,6 +74,16 @@ _FORBIDDEN_BROWSER_HEADERS = frozenset(
         "user-agent",
     }
 )
+
+
+def trusted_live_browser_url(url: str) -> bool:
+    """Return whether provider-owned DNS makes Chrome acquisition acceptable."""
+
+    try:
+        hostname = (urlsplit(url).hostname or "").lower().rstrip(".")
+    except ValueError:
+        return False
+    return any(hostname == trusted or hostname.endswith(f".{trusted}") for trusted in _TRUSTED_LIVE_BROWSER_HOSTS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -656,4 +684,5 @@ __all__ = [
     "LiveChromeSession",
     "PoliteLiveChromeHttpClient",
     "live_jobstreaming_registry",
+    "trusted_live_browser_url",
 ]

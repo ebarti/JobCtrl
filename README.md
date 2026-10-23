@@ -575,9 +575,12 @@ not make a manually copied or force-added private file safe to publish. Use
 [SECURITY.md](SECURITY.md).
 
 Integrated Discovery and its detail-enrichment drain use the paired extension
-in the user's current Chrome profile for every job-source page, job-source API,
-and `robots.txt` request. Chrome therefore owns the effective cookies, session,
-proxy, and browser user agent. JobCtrl still applies the source policy's
+in the user's current Chrome profile for supported provider-owned job-source
+pages, APIs, and `robots.txt` requests. Arbitrary posting hosts use the
+worker's address-pinned public transport instead, preventing a posting's DNS
+operator from changing Chrome's destination after API validation. Chrome owns
+the effective cookies, session, proxy, and browser user agent only for the
+provider-host path. JobCtrl still applies the source policy's
 per-host pacing, concurrency, and run budget before delegation; fetches and
 final destinations must remain public HTTP(S), and the browser-reported user
 agent is used for ordinary robots evaluation. LinkedIn detail enrichment inside
@@ -588,8 +591,10 @@ inconclusive ordinary robots result fails closed, while an absent robots
 endpoint follows the documented warning policy. JobCtrl does not evade login,
 paywall, CAPTCHA, rate-limit, or bot-control gates, and the extension has no
 application-submission path.
-The API validates DNS both when the worker enqueues a task and immediately
-before the extension receives its lease. Brokered HTTP/API fetches run in the
+The API first limits brokered tasks to supported provider-owned DNS zones, then
+validates DNS both when the worker enqueues a task and immediately before the
+extension receives its lease. The extension independently enforces the same
+host boundary before network access. Brokered HTTP/API fetches run in the
 extension service worker with Chrome credentials and redirect following
 disabled. Rendered-page work installs a tab-scoped exact-origin allow rule above
 a default HTTP(S) main-frame block rule, leaving page-owned fetch/XHR alone. In

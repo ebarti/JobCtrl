@@ -33,6 +33,33 @@ function fixture() {
 }
 
 describe("live Discovery browser routes", () => {
+  it("rejects arbitrary hostnames even when DNS validation approves them", async () => {
+    const { app, token } = fixture();
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/extension/discovery/tasks",
+        headers: { authorization: `Bearer ${token}`, host: "127.0.0.1:8766" },
+        payload: {
+          taskId: "discover-local:run-1:rebind",
+          workflowId: "discover-local",
+          temporalRunId: "run-1",
+          sourceFamily: "enrichment",
+          request: {
+            mode: "rendered_page",
+            url: "https://rebind.attacker.invalid/jobs/1",
+          },
+          timeoutMs: 60_000,
+        },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({ error: "untrusted_discovery_browser_host" });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("rejects a Discovery launch before dispatch when the live extension is offline", async () => {
     const { app } = fixture();
     try {

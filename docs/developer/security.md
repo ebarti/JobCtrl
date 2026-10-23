@@ -153,12 +153,16 @@ lease-control poll keeps bridge liveness fresh and aborts/closes a rendered-page
 tab when the worker deletes the lease. The executor also applies the hard
 timeout when a service-worker HTTP request or page request never settles.
 
-**Discovery, enrichment, and crawling.** Integrated Discovery processes public
-job sources, ATS APIs, broad-board crawls, page HTML, captured API responses,
-and discovered posting/apply URLs only through the paired extension in the
-user's current Chrome profile. The API validates each initial task, revalidates
-its DNS/public-address decision immediately before lease, and validates the
-reported final URL. HTTP/API tasks run in the extension service worker with
+**Discovery, enrichment, and crawling.** Integrated Discovery processes
+supported provider-owned job sources, ATS APIs, broad-board crawls, page HTML,
+and captured API responses through the paired extension in the user's current
+Chrome profile. The API and extension both reject live-browser tasks outside a
+fixed provider-owned DNS-zone boundary; arbitrary discovered posting URLs use
+the worker's address-pinned public transport. This closes the validation/use
+gap in which Chrome could resolve an attacker hostname differently after the
+API's DNS check. Within the provider boundary, the API validates each initial
+task, revalidates its DNS/public-address decision immediately before lease, and
+validates the reported final URL. HTTP/API tasks run in the extension service worker with
 redirect following disabled. Before rendered-page navigation, the extension
 installs tab-scoped DNR rules that allow main-frame navigation
 only to the exact source origin; a cross-origin redirect is blocked before

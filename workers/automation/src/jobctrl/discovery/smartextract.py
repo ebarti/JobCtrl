@@ -56,6 +56,7 @@ from jobctrl.infrastructure.discovery.live_browser import (
     LiveChromeDiscoveryClient,
     LiveChromeRobotsCache,
     PoliteLiveChromeHttpClient,
+    trusted_live_browser_url,
 )
 from jobctrl.infrastructure.discovery.production_wiring import DurableJobEventPublisher
 from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
@@ -1448,7 +1449,7 @@ def _run_all(
     total_existing = 0
 
     def _browser_client_for_target(target: dict) -> PoliteLiveChromeHttpClient | None:
-        if discovery_execution is None:
+        if discovery_execution is None or not trusted_live_browser_url(str(target.get("url") or "")):
             return None
         slug = re.sub(r"[^a-z0-9]+", "-", str(target.get("name") or "site").casefold()).strip("-")
         source_id = f"smart_extract:{slug or 'site'}"

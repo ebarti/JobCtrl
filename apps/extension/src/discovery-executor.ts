@@ -9,6 +9,23 @@ import type { BrowserApi, BrowserDeclarativeNetRequestRule, BrowserNavigationErr
 type LeasedDiscoveryTask = Extract<DiscoveryBrowserTaskLeaseResponse, { status: "task" }>;
 type DiscoveryProbeResponse = { ok: true; status: "discovery_ready" };
 
+const TRUSTED_LIVE_BROWSER_HOSTS = [
+  "ashbyhq.com",
+  "example.com",
+  "example.test",
+  "glassdoor.com",
+  "google.com",
+  "greenhouse.io",
+  "icims.com",
+  "indeed.com",
+  "jobvite.com",
+  "lever.co",
+  "linkedin.com",
+  "myworkdayjobs.com",
+  "smartrecruiters.com",
+  "workday.com",
+] as const;
+
 export interface DiscoveryBrowserExecutionOptions {
   signal?: AbortSignal;
 }
@@ -25,6 +42,13 @@ export async function executeDiscoveryBrowserTask(
   options: DiscoveryBrowserExecutionOptions = {},
 ): Promise<DiscoveryBrowserTaskResult> {
   const destination = new URL(task.request.url);
+  if (!isTrustedLiveBrowserUrl(destination)) {
+    return failed(
+      "unsupported_page",
+      "The live Chrome transport is limited to supported provider hosts.",
+      false,
+    );
+  }
   const contextUrl =
     task.request.mode === "rendered_page"
       ? task.request.url
@@ -140,6 +164,13 @@ export async function executeDiscoveryBrowserTask(
       }
     }
   }
+}
+
+function isTrustedLiveBrowserUrl(url: URL): boolean {
+  const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
+  return TRUSTED_LIVE_BROWSER_HOSTS.some(
+    (trustedHost) => hostname === trustedHost || hostname.endsWith(`.${trustedHost}`),
+  );
 }
 
 /**
