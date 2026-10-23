@@ -2434,6 +2434,9 @@ def worker(
         from jobctrl.infrastructure.llm.agent_runtime_pool import close_agent_runtimes
 
         try:
+            from jobctrl.infrastructure.materials.letter_reviews import close_letter_reviews
+
+            close_letter_reviews()
             close_agent_runtimes()
         finally:
             # Runtime teardown may emit final accounting; flush after it settles.

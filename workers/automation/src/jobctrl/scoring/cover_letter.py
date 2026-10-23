@@ -105,6 +105,11 @@ def _build_use_case(
     deps = determination_dependencies(
         conn, tenant_id=tenant_id, lane="tailoring", adapter=llm_port, model_spec=llm_model
     )
+    from jobctrl.infrastructure.materials.letter_reviews import ParallelLetterReviews
+
+    database = conn.execute("PRAGMA database_list").fetchone()[2]
+    # A caller-owned in-memory DB cannot be reopened safely on another thread.
+    letter_reviews = ParallelLetterReviews(Path(database).resolve(), deps) if database else None
     return GenerateCoverLetterUseCase(
         repository=repository,
         llm=deps["llm"],
@@ -112,6 +117,7 @@ def _build_use_case(
         claim_verifier=ModelClaimVerifier(**deps),
         quality_judge=ModelArtifactQualityJudge(**deps),
         preflight=deps["preflight"],
+        letter_reviews=letter_reviews,
         publisher=publisher,
         analysis_repository=analysis_repository,
         unit_of_work=(shared_unit_of_work if default_repository or unit_of_work is not None else None),

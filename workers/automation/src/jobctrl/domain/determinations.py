@@ -206,6 +206,7 @@ def determine(
     repository: DeterminationRepository,
     preflight: Callable[[], object],
     validate: Callable[[T], None] | None = None,
+    on_terminal_failure: Callable[[DeterminationFailure], None] | None = None,
 ) -> tuple[T, DeterminationEnvelope]:
     """Reuse a bound result, or preflight, call, validate and persist one result."""
     data = {"sources": [source.model_dump() for source in sources], "context": dict(context)}
@@ -357,6 +358,8 @@ def determine(
             )
             return accepted
         except DeterminationFailure as failure:
+            if on_terminal_failure is not None:
+                on_terminal_failure(failure)
             repository.record_state(
                 tenant_id=tenant_id,
                 entity_id=entity_id,

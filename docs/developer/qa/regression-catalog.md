@@ -545,6 +545,20 @@ expanded surface for accessibility and desktop/mobile overflow. Synthetic model
 doubles prove authority and failure handling; a configured-provider call with
 owned synthetic sources separately establishes live model integration.
 
+For parallel letter reviews, run locked `pytest tests/test_parallel_letter_reviews.py`
+and the artifact-determination and worker-lifecycle suites. Exercise the production
+builder against an owned file database: a rendezvous must prove both reviews
+enter independently on separate connection-owning threads, while owner guards and
+acceptance stay on the coordinator. Prove unchanged cached determination IDs,
+separate frozen inputs, capacities one/four, the outstanding-pair bound, cancellation
+before admission and after submission, terminal failure before blocked-state writes,
+first-cause retention, typed source/provider/spend failures, bounded repairs and
+accepted-artifact preservation. Stop must precede the next application-level
+provider admission; already-admitted calls may settle with accounting. Drain
+reviews before closing runtimes or removing temporary data. A real configured
+provider call with owned synthetic sources separately proves the integration;
+synthetic timing is not a whole-workflow speed claim.
+
 Every displayed semantic judgment must trace to a persisted determination:
 kind, schema/prompt versions, provider/model, input fingerprint, canonical source
 IDs and verbatim citations. Inspect the canonical writer, the accepted artifact

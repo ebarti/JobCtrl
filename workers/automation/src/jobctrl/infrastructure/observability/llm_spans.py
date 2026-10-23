@@ -61,6 +61,9 @@ def llm_generation_span(
     from jobctrl.llm import enforce_spend_budget
     from jobctrl.llm_lanes import current_llm_lane
 
+    from jobctrl.infrastructure.llm.attempt_admission import check_model_attempt_admission
+
+    check_model_attempt_admission()
     lane = current_llm_lane()
     enforce_spend_budget(lane)
     tracer = trace.get_tracer(scope_name)

@@ -121,6 +121,8 @@ class _CancelingCoverLlm(_CoverLlm):
 @pytest.fixture()
 def conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
     monkeypatch.setattr("jobctrl.llm.enforce_spend_budget", lambda **kwargs: None)
+    # The real runner and its review/usage threads share one process DB identity.
+    monkeypatch.setattr("jobctrl.database.DB_PATH", tmp_path / "jobctrl-v7.db")
     connection = init_db(tmp_path / "jobctrl-v7.db")
     monkeypatch.setattr(cover_letter_module, "get_connection", lambda: connection)
     monkeypatch.setattr(cover_letter_module, "COVER_LETTER_DIR", tmp_path / "cover-letters")

@@ -11,9 +11,10 @@ from jobctrl.domain.materials.adversarial import ADVERSARIAL_REVIEW_PERSONAS, AD
 
 
 class ModelArtifactQualityJudge:
-    def __init__(self, *, llm, repository, tenant_id, provider, model, lane, preflight):
+    def __init__(self, *, llm, repository, tenant_id, provider, model, lane, preflight, on_terminal_failure=None):
         self._llm, self._repository, self._tenant_id = llm, repository, tenant_id
         self._provider, self._model, self._lane, self._preflight = provider, model, lane, preflight
+        self._on_terminal_failure = on_terminal_failure
 
     @staticmethod
     def _validate_finding(finding, line_ids):
@@ -55,6 +56,7 @@ class ModelArtifactQualityJudge:
             repository=self._repository,
             preflight=self._preflight,
             validate=validate,
+            on_terminal_failure=self._on_terminal_failure,
         )
 
     def judge(self, *, artifact_kind, entity_id, lines, sources, rubric):
@@ -96,4 +98,5 @@ class ModelArtifactQualityJudge:
             repository=self._repository,
             preflight=self._preflight,
             validate=validate,
+            on_terminal_failure=self._on_terminal_failure,
         )

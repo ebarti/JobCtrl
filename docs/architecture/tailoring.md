@@ -138,6 +138,14 @@ Authored experience, education and skill rows remain canonical. Exact row IDs co
 
 A generated candidate must pass structural binding, claim verification and the separate quality judge. Model findings supply repair reasons and exact line IDs. Arithmetic may compare accepted typed fit results; it does not assess prose. Provider, spend, JSON, schema and source-binding failures remain distinct and preserve accepted material.
 
+For each cover-letter draft, factual verification and quality review read separate
+copies of the same frozen lines, sources and rubric. The production runner overlaps
+these independent calls in the bounded [letter-review pool](pipeline/concurrency.md).
+Both durable results join before acceptance or an ordered correction. Review IDs,
+cache fingerprints, model/effort, citation validation and attempt budgets stay the
+same. Resume checks retain their dependencies on factual grounding and pruning.
+Custom directly injected reviewers and in-memory repositories run sequentially.
+
 Each bounded resume or cover correction carries an ordered review history:
 recorded determination IDs and their complete typed quality/persona results.
 Later generators and reviewers receive that history, including after a changed

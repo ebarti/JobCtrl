@@ -54,6 +54,7 @@ class ModelClaimVerifier:
         model: str,
         lane: LlmLane,
         preflight: Callable[[], object],
+        on_terminal_failure: Callable[[DeterminationFailure], None] | None = None,
     ) -> None:
         self._llm = llm
         self._repository = repository
@@ -62,6 +63,7 @@ class ModelClaimVerifier:
         self._model = model
         self._lane = lane
         self._preflight = preflight
+        self._on_terminal_failure = on_terminal_failure
 
     def verify(
         self,
@@ -167,6 +169,7 @@ class ModelClaimVerifier:
             repository=self._repository,
             preflight=self._preflight,
             validate=validate,
+            on_terminal_failure=self._on_terminal_failure,
         )
 
 
