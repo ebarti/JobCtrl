@@ -165,6 +165,11 @@ interface JobDisplayRow extends Record<string, unknown> {
   company: string | null;
 }
 
+interface RuntimePreparationJobRow extends Pick<JobDisplayRow, "job_id" | "title" | "company">, Record<string, unknown> {
+  workflow_id: string;
+  temporal_run_id: string;
+}
+
 interface MetricRow extends Record<string, unknown> {
   stage: string;
   outcome: string;
@@ -1868,11 +1873,26 @@ function buildActiveItems(
     tenantId,
     [...byWorkflow.values()].map((member) => member.job_id),
   );
+  const preparationJobs = loadRuntimePreparationJobDisplays(
+    db,
+    tenantId,
+    telemetry.activeDetails.flatMap((detail) => detail.workflowRef ? [detail.workflowRef] : []),
+  );
   const runtimeItems: PipelineActiveItem[] = telemetry.activeDetails.map((detail) => {
     const member = detail.workflowRef ? byWorkflow.get(detail.workflowRef) : undefined;
+    const recordedJob = detail.workflowRef ? preparationJobs.get(detail.workflowRef) : undefined;
+    const memberRunId = selected && detail.workflowRef
+      ? preparationWorkflowRunId(selected, detail.workflowRef)
+      : undefined;
+    // Labels join an exact runtime execution. They never establish Discover membership.
+    const job = recordedJob?.temporal_run_id === detail.executionRef
+      ? recordedJob
+      : member && memberRunId && memberRunId === detail.executionRef
+        ? display.get(member.job_id)
+        : undefined;
     const stage = RUNTIME_ACTIVITY_STAGE[detail.activityType];
-    if (member && stage && isJobStage(stage)) {
-      const job = display.get(member.job_id);
+    if (job && stage && (isJobStage(stage) || stage === "pdf_render")
+      && ["score_job", "tailor_job", "cover_letter", "render_pdf"].includes(detail.activityType)) {
       return {
         kind: "resolved_job" as const,
         activityType: detail.activityType,
@@ -1983,6 +2003,34 @@ function isExactRuntimeProjectionMatch(
 function preparationWorkflowRunId(selected: SelectedExecution, workflowId: string): string | undefined {
   return selected.current.preparationWorkflowRunIds.get(workflowId) ??
     selected.sweep.preparationWorkflowRunIds.get(workflowId);
+}
+
+function loadRuntimePreparationJobDisplays(
+  db: SqliteDatabase,
+  tenantId: string,
+  workflowIds: string[],
+): Map<string, RuntimePreparationJobRow> {
+  const result = new Map<string, RuntimePreparationJobRow>();
+  // The fresh runtime reader already caps activity detail at twenty items.
+  for (const group of chunks([...new Set(workflowIds)], 500)) {
+    const rows = allRows<RuntimePreparationJobRow>(
+      db,
+      `SELECT wrp.workflow_id, wrp.temporal_run_id, j.job_id, j.title, j.company
+         FROM workflow_run_projections wrp
+         JOIN jobs j ON j.tenant_id = wrp.tenant_id AND j.job_id = CASE
+           WHEN json_valid(wrp.input_summary_json) THEN CASE
+             WHEN json_type(wrp.input_summary_json, '$.jobId') = 'text'
+             THEN json_extract(wrp.input_summary_json, '$.jobId')
+           END
+         END
+        WHERE wrp.tenant_id = ? AND wrp.workflow_type = 'JobPreparationWorkflow'
+          AND wrp.temporal_run_id IS NOT NULL
+          AND wrp.workflow_id IN (${group.map(() => "?").join(", ")})`,
+      [tenantId, ...group],
+    );
+    for (const row of rows) result.set(row.workflow_id, row);
+  }
+  return result;
 }
 
 function loadJobDisplays(db: SqliteDatabase, tenantId: string, jobIds: string[]): Map<string, JobDisplayRow> {

@@ -530,8 +530,16 @@ URL imports appear as `job_url_import` / `job-url-import` runtime items with
 the label **Import job URL**. Intake does not invent a pipeline stage or
 selected Discover membership. Fresh empty
 inventory reports zero; unavailable or stale inventory reports unknown.
-Selected-execution membership and exact workflow/run matches only enrich the
-runtime items; their absence does not erase worker activity.
+A fresh preparation activity can receive its job title and company from an
+exact same-tenant `JobPreparationWorkflow` projection: the workflow ID and
+Temporal run ID must match the runtime detail, and its text `jobId` must join a
+canonical Job. This bounded, read-only join works without a selected Discover;
+it reuses the opaque runtime display key and never exposes workflow inputs.
+Selected-membership enrichment also requires the exact preparation run.
+Missing, malformed, foreign-tenant or stale-run bindings remain unresolved.
+These job labels do not establish Discover membership, change selected-run
+counts or coverage, or contribute new ETA evidence. Their absence does not
+erase worker activity.
 
 This boundary is deliberately privacy-safe. The interceptor never reads
 activity arguments. It retains only allowlisted activity kinds, validated safe
