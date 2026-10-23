@@ -105,6 +105,7 @@ from jobctrl.infrastructure.enrichment.linkedin_apply_resolver import (
     LinkedInApplyUrlResolver,
     linkedin_apply_resolver_enabled,
 )
+from jobctrl.infrastructure.network.http_client import record_rate_limited_response
 from jobctrl.infrastructure.network.proxy import ProxyConfig, parse_proxy
 from jobctrl.infrastructure.network.fetch_failures import PublicFetchFailureKind
 from jobctrl.infrastructure.llm import get_llm_adapter
@@ -481,6 +482,20 @@ def _live_result_to_detail_page(result: LiveBrowserResult, url: str) -> DetailPa
 _RETRYABLE_STATUSES = {408, 429, 500, 502, 503, 504}
 
 
+def _mark_server_rate_limit(result: dict, status: int, retry_after: float, t0: float) -> dict:
+    result.update(
+        status="blocked",
+        politeness_outcome=PolitenessOutcome.RATE_LIMITED.value,
+        http_status=status,
+        retry_after_seconds=retry_after,
+        active_state=ActiveState.UNKNOWN.value,
+        verification_method="http_error",
+        error=f"HTTP {status}: the server deferred this request; enrichment will retry after the host cooldown.",
+        elapsed=time.time() - t0,
+    )
+    return result
+
+
 def scrape_detail_page(page, url: str, *, session: PolitenessSession | None = None, page_interpreter=None) -> dict:
     """Run the three-tier cascade on one Playwright page.
 
@@ -522,7 +537,7 @@ def scrape_detail_page(page, url: str, *, session: PolitenessSession | None = No
             result["error"] = decision.reason
             result["elapsed"] = time.time() - t0
             return result
-        return _scrape_detail_page_body(page, url, result, t0, page_interpreter=page_interpreter)
+        return _scrape_detail_page_body(page, url, result, t0, session=session, page_interpreter=page_interpreter)
 
 
 def scrape_detail_page_via_live_chrome(
@@ -558,14 +573,17 @@ def scrape_detail_page_via_live_chrome(
             result["elapsed"] = time.time() - t0
             return result
         live_result = browser.rendered_page(url, timeout_seconds=60.0)
-    final_safety = validate_public_http_url(live_result.final_url)
-    if not final_safety.allowed:
-        return _mark_public_fetch_failure(
-            result,
-            final_safety,
-            blocked_url=live_result.final_url or url,
-            t0=t0,
-        )
+        final_safety = validate_public_http_url(live_result.final_url)
+        if not final_safety.allowed:
+            return _mark_public_fetch_failure(
+                result,
+                final_safety,
+                blocked_url=live_result.final_url or url,
+                t0=t0,
+            )
+        retry_after = record_rate_limited_response(session, url, live_result.status_code)
+        if retry_after is not None:
+            return _mark_server_rate_limit(result, live_result.status_code, retry_after, t0)
     detail_page = _live_result_to_detail_page(live_result, url)
     return _extract_detail_page(
         detail_page,
@@ -576,10 +594,13 @@ def scrape_detail_page_via_live_chrome(
     )
 
 
-def _scrape_detail_page_body(page, url: str, result: dict, t0: float, *, page_interpreter=None) -> dict:
+def _scrape_detail_page_body(
+    page, url: str, result: dict, t0: float, *, session: PolitenessSession, page_interpreter=None
+) -> dict:
     """Navigate + run the three-tier cascade inside the held politeness slot."""
     route_guard = PublicHttpUrlRouteGuard(page, fetch_public_requests=True).install()
     status_code: int | None = None
+    resp = None
     try:
         try:
             resp = page.goto(url, wait_until="domcontentloaded", timeout=45000)
@@ -623,6 +644,9 @@ def _scrape_detail_page_body(page, url: str, result: dict, t0: float, *, page_in
                 t0=t0,
             )
 
+        retry_after = record_rate_limited_response(session, url, status_code, getattr(resp, "headers", None))
+        if retry_after is not None:
+            return _mark_server_rate_limit(result, status_code, retry_after, t0)
         detail_page = _page_to_detail_page(page, url, status=status_code)
         if route_guard.blocked and not _partial_resource_failure(route_guard):
             decision = _route_failure_decision(route_guard)
@@ -1320,13 +1344,11 @@ def _record_enrich_politeness_deferral(
     activity_lease: EnrichmentExecutionLease | None = None,
     claim_version: int | None = None,
 ) -> None:
-    """Fold a mid-flight budget block (peek allowed, guard denied) as a deferral.
+    """Preserve a started job as retryable after a budget or server deferral.
 
-    Only reachable in the rare parallel race where the shared run budget drains
-    between the pre-navigation peek and the guard. The politeness *outcome* was
-    already recorded by the guard (non-error); here we close the started attempt
-    as a retryable failure (``Running -> Failed`` is valid) so the job is retried
-    on the next run rather than counted as a scrape failure.
+    The guard or response handler has already recorded the acquisition outcome.
+    Close this attempt without replacing accepted posting content; the existing
+    recovery path can retry after host pacing admits another request.
     """
     from jobctrl.state import record_job_event, set_stage_state, utc_now
 
@@ -1371,6 +1393,8 @@ def _record_enrich_politeness_deferral(
             "errorCode": error.code,
             "retryable": True,
             "politenessOutcome": cascade_result.get("politeness_outcome"),
+            "httpStatus": cascade_result.get("http_status"),
+            "retryAfterSeconds": cascade_result.get("retry_after_seconds"),
         },
         tenant_id=tenant_id,
     )
@@ -1812,7 +1836,7 @@ def scrape_site_batch(
                         cascade_result.get("status") == "blocked"
                         and cascade_result.get("security_outcome") != _SECURITY_OUTCOME_UNSAFE_URL
                     ):
-                        # Rare parallel race: budget drained between peek + guard.
+                        # Budget exhaustion or a server response deferred this host.
                         _record_enrich_politeness_deferral(
                             conn,
                             repo,
@@ -1826,6 +1850,10 @@ def scrape_site_batch(
                             claim_version=claim_version,
                         )
                         conn.commit()
+                        if cascade_result.get("politeness_outcome") == PolitenessOutcome.RATE_LIMITED.value:
+                            stats["processed"] += 1
+                            stats["blocked"] += 1
+                            continue
                         break
                     cascade_result = _apply_authenticated_linkedin_apply_url(
                         site=site,

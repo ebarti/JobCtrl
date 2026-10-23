@@ -110,6 +110,12 @@ when the model identifies the individual posting but cannot verify visual
 access. Its unknown access and availability remain in the audit. Explicit
 login/challenge pages and unidentified postings continue to require capture.
 
+A posting server's HTTP 429 or 503 response is recorded as a retryable
+acquisition deferral, including its HTTP status and cooldown, instead of an empty
+posting or extraction error. The batch continues with other targets under shared
+host pacing; a failed refresh preserves previously accepted content. The
+[crawl policy](discovery.md#crawl-politeness) defines server-directed waits.
+
 While the worker is running, unfinished enrichment and retryable failures are
 picked up automatically without a new discovery search. Recovery waits for
 existing preparation to finish, keeps each job's attempt history, and retries
