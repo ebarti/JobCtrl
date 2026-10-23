@@ -82,6 +82,7 @@ from jobctrl.infrastructure.scoring import (
 )
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobctrl.scoring.employer_analysis import build_analyze_use_case
+from jobctrl.infrastructure.materials.cover_letter_policy import reconcile_cover_letter_policy
 from jobctrl.state import (
     ensure_job_stage_rows,
     reconcile_score_eligibility_blockers,
@@ -730,6 +731,8 @@ def tailor_job_by_id(
             "reason": score_skip_reason,
         }
 
+    reconcile_cover_letter_policy(conn, tenant_id=tenant_id, job_id=stable_job_id)
+
     existing_materials = _reconcile_existing_approved_resume(
         conn,
         tenant_id=tenant_id,
@@ -1038,6 +1041,7 @@ def tailor_job_by_id(
                 tenant_id=tenant_id,
                 reason="tailor_stage_completed",
             )
+            reconcile_cover_letter_policy(conn, tenant_id=tenant_id, job_id=stable_job_id)
         else:
             exhausted = current_attempt >= MAX_ATTEMPTS
             durable_exhausted = exhausted
@@ -1205,6 +1209,7 @@ def _reconcile_existing_approved_resume(
                 metadata={"activityOwner": workflow_id} if workflow_id else None,
                 validate_transition=False,
             )
+            reconcile_cover_letter_policy(conn, tenant_id=tenant_id, job_id=job_id)
             record_job_event(
                 conn,
                 job_id,

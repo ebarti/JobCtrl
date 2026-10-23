@@ -323,6 +323,25 @@ generation. Reusable preparation without a job, typed rehearsal, calibrated
 grading, and live assistance are future work. There is no practice-attempt,
 transcript, microphone, streaming, or in-session state in this release.
 
+## Cover-Letter Generation Policy
+
+`cover_letter_generation` is a strict boolean opt-in, default `false`. Settings
+exposes it as `coverLetterGeneration`. Discovery, URL imports, profile-update
+continuations and generic material requests freeze plans without Cover when
+disabled. Resume-only preparation has a distinct idempotency identity; existing
+full-material identities remain compatible. Workflows do not read mutable
+configuration during replay.
+
+The cover runner rechecks the setting before acquisition and generation
+admission. Automatic recovery cannot reserve new Cover work while disabled.
+The shared policy reconciler records `COVER_LETTER_GENERATION_DISABLED` only for
+unstarted Cover rows it owns, with no generation attempt. Re-enabling restores
+only those policy-owned skips. It preserves manual declines, other holds,
+failures, cancellation, running work and accepted letters. An idle recovery
+coordinator can release its own frozen unstarted Cover reservation. A legacy
+plan receiving this specific optional skip continues to the résumé PDF; other
+skip reasons retain their existing stop semantics.
+
 ## Voice Pass And Final Audit
 
 The optional post-approval writing pass is off by default. The production

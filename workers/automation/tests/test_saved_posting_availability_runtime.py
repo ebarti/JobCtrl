@@ -44,6 +44,10 @@ JOB = "10000000-0000-4000-8000-000000000123"
 
 @pytest.fixture
 def runtime(tmp_path, monkeypatch):
+    # This fixture tests cover generation after the user opts in.
+    cover_config = tmp_path / "cover-settings.json"
+    cover_config.write_text('{"cover_letter_generation":true}')
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(cover_config))
     db_path = tmp_path / "runtime.db"
     monkeypatch.setattr(config, "APP_DIR", tmp_path)
     monkeypatch.setattr(config, "DB_PATH", db_path)

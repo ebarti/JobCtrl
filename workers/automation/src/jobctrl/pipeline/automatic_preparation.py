@@ -22,6 +22,8 @@ from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError, RPCStatusCode
 
 from jobctrl import database
+from jobctrl.config import get_cover_letter_generation_enabled
+from jobctrl.infrastructure.materials.cover_letter_policy import reconcile_cover_letter_policy
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.enrichment.sqlite_repository import SqliteEnrichmentRepository
@@ -74,6 +76,7 @@ async def reconcile_automatic_preparation(
     if read_spend_budget_status(lane="scoring").global_exceeded:
         return 0
     conn = database.get_connection()
+    reconcile_cover_letter_policy(conn, tenant_id=LOCAL_TENANT, release_reserved=True)
     await _reconcile_stopped_enrichment_owners(client, conn)
     await _reconcile_stopped_activity_owners(client, conn)
     await _reconcile_interrupted_reservations(client, conn)
@@ -347,6 +350,7 @@ def reserve_recovery_batch(
         from jobctrl.infrastructure.materials.manual_decline import release_manual_material_skips
 
         release_manual_material_skips(conn, tenant_id=LOCAL_TENANT)
+        reconcile_cover_letter_policy(conn, tenant_id=LOCAL_TENANT, release_reserved=True)
         _release_declined_material_reservations(conn)
         existing = conn.execute(
             "SELECT metadata_json FROM job_stage_states "
@@ -574,9 +578,12 @@ def _candidates(conn: sqlite3.Connection, *, min_score: int) -> dict[str, list[d
         for stage in ("score", "tailor", "cover")
     }
     result: dict[str, list[dict[str, Any]]] = {stage: [] for stage in _STAGES}
+    cover_enabled = get_cover_letter_generation_enabled()
     for raw in rows:
         row = dict(raw)
         stage = row["stage"]
+        if stage == "cover" and not cover_enabled:
+            continue
         if stage == "enrich":
             if row["current_status"] not in (None, "pending", "failed") or row["full_description"]:
                 continue

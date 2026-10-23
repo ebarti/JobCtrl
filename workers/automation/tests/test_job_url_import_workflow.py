@@ -447,9 +447,13 @@ def test_rendered_posting_fields_follow_model_extraction(tmp_path: Path, semanti
     }
 
 
+@pytest.mark.parametrize("cover_enabled", [False, True])
 def test_import_dispatches_full_preparation_without_apply_and_reuses_workflow_id(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch, cover_enabled,
 ) -> None:
+    cover_config = tmp_path / "cover-settings.json"
+    cover_config.write_text(json.dumps({"cover_letter_generation": cover_enabled}))
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(cover_config))
     conn = init_db(tmp_path / "jobctrl.db")
     requested: list[WorkflowStartSpec] = []
 
@@ -480,7 +484,7 @@ def test_import_dispatches_full_preparation_without_apply_and_reuses_workflow_id
     assert requested[0].workflow_id == requested[1].workflow_id
     preparation_input = requested[0].args[0]
     assert preparation_input.job_id == first.job_id
-    assert preparation_input.steps == ["score", "tailor", "cover", "pdf"]
+    assert preparation_input.steps == (["score", "tailor", "cover", "pdf"] if cover_enabled else ["score", "tailor", "pdf"])
     assert "apply" not in preparation_input.steps
 
 

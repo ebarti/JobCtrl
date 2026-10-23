@@ -56,6 +56,25 @@ async function legacyWorkspace() {
 const defaultPolish = { value: false, source: "default", activation: "next_workflow", editable: true };
 
 describe("retained demo settings compatibility", () => {
+  it.each([undefined, false, true])("retains cover-letter opt-in %s across reopening older saved settings", async (enabled) => {
+    const saved = await retainedSnapshot();
+    const response = saved.state.readModel.settings;
+    delete (response.settings as Partial<SettingsResponse["settings"]>).coverLetterGeneration;
+    delete (response.effectiveSettings as Partial<SettingsResponse["effectiveSettings"]>).coverLetterGeneration;
+    if (enabled !== undefined) response.settings.coverLetterGeneration = enabled;
+    const store = new InMemoryDemoWorkspaceStore(saved);
+    const reopened = repository(store);
+    await reopened.initialize();
+    const current = SettingsResponseSchema.parse(await new DemoApiClientAdapter(reopened).settings());
+    expect(current.settings.coverLetterGeneration).toBe(enabled ?? false);
+    expect(current.effectiveSettings.coverLetterGeneration).toEqual({
+      value: enabled ?? false, source: enabled === undefined ? "default" : "persisted", activation: "next_workflow", editable: true,
+    });
+    expect((await reopened.snapshot()).revision).toBe(saved.revision);
+    expect(await store.readSnapshot()).toEqual(saved);
+    reopened.dispose();
+  });
+
   it("reopens current pre-flag state without changing identity, revision, edits, receipts or blobs", async () => {
     const { saved, store, reopened } = await legacyWorkspace();
     const expected = structuredClone(saved);

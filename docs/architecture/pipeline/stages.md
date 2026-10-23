@@ -264,10 +264,16 @@ of histories that already scheduled the material check.
 
 Targets are derived in `pipeline/preparation.py` from stage state:
 
-- Jobs at `pending_score` get steps `["score","tailor","cover","pdf"]` keyed to
+- Jobs at `pending_score` get steps `["score","tailor","pdf"]` keyed to
   the current **scoring-policy** version.
 - Jobs at `pending_tailor` (meeting `min_score`) get steps
-  `["tailor","cover","pdf"]` keyed to the current **tailoring-policy** version.
+  `["tailor","pdf"]` keyed to the current **tailoring-policy** version.
+- Enabling `cover_letter_generation` inserts Cover before PDF. The saved choice
+  is frozen before dispatch and included in the preparation identity. The
+  [cover-letter policy](../materials.md#cover-letter-generation-policy) also
+  checks admission and automatic recovery.
+
+The following sequence includes the optional cover-letter route.
 
 ```mermaid
 sequenceDiagram
