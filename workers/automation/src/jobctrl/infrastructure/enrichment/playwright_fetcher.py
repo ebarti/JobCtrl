@@ -23,6 +23,7 @@ import logging
 import re
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlsplit
 
 from bs4 import BeautifulSoup, Comment
 
@@ -268,6 +269,7 @@ class PlaywrightDetailPageFetcher:
                             status=status,
                             fetched_at=fetched_at,
                         )
+                    _dismiss_optional_linkedin_dialog(page)
                     page_title = ""
                     try:
                         page_title = page.title() or ""
@@ -303,6 +305,7 @@ class PlaywrightDetailPageFetcher:
                             "PlaywrightDetailPageFetcher: incomplete public resource acquisition (%s); availability remains unknown",
                             route_guard.failure_kind.value,
                         )
+                    _assert_capture_url(page, final_url)
                     return DetailPage(
                         url=url,
                         final_url=final_url,
@@ -373,6 +376,51 @@ def _collect_embedded_pages(page: Any, *, fetched_at: str) -> tuple[tuple[Detail
         except Exception:
             complete = False
     return tuple(captured), complete
+
+
+def _dismiss_optional_linkedin_dialog(page: Any) -> bool:
+    """Use only LinkedIn's offered guest-dialog dismiss control before capture."""
+    initial_url = None
+    dismissed = False
+    try:
+        initial_url = str(getattr(page, "url", ""))
+        current = urlsplit(initial_url)
+        host = (current.hostname or "").lower()
+        if current.scheme not in {"http", "https"} or not (
+            host == "linkedin.com" or host.endswith(".linkedin.com")
+        ) or not current.path.startswith("/jobs/view/"):
+            return False
+        dismiss = None
+        for candidate in page.locator("button.contextual-sign-in-modal__modal-dismiss:visible").all():
+            allowed = candidate.evaluate("""button => {
+                if (button.matches(':disabled') || button.type === 'reset'
+                    || (button.form !== null && button.type === 'submit')) return false;
+                if (getComputedStyle(button).visibility !== 'visible') return false;
+                for (let element = button; element; element = element.parentElement) {
+                    const style = getComputedStyle(element);
+                    if (style.display === 'none' || style.opacity === '0'
+                        || element.hasAttribute('inert') || element.getAttribute('aria-hidden') === 'true') return false;
+                }
+                return true;
+            }""")
+            if allowed:
+                dismiss = candidate
+                break
+        if dismiss is None:
+            return False
+        dismiss.click(timeout=2000, no_wait_after=True)
+        dismiss.wait_for(state="hidden", timeout=2000)
+        dismissed = True
+    except Exception as exc:  # Optional dismissal failure retains the actual page.
+        log.debug("Optional LinkedIn guest dialog remained open: %s", type(exc).__name__)
+    if initial_url is not None and str(getattr(page, "url", "")) != initial_url:
+        raise DetailPageFetchUnavailable("Guest dialog dismissal navigated away from the requested posting.")
+    return dismissed
+
+
+def _assert_capture_url(page: Any, expected_url: str) -> None:
+    if str(page.url) != expected_url:
+        raise DetailPageFetchUnavailable("The posting changed while its capture was being collected.")
 
 
 def _collect_json_ld(page: Any) -> list[Any]:
