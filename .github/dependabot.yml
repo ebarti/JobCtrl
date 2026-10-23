@@ -53,6 +53,24 @@ updates:
       semver-major-days: 30
       semver-minor-days: 7
       semver-patch-days: 3
+    # Match the manifest's reviewed cutoffs. Type-only ignores preserve
+    # security update attempts; cutoff and lock maintenance stays explicit.
+    ignore:
+      - dependency-name: "claude-agent-sdk"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
+      - dependency-name: "google-antigravity"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
+      - dependency-name: "jobstreaming"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
     groups:
       opentelemetry:
         patterns:
