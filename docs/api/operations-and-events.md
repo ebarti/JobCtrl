@@ -124,6 +124,14 @@ calculation: unresolved current jobs or swept backlog can keep a successful
 Discover workflow in `draining`, while a closed membership with failed or
 inconsistent planning/terminal steps produces `completed_with_issues`.
 
+A valid eligibility hold can be a completed job outcome while its canonical
+Tailor/Cover stage counts remain `blocked`. This requires an exact successful
+preparation receipt, its current successful Score owner and accepted score,
+matching non-retryable eligibility-gate provenance, and no unresolved score
+staleness. Such holds do not contribute unfinished ETA or contention demand.
+Missing/foreign evidence, later scores or owners, reset work, generic and
+retryable blocks remain unresolved; a recorded PDF lifecycle takes precedence.
+
 While the selected execution's `family:jobspy` source step is running,
 `sourceFamilies.providerProgress` may expose the latest normalized
 JobStreaming traversal observation: `site`, `phase`, `unit`, completed and

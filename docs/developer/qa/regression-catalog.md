@@ -545,6 +545,19 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For completed eligibility holds in pipeline operations, run
+`corepack pnpm --filter @jobctrl/api exec vitest run test/pipeline-operations.test.ts`
+and the API type/full-test gates. In owned exact-schema storage, reproduce a
+20-member cohort with nine material sets, nine minimum-score skips and two
+non-retryable eligibility holds. Require exact preparation receipt/run/plan and
+current accepted Score ownership/version/staleness/gate provenance. Both cohorts
+must resolve valid holds without relabeling blocked counts, altering canonical
+rows/plans or hiding a real PDF lifecycle. Reject foreign/missing receipts,
+replacement owners, newer/stale scores, reset stages and generic/retryable
+blocks. Verify stage/overall ETA, remaining paths and swept contention all use
+the same completed-hold authority. Exercise actual HTTP readback and preserve
+canonical state. These are structural provenance checks, not semantic evals.
+
 For per-job Score cancellation, run locked
 `pytest tests/test_preparation_score_cancellation.py tests/test_workflow_job_preparation.py tests/test_workflow_control_capacity.py tests/test_automatic_preparation.py tests/test_score_activity_recovery.py tests/test_v7_score_runtime.py`.
 Use owned synthetic storage and real old/new Temporal cancellation histories.
