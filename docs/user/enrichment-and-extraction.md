@@ -64,10 +64,14 @@ have deterministic extraction rules. When the public description is present in
 the captured content, anonymous enrichment can save it without an LLM or an
 external application URL. Guest extraction selects the description's nested
 text block, excluding unrelated expandable content and show-more controls.
-Anonymous page collection removes page chrome and noisy attributes before
-applying its 50,000-character HTML limit, so removable markup does not crowd out
-posting text or application links. JSON-LD is collected separately; meaningful
-content beyond the HTML limit remains outside CSS and LLM extraction input.
+Anonymous page collection removes page chrome, comments, noisy attributes and
+non-visible DOM subtrees before applying its 50,000-character HTML limit. Hidden
+sign-in dialogs therefore cannot crowd out a readable posting or its application
+links. Computed visibility comes from a copied DOM; collection does not change
+the page. Visible descendants that override an ancestor's `visibility: hidden`
+and visible inert content remain readable. JSON-LD and the full status evidence
+are collected separately; meaningful content beyond the HTML limit remains
+outside CSS and LLM extraction input.
 
 Anonymous browser acquisition bounds each public document or data response to
 2 MB. Browser-identified JavaScript and stylesheet dependencies have a separate

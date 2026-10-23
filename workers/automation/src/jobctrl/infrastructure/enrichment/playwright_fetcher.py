@@ -24,7 +24,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Comment
 
 from jobctrl.domain.discovery.source_registry import ENRICHMENT_CRAWL_POLICY
 from jobctrl.domain.enrichment.value_objects import DetailPage
@@ -423,6 +423,66 @@ def _collect_status_html(page: Any, *, visibility_out: list[bool] | None = None)
         return "", False, ""
 
 
+# Shared by selected-main and body-fallback capture. Visibility can be
+# overridden by descendants; display:none and zero opacity hide the subtree.
+_VISIBLE_CONTENT_CLEANUP = """
+    for (let ancestor = originalRoot.parentElement; ancestor; ancestor = ancestor.parentElement) {
+        const style = getComputedStyle(ancestor);
+        if (style.display === 'none' || style.opacity === '0' || ancestor.getAttribute('aria-hidden') === 'true') {
+            return '';
+        }
+    }
+    const originals = [originalRoot, ...originalRoot.querySelectorAll('*')];
+    const copies = [clone, ...clone.querySelectorAll('*')];
+    const indices = new Map(originals.map((element, index) => [element, index]));
+    const blocked = [];
+    const visibility = [];
+    const visibleContent = [];
+    originals.forEach((original, index) => {
+        const style = getComputedStyle(original);
+        const parent = indices.get(original.parentElement);
+        blocked[index] = (parent !== undefined && blocked[parent]) || style.display === 'none'
+            || style.opacity === '0' || original.getAttribute('aria-hidden') === 'true';
+        visibility[index] = style.visibility;
+        visibleContent[index] = !blocked[index] && style.visibility === 'visible';
+    });
+    // A display:contents element has no box of its own but can render text.
+    // Propagate computed visibility without requiring element client rectangles.
+    for (let index = originals.length - 1; index > 0; index--) {
+        const parent = indices.get(originals[index].parentElement);
+        if (parent !== undefined && visibleContent[index]) visibleContent[parent] = true;
+    }
+    originals.forEach((original, index) => {
+        if (blocked[index] || !visibleContent[index]) {
+            copies[index].setAttribute('hidden', '');
+        } else {
+            // CSS may override the HTML hidden attribute, including on a
+            // visibility:hidden parent whose child explicitly becomes visible.
+            copies[index].removeAttribute('hidden');
+            if (visibility[index] !== 'visible') {
+                [...copies[index].childNodes].filter(child => child.nodeType === Node.TEXT_NODE)
+                    .forEach(child => child.remove());
+            }
+        }
+    });
+"""
+
+
+def _visible_inner_html(element: Any) -> str:
+    """Copy rendered content without letting hidden subtrees consume its cap."""
+    if not callable(getattr(element, "evaluate", None)):
+        # Static DOM ports have no computed style; the cleaner still removes
+        # explicit hidden/aria-hidden markup before applying the cap.
+        return element.inner_html()
+    return element.evaluate("""element => {
+        const clone = element.cloneNode(true);
+        const originalRoot = element;
+    """ + _VISIBLE_CONTENT_CLEANUP + """
+        return clone.hasAttribute('hidden') || clone.getAttribute('aria-hidden') === 'true'
+            ? '' : clone.innerHTML;
+    }""")
+
+
 def _collect_main_content(page: Any) -> str:
     """Select plausible main content, then bound its cleaned HTML."""
     for sel in ("main", "article", '[role="main"]', "#content", ".content"):
@@ -434,7 +494,9 @@ def _collect_main_content(page: Any) -> str:
             if text_len > 200:
                 # Raw attributes and page chrome must not displace posting text
                 # that fits within the cleaned-content budget.
-                return _clean_content_html(el.inner_html())[:_MAIN_CONTENT_HTML_LIMIT]
+                html = _clean_content_html(_visible_inner_html(el))[:_MAIN_CONTENT_HTML_LIMIT]
+                if html.strip():
+                    return html
         except Exception:
             continue
     try:
@@ -442,8 +504,11 @@ def _collect_main_content(page: Any) -> str:
             """
             () => {
                 const clone = document.body.cloneNode(true);
+                const originalRoot = document.body;
+            """ + _VISIBLE_CONTENT_CLEANUP + """
                 clone.querySelectorAll('nav, header, footer, script, style, noscript, svg, iframe').forEach(el => el.remove());
-                return clone.innerHTML;
+                return clone.hasAttribute('hidden') || clone.getAttribute('aria-hidden') === 'true'
+                    ? '' : clone.innerHTML;
             }
             """
         )
@@ -455,8 +520,14 @@ def _collect_main_content(page: Any) -> str:
 def _clean_content_html(html: str) -> str:
     """Strip noisy attributes / chrome from a content HTML chunk."""
     soup = BeautifulSoup(html, "html.parser")
-    for tag in soup.select("script, style, noscript, svg, iframe, nav, header, footer"):
-        tag.decompose()
+    for comment in soup.find_all(string=lambda value: isinstance(value, Comment)):
+        comment.extract()
+    for tag in list(soup.select(
+        "script, style, noscript, svg, iframe, nav, header, footer, "
+        "[hidden], [aria-hidden='true']"
+    )):
+        if tag.parent is not None:
+            tag.decompose()
 
     for tag in soup.find_all(True):
         new_attrs: dict = {}
