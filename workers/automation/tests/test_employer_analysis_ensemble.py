@@ -655,7 +655,10 @@ class TestEnsemble:
             await run_ensemble(
                 "sys",
                 JD,
-                adapters=(_StubDraftAdapter("claude-opus-4-8", returns=_grounded_dict()),),
+                adapters=(
+                    _StubDraftAdapter("claude-opus-4-8", returns=_grounded_dict()),
+                    _StubDraftAdapter("gpt-6.1-sol", returns=_grounded_dict()),
+                ),
                 synthesizer=synthesizer,
                 synthesizer_system_prompt="synth-sys",
                 max_leg_retries=1,

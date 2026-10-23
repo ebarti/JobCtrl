@@ -580,6 +580,18 @@ the typed acquisition failure after all capture reads. Repeat a fresh affected
 public URL through production acquisition and retain only private source captures
 and safe control metadata. Do not substitute hidden-page extraction for dismissal.
 
+For sole-provider canonical analysis, run locked
+`pytest tests/test_single_provider_analysis.py` with analysis-determination,
+ensemble, use-case, repository and provider-configuration checks. A sole admitted
+leg must retain strict source verification and exact canonical/per-leg
+verification IDs with no synthesis or duplicate verifier inference. Opposing
+valid model verdicts must control acceptance, failed refreshes preserve the
+accepted record, and a single survivor of multiple admitted legs must still
+synthesize. Prove the revised execution cache identity, then run a configured
+provider against owned synthetic posting data and inspect actual model/effort,
+call provenance and persisted readback. Call-count reduction alone is not a
+whole-workflow speed or quality-equivalence result.
+
 Every displayed semantic judgment must trace to a persisted determination:
 kind, schema/prompt versions, provider/model, input fingerprint, canonical source
 IDs and verbatim citations. Inspect the canonical writer, the accepted artifact
@@ -1226,8 +1238,8 @@ missing credential files, consumer Claude OAuth, raw OpenAI keys, and deferred
 local/custom endpoints must not unlock readiness. Inject a failure at every
 native credential-store batch boundary and prove exact rollback, then exercise provider-level
 revocation, the three-card Settings route at desktop/mobile width, the demo
-read-only boundary, and a sole-provider draft plus synthesis path without making
-a live model call. For model selection, use deterministic SDK fakes to prove
+read-only boundary, sole-provider verified promotion, and retained multi-leg
+synthesis without making a live model call. For model selection, use deterministic SDK fakes to prove
 catalog order, ready-only listing, Codex hidden/invalid filtering, Google
 generate-content filtering, Claude runtime-catalog normalization, stable deduplication, and
 sanitized failures. Prove settings reject an unready provider or unoffered ID,

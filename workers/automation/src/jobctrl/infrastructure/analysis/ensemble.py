@@ -15,8 +15,9 @@ Codex + Antigravity/Gemini; the orchestrator is N-leg, partial-failure safe):
   3. Validate every surviving draft's evidence spans (the deterministic
      grounding gate, the cardinal failure mode #1).
   4. Compute the cross-model agreement signal (D-06/D-08).
-  5. The synthesizer (Claude Agent SDK, D-07) reconciles the typed drafts into
-     the canonical analysis, which is re-validated for grounding before return.
+  5. One admitted leg promotes its grounded, independently verified draft to
+     the strict canonical schema. Multiple admitted legs retain provider-neutral
+     synthesis and canonical grounding/verification, even after a leg fails.
 
 Hard-fail (``EnsembleError``) ONLY when zero drafts survive — a degraded
 ensemble (some legs failed) is returned, clearly marked degraded.
@@ -196,14 +197,22 @@ async def run_ensemble(
             )
         except DeterminationFailure as exc:
             failures.append(AnalysisFailure(model_id="analysis_agreement", error=exc.code, raw_output=None))
-    canonical = await _synthesize_with_retry(
-        synthesizer,
-        system_prompt=synthesizer_system_prompt,
-        drafts=tuple(drafts),
-        jd_snapshot=jd_snapshot,
-        max_retries=max_leg_retries,
-        verify_prose=verify_prose,
-    )
+    if len(adapters) == 1:
+        # This sole admitted draft already passed grounding and independent
+        # source verification. Promote its exact content without another rewrite;
+        # the use-case boundary still verifies and binds the strict canonical.
+        canonical = JobAnalysis.model_validate(drafts[0].model_dump(exclude={"model_id"}))
+    else:
+        # Preserve reconciliation when multiple legs were admitted, including
+        # degraded ensembles with only one surviving draft.
+        canonical = await _synthesize_with_retry(
+            synthesizer,
+            system_prompt=synthesizer_system_prompt,
+            drafts=tuple(drafts),
+            jd_snapshot=jd_snapshot,
+            max_retries=max_leg_retries,
+            verify_prose=verify_prose,
+        )
 
     return EnsembleOutcome(
         canonical=canonical,
