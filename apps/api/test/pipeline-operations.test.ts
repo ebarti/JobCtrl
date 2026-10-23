@@ -62,28 +62,40 @@ describe("pipeline operations read model", () => {
     const fixture = createFixture();
     insertHeartbeat(fixture, { activeSlots: 0, counts: {}, details: [] });
 
-    expect(snapshot(fixture).projectionCoverage).toBeNull();
+    const result = snapshot(fixture);
+    expect(result.projectionCoverage).toBeNull();
+    expect(result.activeItems).toEqual([]);
+    expect(result.activeItemsTotal).toBe(0);
+    expect(result.activeItemsTruncated).toBe(false);
   });
 
   it("reports recovering coverage when no selected execution has unavailable telemetry", () => {
     const fixture = createFixture();
 
-    expect(snapshot(fixture).projectionCoverage).toMatchObject({
+    const result = snapshot(fixture);
+    expect(result.projectionCoverage).toMatchObject({
       status: "recovering",
       persistedMembershipCount: 0,
       persistedStepCount: 0,
     });
+    expect(result.activeItems).toEqual([]);
+    expect(result.activeItemsTotal).toBeNull();
+    expect(result.activeItemsTruncated).toBeNull();
   });
 
   it("reports recovering coverage when occupied slots have no allowlisted runtime details", () => {
     const fixture = createFixture();
     insertHeartbeat(fixture, { activeSlots: 1, counts: {}, details: [] });
 
-    expect(snapshot(fixture).projectionCoverage).toMatchObject({
+    const result = snapshot(fixture);
+    expect(result.projectionCoverage).toMatchObject({
       status: "recovering",
       persistedMembershipCount: 0,
       persistedStepCount: 0,
     });
+    expect(result.activeItems).toEqual([]);
+    expect(result.activeItemsTotal).toBe(0);
+    expect(result.activeItemsTruncated).toBe(true);
   });
 
   it("reports recovering coverage when fresh runtime work has no selected execution", () => {
@@ -96,11 +108,56 @@ describe("pipeline operations read model", () => {
       ],
     });
 
-    expect(snapshot(fixture).projectionCoverage).toMatchObject({
+    const result = snapshot(fixture);
+    expect(result.projectionCoverage).toMatchObject({
       status: "recovering",
       persistedMembershipCount: 0,
       persistedStepCount: 0,
     });
+    expect(result.activeStageCounts).toEqual([{ stage: "tailor", count: 1 }]);
+    expect(result.activeItems).toEqual([{
+      kind: "unresolved_runtime_activity",
+      activityType: "tailor_job",
+      workflowId: unmatchedWorkflowRef("unselected"),
+      executionId: DISCOVER_RUN_ID,
+      attempt: 1,
+      startedAt: "2026-07-14T11:05:00.000Z",
+      opaqueId: "op_000000000000000000000041",
+      stage: "tailor",
+    }]);
+    expect(result.activeItemsTotal).toBe(1);
+    expect(result.activeItemsTruncated).toBe(false);
+  });
+
+  it("preserves a truncated standalone runtime inventory without a selected execution", () => {
+    const fixture = createFixture();
+    insertHeartbeat(fixture, {
+      activeSlots: 2,
+      counts: { tailor_job: 2 },
+      details: [activityDetail("tailor_job", "op_000000000000000000000042", unmatchedWorkflowRef("truncated"))],
+    });
+
+    const result = snapshot(fixture);
+    expect(result.activeItems).toHaveLength(1);
+    expect(result.activeItemsTotal).toBe(2);
+    expect(result.activeItemsTruncated).toBe(true);
+  });
+
+  it("withholds stale standalone activity details without a selected execution", () => {
+    const fixture = createFixture();
+    insertHeartbeat(fixture, {
+      activeSlots: 1,
+      counts: { tailor_job: 1 },
+      details: [activityDetail("tailor_job", "op_000000000000000000000043", unmatchedWorkflowRef("stale"))],
+    });
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET last_seen_at = ?")
+      .run(new Date(NOW.getTime() - 60_000).toISOString());
+
+    const result = snapshot(fixture);
+    expect(result.activeItems).toEqual([]);
+    expect(result.activeItemsTotal).toBeNull();
+    expect(result.activeItemsTruncated).toBeNull();
+    expect(result.activeStageCounts).toBeNull();
   });
 
   it.each([

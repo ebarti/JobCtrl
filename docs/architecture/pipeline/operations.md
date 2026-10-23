@@ -496,7 +496,11 @@ resolved database/app-dir identity, selects the task queue named by the newest
 matching heartbeat, and aggregates fresh schema-valid workers from that queue.
 Active slots count every activity; active-item detail is a separate
 oldest-first list capped at 20 with an exact allowlisted total and truncation
-marker.
+marker. This global runtime inventory remains available when no Discover
+execution is selected, including manual preparation activity. Fresh empty
+inventory reports zero; unavailable or stale inventory reports unknown.
+Selected-execution membership and exact workflow/run matches only enrich the
+runtime items; their absence does not erase worker activity.
 
 This boundary is deliberately privacy-safe. The interceptor never reads
 activity arguments. It retains only allowlisted activity kinds, validated safe
