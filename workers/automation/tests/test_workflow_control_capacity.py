@@ -29,7 +29,7 @@ from jobctrl.llm import check_spend_budget, record_llm_spend
 from jobctrl.preparation.workflow import (
     JobPreparationInput,
     JobPreparationWorkflow,
-    _cancel_material_stage_state,
+    _cancel_stage_state,
 )
 from jobctrl.state import ensure_job_stage_rows, set_stage_state
 from .temporal_env import local_env
@@ -62,7 +62,7 @@ class _CancelControlWorkflow:
             await workflow.wait_condition(lambda: False)
         except (asyncio.CancelledError, CancelledError):
             # The same owner-scoped cancellation helper as JobPreparationWorkflow.
-            await _cancel_material_stage_state("cover", payload)
+            await _cancel_stage_state("cover", payload)
             raise
 
 

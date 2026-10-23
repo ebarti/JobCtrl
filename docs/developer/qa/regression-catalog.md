@@ -545,6 +545,20 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For per-job Score cancellation, run locked
+`pytest tests/test_preparation_score_cancellation.py tests/test_workflow_job_preparation.py tests/test_workflow_control_capacity.py tests/test_automatic_preparation.py tests/test_score_activity_recovery.py tests/test_v7_score_runtime.py`.
+Use owned synthetic storage and real old/new Temporal cancellation histories.
+Verify cooperative event delivery, bounded cleanup, exact owner/job/step recovery,
+preservation of committed scores and newer owners, and no material dispatch after
+cancellation. A late success or failure must preserve canceled/reset state and
+publish no score; ownership loss must skip without reclaiming work on retry.
+Unavailable or different-run history never releases ownership. Keep the purge's
+active-work guard intact.
+Exercise both cold admission and accepted-score reuse after cancellation or a
+newer owner, including unchanged cache attempt counts and valid explicit
+rescores. A nullable/unknown SDK status must preserve ownership; same-owner rows
+outside a single-job preparation's canonical job must remain unchanged.
+
 For interpretation metadata citation sources, run locked
 `pytest tests/test_interpretation_citable_fields.py tests/test_remaining_determinations.py tests/test_binding_repair_feedback.py tests/test_analysis_retry_boundaries.py`.
 Use owned exact-schema storage and explicit synthetic model decisions. Omit

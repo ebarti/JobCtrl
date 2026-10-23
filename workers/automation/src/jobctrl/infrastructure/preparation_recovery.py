@@ -66,7 +66,7 @@ def claim_preparation_reservation(
                 conn, str(job_id), expected_posting_url, tenant_id=str(tenant_id), allow_unknown=True
             )
         if cancel_event is not None and cancel_event.is_set():
-            raise RuntimeError(f"{stage} activity canceled before dispatch")
+            raise PreparationReservationLost(f"{stage} activity canceled before dispatch")
         if workflow_id and not owns_preparation_reservation(
             conn, tenant_id=tenant_id, job_id=job_id, stage=stage, workflow_id=workflow_id
         ):
@@ -85,6 +85,7 @@ class RecoverPreparationStateInput:
     stage: str
     expected_app_dir: str | None = None
     expected_db_path: str | None = None
+    job_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -262,17 +263,20 @@ def recover_preparation_state_rows(
     from jobctrl.domain.tenant import TenantId
     from jobctrl.state import utc_now
 
-    rows = conn.execute(
-        """
+    query = """
         SELECT job_id, attempt_count, max_attempts, started_at, metadata_json
           FROM job_stage_states
          WHERE tenant_id = ?
            AND stage = ?
            AND state = 'running'
            AND json_extract(metadata_json, '$.activityOwner') = ?
-        """,
-        (payload.tenant_id, payload.stage, payload.workflow_id),
-    ).fetchall()
+        """
+    parameters = [payload.tenant_id, payload.stage, payload.workflow_id]
+    job_ids = tuple(dict.fromkeys(str(canonical_job_id(value)) for value in payload.job_ids))
+    if job_ids:
+        query += " AND job_id IN (" + ",".join("?" for _ in job_ids) + ")"
+        parameters.extend(job_ids)
+    rows = conn.execute(query, parameters).fetchall()
     tenant_id = TenantId(payload.tenant_id)
     finished_at = utc_now()
     restored = 0

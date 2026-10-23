@@ -167,13 +167,13 @@ class JobPreparationWorkflow:
             try:
                 output = await _execute_step(step, payload)
             except CancelledError:
-                if step in {"tailor", "cover"}:
-                    await _cancel_material_stage_state(step, payload)
+                if step in {"score", "tailor", "cover"}:
+                    await _cancel_stage_state(step, payload)
                 raise
             except ActivityError as exc:
                 if _activity_error_was_cancelled(exc):
-                    if step in {"tailor", "cover"}:
-                        await _cancel_material_stage_state(step, payload)
+                    if step in {"score", "tailor", "cover"}:
+                        await _cancel_stage_state(step, payload)
                     raise CancelledError("Workflow canceled by request.") from exc
                 if step in {"score", "tailor", "cover"}:
                     await _recover_stage_state(step, payload)
@@ -232,11 +232,12 @@ async def _recover_stage_state(
     )
 
 
-async def _cancel_material_stage_state(
+async def _cancel_stage_state(
     stage: str,
     payload: JobPreparationInput,
 ) -> None:
-    if not workflow.patched("preparation-material-cancellation-v1"):
+    marker = "preparation-score-cancellation-v1" if stage == "score" else "preparation-material-cancellation-v1"
+    if not workflow.patched(marker):
         return
     await execute_control_activity(
         cancel_preparation_state_activity,
@@ -282,6 +283,7 @@ def _activity_output_detail(output: Any) -> str:
 
 async def _execute_step(step: str, payload: JobPreparationInput) -> Any:
     if step == "score":
+        wait_for_cancel = workflow.patched("preparation-score-cancellation-v1")
         return await workflow.execute_activity(
             score_job_activity,
             ScoreJobActivityInput(
@@ -293,6 +295,10 @@ async def _execute_step(step: str, payload: JobPreparationInput) -> Any:
             start_to_close_timeout=_MODEL_ACTIVITY_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=_SCORE_RETRY,
+            cancellation_type=(
+                workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED
+                if wait_for_cancel else workflow.ActivityCancellationType.TRY_CANCEL
+            ),
         )
     if step == "tailor":
         return await workflow.execute_activity(

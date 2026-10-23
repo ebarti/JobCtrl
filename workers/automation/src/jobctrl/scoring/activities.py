@@ -332,6 +332,7 @@ async def score_job_activity(payload: ScoreJobActivityInput) -> ScoreJobActivity
     """Score one canonical JobId for ``JobPreparationWorkflow``."""
     from jobctrl.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
 
+    cancel_event = threading.Event()
     workflow_id = str(activity.info().workflow_run_id or activity.info().workflow_id)
     if activity.info().attempt > 1:
         from jobctrl.database import get_connection
@@ -350,10 +351,11 @@ async def score_job_activity(payload: ScoreJobActivityInput) -> ScoreJobActivity
         )
     try:
         result = await run_blocking_with_heartbeat(
-            lambda: _score_one_job(payload, workflow_id=workflow_id),
+            lambda: _score_one_job(payload, workflow_id=workflow_id, cancel_event=cancel_event),
             starting_message="score-job starting",
             progress_message="score-job still running",
             activity_name="score_job",
+            on_cancel=cancel_event.set,
         )
         status = str(result.get("status") or "ok")
         if status != "ok":
@@ -374,19 +376,28 @@ def _score_one_job(
     payload: ScoreJobActivityInput,
     *,
     workflow_id: str | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     from jobctrl.domain.errors import MissingInputError
     from jobctrl.domain.scoring.eligibility import eligibility_blocks_downstream
     from jobctrl.domain.tenant import TenantId
     from jobctrl.scoring.scorer import score_job_by_id
+    from jobctrl.infrastructure.preparation_recovery import PreparationReservationLost
 
-    outcome = score_job_by_id(
-        payload.job_id,
-        tenant_id=TenantId(payload.tenant_id),
-        rescore=payload.rescore,
-        llm_model=payload.llm_model,
-        workflow_id=workflow_id,
-    )
+    if cancel_event is not None and cancel_event.is_set():
+        return {"status": "skipped", "reason": "activity_owner_lost"}
+    try:
+        outcome = score_job_by_id(
+            payload.job_id,
+            tenant_id=TenantId(payload.tenant_id),
+            rescore=payload.rescore,
+            llm_model=payload.llm_model,
+            workflow_id=workflow_id,
+            cancel_event=cancel_event,
+        )
+    except PreparationReservationLost:
+        # A canceled/reset predecessor must not retry and reclaim a successor.
+        return {"status": "skipped", "reason": "activity_owner_lost"}
     if outcome.ok:
         return {
             "status": "ok",
