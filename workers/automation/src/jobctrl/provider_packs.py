@@ -340,6 +340,14 @@ def validate_installed_pack_metadata(payload: Mapping[str, Any]) -> ProviderPack
     )
 
 
+def provider_pack_installation_key(spec: ProviderPackSpec) -> str:
+    """Address the exact signed closure without overwriting another payload's pack."""
+    metadata = spec.to_metadata(tree_sha256="0" * 64)
+    metadata.pop("treeSha256")
+    digest = hashlib.sha256(json.dumps(metadata, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return f"{spec.version}-{digest}"
+
+
 def _download_wheel(wheel: ProviderWheelSpec, destination: Path) -> None:
     request = urllib.request.Request(
         wheel.url,
@@ -596,7 +604,8 @@ def install_provider_pack(
         raise ProviderPackError(f"provider pack parent cannot be a symlink: {pack_parent}")
     pack_parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     pack_parent.chmod(0o700)
-    target = pack_parent / spec.version
+    installation_key = provider_pack_installation_key(spec)
+    target = pack_parent / installation_key
     if target.is_symlink():
         raise ProviderPackError(f"provider pack target cannot be a symlink: {target}")
     staging = Path(tempfile.mkdtemp(prefix=f".{spec.version}.staging-", dir=pack_parent))
@@ -661,9 +670,10 @@ def install_provider_pack(
         _write_json_atomic(
             pack_parent / "active.json",
             {
-                "schemaVersion": SPEC_SCHEMA_VERSION,
+                "schemaVersion": 2,
                 "version": spec.version,
                 "treeSha256": tree_sha256,
+                "installationKey": installation_key,
             },
         )
         return target
@@ -685,6 +695,7 @@ __all__ = [
     "parse_provider_pack_lock",
     "parse_provider_pack_spec",
     "provider_tree_sha256",
+    "provider_pack_installation_key",
     "provider_tree_stats",
     "validate_installed_pack_metadata",
 ]

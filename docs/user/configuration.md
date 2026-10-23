@@ -365,6 +365,17 @@ token cost for an in-flight call. The limit is not a reservation or strict
 in-flight cap. `GET /v1/health` and `jobctrl doctor` report the global USD total
 and each lane's observed tokens, configured threshold, and status.
 
+## Provider sessions
+
+JobCtrl uses agent-runtime-kit to execute provider requests. Codex can keep its
+SDK process warm while each request starts a fresh conversation. This preserves
+independent generation and review. Saved models, reasoning effort, budgets and
+provider availability still determine which requests run.
+
+The runtime keeps a bounded number of idle clients. It does not add another
+queue below the pipeline's configured concurrency. Model reasoning and required
+artifact reviews can still take time even when the SDK process is already warm.
+
 ## Execution Concurrency
 
 Settings separates pipeline parallelism from the worker capacity that executes

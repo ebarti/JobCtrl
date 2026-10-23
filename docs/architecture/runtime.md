@@ -21,6 +21,14 @@ or where a change belongs.
 You start the first four; the API spawns and reuses the `jobctrl rpc`
 subprocess itself.
 
+## Agent execution
+
+The Python worker and RPC process use a process-owned `agent-runtime-kit`
+service for provider generation. Its persistent event loop, bounded idle cache,
+fresh request conversations and cancellation/shutdown rules are defined in
+[Agent Runtime Ownership](agent-runtime.md). Pipeline admission and Temporal
+activity capacity remain owned by their existing layers.
+
 ## Source and bundled runtime boundaries
 
 The table above describes the source-development topology. The bundled
@@ -48,6 +56,12 @@ mode ignores ambient `PYTHONHOME`, `PYTHONPATH`, user-site, and virtualenv
 state. Bundled dotenv discovery is limited to the JobCtrl-owned state file and
 never searches the current directory or a checkout.
 
+Provider pack directories identify the exact signed wheel closure as well as
+the SDK version. A changed closure installs alongside the previous directory;
+activation validates its schema-2 installation identity against the signed
+payload. Compatible legacy schema-1 version directories retain the same full
+wheel and tree verification. See [Agent Runtime Ownership](agent-runtime.md).
+
 Provider runtimes that JobCtrl cannot redistribute are a separate mutable
 boundary under the JobCtrl state directory. The signed payload owns the exact
 provider-pack lock; installation accepts only that lock, verifies every wheel's
@@ -66,8 +80,12 @@ When isolated auth is absent, setup and generation retain one-time reuse
 of a regular Codex CLI `auth.json`; the explicit Codex provider verify action
 uses the same copy-once behavior before checking the isolated login. Existing
 JobCtrl-owned auth is not overwritten, and the normal Codex home is unchanged.
+The generated workspace also has an explicit private project root, so SDK
+configuration discovery cannot inherit unrelated settings from its physical
+ancestors. Its initialization and validation are defined in
+[Agent Runtime Ownership](agent-runtime.md#codex).
 Only `auth.json` is reused; user configuration, instructions, skills, sessions
-and logs are never copied. Generation threads are ephemeral. Each generation
+and logs are never copied. Generation threads are ephemeral. Each pooled generation client
 or model-catalog app-server client uses a private temporary `sqlite_home` and
 `log_dir`, removed after the app server closes, including startup failures and
 cancellation. Existing files in the stable credential home are preserved.

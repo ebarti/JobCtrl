@@ -16,6 +16,7 @@ import stat
 import threading
 import tomllib
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from urllib.request import Request
 
@@ -94,6 +95,7 @@ def test_config_overrides_select_workspace_only_permission_profile() -> None:
     assert "features.apps=false" in overrides
     assert "features.shell_tool=false" in overrides
     assert "allow_login_shell=false" in overrides
+    assert 'project_root_markers=[".git"]' in overrides
     assert 'shell_environment_policy={inherit="none"}' in overrides
     assert f'default_permissions="{profile}"' in overrides
 
@@ -500,6 +502,92 @@ async def test_pinned_app_server_denies_auth_file_and_strips_provider_key_from_c
     assert codex_home.exists()
 
 
+def _kit_workspace_report(dirs):
+    from agent_runtime_kit import AgentTask, FilesystemAccess, PermissionMode, PermissionProfile
+    from agent_runtime_kit.adapters.codex import CodexAgentRuntime
+
+    overrides = tuple(value for value in adapter._codex_config_overrides(Path("/owned/codex"))
+                      if value != f'default_permissions="{adapter._CODEX_PERMISSION_PROFILE}"')
+    runtime = CodexAgentRuntime(
+        env=adapter._isolated_codex_env(dirs.codex_home, dirs.process_home),
+        config_overrides=overrides,
+    )
+    task = AgentTask(
+        goal="Owned configuration boundary check; no provider call",
+        model="gpt-6.1-sol",
+        reasoning_effort="max",
+        working_directory=dirs.workdir,
+        permissions=PermissionProfile(
+            mode=PermissionMode.STRICT, filesystem=FilesystemAccess.READ_ONLY,
+            native_profile=adapter._CODEX_PERMISSION_PROFILE,
+        ),
+    )
+    return runtime, task, runtime.validate_task(task)
+
+
+def test_prepared_workspace_bounds_kit_configuration_to_owned_root(monkeypatch, tmp_path):
+    retained_home = tmp_path / "retained-user-home"
+    ancestor = retained_home / ".codex" / "config.toml"
+    ancestor.parent.mkdir(parents=True)
+    original = 'sandbox_mode="read-only"\nproject_root_markers=[".foreign-root"]\n'
+    ancestor.write_text(original)
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", retained_home / ".jobctrl")
+
+    dirs = adapter._prepare_isolated_codex_home(ensure_auth=False)
+    runtime, task, report = _kit_workspace_report(dirs)
+
+    assert not report.issues
+    paths = runtime._native_config_paths(task)
+    assert dirs.codex_home / "config.toml" in paths
+    assert Path("/etc/codex/config.toml") in paths
+    assert dirs.workdir / ".codex" / "config.toml" in paths
+    assert ancestor not in paths
+    assert ancestor.read_text() == original
+    assert not (dirs.codex_home / "auth.json").exists()
+
+
+@pytest.mark.parametrize("scope", ["workspace", "isolated_home"])
+def test_workspace_root_does_not_hide_effective_config_conflicts(monkeypatch, tmp_path, scope):
+    _isolate_homes(monkeypatch, tmp_path)
+    dirs = adapter._prepare_isolated_codex_home(ensure_auth=False)
+    path = dirs.workdir / ".codex" / "config.toml" if scope == "workspace" else dirs.codex_home / "config.toml"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text('sandbox_mode="read-only"\n')
+
+    _runtime, _task, report = _kit_workspace_report(dirs)
+
+    assert any(issue.field == "permissions.native_profile" for issue in report.issues)
+    assert path.read_text() == 'sandbox_mode="read-only"\n'
+
+
+@pytest.mark.parametrize("directory", ["codex_home", "workspace", "home"])
+def test_redirected_runtime_directories_are_refused_before_auth_or_chmod(monkeypatch, tmp_path, directory):
+    app_dir, _source = _isolate_homes(monkeypatch, tmp_path)
+    codex_home = app_dir / "codex_home"
+    target = codex_home if directory == "codex_home" else codex_home / directory
+    target.mkdir(parents=True, mode=0o755)
+    original = Path.lstat
+    enrolled = []
+    monkeypatch.setattr(adapter, "ensure_jobctrl_codex_auth", lambda: enrolled.append(True))
+
+    def with_reparse(path, *args, **kwargs):
+        info = original(path, *args, **kwargs)
+        if path != target:
+            return info
+        return SimpleNamespace(st_mode=info.st_mode, st_nlink=info.st_nlink,
+                               st_file_attributes=0x400, st_reparse_tag=0xA0000003)
+
+    mode_before = target.stat().st_mode
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "lstat", with_reparse)
+        with pytest.raises(RuntimeError, match="Codex"):
+            adapter._prepare_isolated_codex_home()
+    assert target.stat().st_mode == mode_before
+    assert not (target / "auth.json").exists()
+    if directory == "codex_home":
+        assert enrolled == []
+
+
 def _runtime_root(config: Any) -> Path:
     overrides = tomllib.loads("\n".join(config.config_overrides[-2:]))
     sqlite_root = Path(overrides["sqlite_home"])
@@ -578,10 +666,13 @@ async def test_runtime_storage_is_removed_on_every_client_exit(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("phase", ["process_start", "initialize", "shutdown"])
+@pytest.mark.parametrize("route", ["factory", "kit"])
 async def test_cancellation_joins_process_start_and_shutdown_before_cleanup(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, phase: str
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, phase: str, route: str
 ) -> None:
     import openai_codex
+    from jobctrl.infrastructure.llm import agent_runtime_codex as kit_adapter
+    from jobctrl.infrastructure.llm.agent_runtime_pool import AgentRuntimeService
 
     _app_dir, source_home = _isolate_homes(monkeypatch, tmp_path)
     (source_home / "auth.json").write_text('{"OPENAI_API_KEY":"sk-synthetic-race"}')
@@ -589,10 +680,10 @@ async def test_cancellation_joins_process_start_and_shutdown_before_cleanup(
     monkeypatch.setattr(adapter, "resolve_codex_binary", lambda: binary)
     starting = threading.Event()
     publish_process = threading.Event()
-    initializing = asyncio.Event()
-    allow_initialize = asyncio.Event()
-    closing = asyncio.Event()
-    allow_close = asyncio.Event()
+    initializing = threading.Event()
+    allow_initialize = threading.Event()
+    closing = threading.Event()
+    allow_close = threading.Event()
     roots: list[Path] = []
     process = {"running": False}
 
@@ -609,20 +700,43 @@ async def test_cancellation_joins_process_start_and_shutdown_before_cleanup(
 
         async def __aenter__(self) -> "FakeAsyncCodex":
             initializing.set()
-            await allow_initialize.wait()
+            await asyncio.to_thread(allow_initialize.wait)
             return self
 
         async def close(self) -> None:
             closing.set()
-            await allow_close.wait()
+            await asyncio.to_thread(allow_close.wait)
             assert roots[0].exists()
             process["running"] = False
 
+    async def thread_start(self, **kwargs):
+        async def run(prompt, **turn_kwargs):
+            # A successful kit turn remains pooled. Exercise shutdown through
+            # the actual failed-turn eviction boundary instead.
+            return SimpleNamespace(
+                status="failed", final_response=None,
+                error=SimpleNamespace(message="owned shutdown trigger"), usage=None,
+            )
+        return SimpleNamespace(id="owned-shutdown-thread", run=run)
+
+    FakeAsyncCodex.thread_start = thread_start
     monkeypatch.setattr(openai_codex, "AsyncCodex", FakeAsyncCodex)
 
+    owner = AgentRuntimeService(capacity=1) if route == "kit" else None
+    if owner is not None:
+        monkeypatch.setattr(kit_adapter, "agent_runtime_service", lambda: owner)
+
     async def run() -> None:
-        async with adapter._load_async_codex_factory()():
-            pass
+        factory = adapter._load_async_codex_factory()
+        if owner is not None:
+            await kit_adapter.call_codex_runtime(
+                factory=factory, approval=lambda: "deny-all", model="owned-model",
+                effort="max", prompt="owned startup cancellation", operation="chat_json",
+                output_schema=None,
+            )
+        else:
+            async with factory():
+                pass
 
     task = asyncio.create_task(run())
     try:
@@ -636,12 +750,12 @@ async def test_cancellation_joins_process_start_and_shutdown_before_cleanup(
             publish_process.set()
         else:
             publish_process.set()
-            await asyncio.wait_for(initializing.wait(), timeout=5)
+            assert await asyncio.to_thread(initializing.wait, 5)
             if phase == "initialize":
                 task.cancel()
             else:
                 allow_initialize.set()
-        await asyncio.wait_for(closing.wait(), timeout=5)
+        assert await asyncio.to_thread(closing.wait, 5)
         assert process["running"] and roots[0].exists()
         # Repeated cancellation must not detach the SDK's shutdown worker.
         task.cancel()
@@ -662,3 +776,74 @@ async def test_cancellation_joins_process_start_and_shutdown_before_cleanup(
         if not task.done():
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+        if owner is not None:
+            await asyncio.to_thread(owner.close)
+
+
+@pytest.mark.asyncio
+async def test_pooled_native_storage_survives_reuse_then_closes_before_removal(monkeypatch, tmp_path):
+    import openai_codex
+    from jobctrl.infrastructure.llm import agent_runtime_codex as kit_adapter
+    from jobctrl.infrastructure.llm.agent_runtime_pool import AgentRuntimeService
+
+    app_dir, source_home = _isolate_homes(monkeypatch, tmp_path)
+    auth = b'{"OPENAI_API_KEY":"sk-owned-pool-storage"}'
+    (source_home / "auth.json").write_bytes(auth)
+    stable_home = app_dir / "codex_home"
+    stable_home.mkdir(parents=True)
+    (stable_home / "auth.json").write_bytes(auth)
+    retained = stable_home / "logs_2.sqlite"
+    retained.write_bytes(b"retained provider state")
+    binary = _write_executable(tmp_path / "codex-bin")
+    monkeypatch.setattr(adapter, "resolve_codex_binary", lambda: binary)
+    roots = []
+    closed = []
+    threads = []
+
+    class FakeAsyncCodex(_FactoryCodexDouble):
+        def __init__(self, *, config):
+            self.root = _runtime_root(config)
+            roots.append(self.root)
+            assert self.root.exists()
+
+        async def __aenter__(self):
+            return self
+
+        async def close(self):
+            assert self.root.exists()
+            closed.append(self.root)
+
+        async def thread_start(self, **kwargs):
+            assert kwargs["ephemeral"] is True
+            thread_id = f"owned-pool-thread-{len(threads)}"
+            threads.append(thread_id)
+            async def run(prompt, **turn_kwargs):
+                return SimpleNamespace(status="completed", final_response="{}", error=None, usage=None)
+            return SimpleNamespace(id=thread_id, run=run)
+
+    monkeypatch.setattr(openai_codex, "AsyncCodex", FakeAsyncCodex)
+    owner = AgentRuntimeService(capacity=1)
+    monkeypatch.setattr(kit_adapter, "agent_runtime_service", lambda: owner)
+    try:
+        async def run(model):
+            factory = adapter._load_async_codex_factory()
+            assert all(not value.startswith(("sqlite_home=", "log_dir="))
+                       for value in factory.jobctrl_runtime_config["config_overrides"])
+            return await kit_adapter.call_codex_runtime(
+                factory=factory, approval=lambda: "deny-all", model=model, effort="max",
+                prompt="owned pool storage", operation="chat_json", output_schema=None,
+            )
+        first = await run("owned-a")
+        second = await run("owned-a")
+        assert len(roots) == 1 and roots[0].exists() and closed == []
+        assert first.session_id != second.session_id
+        assert second.runtime_metadata["sdk_process_reused"] is True
+        await run("owned-b")
+        assert len(roots) == 2 and closed == roots[:1]
+        assert not roots[0].exists() and roots[1].exists()
+    finally:
+        await asyncio.to_thread(owner.close)
+    assert closed == roots and all(not root.exists() for root in roots)
+    assert (stable_home / "auth.json").read_bytes() == auth
+    assert (source_home / "auth.json").read_bytes() == auth
+    assert retained.read_bytes() == b"retained provider state"

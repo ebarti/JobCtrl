@@ -178,6 +178,7 @@ def activate_provider_pack(pack_id: str, *, app_dir: Path) -> Path | None:
         expected_provider_tree_sha256,
         load_provider_pack_spec,
         provider_tree_sha256,
+        provider_pack_installation_key,
     )
 
     root = provider_packs_dir(app_dir=app_dir)
@@ -207,10 +208,16 @@ def activate_provider_pack(pack_id: str, *, app_dir: Path) -> Path | None:
         ) from exc
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeConfigurationError(f"invalid provider pack activation file: {active_path}") from exc
-    if not isinstance(active, dict) or set(active) != {"schemaVersion", "version", "treeSha256"}:
+    if not isinstance(active, dict):
         raise RuntimeConfigurationError(f"invalid provider pack activation metadata: {active_path}")
-    if active.get("schemaVersion") != 1:
+    schema = active.get("schemaVersion")
+    if type(schema) is not int or schema not in (1, 2):
         raise RuntimeConfigurationError(f"unsupported provider pack activation schema: {active_path}")
+    expected_keys = {"schemaVersion", "version", "treeSha256"}
+    if schema == 2:
+        expected_keys.add("installationKey")
+    if set(active) != expected_keys:
+        raise RuntimeConfigurationError(f"invalid provider pack activation metadata: {active_path}")
     version = active.get("version")
     digest = active.get("treeSha256")
     if not isinstance(version, str) or not version or any(part in version for part in ("/", "\\", "..")):
@@ -221,9 +228,14 @@ def activate_provider_pack(pack_id: str, *, app_dir: Path) -> Path | None:
         raise RuntimeConfigurationError(
             f"provider pack activation version is not authorized by the signed lock: {active_path}"
         )
-    pack_root = (root / pack_id / version).resolve(strict=False)
+    installation_key = provider_pack_installation_key(signed_spec) if schema == 2 else version
+    if schema == 2 and active["installationKey"] != installation_key:
+        raise RuntimeConfigurationError(
+            f"provider pack installation identity is not authorized by the signed lock: {active_path}"
+        )
+    pack_root = (root / pack_id / installation_key).resolve(strict=False)
     _require_owned_path(pack_root, root, variable=PROVIDER_PACKS_DIR_ENV)
-    if (root / pack_id / version).is_symlink():
+    if (root / pack_id / installation_key).is_symlink():
         raise RuntimeConfigurationError(f"provider pack root cannot be a symlink: {pack_root}")
     metadata_path = pack_root / "pack.json"
     if metadata_path.is_symlink():
@@ -293,7 +305,7 @@ def activate_provider_pack(pack_id: str, *, app_dir: Path) -> Path | None:
             other_site = Path(other_path)
             other_root = other_site.parent
             if (
-                other_root.name != other_spec.version
+                other_root.name not in {other_spec.version, provider_pack_installation_key(other_spec)}
                 or other_root.is_symlink()
                 or other_site.is_symlink()
             ):
@@ -315,12 +327,21 @@ def activate_provider_pack(pack_id: str, *, app_dir: Path) -> Path | None:
                 other_expected_digest != other_actual_digest
                 or other_metadata
                 != other_spec.to_metadata(tree_sha256=other_expected_digest)
-                or other_active
-                != {
-                    "schemaVersion": 1,
-                    "version": other_spec.version,
-                    "treeSha256": other_expected_digest,
-                }
+                or not isinstance(other_active, dict)
+                or type(other_active.get("schemaVersion")) is not int
+                or other_active not in (
+                    {
+                        "schemaVersion": 1,
+                        "version": other_spec.version,
+                        "treeSha256": other_expected_digest,
+                    },
+                    {
+                        "schemaVersion": 2,
+                        "version": other_spec.version,
+                        "treeSha256": other_expected_digest,
+                        "installationKey": provider_pack_installation_key(other_spec),
+                    },
+                )
             ):
                 raise ProviderPackError("active provider state differs from its signed wheels")
         except ProviderPackError as exc:

@@ -18,7 +18,7 @@ Unless overridden by `JOBCTRL_DIR`, the local authority root is
 | `config.json` | Non-secret Settings values including spend/capacity, scoring guidance, provider metadata, provider-scoped model IDs, AI execution policy, compensation source policy, and explicitly adopted browser metadata. Transient detected-browser candidates are not persisted. |
 | `.env`, `gmail/` | Legacy plaintext environment configuration until migration, and Gmail OAuth client/token state. |
 | Native OS credential store | Allowlisted provider/CapSolver secrets; macOS Keychain, Windows Credential Manager, or Linux Secret Service. Not part of workspace database backups. |
-| `codex_home/` | Stable JobCtrl-owned Codex authentication; auth is outside the prompt-readable `workspace/` subtree. New app-server databases/logs use temporary client-owned storage and generation chats are ephemeral. Existing provider state is preserved. |
+| `codex_home/` | Stable JobCtrl-owned Codex authentication; auth is outside the prompt-readable `workspace/` subtree, whose private empty Git metadata bounds SDK project configuration discovery. New app-server databases/logs use temporary client-owned storage and generation chats are ephemeral. Existing provider state is preserved. |
 | `claude_home/`, `provider-packs/`, `provider-runtime/` | Isolated and separately acquired provider runtime state. |
 | `tailored_resumes/`, `cover_letters/`, `logs/` | Generated material and logs registered by SQLite metadata where applicable. |
 | `browser-profiles/`, `extension-capability-token`, `chrome-workers/`, `apply-workers/` | Consented copied profiles for separate compatibility capabilities, extension pairing, and browser/apply execution state. Integrated Discovery uses the current Chrome profile through the extension and never stores a copy; its bridge task bodies/results are API-process-memory-only. Browser-adoption metadata is in `config.json`. |
@@ -526,3 +526,11 @@ source snapshot and fingerprint used for review; semantic determinations remain
 in their existing canonical tables. No new database, profile copy, file store
 or runtime migration is introduced. Offer writes are transactional and retain
 all prior revisions and decisions.
+
+
+Provider pack installation directories include the SDK version and signed
+specification hash. Activation schema 2 records that identity; readers derive
+it from the signed payload and retain schema-1 compatibility for verified
+legacy directories. Updating a closure preserves the prior installation and
+never repurposes a version-only directory. The [runtime contract](agent-runtime.md)
+keeps wheel/tree integrity and core-overlap refusal mandatory.

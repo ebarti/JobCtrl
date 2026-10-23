@@ -176,6 +176,35 @@ workflow dispatch are synthetic; it does not exercise personal Chrome, external
 sources, scoring or material generation. Pair this with the applicable live
 Discovery proof from the regression catalog before claiming runtime recovery.
 
+## Agent Runtime Integration
+
+Run the pool and actual-kit adapter checks together with existing provider
+routing, failure recovery, analysis, voice and Codex isolation cases. Preserve
+parallel admitted requests above the idle-cache count, fresh conversation IDs,
+model/effort and named permissions, partial-usage accounting, original typed
+failures, startup-publication ordering and complete cancellation cleanup.
+
+Use a configured provider only in an owned synthetic workspace. Repeat calls
+through the production LlmPort and inspect actual kit process-start/reuse
+metadata and distinct conversation IDs. A reused Python adapter object is not
+proof of a reused SDK process. Verify source-installed and bundled dependency
+closure: a package moved into core must leave generated provider deltas, and
+core-overlap rejection stays enabled. Follow
+[Agent Runtime Ownership](architecture/agent-runtime.md) and the
+[Auditability Checks](developer/qa/regression-catalog.md#auditability-checks).
+
+For Codex isolation, place the owned runtime beneath a synthetic user-home
+ancestor containing conflicting legacy Codex settings. Require real-kit
+validation and the public app-server `config/read` to exclude that ancestor
+while preserving isolated-home, workspace-local and system configuration
+inspection. Verify the generated Git root without a runtime Git dependency,
+concurrent initialization, failed-publication cleanup, and refusal/preservation
+of symlinks, Windows junctions/reparse points, gitfiles and unfamiliar or partial metadata. Repeat real configured
+provider calls through the normal typed adapter in this home-shaped workspace;
+use fresh conversations and verify that process reuse and subsequent workspace
+preparation remain valid. A plain temporary-root probe does not cover retained
+home ancestry.
+
 ## Safe QA Data
 
 Use uniquely owned synthetic workspaces. Never point QA at real profiles,

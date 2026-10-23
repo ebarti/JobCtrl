@@ -1,9 +1,9 @@
 """Claude Agent SDK adapter for employer analysis — draft leg + synthesizer.
 
-Mirrors the mestre vendor-lane pattern (``mestre/vendor_lane/backends/
-claude_sdk.py``): a thin wrapper over ``claude_agent_sdk.query`` that forces
-native structured output via ``output_format={"type":"json_schema", ...}`` and
-reads the parsed object off the final ``ResultMessage.structured_output``.
+Dispatches native ``claude_agent_sdk.query`` through ``agent-runtime-kit``
+with a fresh tool-free conversation. Native structured output uses
+``output_format={"type":"json_schema", ...}``; JobCtrl retains terminal
+failure classification, accounting and strict result parsing.
 
 Test-mockability (no live auth in tests — D-04): the SDK ``query`` function and
 the ``ClaudeAgentOptions`` class are resolved through injectable factories that
@@ -83,6 +83,22 @@ async def _aiter(result: AsyncIterator[Any] | Awaitable[AsyncIterator[Any]]) -> 
 
 
 async def _collect_sdk_messages(
+    query_fn: QueryFn,
+    *,
+    prompt: str,
+    options: Any,
+    model: str,
+    operation: str,
+) -> list[Any]:
+    """Run every Claude generation/analysis/voice request through the kit."""
+    from jobctrl.infrastructure.llm.agent_runtime_claude import call_claude_runtime
+
+    return await call_claude_runtime(
+        query=query_fn, options=options, prompt=prompt, model=model, operation=operation,
+    )
+
+
+async def _collect_raw_sdk_messages(
     query_fn: QueryFn,
     *,
     prompt: str,
