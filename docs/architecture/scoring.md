@@ -51,6 +51,14 @@ The acquisition and scheduling policy is owned by
 
 `PendingJobSelector` orders eligible work mechanically by recency and stable job ID. `--limit` applies a spend/work cap to that order. No vocabulary overlap, BM25 or embedding fallback decides which pending jobs are relevant. Provider searches execute saved settings directly. Fetched listings enter canonical ingestion without a separate model admission gate; scoring uses the full posting and current canonical job interpretation.
 
+Job interpretation offers separately citable metadata fields only when their
+stored text is nonblank. It preserves exact nonblank text, including literal
+zero values. Missing metadata does not establish absence in the full posting:
+the model still decides stated and unknown values from the canonical posting.
+Source IDs and exact quotations remain validated, with the existing bounded
+three-call correction budget. The request fingerprint includes the actual source
+catalog; accepted older interpretation bindings remain readable.
+
 ## Scoring Fit Assessment
 
 The Scoring context keeps `FitScore` as a 1..10 applicant-side triage signal,

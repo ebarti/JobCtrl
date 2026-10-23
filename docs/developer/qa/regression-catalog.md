@@ -545,6 +545,16 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For interpretation metadata citation sources, run locked
+`pytest tests/test_interpretation_citable_fields.py tests/test_remaining_determinations.py tests/test_binding_repair_feedback.py tests/test_analysis_retry_boundaries.py`.
+Use owned exact-schema storage and explicit synthetic model decisions. Omit
+absent and whitespace-only metadata from both the source catalog and citation
+schema; preserve nonblank text and literal zero. Missing fields must not replace
+the model's full-posting judgment with a mechanical unknown. Verify model-selected
+unknowns, cache/readback identity, and preservation of accepted bindings after a
+failed refresh. Foreign IDs and changed quotes still exhaust one bounded
+three-call budget; never substitute a quote or increase stage retry budgets.
+
 For implicit per-job preparation after a manual Apply skip, run locked
 `pytest tests/test_preparation_manual_decline.py tests/test_automatic_material_decline.py tests/test_preparation_score_material_block.py tests/test_v7_tailor_runtime.py tests/test_v7_cover_runtime.py`.
 Use owned exact-schema jobs and real activity/workflow entry points. With a
