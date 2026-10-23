@@ -588,7 +588,8 @@ function isNullableWorkflowRef(value: unknown): value is string | null {
     typeof value === "string" &&
     (/^discover-local$/.test(value) ||
       /^prep-preparation:[a-f0-9]{64}$/.test(value) ||
-      /^run-[a-f0-9]{32}$/.test(value))
+      /^run-[a-f0-9]{32}$/.test(value) ||
+      /^prepare-auto-local-(?:enrich|score|tailor|cover)-[a-f0-9]{24}$/.exec(value)?.[0] === value)
   );
 }
 

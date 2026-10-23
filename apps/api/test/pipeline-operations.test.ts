@@ -31,6 +31,23 @@ afterEach(() => {
 });
 
 describe("pipeline operations read model", () => {
+  it.each(["enrich", "score", "tailor", "cover"])("reports the %s recovery batch stage and exact execution without inventing job membership", (stageName) => {
+    const fixture = createFixture();
+    const workflowId = `prepare-auto-local-${stageName}-${"a".repeat(24)}`;
+    insertHeartbeat(fixture, {
+      activeSlots: 1, counts: { [stageName]: 1 },
+      details: [activityDetail(stageName, "op_000000000000000000000042", workflowId, PREPARATION_RUN_ID)],
+    });
+    const result = snapshot(fixture);
+    expect(result.activeStageCounts).toEqual([{ stage: stageName, count: 1 }]);
+    expect(result.activeItems).toEqual([expect.objectContaining({
+      kind: "unresolved_runtime_activity", activityType: stageName, stage: stageName,
+      workflowId, executionId: PREPARATION_RUN_ID,
+    })]);
+    expect(result.activeItemsTotal).toBe(1);
+    expect(result.projectionCoverage).toMatchObject({ persistedMembershipCount: 0 });
+  });
+
   it("presents stages in dependency order with an explicit enrichment reconciliation label", () => {
     const fixture = createFixture();
     insertExecution(fixture, { status: "in_progress" });
@@ -2362,6 +2379,7 @@ function activityDetail(
 ): Record<string, unknown> {
   const kinds: Record<string, string> = {
     job_url_import: "job-url-import",
+    enrich: "enrichment",
     render_pdf: "job-pdf-render",
     score_job: "job-scoring",
     tailor_job: "job-tailoring",
