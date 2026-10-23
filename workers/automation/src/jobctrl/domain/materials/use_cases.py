@@ -1821,6 +1821,7 @@ class TailorResumeUseCase:
         requirement_fit_repository: "RequirementFitReportRepository | None" = None,
         analyze_use_case: "AnalyzeJobUseCase | None" = None,
         voice: VoicePort | None = None,
+        voice_skip_reason: str = "no_voice_port",
         pdf_renderer: PdfRendererPort | None = None,
         unit_of_work: UnitOfWork | None = None,
         evidence_selector: MaterialEvidenceSelector | None = None,
@@ -1850,15 +1851,11 @@ class TailorResumeUseCase:
         # ``_run_analyze`` to produce/reuse it before tailoring; otherwise the
         # caller must pass ``employer_analysis`` into ``execute`` directly.
         self._analyze_use_case = analyze_use_case
-        # Phase 3: the explicit voice pass (VOICE-01/02/03). When injected, the
-        # SELECTED candidate's prose is de-buzzworded/varied BEFORE the final audit
-        # so the audited + coverage text equals the rendered text; provenance + the
-        # never-fabricate detector are re-run against the voiced text, and the
-        # voiced payload is kept only when the deterministic voice proxies improve
-        # AND grounding re-validates — otherwise the clean pre-voice candidate
-        # ships. When absent, the use case is exactly the Phase-2 flow (coverage is
-        # still computed canonically, just over the un-voiced candidate).
+        # Optional polish starts only after the selected candidate passes all
+        # required reviews. Changed prose must pass those reviews again; a
+        # disabled pass retains the exact approved candidate and its receipts.
         self._voice = voice
+        self._voice_skip_reason = voice_skip_reason
         # Preservation invariant (architecture.md §5.5 / CLAUDE.md): when a PDF
         # renderer is injected, an approved resume's PDF is rendered INSIDE the
         # tailor transaction — BEFORE the prior approved generation is superseded
@@ -3440,7 +3437,17 @@ class TailorResumeUseCase:
         if not candidate.validation.passed or candidate.verdict is None or not candidate.verdict.approved:
             return candidate, VoicePassRecord.skipped("pre_voice_candidate_rejected")
         if self._voice is None:
-            return candidate, VoicePassRecord.skipped("no_voice_port")
+            record = VoicePassRecord.skipped(self._voice_skip_reason)
+            if self._voice_skip_reason == "optional_voice_polish_disabled":
+                final_judge = dict(candidate.record.get("judge") or {})
+                final_judge["review_history"] = [
+                    *deepcopy(candidate.record.get("review_history", [])),
+                    *_candidate_review_history(candidate.record),
+                ]
+                if candidate.adversarial_review is not None:
+                    final_judge["adversarial_review"] = candidate.adversarial_review.to_voice_pass_dict()
+                record = replace(record, final_judge=final_judge)
+            return candidate, record
         try:
             payload, voice_record = self._run_voice(tailored_payload=candidate.payload)
         except DeterminationFailure as exc:

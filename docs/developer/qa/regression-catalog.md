@@ -545,6 +545,22 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For optional post-approval résumé polish, run locked
+`pytest tests/test_resume_polish_policy.py tests/test_tailor_voice_audit_integration.py tests/test_tailor_judge_selection.py tests/test_saved_default_model.py tests/test_tailoring_artifact_boundary.py`.
+Prove a missing/false setting never acquires a voice provider; explicit boolean
+true and injected ports retain the existing rewrite/no-op/rejection paths.
+Required factual, quality and applicable persona verdicts retain authority.
+The disabled pass must preserve the exact selected text and provenance, keep the
+accepted review IDs, and record a truthful skipped audit. Rejected required
+reviews, malformed/stale/foreign receipts, cancellation and rendering failures
+must retain their existing failure and accepted-artifact preservation behavior.
+Exercise the HTTP Settings route with both booleans and invalid types in owned
+workspaces, retaining unrelated config bytes/values and avoiding provider calls
+for a polish-only update. Cover the real form's default/saved/reset states,
+changed-fields-only save during catalog failure, optimistic update and rollback,
+and browser readback. Call counts establish avoided work; report latency only
+when measured through completed production work.
+
 For known eligibility blocks in preparation, run locked
 `pytest tests/test_preparation_score_material_block.py tests/test_workflow_control_capacity.py tests/test_workflow_job_preparation.py tests/test_score_eligibility_stage_state.py tests/test_automatic_material_decline.py tests/test_v7_score_runtime.py`.
 Exercise the actual Score activity and Temporal payload conversion with the
@@ -1285,6 +1301,14 @@ proof for audit, and returns to `ready` after the authoritative history becomes
 readable; it must not leave stale ready data published during the failure.
 
 ### Public demo privacy and edge gate
+
+For additive demo settings, reopen a retained current-schema/current-seed
+workspace missing the new fields and require a strict, complete settings response
+and a rendered settings panel. Preserve identity, revision, authored edits,
+receipts and blobs on read; verify both subsequent boolean save directions and
+reload, existing saved values, an older tab's latest transaction state, and storage
+fallback. Never replace the workspace or relax response-schema assertions to
+update an immutable seed digest.
 
 When consent, cookies, telemetry, D1, retention, or Cloudflare configuration
 changes, the edge suite must prove that decline creates no analytics identity,

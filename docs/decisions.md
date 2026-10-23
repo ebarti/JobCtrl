@@ -2883,3 +2883,23 @@ repairs, interpretation provenance, generation allocation and preservation of
 accepted analysis during failed refreshes remain unchanged. Use owned synthetic
 sources and a configured-provider run for integration proof; do not introduce
 quality baselines, labeled corpora or recorded-output replay.
+
+## 2026-10-22: Extra Resume Polish Is Opt-In
+
+Status: accepted
+
+A selected résumé that has passed required factual, quality and applicable
+persona reviews is an accepted candidate. The production factory previously
+requested another writing pass whenever its provider was available; changed
+wording then required the same independent reviews again. This extra work can
+improve wording but is not necessary to establish the original approval.
+
+The saved boolean `resume_voice_polish` defaults to false and is editable under
+Settings → Model selection. A disabled pass retains the exact approved text
+and review identities with a truthful skipped audit. Opt-in and explicit voice
+ports keep the complete existing rewrite and fresh-review behavior. Model and
+effort choices, original review gates, source/version fences, cancellation,
+spend admission and failed-refresh preservation remain unchanged. Existing
+accepted materials and work already running are not rewritten by a setting edit.
+See [Materials](architecture/materials.md) and
+[Configuration](user/configuration.md).

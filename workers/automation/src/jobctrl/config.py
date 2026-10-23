@@ -1356,6 +1356,11 @@ def get_tailoring_generator_models() -> tuple[str, ...]:
     return tuple(str(item).strip() for item in saved if str(item).strip()) if isinstance(saved, list) else ()
 
 
+def get_resume_voice_polish_enabled() -> bool:
+    """Extra post-approval rewriting is opt-in; required reviews always run."""
+    return _config_setting("resume_voice_polish") is True
+
+
 def get_tailoring_judge_model() -> str | None:
     saved = _config_setting("tailoring_judge_model")
     return str(saved).strip() or None if saved is not None else None

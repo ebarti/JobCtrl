@@ -9,6 +9,67 @@ import { buildTestPorts } from "../../../test/testPorts.js";
 import { AiExecutionPolicyPanel } from "./AiExecutionPolicyPanel.js";
 
 describe("<AiExecutionPolicyPanel>", () => {
+  it.each([true, false])("saves extra resume polish %s independently of the model catalog", async (enabled) => {
+    const user = userEvent.setup();
+    const settings = { ...sampleSettingsResponse, settings: { ...sampleSettingsResponse.settings, defaultLlmModel: "codex:saved-model", resumeVoicePolish: !enabled } };
+    const updateSettings = vi.fn(async () => ({ ...settings, settings: { ...settings.settings, resumeVoicePolish: enabled } }));
+    renderWithProviders(<AiExecutionPolicyPanel />, { ports: buildTestPorts({ api: {
+      settings: vi.fn(async () => settings),
+      providerModels: vi.fn(async () => { throw new Error("Synthetic catalog outage"); }), updateSettings,
+    } }) });
+    const polish = await screen.findByRole("checkbox", { name: "Extra résumé polish" });
+    expect(polish).toHaveAttribute("aria-checked", String(!enabled));
+    await user.click(polish);
+    await user.click(screen.getByRole("button", { name: "Save AI policy" }));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledWith({ resumeVoicePolish: enabled }));
+  });
+
+  it.each([
+    [true, true], [false, true], [true, false], [false, false],
+  ])("preserves undisplayed generator fallbacks on a polish-only save (%s, catalog ready: %s)", async (enabled, catalogReady) => {
+    const user = userEvent.setup();
+    const settings = { ...sampleSettingsResponse, settings: {
+      ...sampleSettingsResponse.settings,
+      resumeVoicePolish: !enabled,
+      tailoringGeneratorModels: ["codex:gpt-6.1-sol", "codex:gpt-6-sol", "codex:gpt-5.6-sol"],
+    } };
+    const updateSettings = vi.fn(async () => ({ ...settings, settings: { ...settings.settings, resumeVoicePolish: enabled } }));
+    renderWithProviders(<AiExecutionPolicyPanel />, { ports: buildTestPorts({ api: {
+      settings: vi.fn(async () => settings),
+      providerModels: vi.fn(async () => {
+        if (!catalogReady) throw new Error("Synthetic catalog outage");
+        return sampleProviderModelsResponse;
+      }),
+      updateSettings,
+    } }) });
+    await user.click(await screen.findByRole("checkbox", { name: "Extra résumé polish" }));
+    await user.click(screen.getByRole("button", { name: "Save AI policy" }));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledWith({ resumeVoicePolish: enabled }));
+  });
+
+  it("rolls back extra-polish cache state while keeping the failed-save draft editable", async () => {
+    const user = userEvent.setup();
+    let rejectSave: (reason: Error) => void = () => undefined;
+    const updateSettings = vi.fn(() => new Promise<typeof sampleSettingsResponse>((_resolve, reject) => { rejectSave = reject; }));
+    const { queryClient } = renderWithProviders(<AiExecutionPolicyPanel />, { ports: buildTestPorts({ api: {
+      settings: vi.fn(async () => sampleSettingsResponse), providerModels: vi.fn(async () => sampleProviderModelsResponse), updateSettings,
+    } }) });
+    const polish = await screen.findByRole("checkbox", { name: "Extra résumé polish" });
+    expect(polish).not.toBeChecked();
+    await user.click(polish);
+    await user.click(screen.getByRole("button", { name: "Save AI policy" }));
+    const cached = () => queryClient.getQueryCache().getAll().find(query => (query.state.data as typeof sampleSettingsResponse | undefined)?.settings)?.state.data as typeof sampleSettingsResponse;
+    await waitFor(() => expect(cached().settings.resumeVoicePolish).toBe(true));
+    await act(async () => rejectSave(new Error("Synthetic save failure")));
+    expect(await screen.findByRole("alert")).toHaveTextContent("AI execution policy could not be saved");
+    expect(cached().settings.resumeVoicePolish).toBe(false);
+    expect(cached().effectiveSettings.resumeVoicePolish.source).toBe("default");
+    expect(polish).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(polish).not.toBeChecked();
+  });
+
+
   it("offers only model-reported effort options and saves the model-specific choice", async () => {
     const user = userEvent.setup();
     const updateSettings = vi.fn(async () => sampleSettingsResponse);

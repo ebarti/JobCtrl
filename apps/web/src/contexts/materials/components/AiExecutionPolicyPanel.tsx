@@ -75,6 +75,7 @@ export function AiExecutionPolicyPanel() {
       generatorPrimary: generators[0] ?? "",
       generatorFallback: generators[1] ?? "",
       tailoringJudgeModel: response?.settings.tailoringJudgeModel ?? "",
+      resumeVoicePolish: response?.settings.resumeVoicePolish ?? false,
     },
     onSubmit: async ({ value, formApi }) => {
       if (!response) return;
@@ -83,25 +84,35 @@ export function AiExecutionPolicyPanel() {
         value.generatorPrimary,
         value.generatorFallback,
       ].filter((model, index, all) => model && all.indexOf(model) === index);
+      const effortChanges = Object.fromEntries(
+        [...new Set([...Object.keys(response.settings.codexReasoningEfforts), ...Object.keys(value.codexReasoningEfforts)])]
+          .filter((model) => response.settings.codexReasoningEfforts[model] !== value.codexReasoningEfforts[model])
+          .map((model) => [model, value.codexReasoningEfforts[model] || null]),
+      );
       const request = {
-        defaultLlmModel: value.defaultLlmModel || null,
-        codexReasoningEfforts: Object.fromEntries(
-          [...new Set([...Object.keys(response.settings.codexReasoningEfforts), ...Object.keys(value.codexReasoningEfforts)])]
-            .filter((model) => response.settings.codexReasoningEfforts[model] !== value.codexReasoningEfforts[model])
-            .map((model) => [model, value.codexReasoningEfforts[model] || null]),
-        ),
-        ...(response.effectiveSettings.analysisLegs.editable
+        ...(response.effectiveSettings.defaultLlmModel.editable &&
+          (value.defaultLlmModel || null) !== response.settings.defaultLlmModel
+          ? { defaultLlmModel: value.defaultLlmModel || null }
+          : {}),
+        ...(response.effectiveSettings.codexReasoningEfforts.editable && Object.keys(effortChanges).length
+          ? { codexReasoningEfforts: effortChanges }
+          : {}),
+        ...(response.effectiveSettings.analysisLegs.editable &&
+          JSON.stringify(value.analysisLegs) !== JSON.stringify(response.settings.analysisLegs)
           ? { analysisLegs: value.analysisLegs }
           : {}),
-        ...(response.effectiveSettings.tailoringGeneratorModels.editable
-          ? {
-              tailoringGeneratorModels: generatorModels.length
-                ? generatorModels
-                : null,
-            }
+        ...(response.effectiveSettings.tailoringGeneratorModels.editable &&
+          (value.generatorPrimary !== (generators[0] ?? "") ||
+            value.generatorFallback !== (generators[1] ?? ""))
+          ? { tailoringGeneratorModels: generatorModels.length ? generatorModels : null }
           : {}),
-        ...(response.effectiveSettings.tailoringJudgeModel.editable
+        ...(response.effectiveSettings.tailoringJudgeModel.editable &&
+          (value.tailoringJudgeModel || null) !== response.settings.tailoringJudgeModel
           ? { tailoringJudgeModel: value.tailoringJudgeModel || null }
+          : {}),
+        ...(response.effectiveSettings.resumeVoicePolish.editable &&
+          value.resumeVoicePolish !== response.settings.resumeVoicePolish
+          ? { resumeVoicePolish: value.resumeVoicePolish }
           : {}),
       };
       const parsed = SettingsUpdateRequestSchema.safeParse(request);
@@ -122,6 +133,7 @@ export function AiExecutionPolicyPanel() {
           generatorPrimary: savedGenerators[0] ?? "",
           generatorFallback: savedGenerators[1] ?? "",
           tailoringJudgeModel: saved.settings.tailoringJudgeModel ?? "",
+          resumeVoicePolish: saved.settings.resumeVoicePolish,
         });
         setStatus({
           kind: "success",
@@ -146,6 +158,7 @@ export function AiExecutionPolicyPanel() {
       generatorPrimary: savedGenerators[0] ?? "",
       generatorFallback: savedGenerators[1] ?? "",
       tailoringJudgeModel: response.settings.tailoringJudgeModel ?? "",
+      resumeVoicePolish: response.settings.resumeVoicePolish,
     });
   }, [form, response]);
 
@@ -176,12 +189,14 @@ export function AiExecutionPolicyPanel() {
     generatorPrimary: generators[0] ?? "",
     generatorFallback: generators[1] ?? "",
     tailoringJudgeModel: response.settings.tailoringJudgeModel ?? "",
+    resumeVoicePolish: response.settings.resumeVoicePolish,
   };
   const allReadOnly =
     !effective.defaultLlmModel.editable &&
     !effective.analysisLegs.editable &&
     !effective.tailoringGeneratorModels.editable &&
-    !effective.tailoringJudgeModel.editable;
+    !effective.tailoringJudgeModel.editable &&
+    !effective.resumeVoicePolish.editable;
 
   function clearSaveStatus() {
     setStatus(null);
@@ -335,6 +350,34 @@ export function AiExecutionPolicyPanel() {
                 field.handleChange(value);
               }}
             />
+          )}
+        </form.Field>
+        <form.Field name="resumeVoicePolish">
+          {(field) => (
+            <FieldSet>
+              <FieldLegend>Résumé finishing</FieldLegend>
+              <Field className="choice target-choice" orientation="horizontal">
+                <Checkbox
+                  id="resume-voice-polish"
+                  name="resumeVoicePolish"
+                  aria-describedby="resume-voice-polish-help"
+                  disabled={!effective.resumeVoicePolish.editable}
+                  checked={field.state.value}
+                  onCheckedChange={(checked) => {
+                    clearSaveStatus();
+                    field.handleChange(checked === true);
+                  }}
+                />
+                <FieldLabel htmlFor="resume-voice-polish">Extra résumé polish</FieldLabel>
+              </Field>
+              <FieldDescription id="resume-voice-polish-help">
+                Off by default. Required reviews always run. An extra writing pass can refine wording
+                and takes longer; any changes are reviewed again.
+              </FieldDescription>
+              <FieldDescription>
+                {context(effective.resumeVoicePolish.source, "next résumé generation")}
+              </FieldDescription>
+            </FieldSet>
           )}
         </form.Field>
         <form.Subscribe

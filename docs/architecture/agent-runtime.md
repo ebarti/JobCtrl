@@ -117,6 +117,11 @@ provider-generation admission boundary, before spend checking. Calls admitted
 before stop may finish with usage accounting; this does not claim control over
 SDK-internal retries. The separate bounded review pool drains before runtime close.
 
+The extra post-approval voice pass is admitted by the Materials factory only
+when its saved opt-in policy or an explicitly injected port requests it. Its
+absence does not bypass the selected candidate's required reviews. Runtime
+transport and provider routing do not decide this product policy.
+
 Draft generation, voice changes and their dependent factual/quality checks keep
 the [Tailoring Contract](tailoring.md). Runtime reuse removes repeated process
 startup; model reasoning and artifact dependencies still contribute to duration.

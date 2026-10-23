@@ -27,6 +27,7 @@ export const DEFAULT_JOBCTRL_SETTINGS: JobCtrlSettings = {
   codexReasoningEfforts: {},
   tailoringGeneratorModels: null,
   tailoringJudgeModel: null,
+  resumeVoicePolish: false,
   applyMaxBudgetUsd: 5,
   applyTimeoutSeconds: 900,
   scoreCriteria: "",
@@ -79,6 +80,9 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
   const codexReasoningEfforts = persistedCodexReasoningEfforts(raw);
   const tailoringGeneratorModels = persistedModels(raw, "tailoring_generator_models");
   const tailoringJudgeModel = persistedNullableModel(raw, "tailoring_judge_model");
+  const resumeVoicePolish = typeof raw.resume_voice_polish === "boolean"
+    ? persistedSetting(raw.resume_voice_polish, "next_workflow")
+    : defaultSetting(false, "next_workflow");
   const applyMaxBudgetUsd = persistedNumber(
     raw,
     "apply_max_budget_usd",
@@ -110,6 +114,7 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
       codexReasoningEfforts: codexReasoningEfforts.value,
       tailoringGeneratorModels: tailoringGeneratorModels.value,
       tailoringJudgeModel: tailoringJudgeModel.value,
+      resumeVoicePolish: resumeVoicePolish.value,
       applyMaxBudgetUsd: applyMaxBudgetUsd.value,
       applyTimeoutSeconds: applyTimeoutSeconds.value,
       scoreCriteria: scoreCriteria.value,
@@ -127,6 +132,7 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
       codexReasoningEfforts,
       tailoringGeneratorModels,
       tailoringJudgeModel,
+      resumeVoicePolish,
       applyMaxBudgetUsd,
       applyTimeoutSeconds,
       scoreCriteria,

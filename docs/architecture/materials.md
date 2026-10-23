@@ -325,6 +325,15 @@ transcript, microphone, streaming, or in-session state in this release.
 
 ## Voice Pass And Final Audit
 
+The optional post-approval writing pass is off by default. The production
+factory admits it only when `resume_voice_polish` is `true` or a caller explicitly
+injects a voice port. Required factual, quality and applicable persona reviews
+remain mandatory. A disabled pass records `optional_voice_polish_disabled`,
+links the selected candidate's recorded reviews, and leaves its payload,
+provenance, coverage, anchors and rendered text unchanged. An enabled but
+unavailable port retains the separate `no_voice_port` outcome. New generations
+read the setting; existing accepted artifacts and running use cases do not change.
+
 A model chooses voice changes using stable line IDs. Any changed artifact receives fresh claim verification and separate quality review, plus the six-persona determination for a high-fit resume. Typed verdicts decide adoption; buzzword and structural-variety proxies are removed. An optional rewrite provider or shape failure records a rejected attempt and retains the already-verified candidate. Verification failures for changed text block the refresh. Accepted final text, source anchors and determination IDs commit together. Requirement coverage is arithmetic over verifier-declared served requirement IDs, never keyword appearance.
 
 ## Tailoring Explanation Read Model

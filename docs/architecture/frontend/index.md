@@ -172,6 +172,14 @@ capability only when its synthetic scenario, adapter behavior, tests and this
 support inventory are intentionally supplied. Demo scenarios make no provider
 calls or external submissions and do not establish production worker behavior.
 
+Retained current-seed workspaces receive absent `resumeVoicePolish` settings and
+effective-value metadata at the repository read/adoption and transaction-draft
+boundaries. Reading these additive defaults does not write, reseed, advance the
+revision or replace retained edits, receipts or blobs. Recorded `true`/`false`
+values and existing metadata remain intact; the next ordinary settings command
+persists the complete draft through its existing transaction and revision rule.
+Malformed present values still fail the strict settings response contract.
+
 The remaining production/demo policy duplication is descriptive inventory:
 
 | Policy | Current owners and shared parts |
