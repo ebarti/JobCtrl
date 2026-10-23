@@ -474,7 +474,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     digestKeys.all(LOCAL_TENANT),
     pipelineKeys.operations(LOCAL_TENANT),
   ],
-  ProfileUpdated: [profileKeys.profile(LOCAL_TENANT), evidenceMapKeys.list(LOCAL_TENANT), interviewKeys.jobs(LOCAL_TENANT), jobsKeys.details(LOCAL_TENANT)],
+  ProfileUpdated: [profileKeys.profile(LOCAL_TENANT), evidenceMapKeys.list(LOCAL_TENANT), interviewKeys.jobs(LOCAL_TENANT), jobsKeys.details(LOCAL_TENANT), jobsKeys.lists(LOCAL_TENANT)],
   ProfileImported: [profileKeys.profile(LOCAL_TENANT), evidenceMapKeys.list(LOCAL_TENANT), interviewKeys.jobs(LOCAL_TENANT), jobsKeys.details(LOCAL_TENANT)],
   WorkflowStarted: [
     workflowRunsKeys.lists(LOCAL_TENANT),

@@ -10960,458 +10960,81 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it.each([false, true])("records profile updates and resumes preparation with cover generation %s", async (enabled) => {
+  it.each([false, true])("saves profile revisions without preparation with cover generation %s", async (enabled) => {
     const config = JSON.parse(fs.readFileSync(options.configPath!, "utf8"));
     fs.writeFileSync(options.configPath!, JSON.stringify({ ...config, cover_letter_generation: enabled }));
-    const dispatch = vi.fn(async (_command: ActionCommandPayload): Promise<ActionDispatchResult> => ({
-      status: "queued",
-      runId: "run-retailor",
-    }));
+    const dispatch = vi.fn<ActionDispatcher>(async () => ({ status: "queued" }));
     const app = buildApp({ ...options, actionDispatcher: dispatch });
-    const response = await app.inject({
-      method: "PATCH",
-      url: "/v1/profile",
-      payload: { profile: validProfileFixture("Event Driven Candidate") },
-    });
-
-    expect(response.statusCode, response.body).toBe(200);
-    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1));
-    expect(dispatch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: "run_stage",
-        jobKey: "pipeline",
-        stage: "score",
-        stages: enabled ? ["score", "tailor", "cover"] : ["score", "tailor"],
-        dryRun: false,
-        limit: 0,
-        workers: 5,
-        minScore: 6,
-        retailor: true,
-      }),
-      { appDir: tempDir, configPath: options.configPath, dbPath: options.dbPath },
-    );
-    expect(dispatch.mock.calls[0]?.[0].rescore).toBeUndefined();
-
-    const db = new Database(options.dbPath);
     try {
-      const event = db
-        .prepare(
-          "SELECT job_id, stage, event_type, payload_json FROM job_events WHERE event_type = 'ProfileUpdated' ORDER BY event_id DESC LIMIT 1",
-        )
-        .get() as { job_id: string | null; stage: string | null; event_type: string; payload_json: string };
-      expect(event).toMatchObject({
-        job_id: null,
-        stage: null,
-        event_type: "ProfileUpdated",
-      });
-      expect(JSON.parse(event.payload_json)).toMatchObject({
-        tenantId: "local",
-        changedSections: ["profile"],
-        updatedAt: expect.any(String),
-      });
-    } finally {
-      db.close();
-    }
-
-    await app.close();
-  });
-
-  it("does not redispatch preparation when a form resubmits the unchanged profile", async () => {
-    const dispatch = vi.fn(async (): Promise<ActionDispatchResult> => ({ status: "queued" }));
-    const app = buildApp({ ...options, actionDispatcher: dispatch });
-    const profile = validProfileFixture("Unchanged Candidate");
-
-    const first = await app.inject({
-      method: "PATCH",
-      url: "/v1/profile",
-      payload: { profile },
-    });
-    expect(first.statusCode, first.body).toBe(200);
-    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1));
-
-    const beforeDb = new Database(options.dbPath);
-    const before = beforeDb.prepare(
-      "SELECT version FROM candidate_profiles WHERE tenant_id = 'local' AND profile_id = 'default'",
-    ).get() as { version: number };
-    beforeDb.close();
-    dispatch.mockClear();
-
-    const repeated = await app.inject({
-      method: "PATCH",
-      url: "/v1/profile",
-      payload: { profile },
-    });
-
-    expect(repeated.statusCode, repeated.body).toBe(200);
-    expect(dispatch).not.toHaveBeenCalled();
-    const db = new Database(options.dbPath);
-    try {
-      expect(db.prepare(
-        "SELECT version FROM candidate_profiles WHERE tenant_id = 'local' AND profile_id = 'default'",
-      ).get()).toEqual(before);
-      expect(db.prepare(
-        "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
-      ).get()).toEqual({ count: 1 });
-    } finally {
-      db.close();
-    }
-
-    await app.close();
-  });
-
-  it("rolls back the profile mutation when its durable continuation event cannot commit", async () => {
-    const db = new Database(options.dbPath);
-    expect(() => persistProfileUpdate(
-      db,
-      { profile: validProfileFixture("Atomic Candidate") },
-      () => {
-        throw new Error("profile outbox unavailable");
-      },
-    )).toThrow("profile outbox unavailable");
-    db.close();
-
-    const verifyDb = new Database(options.dbPath, { readonly: true });
-    try {
-      expect(verifyDb.prepare(
-        "SELECT COUNT(*) AS count FROM candidate_profiles WHERE tenant_id = 'local' AND profile_id = 'default'",
-      ).get()).toEqual({ count: 0 });
-      expect(verifyDb.prepare(
-        "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
-      ).get()).toEqual({ count: 0 });
-    } finally {
-      verifyDb.close();
-    }
-
-  });
-
-  it("coalesces concurrent identical profile saves into one version and continuation", async () => {
-    const dispatched = deferred<ActionDispatchResult>();
-    const dispatch = vi.fn<ActionDispatcher>(() => dispatched.promise);
-    const app = buildApp({ ...options, actionDispatcher: dispatch });
-    const profile = validProfileFixture("Concurrent Candidate");
-    const save = () => app.inject({
-      method: "PATCH",
-      url: "/v1/profile",
-      payload: { profile },
-    });
-
-    const responses = Promise.all([save(), save()]);
-    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1));
-    dispatched.resolve({ status: "queued", runId: "run-concurrent-profile" });
-    expect((await responses).map((response) => response.statusCode)).toEqual([200, 200]);
-    expect(dispatch).toHaveBeenCalledTimes(1);
-
-    const db = new Database(options.dbPath);
-    try {
-      expect(db.prepare(
-        "SELECT version FROM candidate_profiles WHERE tenant_id = 'local' AND profile_id = 'default'",
-      ).get()).toEqual({ version: 1 });
-      expect(db.prepare(
-        "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
-      ).get()).toEqual({ count: 1 });
-    } finally {
-      db.close();
-    }
-
-    await app.close();
-  });
-
-  it("coalesces simultaneous genuine profile revisions into the newest durable continuation", async () => {
-    const dispatched = deferred<ActionDispatchResult>();
-    const dispatchStarted = deferred<void>();
-    const dispatch = vi.fn<ActionDispatcher>(() => {
-      dispatchStarted.resolve();
-      return dispatched.promise;
-    });
-    const app = buildApp({ ...options, actionDispatcher: dispatch });
-
-    const responses = Promise.all([
-      app.inject({
-        method: "PATCH",
-        url: "/v1/profile",
-        payload: { profile: validProfileFixture("Concurrent Candidate A") },
-      }),
-      app.inject({
-        method: "PATCH",
-        url: "/v1/profile",
-        payload: { profile: validProfileFixture("Concurrent Candidate B") },
-      }),
-    ]);
-
-    // Synchronize on the callback under the test's existing deadline. API
-    // startup and SQLite work on a loaded runner have no one-second SLA.
-    await dispatchStarted.promise;
-    expect(dispatch).toHaveBeenCalledTimes(1);
-    const pendingDb = new Database(options.dbPath, { readonly: true });
-    const events = pendingDb.prepare(
-      "SELECT event_id FROM job_events WHERE event_type = 'ProfileUpdated' ORDER BY event_id",
-    ).all() as Array<{ event_id: number }>;
-    pendingDb.close();
-    expect(events).toHaveLength(2);
-    expect(dispatch.mock.calls[0]?.[0].reason).toBe(
-      `profile_updated:${events[1]?.event_id}`,
-    );
-
-    dispatched.resolve({ status: "queued", runId: "run-latest-profile" });
-    expect((await responses).map((response) => response.statusCode)).toEqual([200, 200]);
-    await vi.waitFor(() => {
-      const db = new Database(options.dbPath, { readonly: true });
-      const row = db.prepare(
-        "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileContinuationHandled'",
-      ).get() as { count: number };
-      db.close();
-      expect(row.count).toBe(2);
-    });
-    expect(dispatch).toHaveBeenCalledTimes(1);
-
-    await app.close();
-  });
-
-  it("recovers an unacknowledged profile continuation on API startup", async () => {
-    const db = new Database(options.dbPath);
-    const inserted = db.prepare(
-      `INSERT INTO job_events (
-         tenant_id, job_id, identity_version, stage, event_type, level,
-         message, occurred_at, payload_json
-       ) VALUES ('local', NULL, 1, NULL, 'ProfileUpdated', 'info', ?, ?, ?)`,
-    ).run(
-      "Candidate profile updated.",
-      "2026-08-04T20:00:00.000Z",
-      JSON.stringify({
-        tenantId: "local",
-        changedSections: ["profile"],
-        updatedAt: "2026-08-04T20:00:00.000Z",
-      }),
-    );
-    db.close();
-
-    const providerDispatcher: JsonRpcDispatcher = {
-      call: vi.fn(async () => ({
-        jsonrpc: "2.0" as const,
-        id: 1,
-        result: { capabilities: [], detectedBrowsers: [] },
-      })),
-      close: vi.fn(async () => undefined),
-    };
-    const dispatched = deferred<ActionDispatchResult>();
-    const dispatch = vi.fn<ActionDispatcher>(() => dispatched.promise);
-    const app = buildApp({ ...options, providerDispatcher, actionDispatcher: dispatch });
-
-    await app.listen({ host: "127.0.0.1", port: 0 });
-    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1));
-    expect(dispatch.mock.calls[0]?.[0].reason).toBe(
-      `profile_updated:${Number(inserted.lastInsertRowid)}`,
-    );
-    dispatched.resolve({ status: "queued", runId: "run-startup-profile" });
-    await vi.waitFor(() => {
-      const handledDb = new Database(options.dbPath, { readonly: true });
-      const row = handledDb.prepare(
-        "SELECT COUNT(*) AS count FROM job_events WHERE idempotency_key = ?",
-      ).get(`profile-continuation-handled:${Number(inserted.lastInsertRowid)}`) as { count: number };
-      handledDb.close();
-      expect(row.count).toBe(1);
-    });
-
-    await app.close();
-  });
-
-  it("records a terminal failed profile continuation once and permits newer revisions", async () => {
-    const db = new Database(options.dbPath);
-    const insert = db.prepare(
-      `INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json)
-       VALUES ('local', NULL, 1, NULL, 'ProfileUpdated', 'info', 'Synthetic profile update', ?, ?)`,
-    );
-    const firstId = Number(insert.run("2026-08-04T20:00:00.000Z", JSON.stringify({ changedSections: ["profile"] })).lastInsertRowid);
-    const secondId = Number(insert.run("2026-08-04T20:00:01.000Z", JSON.stringify({ changedSections: ["profile"] })).lastInsertRowid);
-    db.prepare(
-      `INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json, idempotency_key)
-       VALUES ('local', NULL, 1, NULL, 'ProfileContinuationDispatchIntended', 'info', 'Synthetic intent', ?, ?, ?)`,
-    ).run("2026-08-04T20:00:00.500Z", JSON.stringify({ sourceEventId: firstId }), `profile-continuation-dispatch-intended:${firstId}`);
-    db.close();
-    const rpc: JsonRpcDispatcher = {
-      call: vi.fn(async (_method, params) => ({
-        jsonrpc: "2.0" as const, id: 1,
-        result: params.reason === `profile_updated:${firstId}`
-          ? { runId: "run-failed", workflowId: "profile-failed", result: { stages_completed: ["score"], stages_failed: ["tailor"], failure: "Private synthetic failure", error_code: "missing_input" } }
-          : { runId: "run-newer", workflowId: "profile-newer", result: { stages_completed: ["score", "tailor", "cover"], stages_failed: [], failure: null, error_code: null } },
-      })),
-      close: vi.fn(async () => undefined),
-    };
-    const providerDispatcher: JsonRpcDispatcher = {
-      call: vi.fn(async () => ({ jsonrpc: "2.0" as const, id: 1, result: { capabilities: [], detectedBrowsers: [] } })),
-      close: vi.fn(async () => undefined),
-    };
-    const dispatch = createActionDispatcher(rpc);
-    const app = buildApp({ ...options, providerDispatcher, actionDispatcher: dispatch });
-    await app.listen({ host: "127.0.0.1", port: 0 });
-    await vi.waitFor(() => {
-      const read = new Database(options.dbPath, { readonly: true });
+      for (const name of ["First Candidate", "Second Candidate", "Second Candidate"]) {
+        const response = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: validProfileFixture(name) } });
+        expect(response.statusCode, response.body).toBe(200);
+      }
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(dispatch).not.toHaveBeenCalled();
+      const db = new Database(options.dbPath);
       try {
-        const failed = read.prepare("SELECT payload_json FROM job_events WHERE event_type = 'ProfileContinuationFailed'").all() as Array<{ payload_json: string }>;
-        expect(failed).toHaveLength(1);
-        expect(JSON.parse(failed[0]!.payload_json)).toEqual({ sourceEventId: firstId, status: "failed", runId: "run-failed", workflowId: "profile-failed", errorCode: "missing_input" });
-        const handled = read.prepare("SELECT json_extract(payload_json, '$.sourceEventId') AS source_id FROM job_events WHERE event_type = 'ProfileContinuationHandled'").all();
-        expect(handled).toEqual([{ source_id: secondId }]);
-      } finally { read.close(); }
-    });
-    expect(rpc.call).toHaveBeenCalledTimes(2);
-    await app.close();
-
-    const restarted = buildApp({ ...options, providerDispatcher, actionDispatcher: dispatch });
-    await restarted.listen({ host: "127.0.0.1", port: 0 });
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(rpc.call).toHaveBeenCalledTimes(2);
-    await restarted.close();
+        expect(db.prepare("SELECT version FROM candidate_profiles WHERE tenant_id='local' AND profile_id='default'").get()).toEqual({ version: 2 });
+        const events = db.prepare("SELECT job_id, stage, payload_json FROM job_events WHERE event_type='ProfileUpdated'").all() as Array<{ job_id: null; stage: null; payload_json: string }>;
+        expect(events).toHaveLength(2);
+        for (const event of events) {
+          expect(event.job_id).toBeNull(); expect(event.stage).toBeNull();
+          expect(JSON.parse(event.payload_json)).toMatchObject({ tenantId: "local", changedSections: ["profile"] });
+        }
+      } finally { db.close(); }
+    } finally { await app.close(); }
   });
 
-  it("keeps an uncertain failed profile dispatch pending for startup reattachment", async () => {
+  it("rolls back a profile mutation if its audit event cannot commit", () => {
     const db = new Database(options.dbPath);
-    const inserted = db.prepare(
-      `INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json)
-       VALUES ('local', NULL, 1, NULL, 'ProfileUpdated', 'info', 'Synthetic profile update', ?, ?)`,
-    ).run("2026-08-04T20:00:00.000Z", JSON.stringify({ changedSections: ["profile"] }));
-    db.close();
-    const dispatch = vi.fn<ActionDispatcher>()
-      .mockResolvedValueOnce({ status: "failed", message: "Synthetic transport failure" })
-      .mockResolvedValue({ status: "queued", runId: "reattached" });
-    const providerDispatcher: JsonRpcDispatcher = {
-      call: vi.fn(async () => ({ jsonrpc: "2.0" as const, id: 1, result: { capabilities: [], detectedBrowsers: [] } })),
-      close: vi.fn(async () => undefined),
-    };
-    const app = buildApp({ ...options, providerDispatcher, actionDispatcher: dispatch });
-    await app.listen({ host: "127.0.0.1", port: 0 });
-    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1));
-    const read = new Database(options.dbPath, { readonly: true });
-    expect(read.prepare("SELECT COUNT(*) AS n FROM job_events WHERE event_type IN ('ProfileContinuationHandled', 'ProfileContinuationFailed')").get()).toEqual({ n: 0 });
-    read.close();
-    await app.close();
-    const restarted = buildApp({ ...options, providerDispatcher, actionDispatcher: dispatch });
-    await restarted.listen({ host: "127.0.0.1", port: 0 });
-    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(2));
-    expect(dispatch.mock.calls.map(([command]) => command.reason)).toEqual([
-      `profile_updated:${Number(inserted.lastInsertRowid)}`, `profile_updated:${Number(inserted.lastInsertRowid)}`,
-    ]);
-    await restarted.close();
-  });
-
-  it("does not launch startup continuations before the health-only database exists", async () => {
-    fs.rmSync(options.dbPath, { force: true });
-    const providerCall = vi.fn<JsonRpcDispatcher["call"]>(async () => ({
-      jsonrpc: "2.0" as const,
-      id: 1,
-      result: { capabilities: [], detectedBrowsers: [] },
-    }));
-    const dispatch = vi.fn<ActionDispatcher>(async () => ({
-      status: "queued",
-      runId: "run-missing-database",
-    }));
-    const app = buildApp({
-      ...options,
-      providerDispatcher: {
-        call: providerCall,
-        close: vi.fn(async () => undefined),
-      },
-      actionDispatcher: dispatch,
-    });
-
-    await app.listen({ host: "127.0.0.1", port: 0 });
-
-    expect(providerCall).not.toHaveBeenCalled();
-    expect(dispatch).not.toHaveBeenCalled();
-    const health = await app.inject({ method: "GET", url: "/v1/health" });
-    expect(health.statusCode, health.body).toBe(200);
-    expect(health.json()).toMatchObject({ dbExists: false, dbPath: options.dbPath });
-
-    await app.close();
-  });
-
-  it("reattaches an intended older profile continuation before dispatching a newer revision", async () => {
-    const db = new Database(options.dbPath);
-    const insertProfileEvent = db.prepare(
-      `INSERT INTO job_events (
-         tenant_id, job_id, identity_version, stage, event_type, level,
-         message, occurred_at, payload_json
-       ) VALUES ('local', NULL, 1, NULL, 'ProfileUpdated', 'info', ?, ?, ?)`,
-    );
-    const first = insertProfileEvent.run(
-      "Candidate profile updated.",
-      "2026-08-04T20:00:00.000Z",
-      JSON.stringify({ tenantId: "local", changedSections: ["profile"], updatedAt: "2026-08-04T20:00:00.000Z" }),
-    );
-    const second = insertProfileEvent.run(
-      "Candidate profile updated.",
-      "2026-08-04T20:00:01.000Z",
-      JSON.stringify({ tenantId: "local", changedSections: ["profile"], updatedAt: "2026-08-04T20:00:01.000Z" }),
-    );
-    const firstEventId = Number(first.lastInsertRowid);
-    const secondEventId = Number(second.lastInsertRowid);
-    db.prepare(
-      `INSERT INTO job_events (
-         tenant_id, job_id, identity_version, stage, event_type, level,
-         message, occurred_at, payload_json, idempotency_key
-       ) VALUES ('local', NULL, 1, NULL, 'ProfileContinuationDispatchIntended', 'info', ?, ?, ?, ?)`,
-    ).run(
-      "Profile update continuation dispatch reserved.",
-      "2026-08-04T20:00:00.500Z",
-      JSON.stringify({ sourceEventId: firstEventId, status: "dispatch_intended" }),
-      `profile-continuation-dispatch-intended:${firstEventId}`,
-    );
-    db.close();
-
-    const providerDispatcher: JsonRpcDispatcher = {
-      call: vi.fn(async () => ({
-        jsonrpc: "2.0" as const,
-        id: 1,
-        result: { capabilities: [], detectedBrowsers: [] },
-      })),
-      close: vi.fn(async () => undefined),
-    };
-    const firstDispatch = deferred<ActionDispatchResult>();
-    const dispatch = vi.fn<ActionDispatcher>((command) =>
-      command.reason === `profile_updated:${firstEventId}`
-        ? firstDispatch.promise
-        : Promise.resolve({ status: "queued", runId: "run-newer-profile" }),
-    );
-    const app = buildApp({ ...options, providerDispatcher, actionDispatcher: dispatch });
-
-    await app.listen({ host: "127.0.0.1", port: 0 });
-    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1));
-    expect(dispatch.mock.calls[0]?.[0].reason).toBe(`profile_updated:${firstEventId}`);
-    firstDispatch.resolve({ status: "queued", runId: "run-older-profile" });
-    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(2));
-    expect(dispatch.mock.calls.map(([command]) => command.reason)).toEqual([
-      `profile_updated:${firstEventId}`,
-      `profile_updated:${secondEventId}`,
-    ]);
-
-    await vi.waitFor(() => {
-      const progressDb = new Database(options.dbPath, { readonly: true });
-      const row = progressDb.prepare(
-        "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileContinuationHandled'",
-      ).get() as { count: number };
-      progressDb.close();
-      expect(row.count).toBe(2);
-    });
-
-    const handledDb = new Database(options.dbPath, { readonly: true });
     try {
-      const statuses = handledDb.prepare(
-        `SELECT json_extract(payload_json, '$.sourceEventId') AS source_event_id,
-                json_extract(payload_json, '$.status') AS status
-           FROM job_events
-          WHERE event_type = 'ProfileContinuationHandled'
-          ORDER BY source_event_id`,
-      ).all();
-      expect(statuses).toEqual([
-        { source_event_id: firstEventId, status: "completed" },
-        { source_event_id: secondEventId, status: "completed" },
-      ]);
-    } finally {
-      handledDb.close();
-    }
+      expect(() => persistProfileUpdate(db, { profile: validProfileFixture("Atomic Candidate") }, () => { throw new Error("profile audit unavailable"); })).toThrow("profile audit unavailable");
+      expect(db.prepare("SELECT COUNT(*) AS n FROM candidate_profiles").get()).toEqual({ n: 0 });
+      expect(db.prepare("SELECT COUNT(*) AS n FROM job_events WHERE event_type='ProfileUpdated'").get()).toEqual({ n: 0 });
+    } finally { db.close(); }
+  });
 
-    await app.close();
+  it("coalesces identical concurrent saves without starting work", async () => {
+    const dispatch = vi.fn<ActionDispatcher>(async () => ({ status: "queued" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    try {
+      const save = () => app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: validProfileFixture("Concurrent Candidate") } });
+      expect((await Promise.all([save(), save()])).map(response => response.statusCode)).toEqual([200, 200]);
+      expect(dispatch).not.toHaveBeenCalled();
+      const db = new Database(options.dbPath);
+      try { expect(db.prepare("SELECT COUNT(*) AS n FROM job_events WHERE event_type='ProfileUpdated'").get()).toEqual({ n: 1 }); }
+      finally { db.close(); }
+    } finally { await app.close(); }
+  });
+
+  it.each([false, true])("does not drain historical profile continuations on startup (intended=%s)", async intended => {
+    const db = new Database(options.dbPath);
+    const inserted = db.prepare(`INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json)
+      VALUES ('local', NULL, 1, NULL, 'ProfileUpdated', 'info', 'Profile updated', '2026-08-04T20:00:00Z', '{"changedSections":["profile"]}')`).run();
+    if (intended) db.prepare(`INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json, idempotency_key)
+      VALUES ('local', NULL, 1, NULL, 'ProfileContinuationDispatchIntended', 'info', 'Old intent', '2026-08-04T20:00:00Z', ?, ?)`)
+      .run(JSON.stringify({ sourceEventId: Number(inserted.lastInsertRowid) }), `profile-continuation-dispatch-intended:${Number(inserted.lastInsertRowid)}`);
+    const before = db.prepare("SELECT * FROM job_events").all(); db.close();
+    const dispatch = vi.fn<ActionDispatcher>(async () => ({ status: "queued" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    try {
+      await app.listen({ host: "127.0.0.1", port: 0 });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(dispatch).not.toHaveBeenCalled();
+      const read = new Database(options.dbPath, { readonly: true });
+      try { expect(read.prepare("SELECT * FROM job_events").all()).toEqual(before); } finally { read.close(); }
+    } finally { await app.close(); }
+  });
+
+  it("keeps health-only startup free of profile work when the database is absent", async () => {
+    fs.rmSync(options.dbPath, { force: true });
+    const dispatch = vi.fn<ActionDispatcher>(async () => ({ status: "queued" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    try {
+      await app.listen({ host: "127.0.0.1", port: 0 });
+      expect((await app.inject({ method: "GET", url: "/v1/health" })).json()).toMatchObject({ dbExists: false });
+      expect(dispatch).not.toHaveBeenCalled();
+    } finally { await app.close(); }
   });
 
   it("preserves existing non-default style fields during partial style updates", async () => {
@@ -14345,12 +13968,6 @@ function insertStage(
 }
 
 
-function rpcContinuationMarkers() {
-  const db = new Database(options.dbPath, { readonly: true });
-  try { return db.prepare("SELECT event_id, idempotency_key, occurred_at, payload_json FROM job_events WHERE idempotency_key LIKE 'profile-continuation-handled:%' ORDER BY event_id").all(); }
-  finally { db.close(); }
-}
-
 function rpcPreservationControls(seed = false) {
   const db = new Database(options.dbPath);
   try {
@@ -14437,123 +14054,27 @@ describe("enforcing route to registered worker handoffs", () => {
     } finally { fixture.retain("pipeline-awaited-" + name, observations); await fixture.adapter.close(); }
   });
 
-  it("serializes PATCH continuations until awaited completion and writes markers afterward", async () => {
+  it("profile saves and restart preserve accepted data without a scoring RPC handoff", async () => {
     const fixture = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
-    fixture.mode("hold");
     const controls = rpcPreservationControls(true);
     const dispatch = vi.fn(createActionDispatcher(fixture.adapter));
-    const app = buildApp({ ...options, actionDispatcher: dispatch });
-    const observations: unknown[] = [];
+    let app = buildApp({ ...options, actionDispatcher: dispatch });
     try {
       for (const name of ["First Synthetic Revision", "Second Synthetic Revision"]) {
         const response = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: validProfileFixture(name) } });
-        observations.push({ status: response.statusCode, profile: response.json() });
         expect(response.statusCode, response.body).toBe(200);
-        await vi.waitFor(() => expect(fixture.rows().some(row => row.kind === "waiting")).toBe(true), { timeout: 10000 });
       }
-      expect(dispatch).toHaveBeenCalledTimes(1);
-      expect(rpcContinuationMarkers()).toEqual([]);
-      observations.push({ heldMarkers: rpcContinuationMarkers(), heldStarts: fixture.rows().filter(row => row.kind === "start") });
-      fixture.mode("success");
-      await vi.waitFor(() => expect(rpcContinuationMarkers()).toHaveLength(2), { timeout: 10000 });
-      const rows = fixture.rows();
-      expect(rows.filter(row => row.kind === "request")).toHaveLength(2);
-      expect(rows.find(row => row.kind === "request")).toMatchObject({ request: { params: { awaitResult: true, stages: ["score", "tailor"] } } });
-      expect(rows.findIndex(row => row.kind === "completed")).toBeLessThan(rows.findLastIndex(row => row.kind === "start"));
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(fixture.rows().filter(row => row.kind === "start")).toEqual([]);
+      expect(rpcPreservationControls()).toEqual(controls);
+      await app.close();
+      app = buildApp({ ...options, actionDispatcher: dispatch });
+      await app.listen({ host: "127.0.0.1", port: 0 });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(rpcPreservationControls()).toEqual(controls);
       expect((await app.inject({ method: "GET", url: "/v1/profile" })).json().profile.personal.full_name).toBe("Second Synthetic Revision");
-      expect(rpcPreservationControls()).toEqual(controls);
-      observations.push({ settledMarkers: rpcContinuationMarkers(), preservation: controls });
-    } finally { fixture.mode("success"); fixture.retain("profile-serialization", observations); await app.close(); await fixture.adapter.close(); }
-  });
-
-  it.each(["start_failure", "wait_failure", "invalid_result", "wrong_result_family", "invalid_ack", "invalid_envelope", "transport_failure"])("keeps %s pending and startup reattaches the deterministic identity", async (mode) => {
-    const fixture = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
-    fixture.mode(mode === "transport_failure" ? "hold" : mode);
-    const controls = rpcPreservationControls(true);
-    const dispatch = vi.fn(createActionDispatcher(fixture.adapter));
-    let app = buildApp({ ...options, actionDispatcher: dispatch });
-    const observations: unknown[] = [];
-    try {
-      const response = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: validProfileFixture("Saved Through Failure") } });
-      expect(response.statusCode, response.body).toBe(200);
-      await vi.waitFor(() => expect(fixture.rows().some(row => row.kind === "start")).toBe(true), { timeout: 10000 });
-      const firstStart = fixture.rows().find(row => row.kind === "start");
-      if (mode === "transport_failure") {
-        // Disconnect after durable start, not between the attempted-start trace
-        // and the synthetic starter's registry write.
-        await vi.waitFor(() => expect(fixture.rows().some(row => row.kind === "waiting")).toBe(true), { timeout: 10000 });
-        await fixture.adapter.close();
-      }
-      if (mode === "start_failure" || mode === "wait_failure") await expect(dispatch.mock.results[0]!.value).resolves.toMatchObject({ status: "failed" });
-      else await expect(dispatch.mock.results[0]!.value).rejects.toThrow();
-      expect(rpcContinuationMarkers()).toEqual([]);
-      const saved = (await app.inject({ method: "GET", url: "/v1/profile" })).json();
-      expect(saved.profile.personal.full_name).toBe("Saved Through Failure");
-      expect(rpcPreservationControls()).toEqual(controls);
-      observations.push({ status: response.statusCode, saved, failedMarkers: rpcContinuationMarkers(), firstStart });
-      await app.close();
-      await fixture.adapter.close();
-      fixture.mode("success");
-      const restarted = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
-      const previousWaits = restarted.rows().filter(row => row.kind === "waiting").length;
-      restarted.mode("hold");
-      app = buildApp({ ...options, actionDispatcher: createActionDispatcher(restarted.adapter) });
-      try {
-        await app.listen({ host: "127.0.0.1", port: 0 });
-        await vi.waitFor(() => expect(restarted.rows().filter(row => row.kind === "waiting")).toHaveLength(previousWaits + 1), { timeout: 10000 });
-        expect(rpcContinuationMarkers()).toEqual([]);
-        observations.push({ startupHeldMarkers: rpcContinuationMarkers(), startupWait: restarted.rows().at(-1) });
-        restarted.mode("success");
-        await vi.waitFor(() => expect(rpcContinuationMarkers()).toHaveLength(1), { timeout: 10000 });
-        const starts = restarted.rows().filter(row => row.kind === "start");
-        expect(starts.at(-1)?.workflowId).toBe(firstStart?.workflowId);
-        const request = restarted.rows().find(row => row.kind === "request")?.request as { params: { reason: string } };
-        expect(firstStart?.workflowId).toBe("profile-continuation-" + createHash("sha256").update(request.params.reason).digest("hex").slice(0, 24));
-        expect(restarted.rows().filter(row => row.kind === "attached").at(-1)).toMatchObject({ reattached: mode !== "start_failure" });
-        expect(rpcPreservationControls()).toEqual(controls);
-        expect((await app.inject({ method: "GET", url: "/v1/profile" })).json()).toEqual(saved);
-        observations.push({ restartedStart: starts.at(-1), settledMarkers: rpcContinuationMarkers(), preservation: controls });
-      } finally { restarted.mode("success"); await restarted.adapter.close(); }
-    } finally { fixture.retain("profile-restart-" + mode, observations); await app.close(); await fixture.adapter.close(); }
-  });
-
-  it.each(["stage_failure", "stage_failure_without_message"])("retains %s as a terminal failure without replaying it on startup", async (mode) => {
-    const fixture = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
-    fixture.mode(mode);
-    const controls = rpcPreservationControls(true);
-    const dispatch = vi.fn(createActionDispatcher(fixture.adapter));
-    let app = buildApp({ ...options, actionDispatcher: dispatch });
-    const failures = () => {
-      const db = new Database(options.dbPath, { readonly: true });
-      try {
-        return db.prepare("SELECT payload_json FROM job_events WHERE event_type = 'ProfileContinuationFailed'").all() as Array<{ payload_json: string }>;
-      } finally { db.close(); }
-    };
-    try {
-      const response = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: validProfileFixture("Saved Through Terminal Failure") } });
-      expect(response.statusCode, response.body).toBe(200);
-      await vi.waitFor(() => expect(failures()).toHaveLength(1), { timeout: 10000 });
-      await expect(dispatch.mock.results[0]!.value).resolves.toMatchObject({ status: "failed", completedWorkflowFailure: { errorCode: mode === "stage_failure" ? "synthetic" : "workflow_stage_failed" } });
-      const firstFailure = failures();
-      const failed = JSON.parse(firstFailure[0]!.payload_json);
-      expect(failed).toMatchObject({ status: "failed", workflowId: fixture.rows().find(row => row.kind === "start")?.workflowId });
-      expect(rpcContinuationMarkers()).toEqual([]);
-      expect(rpcPreservationControls()).toEqual(controls);
-      await app.close();
-      await fixture.adapter.close();
-      const restarted = workflowRpcFixture(tempDir, options.dbPath, options.configPath!);
-      const priorRequests = restarted.rows().filter(row => row.kind === "request").length;
-      app = buildApp({ ...options, actionDispatcher: createActionDispatcher(restarted.adapter) });
-      try {
-        await app.listen({ host: "127.0.0.1", port: 0 });
-        await new Promise<void>((resolve) => setImmediate(resolve));
-        await new Promise<void>((resolve) => setImmediate(resolve));
-        expect(restarted.rows().filter(row => row.kind === "request")).toHaveLength(priorRequests);
-        expect(failures()).toEqual(firstFailure);
-        expect(rpcContinuationMarkers()).toEqual([]);
-        expect(rpcPreservationControls()).toEqual(controls);
-      } finally { await restarted.adapter.close(); }
-    } finally { fixture.retain("profile-terminal-" + mode, failures()); await app.close(); await fixture.adapter.close(); }
+    } finally { await app.close(); await fixture.adapter.close(); }
   });
 });
 

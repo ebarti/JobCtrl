@@ -2926,3 +2926,14 @@ Accept, Content-Type and encoding headers, URL/redirect validation, request
 budgets, pacing, and Retry-After behavior are unchanged. This replaces the
 mandatory non-browser identity portion of the 2026-07-06 decision. It does not
 change source access policy or imply that a denied request will be accepted.
+
+## 2026-10-23: Profile Saves Do Not Admit Scoring
+
+Profile edits persist a version and audit event without starting Score or material
+preparation. Explicit score refresh first uses a strict source-bound LLM
+determination to assess changed-profile significance for the selected job.
+Insignificant edits retain the original accepted score/date/profile provenance and
+record a review bound to both versions; significant edits proceed through normal
+scoring. Provider, spend, structure and missing-baseline failures stay explicit
+and preserve accepted data. No word lists, similarity thresholds or lexical
+fallback decide significance. See [Scoring](architecture/scoring.md#profile-edits-and-explicit-refresh).

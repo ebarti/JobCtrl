@@ -1083,6 +1083,7 @@ class ScoreTrace:
     model: str = "llm-port-default"
     criteria_version: str = ""
     profile_snapshot_version: int = 0
+    profile_inputs: dict[str, Any] = field(default_factory=dict)
     scoring_policy_id: str = ""
     scoring_policy_version: int = 0
     rubric_version: str = ""
@@ -1116,6 +1117,7 @@ class ScoreTrace:
         except (TypeError, ValueError):
             profile_version = 0
         object.__setattr__(self, "profile_snapshot_version", profile_version)
+        object.__setattr__(self, "profile_inputs", _clean_mapping(self.profile_inputs))
         object.__setattr__(
             self,
             "scoring_policy_version",
@@ -1173,6 +1175,7 @@ class ScoreTrace:
                 ),
                 0,
             ),
+            profile_inputs=_clean_mapping(data.get("profile_inputs", {})),
             rubric_version=str(data.get("rubric_version", data.get("rubricVersion", ""))),
             raw_weighted_score=_float_or_none(data.get("raw_weighted_score", data.get("rawWeightedScore"))),
             calibration_adjustment=_float_or_default(
@@ -1250,6 +1253,7 @@ class ScoreTrace:
             "model": self.model,
             "criteria_version": self.criteria_version,
             "profile_snapshot_version": self.profile_snapshot_version,
+            **({"profile_inputs": self.profile_inputs} if self.profile_inputs else {}),
             "scoring_policy_id": self.scoring_policy_id,
             "scoring_policy_version": self.scoring_policy_version,
             "rubric_version": self.rubric_version,

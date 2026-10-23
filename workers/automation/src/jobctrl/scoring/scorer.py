@@ -175,23 +175,13 @@ def _build_use_case(
         if job_interpretation_reader is None:
             job_interpretation_reader = read_interpretation
     if confirmed_preferences_reader is None:
+        from jobctrl.domain.profile.search_targets import snapshot_target_sources
+
         from jobctrl import config
-        from jobctrl.domain.profile.search_targets import search_target_sources
-        from jobctrl.domain.determinations import DeterminationFailure
 
-        def read_preferences(snapshot, criteria):
-            cfg = config.load_saved_search_settings()
-            target = cfg.get("confirmed_targets") or {}
-            if target.get("profile_version") != snapshot.version:
-                raise DeterminationFailure("stale_profile_version")
-            target = {
-                **target,
-                "criteria": [value for value in (criteria.criteria_text, criteria.target_criteria) if value],
-            }
-            cfg = {**cfg, "confirmed_targets": target}
-            return search_target_sources(cfg)
-
-        confirmed_preferences_reader = read_preferences
+        exact_exclusions = tuple(config.load_saved_search_settings().get("exact_title_exclusions") or ())
+        def confirmed_preferences_reader(snapshot, criteria):
+            return snapshot_target_sources(snapshot, criteria, exact_title_exclusions=exact_exclusions)
     llm_port = determination_dependencies["llm"]
     return ScoreJobUseCase(
         repository=repository,
@@ -228,6 +218,7 @@ def score_job(
     employer_analysis_repository: EmployerAnalysisRepository | None = None,
     analyze_use_case: AnalyzeJobUseCaseLike | None = None,
     require_employer_analysis: bool = False,
+    previous_score: JobScore | None = None,
 ) -> ScoreJobOutcome:
     """Score a single job and persist the result.
 
@@ -276,6 +267,7 @@ def score_job(
         resume_text=resume_text,
         criteria=criteria,
         employer_analysis=employer_analysis,
+        **({"previous_score": previous_score} if previous_score is not None else {}),
     )
 
 
@@ -509,7 +501,7 @@ def run_scoring(
     jobs_to_compute: list[dict[str, Any]] = []
     reused_results: list[tuple[dict[str, Any], ScoreJobOutcome]] = []
     for job in jobs:
-        content_key = _score_content_key(job)
+        content_key = None if rescore else _score_content_key(job)
         if content_key is None:
             jobs_to_compute.append(job)
             continue
@@ -586,6 +578,13 @@ def run_scoring(
             raise PreparationReservationLost("Score activity canceled before inference")
         return use_case.compute(**kwargs)
 
+    previous_scores = {
+        str(job["job_id"]): repository.load(tenant_id, canonical_job_id(str(job["job_id"])))
+        for job in jobs_to_compute
+    } if rescore else {}
+    current_policy = policy_repository.get_current(tenant_id)
+    previous_scores = {key: score for key, score in previous_scores.items() if score is not None
+        and score.trace.scoring_policy_version == current_policy.version}
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         future_to_job = {
             executor.submit(
@@ -596,6 +595,8 @@ def run_scoring(
                 resume_text=resume_text,
                 criteria=criteria,
                 employer_analysis=analyses_by_job.get(str(job.get("url") or "")),
+                **({"previous_score": previous_scores[str(job["job_id"])]}
+                   if str(job["job_id"]) in previous_scores else {}),
             ): job
             for job in jobs_to_compute
         }
@@ -698,6 +699,7 @@ def run_scoring(
                 conn, job=job, score=outcome.score, tenant_id=tenant_id,
                 started_at=started_ats.get(job["url"]), finished_at=finished_at,
                 metadata=metadata, require_ownership=True, cancel_event=cancel_event,
+                retained=outcome.retained,
             )
         else:
             recorded = _record_score_stage_failed(
@@ -712,7 +714,8 @@ def run_scoring(
             ownership_skipped.add(str(job["job_id"]))
     results = committed_results
     errors = sum(1 for _, outcome in results if not outcome.ok) + availability_deferred
-    scored_count = sum(outcome.ok for _, outcome in results)
+    scored_count = sum(outcome.ok and not outcome.retained for _, outcome in results)
+    retained_ids = [str(job["job_id"]) for job, outcome in results if outcome.ok and outcome.retained]
 
     elapsed = time.time() - t0
     log.info(
@@ -732,11 +735,13 @@ def run_scoring(
         dict.fromkeys(
             str(canonical_job_id(str(job["job_id"])))
             for job, outcome in results
-            if outcome.ok and outcome.score is not None
+            if outcome.ok and outcome.score is not None and not outcome.retained
         )
     )
     return {
         "scored": scored_count,
+        "retained": len(retained_ids),
+        "retainedJobIds": retained_ids,
         "errors": errors,
         "elapsed": elapsed,
         "distribution": distribution,
@@ -936,7 +941,7 @@ def score_job_by_id(
         criteria = LocalScoringCriteriaProvider().load(profile_snapshot)
     if repository is None:
         repository = SqliteScoreRepository(conn)
-    if workflow_id:
+    if workflow_id or isinstance(repository, SqliteScoreRepository):
         # Resolve the SQLite companion before the ownership decorator hides
         # its concrete type from the use-case factory's default wiring.
         if requirement_fit_repository is None and isinstance(repository, SqliteScoreRepository):
@@ -1074,6 +1079,8 @@ def score_job_by_id(
         criteria=criteria,
         employer_analysis=employer_analysis,
         require_employer_analysis=require_employer_analysis,
+        **({"previous_score": existing} if rescore and existing is not None
+            and existing.trace.scoring_policy_version == policy_repository.get_current(tenant_id).version else {}),
     )
     if outcome.ok and outcome.score is not None:
         recorded = _record_score_stage_succeeded(
@@ -1085,6 +1092,7 @@ def score_job_by_id(
             metadata=metadata,
             cancel_event=cancel_event,
             validate_transition=True,
+            retained=outcome.retained,
         )
     else:
         recorded = _record_score_stage_failed(
@@ -1112,6 +1120,20 @@ class _OwnedScoreRepository:
 
     def __getattr__(self, name):
         return getattr(self._repository, name)
+
+    def record_profile_review(self, score, *, entity_version, determination_id):
+        from jobctrl.infrastructure.preparation_recovery import PreparationReservationLost
+
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            if not _score_activity_may_write(self._conn, score.tenant_id, score.job_id,
+                                            self._owner, self._cancel_event):
+                raise PreparationReservationLost("Score review no longer owns its stage")
+            self._repository.record_profile_review(score, entity_version=entity_version, determination_id=determination_id)
+            self._conn.commit()
+        except BaseException:
+            self._conn.rollback()
+            raise
 
     def save(self, score):
         from jobctrl.infrastructure.preparation_recovery import PreparationReservationLost
@@ -1242,6 +1264,7 @@ def _record_score_stage_succeeded(
     metadata: dict[str, Any] | None = None,
     cancel_event: Any | None = None,
     require_ownership: bool = False,
+    retained: bool = False,
 ) -> bool:
     job_id = canonical_job_id(str(score.job_id))
     owned = require_ownership or bool(metadata and metadata.get("activityOwner"))
@@ -1263,7 +1286,7 @@ def _record_score_stage_succeeded(
         "score",
         "succeeded",
         tenant_id=tenant_id,
-        attempt_count=_score_attempt_count(conn, tenant_id=tenant_id, job_id=job_id) + 1 if owned else 1,
+        attempt_count=_score_attempt_count(conn, tenant_id=tenant_id, job_id=job_id) + (0 if retained else 1) if owned or retained else 1,
         started_at=started_at or finished_at,
         finished_at=finished_at,
         validate_transition=validate_transition,
@@ -1275,17 +1298,14 @@ def _record_score_stage_succeeded(
         "score",
         "StageCompleted",
         tenant_id=tenant_id,
-        message=f"Fit score {score.fit_score.value}/10",
-        payload={"keywords": list(score.matched_keywords)},
+        message="Profile changes reviewed; saved score retained." if retained else f"Fit score {score.fit_score.value}/10",
+        payload={"keywords": list(score.matched_keywords), "retained": retained},
         occurred_at=finished_at,
     )
-    _sync_score_eligibility_stage_state(
-        conn,
-        tenant_id=tenant_id,
-        job_id=score.job_id,
-        score=score,
-        now=finished_at,
-    )
+    if not retained:
+        _sync_score_eligibility_stage_state(
+            conn, tenant_id=tenant_id, job_id=score.job_id, score=score, now=finished_at,
+        )
     conn.commit()
     return True
 

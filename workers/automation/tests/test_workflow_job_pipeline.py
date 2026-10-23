@@ -6,6 +6,8 @@ the underlying stage runners stubbed so the test stays fast and hermetic.
 
 from __future__ import annotations
 
+from jobctrl.domain.scoring.use_cases import ScoreJobOutcome
+
 import asyncio
 import threading
 import uuid
@@ -664,7 +666,7 @@ async def test_selected_pipeline_scores_only_canonically_enriched_subset():
 
     def fake_score_job_by_id(job_id: JobId, **_kwargs):
         score_calls.append(job_id)
-        return SimpleNamespace(ok=True, error=None)
+        return ScoreJobOutcome(ok=True, score=None)
 
     with (
         patch(

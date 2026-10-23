@@ -185,12 +185,15 @@ bounded excerpts. Sparse storage keys remain available only from each row's
 4. **Generate without mutation.** Scoring writes a score; Materials writes a new
    artifact generation; Apply reads approved application fields. None changes
    the underlying profile as a side effect.
-5. **Propagate deliberate edits.** A later profile save records a new version.
-   For profile-content changes with eligible existing materials and a healthy
-   worker, the API can start replacement tailoring in the background; the save
-   still succeeds when that follow-up is not eligible or cannot be dispatched.
-   Older generations remain available. A prior Apply approval becomes stale
-   when its bound profile version no longer matches.
+5. **Keep edits explicit.** A later profile save records a new version without
+   starting Score, Tailor or Cover. Jobs show **Profile updated since scoring**
+   when a saved score used an older profile. Existing scores and materials stay
+   available with their original dates and source versions. Request **Update
+   score** to have the configured scoring model compare the saved scoring inputs
+   with the current profile for that job. An insignificant-change verdict retains
+   the score and records the review; a significant-change verdict runs a new
+   assessment. A prior Apply approval still becomes stale when its bound profile
+   version no longer matches.
 
 This separation is why profile correction, score correction, resume editing,
 and application approval are different actions: each updates the record owned

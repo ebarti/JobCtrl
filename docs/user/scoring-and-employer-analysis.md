@@ -267,6 +267,15 @@ not for an employer ranking people.
    version and a calibration anchor. A new scoring policy can mark comparable
    older scores stale, but it does not silently replace them; an explicit
    re-score adopts the current policy.
+7. **Review profile edits on request.** Saving your profile does not update scores
+   or regenerate materials. Jobs indicate when your saved score predates the
+   profile. **Update score** first asks your configured scoring model whether the
+   edits could affect this job. If they are insignificant, the score and original
+   date stay unchanged and the model's reason is available in score controls.
+   Significant edits trigger normal scoring. A failed comparison preserves the
+   saved score and reports the failure; older scores without comparison inputs
+   cannot be declared current. A scoring-policy change separately requires a new
+   assessment.
 
 ## Implementation And API Pointers
 

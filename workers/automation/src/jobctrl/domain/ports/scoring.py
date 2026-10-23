@@ -64,6 +64,10 @@ class ScoreRepository(Protocol):
         """
         ...
 
+    def record_profile_review(self, score: JobScore, *, entity_version: str, determination_id: str) -> None:
+        """Bind a recorded review atomically while this accepted score is current."""
+        ...
+
     def list_pending(self, tenant_id: TenantId, *, limit: int = 0) -> list[JobId]:
         """Return ``JobId``s that have a description but no score yet.
 

@@ -6,6 +6,7 @@ import { ApplyRunBadge } from "../../contexts/apply/components/ApplyRunBadge.js"
 import { isApplyRunStatus } from "../../contexts/apply/lib/apply-run-status.js";
 import { ResumeTemplateStatusBadge } from "../../contexts/materials/components/ResumeTemplateStatusBadge.js";
 import { ScoreBadge } from "../../contexts/scoring/components/ScoreBadge.js";
+import { ScoreProfileFreshnessBadge } from "../../contexts/scoring/components/ScoreProfileFreshnessBadge.js";
 import { ScoreStalenessBadge } from "../../contexts/scoring/components/ScoreStalenessBadge.js";
 import { StageBadge } from "../../contexts/pipeline/components/StageBadge.js";
 import { UserFacingStageBadge } from "../../contexts/pipeline/components/UserFacingStageBadge.js";
@@ -626,6 +627,7 @@ export function JobMobileRow({
           <UserFacingStageBadge stage={row.currentStage} />
           <StageBadge state={row.currentState} />
           {applyStatus ? <ApplyRunBadge result={applyStatus} /> : null}
+          <ScoreProfileFreshnessBadge freshness={row.scoreProfileFreshness} />
           {row.scoreStaleness.isStale ? (
             <span data-typography="label">
               <ScoreStalenessBadge staleness={row.scoreStaleness} />
@@ -664,6 +666,7 @@ export function jobColumns(
           <ScoreBadge score={row.fitScore} />
           <span data-typography="label">
             <ScoreStalenessBadge staleness={row.scoreStaleness} />
+            <ScoreProfileFreshnessBadge compact freshness={row.scoreProfileFreshness} />
           </span>
         </div>
       ),

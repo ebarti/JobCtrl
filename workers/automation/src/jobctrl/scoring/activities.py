@@ -283,7 +283,7 @@ def _run_selected_scores(
         if outcome is None:
             continue
         if outcome.ok:
-            scored += 1
+            scored += int(not outcome.retained)
         else:
             errors[str(job_id)] = outcome.error or "Scoring failed"
 
@@ -300,6 +300,7 @@ def _run_selected_scores(
                 "elapsed": elapsed,
                 "selected": len(job_ids),
                 "scored": scored,
+                "retained": sum(outcome is not None and outcome.retained for _, outcome in results),
                 "skipped": sum(outcome is None for _, outcome in results),
                 "skippedJobIds": sorted(str(job_id) for job_id, outcome in results if outcome is None),
             }
