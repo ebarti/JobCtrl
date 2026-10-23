@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import nullcontext
 import re
 import sqlite3
 from datetime import datetime, timezone
@@ -412,11 +413,14 @@ class SqliteDiscoverySearchUnitRepository:
         *,
         was_new: bool,
         accepted_at: str | None = None,
+        commit: bool = True,
     ) -> None:
         """Record an idempotent accepted-job receipt under the current fence."""
 
         stable_job_id = str(canonical_job_id(str(job_id)))
-        with self._conn:
+        if not commit and not self._conn.in_transaction:
+            raise RuntimeError("an accepted receipt must join an open caller transaction")
+        with self._conn if commit else nullcontext():
             self.fence_write(lease)
             self._conn.execute(
                 """
@@ -636,10 +640,22 @@ class SqliteDiscoverySearchUnitRepository:
         execution: DiscoveryExecutionRef,
         *,
         skipped_at: str | None = None,
+        unit_ids: tuple[str, ...] | None = None,
     ) -> int:
         """Close unclaimed units after the caller's durable result limit is met."""
 
         now = skipped_at or _utc_now()
+        if unit_ids is not None:
+            changed = 0
+            with self._conn:
+                for unit_id in dict.fromkeys(unit_ids):
+                    changed += self._conn.execute(
+                        "UPDATE discovery_search_units SET state='skipped',updated_at=?,completed_at=? "
+                        "WHERE tenant_id=? AND discover_workflow_id=? AND discover_run_id=? "
+                        "AND unit_id=? AND state='pending'",
+                        (now, now, *_execution_params(execution), unit_id),
+                    ).rowcount
+            return changed
         with self._conn:
             updated = self._conn.execute(
                 """

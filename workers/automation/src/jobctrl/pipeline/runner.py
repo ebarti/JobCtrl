@@ -1350,6 +1350,7 @@ def plan_discovery_source_families(
     limit: int = 0,
     source_ids: tuple[str, ...] = (),
     discovery_execution: DiscoveryExecutionRef | None = None,
+    use_source_result_budget: bool = False,
 ) -> dict[str, Any]:
     """Plan the runnable discovery source families in legacy order."""
     conn = init_db()
@@ -1398,6 +1399,10 @@ def plan_discovery_source_families(
             active_activity_slots,
         ),
         "next_run_settings": _snapshot_discovery_next_run_settings(search_cfg),
+        "use_source_result_budget": bool(use_source_result_budget and limit > 0),
+        "source_result_limits": {
+            source.source_id: source.crawl_budget for source in schedule.sources if source.should_run
+        } if use_source_result_budget and limit > 0 else {},
     }
 
 
@@ -1415,6 +1420,8 @@ def run_discovery_source_family(
     discovery_execution: DiscoveryExecutionRef | None = None,
     activity_attempt: int | None = None,
     activity_owner_token: str | None = None,
+    use_source_result_budget: bool = False,
+    source_result_limits: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Run one discovery source family and persist its lifecycle events."""
     selected_source_ids = tuple(dict.fromkeys(source_id.strip() for source_id in source_ids if source_id.strip()))
@@ -1455,30 +1462,68 @@ def run_discovery_source_family(
         )
         return {"family": family, "status": status, "result": {}, "source_ids": [s.source_id for s in sources]}
 
+    result_budget = None
+    if family == "jobspy" and use_source_result_budget:
+        from jobctrl.infrastructure.discovery.result_budget import DiscoveryResultBudget
+
+        if discovery_execution is None or limit <= 0:
+            raise ConfigurationError("Source result budgets require a bounded discovery execution")
+        frozen_limits = {
+            source_id: cap for source_id, cap in (source_result_limits or {}).items()
+            if source_id.startswith("jobspy:")
+        }
+        current_sources = {source.source_id: source for source in jobspy_sources}
+        if any(source.should_run and source.source_id not in frozen_limits for source in jobspy_sources):
+            raise ConfigurationError("A runnable broad board is outside the recorded source result plan")
+        if any(type(cap) is not int or cap <= 0 for cap in frozen_limits.values()):
+            raise ConfigurationError("Recorded broad-board result budgets must be positive integers")
+        effective_limits = {
+            source_id: min(cap, current_sources[source_id].crawl_budget)
+            if source_id in current_sources and current_sources[source_id].should_run else 0
+            for source_id, cap in frozen_limits.items()
+        }
+        result_budget = DiscoveryResultBudget(
+            conn, discovery_execution, limit=limit, start_count=start_count, source_limits=effective_limits,
+        )
+
     def fetch_with_limits(fetch, sources, run_id):
-        if cancel_event.is_set() or (limit > 0 and _discover_limit_consumed(start_count, limit)):
+        if cancel_event.is_set() or (result_budget is None and limit > 0 and _discover_limit_consumed(start_count, limit)):
             return {"new": 0, "existing": 0}
         from jobctrl.infrastructure.discovery.capture_recovery import recover_captured_postings
 
         source_ids = tuple(item.source_id for item in sources if item.should_run)
         if family == "jobspy" and search_cfg.get("disable_jobspy", False):
             source_ids = ()
-        recovered = recover_captured_postings(
-            conn,
-            tenant_id=LOCAL_TENANT,
-            source_ids=source_ids,
-            source_family=family,
-            search_cfg=search_cfg,
-            run_id=run_id,
-            discovery_execution=discovery_execution,
-            limit=_discover_remaining_limit(start_count, limit),
-            cancel_event=cancel_event,
-        )
+        recovered = {"new": 0, "existing": 0, "recovered_captures": 0, "recovered_exclusions": 0,
+                     "recovered_capture_failures": 0}
+        if not (limit > 0 and _discover_limit_consumed(start_count, limit)) and (
+            result_budget is None or not result_budget.run_exhausted()
+        ):
+            recovered = recover_captured_postings(
+                conn,
+                tenant_id=LOCAL_TENANT,
+                source_ids=source_ids,
+                source_family=family,
+                search_cfg=search_cfg,
+                run_id=run_id,
+                discovery_execution=discovery_execution,
+                limit=_discover_remaining_limit(start_count, limit),
+                cancel_event=cancel_event,
+                **({"result_budget": result_budget} if result_budget is not None else {}),
+            )
         result = {"new": 0, "existing": 0}
-        if not cancel_event.is_set() and not (limit > 0 and _discover_limit_consumed(start_count, limit)):
+        # A bounded resumable consumer must also settle its recorded units when
+        # a prior attempt reached the cap immediately before it disappeared.
+        if not cancel_event.is_set() and (result_budget is not None or not (
+            limit > 0 and _discover_limit_consumed(start_count, limit)
+        )):
             result.update(fetch(run_id) or {})
-        for key in ("new", "existing"):
-            result[key] = int(result.get(key) or 0) + recovered[key]
+        result["existing"] = int(result.get("existing") or 0) + recovered["existing"]
+        if result_budget is not None:
+            # Includes archived captures and prior attempts exactly once.
+            result["new"] = sum(result_budget.counts().values())
+        else:
+            result["new"] = int(result.get("new") or 0) + recovered["new"]
         if recovered["recovered_captures"] or recovered["recovered_capture_failures"]:
             result.update({key: value for key, value in recovered.items() if key.startswith("recovered_")})
         return result
@@ -1498,13 +1543,18 @@ def run_discovery_source_family(
                 console.print("  [dim]JobStreaming not installed — skipping[/dim]")
                 return {"new": 0, "existing": 0, "errors": 0, "db_total": 0, "queries": 0}
             jobspy_cfg = _jobspy_config_for_sources(search_cfg, jobspy_sources)
-            if not jobspy_cfg.get("boards"):
+            if not jobspy_cfg.get("boards") and result_budget is None:
                 console.print("  [dim]No runnable broad boards scheduled[/dim]")
                 return {"new": 0, "existing": 0, "errors": 0, "db_total": 0, "queries": 0}
             run_kwargs: dict[str, Any] = {
                 "cfg": jobspy_cfg,
                 "limit": _scheduled_limit(schedule, "jobspy", _discover_remaining_limit(start_count, limit)),
             }
+            if result_budget is not None:
+                # The consumer compares cumulative receipts with an absolute
+                # execution cap. Never pass a retry's remaining count as total.
+                run_kwargs["limit"] = limit
+                run_kwargs["result_budget"] = result_budget
             if discovery_execution is not None:
                 run_kwargs["discovery_execution"] = discovery_execution
                 run_kwargs["activity_attempt"] = activity_attempt
@@ -1538,6 +1588,11 @@ def run_discovery_source_family(
             result_holder.update(fetch_with_limits(run_jobspy, jobspy_sources, run_id))
             return result_holder
 
+        if result_budget is not None and not any(source.should_run for source in jobspy_sources):
+            from jobctrl.infrastructure.discovery.sqlite_search_unit_repository import SqliteDiscoverySearchUnitRepository
+
+            if SqliteDiscoverySearchUnitRepository(conn).list_units(discovery_execution):
+                result_holder.update(run_jobspy())
         status = _run_discovery_source(
             "jobspy",
             "Broad boards",

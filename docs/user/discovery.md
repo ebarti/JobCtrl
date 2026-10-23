@@ -199,8 +199,12 @@ not merge the jobs or turn either record into application history. See
 
 Explicit source selection uses each retained registry entry's provider identity,
 even when that board is absent from the saved default board list. Planning
-preserves source state: disabled entries stay skipped and quarantined entries
-retain their bounded probe budget. A runnable broad-board entry without a known
+preserves disabled and quarantined choices: disabled entries stay skipped and
+quarantined entries retain their bounded allowance. Built-in JobStreaming boards
+are supported, active sources. Older experimental defaults are upgraded when the
+registry is loaded and seeded; they do not impose a ten-job probe cap. The run's
+result limit bounds new canonical jobs across the selected sources. A runnable
+broad-board entry without a known
 provider identity fails with a configuration error instead of being silently
 omitted from the requested run.
 
@@ -376,8 +380,15 @@ is delivered again and the durable receipt makes the replay harmless. Results
 excluded by a literal saved whole-title filter get a separate hashed receipt
 before acknowledgement. Accepted new/existing counts, filtered counts, and the
 run-wide new-job limit are therefore read from durable receipts, so a retry
-cannot lose progress or start the limit over. This intake admission remains
-separate from the later score and relevance decision.
+cannot lose progress or start the limit over. New bounded workflows freeze each
+source's result allowance in their plan and compare cumulative admissions with
+the absolute run limit. Canonical insertion, its admission receipt, search-unit
+acceptance and execution membership commit atomically. Archived captures use the
+same allowance; existing jobs consume none. Reaching one board's allowance closes
+only that board's remaining units, allowing other selected boards to continue.
+Disabling a board before a retry closes its frozen units without another provider
+request. This intake admission remains separate from the later score and
+relevance decision.
 
 Temporal retries reclaim only unfinished units with a newer activity-attempt
 fence. Retryable board errors resume from their checkpoint; an expired board

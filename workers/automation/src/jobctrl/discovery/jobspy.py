@@ -46,6 +46,7 @@ from jobctrl.infrastructure.discovery.production_wiring import (
     DurableJobEventPublisher,
 )
 from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
+from jobctrl.infrastructure.discovery.result_budget import DiscoveryResultBudget, DiscoveryResultLimitReached
 from jobctrl.domain.discovery.use_cases import DiscoverJobsUseCase, matches_exact_title_exclusion
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.network import (
@@ -132,6 +133,7 @@ def store_jobspy_results(
     search_cfg: dict | None = None,
     discovery_execution: DiscoveryExecutionRef | None = None,
     search_unit_lease: DiscoverySearchUnitLease | None = None,
+    result_budget: DiscoveryResultBudget | None = None,
 ) -> tuple[int, int]:
     """Store broad-board DataFrame results. Returns ``(new, existing)``."""
     now = datetime.now(timezone.utc).isoformat()
@@ -364,6 +366,11 @@ def store_jobspy_results(
             existing += 1
             continue
 
+        if result_budget is not None:
+            repository = SqliteJobRepository(
+                conn, discovery_execution=discovery_execution, source_family="jobspy",
+                search_unit_lease=search_unit_lease, result_budget=result_budget, result_budget_source_id=source_id,
+            )
         use_case = DiscoverJobsUseCase(
             repository=repository,
             publisher=DurableJobEventPublisher(
@@ -1600,7 +1607,8 @@ def _restore_provider_job(payload):
         raise ValueError("provider_job_invalid") from None
 
 
-def _drain_intake_events(conn, repository, lease, *, query, run_id, search_cfg, limit, detail_fetcher=None, cancel_event=None):
+def _drain_intake_events(conn, repository, lease, *, query, run_id, search_cfg, limit, detail_fetcher=None, cancel_event=None,
+                         result_budget: DiscoveryResultBudget | None = None):
     import pandas as pd
     import json
 
@@ -1623,21 +1631,27 @@ def _drain_intake_events(conn, repository, lease, *, query, run_id, search_cfg, 
             if cancel_event is not None and cancel_event.is_set():
                 raise DiscoveryCancelled("JobStreaming discovery canceled")
             counts = repository.execution_counts(lease.execution)
-            if limit > 0 and counts["new"] >= limit:
+            if result_budget is None and limit > 0 and counts["new"] >= limit:
                 return True
             accepted = _filter_exact_title_exclusions(frame, search_cfg)
             if not accepted.empty:
-                if detail_fetcher is not None:
+                if detail_fetcher is not None and (result_budget is None or not (
+                    result_budget.run_exhausted() or result_budget.source_exhausted(_jobspy_source_id(payload["site"]))
+                )):
                     accepted = detail_fetcher(accepted, payload, row[0])
-                store_jobspy_results(
-                    conn,
-                    accepted,
-                    query,
-                    run_id=run_id,
-                    search_cfg=search_cfg,
-                    discovery_execution=lease.execution,
-                    search_unit_lease=lease,
-                )
+                try:
+                    store_jobspy_results(
+                        conn,
+                        accepted,
+                        query,
+                        run_id=run_id,
+                        search_cfg=search_cfg,
+                        discovery_execution=lease.execution,
+                        search_unit_lease=lease,
+                        result_budget=result_budget,
+                    )
+                except DiscoveryResultLimitReached:
+                    return True
             else:
                 # Only a literal user-authored title exclusion can filter a
                 # structurally valid provider result at this boundary.
@@ -1674,6 +1688,7 @@ def _durable_full_crawl(
     activity_attempt: int,
     activity_owner_token: str,
     adapter_registry: Any | None,
+    result_budget: DiscoveryResultBudget | None = None,
 ) -> dict[str, Any]:
     """Consume JobStreaming from caller-owned units with store-before-ack."""
 
@@ -1697,6 +1712,8 @@ def _durable_full_crawl(
     )
 
     conn = init_db()
+    if result_budget is not None and (result_budget.conn is not conn or result_budget.execution != discovery_execution):
+        raise ValueError("JobStreaming result budget does not match the execution connection")
     repository = SqliteDiscoverySearchUnitRepository(conn)
     existing_units = repository.list_units(discovery_execution)
     # New executions keep provider search listing-only. An interrupted
@@ -1715,6 +1732,10 @@ def _durable_full_crawl(
         hours_old=hours_old,
         linkedin_fetch_description=persisted_linkedin_detail,
     )
+    if result_budget is not None and existing_units:
+        # Live disable/quarantine controls reduce the frozen source allowance;
+        # they must not rewrite provider request/checkpoint identities on retry.
+        specs = [unit.spec for unit in existing_units]
     repository.plan_units(discovery_execution, specs)
     proxy_config = parse_proxy(proxy) if proxy else None
     proxies = [proxy_config.jobspy] if proxy_config else None
@@ -1731,13 +1752,32 @@ def _durable_full_crawl(
     stopped_for_limit = False
     latest_provider_progress: dict[str, Any] | None = None
 
+    def unit_limit_reached(unit: DiscoverySearchUnit) -> bool:
+        if result_budget is not None:
+            return result_budget.run_exhausted() or result_budget.source_exhausted(_jobspy_source_id(unit.spec.sites[0]))
+        return limit > 0 and repository.execution_counts(discovery_execution)["new"] >= limit
+
+    def terminalize_for_limit(lease: DiscoverySearchUnitLease, unit: DiscoverySearchUnit) -> None:
+        repository.mark_skipped(lease)
+        if result_budget is None or result_budget.run_exhausted():
+            repository.mark_pending_skipped(discovery_execution)
+        else:
+            repository.mark_pending_skipped(
+                discovery_execution,
+                unit_ids=tuple(candidate.unit_id for candidate in repository.list_units(discovery_execution)
+                               if candidate.spec.sites == unit.spec.sites),
+            )
+
     def emit_progress(current: DiscoverySearchUnit | None, message: str) -> None:
         if progress_callback is None:
             return
+        counts = repository.execution_counts(discovery_execution)
+        if result_budget is not None:
+            counts["new"] = sum(result_budget.counts().values())
         progress_callback(
             _durable_progress_snapshot(
                 repository.list_units(discovery_execution),
-                repository.execution_counts(discovery_execution),
+                counts,
                 current=current,
                 filtered_jobs=repository.execution_filtered_count(discovery_execution),
                 raw_total=repository.execution_provider_job_count(discovery_execution),
@@ -1833,11 +1873,13 @@ def _durable_full_crawl(
                 limit=limit,
                 detail_fetcher=fill_identity_detail,
                 cancel_event=cancel_event,
+                result_budget=result_budget,
             )
-            if stopped_for_limit:
-                repository.mark_skipped(lease)
-                repository.mark_pending_skipped(discovery_execution)
-                break
+            if stopped_for_limit or (result_budget is not None and unit_limit_reached(unit)):
+                terminalize_for_limit(lease, unit)
+                if result_budget is None or result_budget.run_exhausted():
+                    break
+                continue
             with limiter.slot(
                 _JOBSPY_HOST_KEY,
                 min_interval_seconds=BROAD_BOARD_LEAD_POLICY.min_request_interval_seconds,
@@ -1856,15 +1898,13 @@ def _durable_full_crawl(
                 ) as stream:
                     for event in stream:
                         if isinstance(event, JobEvent):
-                            counts = repository.execution_counts(discovery_execution)
-                            if limit > 0 and counts["new"] >= limit:
+                            if unit_limit_reached(unit):
                                 # A worker can disappear after acknowledging the
                                 # limit-reaching event but before terminalizing
                                 # the unit. Never accept one extra posting when
                                 # that completed checkpoint resumes at the next
                                 # provider result.
-                                repository.mark_skipped(lease)
-                                repository.mark_pending_skipped(discovery_execution)
+                                terminalize_for_limit(lease, unit)
                                 stream.close()
                                 stopped_for_limit = True
                                 emit_progress(unit, "Discovery result limit reached")
@@ -1881,14 +1921,14 @@ def _durable_full_crawl(
                                 limit=limit,
                                 detail_fetcher=fill_identity_detail,
                                 cancel_event=cancel_event,
+                                result_budget=result_budget,
                             )
                             # Capture and canonical ingestion are durable before
                             # acknowledgement advances the provider checkpoint.
                             stream.ack(event)
                             emit_progress(unit, "Listing stored")
                             if stopped_for_limit:
-                                repository.mark_skipped(lease)
-                                repository.mark_pending_skipped(discovery_execution)
+                                terminalize_for_limit(lease, unit)
                                 stream.close()
                                 break
                         elif isinstance(event, ErrorEvent):
@@ -1922,10 +1962,10 @@ def _durable_full_crawl(
                                 limit=limit,
                                 detail_fetcher=fill_identity_detail,
                                 cancel_event=cancel_event,
+                                result_budget=result_budget,
                             )
                             if stopped_for_limit:
-                                repository.mark_skipped(lease)
-                                repository.mark_pending_skipped(discovery_execution)
+                                terminalize_for_limit(lease, unit)
                                 stream.close()
                                 break
                             stream.ack(event)
@@ -2009,7 +2049,10 @@ def _durable_full_crawl(
             terminal_checkpoint_failure = True
 
         if stopped_for_limit:
-            break
+            if result_budget is None or result_budget.run_exhausted():
+                break
+            stopped_for_limit = False
+            continue
         if terminal_checkpoint_failure:
             emit_progress(
                 repository.get_unit(discovery_execution, lease.unit_id),
@@ -2034,10 +2077,11 @@ def _durable_full_crawl(
         raise RuntimeError(f"JobStreaming failed for all {len(failed_units)} search unit(s)")
 
     db_total = int(conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0])
+    admitted_new = sum(result_budget.counts().values()) if result_budget is not None else counts["new"]
     result = {
-        "total": counts["accepted"],
+        "total": counts["accepted"] + max(admitted_new - counts["new"], 0),
         "raw_total": repository.execution_provider_job_count(discovery_execution),
-        "new": counts["new"],
+        "new": admitted_new,
         "existing": counts["existing"],
         "errors": len(_failed_jobstreaming_source_ids(units)),
         "failed_queries": len(failed_units),
@@ -2066,6 +2110,7 @@ def run_discovery(
     activity_attempt: int | None = None,
     activity_owner_token: str | None = None,
     adapter_registry: Any | None = None,
+    result_budget: DiscoveryResultBudget | None = None,
 ) -> dict:
     """Main entry point for JobStreaming broad-board discovery.
 
@@ -2116,8 +2161,11 @@ def run_discovery(
             activity_attempt=activity_attempt,
             activity_owner_token=activity_owner_token,
             adapter_registry=adapter_registry,
+            result_budget=result_budget,
         )
 
+    if result_budget is not None:
+        raise ValueError("A source result budget requires resumable discovery")
     return _full_crawl(
         search_cfg=cfg,
         tiers=tiers,

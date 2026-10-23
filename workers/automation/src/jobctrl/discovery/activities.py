@@ -35,6 +35,7 @@ class PlanDiscoverySourcesInput:
     expected_db_path: str | None = None
     discovery_execution: DiscoveryExecutionRef | None = None
 
+    use_source_result_budget: bool = False
 
 @dataclass(frozen=True)
 class PlanDiscoverySourcesOutput:
@@ -47,6 +48,8 @@ class PlanDiscoverySourcesOutput:
     max_parallel_families: int = 1
     next_run_settings: dict[str, Any] = field(default_factory=dict)
 
+    use_source_result_budget: bool = False
+    source_result_limits: dict[str, int] = field(default_factory=dict)
 
 @dataclass(frozen=True)
 class DiscoverySourceActivityInput:
@@ -63,6 +66,8 @@ class DiscoverySourceActivityInput:
     next_run_settings: dict[str, Any] = field(default_factory=dict)
     discovery_execution: DiscoveryExecutionRef | None = None
 
+    use_source_result_budget: bool = False
+    source_result_limits: dict[str, int] = field(default_factory=dict)
 
 @dataclass(frozen=True)
 class DiscoverySourceActivityOutput:
@@ -191,6 +196,7 @@ def plan_discovery_sources(payload: PlanDiscoverySourcesInput) -> PlanDiscoveryS
             limit=payload.limit,
             source_ids=payload.source_ids,
             discovery_execution=payload.discovery_execution,
+            use_source_result_budget=payload.use_source_result_budget,
         )
         output = PlanDiscoverySourcesOutput(
             families=list(plan.get("families") or []),
@@ -198,6 +204,8 @@ def plan_discovery_sources(payload: PlanDiscoverySourcesInput) -> PlanDiscoveryS
             start_count=int(plan.get("start_count") or 0),
             max_parallel_families=max(1, int(plan.get("max_parallel_families") or 1)),
             next_run_settings=dict(plan.get("next_run_settings") or {}),
+            use_source_result_budget=bool(plan.get("use_source_result_budget", False)),
+            source_result_limits=dict(plan.get("source_result_limits") or {}),
         )
     except Exception as exc:
         if lifecycle is not None:
@@ -263,6 +271,8 @@ async def discovery_source_family_activity(
                 discovery_execution=payload.discovery_execution,
                 activity_attempt=activity_attempt,
                 activity_owner_token=activity_owner_token,
+                use_source_result_budget=payload.use_source_result_budget,
+                source_result_limits=payload.source_result_limits,
             ),
             starting_message=f"discover {payload.family} starting",
             progress_message=f"discover {payload.family} still running",

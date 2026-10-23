@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import uuid
 from dataclasses import dataclass
@@ -279,6 +280,8 @@ async def _plan_discovery_sources(payload: PlanDiscoverySourcesInput) -> PlanDis
         progress_total=5,
         start_count=7,
         max_parallel_families=_MAX_PARALLEL,
+        use_source_result_budget=payload.use_source_result_budget,
+        source_result_limits={"jobspy:indeed": payload.limit} if payload.use_source_result_budget else {},
     )
 
 
@@ -586,8 +589,9 @@ def test_build_per_job_handoff_starts_scored_prep_with_params(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("legacy_history", [False, True])
 @pytest.mark.parametrize("legacy_compensation_budget", [False, True])
+@pytest.mark.parametrize("legacy_source_budget", [False, True])
 async def test_discover_workflow_runs_sources_then_enrichment_and_fanout(
-    monkeypatch, legacy_history, legacy_compensation_budget,
+    monkeypatch, legacy_history, legacy_compensation_budget, legacy_source_budget,
 ) -> None:
     from jobctrl.discovery import workflow as discovery_workflow
 
@@ -597,6 +601,8 @@ async def test_discover_workflow_runs_sources_then_enrichment_and_fanout(
         if legacy_history and patch_id == _TERMINAL_ENRICHMENT_HANDOFF_PATCH:
             return False
         if legacy_compensation_budget and patch_id == _COMPENSATION_MODEL_BUDGET_PATCH:
+            return False
+        if legacy_source_budget and patch_id == discovery_workflow._SOURCE_RESULT_BUDGET_PATCH:
             return False
         return patched(patch_id)
 
@@ -643,6 +649,13 @@ async def test_discover_workflow_runs_sources_then_enrichment_and_fanout(
                     and event.activity_task_scheduled_event_attributes.activity_type.name == "automatic_compensation_refresh"]
     assert len(compensation) == 1
     assert compensation[0].start_to_close_timeout.seconds == (1800 if legacy_compensation_budget else 21600)
+    source_inputs = [json.loads(event.activity_task_scheduled_event_attributes.input.payloads[0].data)
+                     for event in history.events if event.HasField("activity_task_scheduled_event_attributes")
+                     and event.activity_task_scheduled_event_attributes.activity_type.name == "discovery_source_family"]
+    assert len(source_inputs) == 3
+    assert all(item["use_source_result_budget"] is (not legacy_source_budget) for item in source_inputs)
+    assert all(item["source_result_limits"] == ({"jobspy:indeed": 10} if not legacy_source_budget else {})
+               for item in source_inputs)
     assert result.families_completed == ["jobspy", "workday", "smartextract"]
     assert result.families_failed == []
     assert result.preparation_started == 1
