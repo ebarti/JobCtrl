@@ -48,9 +48,17 @@ There is no second spend table or preflight.
 The worker checks saved preparation state at startup and on its 15-second
 heartbeat. `pipeline/automatic_preparation.py` resumes pending or retryable
 failed Enrich, Score, Tailor, and Cover work without running Discover or Apply.
-It waits while Temporal reports another discovery, import, or preparation
-workflow, or canonical stage rows are queued/running. An unavailable Temporal
-inventory prevents dispatch.
+It waits while Temporal reports a discovery, import, or batch pipeline workflow.
+A single-job `JobPreparationWorkflow` may overlap recovery for other jobs: its
+first immutable history event must identify the exact run, local job, permitted
+steps, and compatible workspace. That job remains excluded even between
+activities. Under the SQLite write lock, every queued/running stage must belong
+to one of those verified executions; unknown or conflicting ownership prevents
+new dispatch. Missing or unavailable inventory/history also prevents dispatch.
+An existing recovery reservation that intersects an active preparation job waits
+without changing its frozen cohort. This admits at most one recovery batch at a
+time while unrelated per-job preparation continues through the configured worker
+activity slots; it does not wait for all preparation to become idle.
 
 Each recovery workflow handles one stage for at most 25 local jobs. New dispatches
 snapshot the saved `pipeline_internal_concurrency` (default 1, bounded 1–16);

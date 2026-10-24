@@ -2937,3 +2937,22 @@ record a review bound to both versions; significant edits proceed through normal
 scoring. Provider, spend, structure and missing-baseline failures stay explicit
 and preserve accepted data. No word lists, similarity thresholds or lexical
 fallback decide significance. See [Scoring](architecture/scoring.md#profile-edits-and-explicit-refresh).
+
+## 2026-10-24: Recovery May Overlap Independently Owned Preparation
+
+Status: accepted
+
+Automatic recovery no longer waits for all single-job preparation workflows to
+finish. A live `JobPreparationWorkflow` is scoped from its exact execution's
+immutable start event; its local job stays excluded from recovery even between
+activities. Admission rechecks every queued/running canonical stage under the
+SQLite write lock and permits overlap only for those verified owners. Missing
+history, foreign workspace bindings, unknown owners, and active discovery,
+import or batch pipeline workflows retain the dispatch gate.
+
+This removes an unrelated material-generation delay after a retry cooldown has
+already elapsed. At most one recovery batch remains active, using the existing
+worker slots, internal concurrency, attempt limits, cooldowns, spend preflight
+and source politeness. Frozen reservations, cancellation/skip decisions and
+accepted artifacts retain their existing protections. No workflow command
+sequence changes. See [Operations](architecture/pipeline/operations.md#automatic-preparation-recovery).

@@ -1209,6 +1209,16 @@ Use the real Temporal recovery fixture to prove worker replacement, late
 provider results after cancellation, and exact stopped-owner settlement.
 Missing workflow history must retain ownership; a recovered enrichment lease
 must reject a late predecessor write.
+Hold a real per-job preparation activity open and prove normal recovery can
+enrich and score an unrelated job before releasing that activity. Resolve the
+busy job from the exact run's first history event, including ordinary fanout
+with absent workspace paths; reject explicit foreign paths, copied/wrong-run
+history, missing payloads, and conflicting executions. Exclude the busy job even
+between activities, and retain its attempts, owner and approved materials.
+Unknown canonical owners and active discovery/import/batch workflows still gate
+dispatch. Race an independent owner replacement against admission, then race two
+SQLite writers: require one frozen recovery reservation and one queued event.
+Replay the observed production workflow histories and prove no Apply dispatch.
 For an automatic batch interrupted by an activity timeout, include one consumed
 job and one reservation that never started. Prove the latter returns to pending
 with unchanged attempt counters and can enter a new workflow after cooldown,

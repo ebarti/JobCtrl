@@ -34,7 +34,7 @@ from jobctrl.infrastructure.materials import SqliteEmployerAnalysisRepository
 from jobctrl.infrastructure.temporal.finalize import record_workflow_started, record_workflow_outcome
 from jobctrl.infrastructure.temporal.run_in_activity import shutdown_activity_executors
 from jobctrl.llm import check_spend_budget
-from jobctrl.materials.activities import tailor_activity, cover_activity
+from jobctrl.materials.activities import TailorJobActivityInput, TailorJobActivityOutput, tailor_activity, cover_activity
 from jobctrl.pipeline import automatic_preparation as recovery
 from jobctrl.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
 from jobctrl.scoring import scorer, tailor
@@ -1349,3 +1349,78 @@ async def test_real_enrichment_batch_failure_before_first_claim_stops_recovery(w
         assert row["attempt_count"] == 1
         executions = [run async for run in env.client.list_workflows()]
         assert len(executions) == 1
+
+
+@pytest.mark.asyncio
+async def test_recovery_enrich_and_score_overlap_real_per_job_preparation(world):
+    from temporalio.worker import Replayer
+    from jobctrl.preparation.workflow import JobPreparationInput, JobPreparationWorkflow
+    from .test_v7_cover_runtime import _seed_approved_resume
+
+    retry = seed_for_stage(world, 1, "enrich")
+    busy = seed_for_stage(world, 2, "tailor")
+    _seed_approved_resume(world.conn, world.app, tenant_id=LOCAL_TENANT, job_id=busy)
+    world.conn.commit()
+    accepted = [tuple(row) for row in world.conn.execute("SELECT * FROM job_materials_artifacts WHERE job_id=? ORDER BY artifact_id", (str(busy),))]
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    @activity.defn(name="tailor_job")
+    async def held_material_port(payload: TailorJobActivityInput) -> TailorJobActivityOutput:
+        set_stage_state(world.conn, payload.job_id, "tailor", "running", attempt_count=1,
+            metadata={"activityOwner": activity.info().workflow_run_id}, validate_transition=False)
+        world.conn.commit()
+        entered.set()
+        await release.wait()
+        set_stage_state(world.conn, payload.job_id, "tailor", "skipped", validate_transition=False)
+        world.conn.commit()
+        return TailorJobActivityOutput(status="skipped", reason="synthetic_hold_released")
+
+    queue = f"qa-overlap-{uuid.uuid4()}"
+    async with local_env() as env:
+        async with Worker(env.client, task_queue=queue,
+            workflows=[JobPipelineWorkflow, JobPreparationWorkflow],
+            activities=[*ACTIVITIES, held_material_port],
+            max_concurrent_activities=2, workflow_runner=UnsandboxedWorkflowRunner()):
+            handle = await env.client.start_workflow(JobPreparationWorkflow.run,
+                JobPreparationInput(tenant_id="local", job_id=busy, steps=["tailor"],
+                    target_version="synthetic", idempotency_key="held", retailor=True,
+                    expected_app_dir=str(world.app), expected_db_path=str(world.path)),
+                id=f"prep-held-{uuid.uuid4()}", task_queue=queue)
+            histories = []
+            try:
+                await asyncio.wait_for(entered.wait(), 10)
+                before = _stage(world.conn, busy, "tailor")
+                for _ in range(100):
+                    if [run async for run in env.client.list_workflows(query="ExecutionStatus = 'Running' AND WorkflowType = 'JobPreparationWorkflow'")]:
+                        break
+                    await asyncio.sleep(0.1)
+                else:
+                    raise AssertionError("Held preparation was never visible")
+                for stage in ["enrich", "score"]:
+                    assert await tick(env.client, world, queue) == 1
+                    workflow_id = reserved_id(world, retry, stage)
+                    result = await asyncio.wait_for(env.client.get_workflow_handle(workflow_id).result(), 25)
+                    assert result["stages_completed"] == [stage], result
+                    assert _stage(world.conn, retry, stage)["state"] == "succeeded"
+                    assert _stage(world.conn, busy, "tailor") == before
+                    assert not release.is_set()
+                    histories.append(await env.client.get_workflow_handle(workflow_id).fetch_history())
+                    for _ in range(100):
+                        if not [run async for run in env.client.list_workflows(query="ExecutionStatus = 'Running' AND WorkflowType = 'JobPipelineWorkflow'")]:
+                            break
+                        await asyncio.sleep(0.1)
+                    else:
+                        raise AssertionError("Completed recovery retained active visibility")
+                assert len(world.scrape_calls) == 1 and world.llm.calls == 1
+                assert world.conn.execute("SELECT fit_score FROM job_scores WHERE job_id=?", (str(retry),)).fetchone()[0] == 8
+                assert [tuple(row) for row in world.conn.execute("SELECT * FROM job_materials_artifacts WHERE job_id=? ORDER BY artifact_id", (str(busy),))] == accepted
+            finally:
+                release.set()
+                await asyncio.wait_for(handle.result(), 10)
+            histories.append(await handle.fetch_history())
+            runs = [run async for run in env.client.list_workflows()]
+            assert len(runs) == 3
+            assert {run.workflow_type for run in runs} == {"JobPreparationWorkflow", "JobPipelineWorkflow"}
+        replayer = Replayer(workflows=[JobPipelineWorkflow, JobPreparationWorkflow], workflow_runner=UnsandboxedWorkflowRunner())
+        for history in histories:
+            await replayer.replay_workflow(history)
