@@ -204,6 +204,10 @@ email body or provider error text.
 Confirmation, the submitted fact and the owned stage commit together. Losing
 the acknowledgement after that commit cannot leave an accepted send without
 its application history or let a delayed settlement replace a successor.
+Recovery rechecks the same operation under the writer lock before parking it,
+so it cannot replace an accepted concurrent confirmation with uncertainty.
+Success notifications follow the commit; a failed settlement does not announce
+an application as submitted.
 
 ## Repeat-Application Protection
 

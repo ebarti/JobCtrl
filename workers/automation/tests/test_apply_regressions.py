@@ -1965,7 +1965,7 @@ _INVALID_SEND_RESPONSES = [
 ]
 
 
-def _owned_email_probe(tmp_path, monkeypatch, *, status=200, body=b'{"id":"m1"}', sender_factory=None):
+def _owned_email_probe(tmp_path, monkeypatch, *, status=200, body=b'{"id":"m1"}', sender_factory=None, live_bus=False):
     import httpx
     from contextlib import nullcontext
     from jobctrl.domain.apply import ApplyRun, ApplyRunId
@@ -2002,7 +2002,12 @@ def _owned_email_probe(tmp_path, monkeypatch, *, status=200, body=b'{"id":"m1"}'
     if sender_factory:
         sender = sender_factory(sender)
     repo = launcher_module.SqliteApplyRunRepository()
-    saga = ApplySaga(browser_port=_FakeBrowser(), agent_port=_FakeAgent(behaviour="email_only"),
+    from dataclasses import replace
+    class PrivateEmailAgent(_FakeAgent):
+        def submit_application(self, **kwargs):
+            result = super().submit_application(**kwargs)
+            return replace(result, raw_output=result.raw_output + " private-agent-result-canary")
+    saga = ApplySaga(browser_port=_FakeBrowser(), agent_port=PrivateEmailAgent(behaviour="email_only"),
                      repository=repo, email_sender=sender, availability_authorizer=lambda *_: nullcontext())
     run = ApplyRun.start(tenant_id=TenantId("local"), run_id=ApplyRunId(ctx["run_id"]),
                          job_id=job_id, started_at=utc_now(), worker_id=1, model="synthetic")
@@ -2010,6 +2015,19 @@ def _owned_email_probe(tmp_path, monkeypatch, *, status=200, body=b'{"id":"m1"}'
     from jobctrl.domain.apply.services import ApplyEligibilityChecker
     from .test_apply_use_cases import _CapturingPublisher, _FakeSnapshot, _ready_job
     publisher = _CapturingPublisher()
+    if live_bus:
+        from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
+        publisher = InProcessEventBus()
+        publisher.events = []
+        publisher.durable_success = []
+        def observe(event):
+            if event.event_type in {"EmailApplicationSent", "ApplicationSubmitted"}:
+                with sqlite3.connect(db_path) as observer:
+                    counts = _email_counts(observer, job_id)
+                    publisher.durable_success.append((event.event_type, counts["EmailApplicationSent"], counts["ApplicationSubmitted"]))
+        publisher.subscribe(None, observe)
+        publisher.subscribe(None, publisher.events.append)
+        ProjectionBuilder(conn_factory=lambda: get_connection(db_path)).subscribe_to(publisher)
     monkeypatch.setattr("jobctrl.infrastructure.events.get_default_publisher", lambda: publisher)
     class Snapshot(_FakeSnapshot):
         def as_dict(self):
@@ -2027,19 +2045,31 @@ def _owned_email_probe(tmp_path, monkeypatch, *, status=200, body=b'{"id":"m1"}'
         "full_description": "Send resumes to apply@example.com for consideration.",
         "resume_pdf_path": str(attachment), "resume_pdf_artifact_id": "resume-pdf-1",
         "approved_email_recipient": "apply@example.com", "approved_email_attachment_artifact_id": "resume-pdf-1"}
-    def execute():
-        outcome = use_case.execute(tenant_id=TenantId("local"), job=job, snapshot=Snapshot(),
-                                   worker_id=1, cdp_port=9222, run_id=run.run_id, model="synthetic")
-        assert "private-candidate-canary" not in str(publisher.events)
-        assert "private-provider-canary" not in str(publisher.events)
+    def assert_preserved():
         current = get_connection(db_path)
         assert [tuple(row) for row in current.execute("SELECT * FROM job_materials WHERE job_id=?", (job_id,))] == preserved_materials
         assert [tuple(row) for row in current.execute("SELECT * FROM job_materials_artifacts WHERE job_id=? ORDER BY artifact_id", (job_id,))] == preserved_artifacts
         assert [tuple(row) for row in current.execute("SELECT * FROM application_review_decisions WHERE job_id=?", (job_id,))] == preserved_reviews
+        assert attachment.read_bytes() == b"%PDF synthetic accepted material\n"
+    def execute():
+        try:
+            outcome = use_case.execute(tenant_id=TenantId("local"), job=job, snapshot=Snapshot(),
+                                       worker_id=1, cdp_port=9222, run_id=run.run_id, model="synthetic")
+        finally:
+            assert_preserved()
+        assert "private-candidate-canary" not in str(publisher.events)
+        assert "private-provider-canary" not in str(publisher.events)
+        assert "private-agent-result-canary" not in str(publisher.events)
+        assert "apply@example.com" not in str(publisher.events)
+        successes = Counter(event.event_type for event in publisher.events)
+        assert successes["EmailApplicationSent"] == successes["ApplicationSubmitted"] == int(outcome.apply_run.is_succeeded)
+        current = get_connection(db_path)
         candidate = current.execute("SELECT payload_json FROM job_events WHERE event_type='EmailApplicationCandidateRecorded' AND job_id=?", (job_id,)).fetchone()
         assert candidate and "private-candidate-canary" in candidate[0]
         return outcome
+    execute.assert_preserved = assert_preserved
     execute.publisher_events = publisher.events
+    execute.durable_success = getattr(publisher, "durable_success", [])
     return db_path, conn, job_id, ctx, calls, repo, execute, attachment
 
 
@@ -2140,7 +2170,7 @@ def test_foreign_or_malformed_internal_receipt_cannot_confirm(tmp_path, monkeypa
 @pytest.mark.parametrize("boundary", ["malformed_before_terminal", "confirmation_write_failure", "submitted_fact_write_failure", "confirmation_ack_lost"])
 def test_email_restart_at_persistence_boundaries(tmp_path, monkeypatch, boundary, record_property):
     body = b"{}" if boundary == "malformed_before_terminal" else b'{"id":"m1"}'
-    db_path, conn, job_id, ctx, calls, repo, execute, attachment = _owned_email_probe(tmp_path, monkeypatch, body=body)
+    db_path, conn, job_id, ctx, calls, repo, execute, attachment = _owned_email_probe(tmp_path, monkeypatch, body=body, live_bus=True)
     preserved = attachment.read_bytes()
     real_save = repo.save
     def save(run, **kwargs):
@@ -2168,6 +2198,10 @@ def test_email_restart_at_persistence_boundaries(tmp_path, monkeypatch, boundary
         counts = _email_counts(conn, job_id)
         assert len(calls) == 1 and counts["ApplySubmitIntended"] == 1
         confirmed = boundary == "confirmation_ack_lost"
+        published = Counter(event.event_type for event in execute.publisher_events)
+        assert published["EmailApplicationSent"] == int(confirmed)
+        assert published["ApplicationSubmitted"] == int(confirmed)
+        record_property("success_notifications", json.dumps({key: published[key] for key in ("EmailApplicationSent", "ApplicationSubmitted")}))
         assert counts["EmailApplicationSent"] == int(confirmed)
         assert counts["ApplicationSubmitted"] == int(confirmed)
         row = conn.execute("SELECT state FROM job_stage_states WHERE job_id=? AND stage='apply'", (job_id,)).fetchone()
@@ -2181,7 +2215,7 @@ def test_email_restart_at_persistence_boundaries(tmp_path, monkeypatch, boundary
 
 
 def test_concurrent_email_confirmation_writers_are_idempotent(tmp_path, monkeypatch, record_property):
-    db_path, conn, job_id, ctx, calls, repo, execute, _ = _owned_email_probe(tmp_path, monkeypatch)
+    db_path, conn, job_id, ctx, calls, repo, execute, _ = _owned_email_probe(tmp_path, monkeypatch, live_bus=True)
     try:
         captured = []
         real_save = repo.save
@@ -2217,6 +2251,10 @@ def test_concurrent_email_confirmation_writers_are_idempotent(tmp_path, monkeypa
         conn = get_connection(db_path)
         counts = _email_counts(conn, job_id)
         assert (len(calls), counts["ApplySubmitIntended"], counts["EmailApplicationSent"], counts["ApplicationSubmitted"]) == (1, 1, 1, 1)
+        published = Counter(e.event_type for e in execute.publisher_events)
+        assert published["EmailApplicationSent"] == published["ApplicationSubmitted"] == 1
+        assert execute.durable_success == [("EmailApplicationSent", 1, 1), ("ApplicationSubmitted", 1, 1)]
+        record_property("subscriber_durable_observations", json.dumps(execute.durable_success))
     finally:
         _record_email_probe_counts(record_property, db_path, job_id, calls)
         close_connection(db_path)
@@ -2299,6 +2337,15 @@ def _record_email_probe_counts(record_property, db_path, job_id, calls):
         "submitted_fact": counts["ApplicationSubmitted"], "failed_terminal": counts["ApplicationFailed"],
         "apply_state": state[0] if state else None}, sort_keys=True))
 
+    material_rows = [tuple(row) for row in conn.execute("SELECT * FROM job_materials WHERE job_id=?", (job_id,))]
+    review_rows = [tuple(row) for row in conn.execute("SELECT * FROM application_review_decisions WHERE job_id=?", (job_id,))]
+    record_property("preserved_synthetic_state", json.dumps({
+        "materials_rows": len(material_rows), "review_rows": len(review_rows),
+        "materials_sha256": sha256(json.dumps(material_rows, sort_keys=True).encode()).hexdigest(),
+        "reviews_sha256": sha256(json.dumps(review_rows, sort_keys=True).encode()).hexdigest(),
+        "attachment_sha256": sha256((Path(db_path).parent / "accepted.pdf").read_bytes()).hexdigest(),
+    }, sort_keys=True))
+
 
 def test_email_receipt_event_keys_isolate_identical_run_ids_across_tenants(tmp_path, monkeypatch):
     from dataclasses import asdict
@@ -2351,4 +2398,228 @@ def test_delayed_email_settlement_preserves_accepted_fact_and_successor(tmp_path
         assert (len(calls), counts["EmailApplicationSent"], counts["ApplicationSubmitted"]) == (1, 1, 1)
         assert attachment.read_bytes() == preserved
     finally:
+        close_connection(db_path)
+
+
+def _capture_owned_terminal(repo, execute, monkeypatch):
+    captured = []
+    real_save = repo.save
+    def capture(run, **kwargs):
+        if run.is_terminal:
+            captured.append(run)
+            raise RuntimeError("hold owned terminal")
+        return real_save(run, **kwargs)
+    monkeypatch.setattr(repo, "save", capture)
+    with pytest.raises(RuntimeError, match="hold owned terminal"):
+        execute()
+    monkeypatch.setattr(repo, "save", real_save)
+    assert len(captured) == 1
+    return captured[0]
+
+
+def test_owned_success_notifications_discarded_on_artifact_failure_and_retry(tmp_path, monkeypatch, record_property):
+    db_path, conn, job_id, ctx, calls, repo, execute, attachment = _owned_email_probe(tmp_path, monkeypatch, live_bus=True)
+    try:
+        terminal = _capture_owned_terminal(repo, execute, monkeypatch)
+        real_register = launcher_module._register_apply_log_artifact
+        def fail(*args, **kwargs):
+            raise sqlite3.OperationalError("synthetic artifact write failure")
+        monkeypatch.setattr(launcher_module, "_register_apply_log_artifact", fail)
+        with pytest.raises(sqlite3.OperationalError, match="synthetic artifact"):
+            repo.save(terminal)
+        assert _email_counts(conn, job_id)["EmailApplicationSent"] == 0
+        assert _email_counts(conn, job_id)["ApplicationSubmitted"] == 0
+        assert not any(e.event_type in {"EmailApplicationSent", "ApplicationSubmitted"} for e in execute.publisher_events)
+        monkeypatch.setattr(launcher_module, "_register_apply_log_artifact", real_register)
+        repo.save(terminal)
+        repo.save(terminal)
+        mark_result(job_id, "applied", run_ctx=ctx)
+        assert len(calls) == 1
+        published = Counter(e.event_type for e in execute.publisher_events)
+        assert published["EmailApplicationSent"] == published["ApplicationSubmitted"] == 1
+        assert execute.durable_success == [("EmailApplicationSent", 1, 1), ("ApplicationSubmitted", 1, 1)]
+        record_property("subscriber_durable_observations", json.dumps(execute.durable_success))
+        assert _email_counts(conn, job_id)["ApplicationSubmitted"] == 1
+        projection = conn.execute("SELECT status, events_json FROM apply_run_projections WHERE run_id=?", (ctx["run_id"],)).fetchone()
+        assert projection[0] == "succeeded"
+        assert "private-agent-result-canary" not in projection[1]
+        assert "apply@example.com" not in projection[1]
+        assert attachment.read_bytes() == b"%PDF synthetic accepted material\n"
+        record_property("success_notifications", json.dumps({key: published[key] for key in ("EmailApplicationSent", "ApplicationSubmitted")}))
+    finally:
+        _record_email_probe_counts(record_property, db_path, job_id, calls)
+        close_connection(db_path)
+
+
+@pytest.mark.parametrize("finish", ["commit", "rollback", "sql_commit", "cursor_commit", "context_commit", "savepoint_rollback", "close", "savepoint_retry", "sql_rollback", "cursor_rollback", "context_rollback", "script_commit"])
+def test_owned_settlement_waits_for_inherited_transaction(tmp_path, monkeypatch, finish, record_property):
+    db_path, conn, job_id, ctx, calls, repo, execute, _ = _owned_email_probe(tmp_path, monkeypatch, live_bus=True)
+    try:
+        terminal = _capture_owned_terminal(repo, execute, monkeypatch)
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("SAVEPOINT caller_scope")
+        repo.save(terminal)
+        assert conn.in_transaction
+        assert not any(e.event_type in {"EmailApplicationSent", "ApplicationSubmitted"} for e in execute.publisher_events)
+        with sqlite3.connect(db_path) as observer:
+            assert observer.execute("SELECT count(*) FROM job_events WHERE event_type='ApplicationSubmitted'").fetchone()[0] == 0
+        accepted = finish in {"commit", "sql_commit", "cursor_commit", "context_commit", "savepoint_retry", "script_commit"}
+        if finish == "savepoint_rollback":
+            conn.execute("ROLLBACK TO caller_scope")
+            conn.execute("RELEASE caller_scope")
+            conn.commit()
+        elif finish == "savepoint_retry":
+            conn.execute("ROLLBACK TO caller_scope")
+            repo.save(terminal)
+            assert not any(e.event_type in {"EmailApplicationSent", "ApplicationSubmitted"} for e in execute.publisher_events)
+            conn.commit()
+        elif finish == "sql_rollback":
+            conn.execute("ROLLBACK")
+        elif finish == "cursor_rollback":
+            conn.cursor().execute("ROLLBACK")
+        elif finish == "context_rollback":
+            with pytest.raises(RuntimeError, match="caller failed"):
+                with conn:
+                    raise RuntimeError("caller failed")
+        elif finish == "script_commit":
+            conn.executescript("SELECT 1;")
+        elif finish == "sql_commit":
+            conn.execute("COMMIT")
+        elif finish == "cursor_commit":
+            conn.cursor().execute("COMMIT")
+        elif finish == "context_commit":
+            with conn:
+                pass
+        elif finish == "close":
+            close_connection(db_path)
+            conn = get_connection(db_path)
+        else:
+            getattr(conn, finish)()
+        published = Counter(e.event_type for e in execute.publisher_events)
+        assert published["EmailApplicationSent"] == published["ApplicationSubmitted"] == int(accepted)
+        assert _email_counts(conn, job_id)["ApplicationSubmitted"] == int(accepted)
+        if not accepted:
+            repo.save(terminal)
+            repo.save(terminal)
+            published = Counter(e.event_type for e in execute.publisher_events)
+            assert published["EmailApplicationSent"] == published["ApplicationSubmitted"] == 1
+        assert len(calls) == 1
+        record_property("transaction_finish", finish)
+    finally:
+        _record_email_probe_counts(record_property, db_path, job_id, calls)
+        close_connection(db_path)
+
+
+def test_recovery_rechecks_after_independent_confirmation_commit(tmp_path, monkeypatch, record_property):
+    db_path, conn, job_id, ctx, calls, repo, execute, _ = _owned_email_probe(tmp_path, monkeypatch)
+    try:
+        terminal = _capture_owned_terminal(repo, execute, monkeypatch)
+        entered, settled = threading.Event(), threading.Event()
+        real_check = launcher_module._workflow_terminal_or_gone
+        def pause(*args, **kwargs):
+            result = real_check(*args, **kwargs)
+            entered.set()
+            assert settled.wait(10)
+            return result
+        monkeypatch.setattr(launcher_module, "_workflow_terminal_or_gone", pause)
+        failures = []
+        def settle():
+            try:
+                assert entered.wait(5)
+                repo.save(terminal)
+            except BaseException as exc:
+                failures.append(exc)
+            finally:
+                settled.set()
+                close_connection(db_path)
+        writer = threading.Thread(target=settle)
+        writer.start()
+        assert recover_ambiguous_running_apply() == 0
+        writer.join(10)
+        assert not writer.is_alive() and not failures
+        assert conn.execute("SELECT state FROM job_stage_states WHERE job_id=? AND stage='apply'", (job_id,)).fetchone()[0] == "succeeded"
+        counts = _email_counts(conn, job_id)
+        assert len(calls) == counts["EmailApplicationSent"] == counts["ApplicationSubmitted"] == 1
+        assert recover_ambiguous_running_apply() == 0
+    finally:
+        _record_email_probe_counts(record_property, db_path, job_id, calls)
+        close_connection(db_path)
+
+
+def test_recovery_holds_writer_lock_between_receipt_read_and_parking(tmp_path, monkeypatch, record_property):
+    from jobctrl.apply.launcher import EmailSettlementError
+    db_path, conn, job_id, ctx, calls, repo, execute, _ = _owned_email_probe(tmp_path, monkeypatch)
+    try:
+        terminal = _capture_owned_terminal(repo, execute, monkeypatch)
+        read_receipt, tried_writer = threading.Event(), threading.Event()
+        original = launcher_module._has_email_confirmation
+        def pause(*args):
+            value = original(*args)
+            read_receipt.set()
+            assert tried_writer.wait(10)
+            return value
+        monkeypatch.setattr(launcher_module, "_has_email_confirmation", pause)
+        attempts = []
+        def competing_writer():
+            try:
+                assert read_receipt.wait(5)
+                with sqlite3.connect(db_path, timeout=0.05) as second:
+                    try:
+                        second.execute("BEGIN IMMEDIATE")
+                    except sqlite3.OperationalError as exc:
+                        attempts.append(str(exc))
+            finally:
+                tried_writer.set()
+        writer = threading.Thread(target=competing_writer)
+        writer.start()
+        assert recover_ambiguous_running_apply() == 1
+        writer.join(10)
+        assert not writer.is_alive()
+        assert attempts == ["database is locked"]
+        assert conn.execute("SELECT state FROM job_stage_states WHERE job_id=? AND stage='apply'", (job_id,)).fetchone()[0] == "needs_verification"
+        with pytest.raises(EmailSettlementError, match="no longer owns"):
+            repo.save(terminal)
+        assert len(calls) == 1
+        assert _email_counts(conn, job_id)["ApplicationSubmitted"] == 0
+        assert _email_counts(conn, job_id)["EmailApplicationSent"] == 0
+        for target in (job_id, None):
+            assert acquire_job(target_job_id=target, worker_id=2, run_ctx={}, approval_required=False) is None
+    finally:
+        _record_email_probe_counts(record_property, db_path, job_id, calls)
+        close_connection(db_path)
+
+
+def test_owned_agent_result_publication_and_projection_keep_private_canary_out(tmp_path, monkeypatch, record_property):
+    db_path, conn, job_id, ctx, calls, repo, execute, _ = _owned_email_probe(tmp_path, monkeypatch, live_bus=True)
+    try:
+        execute()
+        raw = conn.execute("SELECT payload_json FROM job_events WHERE job_id=? AND event_type='AgentResult'", (job_id,)).fetchone()[0]
+        assert "private-agent-result-canary" in raw
+        assert "private-agent-result-canary" not in str(execute.publisher_events)
+        projection = conn.execute("SELECT events_json FROM apply_run_projections WHERE run_id=?", (ctx["run_id"],)).fetchone()[0]
+        assert "private-agent-result-canary" not in projection
+        assert "apply@example.com" not in projection
+        assert execute.durable_success == [("EmailApplicationSent", 1, 1), ("ApplicationSubmitted", 1, 1)]
+    finally:
+        _record_email_probe_counts(record_property, db_path, job_id, calls)
+        close_connection(db_path)
+
+
+def test_recovery_respects_inherited_transaction_rollback(tmp_path, monkeypatch, record_property):
+    db_path, conn, job_id, ctx, calls, repo, execute, _ = _owned_email_probe(tmp_path, monkeypatch, body=b"{}")
+    try:
+        _capture_owned_terminal(repo, execute, monkeypatch)
+        conn.execute("BEGIN")
+        assert recover_ambiguous_running_apply() == 1
+        assert conn.in_transaction
+        with sqlite3.connect(db_path) as observer:
+            assert observer.execute("SELECT state FROM job_stage_states WHERE job_id=? AND stage='apply'", (job_id,)).fetchone()[0] == "running"
+        conn.rollback()
+        assert recover_ambiguous_running_apply() == 1
+        close_connection(db_path)
+        conn = get_connection(db_path)
+        assert conn.execute("SELECT state FROM job_stage_states WHERE job_id=? AND stage='apply'", (job_id,)).fetchone()[0] == "needs_verification"
+        assert len(calls) == 1
+    finally:
+        _record_email_probe_counts(record_property, db_path, job_id, calls)
         close_connection(db_path)

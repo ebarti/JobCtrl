@@ -117,7 +117,10 @@ run owner. Malformed success and lost transport acknowledgements remain
 uncertain, with no automatic resend. A previously persisted valid confirmation
 can settle its original operation after restart; repeated settlement cannot
 create another submitted fact or replace a successor's state. This does not
-establish remote exactly-once delivery.
+establish remote exactly-once delivery. Recovery rechecks ownership,
+terminal state and confirmation under the SQLite writer lock before parking.
+Confirmation and submitted-fact notifications wait for the owning commit;
+rollback does not publish a success, including within a caller transaction.
 
 These are not interchangeable promises. “At-most-once” does not mean a model
 may click any web submit button once.

@@ -303,11 +303,13 @@ for framing and precedence rules.
 
 `EmailApplicationCandidateRecorded` invalidates Apply Review using its run
 reference. The canonical preview stays available through the review queue.
-Direct email events and email events wrapped in `ApplyRunEventRecorded` expose
+Direct email events, `AgentResult` and their `ApplyRunEventRecorded` wrappers expose
 references/status only, including on reconnect replay of historical rows.
 Recipients, subjects, bodies, attachment names, provider identifiers and raw
 provider errors are omitted from broad delivery. A malformed send confirmation
-produces no `ApplicationSubmitted` invalidation.
+produces no `ApplicationSubmitted` invalidation. Owned email success notifications
+are emitted only after confirmation, submitted fact and stage commit together;
+a rolled-back settlement emits no success invalidation.
 
 `DryRunCompleted` refreshes apply history, run reads, the review queue, job reads
 and Dashboard from projections. It means the dry-run finished without submitting;

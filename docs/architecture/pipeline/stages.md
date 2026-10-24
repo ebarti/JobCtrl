@@ -522,7 +522,10 @@ recipient/attachment candidate. Terminal apply outcomes are
    transaction, with keys scoped to tenant, job and run. A crash, malformed response or provider exception after intent
    parks the stage in nonretryable `needs_verification`, unless a valid owned
    confirmation was already persisted. Recovery can settle that receipt once
-   without another send. Late receipts cannot overwrite a successor. Dry-runs,
+   without another send. Recovery holds the writer lock while rechecking ownership,
+   terminal state and confirmation before parking. Late receipts cannot overwrite
+   a successor. Owned aggregate notifications wait for commit, including caller
+   transactions, and are discarded on rollback. Dry-runs,
    which submit nothing, get two attempts.
 3. **Repeat-application protection.** Every live claim recomputes relationships
    from canonical job identity, accepted duplicate links, and confirmed

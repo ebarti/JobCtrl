@@ -129,7 +129,8 @@ export function createApplyRunEventRecorded(
   payload: ApplyRunEventRecordedPayload,
 ): ApplyRunEventRecorded {
   const event = payload.event;
-  if (typeof event.event_type === "string" && event.event_type.startsWith("EmailApplication")) {
+  if (String(event.event_type ?? event.eventType ?? "").startsWith("EmailApplication")
+    || (event.event_type ?? event.eventType) === "AgentResult") {
     return createDomainEvent("ApplyRunEventRecorded", tenantId, {
       runId: payload.runId,
       event: Object.fromEntries(["event_id", "event_type", "occurred_at", "level"]

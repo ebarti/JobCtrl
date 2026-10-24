@@ -560,6 +560,14 @@ exact transport/intent/confirmation/submitted-fact counts and unchanged accepted
 bytes. The bounded Temporal activity cases use the production use case and
 writer behind a launcher-main seam, avoiding browser/process lifecycle effects.
 They do not qualify a real browser or remote Gmail delivery.
+Use the production in-process bus and projection subscriber to count success
+notifications alongside durable rows. Inject terminal-artifact and submitted-fact
+write failures; rollback must publish neither success event and a permitted
+settlement retry must publish each once. Exercise inherited commit, rollback,
+savepoint rollback and close, with an independent connection observing durable
+facts at notification time. Race recovery against confirmation in both writer
+orders. Replay direct and wrapped `AgentResult` private-content canaries as well
+as email events; canonical Apply Review must retain the candidate.
 
 Run `corepack pnpm --filter @jobctrl/api exec vitest run test/server.test.ts test/application-feedback.test.ts`
 for SSE replay filtering and canonical preview retention. Keep direct and wrapped
