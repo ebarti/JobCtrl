@@ -4118,17 +4118,20 @@ class ProjectionBuilder:
 
         employer = _canonical_employer(meta)
 
+        from jobctrl.domain.apply.event_privacy import email_event_references
+
         events_payload: list[dict] = []
         for event in events:
+            safe_payload = email_event_references(event["event_type"], event["payload"])
             entry = {
                 "event_type": event["event_type"],
                 "level": event["level"],
                 "occurred_at": event["occurred_at"],
             }
-            if event["message"]:
+            if event["message"] and safe_payload is event["payload"]:
                 entry["message"] = event["message"]
-            if event["payload"]:
-                entry["payload"] = event["payload"]
+            if safe_payload:
+                entry["payload"] = safe_payload
             events_payload.append(entry)
 
         return ApplyRunProjection(

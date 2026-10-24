@@ -13,7 +13,9 @@ needing to know.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from hashlib import sha256
+import json
 from typing import Any, Callable, Mapping, Protocol
 
 from jobctrl.domain.apply.aggregate import ApplyRun
@@ -34,6 +36,7 @@ __all__ = [
     "BrowserPort",
     "BrowserSession",
     "EmailApplicationCandidate",
+    "EmailApplicationOperation",
     "EmailApplicationSenderPort",
     "EmailApplicationSendResult",
 ]
@@ -169,6 +172,22 @@ class EmailApplicationCandidate:
     attachment_name: str
     attachment_path: str
 
+    def fingerprint(self) -> str:
+        """Bind exact preview fields and the immutable material reference."""
+        return sha256(json.dumps(asdict(self), sort_keys=True, ensure_ascii=True).encode()).hexdigest()
+
+
+@dataclass(frozen=True)
+class EmailApplicationOperation:
+    """Immutable identity persisted before admitting an external send."""
+
+    tenant_id: str
+    job_id: str
+    run_id: str
+    intent_id: str
+    material_version: str
+    candidate_fingerprint: str
+
 
 @dataclass(frozen=True)
 class EmailApplicationSendResult:
@@ -176,13 +195,23 @@ class EmailApplicationSendResult:
 
     provider: str = "gmail"
     message_id: str = ""
-    thread_id: str = ""
+    thread_id: str | None = None
+    operation: EmailApplicationOperation | None = None
+
+    def confirms(self, operation: EmailApplicationOperation) -> bool:
+        return (
+            self.provider == "gmail"
+            and isinstance(self.message_id, str) and bool(self.message_id.strip())
+            and (self.thread_id is None or (isinstance(self.thread_id, str) and bool(self.thread_id.strip())))
+            and type(self.operation) is EmailApplicationOperation
+            and self.operation == operation
+        )
 
 
 class EmailApplicationSenderPort(Protocol):
     """Driven port: send an approved email application outside the agent."""
 
-    def send_email_application(self, candidate: EmailApplicationCandidate) -> EmailApplicationSendResult:
+    def send_email_application(self, candidate: EmailApplicationCandidate, *, operation: EmailApplicationOperation) -> EmailApplicationSendResult:
         """Send the approved candidate and return provider metadata."""
         ...
 
@@ -211,6 +240,10 @@ class ApplyRunRepository(Protocol):
 
     def save(self, run: ApplyRun) -> None:
         """Upsert the aggregate (and its events)."""
+        ...
+
+    def admit_email_intent(self, run: ApplyRun) -> None:
+        """Persist a new owned intent, refusing any already admitted intent."""
         ...
 
     def list_recent(

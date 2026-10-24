@@ -308,6 +308,23 @@ function canonicalSseEnvelope(row: EventRow): Record<string, unknown> | null {
   if (!isRecord(payload)) {
     return null;
   }
+  // Historical rows retain private previews for canonical Apply Review.
+  // Replay emits references only, including legacy wrapped publisher events.
+  if (row.event_type?.startsWith("EmailApplication")) {
+    payload = Object.fromEntries(
+      ["tenantId", "jobId", "run_id", "runId", "event_id", "stage", "level", "apply_status"]
+        .filter((key) => Object.hasOwn(payload as object, key))
+        .map((key) => [key, (payload as Record<string, unknown>)[key]]),
+    );
+  } else if (row.event_type === "ApplyRunEventRecorded" && isRecord(payload.event)
+    && typeof payload.event.event_type === "string" && payload.event.event_type.startsWith("EmailApplication")) {
+    const event = payload.event;
+    payload = { run_id: payload.run_id, runId: payload.runId, event: Object.fromEntries(
+      ["event_id", "event_type", "occurred_at", "level"].filter((key) => Object.hasOwn(event, key))
+        .map((key) => [key, event[key]]),
+    ) };
+  }
+  if (!isRecord(payload)) return null;
   if (row.event_type === "OfferRecordChanged") {
     payload = offerEventReferences(payload);
     if (!isRecord(payload)) return null;

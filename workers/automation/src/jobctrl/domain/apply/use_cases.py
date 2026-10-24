@@ -8,7 +8,9 @@ See ddd-target.md §5.6. Two driving use cases live here:
                                   Publishes ``ApplyRunStarted``,
                                   ``ApplyRunEventRecorded``,
                                   ``ApplicationSubmitted`` /
-                                  ``ApplicationFailed`` per §6.7.
+                                  ``ApplicationFailed`` per §6.7. Owned email
+                                  submission is published by the durable
+                                  launcher settlement, once.
   ``SubmitBatchUseCase``       — wraps the single-job use case over a
                                   job-acquirer collaborator (the
                                   legacy launcher's ``acquire_job``
@@ -29,6 +31,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from jobctrl.domain.apply.aggregate import ApplyRun
+from jobctrl.domain.apply.event_privacy import email_event_references
 from jobctrl.domain.apply.process_manager import ApplySaga, EmailApplicationContext, SagaOutcome
 from jobctrl.domain.apply.services import (
     ApplyEligibilityChecker,
@@ -333,7 +336,16 @@ class SubmitApplicationUseCase:
             outcome.apply_run.is_succeeded
             and isinstance(outcome.apply_run.submission_result, Applied)
         ):
-            self._publish_submitted(outcome.apply_run, outcome.apply_run.submission_result)
+            # The launcher publishes the durable submitted fact after validating
+            # the persisted email receipt. Publishing here too duplicates that
+            # notification and precedes terminal settlement.
+            owned_email = any(
+                event.event_type == "ApplySubmitIntended"
+                and event.payload.get("submission_channel") == "email"
+                for event in outcome.apply_run.events
+            )
+            if not owned_email:
+                self._publish_submitted(outcome.apply_run, outcome.apply_run.submission_result)
         elif outcome.apply_run.submission_result is not None:
             self._publish_failed(
                 outcome.apply_run,
@@ -382,7 +394,9 @@ class SubmitApplicationUseCase:
             try:
                 payload = ApplyRunEventRecordedPayload(
                     run_id=str(run.run_id),
-                    event=event.to_dict(),
+                    event=email_event_references(
+                        "ApplyRunEventRecorded", {"event": event.to_dict()}
+                    )["event"],
                 )
                 self._publisher.publish(
                     create_apply_run_event_recorded(run.tenant_id, payload)

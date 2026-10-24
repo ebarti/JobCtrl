@@ -1573,7 +1573,7 @@ describe("application feedback API", () => {
         run_id: "dry-run-email-candidate",
         recipient: "apply@example.com",
         subject: "Application for Staff Engineer",
-        body: "Hello",
+        body: "private-apply-review-canary",
         attachment_artifact_id: "resume-pdf-1",
         attachment_name: "Resume.pdf",
       }),
@@ -1588,6 +1588,7 @@ describe("application feedback API", () => {
       attachmentArtifactId: "resume-pdf-1",
       attachmentName: "Resume.pdf",
       candidateRunId: "dry-run-email-candidate",
+      body: "private-apply-review-canary",
     });
 
     const missingBinding = await app.inject({

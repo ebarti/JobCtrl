@@ -490,3 +490,36 @@ def test_mcp_server_rejects_raw_gmail_tool_names() -> None:
 
     assert response["error"]["code"] == -32000
     assert "Unknown Gmail tool" in response["error"]["message"]
+
+
+def test_email_sender_rechecks_confirmation_and_exact_candidate_binding():
+    from dataclasses import replace
+    import pytest
+    from jobctrl.domain.ports.apply import EmailApplicationCandidate, EmailApplicationOperation
+    from jobctrl.infrastructure.apply.email_sender import GmailEmailApplicationSender
+    from jobctrl.infrastructure.gmail.client import GmailSendError
+
+    candidate = EmailApplicationCandidate("apply@example.com", "Subject", "Synthetic body", "artifact-1", "resume.pdf", "/owned/resume.pdf")
+    operation = EmailApplicationOperation("local", "job-1", "run-1", "email:run-1", "1", candidate.fingerprint())
+    class Client:
+        def __init__(self):
+            self.calls = 0
+            self.result = {"id": "m1"}
+        def send_email_application(self, **_kwargs):
+            self.calls += 1
+            return self.result
+    client = Client()
+    sender = GmailEmailApplicationSender(client=client)
+    with pytest.raises(ValueError, match="binding_mismatch"):
+        sender.send_email_application(replace(candidate, body="different candidate"), operation=operation)
+    assert client.calls == 0
+    for payload in ({}, {"id": 1}, {"id": ""}, {"id": "m1", "threadId": None}, []):
+        client.result = payload
+        with pytest.raises(GmailSendError, match="invalid_confirmation"):
+            sender.send_email_application(candidate, operation=operation)
+    client.result = {"id": "m1", "payload": {"body": "private-provider-canary"}}
+    receipt = sender.send_email_application(candidate, operation=operation)
+    assert receipt.confirms(operation)
+    assert receipt.thread_id is None
+    assert "private-provider-canary" not in str(receipt)
+    assert client.calls == 6

@@ -911,6 +911,16 @@ describe("local TypeScript API", () => {
         jobId,
       }),
     );
+    for (const eventType of ["EmailApplicationCandidateRecorded", "EmailApplicationSendFailed", "EmailApplicationSent"]) {
+      insertEvent.run("local", jobId, "apply", eventType, occurredAt, JSON.stringify({
+        jobId, run_id: "private-email-run", subject: "private-email-canary", body: "private-email-canary",
+        recipient: "private-email-canary", message: "private-email-canary", provider_error: "private-email-canary",
+      }));
+    }
+    insertEvent.run("local", jobId, "apply", "ApplyRunEventRecorded", occurredAt, JSON.stringify({
+      run_id: "private-email-run", event: { event_type: "EmailApplicationSendFailed", message: "private-email-canary",
+        payload: { provider_error: "private-email-canary" } },
+    }));
     const canonical = insertEvent.run(
       "local",
       jobId,
@@ -938,6 +948,9 @@ describe("local TypeScript API", () => {
 
     expect(streamed).toContain(expectedId);
     expect(streamed).toContain("event: StageReset");
+    expect(streamed).toContain("event: EmailApplicationCandidateRecorded");
+    expect(streamed).toContain("private-email-run");
+    expect(streamed).not.toContain("private-email-canary");
     expect(streamed).toContain(`\"tenantId\":\"local\"`);
     expect(streamed).toContain(`\"jobId\":\"${jobId}\"`);
     expect(streamed).toContain(`\"postingUrl\":\"${jobUrl}\"`);
@@ -1600,6 +1613,26 @@ describe("local TypeScript API", () => {
     } finally {
       await app.close();
     }
+  });
+
+  it("keeps historical private email content out of broad activity and Apply timelines", async () => {
+    const db = new Database(options.dbPath);
+    const privateEvent = { event_type: "EmailApplicationCandidateRecorded", level: "info",
+      occurred_at: "2026-04-29T10:15:00+00:00", message: "private-historical-email-canary",
+      payload: { run_id: "run-1", body: "private-historical-email-canary" } };
+    db.prepare("UPDATE apply_run_projections SET events_json=? WHERE run_id='run-1'")
+      .run(JSON.stringify([privateEvent]));
+    db.prepare(`INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,level,message,occurred_at,payload_json)
+      VALUES ('local',?,1,'apply','EmailApplicationCandidateRecorded','info',?,?,?)`)
+      .run(jobIdFor("https://example.com/jobs/ready"), privateEvent.message, privateEvent.occurred_at,
+        JSON.stringify(privateEvent.payload));
+    db.close();
+    const app = buildApp(options);
+    const summary = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+    expect(summary.statusCode, summary.body).toBe(200);
+    expect(summary.body).not.toContain("private-historical-email-canary");
+    expect(summary.body).toContain("EmailApplicationCandidateRecorded");
+    await app.close();
   });
 
   it("returns dashboard summary from the existing SQLite schema", async () => {

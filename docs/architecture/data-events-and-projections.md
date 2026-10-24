@@ -107,6 +107,19 @@ all historical event families: pipeline failures can persist an exception
 message. Treat exception text as potentially durable and sanitize it at the
 producer rather than placing sensitive values in exceptions.
 
+Owned email Apply keeps the full `EmailApplicationCandidateRecorded` preview
+in the canonical event ledger for Apply Review. Its direct publisher event,
+wrapped `ApplyRunEventRecorded`, derived Apply timeline and SSE replay expose
+only references/status. This filtering also applies when historical private
+rows are replayed. `EmailApplicationSent` retains validated provider identifiers
+and the operation binding in canonical storage; broad delivery omits those
+provider identifiers. Send failures use a bounded ambiguity reason, without raw
+exceptions or provider bodies. Apply Review reads the canonical preview rather
+than reconstructing it from broad events.
+The launcher owns the email `ApplicationSubmitted` publication when it settles
+the durable receipt; the use case does not emit an earlier duplicate terminal
+notification.
+
 Interview preparation has three separate authorities: the installed immutable
 public catalog, generation-versioned job prep with retained source context,
 and independently revisioned tenant/job/question notes. The catalog list/detail

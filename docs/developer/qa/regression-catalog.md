@@ -545,6 +545,28 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For owned email confirmation, run locked pytest on `tests/test_gmail_connector.py`,
+`tests/test_apply_saga.py`, `tests/test_apply_use_cases.py`,
+`tests/test_apply_regressions.py`, `tests/test_apply_runs_projection_from_events.py`,
+`tests/test_repeat_application_prevention.py`, `tests/test_workflow_apply.py`,
+`tests/test_activity_apply.py` and `tests/test_rpc_handlers_apply_workflow.py`.
+The receipt cases in `test_apply_regressions.py` traverse production acquisition,
+use case, saga, Gmail client/sender, SQLite persistence, settlement and recovery
+with synthetic storage and fake external transports. Exercise empty/204,
+malformed/nonobject JSON, strict required/optional IDs, provider/transport
+failures, forged operation bindings, independent concurrent settlement writers,
+late receipts and interruption before/after confirmation persistence. Inspect
+exact transport/intent/confirmation/submitted-fact counts and unchanged accepted
+bytes. The bounded Temporal activity cases use the production use case and
+writer behind a launcher-main seam, avoiding browser/process lifecycle effects.
+They do not qualify a real browser or remote Gmail delivery.
+
+Run `corepack pnpm --filter @jobctrl/api exec vitest run test/server.test.ts test/application-feedback.test.ts`
+for SSE replay filtering and canonical preview retention. Keep direct and wrapped
+publisher canaries, worker-built Apply projections, legacy replay and canonical
+Apply Review distinct. Reopening an ambiguous attempt must make no new transport
+call; a persisted valid confirmation may settle only its own current operation.
+
 For interpretation metadata citation sources, run locked
 `pytest tests/test_interpretation_citable_fields.py tests/test_remaining_determinations.py tests/test_binding_repair_feedback.py tests/test_analysis_retry_boundaries.py`.
 Use owned exact-schema storage and explicit synthetic model decisions. Omit

@@ -128,6 +128,14 @@ export function createApplyRunEventRecorded(
   tenantId: TenantId,
   payload: ApplyRunEventRecordedPayload,
 ): ApplyRunEventRecorded {
+  const event = payload.event;
+  if (typeof event.event_type === "string" && event.event_type.startsWith("EmailApplication")) {
+    return createDomainEvent("ApplyRunEventRecorded", tenantId, {
+      runId: payload.runId,
+      event: Object.fromEntries(["event_id", "event_type", "occurred_at", "level"]
+        .filter((key) => Object.hasOwn(event, key)).map((key) => [key, event[key]])),
+    });
+  }
   return createDomainEvent("ApplyRunEventRecorded", tenantId, payload);
 }
 
@@ -135,11 +143,6 @@ export function createApplyRunEventRecorded(
 
 export interface EmailApplicationCandidateRecordedPayload {
   readonly runId: string;
-  readonly recipient: string;
-  readonly subject: string;
-  readonly body: string;
-  readonly attachmentArtifactId: string;
-  readonly attachmentName: string;
 }
 
 export type EmailApplicationCandidateRecorded = DomainEvent<
@@ -147,11 +150,11 @@ export type EmailApplicationCandidateRecorded = DomainEvent<
   EmailApplicationCandidateRecordedPayload
 >;
 
-export function createEmailApplicationCandidateRecorded(
+export function createEmailApplicationCandidateRecorded<T extends EmailApplicationCandidateRecordedPayload>(
   tenantId: TenantId,
-  payload: EmailApplicationCandidateRecordedPayload,
+  payload: T,
 ): EmailApplicationCandidateRecorded {
-  return createDomainEvent("EmailApplicationCandidateRecorded", tenantId, payload);
+  return createDomainEvent("EmailApplicationCandidateRecorded", tenantId, { runId: payload.runId });
 }
 
 // -- ApplicationEmailFeedbackIngested ---------------------------------------

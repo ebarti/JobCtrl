@@ -1250,10 +1250,12 @@ def record_job_event(
         from jobctrl.infrastructure.events import get_default_publisher
 
         publisher = get_default_publisher()
+    from jobctrl.domain.apply.event_privacy import email_event_references
+
     event = create_domain_event(
         event_type=event_type,
         tenant_id=tenant_id,
-        payload=current_payload,
+        payload=email_event_references(event_type, current_payload),
         occurred_at=ts,
     )
     publisher.publish(event)

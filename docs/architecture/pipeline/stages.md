@@ -511,9 +511,19 @@ recipient/attachment candidate. Terminal apply outcomes are
    idempotently. Combined with the per-job workflow ID
    (`apply-{tenant}-{jobKey}` + `USE_EXISTING`, one live apply per job) and the
    **live retry policy of exactly one attempt**, an owned send is never silently
-   retried into a duplicate. A crash or provider exception after intent parks
-   the stage in `needs_verification`. Dry-runs, which submit nothing, get two
-   attempts.
+   retried into a duplicate. Gmail HTTP success requires a JSON object with a
+   nonblank string `id`; `threadId` is optional but strictly nonblank when
+   supplied. Other Message fields are discarded. The intent persists an
+   immutable tenant/job/run/intent/material-generation/candidate-fingerprint
+   binding before transport admission. The saga and SQLite writer both
+   validate confirmation against it. Confirmation and intent use unique event
+   idempotency keys; settlement takes the SQLite writer lock and checks current
+   ownership. Confirmation, submitted fact and the owned stage commit in one
+   transaction, with keys scoped to tenant, job and run. A crash, malformed response or provider exception after intent
+   parks the stage in nonretryable `needs_verification`, unless a valid owned
+   confirmation was already persisted. Recovery can settle that receipt once
+   without another send. Late receipts cannot overwrite a successor. Dry-runs,
+   which submit nothing, get two attempts.
 3. **Repeat-application protection.** Every live claim recomputes relationships
    from canonical job identity, accepted duplicate links, and confirmed
    application facts. Exact identity blocks by default; same employer plus a

@@ -5246,7 +5246,9 @@ function activityRowToSummary(row: Record<string, unknown>): ActivityEventSummar
     company: nullableString(row.employer),
     stage: stringField(row.stage) || "system",
     level: stringField(row.level) || "info",
-    message: stringField(row.message) || "event",
+    message: stringField(row.event_type).startsWith("EmailApplication")
+      ? "Email application status changed"
+      : stringField(row.message) || "event",
     at: nullableString(row.occurred_at),
   };
 }
@@ -5931,7 +5933,7 @@ function parseWorkflowRunTimeline(value: unknown): WorkflowRunTimelineEvent[] {
     eventType: stringField(event.eventType ?? event.event_type) || "event",
     occurredAt: nullableString(event.occurredAt ?? event.occurred_at),
     status: nullableString(event.status),
-    message: nullableString(event.message),
+    message: stringField(event.eventType ?? event.event_type).startsWith("EmailApplication") ? null : nullableString(event.message),
   }));
 }
 
@@ -6066,7 +6068,7 @@ function parseApplyRunTimelineEvents(value: string | null): DashboardSummary["ap
     const type = stringField(event.event_type ?? event.eventType ?? event.type) || "event";
     const at = nullableString(event.occurred_at ?? event.occurredAt ?? event.at);
     const level = stringField(event.level) || "info";
-    const message = nullableString(event.message);
+    const message = type.startsWith("EmailApplication") ? null : nullableString(event.message);
     return { at, type, level, message };
   });
 }
