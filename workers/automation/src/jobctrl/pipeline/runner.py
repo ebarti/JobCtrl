@@ -2141,13 +2141,24 @@ def _run_score(
         workers=workers,
         llm_model=llm_model,
         workflow_id=workflow_id,
+        cancel_event=cancel_event,
     )
     if cancel_event is not None and cancel_event.is_set():
         raise LlmTransientError("scoring canceled")
+    if int(result.get("errors") or 0):
+        # Keep safe typed failures authoritative across the global wrapper,
+        # matching selected scoring and the other model stages.
+        from jobctrl.domain.determinations import serialized_determination_failure
+
+        for detail in (result.get("errorDetails") or {}).values():
+            failure = serialized_determination_failure(detail)
+            if failure is not None:
+                raise failure
+        raise LlmTransientError(f"{result['errors']} scoring error(s)")
     # ``scoredJobIds`` reaches the pipeline workflow through the score stage
     # result so a resolved global material run can union this run's newly
     # scored jobs into its frozen Tailor cohort.
-    return {"status": "ok", "scoredJobIds": list(result.get("scoredJobIds") or [])}
+    return {**result, "status": "ok", "scoredJobIds": list(result.get("scoredJobIds") or [])}
 
 
 def _run_tailor(

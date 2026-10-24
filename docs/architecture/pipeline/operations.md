@@ -129,6 +129,12 @@ its execution lease so a disconnected predecessor cannot commit late results.
 Scoring and material generation fence both admission and persistence against
 cancellation or changed ownership, without holding a database lock during
 provider calls.
+Global Score sweeps use the same admission and publication fences, including
+queued automatic reservations that have no activity owner yet. A profile
+continuation cannot replace a live recovery owner. Selected batches report a
+typed ownership loss as a skipped job and continue independent peers. Global
+failed-job summaries and safe determination errors still fail their activity;
+previously accepted peer results remain saved.
 
 Stopping discovery's streaming enrichment consumer for its terminal pass is an
 internal handoff, not a user cancellation. The consumer releases unfinished
