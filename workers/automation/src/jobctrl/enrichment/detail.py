@@ -581,7 +581,7 @@ def scrape_detail_page_via_live_chrome(
                 blocked_url=live_result.final_url or url,
                 t0=t0,
             )
-        retry_after = record_rate_limited_response(session, url, live_result.status_code)
+        retry_after = record_rate_limited_response(session, live_result.final_url, live_result.status_code)
         if retry_after is not None:
             return _mark_server_rate_limit(result, live_result.status_code, retry_after, t0)
     detail_page = _live_result_to_detail_page(live_result, url)
@@ -644,7 +644,7 @@ def _scrape_detail_page_body(
                 t0=t0,
             )
 
-        retry_after = record_rate_limited_response(session, url, status_code, getattr(resp, "headers", None))
+        retry_after = record_rate_limited_response(session, str(page.url), status_code, getattr(resp, "headers", None))
         if retry_after is not None:
             return _mark_server_rate_limit(result, status_code, retry_after, t0)
         detail_page = _page_to_detail_page(page, url, status=status_code)

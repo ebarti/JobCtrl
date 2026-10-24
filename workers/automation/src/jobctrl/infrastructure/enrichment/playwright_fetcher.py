@@ -276,7 +276,7 @@ class PlaywrightDetailPageFetcher:
                             fetched_at=fetched_at,
                         )
                     retry_after = record_rate_limited_response(
-                        session or self._politeness_session(), url, status, getattr(resp, "headers", None),
+                        session or self._politeness_session(), final_url, status, getattr(resp, "headers", None),
                     )
                     if retry_after is not None:
                         message = f"HTTP {status}: the server deferred this request; retry after the host cooldown."

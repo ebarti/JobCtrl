@@ -212,3 +212,41 @@ def test_batch_rate_limit_preserves_accepted_content_and_processes_next_target(a
     assert len(events) == 2
     assert all(json.loads(row[0])["httpStatus"] == 429 for row in events)
     assert all(json.loads(row[0])["retryAfterSeconds"] == 120 for row in events)
+
+
+@pytest.mark.parametrize("entry", ["batch", "one_off", "connected"])
+@pytest.mark.parametrize("status", [429, 503])
+def test_redirect_cooldown_belongs_to_final_host(acquisition, monkeypatch, entry, status):
+    _, clock, session = acquisition
+    final_url = "https://employer.example/role"
+
+    class RedirectedPage(Page):
+        def goto(self, url, **kwargs):
+            response = super().goto(url, **kwargs)
+            self.url = final_url
+            return response
+
+    page = RedirectedPage(status, {"Retry-After": "120"})
+    if entry == "batch":
+        result = detail.scrape_detail_page(page, URL, session=session)
+        assert result["status"] == "blocked"
+    elif entry == "connected":
+        result = LiveBrowserResult(final_url, status, "text/html", "Rate limited", "Retry later")
+        browser = SimpleNamespace(rendered_page=lambda *args, **kwargs: result)
+        assert detail.scrape_detail_page_via_live_chrome(browser, URL, session=session)["status"] == "blocked"
+    else:
+        browser = SimpleNamespace(new_page=lambda: page, close=lambda: None)
+        browser.new_context = lambda **kwargs: browser
+
+        @contextmanager
+        def playwright():
+            yield SimpleNamespace(chromium=SimpleNamespace(launch=lambda **kwargs: browser))
+
+        monkeypatch.setattr("playwright.sync_api.sync_playwright", playwright)
+        result = playwright_fetcher.PlaywrightDetailPageFetcher(session=session).fetch(URL)
+        assert result.url == URL and result.final_url == final_url and result.status == status
+    # The original host retains only normal pacing, not the responder's cooldown.
+    with session.guard(URL) as decision:
+        assert decision.allowed and clock.now() < 60
+    with session.guard(final_url) as decision:
+        assert decision.allowed and clock.now() == (60 if entry == "connected" else 120)

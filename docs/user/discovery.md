@@ -496,7 +496,8 @@ JobStreaming owns their remaining transport headers. `jobctrl doctor` prints an
 identity for the selected mode. Connected Chrome retains its real browser identity.
 
 Controlled HTTP and posting-browser acquisition record HTTP 429 and 503 as
-server deferrals before extraction. They honor a valid `Retry-After` through the
+server deferrals before extraction. After a redirect, the cooldown belongs to
+the validated final response host; the original posting identity stays intact. They honor a valid `Retry-After` through the
 shared host limiter; when the header is absent or invalid, they use a one-minute
 cooldown. Connected rendered-page results do not carry response headers, so they
 use that same fallback. Other hosts remain independent. Long server delays retain
