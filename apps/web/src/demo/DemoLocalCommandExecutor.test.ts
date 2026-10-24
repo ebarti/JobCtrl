@@ -228,7 +228,7 @@ const LOCAL_CASES = [
   ["updateProfile", (api) => api.updateProfile({ templateText: "Updated bundled template" })],
   ["updateSettings", (api) => api.updateSettings({ dailyBudgetUsd: 12, workerActivitySlots: 8 })],
   ["createContact", (api) => api.createContact({ role: "recruiter", employer: "Demo Workshop", attributes: [{ kind: "name", value: "Synthetic contact" }] })],
-  ["updateContact", (api) => api.updateContact("contact-demo-hiring-partner", { role: "hiring_manager" })],
+  ["updateContact", async (api) => api.updateContact("contact-demo-hiring-partner", { expectedFingerprint: (await api.contact("contact-demo-hiring-partner")).contact.fingerprint, role: "hiring_manager" })],
   ["deleteContact", (api) => api.deleteContact("contact-demo-hiring-partner", { reason: "Demo cleanup" })],
   ["confirmContactCandidate", (api) => api.confirmContactCandidate("research-demo-hiring-partner", "candidate-demo-hiring-partner", { role: "recruiter" })],
   ["approveOutreachDraft", (api) => api.approveOutreachDraft("thread-demo", "outreach-draft-candidate")],
@@ -624,6 +624,28 @@ describe("DemoLocalCommandExecutor", () => {
     expect(snapshot.revision).toBe(before.revision + 4);
   });
 
+  it("fences canonical demo changes and supports previously saved contacts without edit tokens", async () => {
+    const { adapter, repository } = await harness();
+    const contactId = "contact-demo-hiring-partner";
+    await repository.mutate((draft) => {
+      delete (draft.state.readModel.contacts.details[contactId]!.contact as Partial<{ fingerprint: string }>).fingerprint;
+    });
+    const before = (await adapter.contact(contactId)).contact;
+    expect(before.fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    await repository.mutate((draft) => {
+      draft.state.readModel.contacts.details[contactId]!.contact.attributes[0]!.provenance.sourceRef = "newer-source";
+    });
+    const accepted = repository.snapshotNow();
+    await expect(adapter.updateContact(contactId, { expectedFingerprint: before.fingerprint, role: "referrer" }))
+      .rejects.toMatchObject({ status: 409 });
+    expect(repository.snapshotNow()).toEqual(accepted);
+    const latest = (await adapter.contact(contactId)).contact;
+    const next = await adapter.updateContact(contactId, { expectedFingerprint: latest.fingerprint, role: "referrer" });
+    expect(next.contact.fingerprint).not.toBe(latest.fingerprint);
+    expect((await adapter.contact(contactId)).contact).toEqual(next.contact);
+    expect(next.contact.attributes).toEqual(latest.attributes);
+  });
+
   it("updates contact attributes with retain-or-create identity and provenance semantics", async () => {
     const { adapter, repository } = await harness();
     await repository.mutate((draft) => {
@@ -638,6 +660,7 @@ describe("DemoLocalCommandExecutor", () => {
       };
     });
     const request = {
+      expectedFingerprint: (await adapter.contact("contact-demo-hiring-partner")).contact.fingerprint,
       role: "hiring_manager" as const,
       attributes: [
         { kind: "title" as const, value: "Synthetic hiring partner" },
@@ -645,7 +668,8 @@ describe("DemoLocalCommandExecutor", () => {
       ],
     };
     const first = await adapter.updateContact("contact-demo-hiring-partner", request);
-    const replay = await adapter.updateContact("contact-demo-hiring-partner", request);
+    await expect(adapter.updateContact("contact-demo-hiring-partner", request)).rejects.toMatchObject({ status: 409 });
+    const replay = await adapter.updateContact("contact-demo-hiring-partner", { ...request, expectedFingerprint: first.contact.fingerprint });
     expect(first.contact.attributes).toEqual([
       {
         attributeId: "contact-demo-role",

@@ -543,6 +543,28 @@ then prove unchanged approvals and no extra export rows. Inspect desktop/mobile
 screenshots, page identity, console health, overflow and critical/serious axe
 results. Skipping this production gate is not passing browser evidence.
 
+## Contact Replacement Edit Bases
+
+Use `apps/api/test/contacts.test.ts` and `contact-projection-parity.test.ts` for
+canonical detail reads and stale role/link/whole-fact replacements. Run two real
+SQLite handles and independently started production writers: one shared base
+admits exactly one update, and a barrier after comparison must still exclude a
+second writer before replacement. Count canonical facts and events exactly;
+rejected saves append no success events. Change provenance alone and facts at an
+unchanged contact timestamp; refresh projections without invalidating the base.
+Inject attribute and event insert failures and require complete rollback.
+Discard a committed HTTP acknowledgement, restart the owned API, reject the old
+base again and recover deliberately through a fresh typed-client read.
+
+Preserve imported fact IDs and every provenance column, plus accepted outreach
+drafts/reviews/send logs. Pair these tests with the focused worker repository,
+provenance, projection-parity and offer/outreach tests. The editor/mutation,
+demo and `apps/web/e2e/tests/outreach.spec.ts` regressions cover pinned bases,
+rollback/refetch, retained fields, repeated conflict, explicit reconciliation,
+keyboard recovery and a 390px viewport. A fixture or type check alone does not
+prove the real API/browser journey. Use only owned exact-schema synthetic data
+and retain reports under the QA evidence owner.
+
 ## Auditability Checks
 
 For interpretation metadata citation sources, run locked

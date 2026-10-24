@@ -1,4 +1,5 @@
 import { JobCtrlApiError } from "@jobctrl/api-client";
+import { demoContactFingerprint } from "./contact-fingerprint.js";
 import {
   ActivityListQuerySchema,
   InterviewCatalogSchema,
@@ -641,12 +642,14 @@ export class DemoApiClientAdapter implements ApiClientPort {
     return response;
   }
 
-  contact(contactId: string) {
-    return this.detail(
+  async contact(contactId: string) {
+    const detail = await this.detail(
       (model) => model.contacts.details,
       contactId,
       "contact_not_found",
     );
+    detail.contact.fingerprint = await demoContactFingerprint(detail.contact);
+    return detail;
   }
 
   async researchTasks(

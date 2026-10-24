@@ -1,3 +1,7 @@
+import { JobCtrlApiError } from "@jobctrl/api-client";
+import { ContactUpdateRequestSchema } from "@jobctrl/contracts";
+import type { ContactDetail } from "@jobctrl/contracts";
+import { demoContactFingerprint } from "./contact-fingerprint.js";
 import type { ApplyReviewApprovalGateReason } from "@jobctrl/contracts";
 import {
   LOCAL_TENANT,
@@ -158,10 +162,17 @@ export class DemoLocalCommandExecutor {
     args: Parameters<ApiClientPort[TMethod]>,
   ): Promise<ApiClientResponse<TMethod>> {
     const current = await this.workspace.snapshot();
+    const update = method === "updateContact" ? ContactUpdateRequestSchema.parse(args[1]) : null;
+    const source = update ? requireMapValue(current.state.readModel.contacts.details, String(args[0])).contact : null;
+    const sourceFingerprint = source ? await demoContactFingerprint(source) : null;
     let response: unknown;
     const now = this.clock.now().toISOString();
     const commit = await this.workspace.mutate(
       (draft, context) => {
+        if (update && (update.expectedFingerprint !== sourceFingerprint ||
+          JSON.stringify(requireMapValue(draft.state.readModel.contacts.details, String(args[0])).contact) !== JSON.stringify(source))) {
+          throw new JobCtrlApiError(409, "Conflict", "This contact changed. Review the latest contact before retrying your draft.", { error: "contact_revision_conflict" });
+        }
         response = this.apply(method, args as unknown[], draft, context, now);
       },
       { expectedResetEpoch: current.resetEpoch },
@@ -169,7 +180,12 @@ export class DemoLocalCommandExecutor {
     if (commit.kind !== "committed") {
       throw new DemoCommandPersistenceError();
     }
-    return structuredClone(response) as ApiClientResponse<TMethod>;
+    const result = structuredClone(response);
+    if (method === "createContact" || method === "updateContact" || method === "confirmContactCandidate") {
+      const detail = result as { contact: ContactDetail };
+      detail.contact.fingerprint = await demoContactFingerprint(detail.contact);
+    }
+    return result as ApiClientResponse<TMethod>;
   }
 
   private apply(
@@ -1192,6 +1208,7 @@ export class DemoLocalCommandExecutor {
           };
         });
         const contact = {
+          fingerprint: (draft.revision + 1).toString(16).padStart(64, "0"),
           contactId,
           displayName: attributes.find((attribute) => attribute.kind === "name")?.value ?? "",
           role: body.role ?? "other",
@@ -1227,7 +1244,7 @@ export class DemoLocalCommandExecutor {
       }
       case "updateContact": {
         const contactId = requiredString(args[0], "contactId");
-        const body = record(args[1]);
+        const body = ContactUpdateRequestSchema.parse(args[1]);
         const detail = requireMapValue(draft.state.readModel.contacts.details, contactId);
         const contact = detail.contact;
         const employer = Object.hasOwn(body, "employer") ? trimmedStringValue(body.employer) : contact.employer;
@@ -1275,6 +1292,7 @@ export class DemoLocalCommandExecutor {
           });
         }
         Object.assign(contact, {
+          fingerprint: (draft.revision + 1).toString(16).padStart(64, "0"),
           displayName: attributes.find((attribute) => attribute.kind === "name")?.value ?? "",
           role,
           employer,
@@ -1336,6 +1354,7 @@ export class DemoLocalCommandExecutor {
           ?? attributes.find((attribute) => attribute.kind === "title")?.value
           ?? "Synthetic confirmed contact";
         const contact = {
+          fingerprint: (draft.revision + 1).toString(16).padStart(64, "0"),
           contactId,
           displayName,
           role: record(args[2]).role ?? candidate.role,

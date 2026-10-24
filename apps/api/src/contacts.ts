@@ -48,6 +48,11 @@ const CANONICAL_JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a
 
 export class ContactInputError extends Error {}
 export class ContactNotFoundError extends Error {}
+export class ContactRevisionConflictError extends Error {
+  constructor() {
+    super("This contact changed since you opened it. Review the latest contact before retrying your draft.");
+  }
+}
 
 interface ProvenanceSeed {
   sourceKind: ContactSourceKind;
@@ -101,17 +106,37 @@ export function listContacts(
 }
 
 export function getContactDetail(db: SqliteDatabase, contactId: string): ContactDetail | null {
-  refreshContactProjections(db, TENANT_ID);
-  const row = getRow<ContactProjectionRow>(
+  // All fields and the edit base come from one canonical read snapshot, never
+  // independently refreshed projections. This also works on read-only handles.
+  return db.transaction(() => readContactDetail(db, contactId))();
+}
+
+function contactFingerprint(db: SqliteDatabase, contactId: string, row: ContactRow): string {
+  const facts = allRows<Record<string, SqliteValue>>(
     db,
-    "SELECT * FROM contact_projections WHERE tenant_id = ? AND contact_id = ?",
+    "SELECT * FROM contact_attributes WHERE tenant_id = ? AND contact_id = ? ORDER BY attribute_id",
     [TENANT_ID, contactId],
   );
-  if (!row) {
-    return null;
-  }
+  // Include the durable publication identity so even same-clock/no-op saves
+  // cannot repeat a successful mutation after a lost acknowledgement.
+  const publication = getRow<{ event_id: number | null }>(db,
+    `SELECT MAX(event_id) AS event_id FROM job_events
+     WHERE tenant_id = ? AND entity_kind = 'contact' AND entity_ref = ?
+       AND event_type IN ('ContactCreated', 'ContactUpdated', 'ContactAttributeRecorded')`,
+    [TENANT_ID, contactId]);
+  return crypto.createHash("sha256")
+    .update(JSON.stringify(["contact-edit-v1", TENANT_ID, contactId, row, facts, publication]))
+    .digest("hex");
+}
+
+function readContactDetail(db: SqliteDatabase, contactId: string): ContactDetail | null {
+  const row = getRow<ContactRow>(db,
+    "SELECT * FROM contacts WHERE tenant_id = ? AND contact_id = ? AND deleted_at IS NULL",
+    [TENANT_ID, contactId]);
+  if (!row) return null;
   const attributes = readAttributes(db, contactId);
   return {
+    fingerprint: contactFingerprint(db, contactId, row),
     contactId,
     displayName: displayNameFrom(attributes),
     role: normalizeRole(row.role),
@@ -180,97 +205,57 @@ export function updateContact(
   contactId: string,
   request: ContactUpdateRequest,
 ): ContactDetail {
-  const existing = getRow<ContactRow>(
-    db,
-    "SELECT * FROM contacts WHERE tenant_id = ? AND contact_id = ? AND deleted_at IS NULL",
-    [TENANT_ID, contactId],
-  );
-  if (!existing) {
-    throw new ContactNotFoundError(`Contact ${contactId} not found`);
-  }
-  const employer =
-    request.employer !== undefined ? normalizeLink(request.employer) : existing.employer ?? null;
-  const jobId = request.jobId !== undefined ? canonicalJobId(request.jobId) : existing.job_id ?? null;
-  if (!employer && !jobId) {
-    throw new ContactInputError("A contact must link to at least one of employer or jobId.");
-  }
-  const role = request.role ?? normalizeRole(existing.role);
-  const now = new Date().toISOString();
-  const existingAttributes = readAttributes(db, contactId);
-  const previousFacts = new Set(
-    existingAttributes.map((attribute) => `${attribute.kind} ${attribute.value}`),
-  );
-  const provenance: ProvenanceSeed = {
-    sourceKind: "user_entered",
-    sourceRef: USER_ENTERED_REF,
-    captureMethod: "manual",
-    confidence: 1,
-    userConfirmed: true,
-  };
-  const changed = changedFields(existing, { employer, jobId, role }, request.attributes !== undefined);
-  const nextAttributes =
-    request.attributes !== undefined ? seedAttributes(request.attributes) : null;
-  const transaction = db.transaction(() => {
-    db.prepare(
-      `UPDATE contacts SET employer = ?, job_id = ?, role = ?, updated_at = ?
-       WHERE tenant_id = ? AND contact_id = ?`,
-    ).run(employer, jobId, role, now, TENANT_ID, contactId);
-    if (nextAttributes !== null) {
-      db.prepare("DELETE FROM contact_attributes WHERE tenant_id = ? AND contact_id = ?").run(
-        TENANT_ID,
-        contactId,
-      );
-      // A fact whose (kind, value) is unchanged keeps its original attribute
-      // id and provenance (INV-2: editing the contact must not re-stamp
-      // imported/derived facts as user_entered); only new or value-edited
-      // facts are user-entered.
+  // Reserve the SQLite writer before loading or comparing the caller's base.
+  // Keep the returned next base inside the same transaction as its publication.
+  return db.transaction(() => {
+    const existing = getRow<ContactRow>(db,
+      "SELECT * FROM contacts WHERE tenant_id = ? AND contact_id = ? AND deleted_at IS NULL",
+      [TENANT_ID, contactId]);
+    if (!existing) throw new ContactNotFoundError(`Contact ${contactId} not found`);
+    if (request.expectedFingerprint !== contactFingerprint(db, contactId, existing)) {
+      throw new ContactRevisionConflictError();
+    }
+    const employer = request.employer !== undefined ? normalizeLink(request.employer) : existing.employer;
+    const jobId = request.jobId !== undefined ? canonicalJobId(request.jobId) : existing.job_id;
+    if (!employer && !jobId) {
+      throw new ContactInputError("A contact must link to at least one of employer or jobId.");
+    }
+    const role = request.role ?? normalizeRole(existing.role);
+    const now = new Date().toISOString();
+    const provenance: ProvenanceSeed = {
+      sourceKind: "user_entered", sourceRef: USER_ENTERED_REF,
+      captureMethod: "manual", confidence: 1, userConfirmed: true,
+    };
+    const added: AttributeSeed[] = [];
+    if (request.attributes !== undefined) {
       const remaining = new Map<string, ContactAttributeDto[]>();
-      for (const attribute of existingAttributes) {
-        const key = `${attribute.kind} ${attribute.value}`;
-        const bucket = remaining.get(key);
-        if (bucket) {
-          bucket.push(attribute);
-        } else {
-          remaining.set(key, [attribute]);
-        }
+      for (const fact of readAttributes(db, contactId)) {
+        const key = JSON.stringify([fact.kind, fact.value]);
+        const bucket = remaining.get(key) ?? [];
+        bucket.push(fact);
+        remaining.set(key, bucket);
       }
-      const rows = nextAttributes.map((seed) => {
-        const kept = remaining.get(`${seed.kind} ${seed.value}`)?.shift();
-        if (kept) {
-          return {
-            attributeId: kept.attributeId,
-            kind: seed.kind,
-            value: seed.value,
-            provenance: {
-              sourceKind: kept.provenance.sourceKind,
-              sourceRef: kept.provenance.sourceRef,
-              captureMethod: kept.provenance.captureMethod,
-              confidence: kept.provenance.confidence,
-              userConfirmed: kept.provenance.userConfirmed,
-            },
-            recordedAt: kept.provenance.capturedAt,
-          };
-        }
-        return { attributeId: seed.attributeId, kind: seed.kind, value: seed.value, provenance, recordedAt: now };
-      });
-      insertAttributeRows(db, contactId, rows);
+      for (const seed of seedAttributes(request.attributes)) {
+        const kept = remaining.get(JSON.stringify([seed.kind, seed.value]))?.shift();
+        if (!kept) added.push(seed);
+      }
+      // Leave retained rows byte-for-byte intact, including nullable provenance.
+      const remove = db.prepare("DELETE FROM contact_attributes WHERE tenant_id = ? AND contact_id = ? AND attribute_id = ?");
+      for (const bucket of remaining.values()) {
+        for (const fact of bucket) remove.run(TENANT_ID, contactId, fact.attributeId);
+      }
+      insertAttributes(db, contactId, added, provenance, now);
     }
+    db.prepare(`UPDATE contacts SET employer = ?, job_id = ?, role = ?, updated_at = ?
+      WHERE tenant_id = ? AND contact_id = ?`).run(employer, jobId, role, now, TENANT_ID, contactId);
     recordContactEvent(db, {
-      jobId,
-      eventType: "ContactUpdated",
-      contactId,
-      payload: { tenantId: TENANT_ID, contactId, changedFields: changed, updatedAt: now },
+      jobId, eventType: "ContactUpdated", contactId,
+      payload: { tenantId: TENANT_ID, contactId,
+        changedFields: changedFields(existing, { employer, jobId, role }, request.attributes !== undefined), updatedAt: now },
     });
-    if (nextAttributes !== null) {
-      for (const attribute of nextAttributes) {
-        if (!previousFacts.has(`${attribute.kind} ${attribute.value}`)) {
-          recordAttributeEvent(db, contactId, jobId, attribute, provenance, now);
-        }
-      }
-    }
-  });
-  transaction();
-  return requireContactDetail(db, contactId);
+    for (const attribute of added) recordAttributeEvent(db, contactId, jobId, attribute, provenance, now);
+    return readContactDetail(db, contactId)!;
+  }).immediate();
 }
 
 export function deleteContact(

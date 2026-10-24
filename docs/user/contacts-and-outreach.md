@@ -66,6 +66,29 @@ yourself. The current cadence policy belongs to
 [Apply → Outreach Follow-Ups](apply.md#outreach-follow-ups) and is not duplicated
 here.
 
+## Editing A Contact That Changed Elsewhere
+
+An edit is bound to the saved contact you opened. If another tab or client
+commits a change first, **save contact** reports a conflict and keeps every
+entered field in the open editor. The newer role, employer/job links, facts and
+provenance remain saved. Background refreshes do not silently replace your draft
+or grant it permission to overwrite that newer record.
+
+Choose **Load latest contact** to inspect the newer links, role and facts with
+their provenance alongside your draft. Reconcile the draft fields deliberately,
+then choose **I reviewed the latest contact; keep my draft** to enable saving
+against that reviewed record. This choice keeps your fields; it does not merge
+them automatically or save anything. Another intervening change can conflict
+again. If loading fails, keep the editor open and try loading again.
+
+A successful edit preserves the identity and original provenance of unchanged
+facts, including imported facts. New or value-edited facts record user-entered
+provenance. Contact edits do not replace outreach drafts, reviews or send logs.
+After an uncertain save result, inspect the latest contact before retrying;
+an old edit base cannot overwrite an accepted save. Closing the editor or
+navigating away discards its unsaved draft; it is not a durable draft/history
+feature.
+
 ## Contact Import
 
 Open **Import contacts**, choose CSV or vCard, enter the source filename, and

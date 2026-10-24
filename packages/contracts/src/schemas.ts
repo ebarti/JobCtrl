@@ -6489,6 +6489,8 @@ export interface ContactSummary {
 }
 
 export interface ContactDetail {
+  /** Opaque canonical edit base; required unchanged on replacement saves. */
+  fingerprint: string;
   contactId: string;
   displayName: string;
   role: ContactRole;
@@ -6541,6 +6543,7 @@ export type ContactCreateRequest = z.infer<typeof ContactCreateRequestSchema>;
 
 export const ContactUpdateRequestSchema = z
   .object({
+    expectedFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     role: ContactRoleSchema.optional(),
     employer: contactEmployerField,
     jobId: contactApiJobIdField,

@@ -30,6 +30,34 @@ Gmail feedback scan summaries and `ApplicationEmailFeedbackIngested` payloads
 use canonical `jobId` across Python, REST contracts, domain events, and web
 invalidation. Posting and application URLs are search hints, never identity.
 
+## Contact Edit Authority
+
+`ContactDetail.fingerprint` and the required
+`ContactUpdateRequest.expectedFingerprint` fence replacement edits in
+`apps/api/src/contacts.ts`. A detail read uses one SQLite snapshot of canonical
+contact rows, raw attribute values/identities and complete provenance. The opaque
+SHA-256 base includes tenant/contact identity and the latest durable contact
+publication event identity. It does not depend on projections or timestamp
+uniqueness; same-clock and provenance-only changes invalidate old bases. The
+publication identity also fences retries after a committed save whose reply was
+lost, including no-op edits. The existing schema v14 remains unchanged.
+
+The update reserves SQLite's writer with `BEGIN IMMEDIATE` before reading and
+comparing the base, then applies changes, records events and reads the resulting
+base before commit. Any failure rolls back that whole transaction. Unchanged
+facts stay in place byte-for-byte; replacement only removes absent facts and
+inserts new/value-edited facts. HTTP maps a mismatch to 409
+`contact_revision_conflict`, invalid requests to 400 and missing/deleted contacts
+to 404. A fingerprint is an edit fence, not authentication or an outreach thread
+publication version; existing worker writers remain under their own protocols.
+
+The context-owned web hooks handle query access and optimistic rollback. The
+editor pins the original snapshot/base for the lifetime of the dialog and
+retains its form through conflicts and refetches. Loading the latest record is
+read-only. Only explicit review enables retry against that loaded base, with the
+draft fields retained for deliberate reconciliation. A second conflict requires
+another review. The draft remains local to the open dialog.
+
 ## Enrichment Retry Ownership
 
 `pipeline/retry.py::reset_retry_stages` owns explicit enrichment resets. The

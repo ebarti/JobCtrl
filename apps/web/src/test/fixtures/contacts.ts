@@ -59,6 +59,7 @@ export const sampleContactAttributes: ContactAttributeDto[] = [
 
 export function makeContactDetail(overrides: Partial<ContactDetail> = {}): ContactDetail {
   return {
+    fingerprint: "a".repeat(64),
     contactId: "contact-1",
     displayName: "Dana Reyes",
     role: "recruiter",
