@@ -53,7 +53,10 @@ class OwnedCompensationReceiptWorkflow:
 
 
 @pytest.mark.asyncio
-async def test_actual_activity_records_scoped_source_and_cached_classification_receipts(tmp_path, monkeypatch):
+@pytest.mark.parametrize("failure_kind", ["unavailable", "page_budget_exhausted", "unparsed"])
+async def test_actual_activity_records_scoped_source_and_cached_classification_receipts(
+    tmp_path, monkeypatch, failure_kind,
+):
     path = tmp_path / "owned-compensation-receipts.sqlite"
     monkeypatch.setattr(database_module, "DB_PATH", path)
     conn = init_db(path)
@@ -69,15 +72,21 @@ async def test_actual_activity_records_scoped_source_and_cached_classification_r
     )
 
     def fetch(url):
-        raise HTTPError(url, 403, "private exception message", {}, None)
+        if failure_kind == "page_budget_exhausted":
+            pytest.fail("zero allowance must perform no public request")
+        if failure_kind == "unavailable":
+            raise HTTPError(url, 403, "private exception message", {}, None)
+        return "<html><body>synthetic unsupported salary structure</body></html>"
 
     def load(**kwargs):
         outcomes = []
         load_levels_fyi_public_observations(
             kwargs["levels_fyi_targets"], fetch_text=fetch, on_load_outcome=outcomes.append,
+            max_pages=0 if failure_kind == "page_budget_exhausted" else 25,
         )
         return ReportedCompensationSourceLoad(
-            observations=(observation(),), source_errors=("levels_fyi_public_unavailable",),
+            observations=(observation(),),
+            source_errors=(f"levels_fyi_public_{failure_kind}",),
             levels_fyi_target_outcomes=outcomes[0].targets,
         )
 
@@ -112,8 +121,17 @@ async def test_actual_activity_records_scoped_source_and_cached_classification_r
             assert result.diagnostics["owner"] == f"discover:{queue}:{description.run_id}:{scheduled[0].activity_id}:1"
             targets = {item["occupationFamilyCode"]: item for item in result.diagnostics["levelsFyiTargets"]}
             assert targets["operations"]["coverage"] == "unsupported_role" and not targets["operations"]["failed"]
-            assert targets["engineering_management"]["failed"]
-            assert {request["httpStatus"] for request in targets["engineering_management"]["requests"]} == {403}
+            target = targets["engineering_management"]
+            expected_error = f"levels_fyi_public_{failure_kind}"
+            assert target["failed"] and target["errorCodes"] == [expected_error]
+            assert expected_error in result.warnings
+            if failure_kind == "unavailable":
+                assert {request["httpStatus"] for request in target["requests"]} == {403}
+            elif failure_kind == "page_budget_exhausted":
+                assert target["pageBudgetExhausted"] and target["requests"] == []
+            else:
+                assert {request["status"] for request in target["requests"]} == {"available"}
+                assert target["parsedPages"] == 0
             receipt, = result.diagnostics["rejectedObservations"]
             assert receipt["reason"] == "missing_role_family"
             stored = conn.execute(
