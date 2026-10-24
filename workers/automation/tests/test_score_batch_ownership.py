@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -428,3 +429,56 @@ def test_global_pipeline_does_not_report_success_when_score_jobs_failed(monkeypa
     else:
         with pytest.raises(LlmTransientError, match="1 scoring error"):
             _run_score(workflow_id="pipeline-run")
+
+
+@pytest.mark.parametrize("entry", ["global", "selected"])
+@pytest.mark.parametrize("accepted", [False, True])
+@pytest.mark.parametrize("provider_failure", [False, True])
+def test_cooperative_batch_cancellation_preserves_accepted_results(
+    conn, monkeypatch, profile_snapshot, entry, accepted, provider_failure
+):
+    from jobctrl.domain.errors import LlmTransientError
+    from jobctrl.pipeline.runner import _run_score
+
+    _seed(conn, _FOREIGN)
+    if accepted:
+        assert _run(conn, monkeypatch, profile_snapshot, _ScriptedLlm(_GOOD))["scored"] == 1
+    baseline = [tuple(row) for row in conn.execute("SELECT * FROM job_scores")]
+    baseline_events = conn.execute(
+        "SELECT COUNT(*) FROM job_events WHERE event_type IN ('StageCompleted','StageFailed')"
+    ).fetchone()[0]
+    canceled = threading.Event()
+
+    class StopAfterInference(_ScriptedLlm):
+        def chat_json(self, messages, **kwargs):
+            result = super().chat_json(messages, **kwargs)
+            canceled.set()
+            if provider_failure:
+                raise RuntimeError("Synthetic failure after cancellation")
+            return result
+
+    llm = StopAfterInference(_GOOD)
+    options = dict(profile_snapshot=profile_snapshot, resume_text="Synthetic Python engineer.",
+                   criteria=ScoringCriteria(), llm_port=llm, require_employer_analysis=False)
+    monkeypatch.setattr(scorer, "get_connection", lambda: conn)
+    if entry == "global":
+        real = scorer.run_scoring
+        monkeypatch.setattr(scorer, "run_scoring", lambda **kwargs: real(**kwargs, **options))
+        def call():
+            return _run_score(workflow_id="canceled-refresh-run", cancel_event=canceled, rescore=accepted)
+    else:
+        real = scorer.score_job_by_id
+        monkeypatch.setattr(scorer, "score_job_by_id", lambda jid, **kwargs: real(jid, **kwargs, **options))
+        def call():
+            return _run_selected_scores(
+                ScoreActivityInput(tenant_id="local", job_ids=(_job_id(_FOREIGN),),
+                                   workflow_id="canceled-refresh-run", rescore=accepted),
+                cancel_event=canceled,
+            )
+    with pytest.raises(LlmTransientError, match="canceled"):
+        call()
+    assert canceled.is_set()
+    assert [tuple(row) for row in conn.execute("SELECT * FROM job_scores")] == baseline
+    assert conn.execute(
+        "SELECT COUNT(*) FROM job_events WHERE event_type IN ('StageCompleted','StageFailed')"
+    ).fetchone()[0] == baseline_events

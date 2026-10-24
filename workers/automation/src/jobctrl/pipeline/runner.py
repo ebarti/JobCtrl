@@ -2141,6 +2141,7 @@ def _run_score(
         workers=workers,
         llm_model=llm_model,
         workflow_id=workflow_id,
+        cancel_event=cancel_event,
     )
     if cancel_event is not None and cancel_event.is_set():
         raise LlmTransientError("scoring canceled")

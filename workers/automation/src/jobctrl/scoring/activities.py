@@ -247,10 +247,10 @@ def _run_selected_scores(
                 rescore=payload.rescore,
                 llm_model=payload.llm_model,
                 workflow_id=payload.workflow_id,
+                cancel_event=cancel_event,
                 **(
                     {
                         "enforce_workflow_ownership": True,
-                        "cancel_event": cancel_event,
                         "recovery_workflow_id": payload.recovery_workflow_id,
                     }
                     if payload.recovery_workflow_id

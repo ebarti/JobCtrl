@@ -299,6 +299,7 @@ def run_scoring(
     analyze_use_case: AnalyzeJobUseCaseLike | None = None,
     require_employer_analysis: bool = True,
     workflow_id: str | None = None,
+    cancel_event: Any | None = None,
 ) -> dict:
     """Score unscored jobs that have full descriptions.
 
@@ -327,7 +328,7 @@ def run_scoring(
         requirement_fit_repository = SqliteRequirementFitReportRepository(repository.connection)
     score_repository = repository
     # Global sweeps must use the same publication fence as selected scoring.
-    repository = _OwnedScoreRepository(repository, conn, workflow_id, None)
+    repository = _OwnedScoreRepository(repository, conn, workflow_id, cancel_event)
     if employer_analysis_repository is None:
         employer_analysis_repository = SqliteEmployerAnalysisRepository(conn)
     if analyze_use_case is None and require_employer_analysis:
@@ -400,7 +401,7 @@ def run_scoring(
     availability_deferred = 0
     for job in jobs:
         try:
-            _assert_direct_score_admission(conn, tenant_id, job["job_id"], workflow_id, None)
+            _assert_direct_score_admission(conn, tenant_id, job["job_id"], workflow_id, cancel_event)
         except PreparationReservationLost:
             ownership_skipped.add(str(job["job_id"]))
             continue
@@ -432,11 +433,11 @@ def run_scoring(
                 job_id=job["job_id"],
                 stage="score",
                 workflow_id=None,
-                cancel_event=None,
+                cancel_event=cancel_event,
                 expected_posting_url=job["url"],
             ):
                 job_id = canonical_job_id(str(job["job_id"]))
-                _assert_direct_score_admission(conn, tenant_id, job_id, workflow_id, None)
+                _assert_direct_score_admission(conn, tenant_id, job_id, workflow_id, cancel_event)
                 ensure_job_stage_rows(
                     conn,
                     job_id,
@@ -548,6 +549,9 @@ def run_scoring(
     analyses_by_job: dict[str, EmployerAnalysis] = {}
     analysis_ready_jobs: list[dict[str, Any]] = []
     for job in jobs_to_compute:
+        if cancel_event is not None and cancel_event.is_set():
+            ownership_skipped.add(str(job["job_id"]))
+            continue
         job_url = str(job.get("url") or "")
         try:
             analysis = _ensure_employer_analysis_for_job(
@@ -577,10 +581,15 @@ def run_scoring(
     # Worker threads run the LLM step only — the SQLite connection is not
     # safe to share across threads. Persistence happens below on the main
     # thread once each parse comes back.
+    def compute_if_active(**kwargs):
+        if cancel_event is not None and cancel_event.is_set():
+            raise PreparationReservationLost("Score activity canceled before inference")
+        return use_case.compute(**kwargs)
+
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         future_to_job = {
             executor.submit(
-                use_case.compute,
+                compute_if_active,
                 job=job,
                 profile_snapshot=profile_snapshot,
                 tenant_id=tenant_id,
@@ -635,7 +644,7 @@ def run_scoring(
                             employer_analysis_repository=employer_analysis_repository,
                             analyze_use_case=analyze_use_case,
                             require_employer_analysis=require_employer_analysis,
-                            workflow_id=workflow_id,
+                            workflow_id=workflow_id, cancel_event=cancel_event,
                         )
                     except PreparationReservationLost:
                         ownership_skipped.add(str(duplicate_job["job_id"]))
@@ -688,14 +697,14 @@ def run_scoring(
             recorded = _record_score_stage_succeeded(
                 conn, job=job, score=outcome.score, tenant_id=tenant_id,
                 started_at=started_ats.get(job["url"]), finished_at=finished_at,
-                metadata=metadata, require_ownership=True,
+                metadata=metadata, require_ownership=True, cancel_event=cancel_event,
             )
         else:
             recorded = _record_score_stage_failed(
                 conn, job=job, tenant_id=tenant_id,
                 started_at=started_ats.get(job["url"]) or finished_at,
                 metadata=metadata, error=outcome.error or "Scoring failed",
-                require_ownership=True,
+                require_ownership=True, cancel_event=cancel_event,
             )
         if recorded:
             committed_results.append((job, outcome))
