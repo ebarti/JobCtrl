@@ -9034,6 +9034,7 @@ describe("local TypeScript API", () => {
   });
 
   it("dispatches per-job material generation over the material stages (INSPECT-01)", async () => {
+    fs.writeFileSync(options.configPath, JSON.stringify({ ...JSON.parse(fs.readFileSync(options.configPath, "utf8")), cover_letter_generation: true }));
     const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test", runId: "run-materials" }));
     const app = buildApp({ ...options, actionDispatcher: dispatch });
     const jobKey = encodeURIComponent("https://example.com/jobs/ready");
@@ -9067,7 +9068,8 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("defaults per-job material generation to the tailor+cover stages", async () => {
+  it.each([false, true])("defaults per-job material generation to saved cover-letter policy %s", async (enabled) => {
+    fs.writeFileSync(options.configPath, JSON.stringify({ ...JSON.parse(fs.readFileSync(options.configPath, "utf8")), cover_letter_generation: enabled }));
     const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test", runId: "run-materials" }));
     const app = buildApp({ ...options, actionDispatcher: dispatch });
     const jobKey = encodeURIComponent("https://example.com/jobs/ready");
@@ -9083,11 +9085,21 @@ describe("local TypeScript API", () => {
       expect.objectContaining({
         action: "run_stage",
         stage: "tailor",
-        stages: ["tailor", "cover"],
+        stages: enabled ? ["tailor", "cover"] : ["tailor"],
       }),
       expect.anything(),
     );
 
+    await app.close();
+  });
+
+  it("refuses explicit cover-only generation while the opt-in is off", async () => {
+    const dispatch = vi.fn();
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const response = await app.inject({ method: "POST", url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/ready")}/actions/generate-materials`, payload: { stages: ["cover"] } });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ error: "cover_letter_generation_disabled" });
+    expect(dispatch).not.toHaveBeenCalled();
     await app.close();
   });
 
@@ -10948,7 +10960,9 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("records profile updates and resumes preparation without requiring an existing resume", async () => {
+  it.each([false, true])("records profile updates and resumes preparation with cover generation %s", async (enabled) => {
+    const config = JSON.parse(fs.readFileSync(options.configPath!, "utf8"));
+    fs.writeFileSync(options.configPath!, JSON.stringify({ ...config, cover_letter_generation: enabled }));
     const dispatch = vi.fn(async (_command: ActionCommandPayload): Promise<ActionDispatchResult> => ({
       status: "queued",
       runId: "run-retailor",
@@ -10967,7 +10981,7 @@ describe("local TypeScript API", () => {
         action: "run_stage",
         jobKey: "pipeline",
         stage: "score",
-        stages: ["score", "tailor", "cover"],
+        stages: enabled ? ["score", "tailor", "cover"] : ["score", "tailor"],
         dryRun: false,
         limit: 0,
         workers: 5,
@@ -11829,6 +11843,32 @@ describe("local TypeScript API", () => {
     const app = buildApp(options);
     const before = fs.readFileSync(options.configPath, "utf8");
     const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: { resumeVoicePolish: value } });
+    expect(response.statusCode).toBe(400);
+    expect(fs.readFileSync(options.configPath, "utf8")).toBe(before);
+    await app.close();
+  });
+
+  it("saves cover-letter generation without probing unavailable model providers", async () => {
+    const call = vi.fn(async () => { throw new Error("Synthetic unavailable provider"); });
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const original = JSON.parse(fs.readFileSync(options.configPath, "utf8"));
+    for (const enabled of [true, false]) {
+      const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: { coverLetterGeneration: enabled } });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json()).toMatchObject({
+        settings: { coverLetterGeneration: enabled },
+        effectiveSettings: { coverLetterGeneration: { value: enabled, source: "persisted", activation: "next_workflow", editable: true } },
+      });
+      expect(JSON.parse(fs.readFileSync(options.configPath, "utf8"))).toEqual({ ...original, cover_letter_generation: enabled });
+    }
+    expect(call).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it.each([null, "true", 1])("rejects a non-boolean cover-letter update %s without writing", async (value) => {
+    const app = buildApp(options);
+    const before = fs.readFileSync(options.configPath, "utf8");
+    const response = await app.inject({ method: "PATCH", url: "/v1/settings", payload: { coverLetterGeneration: value } });
     expect(response.statusCode).toBe(400);
     expect(fs.readFileSync(options.configPath, "utf8")).toBe(before);
     await app.close();
@@ -14418,7 +14458,7 @@ describe("enforcing route to registered worker handoffs", () => {
       await vi.waitFor(() => expect(rpcContinuationMarkers()).toHaveLength(2), { timeout: 10000 });
       const rows = fixture.rows();
       expect(rows.filter(row => row.kind === "request")).toHaveLength(2);
-      expect(rows.find(row => row.kind === "request")).toMatchObject({ request: { params: { awaitResult: true, stages: ["score", "tailor", "cover"] } } });
+      expect(rows.find(row => row.kind === "request")).toMatchObject({ request: { params: { awaitResult: true, stages: ["score", "tailor"] } } });
       expect(rows.findIndex(row => row.kind === "completed")).toBeLessThan(rows.findLastIndex(row => row.kind === "start"));
       expect((await app.inject({ method: "GET", url: "/v1/profile" })).json().profile.personal.full_name).toBe("Second Synthetic Revision");
       expect(rpcPreservationControls()).toEqual(controls);

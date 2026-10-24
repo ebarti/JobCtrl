@@ -120,6 +120,10 @@ class _CancelingCoverLlm(_CoverLlm):
 
 @pytest.fixture()
 def conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
+    # This fixture tests cover generation after the user opts in.
+    cover_config = tmp_path / "cover-settings.json"
+    cover_config.write_text('{"cover_letter_generation":true}')
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(cover_config))
     monkeypatch.setattr("jobctrl.llm.enforce_spend_budget", lambda **kwargs: None)
     # The real runner and its review/usage threads share one process DB identity.
     monkeypatch.setattr("jobctrl.database.DB_PATH", tmp_path / "jobctrl-v7.db")

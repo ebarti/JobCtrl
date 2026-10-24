@@ -1363,6 +1363,11 @@ def get_tailoring_generator_models() -> tuple[str, ...]:
     return tuple(str(item).strip() for item in saved if str(item).strip()) if isinstance(saved, list) else ()
 
 
+def get_cover_letter_generation_enabled() -> bool:
+    """Cover-letter creation requires an explicit saved opt-in."""
+    return _config_setting("cover_letter_generation") is True
+
+
 def get_resume_voice_polish_enabled() -> bool:
     """Extra post-approval rewriting is opt-in; required reviews always run."""
     return _config_setting("resume_voice_polish") is True

@@ -1291,7 +1291,7 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "tailorJudgeModel": "gemini:judge-c",
             },
             {
-                "steps": ["tailor", "cover", "pdf"],
+                "steps": ["tailor", "pdf"],
                 "retailor": False,
                 "job_id": JobId("20000000-0000-4000-8000-000000000008"),
                 "allow_low_fit_override": True,
@@ -1312,7 +1312,7 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "tailorJudgeModel": "gemini:judge-c",
             },
             {
-                "steps": ["tailor", "cover", "pdf"],
+                "steps": ["tailor", "pdf"],
                 "retailor": True,
                 "job_id": JobId("20000000-0000-4000-8000-000000000009"),
                 "suppress_existing_artifacts": False,
@@ -1329,7 +1329,7 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "jobId": "20000000-0000-4000-8000-000000000010",
             },
             {
-                "steps": ["tailor", "cover", "pdf"],
+                "steps": ["tailor", "pdf"],
                 "retailor": True,
                 "job_id": JobId("20000000-0000-4000-8000-000000000010"),
                 "suppress_existing_artifacts": False,

@@ -184,6 +184,10 @@ class JobPreparationWorkflow:
             status = _activity_output_status(output)
             if status in {"skipped", "not_eligible"}:
                 skipped.append(step)
+                if step == "cover" and getattr(output, "reason", None) == "cover_letter_generation_disabled":
+                    # This result is new; historical skips retain their old commands.
+                    # A disabled optional letter must not prevent the requested PDF.
+                    continue
                 break
             if status in {"error", "failed"}:
                 failed.append(step)

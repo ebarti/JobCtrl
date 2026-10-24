@@ -22,6 +22,10 @@ TENANT = TenantId("tenant-a")
 
 
 def seed(tmp_path, monkeypatch, stage):
+    # This fixture tests cover generation after the user opts in.
+    cover_config = tmp_path / "cover-settings.json"
+    cover_config.write_text('{"cover_letter_generation":true}')
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(cover_config))
     monkeypatch.setattr("jobctrl.database.DB_PATH", tmp_path / "owned.db")
     monkeypatch.setattr("jobctrl.config.DB_PATH", tmp_path / "owned.db")
     monkeypatch.setattr("jobctrl.config.APP_DIR", tmp_path)

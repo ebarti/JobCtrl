@@ -1117,7 +1117,7 @@ def _imported_job_needs_preparation(
 
     rows = conn.execute(
         """
-        SELECT stage, state
+        SELECT stage, state, error_code
         FROM job_stage_states
         WHERE tenant_id = ? AND job_id = ?
           AND stage IN ('discover', 'enrich', 'score', 'tailor', 'cover')
@@ -1130,10 +1130,17 @@ def _imported_job_needs_preparation(
         )
         for row in rows
     }
+    from jobctrl.infrastructure.materials.cover_letter_policy import COVER_LETTER_DISABLED
+
+    cover_disabled = any(
+        row[0] == "cover" and row[1] == "skipped" and row[2] == COVER_LETTER_DISABLED
+        for row in rows
+    )
     return (
         states.get("discover") == "succeeded"
         and states.get("enrich") == "succeeded"
-        and all(states.get(stage) == "pending" for stage in ("score", "tailor", "cover"))
+        and all(states.get(stage) == "pending" for stage in ("score", "tailor"))
+        and (states.get("cover") == "pending" or cover_disabled)
     )
 
 

@@ -952,38 +952,28 @@ function withCurrentSettingsDefaults(
   ) {
     return snapshot;
   }
-  const response = snapshot.state.readModel.settings;
-  const hasValue = Object.hasOwn(response.settings, "resumeVoicePolish");
-  const hasMetadata = Object.hasOwn(response.effectiveSettings, "resumeVoicePolish");
-  if (hasValue && hasMetadata) {
-    return snapshot;
+  let response = snapshot.state.readModel.settings;
+  for (const key of ["resumeVoicePolish", "coverLetterGeneration"] as const) {
+    const hasValue = Object.hasOwn(response.settings, key);
+    const hasMetadata = Object.hasOwn(response.effectiveSettings, key);
+    if (hasValue && hasMetadata) continue;
+    // Preserve an existing value, including malformed values for schema validation.
+    const value = hasValue
+      ? response.settings[key]
+      : hasMetadata ? response.effectiveSettings[key]?.value : false;
+    response = {
+      ...response,
+      settings: hasValue ? response.settings : { ...response.settings, [key]: value },
+      effectiveSettings: hasMetadata ? response.effectiveSettings : {
+        ...response.effectiveSettings,
+        [key]: { value, source: hasValue ? "persisted" : "default", activation: "next_workflow", editable: true },
+      },
+    };
   }
-  // A retained boolean in either half wins over the absent-setting default.
-  // Present malformed properties stay malformed for the strict response schema.
-  const value = hasValue
-    ? response.settings.resumeVoicePolish
-    : hasMetadata ? response.effectiveSettings.resumeVoicePolish?.value : false;
+  if (response === snapshot.state.readModel.settings) return snapshot;
   return {
     ...snapshot,
-    state: {
-      ...snapshot.state,
-      readModel: {
-        ...snapshot.state.readModel,
-        settings: {
-          ...response,
-          settings: hasValue ? response.settings : { ...response.settings, resumeVoicePolish: value },
-          effectiveSettings: hasMetadata ? response.effectiveSettings : {
-            ...response.effectiveSettings,
-            resumeVoicePolish: {
-              value,
-              source: hasValue ? "persisted" : "default",
-              activation: "next_workflow",
-              editable: true,
-            },
-          },
-        },
-      },
-    },
+    state: { ...snapshot.state, readModel: { ...snapshot.state.readModel, settings: response } },
   };
 }
 

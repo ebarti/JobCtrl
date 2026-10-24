@@ -8,6 +8,15 @@ Review, Interviews, and Outreach views.
 For field-level schemas and every route variant, use the
 [complete contract](complete-contract.md#jobs-read-model-and-lifecycle).
 
+## Generation Selection
+
+`POST /v1/jobs/:jobKey/actions/generate-materials` accepts optional `stages`.
+Omitting them prepares the résumé and PDF; it also includes a letter when
+`coverLetterGeneration` is enabled in Settings. With the setting off, mixed
+requests omit Cover and a cover-only request returns
+`409 cover_letter_generation_disabled` with guidance to enable the setting.
+Existing accepted materials remain available.
+
 ## Jobs And Evidence
 
 | Route family | What it exposes |

@@ -168,6 +168,10 @@ def generate_cover_letter(
     keeps its single-call ergonomics. New callers should construct
     :class:`GenerateCoverLetterUseCase` directly.
     """
+    from jobctrl.config import get_cover_letter_generation_enabled
+
+    if not get_cover_letter_generation_enabled():
+        return ""
     from jobctrl.enrichment.availability import require_fresh_active
 
     require_fresh_active(str(job["job_id"]), expected_posting_url=job["url"], allow_unknown=True)
@@ -220,6 +224,13 @@ def cover_letter_by_id(
     job = SqlitePreparationTargetReader(conn).load(tenant_id, stable_job_id)
     if job is None:
         return _skipped_result(stable_job_id, reason="job_not_found")
+
+    from jobctrl.infrastructure.materials.cover_letter_policy import cover_letter_request_disabled
+
+    if cover_letter_request_disabled(
+        conn, tenant_id=tenant_id, job_id=stable_job_id, workflow_id=recovery_workflow_id or workflow_id,
+    ):
+        return {"job_id": str(stable_job_id), "status": "skipped", "reason": "cover_letter_generation_disabled"}
 
     material_unit_of_work: SqliteUnitOfWork | None = None
     if repository is None:
@@ -290,6 +301,10 @@ def cover_letter_by_id(
         cancel_event=cancel_event,
         expected_posting_url=expected_posting_url,
     ):
+        if cover_letter_request_disabled(
+            conn, tenant_id=tenant_id, job_id=stable_job_id, workflow_id=recovery_workflow_id or workflow_id,
+        ):
+            return {"job_id": str(stable_job_id), "status": "skipped", "reason": "cover_letter_generation_disabled"}
         if material_request_declined(
             conn, tenant_id=tenant_id, job_id=stable_job_id, stage="cover",
             explicit_material_request=explicit_material_request, workflow_id=workflow_id,
@@ -330,6 +345,10 @@ def cover_letter_by_id(
         cancel_event=cancel_event,
         expected_posting_url=expected_posting_url,
     ):
+        if cover_letter_request_disabled(
+            conn, tenant_id=tenant_id, job_id=stable_job_id, workflow_id=recovery_workflow_id or workflow_id,
+        ):
+            return {"job_id": str(stable_job_id), "status": "skipped", "reason": "cover_letter_generation_disabled"}
         if material_request_declined(
             conn, tenant_id=tenant_id, job_id=stable_job_id, stage="cover",
             explicit_material_request=explicit_material_request, workflow_id=workflow_id,
