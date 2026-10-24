@@ -552,7 +552,10 @@ profile-continuation sweep with foreign pending/running ownership, queued
 reservations and canonical cancellation. Preserve complete stage and accepted
 score bytes while an independent peer succeeds. Race a second writer after
 acquisition and revoke ownership after compute and after valid publication;
-publication and terminal fences must each preserve the successor. Exercise
+publication and terminal fences must each preserve the successor. Also cancel during
+inference through both global and ordinary selected batch entry points; late
+success and provider failure must preserve accepted score bytes and publish no
+completion or failure event. Exercise
 shared-donor loss without dropping an independently owned duplicate. Selected
 sequential/parallel batches skip only typed reservation loss; genuine provider,
 structural and determination failures remain visible. Run the actual Temporal
