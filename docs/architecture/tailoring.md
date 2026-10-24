@@ -136,6 +136,13 @@ Authored experience, education and skill rows remain canonical. Exact row IDs co
 
 ## Attempt Loop And Candidate Selection
 
+Each candidate attempt receives a fresh opaque UUID before provider I/O. The ID
+stays with its parse/provider failure, reviews, correction feedback and persisted
+selection. Repeated or common-prefix prompts and parallel attempts still create
+distinct candidates. The complete request has a separate prompt fingerprint;
+candidate identity does not decide semantic equality or invalidate determination
+reuse. Historical IDs remain as recorded, scoped by their generation and attempt.
+
 A generated candidate must pass structural binding, claim verification and the separate quality judge. Model findings supply repair reasons and exact line IDs. Arithmetic may compare accepted typed fit results; it does not assess prose. Provider, spend, JSON, schema and source-binding failures remain distinct and preserve accepted material.
 
 For each cover-letter draft, factual verification and quality review read separate

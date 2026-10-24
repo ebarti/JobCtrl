@@ -545,6 +545,15 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For material candidate identities, run locked
+`pytest tests/test_material_candidate_identity.py tests/test_material_review_history.py tests/test_materials_use_cases.py tests/test_tailor_voice_audit_integration.py`
+and the full worker suite. Identical requests and common-prefix requests must
+receive distinct IDs across parse/provider failures, parallel admission, bounded
+correction and new generations. Require one unambiguous selected candidate in
+the canonical persisted audit, unchanged old-generation selections and unchanged
+full-request fingerprints. Model verdicts, factual/quality/persona receipts,
+retry budgets and cache reuse keep their existing authority.
+
 For batch Score ownership, run locked
 `pytest tests/test_score_batch_ownership.py tests/test_scorer.py tests/test_score_activity_recovery.py tests/test_automatic_preparation.py tests/test_preparation_score_cancellation.py tests/test_v7_score_runtime.py tests/test_activity_score.py tests/test_workflow_job_pipeline.py`
 and the full worker suite. In owned exact-schema SQLite, overlap a global
