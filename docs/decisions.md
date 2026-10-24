@@ -2937,3 +2937,24 @@ record a review bound to both versions; significant edits proceed through normal
 scoring. Provider, spend, structure and missing-baseline failures stay explicit
 and preserve accepted data. No word lists, similarity thresholds or lexical
 fallback decide significance. See [Scoring](architecture/scoring.md#profile-edits-and-explicit-refresh).
+
+## 2026-10-24: Recovery Shares Capacity Across Independently Owned Cohorts
+
+Status: accepted
+
+Automatic recovery can overlap exact, independently owned per-job preparation
+and one-stage automatic batches. Each live cohort is read from its execution's
+immutable start event; its jobs stay excluded even between activities. Admission
+rechecks canonical ownership and frozen queue manifests under the SQLite write
+lock. Discovery, imports, unscoped/manual batches, foreign workspace bindings,
+missing history and conflicting owners retain the dispatch gate.
+
+Automatic batches share the saved internal concurrency budget. A batch accounts
+for the smaller of its immutable worker count and unfinished cohort membership;
+the next dispatch receives only remaining parallelism. Existing workflow input
+and frozen cohort identities are preserved. A recorded queued owner requires its
+exact execution before settlement, and missing history cannot start a replacement.
+Attempt limits, cooldowns, spend preflight, source politeness, cancellation/skip
+decisions and accepted artifacts remain protected. Worker activity slots remain
+an independent bound. No workflow command sequence changes. See
+[Operations](architecture/pipeline/operations.md#automatic-preparation-recovery).
