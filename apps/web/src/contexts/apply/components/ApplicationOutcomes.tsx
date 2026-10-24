@@ -238,12 +238,12 @@ export function ManualOutcomeForm({ jobId }: ManualOutcomeFormProps) {
       }}
     >
       {action.pending ? (
-        <div role="status">
+        <div className="outcome-retry-notice" role="status">
           Retry keeps the original submitted values; the action may already be recorded.
           <Button type="button" disabled={recordOutcome.isPending} onClick={() => { action.newAction(); recordOutcome.reset(); }}>Start a new action</Button>
         </div>
       ) : null}
-      <fieldset disabled={action.pending}>
+      <fieldset className="outcome-fields" disabled={action.pending}>
       <form.Field name="kind">
         {(field) => (
           <Field className="field">
@@ -446,7 +446,7 @@ export function InterviewReflectionForm({
       }}
     >
       {action.pending ? (
-        <div role="status">
+        <div className="outcome-retry-notice" role="status">
           Retry keeps the original submitted values; the action may already be recorded.
           <Button type="button" disabled={recordOutcome.isPending} onClick={() => { action.newAction(); recordOutcome.reset(); }}>Start a new action</Button>
         </div>
@@ -459,7 +459,7 @@ export function InterviewReflectionForm({
         type="hidden"
         value={prepGeneration}
       />
-      <fieldset disabled={action.pending}>
+      <fieldset className="outcome-fields" disabled={action.pending}>
       <form.Field name="occurredAt">
         {(field) => (
           <Field className="field">

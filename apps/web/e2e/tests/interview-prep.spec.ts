@@ -1,8 +1,50 @@
 import type { ApplicationOutcomeWriteResponse } from "@jobctrl/contracts";
-import { test, expect } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import Database from "better-sqlite3";
 
 import { loadE2eDbPath, QA_PLATFORM_JOB_ID } from "../fixtures/e2e-state.js";
+
+async function expectOutcomeGrid(page: Page, form: Locator): Promise<void> {
+  const originalViewport = page.viewportSize();
+  try {
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await expect(form).toBeVisible();
+      const layout = await form.evaluate((element) => {
+        const fields = element.querySelector("fieldset")!;
+        const note = fields.querySelector(".field.wide")!;
+        const notice = element.querySelector(".outcome-retry-notice");
+        const rect = element.getBoundingClientRect();
+        const fieldRect = fields.getBoundingClientRect();
+        const noteRect = note.getBoundingClientRect();
+        const noticeRect = notice?.getBoundingClientRect();
+        const formStyle = getComputedStyle(element);
+        const fieldStyle = getComputedStyle(fields);
+        return {
+          display: fieldStyle.display,
+          columns: fieldStyle.gridTemplateColumns,
+          formColumns: formStyle.gridTemplateColumns,
+          gap: fieldStyle.gap,
+          formGap: formStyle.gap,
+          fieldWidthDifference: Math.abs(fieldRect.width - rect.width),
+          fieldLeftDifference: Math.abs(fieldRect.left - rect.left),
+          noteWidthDifference: Math.abs(noteRect.width - fieldRect.width),
+          noticeWidthDifference: noticeRect ? Math.abs(noticeRect.width - rect.width) : 0,
+        };
+      });
+      expect(layout.display).toBe("grid");
+      expect(layout.columns).toBe(layout.formColumns);
+      expect(layout.formColumns.split(" ")).toHaveLength(width > 1000 ? 2 : 1);
+      expect(layout.gap).toBe(layout.formGap);
+      expect(layout.fieldWidthDifference).toBeLessThan(1);
+      expect(layout.fieldLeftDifference).toBeLessThan(1);
+      expect(layout.noteWidthDifference).toBeLessThan(1);
+      expect(layout.noticeWidthDifference).toBeLessThan(1);
+    }
+  } finally {
+    if (originalViewport) await page.setViewportSize(originalViewport);
+  }
+}
 
 function refreshWorkerHeartbeat(dbPath: string): void {
   const db = new Database(dbPath);
@@ -116,6 +158,8 @@ test("Interview prep: explicit generation queues and accepted prep surfaces with
   });
 
   const reflectionNote = "Asked how the platform migration should be sequenced.";
+  const reflectionForm = drawer.locator(".interview-reflection-form");
+  await expectOutcomeGrid(page, reflectionForm);
   await drawer.getByLabel("Interview date").fill("2026-06-01T13:20");
   await drawer.getByLabel("Reflection note").fill(reflectionNote);
   let acceptedBeforeLoss: ApplicationOutcomeWriteResponse | undefined;
@@ -132,6 +176,7 @@ test("Interview prep: explicit generation queues and accepted prep surfaces with
   await expect(drawer.locator(".interview-reflection-form").getByRole("alert")).toBeVisible();
   await expect(drawer.getByLabel("Reflection note")).toHaveValue(reflectionNote);
   await expect(drawer.getByLabel("Reflection note")).toBeDisabled();
+  await expectOutcomeGrid(page, reflectionForm);
   await page.screenshot({ path: testInfo.outputPath("reflection-lost-ack.png") });
   const [outcomeResponse] = await Promise.all([
     page.waitForResponse(
@@ -165,6 +210,7 @@ test("Interview prep: explicit generation queues and accepted prep surfaces with
   await page.unroute("**/v1/jobs/*/outcomes");
   await drawer.getByRole("button", { name: /· Application outcomes/ }).click();
   const manualForm = drawer.locator(".outcome-form:not(.interview-reflection-form)");
+  await expectOutcomeGrid(page, manualForm);
   await manualForm.getByRole("combobox", { name: "Outcome", exact: true }).click();
   await page.getByRole("option", { name: "Interview", exact: true }).click();
   await manualForm.getByLabel("Local note").fill("Synthetic ordinary interview observation");
@@ -181,6 +227,7 @@ test("Interview prep: explicit generation queues and accepted prep surfaces with
   });
   await manualForm.getByRole("button", { name: "Record outcome" }).click();
   await expect(manualForm.getByRole("alert")).toBeVisible();
+  await expectOutcomeGrid(page, manualForm);
   await page.screenshot({ path: testInfo.outputPath("manual-outcome-lost-ack.png") });
   const [manualResponse] = await Promise.all([
     page.waitForResponse((response) => response.url().includes("/outcomes") && response.request().method() === "POST"),
