@@ -44,7 +44,9 @@ from rich.console import Console
 from rich.live import Live
 
 from jobctrl import config
-from jobctrl.infrastructure.apply_controls import APPLY_ADMISSIBLE_SQL, APPLY_MANUAL_STOP_SQL
+from jobctrl.infrastructure.apply_controls import (
+    APPLY_ADMISSIBLE_SQL, APPLY_MANUAL_STOP_SQL, APPLY_SUBMIT_INTENT_SQL, APPLY_UNRESOLVED_SKIP_SQL,
+)
 from jobctrl.domain.apply.value_objects import Applied, DryRunComplete, Failed, SubmissionResult
 from jobctrl.apply import prompt as prompt_mod  # noqa: F401  -- kept for back-compat imports
 from jobctrl.apply.chrome import (
@@ -1927,14 +1929,55 @@ def mark_job(
         )
         conn.commit()
     else:
-        mark_result(
-            stable_job_id,
-            "failed",
-            error=reason or "manual",
-            permanent=True,
-            duration_ms=0,
-            tenant_id=stable_tenant_id,
+        _mark_failed_manually(stable_job_id, tenant_id=stable_tenant_id, reason=reason or "manual")
+
+
+def _mark_failed_manually(job_id: JobId, *, tenant_id: TenantId, reason: str) -> None:
+    """A local human label is neither worker settlement nor no-send evidence."""
+    from jobctrl.infrastructure.apply_controls import assert_safe_apply_reset, has_unsettled_apply_run
+
+    conn = get_connection()
+    owned = not conn.in_transaction
+    conn.execute("BEGIN IMMEDIATE" if owned else "SAVEPOINT manual_apply_failure")
+    try:
+        try:
+            assert_safe_apply_reset(conn, tenant_id=tenant_id, job_id=job_id)
+            stopped = conn.execute(
+                f"SELECT 1 FROM jobs WHERE tenant_id=? AND job_id=? AND ({APPLY_MANUAL_STOP_SQL})",
+                (str(tenant_id), str(job_id)),
+            ).fetchone()
+            row = conn.execute(
+                "SELECT state,attempt_count FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage='apply'",
+                (str(tenant_id), str(job_id)),
+            ).fetchone()
+            if stopped or (row and row[0] == "skipped") or has_unsettled_apply_run(conn, tenant_id=tenant_id, job_id=job_id):
+                raise ValueError("Skip or an unsettled run still owns this job; stop and verify that run first.")
+        except ValueError as exc:
+            raise ValueError(f"Manual Apply failure refused: {exc}") from exc
+        now = _utc_now()
+        ensure_job_stage_rows(conn, job_id, tenant_id=tenant_id)
+        set_stage_state(
+            conn, job_id, "apply", "failed", tenant_id=tenant_id,
+            attempt_count=int(row[1]) if row else 0, finished_at=now, duration_ms=0,
+            error_code="FAILED", error_message=reason, retryable=False, validate_transition=False,
         )
+        record_job_event(
+            conn, job_id, "apply", "ApplicationFailed", tenant_id=tenant_id,
+            level="error", message=reason,
+            payload={"run_id": str(new_apply_run_id()), "result": reason, "finished_at": now,
+                     "duration_ms": 0, "source": "user_attestation"},
+        )
+        if owned:
+            conn.commit()
+        else:
+            conn.execute("RELEASE SAVEPOINT manual_apply_failure")
+    except BaseException:
+        if owned:
+            conn.rollback()
+        else:
+            conn.execute("ROLLBACK TO SAVEPOINT manual_apply_failure")
+            conn.execute("RELEASE SAVEPOINT manual_apply_failure")
+        raise
 
 
 def reset_failed() -> int:
@@ -2142,6 +2185,13 @@ def _authorize_posting_before_submit(tenant_id: str, job_id: str, posting_url: s
         ).fetchone()
         if not owner or owner[0] != run_id or not running or running[0] != "running" or manual_stop:
             raise MissingInputError("Apply intent no longer owns the original posting attempt")
+        uncertain = conn.execute(
+            f"SELECT 1 FROM jobs WHERE tenant_id=? AND job_id=? "
+            f"AND (({APPLY_SUBMIT_INTENT_SQL}) OR ({APPLY_UNRESOLVED_SKIP_SQL}))",
+            (tenant_id, job_id),
+        ).fetchone()
+        if uncertain:
+            raise MissingInputError("Apply submission evidence is already recorded; verify the external outcome before retrying")
         yield
         conn.commit()
     except BaseException:

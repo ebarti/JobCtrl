@@ -557,7 +557,14 @@ restart/stage relabel/reset cannot authorize another. Repeat Needs verification
 without an intent receipt, retaining its prior state through repeated Skip and
 later stage labels. Assert exact intent/sender
 counts, original run identity, preserved artifact fingerprints and late-result
-ownership. Exercise CLI/registered RPC mixed-cohort rollback and caller-owned
+ownership. Seed an inherited running attempt with an earlier same-job intent,
+including an independent-writer intent committed during agent execution: final
+admission must create no second intent/send, while foreign tenant/job evidence
+cannot block an unchanged safe submission. Compare the real Apply Review and
+Job Detail readers after relabel/restart. Exercise the real CLI manual-failure
+command: active ownership, Skip and uncertainty must produce a nonzero refusal,
+while safe local failure preserves attempts/materials. Open More job actions
+before inspecting Skip on desktop/mobile and after reload. Exercise CLI/registered RPC mixed-cohort rollback and caller-owned
 transactions. API HTTP Skip/reload/reset and focused UI mutation/rollback tests
 must preserve visible active-run and verification evidence. These regressions
 do not establish live-provider or installed-runtime behavior.

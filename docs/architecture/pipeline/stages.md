@@ -511,7 +511,10 @@ reset rolls back all selected stages on refusal and retains caller transaction
 ownership. Accepted materials and historical events are unchanged.
 
 Skip is a local disposition; it neither dispatches provider cancellation nor
-asserts external completion. Final intent retains the existing run/stage fence.
+asserts external completion. Final intent retains the existing run/stage fence
+and rechecks all durable tenant/job submit intents and unresolved skipped
+outcomes under that same writer lock. This also fences an inherited attempt
+that was admitted before earlier submission evidence became visible.
 Settlement holds the writer and rejects a stopped stage or a successor run;
 recovery reads running ownership under the writer as well. Durable intent remains
 a retry blocker even if a late terminal event is recorded after a local stop.

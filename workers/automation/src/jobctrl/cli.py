@@ -1615,12 +1615,15 @@ def apply(
     if mark_failed:
         from jobctrl.apply.launcher import mark_job
 
-        mark_job(
-            resolve_job_id(mark_failed),
-            "failed",
-            reason=fail_reason,
-            tenant_id=LOCAL_TENANT,
-        )
+        try:
+            mark_job(
+                resolve_job_id(mark_failed),
+                "failed",
+                reason=fail_reason,
+                tenant_id=LOCAL_TENANT,
+            )
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--mark-failed") from exc
         console.print(f"[yellow]Marked as failed:[/yellow] {mark_failed} ({fail_reason or 'manual'})")
         return
 

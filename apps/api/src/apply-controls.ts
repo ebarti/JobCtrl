@@ -1,4 +1,4 @@
-import { allRows, type SqliteDatabase } from "./db.js";
+import { allRows, getRow, type SqliteDatabase } from "./db.js";
 
 /** Durable external authority is read from every intent, never the latest projection. */
 export function applySubmitIntentRunIds(db: SqliteDatabase, tenantId: string, jobId: string): string[] {
@@ -78,4 +78,19 @@ export function applyIntentOutcomeRecorded(db: SqliteDatabase, tenantId: string,
         AND json_extract(CASE WHEN json_valid(submitted.payload_json) THEN submitted.payload_json ELSE '{}' END,'$.run_id') =
           json_extract(CASE WHEN json_valid(intent.payload_json) THEN intent.payload_json ELSE '{}' END,'$.run_id')))
     LIMIT 1`, [tenantId, jobId]).length > 0;
+}
+
+/** Shared canonical inputs for Job Detail and Apply Review; never infer from latest-run projections. */
+export function readApplyAuditControls(db: SqliteDatabase, tenantId: string, jobId: string) {
+  const state = getRow<{ state: string; error_code: string | null; retryable: number }>(db,
+    "SELECT state,error_code,retryable FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage='apply'",
+    [tenantId, jobId]);
+  return {
+    submitIntentRunIds: applySubmitIntentRunIds(db, tenantId, jobId),
+    intentManuallyResolved: applyIntentManuallyResolved(db, tenantId, jobId),
+    intentOutcomeRecorded: applyIntentOutcomeRecorded(db, tenantId, jobId),
+    unresolvedSkippedOutcome: hasUnresolvedSkippedOutcome(db, tenantId, jobId),
+    manuallySkipped: hasManualApplyStop(db, tenantId, jobId) ||
+      (state?.state === "skipped" && state.error_code === null && state.retryable === 0),
+  };
 }

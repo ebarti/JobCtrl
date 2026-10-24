@@ -110,6 +110,12 @@ local terminal result or cleanup acknowledgement (`LockReleased`). A local stage
 cannot establish that active work ended. Submit intent still blocks retry after
 that settlement.
 
+The CLI `apply --mark-failed <url>` records a local failure only when no active
+owner, Skip, Applied outcome or unresolved submission evidence remains. Unsafe requests
+exit with a refusal and preserve the current stage and history; this command
+cannot establish that an external submission stopped. A safe manual failure
+preserves the attempt budget and accepted materials.
+
 ## Approval And Automation Modes
 
 Apply checks only the locally eligible candidate after repeat-application,

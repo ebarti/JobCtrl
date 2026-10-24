@@ -52,6 +52,7 @@ import {
 import { bindRequirementFitReport, requirementCoverageForArtifact, requirementIdentities, unrecordedRequirementCoverage } from "./requirement-evidence.js";
 import { missingApplicationAttestationFields } from "./application-attestations.js";
 import { buildApplyAudit } from "./apply-audit.js";
+import { readApplyAuditControls } from "./apply-controls.js";
 import { allRows, getRow, type SqliteDatabase } from "./db.js";
 import { ensureJobDetailProjection, refreshProjections } from "./projections.js";
 import { evaluateRepeatApplication } from "./repeat-application.js";
@@ -833,6 +834,7 @@ function reviewQueueItemFromRow(
       }
     : null;
   const applyAudit = buildApplyAudit({
+    ...readApplyAuditControls(db, DEFAULT_TENANT, jobId),
     applicationUrl,
     hasResume: Boolean(row.has_resume),
     hasCoverLetter: Boolean(row.has_cover_letter),

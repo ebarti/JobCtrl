@@ -3075,3 +3075,35 @@ function seedInterviewPrepGeneration(dbPath: string, jobId: string, generation: 
     db.close();
   }
 }
+
+it.each([true, false])("Apply Review and Job Detail retain identical durable controls after relabel and restart (intent=%s)", async (withIntent) => {
+  const db = new Database(options.dbPath);
+  db.prepare("UPDATE job_stage_states SET state='needs_verification' WHERE tenant_id='local' AND job_id=? AND stage='apply'").run(READY_JOB_ID);
+  if (withIntent) db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,payload_json,occurred_at) VALUES ('local',?,1,'apply','ApplySubmitIntended',?,'2026-10-24')")
+    .run(READY_JOB_ID, JSON.stringify({ run_id: "original-uncertain" }));
+  const app = buildApp(options);
+  const skipped = await app.inject({ method: "POST", url: `/v1/jobs/${READY_JOB_ID}/actions/mark-skipped`, payload: {} });
+  expect(skipped.statusCode, skipped.body).toBe(200);
+  await app.close();
+  db.prepare("UPDATE job_stage_states SET state='pending' WHERE tenant_id='local' AND job_id=? AND stage='apply'").run(READY_JOB_ID);
+  const before = db.prepare("SELECT * FROM job_events WHERE job_id=? ORDER BY event_id").all(READY_JOB_ID);
+  db.close();
+  const restarted = buildApp(options);
+  try {
+    const queue = await restarted.inject({ method: "GET", url: "/v1/apply/review-queue" });
+    const detail = await restarted.inject({ method: "GET", url: `/v1/jobs/${READY_JOB_ID}` });
+    expect(queue.statusCode, queue.body).toBe(200);
+    expect(detail.statusCode, detail.body).toBe(200);
+    const queued = (queue.json() as ApplyReviewQueueResponse).items.find(item => item.jobKey === READY_JOB_ID)!;
+    expect(queued).toBeDefined();
+    expect(queued.applyAudit.hardBlockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "manual_apply_skip" }), expect.objectContaining({ code: "submission_outcome_uncertain" }),
+      ...(withIntent ? [expect.objectContaining({ code: "submission_intent_recorded", detail: expect.stringContaining("original-uncertain") })] : []),
+    ]));
+    expect(queued.applyAudit.hardBlockers).toEqual(detail.json().applyAudit.hardBlockers);
+    expect(queued.applyAudit.sources).toEqual(detail.json().applyAudit.sources);
+    const after = new Database(options.dbPath);
+    expect(after.prepare("SELECT * FROM job_events WHERE job_id=? ORDER BY event_id").all(READY_JOB_ID)).toEqual(before);
+    after.close();
+  } finally { await restarted.close(); }
+});

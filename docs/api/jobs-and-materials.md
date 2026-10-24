@@ -359,7 +359,8 @@ existing claim/quality gates and fences source changes at persistence. Stale
 offer bindings return `409 draft_gates_not_passed` on approval/send logging.
 Provider, spend and structural failures retain the last approved message.
 
-Manual `mark-skipped` records a durable local Apply stop. Its response message
+Job Detail and Apply Review read the same canonical Apply disposition and
+submission evidence. Manual `mark-skipped` records a durable local Apply stop. Its response message
 explains that an in-flight submission may still complete. Job Detail's existing
 `applyAudit.hardBlockers` distinguishes `manual_apply_skip` from
 `submission_intent_recorded`; the latter retains original intent run IDs from

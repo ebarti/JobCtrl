@@ -1,4 +1,4 @@
-import { applySubmitIntentRunIds, applyIntentManuallyResolved, hasUnresolvedSkippedOutcome, hasManualApplyStop, applyIntentOutcomeRecorded } from "./apply-controls.js";
+import { readApplyAuditControls } from "./apply-controls.js";
 import { companyBriefingSummaries } from "./company-briefings.js";
 import { resolveJobLocator } from "./job-locators.js";
 import { EMPLOYER_ANALYSIS_PROMPT_VERSION } from "./contracts.js";
@@ -1159,11 +1159,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
       currentErrorCode: jobSummary.errorCode,
       currentErrorMessage: jobSummary.errorMessage,
       latestApplyRun,
-      submitIntentRunIds: applySubmitIntentRunIds(db, DEFAULT_TENANT, jobId),
-      intentManuallyResolved: applyIntentManuallyResolved(db, DEFAULT_TENANT, jobId),
-      intentOutcomeRecorded: applyIntentOutcomeRecorded(db, DEFAULT_TENANT, jobId),
-      unresolvedSkippedOutcome: hasUnresolvedSkippedOutcome(db, DEFAULT_TENANT, jobId),
-      manuallySkipped: hasManualApplyStop(db, DEFAULT_TENANT, jobId) || stages.some((entry) => entry.stage === "apply" && entry.state === "skipped" && !entry.errorCode && !entry.retryable),
+      ...readApplyAuditControls(db, DEFAULT_TENANT, jobId),
       scoreBreakdown: jobSummary.scoreBreakdown,
       reviewEvidenceAvailable: Boolean(
         jobSummary.scoreBreakdown ||

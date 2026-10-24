@@ -746,19 +746,27 @@ test("keeps the job detail header Tab order aligned with its visual order", asyn
   await expect(drawer.getByRole("button", { name: "Sections" })).toBeFocused();
 });
 
-test("Job detail exposes local Skip limits on desktop and mobile after reload", async ({ page }) => {
+test("Job detail exposes local Skip limits on desktop and mobile after reload", async ({ page }, testInfo) => {
   const prohibited = watchProhibitedProductPathRequests(page);
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`/jobs/${encodeURIComponent(QA_PLATFORM_JOB_ID)}?${FILTER_PARAMS}`);
-    const skip = page.getByRole("button", { name: "Skip", exact: true });
+    const drawer = page.getByRole("article", { name: "Job details" });
+    const moreActions = drawer.getByRole("button", { name: "More job actions" });
+    await moreActions.focus();
+    await moreActions.press("Enter");
+    const skip = page.getByRole("dialog", { name: "Job workflow actions" }).getByRole("button", { name: "Skip", exact: true });
     await expect(skip).toBeVisible();
     await skip.focus();
     await expect(skip).toBeFocused();
     await expect(skip).toHaveAccessibleDescription(/Skip stops future Apply locally. In-flight submissions may still complete/);
     await page.reload();
+    await drawer.getByRole("button", { name: "More job actions" }).click();
     await expect(skip).toHaveAccessibleDescription(/In-flight submissions may still complete/);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+    const screenshotPath = testInfo.outputPath(`local-skip-${width}-after-reload.png`);
+    await page.screenshot({ path: screenshotPath, animations: "disabled" });
+    await testInfo.attach(`local-skip-${width}-after-reload`, { path: screenshotPath, contentType: "image/png" });
   }
   expect(prohibited).toEqual([]);
 });
