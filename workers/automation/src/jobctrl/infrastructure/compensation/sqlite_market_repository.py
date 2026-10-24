@@ -697,13 +697,14 @@ def load_default_reported_compensation_observations(
         if str(source_env.get("JOBCTRL_LEVELS_FYI_ACCESS_MODE") or "").strip().casefold() == "public_markdown"
         else ()
     )
-    if any(
-        any(target.failed for target in outcome.targets) if outcome.targets else (
-            outcome.unavailable or outcome.level_lookup_unavailable or outcome.reachable_pages < outcome.requested_pages
-        )
-        for outcome in levels_fyi_outcomes
-    ):
-        source_errors.append("levels_fyi_public_unavailable")
+    for outcome in levels_fyi_outcomes:
+        if outcome.targets:
+            errors = tuple(code for target in outcome.targets for code in target.error_codes)
+        elif outcome.unavailable or outcome.level_lookup_unavailable or outcome.reachable_pages < outcome.requested_pages:
+            errors = ("levels_fyi_public_unavailable",)
+        else:
+            errors = ()
+        source_errors.extend(code for code in dict.fromkeys(errors) if code not in source_errors)
     levels_fyi = (*levels_fyi_public, *levels_fyi_licensed)
     glassdoor = _load_configured_provider_observations(
         source_env,
