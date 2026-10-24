@@ -408,11 +408,11 @@ travel through `SubprocessJsonRpcAdapter` to the long-lived `jobctrl rpc`
 subprocess. Method-specific calls use the shared contract boundary described in
 [Contracts, Types & API Boundaries](contracts-types-and-api-boundaries.md#typescript-to-python-json-rpc):
 parameters validate before transport and results validate before consumption.
-Awaited profile continuations require completed pipeline results before a
-handled marker is persisted. Confirmed terminal failures receive a separate,
-idempotent `ProfileContinuationFailed` event instead, so restarting does not
-replay an immutable failed result or block later profile revisions. Uncertain
-dispatches remain pending for reattachment. Workflow-mode handlers return a workflow spec that the RPC server
+Profile saves commit their audit event without admitting preparation. Startup
+leaves historical profile-continuation events intact without reattachment.
+Already admitted legacy workflows retain their existing result and replay
+contracts. Explicit refresh uses the [Scoring profile-impact boundary](scoring.md#profile-edits-and-explicit-refresh).
+Workflow-mode handlers return a workflow spec that the RPC server
 starts on Temporal (`run_stage`,
 `rescore_job`, `rescore_jobs_not_on_current_scoring_policy`, `tailor_job`,
 `retailor_job`, `retailor_current_policy`, `refresh_compensation`, `apply`,

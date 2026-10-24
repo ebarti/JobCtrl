@@ -128,7 +128,6 @@ def test_invalid_board_control_only_blocks_planning_and_keeps_raw_sources(tmp_pa
 def test_scoring_reads_saved_sources_without_materializing_board_controls(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from jobctrl.scoring import scorer
-    from jobctrl.domain.determinations import DeterminationFailure
 
     _saved_location_rows(tmp_path, monkeypatch, "Authored location", "unsupported_saved_value")
     monkeypatch.setattr(scorer, "ScoreJobUseCase", lambda **kwargs: SimpleNamespace(**kwargs))
@@ -138,11 +137,15 @@ def test_scoring_reads_saved_sources_without_materializing_board_controls(tmp_pa
         job_interpretation_reader=lambda _job: None,
     )
     criteria = SimpleNamespace(criteria_text="Authored criteria", target_criteria=None)
-    sources = use_case.confirmed_preferences_reader(SimpleNamespace(version=7), criteria)
+    snapshot = SimpleNamespace(version=7, experience={
+        "target_locations": "Authored location", "target_work_models": "unsupported_saved_value",
+    })
+    sources = use_case.confirmed_preferences_reader(snapshot, criteria)
     assert {source.source_id: source.text for source in sources}["target:work_models:0"] == "unsupported_saved_value"
-    with pytest.raises(DeterminationFailure) as raised:
-        use_case.confirmed_preferences_reader(SimpleNamespace(version=8), criteria)
-    assert raised.value.code == "stale_profile_version"
+    with sqlite3.connect(config.DB_PATH) as writer:
+        writer.execute("UPDATE candidate_profiles SET version=8, experience_target_locations='Different location', experience_target_work_models='remote'")
+    # New saves cannot change the sources of work already using snapshot v7.
+    assert use_case.confirmed_preferences_reader(snapshot, criteria) == sources
 
 
 def test_unchanged_literal_settings_preserve_native_board_parameters():

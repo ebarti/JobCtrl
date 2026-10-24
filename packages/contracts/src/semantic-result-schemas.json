@@ -4740,6 +4740,115 @@
     },
     "schemaVersion": "2"
   },
+  "score_profile_impact": {
+    "promptVersion": "score-profile-impact-v1",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/Citation"
+          },
+          "maxItems": 30,
+          "minItems": 1,
+          "title": "Citations",
+          "type": "array"
+        },
+        "job_id": {
+          "title": "Job Id",
+          "type": "string"
+        },
+        "profile_id": {
+          "title": "Profile Id",
+          "type": "string"
+        },
+        "rationale": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "reviewed_profile_version": {
+          "minimum": 1,
+          "title": "Reviewed Profile Version",
+          "type": "integer"
+        },
+        "score_version": {
+          "minimum": 1,
+          "title": "Score Version",
+          "type": "integer"
+        },
+        "scored_profile_version": {
+          "minimum": 1,
+          "title": "Scored Profile Version",
+          "type": "integer"
+        },
+        "scoring_determination_id": {
+          "minLength": 1,
+          "title": "Scoring Determination Id",
+          "type": "string"
+        },
+        "verdict": {
+          "enum": [
+            "significant",
+            "insignificant"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "job_id",
+        "score_version",
+        "scoring_determination_id",
+        "profile_id",
+        "scored_profile_version",
+        "reviewed_profile_version",
+        "verdict",
+        "rationale",
+        "citations"
+      ],
+      "title": "ProfileImpactDecision",
+      "type": "object"
+    },
+    "schemaVersion": "1"
+  },
   "scoring": {
     "compatiblePromptVersions": [
       "score-fit-assessment-v10-binding-repair"

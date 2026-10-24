@@ -115,6 +115,13 @@ documentation, not the historical plan that first proposed it.
 | BR-071 | 2026-10-04 | Saved posting availability must be observed independently of accepted content: current exact identity/status evidence, separate attempt/success clocks, visible uncertainty/overdue state, reversible unavailable outcomes, bounded recurring/explicit checks and durable fenced actual-host acquisition. Preparation refreshes evidence after six hours and can use accepted content while availability is unknown; exact-bound human-reviewed Apply with approval from the preceding 15 minutes, manual Apply and rehearsals remain possible under uncertainty, while unattended Apply requires active success within 15 minutes. Confirmed closure and changed candidates stop work. Checks run outside writer transactions; failed checks preserve materials, approvals, application outcomes and user visibility. Paired-extension presence cannot imply authenticated availability. | Job seekers preparing saved jobs. | Prevent stale or ambiguous employer state from authorizing work without discarding accepted evidence. | [Enrichment](user/enrichment-and-extraction.md#saved-posting-availability), [runtime](architecture/runtime.md#saved-posting-availability-runtime), [QA](developer/qa/regression-catalog.md#saved-posting-availability) |
 | BR-075 | 2026-10-18 | Selected-job skill demand must refer to an explicit dated cohort, disclose size, missing descriptions, exact duplicates and uncertainty, and cite posting spans and unique confirmed candidate evidence. User-chosen learning/evidence milestones retain origin and completion statements; activity, aspirations, posting demand and confirmed capability remain distinct across source changes and never produce readiness or automatic Profile/fit changes. | Job seekers reviewing development choices. | Keep cohort observations and progress truthful and auditable. | [selected-job workflow](user/scoring-and-employer-analysis.md#selected-job-demand-and-learning-milestones), [issue #1038](https://github.com/ebarti/JobCtrl/issues/1038) |
 
+Profile-save clarification (2026-10-23): saving or autosaving candidate facts must
+not schedule scoring or material regeneration. Jobs disclose when the recorded
+score profile predates the saved profile. An explicitly requested score update
+uses a source-bound LLM significance check before recomputing for profile changes;
+insignificant edits retain the original score and recorded provenance. Failed or
+unavailable checks never become an insignificant verdict. See [Scoring](architecture/scoring.md#profile-edits-and-explicit-refresh).
+
 ## Technical Requirements
 
 ### Product Surface And Runtime

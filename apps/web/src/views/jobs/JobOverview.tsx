@@ -1,6 +1,7 @@
 import { IconExternalLink } from "@tabler/icons-react";
 
 import type { JobDetail } from "@jobctrl/contracts";
+import { ScoreProfileFreshnessBadge } from "../../contexts/scoring/components/ScoreProfileFreshnessBadge.js";
 import { ScoreBadge } from "../../contexts/scoring/components/ScoreBadge.js";
 import { ContextHelp } from "../../shared/ui/context-help.js";
 import { StatusBadge } from "../../shared/ui/status-badge.js";
@@ -88,6 +89,7 @@ export function JobOverview({ detail }: JobOverviewProps) {
             <MetadataField label="Discovered via" value={job.discoverySource} help="Discovery source recorded when this job entered the local pipeline; it does not establish that the current posting is still open." />
           ) : null}
         </dl>
+        <ScoreProfileFreshnessBadge freshness={job.scoreProfileFreshness} />
         <div className="job-overview-meta-row">
           <div
             className="job-overview-readiness"

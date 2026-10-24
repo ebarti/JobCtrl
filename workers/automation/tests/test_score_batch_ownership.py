@@ -170,7 +170,7 @@ def test_selected_batch_skips_lost_owner_and_finishes_independent_jobs(monkeypat
         calls.append(jid)
         if jid == ids[0]:
             raise PreparationReservationLost("Synthetic successor acquired this row")
-        return SimpleNamespace(ok=True, error=None)
+        return SimpleNamespace(ok=True, error=None, retained=False)
 
     monkeypatch.setattr(scorer, "score_job_by_id", score)
     monkeypatch.setattr(
@@ -277,7 +277,7 @@ def test_selected_batch_reports_real_job_failure_while_retaining_other_results(m
     ids = tuple(_job_id("https://example.test/results/" + str(i)) for i in range(2))
 
     def score(jid, **kwargs):
-        return SimpleNamespace(ok=jid != ids[0], error="Synthetic real failure" if jid == ids[0] else None)
+        return SimpleNamespace(ok=jid != ids[0], error="Synthetic real failure" if jid == ids[0] else None, retained=False)
 
     monkeypatch.setattr(scorer, "score_job_by_id", score)
     monkeypatch.setattr(
@@ -320,7 +320,7 @@ async def test_actual_score_workflow_preserves_ownership_and_replays(conn, monke
         def revoked_or_peer(jid, **kwargs):
             if jid == _job_id(_FOREIGN):
                 raise PreparationReservationLost("Synthetic successor already owns job")
-            return SimpleNamespace(ok=True, error=None)
+            return SimpleNamespace(ok=True, error=None, retained=False)
 
         monkeypatch.setattr(scorer, "score_job_by_id", revoked_or_peer)
     else:
