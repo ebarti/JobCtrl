@@ -42,7 +42,7 @@ export function useRetryStageMutation(): UseMutationResult<
       // Retry without runAfter is sync; with runAfter it's async (202). Either
       // way the user expects "this stage is now running" feedback. SSE in
       // Phase 5 will reconcile to the true server state.
-      optimisticUpdates: ({ jobId, stage, refreshApplyUrl }) => refreshApplyUrl ? [] : [
+      optimisticUpdates: ({ jobId, stage, refreshApplyUrl }) => refreshApplyUrl || stage === "apply" ? [] : [
         {
           queryKey: jobsKeys.detail(tenantId, jobId),
           patch: (current) => patchStageState(current, stage, "running"),

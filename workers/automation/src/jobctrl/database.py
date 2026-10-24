@@ -10,6 +10,8 @@ persistent run and event telemetry.
 
 from __future__ import annotations
 
+from jobctrl.infrastructure.apply_controls import APPLY_ADMISSIBLE_SQL
+
 import json
 import sqlite3
 import threading
@@ -3151,20 +3153,7 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
         f"AND {_NOT_CLOSED_ACTIVE_STATE}"
     ).fetchone()[0]
 
-    stats["ready_to_apply"] = conn.execute(
-        f"SELECT COUNT(*) FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} "
-        f"{_SCORE_DOWNSTREAM_STATE_JOIN} {_ENRICHMENT_JOIN} {_LATEST_APPLY_RUN_JOIN} "
-        f"{_ACTIVE_STATE_JOIN} "
-        f"WHERE {_READY_TAILORED_RESUME_WITH_PDF} "
-        f"AND {_EFFECTIVE_FIT_SCORE} >= 7 "
-        f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
-        f"AND {_SCORE_CURRENT_FOR_DOWNSTREAM} "
-        f"AND {_EFFECTIVE_APPLIED_AT} IS NULL "
-        f"AND {_EFFECTIVE_APPLY_TARGET_URL} IS NOT NULL "
-        f"AND {_EFFECTIVE_APPLY_TARGET_URL} != '' "
-        f"AND {_NOT_CLOSED_ACTIVE_STATE} "
-        f"AND {_ENRICHMENT_NOT_QUARANTINED}"
-    ).fetchone()[0]
+    stats["ready_to_apply"] = count_ready_to_apply(conn)
 
     return stats
 
@@ -3186,6 +3175,7 @@ def count_ready_to_apply(
     register_score_eligibility_sql(conn)
     where = [
         _READY_TAILORED_RESUME_WITH_PDF,
+        APPLY_ADMISSIBLE_SQL,
         f"{_EFFECTIVE_FIT_SCORE} >= ?",
         _SCORE_ELIGIBLE_FOR_DOWNSTREAM,
         _SCORE_CURRENT_FOR_DOWNSTREAM,
@@ -3492,6 +3482,7 @@ def get_jobs_by_stage(
         # through ``apply_run_projections`` so the new write path
         # (which leaves jobs.applied_at NULL) is visible.
         "pending_apply": (
+            f"{APPLY_ADMISSIBLE_SQL} AND "
             f"{_READY_TAILORED_RESUME_WITH_PDF} "
             f"AND {_EFFECTIVE_FIT_SCORE} >= ? "
             f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "

@@ -26,8 +26,9 @@ for that job, including preparation chained from URL imports and Discover. The
 current Skip is checked again before each new material stage starts. An explicit
 Tailor or Re-tailor action can request materials while Apply remains skipped;
 all score, eligibility, source and review prerequisites still apply.
-Use **Cancel** to stop work already in progress. Resetting the Apply outcome
-allows normal automatic eligibility again. A minimum-score policy skip remains
+Use **Cancel** to stop work already in progress. A safe pre-submission Apply reset
+allows normal automatic eligibility again. Recorded submit intent cannot be
+cleared by reset; see [Skip and safe reset](apply.md#skip-and-safe-reset). A minimum-score policy skip remains
 a separate decision controlled by the score and materials threshold.
 
 A cover letter's factual and quality reviews can run together because they inspect

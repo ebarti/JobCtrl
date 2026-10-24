@@ -82,6 +82,34 @@ full-width sequence rather than competing columns. When the surface becomes
 narrow, the queue moves above the review and the approval/defer/decline actions
 wrap below their binding explanation; no decision or audit section is removed.
 
+## Skip And Safe Reset
+
+**Skip** records a local stop for future Apply, including targeted requests,
+batches and standing automation. It also blocks dry-run claims until a safe
+explicit Apply reset. Approval settings do not override the stop. It preserves
+accepted materials and existing attempt history.
+
+Skip does not cancel a provider operation already in flight or prove an
+application was stopped externally. Use the separate run controls for active
+work, and inspect the employer site or provider history for an uncertain outcome.
+Recorded submit intent remains visible in Apply Audit even after Skip, later
+stage changes or restart. Ordinary reset cannot clear that evidence or permit
+another send. Skip also retains a prior Needs verification stop when no intent
+receipt is available; changing the label cannot resolve it. **Mark Applied** remains available to record a confirmed manual
+outcome.
+
+An explicit Apply reset can release a local pre-submission Skip, a retryable
+failure, exhaustion or cancellation when no submit intent exists. It refuses
+active/queued work, Applied, Needs verification and policy-owned skip causes.
+It preserves accepted artifacts and events; the attempt budget is retained unless
+reset explicitly (or exhausted). A retryable `DRY_RUN` completion remains eligible
+for another rehearsal without resetting a manual Skip.
+
+A Skip over an admitted run also retains that owner: reset waits for its exact
+local terminal result or cleanup acknowledgement (`LockReleased`). A local stage label alone
+cannot establish that active work ended. Submit intent still blocks retry after
+that settlement.
+
 ## Approval And Automation Modes
 
 Apply checks only the locally eligible candidate after repeat-application,

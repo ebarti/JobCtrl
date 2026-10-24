@@ -1051,3 +1051,315 @@ def test_repeat_protection_does_not_cross_tenants_with_shared_job_id_and_url(
         ).fetchone()[0]
         == 0
     )
+
+
+@pytest.mark.parametrize("prior", ["pending", "failed", "needs_verification"])
+@pytest.mark.parametrize("targeted", [True, False])
+@pytest.mark.parametrize("approval_required", [True, False])
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_manual_skip_is_durable_before_any_claim_work(conn, monkeypatch, prior, targeted, approval_required, dry_run):
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state
+    from jobctrl.database import count_ready_to_apply, get_jobs_by_stage
+
+    _insert_ready_job(conn, LOCAL_TENANT, LOCAL_JOB_ID)
+    ensure_job_stage_rows(conn, LOCAL_JOB_ID)
+    conn.execute("UPDATE job_stage_states SET state='succeeded' WHERE stage='score'")
+    set_stage_state(conn, LOCAL_JOB_ID, "apply", prior, validate_transition=False, attempt_count=1)
+    # Canonical shape written by the HTTP manual Skip, including NULL error_code.
+    set_stage_state(conn, LOCAL_JOB_ID, "apply", "skipped", retryable=False, validate_transition=False, attempt_count=1)
+    conn.commit()
+    before = [tuple(r) for r in conn.execute("SELECT * FROM job_materials_artifacts")]
+    monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: conn)
+    monkeypatch.setattr("jobctrl.domain.apply.repeat_application.prepare_repeat_application", lambda *a, **k: pytest.fail("stopped job reached model preflight"))
+    monkeypatch.setattr("jobctrl.enrichment.availability.require_fresh_active", lambda *a, **k: pytest.fail("stopped job acquired posting"))
+    for _ in range(3):
+        assert acquire_job(target_job_id=JobId(LOCAL_JOB_ID) if targeted else None,
+                           approval_required=approval_required, run_ctx={"dry_run": dry_run}) is None
+    assert count_ready_to_apply(conn) == 0
+    assert get_jobs_by_stage(conn, "pending_apply") == []
+    assert conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type IN ('ApplyRunStarted','ApplySubmitIntended')").fetchone()[0] == 0
+    assert conn.execute("SELECT attempt_count FROM job_stage_states WHERE job_id=? AND stage='apply'", (LOCAL_JOB_ID,)).fetchone()[0] == 1
+    assert [tuple(r) for r in conn.execute("SELECT * FROM job_materials_artifacts")] == before
+
+
+@pytest.mark.parametrize("stage", ["skipped", "pending", "failed", "canceled"])
+def test_durable_intent_blocks_after_connection_restart_and_unrelated_stage(conn, monkeypatch, tmp_path, stage):
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state, record_job_event, reset_job_stage
+    from jobctrl.database import count_ready_to_apply
+
+    _insert_ready_job(conn, LOCAL_TENANT, LOCAL_JOB_ID)
+    ensure_job_stage_rows(conn, LOCAL_JOB_ID)
+    conn.execute("UPDATE job_stage_states SET state='succeeded' WHERE stage='score'")
+    record_job_event(conn, JobId(LOCAL_JOB_ID), "apply", "ApplySubmitIntended", payload={"run_id": "original-intent"})
+    # Lost acknowledgement / failed settlement and a newer unrelated run are not no-send evidence.
+    record_job_event(conn, JobId(LOCAL_JOB_ID), "apply", "ApplicationFailed", payload={"run_id": "original-intent"})
+    record_job_event(conn, JobId(LOCAL_JOB_ID), "apply", "DryRunCompleted", payload={"run_id": "later-unrelated"})
+    set_stage_state(conn, LOCAL_JOB_ID, "apply", stage, retryable=False, validate_transition=False)
+    conn.commit()
+    restarted = sqlite3.connect(tmp_path / "jobctrl.db")
+    restarted.row_factory = sqlite3.Row
+    from jobctrl.scoring.eligibility_sql import register_score_eligibility_sql
+    register_score_eligibility_sql(restarted)
+    monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: restarted)
+    try:
+        for target in [JobId(LOCAL_JOB_ID), None]:
+            assert acquire_job(target_job_id=target, approval_required=False) is None
+        assert count_ready_to_apply(restarted) == 0
+        before = [tuple(r) for r in restarted.execute("SELECT * FROM job_stage_states")]
+        with pytest.raises(ValueError, match="intent"):
+            reset_job_stage(restarted, LOCAL_JOB_ID, "apply", reset_attempts=True)
+        assert [tuple(r) for r in restarted.execute("SELECT * FROM job_stage_states")] == before
+        assert restarted.execute("SELECT COUNT(*) FROM job_events WHERE event_type='ApplySubmitIntended'").fetchone()[0] == 1
+    finally:
+        restarted.close()
+
+
+def test_skip_committed_by_independent_writer_during_availability_refresh_cannot_claim(conn, monkeypatch, tmp_path):
+    from jobctrl.state import ensure_job_stage_rows
+
+    _insert_ready_job(conn, LOCAL_TENANT, LOCAL_JOB_ID)
+    ensure_job_stage_rows(conn, LOCAL_JOB_ID)
+    conn.execute("UPDATE job_stage_states SET state='succeeded' WHERE stage='score'")
+    conn.commit()
+    monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: conn)
+    monkeypatch.setattr("jobctrl.enrichment.availability.fresh_active", lambda *a, **k: False)
+    visited = []
+
+    def skip(*args, **kwargs):
+        with sqlite3.connect(tmp_path / "jobctrl.db") as writer:
+            writer.execute("UPDATE job_stage_states SET state='skipped',retryable=0,error_code=NULL,version=version+1 WHERE job_id=? AND stage='apply'", (LOCAL_JOB_ID,))
+        visited.append("skip committed")
+
+    monkeypatch.setattr("jobctrl.enrichment.availability.require_fresh_active", skip)
+    assert acquire_job(target_job_id=JobId(LOCAL_JOB_ID), approval_required=False, run_ctx={"dry_run": True}) is None
+    assert visited == ["skip committed"]
+    assert conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type='ApplyRunStarted'").fetchone()[0] == 0
+
+
+def test_skipped_peer_does_not_starve_safe_dry_run_and_reset_preserves_artifacts(conn, monkeypatch):
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state, reset_job_stage
+
+    for job, url in [(LOCAL_JOB_ID, SHARED_URL), (OTHER_JOB_ID, SHARED_URL + '-peer')]:
+        _insert_ready_job(conn, LOCAL_TENANT, job, url=url)
+        ensure_job_stage_rows(conn, job)
+        conn.execute("UPDATE job_stage_states SET state='succeeded' WHERE stage='score'")
+    set_stage_state(conn, LOCAL_JOB_ID, "apply", "skipped", retryable=False, validate_transition=False)
+    set_stage_state(conn, OTHER_JOB_ID, "apply", "skipped", error_code="DRY_RUN", retryable=True, validate_transition=False)
+    conn.commit()
+    before = [tuple(r) for r in conn.execute("SELECT * FROM job_materials_artifacts")]
+    monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: conn)
+    monkeypatch.setattr("jobctrl.apply.launcher.add_event", lambda *a: None)
+    claim = acquire_job(approval_required=False, run_ctx={"dry_run": True})
+    assert claim["job_id"] == OTHER_JOB_ID
+    assert reset_job_stage(conn, LOCAL_JOB_ID, "apply") == SHARED_URL
+    assert [tuple(r) for r in conn.execute("SELECT * FROM job_materials_artifacts")] == before
+
+
+def test_late_result_cannot_replace_local_stop_or_reset_or_successor(conn, monkeypatch):
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state, record_job_event, reset_job_stage
+
+    _insert_ready_job(conn, LOCAL_TENANT, LOCAL_JOB_ID)
+    ensure_job_stage_rows(conn, LOCAL_JOB_ID)
+    conn.execute("UPDATE job_stage_states SET state='succeeded' WHERE stage='score'")
+    record_job_event(conn, JobId(LOCAL_JOB_ID), "apply", "ApplyRunStarted", payload={"run_id": "original"})
+    set_stage_state(conn, LOCAL_JOB_ID, "apply", "skipped", retryable=False, validate_transition=False)
+    conn.commit()
+    monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: conn)
+    with pytest.raises(ValueError, match="prior admitted run"):
+        reset_job_stage(conn, LOCAL_JOB_ID, "apply")
+    for state in ["skipped", "pending", "running"]:
+        if state == "pending":
+            reset_job_stage(conn, LOCAL_JOB_ID, "apply")
+        if state == "running":
+            set_stage_state(conn, LOCAL_JOB_ID, "apply", "running")
+            record_job_event(conn, JobId(LOCAL_JOB_ID), "apply", "ApplyRunStarted", payload={"run_id": "successor"})
+            conn.commit()
+        before = [tuple(r) for r in conn.execute("SELECT * FROM job_stage_states")]
+        mark_result(JobId(LOCAL_JOB_ID), "applied", run_ctx={"run_id": "original"})
+        assert [tuple(r) for r in conn.execute("SELECT * FROM job_stage_states")] == before
+    assert conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type='ApplicationSubmitted'").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("overlap", ["before_intent", "after_intent", "lost_ack"])
+def test_owned_email_skip_overlap_retains_durable_authority(conn, monkeypatch, tmp_path, overlap):
+    """Real claim, final-intent writer, saga and SQLite event writer; fake transports only."""
+    from jobctrl.apply.launcher import SqliteApplyRunRepository, _authorize_posting_before_submit
+    from jobctrl.domain.apply import ApplyRun, new_apply_run_id
+    from jobctrl.domain.apply.process_manager import ApplySaga
+    from jobctrl.state import reset_job_stage
+    from tests.test_apply_saga import _FakeBrowser, _FakeAgent, _FakeEmailSender, _config, _prompt, _email_context
+
+    _insert_ready_job(conn, LOCAL_TENANT, LOCAL_JOB_ID)
+    conn.commit()
+    monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: conn)
+    monkeypatch.setattr("jobctrl.apply.launcher.add_event", lambda *a: None)
+    accepted = tmp_path / "accepted"
+    accepted.mkdir()
+    files = [accepted / "resume.md", accepted / "resume.pdf"]
+    for file in files:
+        file.write_bytes(b"Owned synthetic accepted artifact: " + file.suffix.encode())
+    for artifact_type, file in zip(("tailored_resume", "resume_pdf"), files):
+        conn.execute("UPDATE job_materials_artifacts SET path=? WHERE job_id=? AND artifact_type=?", (str(file), LOCAL_JOB_ID, artifact_type))
+    conn.commit()
+
+    def fingerprint():
+        return hashlib.sha256(repr([tuple(r) for r in conn.execute("SELECT * FROM job_materials_artifacts")]).encode() + b"".join(file.read_bytes() for file in files)).hexdigest()
+
+    before = fingerprint()
+    context = {"run_id": str(new_apply_run_id())}
+    assert acquire_job(target_job_id=JobId(LOCAL_JOB_ID), approval_required=False, run_ctx=context)
+    claimed_stage = dict(conn.execute("SELECT state,version,attempt_count FROM job_stage_states WHERE job_id=? AND stage='apply'", (LOCAL_JOB_ID,)).fetchone())
+
+    def skip():
+        with sqlite3.connect(tmp_path / "jobctrl.db") as writer:
+            writer.execute("UPDATE job_stage_states SET state='skipped',error_code=NULL,retryable=0,version=version+1 WHERE tenant_id=? AND job_id=? AND stage='apply'", (LOCAL_TENANT, LOCAL_JOB_ID))
+
+    class Agent(_FakeAgent):
+        def submit_application(self, **kwargs):
+            result = super().submit_application(**kwargs)
+            if overlap == "before_intent":
+                skip()
+            return result
+
+    class Sender(_FakeEmailSender):
+        def send_email_application(self, candidate):
+            # Intent must already be committed and visible to a second connection.
+            with sqlite3.connect(tmp_path / "jobctrl.db") as observer:
+                assert observer.execute("SELECT COUNT(*) FROM job_events WHERE event_type='ApplySubmitIntended'").fetchone()[0] == 1
+            result = super().send_email_application(candidate)
+            skip()
+            if overlap == "lost_ack":
+                raise TimeoutError("synthetic acceptance with lost acknowledgement")
+            return result
+
+    sender = Sender()
+    saga = ApplySaga(browser_port=_FakeBrowser(), agent_port=Agent(behaviour="email_only"),
+                     repository=SqliteApplyRunRepository(), email_sender=sender,
+                     availability_authorizer=_authorize_posting_before_submit)
+    run = ApplyRun.start(tenant_id=TenantId(LOCAL_TENANT), job_id=JobId(LOCAL_JOB_ID),
+                         run_id=context["run_id"], started_at=TIMESTAMP, worker_id=1, model="synthetic")
+    outcome = saga.run(apply_run=run, browser_config=_config(), prompt=_prompt(), model="synthetic",
+                       posting_url=SHARED_URL, email_application_context=_email_context(
+                           approved_recipient_email="apply@example.com", approved_attachment_artifact_id="resume-pdf-1",
+                           attachment_path=str(files[1])))
+    mark_result(JobId(LOCAL_JOB_ID), "applied" if outcome.apply_run.is_succeeded else "failed", run_ctx=context)
+    assert conn.execute("SELECT state FROM job_stage_states WHERE job_id=? AND stage='apply'", (LOCAL_JOB_ID,)).fetchone()[0] == "skipped"
+    settled_stage = dict(conn.execute("SELECT state,version,attempt_count FROM job_stage_states WHERE job_id=? AND stage='apply'", (LOCAL_JOB_ID,)).fetchone())
+    intended = conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type='ApplySubmitIntended'").fetchone()[0]
+    assert intended == (0 if overlap == "before_intent" else 1)
+    assert len(sender.sent) == intended
+    for _ in range(3):
+        assert acquire_job(target_job_id=JobId(LOCAL_JOB_ID), approval_required=False) is None
+    if intended:
+        with pytest.raises(ValueError, match="intent"):
+            reset_job_stage(conn, LOCAL_JOB_ID, "apply")
+        import subprocess
+        import sys
+        (tmp_path / "owned_skip_probe").write_text("synthetic #1173")
+        restarted = subprocess.run([sys.executable, str(Path(__file__).with_name("apply_skip_restart_probe.py")),
+                                    str(tmp_path / "jobctrl.db"), LOCAL_JOB_ID], capture_output=True, text=True, timeout=30)
+        assert restarted.returncode == 0, restarted.stdout + restarted.stderr
+        print(restarted.stdout)
+    else:
+        # The exact local execution returned pre-intent; explicit reset is safe.
+        reset_job_stage(conn, LOCAL_JOB_ID, "apply")
+    after = fingerprint()
+    assert after == before
+    events = dict(conn.execute("SELECT event_type,COUNT(*) FROM job_events GROUP BY event_type").fetchall())
+    # Retain exact synthetic identities/counts in pytest output for independent inspection.
+    print(json.dumps({"overlap": overlap, "tenant": LOCAL_TENANT, "job": LOCAL_JOB_ID,
+                      "run": context["run_id"], "sender_calls": len(sender.sent), "events": events,
+                      "artifact_before": before, "artifact_after": after, "claimed_stage": claimed_stage, "settled_stage": settled_stage,
+                      "final_stage": dict(conn.execute("SELECT state,version,attempt_count FROM job_stage_states WHERE job_id=? AND stage='apply'", (LOCAL_JOB_ID,)).fetchone())}))
+
+
+def test_failed_batch_reset_cannot_release_a_skip_committed_after_selection(conn, monkeypatch, tmp_path):
+    from jobctrl.apply.launcher import reset_failed
+    from jobctrl.pipeline import retry
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state
+
+    _insert_ready_job(conn, LOCAL_TENANT, LOCAL_JOB_ID)
+    ensure_job_stage_rows(conn, LOCAL_JOB_ID)
+    set_stage_state(conn, LOCAL_JOB_ID, "apply", "failed", attempt_count=2, validate_transition=False)
+    conn.commit()
+    monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: conn)
+    reset = retry.reset_retry_stages
+
+    def skip_then_reset(*args, **kwargs):
+        with sqlite3.connect(tmp_path / "jobctrl.db") as writer:
+            writer.execute("UPDATE job_stage_states SET state='skipped',retryable=0,error_code=NULL WHERE job_id=? AND stage='apply'", (LOCAL_JOB_ID,))
+        return reset(*args, **kwargs)
+
+    monkeypatch.setattr(retry, "reset_retry_stages", skip_then_reset)
+    assert reset_failed() == 0
+    assert tuple(conn.execute("SELECT state,attempt_count FROM job_stage_states WHERE job_id=? AND stage='apply'", (LOCAL_JOB_ID,)).fetchone()) == ("skipped", 2)
+    assert conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type='StageReset'").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("state", ["skipped", "pending", "failed"])
+def test_retained_needs_verification_stop_blocks_without_intent_receipt(conn, monkeypatch, state):
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state, record_job_event, reset_job_stage
+
+    _insert_ready_job(conn, LOCAL_TENANT, LOCAL_JOB_ID)
+    ensure_job_stage_rows(conn, LOCAL_JOB_ID)
+    set_stage_state(conn, LOCAL_JOB_ID, "score", "succeeded", validate_transition=False)
+    set_stage_state(conn, LOCAL_JOB_ID, "apply", state, validate_transition=False)
+    record_job_event(conn, JobId(LOCAL_JOB_ID), "apply", "StageSkipped", payload={"previousState": "needs_verification"})
+    # Repeated Skip must not erase the retained reason either.
+    record_job_event(conn, JobId(LOCAL_JOB_ID), "apply", "StageSkipped", payload={"previousState": "skipped"})
+    conn.commit()
+    monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: conn)
+    for target in [JobId(LOCAL_JOB_ID), None]:
+        assert acquire_job(target_job_id=target, approval_required=False, run_ctx={"dry_run": True}) is None
+    with pytest.raises(ValueError, match="verification"):
+        reset_job_stage(conn, LOCAL_JOB_ID, "apply", reset_attempts=True)
+    assert conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type IN ('ApplyRunStarted','ApplySubmitIntended')").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("state", ["pending", "failed", "canceled"])
+def test_reset_cannot_use_stage_relabel_as_skipped_run_settlement(conn, monkeypatch, state):
+    from jobctrl.state import ensure_job_stage_rows, record_job_event, reset_job_stage, set_stage_state
+
+    _insert_ready_job(conn, LOCAL_TENANT, LOCAL_JOB_ID)
+    ensure_job_stage_rows(conn, LOCAL_JOB_ID)
+    set_stage_state(conn, LOCAL_JOB_ID, "score", "succeeded", validate_transition=False)
+    record_job_event(conn, JobId(LOCAL_JOB_ID), "apply", "ApplyRunStarted", payload={"run_id": "original"})
+    record_job_event(conn, JobId(LOCAL_JOB_ID), "apply", "StageSkipped", payload={"previousState": "running", "manualDisposition": "skip"})
+    set_stage_state(conn, LOCAL_JOB_ID, "apply", state, validate_transition=False, attempt_count=1)
+    conn.commit()
+    monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: conn)
+    before = [tuple(row) for row in conn.execute("SELECT * FROM job_stage_states")]
+    for target in [JobId(LOCAL_JOB_ID), None]:
+        assert acquire_job(target_job_id=target, approval_required=False, run_ctx={"dry_run": True}) is None
+    with pytest.raises(ValueError, match="prior admitted run"):
+        reset_job_stage(conn, LOCAL_JOB_ID, "apply", reset_attempts=True)
+    assert [tuple(row) for row in conn.execute("SELECT * FROM job_stage_states")] == before
+    # Exact local cleanup acknowledges settlement, but cannot itself release Skip.
+    release_lock(JobId(LOCAL_JOB_ID), {"run_id": "original"})
+    assert acquire_job(target_job_id=JobId(LOCAL_JOB_ID), approval_required=False, run_ctx={"dry_run": True}) is None
+    reset_job_stage(conn, LOCAL_JOB_ID, "apply")
+    assert acquire_job(target_job_id=JobId(LOCAL_JOB_ID), approval_required=False, run_ctx={"dry_run": True})
+
+
+def test_manual_skip_history_fences_final_intent_and_late_settlement_after_stage_relabel(conn, monkeypatch):
+    from jobctrl.apply.launcher import _authorize_posting_before_submit
+    from jobctrl.domain.errors import MissingInputError
+    from jobctrl.state import record_job_event, set_stage_state
+
+    _insert_ready_job(conn, LOCAL_TENANT, LOCAL_JOB_ID)
+    conn.commit()
+    monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: conn)
+    context = {"run_id": "original", "dry_run": True}
+    assert acquire_job(target_job_id=JobId(LOCAL_JOB_ID), approval_required=False, run_ctx=context)
+    record_job_event(conn, JobId(LOCAL_JOB_ID), "apply", "StageSkipped",
+                     payload={"previousState": "running", "manualDisposition": "skip"})
+    # A later label cannot restore the revoked run's permission to send or settle.
+    set_stage_state(conn, LOCAL_JOB_ID, "apply", "running", validate_transition=False)
+    conn.commit()
+    before = [tuple(row) for row in conn.execute("SELECT * FROM job_stage_states")]
+    with pytest.raises(MissingInputError, match="no longer owns"):
+        with _authorize_posting_before_submit(LOCAL_TENANT, LOCAL_JOB_ID, SHARED_URL, "original"):
+            pytest.fail("revoked execution entered final intent")
+    mark_result(JobId(LOCAL_JOB_ID), "applied", run_ctx=context)
+    assert [tuple(row) for row in conn.execute("SELECT * FROM job_stage_states")] == before
+    assert conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type IN ('ApplySubmitIntended','ApplicationSubmitted')").fetchone()[0] == 0

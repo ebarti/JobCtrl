@@ -49,3 +49,15 @@ describe("useRetryStageMutation", () => {
     expect(restored).toEqual(initialDetail);
   });
 });
+
+it("keeps uncertain Apply visible when reset is refused", async () => {
+  server.use(http.post("*/v1/jobs/:jobKey/actions/retry-stage", () =>
+    new HttpResponse(JSON.stringify({ ok: false, error: "submission_intent_recorded" }), { status: 400 })));
+  const { result, queryClient } = renderHookWithProviders(() => useRetryStageMutation());
+  const detail = { ...initialDetail, stages: [{ stage: "apply", state: "needs_verification" }] };
+  queryClient.setQueryData(jobsKeys.detail(LOCAL_TENANT, "job-1"), detail);
+  await act(async () => { result.current.mutate({ jobId: "job-1", stage: "apply" }); });
+  expect(queryClient.getQueryData(jobsKeys.detail(LOCAL_TENANT, "job-1"))).toEqual(detail);
+  await waitFor(() => expect(result.current.isError).toBe(true));
+  expect(queryClient.getQueryData(jobsKeys.detail(LOCAL_TENANT, "job-1"))).toEqual(detail);
+});

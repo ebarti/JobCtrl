@@ -496,6 +496,31 @@ recipient/attachment candidate. Terminal apply outcomes are
 `ApplicationFailed` (including the manual final-submit boundary), or
 `ApplyManualSkip` (manual-ATS skip).
 
+Manual Apply controls are canonical stage state plus durable event history.
+Manual Skip records `manualDisposition: "skip"`; that stop remains active across
+later local labels until a safe `StageReset` or manual Applied resolution.
+Selectors, readiness counts and the locked claim exclude manual Skip and any
+recorded submit intent for the exact tenant/job, independently of latest-run
+projections. Skip records its previous state in the event: a prior
+`needs_verification` remains a separate unresolved stop even without an intent
+receipt. Only retryable `DRY_RUN` skips remain automatically claimable.
+After availability refresh, admission rechecks the controls under the writer.
+An explicit reset acquires the writer and refuses submit intent, active ownership,
+Applied, Needs verification and nonmanual policy skips. The shared mixed-cohort
+reset rolls back all selected stages on refusal and retains caller transaction
+ownership. Accepted materials and historical events are unchanged.
+
+Skip is a local disposition; it neither dispatches provider cancellation nor
+asserts external completion. Final intent retains the existing run/stage fence.
+Settlement holds the writer and rejects a stopped stage or a successor run;
+recovery reads running ownership under the writer as well. Durable intent remains
+a retry blocker even if a late terminal event is recorded after a local stop.
+
+A Skip over an admitted run also retains that owner: reset waits for its exact
+local terminal result or cleanup acknowledgement (`LockReleased`). A local stage label alone
+cannot establish that active work ended. Submit intent still blocks retry after
+that settlement.
+
 **Seven safety invariants, and the mechanisms that enforce them:**
 
 1. **No model-owned final browser commit.** The use case stops ordinary live

@@ -179,3 +179,34 @@ describe("buildApplyAudit", () => {
     expect(JSON.stringify(audit)).not.toContain("background_check_consent");
   });
 });
+
+it("keeps original intent and local disposition distinct after a newer unrelated result", () => {
+  const audit = buildApplyAudit({ ...READY_INPUT, currentState: "skipped", manuallySkipped: true,
+    submitIntentRunIds: ["original-intent"], latestApplyRun: { runId: "newer", status: "succeeded", result: "dry_run", dryRun: true, startedAt: null, finishedAt: null } });
+  expect(audit.state).toBe("blocked");
+  expect(audit.hardBlockers.map((fact) => fact.code)).toEqual(["submission_intent_recorded", "manual_apply_skip"]);
+  expect(audit.summary).toContain("original-intent");
+  expect(audit.summary).toContain("reset do not prove");
+  expect(audit.reviewEvidenceAvailable).toBe(true);
+});
+
+it("retains original intent source after a manual Applied attestation without calling it unresolved", () => {
+  const audit = buildApplyAudit({ ...READY_INPUT, currentState: "succeeded", submitIntentRunIds: ["original"], intentManuallyResolved: true,
+    latestApplyRun: { runId: "original", status: "failed", result: "unknown", dryRun: false, startedAt: null, finishedAt: null } });
+  expect(audit.state).toBe("ready");
+  expect(audit.hardBlockers).toEqual([]);
+  expect(audit.sources).toContainEqual(expect.objectContaining({ kind: "submit_intent", detail: "original; manually recorded Applied" }));
+});
+
+it("keeps prior Needs verification explicit without inventing an intent receipt", () => {
+  const audit = buildApplyAudit({ ...READY_INPUT, currentState: "skipped", manuallySkipped: true, unresolvedSkippedOutcome: true });
+  expect(audit.state).toBe("blocked");
+  expect(audit.hardBlockers).toContainEqual(expect.objectContaining({ code: "submission_outcome_uncertain" }));
+  expect(audit.sources.some((entry) => entry.kind === "submit_intent")).toBe(false);
+});
+
+it("retains exact recorded submission evidence without mislabeling an accepted outcome as uncertain", () => {
+  const audit = buildApplyAudit({ ...READY_INPUT, currentState: "succeeded", submitIntentRunIds: ["original"], intentOutcomeRecorded: true });
+  expect(audit.hardBlockers).not.toContainEqual(expect.objectContaining({ code: "submission_intent_recorded" }));
+  expect(audit.sources).toContainEqual(expect.objectContaining({ kind: "submit_intent", detail: "original; submission recorded" }));
+});

@@ -192,3 +192,20 @@ describe("cancelJobAction", () => {
     ).get(TENANT_ID, JOB_ID) as Record<string, unknown>;
   }
 });
+
+it("Skip keeps the active attempt evidence without claiming provider cancellation", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-local-skip-"));
+  const dbPath = path.join(directory, "jobctrl.db");
+  initializeExactDatabase(dbPath);
+  const db = new Database(dbPath);
+  try {
+    db.prepare("INSERT INTO jobs (tenant_id,job_id,url,title,discovered_at) VALUES ('local',?,?,'Synthetic','2026-10-24')").run(JOB_ID, JOB_URL);
+    db.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,attempt_count,max_attempts,updated_at,started_at,retryable,metadata_json) VALUES ('local',?,'apply','running',2,3,'2026-10-24','2026-10-24',1,?)").run(JOB_ID, JSON.stringify({ run_id: "original" }));
+    markJobSkipped(db, JOB_ID, {});
+    const row = db.prepare("SELECT state,attempt_count,started_at,metadata_json FROM job_stage_states WHERE job_id=?").get(JOB_ID);
+    expect(row).toMatchObject({ state: "skipped", attempt_count: 2, started_at: "2026-10-24", metadata_json: JSON.stringify({ run_id: "original" }) });
+    expect(db.prepare("SELECT event_type,message FROM job_events").all()).toEqual([
+      { event_type: "StageSkipped", message: expect.stringContaining("in-flight submission may still complete") },
+    ]);
+  } finally { db.close(); fs.rmSync(directory, { recursive: true, force: true }); }
+});

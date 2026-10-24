@@ -745,3 +745,20 @@ test("keeps the job detail header Tab order aligned with its visual order", asyn
   await page.keyboard.press("Tab");
   await expect(drawer.getByRole("button", { name: "Sections" })).toBeFocused();
 });
+
+test("Job detail exposes local Skip limits on desktop and mobile after reload", async ({ page }) => {
+  const prohibited = watchProhibitedProductPathRequests(page);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`/jobs/${encodeURIComponent(QA_PLATFORM_JOB_ID)}?${FILTER_PARAMS}`);
+    const skip = page.getByRole("button", { name: "Skip", exact: true });
+    await expect(skip).toBeVisible();
+    await skip.focus();
+    await expect(skip).toBeFocused();
+    await expect(skip).toHaveAccessibleDescription(/Skip stops future Apply locally. In-flight submissions may still complete/);
+    await page.reload();
+    await expect(skip).toHaveAccessibleDescription(/In-flight submissions may still complete/);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+  }
+  expect(prohibited).toEqual([]);
+});
