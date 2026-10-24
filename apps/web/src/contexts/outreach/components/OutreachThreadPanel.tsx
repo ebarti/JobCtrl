@@ -20,6 +20,7 @@ import { DraftStatusBadge } from "./DraftStatusBadge.js";
 import { FollowUpPanel } from "./FollowUpPanel.js";
 import { GenerateDraftButton } from "./GenerateDraftButton.js";
 import { OutreachSendLogList } from "./OutreachSendLogList.js";
+import { RetainedOutreachSessions } from "./RetainedOutreachSessions.js";
 import { RejectDraftButton } from "./RejectDraftButton.js";
 
 export interface OutreachThreadPanelProps {
@@ -283,7 +284,16 @@ function OutreachThreadBody({
 // review with its gate results + claim provenance + approve/reject/revise actions,
 // and the full generation history so a re-draft never hides prior generations
 // (INV-5). There is no send action anywhere (INV-1).
-export function OutreachThreadPanel({ contactId, jobId, draftKind, offerRevisionId }: OutreachThreadPanelProps): JSX.Element {
+export function OutreachThreadPanel(props: OutreachThreadPanelProps): JSX.Element {
+  const tenantId = useTenantId();
+  return (
+    <RetainedOutreachSessions key={tenantId} targetKey={JSON.stringify([props.contactId, props.jobId ?? null])}>
+      <OutreachThreadPanelSession {...props} />
+    </RetainedOutreachSessions>
+  );
+}
+
+function OutreachThreadPanelSession({ contactId, jobId, draftKind, offerRevisionId }: OutreachThreadPanelProps): JSX.Element {
   const [revision, setRevision] = useState<Revision | null>(null);
   const query = useOutreachThreadQuery({ contactId, ...(jobId ? { jobId } : {}) });
   const errorMessage = query.error instanceof Error ? query.error.message : "";

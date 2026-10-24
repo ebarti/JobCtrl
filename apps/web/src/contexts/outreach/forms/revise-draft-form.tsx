@@ -1,5 +1,4 @@
-import { JobCtrlApiError } from "@jobctrl/api-client";
-import { OutreachPublicationConflictSchema, ReviseOutreachDraftRequestSchema } from "@jobctrl/contracts";
+import { type OutreachPublicationConflict, ReviseOutreachDraftRequestSchema } from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
 import { useId, useState, type JSX } from "react";
 
@@ -11,6 +10,10 @@ import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { Button } from "../../../shared/ui/button.js";
 import { Field, FieldLabel } from "../../../shared/ui/field.js";
 import { Textarea } from "../../../shared/ui/textarea.js";
+import { useTenantId } from "../../../shared/providers/TenantProvider.js";
+import { RetainedOutreachSessions } from "../components/RetainedOutreachSessions.js";
+import { UnpublishedOutreachProposal } from "../components/UnpublishedOutreachProposal.js";
+import { readPublicationConflict } from "../lib/publication-conflict.js";
 import { useReviseDraftMutation } from "../hooks/useReviseDraftMutation.js";
 
 export interface ReviseDraftFormProps {
@@ -25,7 +28,16 @@ export interface ReviseDraftFormProps {
 // TanStack Form + Zod safeParse (no zod-form-adapter). Editing only the body; the
 // server re-runs the full truthfulness gate stack against the edited text and
 // returns a new gated candidate, so prior generations stay in the history (INV-5).
-export function ReviseDraftForm({
+export function ReviseDraftForm(props: ReviseDraftFormProps): JSX.Element {
+  const tenantId = useTenantId();
+  return (
+    <RetainedOutreachSessions key={tenantId} targetKey={JSON.stringify([props.contactId, props.jobId ?? null, props.threadId])}>
+      <ReviseDraftSession {...props} />
+    </RetainedOutreachSessions>
+  );
+}
+
+function ReviseDraftSession({
   threadId,
   contactId,
   jobId,
@@ -38,7 +50,7 @@ export function ReviseDraftForm({
     featureFlags,
     "reviseOutreachDraft",
   );
-  const [retainedConflict, setRetainedConflict] = useState<ReturnType<typeof OutreachPublicationConflictSchema.parse> | null>(null);
+  const [retainedConflict, setRetainedConflict] = useState<OutreachPublicationConflict | null>(null);
   const [reconciled, setReconciled] = useState(false);
   const formId = useId();
   const unavailableReasonId = useId();
@@ -67,17 +79,10 @@ export function ReviseDraftForm({
       try {
         await mutation.mutateAsync(result.data);
       } catch (error) {
-        if (error instanceof JobCtrlApiError && error.status === 409) {
-          const response = error.responseBody;
-          if (response && typeof response === "object" && "outcome" in response && "threadId" in response && "unpublishedDraft" in response) {
-            const parsed = OutreachPublicationConflictSchema.safeParse({
-              outcome: response.outcome, threadId: response.threadId, unpublishedDraft: response.unpublishedDraft,
-            });
-            if (parsed.success) {
-              setRetainedConflict(parsed.data);
-              setReconciled(false);
-            }
-          }
+        const conflict = readPublicationConflict(error);
+        if (conflict && conflict.threadId === threadId) {
+          setRetainedConflict(conflict);
+          setReconciled(false);
         }
         // The mutation error is rendered below; resolve the form submission so
         // a recoverable API failure cannot escape the event handler.
@@ -124,19 +129,7 @@ export function ReviseDraftForm({
       ) : null}
       {mutationError ? <div role="alert" className="banner inline">{mutationError}</div> : null}
       {retainedConflict ? (
-        <div role="group" aria-label="Unpublished revision">
-          <p role="status">This revision was not published because Outreach changed. Your edits and completed checks are retained. Compare the current accepted message, reviews, sends and reminder before retrying.</p>
-          <details>
-            <summary>Unpublished message and completed verification</summary>
-            <pre className="whitespace-pre-wrap break-words">{retainedConflict.unpublishedDraft.bodyText}</pre>
-            <pre className="whitespace-pre-wrap break-words">{JSON.stringify(retainedConflict.unpublishedDraft.gateResults, null, 2)}</pre>
-            <pre className="whitespace-pre-wrap break-words">{JSON.stringify(retainedConflict.unpublishedDraft.provenance, null, 2)}</pre>
-          </details>
-          <label>
-            <input type="checkbox" checked={reconciled} onChange={(event) => setReconciled(event.target.checked)} />
-            I compared the current thread and want to verify this edit again
-          </label>
-        </div>
+        <UnpublishedOutreachProposal conflict={retainedConflict} mode="revision" reconciled={reconciled} onReconciled={setReconciled} disabled={mutation.isPending} />
       ) : null}
       <form.Subscribe selector={(state) => state.errors}>
         {(errors) => {

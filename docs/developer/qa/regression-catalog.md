@@ -561,7 +561,14 @@ one winner generation/event and no automatic regeneration or send replay.
 
 Frontend form/hook/panel regressions and `e2e/tests/outreach.spec.ts` cover visible
 conflict recovery, retained edits/checks after card replacement/removal and
-deliberate retry. Browser presentation fixtures are separate from HTTP/RPC
+deliberate retry. Include the real Offer recipient selector with a cached second
+recipient: an earlier recipient's edit, completion and comparison controls must
+remain suspended until returning to that recipient. Repeat for another job and
+for generation's purpose/offer-revision scope, including a completion arriving
+while another target is displayed. Exercise delayed generation and competing
+first creation through the normal generation caller, preserving completed body,
+checks and provenance across refetch and a failed deliberate retry. Global
+mutation retry defaults must never cause automatic regeneration. Browser presentation fixtures are separate from HTTP/RPC
 persistence proof. See the [publication design](../../architecture/tailoring.md#outreach-publication-boundary)
 and [user recovery](../../user/contacts-and-outreach.md#when-outreach-changes-during-verification).
 

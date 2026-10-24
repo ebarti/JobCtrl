@@ -1641,9 +1641,16 @@ remain recorded independently of publication.
 Refetch by contact and optional job to inspect the current thread; a competing
 first creation may have a different thread ID. Reconcile explicitly before
 retrying against that state. There is no automatic regeneration, send replay or
-idempotency guarantee in this protocol. The web editor retains text and conflict
-results across query/SSE refresh in the open page; it does not persist them
-across page reload or navigation.
+idempotency guarantee in this protocol. The web editor and generation control
+retain unpublished text, completed checks and provenance separately from a
+mutation error across query/SSE refresh and a failed deliberate retry. The normal
+generation caller re-reads by contact/job after conflict, so a competing creation
+can resolve to the winner's different thread ID. Retained sessions belong to their
+recipient/job; switching targets suspends the previous controls until returning
+to that target. Generation additionally scopes purpose and offer revision. A
+comparison is required before retrying; no automatic generation retry occurs.
+Private proposals clear on success or explicit discard. They are not persisted
+across panel unmount, tenant change, page reload or navigation.
 
 Send logging and follow-ups (Phase 4) are simple state transitions hosted directly
 in the TypeScript API. **No route sends anything (INV-1)** — `send-logs` records a

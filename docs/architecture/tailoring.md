@@ -296,7 +296,16 @@ variant; the API maps it to HTTP 409. No accepted ID or generation is assigned t
 the returned private proposal. The web editor is mounted independently of the
 current review card, retaining text and completed results across refetch/SSE,
 and asks for deliberate reconciliation before another verification attempt.
-This retention is limited to the open page. The protocol does not add contact
+Open-page sessions partition the mounted review/editor state by tenant, contact
+and optional job. Inactive recipient/job sessions remain hidden and inert,
+including their reconciliation controls; returning to the original target resumes
+its work. Pending callbacks retain that target's own mutation context. Tenant
+changes reset these sessions. Generation also partitions by purpose and offer
+revision, retains its private conflict separately from the mutation error and
+presents the completed body, checks and provenance. Another generation requires
+explicit comparison, and a failed deliberate retry preserves the last proposal.
+Neither generation nor conflict recovery automatically retries a model call.
+This retention ends when the panel unmounts or the page reloads. The protocol does not add contact
 edit CAS, command replay identities or any send transport.
 
 ## Key Code Pointers
