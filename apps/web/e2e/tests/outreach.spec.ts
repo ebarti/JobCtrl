@@ -22,6 +22,72 @@ const SENSITIVE_VALUES = [
   "Hi Casey, I saw the platform role and wanted to introduce myself.",
 ];
 
+test("two contact editors retain a stale draft and reconcile explicitly on a narrow viewport", async ({ page }) => {
+  const dbPath = loadE2eDbPath();
+  seedOutreachPlanner(dbPath);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const newer = await page.context().newPage();
+  try {
+    await page.goto(`/outreach/${CONTACT_ID}`);
+    await newer.goto(`/outreach/${CONTACT_ID}`);
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    await newer.getByRole("button", { name: "Edit", exact: true }).click();
+    const staleEditor = page.getByRole("dialog", { name: "Edit contact" });
+    const newerEditor = newer.getByRole("dialog", { name: "Edit contact" });
+    await staleEditor.getByLabel("Employer", { exact: true }).fill("Stale draft employer");
+    await staleEditor.getByLabel("Value", { exact: true }).nth(1).fill("My reconciled contact name");
+    await newerEditor.getByLabel("Employer", { exact: true }).fill("Newer saved employer");
+    const updated = newer.waitForResponse((response) => response.url().endsWith(`/v1/contacts/${CONTACT_ID}`) && response.request().method() === "PATCH");
+    await newerEditor.getByRole("button", { name: "save contact", exact: true }).click();
+    expect((await updated).status()).toBe(200);
+    await expect(newerEditor).toBeHidden();
+    const db = new Database(dbPath);
+    const snapshot = () => ({
+      contact: db.prepare("SELECT * FROM contacts WHERE contact_id = ?").get(CONTACT_ID),
+      facts: db.prepare("SELECT * FROM contact_attributes WHERE contact_id = ? ORDER BY attribute_id").all(CONTACT_ID),
+      events: db.prepare("SELECT * FROM job_events WHERE entity_kind = 'contact' AND entity_ref = ? ORDER BY event_id").all(CONTACT_ID),
+      drafts: db.prepare("SELECT * FROM outreach_drafts WHERE thread_id = ? ORDER BY draft_id").all(CONTACT_THREAD_ID),
+      sends: db.prepare("SELECT * FROM outreach_send_logs WHERE thread_id = ? ORDER BY send_log_id").all(CONTACT_THREAD_ID),
+    });
+    try {
+      const accepted = snapshot();
+      const rejected = page.waitForResponse((response) => response.url().endsWith(`/v1/contacts/${CONTACT_ID}`) && response.request().method() === "PATCH");
+      await staleEditor.getByRole("button", { name: "save contact", exact: true }).click();
+      expect((await rejected).status()).toBe(409);
+      await expect(staleEditor.getByRole("alert")).toContainText("Your draft is retained");
+      await expect(staleEditor.getByLabel("Employer", { exact: true })).toHaveValue("Stale draft employer");
+      await expect(staleEditor.getByLabel("Value", { exact: true }).nth(1)).toHaveValue("My reconciled contact name");
+      expect(snapshot()).toEqual(accepted);
+      await expect(staleEditor.getByRole("button", { name: "save contact", exact: true })).toBeDisabled();
+      const load = staleEditor.getByRole("button", { name: "Load latest contact", exact: true });
+      await load.focus();
+      await page.keyboard.press("Enter");
+      await expect(staleEditor.getByText("Newer saved employer", { exact: true })).toBeVisible();
+      const review = staleEditor.getByRole("button", { name: "I reviewed the latest contact; keep my draft", exact: true });
+      await review.focus();
+      await page.keyboard.press("Enter");
+      await staleEditor.getByLabel("Employer", { exact: true }).fill("Newer saved employer");
+      expect(await staleEditor.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+      const saved = page.waitForResponse((response) => response.url().endsWith(`/v1/contacts/${CONTACT_ID}`) && response.request().method() === "PATCH");
+      await staleEditor.getByRole("button", { name: "save contact", exact: true }).focus();
+      await page.keyboard.press("Enter");
+      expect((await saved).status()).toBe(200);
+      await expect(staleEditor).toBeHidden();
+      const reconciled = snapshot();
+      expect(reconciled.contact).toMatchObject({ employer: "Newer saved employer" });
+      expect(reconciled.facts).toHaveLength(3);
+      expect(reconciled.events).toHaveLength(accepted.events.length + 2);
+      for (const factId of ["attr-e2e-title", "attr-e2e-email"]) {
+        expect(reconciled.facts.find((fact) => (fact as { attribute_id: string }).attribute_id === factId))
+          .toEqual(accepted.facts.find((fact) => (fact as { attribute_id: string }).attribute_id === factId));
+      }
+      expect(reconciled.drafts).toEqual(accepted.drafts);
+      expect(reconciled.sends).toEqual(accepted.sends);
+      await expect(page.getByRole("heading", { name: "My reconciled contact name", exact: true })).toBeVisible();
+    } finally { db.close(); }
+  } finally { await newer.close(); }
+});
+
 test.afterEach(() => {
   const db = new Database(loadE2eDbPath());
   try {

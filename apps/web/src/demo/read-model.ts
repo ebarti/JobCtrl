@@ -1665,6 +1665,7 @@ export const DEMO_READ_MODEL = {
       "contact-demo-hiring-partner": {
         ok: true,
         contact: {
+          fingerprint: "d".repeat(64),
           contactId: "contact-demo-hiring-partner",
           displayName: "Synthetic hiring partner",
           role: "recruiter",

@@ -45,6 +45,7 @@ export interface ContactFormValues {
 export interface ContactFormProps {
   submitLabel: string;
   pending: boolean;
+  saveBlocked?: boolean;
   onSubmit: (request: ContactCreateRequest) => void | Promise<void>;
   initialValues?: Partial<ContactFormValues>;
   lockedJobId?: string;
@@ -87,6 +88,7 @@ function assembleCandidate(values: ContactFormValues) {
 export function ContactForm({
   submitLabel,
   pending,
+  saveBlocked = false,
   onSubmit,
   initialValues,
   lockedJobId,
@@ -297,7 +299,7 @@ export function ContactForm({
           <div className="form-actions">
             <Button
               type="submit"
-              disabled={pending || isSubmitting}
+              disabled={pending || isSubmitting || saveBlocked}
             >
               {pending || isSubmitting ? "Saving…" : submitLabel}
             </Button>

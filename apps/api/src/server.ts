@@ -146,6 +146,7 @@ import {
   importContacts,
   listContacts,
   updateContact,
+  ContactRevisionConflictError,
 } from "./contacts.js";
 import {
   validatePublicHttpUrl,
@@ -3736,6 +3737,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       try {
         return { ok: true, contact: updateContact(db, decodeRouteParam(request.params.contactId), body) };
       } catch (error) {
+        if (error instanceof ContactRevisionConflictError) {
+          void reply.code(409);
+          return { ok: false, error: "contact_revision_conflict", message: error.message };
+        }
         if (error instanceof ContactNotFoundError) {
           void reply.code(404);
           return { ok: false, error: "contact_not_found", message: error.message };
