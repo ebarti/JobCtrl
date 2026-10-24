@@ -103,6 +103,7 @@ async def test_known_hard_block_finishes_without_material_dispatch(monkeypatch, 
     SimpleNamespace(status="ok", material_preparation_blocked=False),
 ])
 async def test_eligible_legacy_or_malformed_flag_retains_material_guards(monkeypatch, output):
+    monkeypatch.setattr(prep.workflow, "patched", lambda _marker: True)
     calls = []
 
     async def execute(activity_fn, _payload, **_kwargs):
@@ -118,6 +119,7 @@ async def test_eligible_legacy_or_malformed_flag_retains_material_guards(monkeyp
 @pytest.mark.asyncio
 @pytest.mark.parametrize("steps", [["score"], ["pdf"], ["score", "pdf"], ["tailor", "cover", "pdf"]])
 async def test_score_only_export_and_explicit_material_paths_stay_unchanged(monkeypatch, steps):
+    monkeypatch.setattr(prep.workflow, "patched", lambda _marker: True)
     calls = []
 
     async def execute(activity_fn, _payload, **_kwargs):

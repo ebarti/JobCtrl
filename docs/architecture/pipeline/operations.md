@@ -724,6 +724,20 @@ defensive dashboard read keep them truthful on existing databases:
   histories retain their original commands. This removes dependence on remote
   model-slot occupancy; it does not shorten model calls or bypass spend,
   cancellation ownership, or accepted-result preservation checks.
+  Per-job Score cancellation uses a separate replay marker, waits for the
+  activity's bounded cancellation cleanup, and settles only its exact owned
+  stage. Direct Score activities carry a cooperative stop event and fence both
+  score publication and terminal stage writes against cancellation or a newer
+  owner. Lost ownership skips the predecessor instead of retrying it. Startup
+  recovery also checks ordinary preparation owners against their exact Temporal
+  execution, canonical job and selected step; unavailable history leaves the
+  row untouched. Already committed results survive cancellation.
+  Direct admission and cached-score reuse check current ownership under the
+  writer lock before changing a stage. Recovery mutates only the verified job
+  for a single-job preparation and requires an explicit known terminal status;
+  an unknown status never releases ownership. To revoke queued work, cancel its
+  exact workflow and observe terminalization before resetting the stage. A
+  reset-only action changes local stage state without canceling Temporal work.
 
 ## Recurring Saved Posting Checks
 
