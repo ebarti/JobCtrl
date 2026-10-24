@@ -73,7 +73,7 @@ from jobctrl.domain.enrichment.value_objects import (
     FullDescription,
 )
 from jobctrl.domain.identifiers import JobId, canonical_job_id
-from jobctrl.domain.errors import ConfigurationError, TransientNetworkError
+from jobctrl.domain.errors import ConfigurationError, EnrichmentCanceledError, TransientNetworkError
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
@@ -1689,7 +1689,7 @@ def scrape_site_batch(
             for i, (job_id, title) in enumerate(targets):
                 claim_version: int | None = None
                 if cancel_event is not None and cancel_event.is_set():
-                    raise TransientNetworkError("enrichment canceled")
+                    raise EnrichmentCanceledError("enrichment canceled")
                 log.info(
                     "[%d/%d] %s",
                     i + 1,
@@ -1863,7 +1863,7 @@ def scrape_site_batch(
                         page=page,
                     )
                     if cancel_event is not None and cancel_event.is_set():
-                        raise TransientNetworkError("enrichment canceled")
+                        raise EnrichmentCanceledError("enrichment canceled")
                     stats["processed"] += 1
 
                     tier = cascade_result.get("tier_used")
@@ -2972,7 +2972,7 @@ def _refresh_selected_apply_targets(
         if not _is_linkedin_job("linkedin", identity.posting_url.value):
             continue
         if cancel_event is not None and cancel_event.is_set():
-            raise TransientNetworkError("enrichment canceled")
+            raise EnrichmentCanceledError("enrichment canceled")
         started_at = utc_now()
         method = "navigation_error"
         target: str | None = None
@@ -3007,7 +3007,7 @@ def _refresh_selected_apply_targets(
         except Exception:  # noqa: BLE001 - persist a code-owned, non-sensitive failure
             method = "navigation_error"
         if cancel_event is not None and cancel_event.is_set():
-            raise TransientNetworkError("enrichment canceled")
+            raise EnrichmentCanceledError("enrichment canceled")
         recovered_url = ApplicationUrl(value=target) if target is not None else None
         result = (
             recovered_url
@@ -3311,7 +3311,7 @@ def _repair_legacy_missing_apply_url_content_trust_candidates(
     for row in rows:
         try:
             if cancel_event is not None and cancel_event.is_set():
-                raise TransientNetworkError("enrichment canceled")
+                raise EnrichmentCanceledError("enrichment canceled")
             tenant_id = TenantId(str(row["tenant_id"] if isinstance(row, sqlite3.Row) else row[0]))
             job_id = canonical_job_id(str(row["job_id"] if isinstance(row, sqlite3.Row) else row[1]))
             aggregate = repo.load(tenant_id, job_id)
@@ -3456,7 +3456,7 @@ def _reset_authenticated_linkedin_retry_candidates(
         for row in rows:
             try:
                 if cancel_event is not None and cancel_event.is_set():
-                    raise TransientNetworkError("enrichment canceled")
+                    raise EnrichmentCanceledError("enrichment canceled")
                 attempts_json = row["attempts_json"] if isinstance(row, sqlite3.Row) else row[5]
                 current_status = row["current_status"] if isinstance(row, sqlite3.Row) else row[3]
                 attempt_count = (
@@ -3485,7 +3485,7 @@ def _reset_authenticated_linkedin_retry_candidates(
                     if not _last_authenticated_apply_url_recovery_retryable(attempts_json):
                         continue
                     if cancel_event is not None and cancel_event.is_set():
-                        raise TransientNetworkError("enrichment canceled")
+                        raise EnrichmentCanceledError("enrichment canceled")
                     if resolver is None and resolver_factory is not None:
                         try:
                             resolver = resolver_factory()
@@ -3517,7 +3517,7 @@ def _reset_authenticated_linkedin_retry_candidates(
                         # gate already recorded the budget/rate outcome.
                         continue
                     if cancel_event is not None and cancel_event.is_set():
-                        raise TransientNetworkError("enrichment canceled")
+                        raise EnrichmentCanceledError("enrichment canceled")
                     apply_url_value = resolved.get("application_url")
                     recovered = ApplicationUrl(value=str(apply_url_value)) if apply_url_value else None
                     # Every authenticated pass records an attempt so a
@@ -4540,7 +4540,7 @@ def _run_detail_scraper(
 
         def _scrape_site(site: str) -> dict:
             if cancel_event is not None and cancel_event.is_set():
-                raise TransientNetworkError("enrichment canceled")
+                raise EnrichmentCanceledError("enrichment canceled")
             thread_conn = db_module.get_connection(database_path)
             try:
                 jobs = planned_site_jobs[site]
@@ -4618,7 +4618,7 @@ def _run_detail_scraper(
                     cancel_event=cancel_event,
                     activity_lease=activity_lease,
                 )
-                raise TransientNetworkError("enrichment canceled")
+                raise EnrichmentCanceledError("enrichment canceled")
             _release_unstarted_enrichment_cohort(
                 conn,
                 owned_job_ids,
@@ -4641,7 +4641,7 @@ def _run_detail_scraper(
                     cancel_event=cancel_event,
                     activity_lease=activity_lease,
                 )
-                raise TransientNetworkError("enrichment canceled")
+                raise EnrichmentCanceledError("enrichment canceled")
             jobs = planned_site_jobs[site]
             log.info("%s -- %d jobs", site, len(jobs))
             try:

@@ -753,7 +753,7 @@ async def _live_enrichment_probe(
 
 
 @pytest.mark.asyncio
-async def test_discover_workflow_starts_enrichment_before_source_family_completes() -> None:
+async def test_discover_workflow_starts_enrichment_before_source_family_completes(tmp_path, caplog) -> None:
     """A committed job must not wait for a broad-board family crawl to finish."""
 
     _reset_state()
@@ -779,15 +779,15 @@ async def test_discover_workflow_starts_enrichment_before_source_family_complete
             workflow_runner=UnsandboxedWorkflowRunner(),
         ):
             try:
-                result = await asyncio.wait_for(
-                    env.client.execute_workflow(
-                        DiscoverWorkflow.run,
-                        DiscoverWorkflowInput(tenant_id="local"),
-                        id=f"{queue}-wf",
-                        task_queue=queue,
-                    ),
-                    timeout=15,
+                handle = await env.client.start_workflow(
+                    DiscoverWorkflow.run,
+                    DiscoverWorkflowInput(tenant_id="local"),
+                    id=f"{queue}-wf",
+                    task_queue=queue,
                 )
+                result = await asyncio.wait_for(handle.result(), timeout=15)
+                history = await handle.fetch_history()
+                (tmp_path / "handoff-history.json").write_text(history.to_json())
             except TimeoutError:
                 pytest.fail(f"workflow timed out with events: {_EVENTS!r}")
 
@@ -795,6 +795,12 @@ async def test_discover_workflow_starts_enrichment_before_source_family_complete
     kinds = [event[0] for event in _EVENTS]
     assert kinds.index("live_enrichment_started") < kinds.index("source_completed")
     assert kinds.index("live_enrichment_canceled") < kinds.index("terminal_enrichment")
+
+    await Replayer(
+        workflows=[DiscoverWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ).replay_workflow(history)
+    assert not [record for record in caplog.records if record.levelno >= 40]
 
 
 @pytest.mark.asyncio

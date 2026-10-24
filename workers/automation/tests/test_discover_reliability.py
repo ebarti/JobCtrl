@@ -2607,6 +2607,48 @@ def test_live_recovery_selector_is_scoped_and_retryable(
         close_connection(db_path)
 
 
+@pytest.mark.parametrize("in_flight", [False, True])
+def test_cooperative_enrichment_stop_propagates_without_crash_log(monkeypatch, caplog, in_flight):
+    stop = threading.Event()
+    done = threading.Event()
+    done.set()
+    monkeypatch.setattr(runner, "_count_pending", lambda *_args: 1)
+    original_enrich = runner._run_enrich
+
+    def interrupted_enrich(**kwargs):
+        stop.set()
+        return original_enrich(**kwargs)
+
+    if in_flight:
+        monkeypatch.setattr(runner, "_run_enrich", interrupted_enrich)
+    else:
+        stop.set()
+    result = {}
+    with pytest.raises(TransientNetworkError):
+        runner._run_discovery_enrichment_until_idle(done, result, workers=1, limit=0, cancel_event=stop)
+    assert result == {}
+    assert not [record for record in caplog.records if record.levelno >= 40]
+
+
+def test_unexpected_failure_racing_enrichment_stop_remains_a_failure(monkeypatch, caplog):
+    stop = threading.Event()
+    done = threading.Event()
+    done.set()
+    monkeypatch.setattr(runner, "_count_pending", lambda *_args: 1)
+
+    def broken_enrich(**_kwargs):
+        stop.set()
+        raise ValueError("synthetic real failure")
+
+    monkeypatch.setattr(runner, "_run_enrich", broken_enrich)
+    result = {}
+    runner._run_discovery_enrichment_until_idle(done, result, workers=1, limit=0, cancel_event=stop)
+    assert result["status"] == "failed"
+    assert result["error_class"] == "ValueError"
+    assert result["retryable"] is False
+    assert any(record.levelno >= 40 for record in caplog.records)
+
+
 def test_until_idle_records_systemic_failure_with_full_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
