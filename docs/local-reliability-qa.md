@@ -194,6 +194,21 @@ SQLite connections to prove a concurrent approval cannot cross the suppression
 eligibility/mutation window, and inject a post-mutation failure to prove the
 complete reconciliation and suppression sweep rolls back.
 
+## Transient Provider Recovery
+
+Run locked `pytest tests/test_provider_transient_recovery.py tests/test_provider_availability_recovery.py tests/test_saved_default_model.py tests/test_workflow_job_preparation.py`
+with provider-routing, analysis and determination checks. Use owned synthetic
+SDK boundaries to reproduce overload followed by overlapping requests on the
+same selected model. Temporary rate, server and connection failures must not
+permanently exclude that route or turn its next retry into non-retryable
+unavailability. Authentication rejection, exhausted usage allowances and actual
+unavailable execution still exclude their provider or model scope. Exercise the
+real Score activity and preparation workflow through a failed first call and a
+successful second attempt, then replay its history. Preserve bounded retry
+budgets, provider/model provenance, accepted artifacts and semantic-review gates.
+These tests prove failure handling; a separate configured-provider run proves
+live availability.
+
 ## Agent Runtime Integration
 
 Run the pool and actual-kit adapter checks together with existing provider
