@@ -109,6 +109,16 @@ class EmailApplicationContext:
     attachment_path: str
     approved_recipient_email: str = ""
     approved_attachment_artifact_id: str = ""
+    source_binding: Mapping[str, Any] | None = None
+    profile_version: int | None = None
+
+
+class EmailApprovalRefused(Exception):
+    """Stable, non-private reason from the final canonical authority reader."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(reason)
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +156,7 @@ class ApplySaga:
         timeout_seconds: int | None = None,
         submission_authorizer: Callable[[], None] | None = None,
         availability_authorizer: Callable[[str, str, str, str], Any] | None = None,
+        email_intent_authorizer: Callable[..., Any] | None = None,
     ) -> None:
         self._browser = browser_port
         self._agent = agent_port
@@ -158,6 +169,7 @@ class ApplySaga:
         # capability. The model-driven browser remains transport-locked.
         self._submission_authorizer = submission_authorizer or (lambda: None)
         self._availability_authorizer = availability_authorizer or (lambda tenant_id, job_id, posting_url, run_id: nullcontext())
+        self._email_intent_authorizer = email_intent_authorizer
 
     # ------------------------------------------------------------------
     # Public API
@@ -503,6 +515,7 @@ class ApplySaga:
 
         candidate = _build_email_application_candidate(result.recipient_email, context)
         candidate_payload = _candidate_payload(candidate, run_id=str(run.run_id), duration_ms=duration_ms)
+        before_candidate = run
         run = run.record_event(
             event_type="EmailApplicationCandidateRecorded",
             occurred_at=_utc_now(),
@@ -560,8 +573,16 @@ class ApplySaga:
                 retryable=True,
             )
 
+        persisting_intent = False
         try:
-            with self._availability_authorizer(str(run.tenant_id), str(run.job_id), posting_url, str(run.run_id)):
+            authorization = (
+                self._email_intent_authorizer(
+                    str(run.tenant_id), str(run.job_id), posting_url, str(run.run_id), candidate, context,
+                ) if self._email_intent_authorizer else
+                self._availability_authorizer(str(run.tenant_id), str(run.job_id), posting_url, str(run.run_id))
+            )
+            with authorization as authority:
+                persisting_intent = True
                 intended_at = _utc_now()
                 intended_run = run.record_event(
                     event_type="ApplySubmitIntended",
@@ -575,15 +596,30 @@ class ApplySaga:
                         "material_version": str(material_version or ""),
                         "submission_channel": "email",
                         "intended_at": intended_at,
+                        **(authority or {}),
                     },
                 )
                 self._repository.save(intended_run)
             run = intended_run
+        except EmailApprovalRefused as exc:
+            run = before_candidate.record_event(
+                event_type="ApplySubmissionBlocked", occurred_at=_utc_now(), level="warn",
+                message="Current exact application approval is required before sending.",
+                payload={"reason": exc.reason, "submission_channel": "email"},
+            )
+            return run, Failed(error=exc.reason, retryable=True)
         except Exception:  # noqa: BLE001 - freshness/intent ownership port
-            run = run.record_event(event_type="ApplySubmissionBlocked", occurred_at=_utc_now(), level="warn",
-                                   message="Check availability or inspect the employer posting before retrying.",
-                                   payload={"reason": "posting_availability_unverified", "submission_channel": "email"})
-            return run, Failed(error="POSTING_AVAILABILITY_UNVERIFIED: check availability or inspect the employer posting", retryable=True)
+            reason = "apply_intent_persistence_failed" if persisting_intent else "posting_availability_unverified"
+            message = (
+                "Application intent could not be committed; no send was admitted."
+                if persisting_intent else
+                "Check availability or inspect the employer posting before retrying."
+            )
+            run = before_candidate.record_event(
+                event_type="ApplySubmissionBlocked", occurred_at=_utc_now(), level="warn",
+                message=message, payload={"reason": reason, "submission_channel": "email"},
+            )
+            return run, Failed(error=f"{reason.upper()}: {message}", retryable=True)
 
         try:
             send_result = self._email_sender.send_email_application(candidate)

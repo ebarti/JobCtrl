@@ -1128,6 +1128,14 @@ def _acquire_job_candidate(
                 ),
             },
         )
+        # Capture canonical sources before releasing claim admission. A writer
+        # must not replace accepted material in the claim-to-capture gap.
+        job_dict = _row_to_job_dict(row, run_id=run_id)
+        job_dict["email_source_binding"] = _email_source_binding(conn, tenant_id, job_id, job_dict)
+        decision = _latest_apply_review_decision(conn, tenant_id=tenant_id, job_id=job_id)
+        if decision:
+            job_dict["approved_email_recipient"] = str(decision.get("email_recipient") or "")
+            job_dict["approved_email_attachment_artifact_id"] = str(decision.get("email_attachment_artifact_id") or "")
         conn.commit()
 
         if run_ctx is not None:
@@ -1137,24 +1145,12 @@ def _acquire_job_candidate(
             run_ctx["application_url"] = apply_url
             run_ctx["tenant_id"] = tenant_id
             run_ctx["job_id"] = job_id
-            run_ctx["profile_version"] = _current_profile_version(
-                conn,
-                tenant_id=tenant_id,
-            )
+            run_ctx["profile_version"] = job_dict["email_source_binding"]["profile_version"]
             run_ctx["repeat_application_override_id"] = repeat_override_id
             run_ctx["repeat_application_evidence_fingerprint"] = (
                 repeat_assessment.get("evidenceFingerprint") if repeat_assessment else None
             )
 
-        job_dict = _row_to_job_dict(row, run_id=run_id)
-        decision = _latest_apply_review_decision(
-            conn,
-            tenant_id=tenant_id,
-            job_id=job_id,
-        )
-        if decision:
-            job_dict["approved_email_recipient"] = str(decision.get("email_recipient") or "")
-            job_dict["approved_email_attachment_artifact_id"] = str(decision.get("email_attachment_artifact_id") or "")
         return job_dict
     except Exception:
         conn.rollback()
@@ -1396,6 +1392,7 @@ def mark_result(
             "apply",
             "succeeded",
             tenant_id=stable_tenant_id,
+            attempt_count=_attempt_count_for(conn, tenant_id=stable_tenant_id, job_id=stable_job_id),
             finished_at=now,
             duration_ms=duration_ms,
             validate_transition=False,
@@ -1432,6 +1429,7 @@ def mark_result(
             "apply",
             "skipped",
             tenant_id=stable_tenant_id,
+            attempt_count=_attempt_count_for(conn, tenant_id=stable_tenant_id, job_id=stable_job_id),
             finished_at=now,
             duration_ms=duration_ms,
             error_code="DRY_RUN",
@@ -1471,6 +1469,7 @@ def mark_result(
             "apply",
             "needs_verification",
             tenant_id=stable_tenant_id,
+            attempt_count=_attempt_count_for(conn, tenant_id=stable_tenant_id, job_id=stable_job_id),
             finished_at=now,
             duration_ms=duration_ms,
             error_code="APPLY_NEEDS_VERIFICATION",
@@ -1511,6 +1510,7 @@ def mark_result(
             "apply",
             "failed",
             tenant_id=stable_tenant_id,
+            attempt_count=_attempt_count_for(conn, tenant_id=stable_tenant_id, job_id=stable_job_id),
             finished_at=now,
             duration_ms=duration_ms,
             error_code=str(status).upper(),
@@ -1663,6 +1663,7 @@ def recover_ambiguous_running_apply(console: Console | None = None) -> int:
                         "apply",
                         "needs_verification",
                         tenant_id=tenant_id,
+                        attempt_count=_attempt_count_for(conn, tenant_id=tenant_id, job_id=job_id),
                         error_code="APPLY_NEEDS_VERIFICATION",
                         error_message="Live apply reached the submit-intent checkpoint without a terminal result.",
                         retryable=False,
@@ -1676,6 +1677,7 @@ def recover_ambiguous_running_apply(console: Console | None = None) -> int:
                         "apply",
                         "pending",
                         tenant_id=tenant_id,
+                        attempt_count=_attempt_count_for(conn, tenant_id=tenant_id, job_id=job_id),
                         next_action=(f"jobctrl apply --url {posting_url}" if posting_url else None),
                         validate_transition=False,
                     )
@@ -2078,8 +2080,134 @@ def _has_current_apply_review(conn, tenant_id: str, job_id: str) -> bool:
     )
 
 
+def _email_source_binding(conn, tenant_id: str, job_id: str, job) -> dict[str, Any]:
+    """Freeze exact source identities, including replacements within a generation.
+
+    This is a comparison of canonical source bytes/IDs, never a semantic judgment.
+    Missing files remain unavailable rather than becoming accepted empty content.
+    """
+    artifacts = conn.execute(
+        "SELECT generation,artifact_type,artifact_id,path,metadata_json FROM job_materials_artifacts "
+        "WHERE tenant_id=? AND job_id=? AND status='approved' AND superseded_at IS NULL "
+        "ORDER BY generation,artifact_type,artifact_id",
+        (tenant_id, job_id),
+    ).fetchall()
+    def file_hash(path):
+        try:
+            with Path(path).open("rb") as source:
+                digest = sha256()
+                size = 0
+                while chunk := source.read(1024 * 1024):
+                    digest.update(chunk)
+                    size += len(chunk)
+            return digest.hexdigest() if size else None
+        except (OSError, TypeError, ValueError):
+            return None
+
+    return {
+        "profile_version": _current_profile_version(conn, tenant_id=tenant_id),
+        "posting_url": job["url"],
+        "application_url": job["application_url"] or job["url"],
+        "materials_generation": job["materials_generation"],
+        "job": {key: job[key] for key in (
+            "title", "site", "description", "full_description", "resume_pdf_path",
+            "resume_pdf_artifact_id", "tailored_resume_path", "cover_letter_path",
+        )},
+        "artifacts": [list(row) for row in artifacts],
+        "files": {str(row[3]): file_hash(row[3]) for row in artifacts},
+    }
+
+
+def _email_binding_digest(value):
+    """Shared with the API: compact UTF-8 JSON arrays, preserving field order."""
+    return sha256(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _email_materials_digest(source):
+    return _email_binding_digest([row + [source["files"].get(str(row[3]))] for row in source["artifacts"]])
+
+
+def _email_candidate_digest(candidate):
+    return _email_binding_digest([candidate[key] for key in (
+        "recipient", "subject", "body", "attachment_artifact_id", "attachment_name",
+    )])
+
+
+def _email_posting_inputs_digest(source):
+    return _email_binding_digest([source["job"][key] for key in ("title", "site", "description", "full_description")])
+
+
+def _assert_current_email_approval(conn, tenant_id, job_id, candidate, context):
+    from jobctrl.domain.apply.process_manager import EmailApprovalRefused
+
+    rows = _select_apply_candidates(conn, tenant_id, canonical_job_id(job_id), 0)
+    if not rows:
+        raise EmailApprovalRefused("awaiting_approval")
+    job = rows[0]
+    current = _email_source_binding(conn, tenant_id, job_id, job)
+    reason = _approval_refusal_reason(
+        conn, tenant_id=tenant_id, job_id=job_id,
+        materials_generation=current["materials_generation"],
+        profile_version=current["profile_version"], application_url=current["application_url"],
+    )
+    if reason:
+        raise EmailApprovalRefused(reason)
+    captured = context.source_binding or {}
+    if (current["profile_version"] != captured.get("profile_version")
+            or current["profile_version"] != context.profile_version):
+        raise EmailApprovalRefused("approval_stale_profile")
+    if any(current[key] != captured.get(key) for key in ("posting_url", "application_url")):
+        raise EmailApprovalRefused("approval_stale_url")
+    if current != captured or not current["files"].get(candidate.attachment_path):
+        raise EmailApprovalRefused("approval_stale_materials")
+
+    # A newly approved different candidate cannot authorize this delayed send.
+    # The pending run's candidate has not yet been persisted: read the canonical
+    # reviewed candidate before saving this run's events into the intent transaction.
+    reviewed = _latest_email_application_candidate(conn, tenant_id=tenant_id, job_id=job_id)
+    decision = _latest_apply_review_decision(conn, tenant_id=tenant_id, job_id=job_id) or {}
+    expected = {
+        "recipient": candidate.recipient_email,
+        "subject": candidate.subject,
+        "body": candidate.body,
+        "attachment_artifact_id": candidate.attachment_artifact_id,
+        "attachment_name": candidate.attachment_name,
+    }
+    event = conn.execute(
+        "SELECT payload_json FROM job_events WHERE tenant_id=? AND job_id=? "
+        "AND event_type='ApplyReviewDecisionRecorded' AND json_extract(payload_json,'$.decisionId')=? "
+        "ORDER BY event_id DESC LIMIT 1", (tenant_id, job_id, decision.get("decision_id")),
+    ).fetchone()
+    authority = _payload_from_row(event).get("emailApprovalBinding") if event else None
+    # Legacy recipient/attachment-only decisions are not complete email authority.
+    # Never substitute a newer rehearsal for the preview actually approved.
+    if not isinstance(authority, dict) or type(authority.get("version")) is not int or authority["version"] != 1:
+        raise EmailApprovalRefused("approval_stale_email_candidate")
+    if authority.get("postingUrlSha256") != _email_binding_digest([current["posting_url"]]):
+        raise EmailApprovalRefused("approval_stale_url")
+    if authority.get("materialsSha256") != _email_materials_digest(current):
+        raise EmailApprovalRefused("approval_stale_materials")
+    if authority.get("candidateSha256") != _email_candidate_digest(expected):
+        raise EmailApprovalRefused("approval_stale_email_candidate")
+    if authority.get("postingInputsSha256") != _email_posting_inputs_digest(current):
+        raise EmailApprovalRefused("approval_stale_email_candidate")
+    if (not reviewed or any(reviewed.get(key) != value for key, value in expected.items())
+            or decision.get("email_recipient", "").lower() != candidate.recipient_email.lower()
+            or decision.get("email_attachment_artifact_id") != candidate.attachment_artifact_id
+            or job["resume_pdf_artifact_id"] != candidate.attachment_artifact_id
+            or job["resume_pdf_path"] != candidate.attachment_path):
+        raise EmailApprovalRefused("approval_stale_email_candidate")
+    return {
+        "approval_decision_id": decision["decision_id"],
+        "email_source_sha256": sha256(json.dumps(current, sort_keys=True).encode()).hexdigest(),
+        "email_candidate_sha256": sha256(json.dumps(expected, sort_keys=True).encode()).hexdigest(),
+    }
+
+
 @contextmanager
-def _authorize_posting_before_submit(tenant_id: str, job_id: str, posting_url: str, run_id: str):
+def _authorize_posting_before_submit(
+    tenant_id: str, job_id: str, posting_url: str, run_id: str, candidate=None, context=None,
+):
     from datetime import timedelta
     from jobctrl.domain.errors import MissingInputError
     from jobctrl.enrichment.availability import require_fresh_active, assert_fresh_candidate
@@ -2114,7 +2242,16 @@ def _authorize_posting_before_submit(tenant_id: str, job_id: str, posting_url: s
         ).fetchone()
         if not owner or owner[0] != run_id or not running or running[0] != "running":
             raise MissingInputError("Apply intent no longer owns the original posting attempt")
-        yield
+        authority = None
+        if candidate is not None:
+            from jobctrl.domain.apply.process_manager import EmailApprovalRefused
+            try:
+                authority = _assert_current_email_approval(conn, tenant_id, job_id, candidate, context)
+            except EmailApprovalRefused:
+                raise
+            except Exception as exc:
+                raise EmailApprovalRefused("approval_authority_unavailable") from exc
+        yield authority
         conn.commit()
     except BaseException:
         conn.rollback()
@@ -2153,6 +2290,7 @@ def _build_use_case():
         timeout_seconds=config.get_apply_timeout_seconds(),
         submission_authorizer=lambda: require_system_browser_capability("auto-apply-browser"),
         availability_authorizer=_authorize_posting_before_submit,
+        email_intent_authorizer=_authorize_posting_before_submit,
     )
     return SubmitApplicationUseCase(
         repository=SqliteApplyRunRepository(),
@@ -2178,6 +2316,7 @@ class SqliteApplyRunRepository:
         tenant_id = TenantId(str(getattr(run, "tenant_id", "") or LOCAL_TENANT))
 
         conn = get_connection()
+        owns_transaction = not conn.in_transaction
         try:
             seen = _existing_apply_event_ids(
                 conn,
@@ -2240,10 +2379,12 @@ class SqliteApplyRunRepository:
                 )
                 if event_id:
                     seen.add(event_id)
-            conn.commit()
+            if owns_transaction:
+                conn.commit()
         except Exception:
             try:
-                conn.rollback()
+                if owns_transaction:
+                    conn.rollback()
             except Exception:  # noqa: BLE001
                 pass
             raise

@@ -545,6 +545,45 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For current approval at owned email intent, run locked
+`pytest tests/test_apply_regressions.py -k owned_email -s` with an owned JUnit path,
+alongside the Apply saga/use-case, approval vocabulary, cover review, posting
+availability and repeat-application regressions. The fixture retains production
+`acquire_job` → `run_job` → use case → saga → final authorizer → SQLite intent →
+settlement/recovery; only external browser, agent, DNS and sender transports are
+synthetic. It does not replace API/RPC/Temporal dispatch or rendered review QA.
+
+Commit independent defer/reset, profile, application/posting URL, material
+generation, same-generation artifact/byte, cover binding and email candidate
+changes after claim. Repeat with claim-time approval waiting enabled and disabled,
+including changed inputs followed by a new approval, tied decision clocks, missing
+authority and read failure. Require zero intent/send on refusal, stable reasons,
+unchanged post-edit review/material history, accepted bytes and one claimed
+attempt through settlement. The unchanged control requires one committed intent
+before one fake send, with decision/source/candidate provenance on the intent.
+Use a second real SQLite connection before and after repository save to prove
+neither writer admission nor intent visibility can cross validation-to-commit.
+Also gate the first source-binding read during claim: the running stage must
+remain uncommitted and another writer must be excluded. Replace attachment
+bytes/metadata or the accepted tailored-resume identity before claim and after
+claim separately; neither a new snapshot nor an unchanged generation may adopt
+the replacement under older approval. Approve candidate A, change the job title,
+and run another production rehearsal to produce B with the same recipient and
+attachment but different subject/body. A's recorded fingerprint must refuse B
+under both approval-wait settings. The API approval tests also require complete
+fingerprint persistence and atomic refusal when accepted file bytes are unavailable.
+Fail intent insertion to prove rollback, then exercise lost acknowledgement and
+crash after intent through restart and repeated targeted/standing polls: uncertainty
+stays `needs_verification` with no resend. Emit scenario identities, exact event
+and sender counts, artifact/source hashes and writer ordering for retained QA.
+
+The owning boundaries are
+[`_authorize_posting_before_submit` and `SqliteApplyRunRepository.save`](../../../workers/automation/src/jobctrl/apply/launcher.py),
+[`_handle_email_only_result`](../../../workers/automation/src/jobctrl/domain/apply/process_manager.py)
+and [`_email_application_context`](../../../workers/automation/src/jobctrl/domain/apply/use_cases.py).
+Browser final submit remains manual; Gmail verification, provider receipt
+validation and manual Skip semantics retain their separate contracts.
+
 For interpretation metadata citation sources, run locked
 `pytest tests/test_interpretation_citable_fields.py tests/test_remaining_determinations.py tests/test_binding_repair_feedback.py tests/test_analysis_retry_boundaries.py`.
 Use owned exact-schema storage and explicit synthetic model decisions. Omit

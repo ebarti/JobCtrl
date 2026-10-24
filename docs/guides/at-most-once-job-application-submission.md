@@ -70,9 +70,27 @@ The worker checks that binding while atomically claiming work in SQLite. It is
 not only a disabled button in the web app, so a stale page, direct API call,
 standing loop, or concurrent worker cannot bypass the claim-time decision.
 
+The owned email path checks again immediately before durable intent. In one
+SQLite writer transaction it rereads current approval, profile, URLs, accepted
+material and cover binding, rehearsal evidence and email preview, comparing them
+with the run's captured sources and actual outgoing candidate. A second writer
+must commit its authority change before this transaction or wait until intent
+commits. A changed profile or attachment followed by a fresh approval still does
+not authorize a delayed run using the older inputs. Refusals preserve accepted
+history and the claimed attempt; they create no intent and call no sender.
+
+The claim captures source identities before committing. The approval decision
+retains fingerprints of the complete reviewed email and accepted material bytes;
+the final guard checks those fingerprints as well as the claim snapshot. A later
+rehearsal with a different subject/body or a same-generation file replacement
+therefore needs fresh approval, even when recipient and attachment IDs match.
+Recipient/attachment-only historical approvals cannot authorize an email send.
+
 Turning the general approval wait off does not create generic submission
 authority. Browser final submit remains manual, the Gmail sender still requires
-its exact send scope, and repeat-application protection still runs.
+its current exact send scope at intent commit, and repeat-application protection
+still runs. Once intent commits, later decisions cannot retract an admitted
+message; uncertainty remains a manual-verification boundary.
 
 ## Repeat Protection Answers A Different Question
 

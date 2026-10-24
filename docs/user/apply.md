@@ -186,6 +186,25 @@ sender rechecks its capability, records submit intent immediately before the
 send, and accepts only the exact recipient and attachment approved in Apply
 Review.
 
+Immediately before owned email intent commits, the worker rereads the latest
+Apply Review decision, saved profile version, posting and application URLs,
+accepted materials and cover-letter binding, qualifying rehearsal, and current
+email candidate. It compares those records with the delayed run's sources and
+actual outgoing email in the same SQLite writer transaction as the intent.
+Each email approval retains fingerprints of the complete reviewed recipient,
+subject, body and attachment, plus accepted material identities and bytes.
+A newer rehearsal cannot replace that approved preview. Replacing a file within
+the same material generation also requires fresh review. Older approvals that
+only retained recipient and attachment IDs need a new approval before email send.
+This check always runs, including when `applyApprovalRequired` is off. Defer,
+reset, changed inputs, or a newly approved different candidate stop the older
+run with no intent or sender call. The refusal keeps its approval reason,
+accepted material/history, and the already claimed attempt count.
+
+Changes committed after intent cannot retract an admitted send. An interrupted
+or uncertain send still requires manual verification; it is never an automatic
+retry authorization.
+
 ## Repeat-Application Protection
 
 Before every live application claim, JobCtrl compares the target with confirmed
