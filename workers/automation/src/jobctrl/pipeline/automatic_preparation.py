@@ -18,6 +18,7 @@ from typing import Any
 from temporalio.client import WorkflowExecutionStatus
 from temporalio.api.enums.v1 import TimeoutType
 from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
+from temporalio.converter import DataConverter
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError, RPCStatusCode
 
@@ -57,6 +58,88 @@ class RecoveryBatch:
         }
 
 
+@dataclass(frozen=True)
+class _ActivePreparation:
+    workflow_id: str
+    run_id: str
+    job_id: JobId
+    steps: frozenset[str]
+
+
+async def _active_preparation_scopes(
+    client: Any, *, expected_app_dir: str, expected_db_path: str,
+) -> dict[JobId, _ActivePreparation] | None:
+    """Scope only immutable single-job executions; other producers remain a gate."""
+    executions = [execution async for execution in client.list_workflows(query=_ACTIVE_WORK)]
+    if any(getattr(execution, "workflow_type", None) != "JobPreparationWorkflow" for execution in executions):
+        return None
+    scopes: dict[JobId, _ActivePreparation] = {}
+    for execution in executions:
+        workflow_id, run_id = getattr(execution, "id", None), getattr(execution, "run_id", None)
+        if not isinstance(workflow_id, str) or not workflow_id or not isinstance(run_id, str) or not run_id:
+            return None
+        handle = client.get_workflow_handle(workflow_id, run_id=run_id)
+        if getattr(handle, "run_id", None) != run_id:
+            return None
+        # A projection may be absent between activities. Read only the first
+        # immutable event from the explicit run, without waiting for new events.
+        events = handle.fetch_history_events(page_size=1, wait_new_event=False)
+        event = await anext(events, None)
+        if event is None or event.event_id != 1 or event.WhichOneof("attributes") != "workflow_execution_started_event_attributes":
+            return None
+        attrs = event.workflow_execution_started_event_attributes
+        if attrs.workflow_type.name != "JobPreparationWorkflow" or attrs.original_execution_run_id != run_id:
+            return None
+        raw = list(attrs.input.payloads)
+        if len(raw) != 1 or len(raw[0].data) > 65536:
+            return None
+        try:
+            decoded = await (getattr(client, "data_converter", None) or DataConverter.default).decode(raw)
+            if len(decoded) != 1 or not isinstance(decoded[0], dict):
+                return None
+            payload = decoded[0]
+            if payload.get("tenant_id") != str(LOCAL_TENANT):
+                return None
+            # Absent paths use the worker's configured workspace, as ordinary
+            # per-job fanout does. Explicit foreign bindings must not be adopted.
+            if payload.get("expected_app_dir") not in (None, expected_app_dir) or payload.get("expected_db_path") not in (None, expected_db_path):
+                return None
+            job_id = canonical_job_id(payload.get("job_id"))
+            steps = payload.get("steps")
+            if not isinstance(steps, list) or not steps or any(not isinstance(step, str) or step not in {"score", "tailor", "cover", "pdf"} for step in steps):
+                return None
+            scope = _ActivePreparation(workflow_id, run_id, job_id, frozenset(steps))
+        except (TypeError, ValueError):
+            return None
+        if job_id in scopes and scopes[job_id] != scope:
+            return None
+        scopes[job_id] = scope
+    return scopes
+
+
+def _belongs_to_active_preparation(row: sqlite3.Row, scopes: dict[JobId, _ActivePreparation]) -> bool:
+    scope = scopes.get(row["job_id"])
+    if scope is None or row["stage"] not in scope.steps:
+        return False
+    try:
+        metadata = json.loads(row["metadata_json"] or "{}")
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(metadata, dict):
+        return False
+    owner = metadata.get("activityOwner")
+    if owner is not None:
+        return (
+            owner == scope.run_id
+            and metadata.get("workflowId") in (None, scope.workflow_id)
+            and metadata.get("temporalRunId") in (None, scope.run_id)
+        )
+    return (
+        metadata.get("workflowId") == scope.workflow_id
+        and metadata.get("temporalRunId") == scope.run_id
+    )
+
+
 async def reconcile_automatic_preparation(
     client: Any,
     *,
@@ -64,24 +147,31 @@ async def reconcile_automatic_preparation(
     expected_app_dir: str,
     expected_db_path: str,
 ) -> int:
-    """Dispatch at most one bounded batch while the preparation worker is idle."""
+    """Dispatch one bounded batch alongside independently owned per-job work."""
     from jobctrl.infrastructure.scoring.criteria_provider import read_min_fit_score
     from jobctrl.llm import read_spend_budget_status
     from jobctrl.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
 
     # Visibility errors propagate before any reservation is written. The worker
     # retries this read on its next heartbeat instead of guessing that it is idle.
-    async for _execution in client.list_workflows(query=_ACTIVE_WORK):
+    active_preparations = await _active_preparation_scopes(
+        client, expected_app_dir=expected_app_dir, expected_db_path=expected_db_path,
+    )
+    if active_preparations is None:
         return 0
     if read_spend_budget_status(lane="scoring").global_exceeded:
         return 0
     conn = database.get_connection()
+    if any(conn.execute(
+        "SELECT 1 FROM jobs WHERE tenant_id=? AND job_id=?", (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone() is None for job_id in active_preparations):
+        return 0
     reconcile_cover_letter_policy(conn, tenant_id=LOCAL_TENANT, release_reserved=True)
     await _reconcile_stopped_enrichment_owners(client, conn)
     await _reconcile_stopped_activity_owners(client, conn)
     await _reconcile_interrupted_reservations(client, conn)
     await reconcile_public_fetch_failures(conn)
-    batch = reserve_recovery_batch(conn, min_score=read_min_fit_score(default=7))
+    batch = reserve_recovery_batch(conn, min_score=read_min_fit_score(default=7), active_preparations=active_preparations)
     if batch is None:
         return 0
     try:
@@ -343,8 +433,10 @@ def reserve_recovery_batch(
     *,
     min_score: int = 7,
     now: datetime | None = None,
+    active_preparations: dict[JobId, _ActivePreparation] | None = None,
 ) -> RecoveryBatch | None:
     now = now or datetime.now(timezone.utc)
+    active_preparations = active_preparations or {}
     conn.execute("BEGIN IMMEDIATE")
     try:
         from jobctrl.infrastructure.materials.manual_decline import release_manual_material_skips
@@ -368,22 +460,23 @@ def reserve_recovery_batch(
                 min_score=int(saved["minScore"]),
             )
             conn.commit()
-            return batch
+            return None if any(job_id in active_preparations for job_id in batch.job_ids) else batch
         # A dispatch belonging to another producer may not yet be visible in
-        # Temporal. Its canonical queue/running rows take precedence as well.
+        # Temporal. Only exact known per-job owners may overlap; unknown,
+        # foreign and batch reservations still take precedence under this lock.
         busy = conn.execute(
-            "SELECT 1 FROM job_stage_states WHERE tenant_id = ? "
+            "SELECT job_id,stage,metadata_json FROM job_stage_states WHERE tenant_id = ? "
             "AND stage IN ('enrich', 'score', 'tailor', 'cover') "
-            "AND state IN ('queued', 'running') LIMIT 1",
+            "AND state IN ('queued', 'running')",
             (str(LOCAL_TENANT),),
-        ).fetchone()
-        if busy:
+        ).fetchall()
+        if any(not _belongs_to_active_preparation(row, active_preparations) for row in busy):
             conn.commit()
             return None
         _repair_completed_discovery_handoff(conn)
         candidates = _candidates(conn, min_score=min_score)
         for stage in _STAGES:
-            due = [row for row in candidates[stage] if _retry_due(row, now)][:_BATCH_SIZE]
+            due = [row for row in candidates[stage] if row["job_id"] not in active_preparations and _retry_due(row, now)][:_BATCH_SIZE]
             if not due:
                 continue
             identity = [(row["job_id"], row["attempt_count"], row["updated_at"]) for row in due]
