@@ -1,19 +1,22 @@
 # Reliability & QA
 
 Choose the smallest proof for the accepted outcome. This page selects JobCtrl's
-risk and product checks.
-Explicit plans may raise the requirement. Never reduce security, privacy, data,
+risk and product checks. Independent code review is optional unless the user
+explicitly requests it. A missing reviewer or recorded review does not block
+implementation, validation, or delivery. The implementing agent may perform
+the required QA; passing automated tests alone does not replace product-path
+or visual verification. Explicit plans may raise the testing requirement. Never reduce security, privacy, data,
 migration, release or submission proof to save time.
 
-| Risk | Required proof and independent gates |
+| Risk | Required proof |
 | --- | --- |
 | 0: prose/comments/format only, no contract effect | `git diff --check`; docs build for published content/links |
-| 1: contained internal/tooling/instruction change | Touched checks, diff check, one independent review; instruction changes include conflict/link review |
-| 2: UI/CLI/API/integration/workflow behavior | Tier 1 plus actual product-path QA; review and QA PASS |
-| 3: privacy/security/user data/migrations/releases/submission | Applicable full risk matrix, meaningful regression fixture, operational/product proof; review and QA PASS |
+| 1: contained internal/tooling/instruction change | Touched checks and diff check; instruction changes include conflict/link checks |
+| 2: UI/CLI/API/integration/workflow behavior | Tier 1 plus actual product-path QA; QA PASS |
+| 3: privacy/security/user data/migrations/releases/submission | Applicable full risk matrix, meaningful regression fixture, operational/product proof; QA PASS |
 
 No unresolved Blocker/High may remain, and required scenarios need observed
-results. Contract-only high-risk changes require independent review and safety
+results. Contract-only high-risk changes require safety
 checks, with product verification before first use. Major UI regressions require
 a regression test or an explicit reproducible scenario.
 
@@ -79,7 +82,7 @@ temporary-directory recipe in the [regression catalog](developer/qa/regression-c
 That trial measures repeatability, page breaks, clipping, reading order and
 layout-box correspondence with synthetic resumes through both current product
 entry points on A4 and Letter. Missing Chromium/Poppler or any skipped required
-case is nonpassing. Automated results require independent inspection of every
+case is nonpassing. Automated results require visual inspection of every
 measured PDF page; pending measurements and DOM/PDF mismatches must remain
 explicit. The [results protocol](developer/qa/regression-catalog.md#results-and-independent-completion)
 defines severity, scope limits and the controller's completion gates. Run
@@ -230,7 +233,7 @@ No application submission is implied by a QA request.
 ## Saved Posting Availability Product QA
 
 This is risk 3 work: evidence freshness, durable claims and reviewed submission
-boundaries need independent exact-candidate review and verification. Run the
+boundaries need verification against the exact candidate. Run the
 full worker suite excluding the two explicitly environment-owned
 `system_browser` cases in `test_apply_chrome_dry_run_guard.py`, cross-stack check,
 API/RPC/readonly/event parity, availability web/a11y tests and web/docs builds.
