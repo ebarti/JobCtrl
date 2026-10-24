@@ -1573,11 +1573,16 @@ describe("application feedback API", () => {
         run_id: "dry-run-email-candidate",
         recipient: "apply@example.com",
         subject: "Application for Staff Engineer",
-        body: "Hello",
+        body: "private-apply-review-canary",
         attachment_artifact_id: "resume-pdf-1",
         attachment_name: "Resume.pdf",
       }),
     );
+    db.prepare(`INSERT INTO job_events (
+      tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+    ) VALUES ('local', ?, 1, 'apply', 'AgentResult', 'info', ?, ?, ?)`)
+      .run(READY_JOB_ID, "private-agent-review-canary", NOW,
+        JSON.stringify({ run_id: "dry-run-email-candidate", raw_output: "private-agent-review-canary" }));
     db.close();
     const app = buildApp(options);
     const readyKey = encodeURIComponent(READY_JOB);
@@ -1588,8 +1593,13 @@ describe("application feedback API", () => {
       attachmentArtifactId: "resume-pdf-1",
       attachmentName: "Resume.pdf",
       candidateRunId: "dry-run-email-candidate",
+      body: "private-apply-review-canary",
     });
 
+    const dashboard = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+    expect(dashboard.statusCode, dashboard.body).toBe(200);
+    expect(dashboard.body).not.toContain("private-agent-review-canary");
+    expect(dashboard.body).not.toContain("private-apply-review-canary");
     const missingBinding = await app.inject({
       method: "POST",
       url: `/v1/jobs/${readyKey}/apply-review/decision`,

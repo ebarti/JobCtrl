@@ -107,6 +107,27 @@ all historical event families: pipeline failures can persist an exception
 message. Treat exception text as potentially durable and sanitize it at the
 producer rather than placing sensitive values in exceptions.
 
+Owned email Apply keeps the full `EmailApplicationCandidateRecorded` preview
+in the canonical event ledger for Apply Review. Its direct publisher event,
+wrapped `ApplyRunEventRecorded`, derived Apply timeline and SSE replay expose
+only references/status. This filtering also applies when historical private
+rows are replayed. The same filtering covers `AgentResult`, whose raw model
+output can repeat the recipient and email body, and wrapped result events.
+`EmailApplicationSent` retains validated provider identifiers
+and the operation binding in canonical storage; broad delivery omits those
+provider identifiers. Send failures use a bounded ambiguity reason, without raw
+exceptions or provider bodies. Apply Review reads the canonical preview rather
+than reconstructing it from broad events.
+The launcher owns the email `ApplicationSubmitted` publication when it settles
+the durable receipt; the use case does not emit an earlier duplicate terminal
+notification. Owned Apply aggregate notifications wait until the SQLite owner
+commits, including when settlement inherits a caller transaction. Rollback,
+rollback to a caller savepoint and connection close discard uncommitted
+notifications. Each callback checks its exact committed event row before fan-out;
+receipt and submitted-fact subscribers observe the complete settlement together.
+A process stop after commit can lose an in-memory notification; durable event
+replay remains authoritative.
+
 Interview preparation has three separate authorities: the installed immutable
 public catalog, generation-versioned job prep with retained source context,
 and independently revisioned tenant/job/question notes. The catalog list/detail
@@ -130,7 +151,8 @@ still begins at the owning domain/application boundary.
 2. `record_job_event` inserts the `job_events` row that becomes durable when
    the caller commits, then publishes an in-memory `DomainEvent` through the
    process-wide `InProcessEventBus`.
-3. That notification currently occurs before the caller commits. The wildcard
+3. Outside the commit-bound owned Apply aggregate path described above, that
+   notification occurs before the caller commits. The wildcard
    `ProjectionBuilder` subscriber refreshes through the publishing thread's
    thread-local SQLite connection inside a savepoint when a transaction is
    already open. The publisher retains commit and rollback ownership.

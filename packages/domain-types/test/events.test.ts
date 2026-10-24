@@ -50,6 +50,7 @@ import {
   createDryRunCompleted,
   createApplyReviewDecisionRecorded,
   createApplyRunStarted,
+  createApplyRunEventRecorded,
   createOutcomeSuggestionDecided,
 } from "../src/events/apply.js";
 import { createStageStarted, createStageCompleted } from "../src/events/orchestration.js";
@@ -1267,5 +1268,19 @@ describe("DOMAIN_EVENT_TYPES enumeration", () => {
     for (const eventType of fromFactories) {
       expect(DOMAIN_EVENT_TYPES).toContain(eventType);
     }
+  });
+});
+
+
+describe("Apply event privacy", () => {
+  it.each(["event_type", "eventType"])("omits private AgentResult content carried by %s", (eventKey) => {
+    const event = createApplyRunEventRecorded(LOCAL_TENANT, {
+      runId: "owned-email-run",
+      event: { [eventKey]: "AgentResult", event_id: 7, level: "info",
+        message: "private-agent-canary", payload: { raw_output: "private-agent-canary" } },
+    });
+    expect(event.payload.runId).toBe("owned-email-run");
+    expect(event.payload.event).toMatchObject({ event_id: 7, level: "info" });
+    expect(JSON.stringify(event)).not.toContain("private-agent-canary");
   });
 });

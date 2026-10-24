@@ -34,6 +34,9 @@ class _InMemoryApplyRunRepository:
     def __init__(self) -> None:
         self._store: dict[tuple[str, str], ApplyRun] = {}
 
+    def admit_email_intent(self, run: ApplyRun) -> None:
+        self.save(run)
+
     def save(self, run: ApplyRun) -> None:
         self._store[(str(run.tenant_id), str(run.run_id))] = run
 
@@ -131,11 +134,11 @@ class _FakeEmailSender:
         self.fail = fail
         self.sent = []
 
-    def send_email_application(self, candidate):
+    def send_email_application(self, candidate, *, operation):
         self.sent.append(candidate)
         if self.fail:
             raise RuntimeError("Gmail token missing gmail.send scope")
-        return EmailApplicationSendResult(provider="gmail", message_id="m1", thread_id="t1")
+        return EmailApplicationSendResult(provider="gmail", message_id="m1", thread_id="t1", operation=operation)
 
 
 @pytest.fixture()
@@ -692,7 +695,7 @@ def test_email_sender_exception_is_ambiguous_after_submit_intent(repo):
     assert isinstance(submission, Failed)
     assert submission.retryable is False
     assert "email_send_outcome_ambiguous" in submission.error
-    assert "gmail.send scope" in submission.error
+    assert "gmail.send scope" not in submission.error
     event_types = [event.event_type for event in outcome.apply_run.events]
     assert event_types.index("ApplySubmitIntended") < event_types.index(
         "EmailApplicationSendFailed"

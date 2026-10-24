@@ -100,7 +100,9 @@ def get_connection(
         except sqlite3.ProgrammingError:
             pass
 
-    conn = sqlite3.connect(path, timeout=30)
+    from jobctrl.infrastructure.commit_notifications import NotificationConnection
+
+    conn = sqlite3.connect(path, timeout=30, factory=NotificationConnection)
     if enable_wal:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=10000")

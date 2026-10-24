@@ -105,7 +105,22 @@ and autofill whitelisted fields, but it has no submit capability.
 The owned Gmail path is different because JobCtrl controls the mutation
 adapter. It can compare the exact recipient and attachment with the approval,
 persist submit intent immediately before the send, restrict the live activity
-to one attempt, and preserve the provider result.
+to one attempt, and preserve a validated provider receipt. A successful Gmail
+response must contain a nonblank string `id`; optional `threadId` must be a
+nonblank string when present. Other optional Message fields are discarded.
+See Google's [messages.send response contract](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/send).
+
+Before transport admission, the durable intent binds tenant, canonical job,
+run/intent identity, material generation and a hash of the exact preview fields
+and material reference. Confirmation must match that binding and the current
+run owner. Malformed success and lost transport acknowledgements remain
+uncertain, with no automatic resend. A previously persisted valid confirmation
+can settle its original operation after restart; repeated settlement cannot
+create another submitted fact or replace a successor's state. This does not
+establish remote exactly-once delivery. Recovery rechecks ownership,
+terminal state and confirmation under the SQLite writer lock before parking.
+Confirmation and submitted-fact notifications wait for the owning commit;
+rollback does not publish a success, including within a caller transaction.
 
 These are not interchangeable promises. “At-most-once” does not mean a model
 may click any web submit button once.

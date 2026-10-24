@@ -1286,6 +1286,10 @@ def _record_apply_terminal_event_once(
         level=level,
         message=message,
         payload=payload,
+        defer_publication=(
+            event_type == "ApplicationSubmitted"
+            and bool((_email_intent(conn, tenant_id, job_id, run_id) or {}).get("operation"))
+        ),
     )
 
 
@@ -1298,6 +1302,38 @@ def mark_result(
     task_id: str | None = None,
     run_ctx: dict | None = None,
     tenant_id: TenantId | None = None,
+) -> None:
+    """Settle owned email attempts under the writer lock using durable receipts."""
+    conn = get_connection()
+    tenant = TenantId(str(tenant_id or (run_ctx or {}).get("tenant_id") or LOCAL_TENANT))
+    job = canonical_job_id(str(job_id))
+    run_id = str(task_id or (run_ctx or {}).get("run_id") or "")
+    # Other result channels retain their existing contract.
+    intent = _email_intent(conn, tenant, job, run_id) if run_id else None
+    if intent and intent.get("submission_channel") == "email":
+        with _owned_apply_writer(conn, tenant, job):
+            if not _owns_email_settlement(conn, tenant, job, run_id):
+                return
+            if _has_email_confirmation(conn, tenant, job, run_id):
+                status, error = "applied", None
+            else:
+                status, error, permanent = "failed", "email_send_outcome_ambiguous", True
+            _mark_result(job_id, status, error, permanent, duration_ms, task_id, run_ctx, tenant_id, _commit=False)
+        return
+    _mark_result(job_id, status, error, permanent, duration_ms, task_id, run_ctx, tenant_id)
+
+
+def _mark_result(
+    job_id: JobId,
+    status: str,
+    error: str | None = None,
+    permanent: bool = False,
+    duration_ms: int | None = None,
+    task_id: str | None = None,
+    run_ctx: dict | None = None,
+    tenant_id: TenantId | None = None,
+    *,
+    _commit: bool = True,
 ) -> None:
     """Update a job's apply outcome.
 
@@ -1546,7 +1582,8 @@ def mark_result(
         run_id=str(run_id),
         occurred_at=now,
     )
-    conn.commit()
+    if _commit:
+        conn.commit()
 
 
 def _latest_apply_run_started_run_id(
@@ -1615,6 +1652,33 @@ def release_lock(
     conn.commit()
 
 
+@contextmanager
+def _owned_apply_writer(conn, tenant_id, job_id):
+    savepoint = "owned_apply_" + uuid.uuid4().hex
+    inherited = conn.in_transaction
+    if not inherited:
+        conn.execute("BEGIN IMMEDIATE")
+    conn.execute(f"SAVEPOINT {savepoint}")
+    try:
+        if inherited:
+            # An inherited deferred transaction may not hold the writer yet.
+            conn.execute(
+                "UPDATE job_stage_states SET state=state WHERE tenant_id=? AND job_id=? AND stage='apply'",
+                (str(tenant_id), str(job_id)),
+            )
+        yield
+    except BaseException:
+        conn.execute(f"ROLLBACK TO {savepoint}")
+        conn.execute(f"RELEASE {savepoint}")
+        if not inherited:
+            conn.rollback()
+        raise
+    else:
+        conn.execute(f"RELEASE {savepoint}")
+        if not inherited:
+            conn.commit()
+
+
 def recover_ambiguous_running_apply(console: Console | None = None) -> int:
     """Recover apply rows inherited from a prior dead workflow/activity."""
     try:
@@ -1643,43 +1707,58 @@ def recover_ambiguous_running_apply(console: Console | None = None) -> int:
                     workflow_id=workflow_id or run_id,
                 ):
                     continue
-                if run_id:
-                    if _has_apply_terminal_result(
+                # Selection and workflow inspection may race a settling writer.
+                # Recheck the exact owner and state under the same lock as parking.
+                with _owned_apply_writer(conn, tenant_id, job_id):
+                    current = conn.execute(
+                        "SELECT state FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage='apply'",
+                        (str(tenant_id), str(job_id)),
+                    ).fetchone()
+                    if current is None or current[0] != "running":
+                        continue
+                    if _latest_apply_run_started_identity(conn, tenant_id=tenant_id, job_id=job_id) != (run_id, workflow_id):
+                        continue
+                    if run_id:
+                        if _has_apply_terminal_result(
+                            conn,
+                            tenant_id=tenant_id,
+                            job_id=job_id,
+                            run_id=run_id,
+                        ):
+                            continue
+                    if run_id and _has_apply_submit_intent(
                         conn,
                         tenant_id=tenant_id,
                         job_id=job_id,
                         run_id=run_id,
                     ):
-                        continue
-                if run_id and _has_apply_submit_intent(
-                    conn,
-                    tenant_id=tenant_id,
-                    job_id=job_id,
-                    run_id=run_id,
-                ):
-                    set_stage_state(
-                        conn,
-                        job_id,
-                        "apply",
-                        "needs_verification",
-                        tenant_id=tenant_id,
-                        error_code="APPLY_NEEDS_VERIFICATION",
-                        error_message="Live apply reached the submit-intent checkpoint without a terminal result.",
-                        retryable=False,
-                        next_action="Review the employer site or confirmation email before retrying.",
-                        validate_transition=False,
-                    )
-                else:
-                    set_stage_state(
-                        conn,
-                        job_id,
-                        "apply",
-                        "pending",
-                        tenant_id=tenant_id,
-                        next_action=(f"jobctrl apply --url {posting_url}" if posting_url else None),
-                        validate_transition=False,
-                    )
-                recovered += 1
+                        if _has_email_confirmation(conn, tenant_id, job_id, run_id):
+                            mark_result(job_id, "applied", run_ctx={"run_id": run_id}, tenant_id=tenant_id)
+                            recovered += 1
+                            continue
+                        set_stage_state(
+                            conn,
+                            job_id,
+                            "apply",
+                            "needs_verification",
+                            tenant_id=tenant_id,
+                            error_code="APPLY_NEEDS_VERIFICATION",
+                            error_message="Live apply reached the submit-intent checkpoint without a terminal result.",
+                            retryable=False,
+                            next_action="Review the employer site or confirmation email before retrying.",
+                            validate_transition=False,
+                        )
+                    else:
+                        set_stage_state(
+                            conn,
+                            job_id,
+                            "apply",
+                            "pending",
+                            tenant_id=tenant_id,
+                            next_action=(f"jobctrl apply --url {posting_url}" if posting_url else None),
+                            validate_transition=False,
+                        )
+                    recovered += 1
             except Exception:  # noqa: BLE001
                 logger.exception(
                     "Apply recovery failed for %s/%s",
@@ -1688,7 +1767,6 @@ def recover_ambiguous_running_apply(console: Console | None = None) -> int:
                 )
                 continue
         if recovered:
-            conn.commit()
             if console is not None:
                 console.print(f"[yellow]Recovered {recovered} ambiguous apply run(s) from prior crash[/yellow]")
         return recovered
@@ -2166,10 +2244,70 @@ def _build_use_case():
     )
 
 
+class EmailSettlementError(RuntimeError):
+    """An email receipt or intent no longer has durable settlement authority."""
+
+
+def _owns_email_settlement(conn, tenant_id, job_id, run_id) -> bool:
+    state = conn.execute(
+        "SELECT state FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage='apply'",
+        (str(tenant_id), str(job_id)),
+    ).fetchone()
+    return bool(state and state[0] == "running" and
+                _latest_apply_run_started_run_id(conn, tenant_id=tenant_id, job_id=job_id) == run_id)
+
+
+def _valid_email_operation(operation, tenant_id, job_id, run_id) -> bool:
+    from jobctrl.domain.ports.apply import EmailApplicationOperation
+    from dataclasses import fields
+
+    return (
+        isinstance(operation, dict)
+        and set(operation) == {field.name for field in fields(EmailApplicationOperation)}
+        and all(isinstance(value, str) and bool(value.strip()) for value in operation.values())
+        and operation["tenant_id"] == str(tenant_id) and operation["job_id"] == str(job_id)
+        and operation["run_id"] == run_id and operation["intent_id"] == f"email:{run_id}"
+    )
+
+
+def _email_intent(conn, tenant_id, job_id, run_id):
+    row = conn.execute(
+        "SELECT payload_json FROM job_events WHERE tenant_id=? AND job_id=? AND stage='apply' "
+        "AND event_type='ApplySubmitIntended' AND json_extract(payload_json, '$.run_id')=? ORDER BY event_id LIMIT 1",
+        (str(tenant_id), str(job_id), str(run_id)),
+    ).fetchone()
+    return json.loads(row[0]) if row else None
+
+
+def _valid_email_confirmation(conn, tenant_id, job_id, run_id, payload) -> bool:
+    from jobctrl.domain.ports.apply import EmailApplicationOperation, EmailApplicationSendResult
+
+    intent = _email_intent(conn, tenant_id, job_id, run_id)
+    operation = payload.get("operation")
+    if not intent or not _valid_email_operation(operation, tenant_id, job_id, run_id) or intent.get("operation") != operation:
+        return False
+    return EmailApplicationSendResult(
+        provider=payload.get("provider"), message_id=payload.get("message_id"),
+        thread_id=payload.get("thread_id"), operation=EmailApplicationOperation(**operation),
+    ).confirms(EmailApplicationOperation(**operation))
+
+
+def _has_email_confirmation(conn, tenant_id, job_id, run_id) -> bool:
+    rows = conn.execute(
+        "SELECT payload_json FROM job_events WHERE tenant_id=? AND job_id=? AND event_type='EmailApplicationSent' "
+        "AND json_extract(payload_json, '$.run_id')=?",
+        (str(tenant_id), str(job_id), str(run_id)),
+    ).fetchall()
+    return any(_valid_email_confirmation(conn, tenant_id, job_id, run_id, json.loads(row[0])) for row in rows)
+
+
 class SqliteApplyRunRepository:
     """Persist ``ApplyRun`` aggregate events into the canonical event stream."""
 
-    def save(self, run) -> None:
+    def admit_email_intent(self, run) -> None:
+        self.save(run, admitting_email=True)
+
+    def save(self, run, *, admitting_email: bool = False) -> None:
         job_id_raw = str(getattr(run, "job_id", "") or "")
         run_id = str(getattr(run, "run_id", "") or "")
         if not job_id_raw or not run_id:
@@ -2178,13 +2316,20 @@ class SqliteApplyRunRepository:
         tenant_id = TenantId(str(getattr(run, "tenant_id", "") or LOCAL_TENANT))
 
         conn = get_connection()
+        inherited = conn.in_transaction
+        if not inherited:
+            conn.execute("BEGIN IMMEDIATE")
+        conn.execute("SAVEPOINT email_run_save")
         try:
+            if admitting_email and _has_apply_submit_intent(conn, tenant_id=tenant_id, job_id=job_id, run_id=run_id):
+                raise EmailSettlementError("Email intent already admitted")
             seen = _existing_apply_event_ids(
                 conn,
                 tenant_id=tenant_id,
                 job_id=job_id,
                 run_id=run_id,
             )
+            new_email_confirmation = False
             for event in list(getattr(run, "events", ()) or ()):
                 event_id = int(getattr(event, "event_id", 0) or 0)
                 if event_id and event_id in seen:
@@ -2196,6 +2341,18 @@ class SqliteApplyRunRepository:
                 payload.setdefault("run_id", run_id)
                 payload["event_id"] = event_id
                 payload.setdefault("apply_status", str(getattr(run, "status", "") or ""))
+                if event_type in {"ApplySubmitIntended", "EmailApplicationSent"} and payload.get("operation"):
+                    if not _owns_email_settlement(conn, tenant_id, job_id, run_id):
+                        raise EmailSettlementError("Email operation no longer owns the attempt")
+                    operation = payload["operation"]
+                    if not _valid_email_operation(operation, tenant_id, job_id, run_id):
+                        raise EmailSettlementError("Invalid email operation binding")
+                    if event_type == "EmailApplicationSent" and not _valid_email_confirmation(conn, tenant_id, job_id, run_id, payload):
+                        raise EmailSettlementError("Invalid email confirmation binding")
+                if event_type == "EmailApplicationSent" and not payload.get("operation"):
+                    raise EmailSettlementError("Missing email confirmation binding")
+                if event_type == "EmailApplicationSent":
+                    new_email_confirmation = True
                 if event_type == "ApplyTerminalDetermination":
                     from jobctrl.domain.apply.terminal_report import ApplyTerminalReport, report_envelope
                     from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
@@ -2228,7 +2385,16 @@ class SqliteApplyRunRepository:
                     level=str(getattr(event, "level", "info") or "info"),
                     message=getattr(event, "message", None),
                     payload=payload,
+                    defer_publication=True,
                     occurred_at=str(getattr(event, "occurred_at", "") or "") or None,
+                    idempotency_key=(
+                        "apply-email:" + sha256(json.dumps(
+                            [str(tenant_id), str(job_id), run_id, event_type],
+                            separators=(",", ":"),
+                        ).encode()).hexdigest()
+                        if event_type in {"ApplySubmitIntended", "EmailApplicationSent"} and payload.get("operation")
+                        else None
+                    ),
                 )
                 _persist_agent_artifacts(
                     conn,
@@ -2240,10 +2406,25 @@ class SqliteApplyRunRepository:
                 )
                 if event_id:
                     seen.add(event_id)
-            conn.commit()
-        except Exception:
+            if new_email_confirmation:
+                # Receipt, submitted fact and owned stage settle atomically.
+                # A lost acknowledgement or successor cannot strand an accepted
+                # send between confirmation persistence and terminal settlement.
+                _mark_result(
+                    job_id, "applied", task_id=run_id, tenant_id=tenant_id,
+                    duration_ms=run.duration_ms,
+                    run_ctx={"run_id": run_id, "worker_id": run.worker_id, "model": run.model},
+                    _commit=False,
+                )
+            conn.execute("RELEASE email_run_save")
+            if not inherited:
+                conn.commit()
+        except BaseException:
             try:
-                conn.rollback()
+                conn.execute("ROLLBACK TO email_run_save")
+                conn.execute("RELEASE email_run_save")
+                if not inherited:
+                    conn.rollback()
             except Exception:  # noqa: BLE001
                 pass
             raise
