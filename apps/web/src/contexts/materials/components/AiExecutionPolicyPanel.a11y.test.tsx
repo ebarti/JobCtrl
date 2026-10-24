@@ -9,6 +9,7 @@ describe("<AiExecutionPolicyPanel> accessibility", () => {
   it("labels the finishing policy and its description without axe violations", async () => {
     const view = renderWithProviders(<AiExecutionPolicyPanel />);
     expect(await screen.findByRole("checkbox", { name: "Extra résumé polish" })).not.toBeChecked();
+    expect(await screen.findByRole("checkbox", { name: "Generate cover letters" })).not.toBeChecked();
     expect(await axe(view.container)).toHaveNoViolations();
   });
 });

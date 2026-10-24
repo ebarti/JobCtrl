@@ -11,6 +11,13 @@ without turning the job description into evidence about you.
 For a plain-language walkthrough of that boundary, read
 [Resume Tailoring Without Fabrication](../guides/resume-tailoring-without-fabrication.md).
 
+Cover-letter generation is off by default. Enable **Generate cover letters** in
+Settings → Model selection to include letters in new material preparation. With
+it off, eligible jobs still receive a reviewed résumé and its PDF. Cover is
+recorded as skipped because the setting is off; existing accepted letters and
+work already generating are preserved. New direct cover-only requests also
+require the setting to be enabled.
+
 Before generating a resume or cover letter, JobCtrl attempts to refresh active
 evidence older than six hours. Usable content can feed preparation while
 availability remains unknown. Confirmed unavailable postings stop new work;

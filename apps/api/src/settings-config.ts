@@ -28,6 +28,7 @@ export const DEFAULT_JOBCTRL_SETTINGS: JobCtrlSettings = {
   tailoringGeneratorModels: null,
   tailoringJudgeModel: null,
   resumeVoicePolish: false,
+  coverLetterGeneration: false,
   applyMaxBudgetUsd: 5,
   applyTimeoutSeconds: 900,
   scoreCriteria: "",
@@ -83,6 +84,9 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
   const resumeVoicePolish = typeof raw.resume_voice_polish === "boolean"
     ? persistedSetting(raw.resume_voice_polish, "next_workflow")
     : defaultSetting(false, "next_workflow");
+  const coverLetterGeneration = typeof raw.cover_letter_generation === "boolean"
+    ? persistedSetting(raw.cover_letter_generation, "next_workflow")
+    : defaultSetting(false, "next_workflow");
   const applyMaxBudgetUsd = persistedNumber(
     raw,
     "apply_max_budget_usd",
@@ -115,6 +119,7 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
       tailoringGeneratorModels: tailoringGeneratorModels.value,
       tailoringJudgeModel: tailoringJudgeModel.value,
       resumeVoicePolish: resumeVoicePolish.value,
+      coverLetterGeneration: coverLetterGeneration.value,
       applyMaxBudgetUsd: applyMaxBudgetUsd.value,
       applyTimeoutSeconds: applyTimeoutSeconds.value,
       scoreCriteria: scoreCriteria.value,
@@ -133,6 +138,7 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
       tailoringGeneratorModels,
       tailoringJudgeModel,
       resumeVoicePolish,
+      coverLetterGeneration,
       applyMaxBudgetUsd,
       applyTimeoutSeconds,
       scoreCriteria,

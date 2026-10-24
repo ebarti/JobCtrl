@@ -1823,9 +1823,11 @@ generation when tailoring succeeds.
 
 Other per-job action routes: `POST /v1/jobs/:jobKey/actions/apply` dispatches
 the apply JSON-RPC method (and so `ApplyWorkflow`) for one job;
-`POST /v1/jobs/:jobKey/actions/generate-materials` dispatches the tailor →
-cover preparation stages for one job and returns `202` when the worker is
-ready; `POST /v1/jobs/:jobKey/actions/generate-interview-prep` dispatches the
+`POST /v1/jobs/:jobKey/actions/generate-materials` resolves omitted `stages`
+from saved `coverLetterGeneration`: Tailor by default, Tailor → Cover when
+enabled. While disabled, Cover is omitted from mixed requests and a cover-only
+request returns `409 cover_letter_generation_disabled` without dispatch.
+Accepted requests return `202` when the worker is ready; `POST /v1/jobs/:jobKey/actions/generate-interview-prep` dispatches the
 explicit `generate_interview_prep` workflow action for one job and returns `202`
 when queued (`200` for a completed dispatch response);
 `POST /v1/jobs/:jobKey/actions/cancel` requests cooperative

@@ -71,9 +71,9 @@ def test_derive_preparation_targets_is_sorted_and_prefers_score_workflow(
 
     assert [target.job_id for target in targets] == [_job_id(1), _job_id(2), _job_id(3)]
     assert {target.tenant_id for target in targets} == {LOCAL_TENANT}
-    assert targets[0].steps == ["score", "tailor", "cover", "pdf"]
+    assert targets[0].steps == ["score", "tailor", "pdf"]
     assert targets[0].target_version == "11"
-    assert targets[2].steps == ["tailor", "cover", "pdf"]
+    assert targets[2].steps == ["tailor", "pdf"]
     assert targets[2].target_version == "7"
 
 
@@ -119,7 +119,7 @@ def test_derive_targets_score_only_skips_pending_tailor(
     # Score-only (every subsequent streaming pass) never touches pending_tailor,
     # so the mid-tailor job cannot get a second, racing prep workflow.
     assert [target.job_id for target in score_only] == [_job_id(10)]
-    assert score_only[0].steps == ["score", "tailor", "cover", "pdf"]
+    assert score_only[0].steps == ["score", "tailor", "pdf"]
 
 
 def test_derive_preparation_targets_uses_exact_v7_job_identity_queries(
@@ -263,9 +263,9 @@ def test_derive_preparation_targets_uses_exact_v7_job_identity_queries(
             pending_tailor_id,
             restored_score_id,
         ]
-        assert targets[0].steps == ["score", "tailor", "cover", "pdf"]
-        assert targets[1].steps == ["tailor", "cover", "pdf"]
-        assert targets[2].steps == ["score", "tailor", "cover", "pdf"]
+        assert targets[0].steps == ["score", "tailor", "pdf"]
+        assert targets[1].steps == ["tailor", "pdf"]
+        assert targets[2].steps == ["score", "tailor", "pdf"]
         suppressed = conn.execute(
             """
             SELECT status, metadata_json
@@ -549,7 +549,7 @@ def test_build_preparation_workflow_spec_uses_deterministic_id(
     assert spec.workflow_id.startswith("prep-preparation:")
     (payload,) = spec.args
     assert isinstance(payload, JobPreparationInput)
-    assert payload.steps == ["tailor", "cover", "pdf"]
+    assert payload.steps == ["tailor", "pdf"]
     assert payload.job_id == _job_id(40)
     assert spec.workflow_id == f"prep-{payload.idempotency_key}"
 
