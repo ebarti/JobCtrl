@@ -403,3 +403,16 @@ save and API restart must make zero scoring/material dispatches, including old
 undelivered/intended profile events. Show updated, unknown and reviewed-unchanged
 profile states and visible model rationale. These prove model authority and
 structural binding, not semantic judgment quality.
+
+## Concurrent Preparation Recovery
+
+Run `test_automatic_preparation.py`, `test_automatic_preparation_overlap.py`,
+and `test_automatic_preparation_temporal_qa.py` with affected ownership and
+politeness tests. Real Temporal cases must complete peer Enrich and Score while
+per-job and automatic batch activities remain open, then replay every history.
+Require unchanged accepted artifacts and owners, shared capacity under the saved
+internal limit, frozen reservation reuse under independent writers, and exact
+recorded-run settlement without a preflight retry loop. Exercise the fail-closed
+cases in the [regression catalog](developer/qa/regression-catalog.md). Worker-wide
+scheduler changes also require the full worker suite and a restarted runtime
+using the tested candidate.

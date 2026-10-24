@@ -48,24 +48,42 @@ There is no second spend table or preflight.
 The worker checks saved preparation state at startup and on its 15-second
 heartbeat. `pipeline/automatic_preparation.py` resumes pending or retryable
 failed Enrich, Score, Tailor, and Cover work without running Discover or Apply.
-It waits while Temporal reports another discovery, import, or preparation
-workflow, or canonical stage rows are queued/running. An unavailable Temporal
-inventory prevents dispatch.
+Discovery, imports and unscoped/manual batch workflows retain a global dispatch
+gate. A single-job `JobPreparationWorkflow` or one-stage automatic
+`JobPipelineWorkflow` may overlap recovery for other jobs: its first immutable
+history event must identify the exact run, local cohort, permitted stage and
+compatible workspace. Every member stays excluded even between activities.
+Missing or unavailable inventory/history prevents dispatch.
 
-Each recovery workflow handles one stage for at most 25 local jobs. New dispatches
-snapshot the saved `pipeline_internal_concurrency` (default 1, bounded 1–16);
-reattaching to an existing execution preserves its original input. Worker activity
-slots and source politeness remain separate limits. Heartbeats retain only the
-generated `prepare-auto-local-<stage>-<24 hex>` workflow ID and Temporal run ID.
-Pipelines uses the literal activity type to show its stage without assigning the
-batch to an individual job or inventing Discovery membership. Canonical
-queue predicates determine description, score, policy, threshold, and approved
-material prerequisites. A later heartbeat selects the next eligible stage.
-Recovery excludes explicit cancellation, blocked/non-retryable and exhausted
-states, deleted jobs, and closed/incompatible postings. Existing scores and
-approved materials are reused. Attempts are preserved, capped by the smaller
-of the stage limit and five, and delayed by `min(1800, 60 * 2^attempts)` seconds.
-Both dispatch and the workflow enforce the normal spend preflight.
+Under the SQLite write lock, every queued/running stage must belong to a
+verified execution or an unchanged frozen reservation. Unknown or conflicting
+ownership prevents dispatch. A frozen reservation already executing under its
+verified cohort keeps its rows while unrelated work can proceed. An unstarted
+reservation retains its exact cohort and deterministic workflow ID; a recorded
+run must be described before settlement, and missing owner history cannot
+justify a replacement execution. Enrich's activity/run/attempt lease token and
+Score/Tailor/Cover's run owner are checked using their respective formats.
+
+Each recovery workflow handles one stage for at most 25 local jobs. Automatic
+batches share the saved `pipeline_internal_concurrency` budget (default 1,
+bounded 1–16): each executing batch accounts for the smaller of its immutable
+worker count and unfinished cohort membership. The next dispatch receives only
+the remaining parallelism, rather than multiplying the setting for each batch.
+Existing execution input is never rewritten. Worker activity slots and source
+politeness remain separate limits. One new cohort is dispatched per heartbeat.
+Heartbeats retain only the generated `prepare-auto-local-<stage>-<24 hex>`
+workflow ID and Temporal run ID. Pipelines uses the literal activity type to
+show its stage without assigning the batch to an individual job or inventing
+Discovery membership.
+
+Canonical queue predicates determine description, score, policy, threshold,
+and approved material prerequisites. A later heartbeat selects the next
+eligible stage. Recovery excludes explicit cancellation, blocked/non-retryable
+and exhausted states, deleted jobs, and closed/incompatible postings. Existing
+scores and approved materials are reused. Attempts are preserved, capped by
+the smaller of the stage limit and five, and delayed by
+`min(1800, 60 * 2^attempts)` seconds. Both dispatch and the workflow enforce the
+normal spend preflight.
 
 Automatic Tailor/Cover also respect a canonical manual Apply decline: `skipped`,
 no error code, and non-retryable. This differs from a `MIN_SCORE` policy skip;

@@ -34,7 +34,7 @@ from jobctrl.infrastructure.materials import SqliteEmployerAnalysisRepository
 from jobctrl.infrastructure.temporal.finalize import record_workflow_started, record_workflow_outcome
 from jobctrl.infrastructure.temporal.run_in_activity import shutdown_activity_executors
 from jobctrl.llm import check_spend_budget
-from jobctrl.materials.activities import tailor_activity, cover_activity
+from jobctrl.materials.activities import TailorActivityInput, TailorActivityOutput, TailorJobActivityInput, TailorJobActivityOutput, tailor_activity, cover_activity
 from jobctrl.pipeline import automatic_preparation as recovery
 from jobctrl.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
 from jobctrl.scoring import scorer, tailor
@@ -1344,8 +1344,114 @@ async def test_real_enrichment_batch_failure_before_first_claim_stops_recovery(w
             world.conn.commit()
             assert await tick(env.client, world, queue) == 0
         row = _stage(world.conn, job_id, "enrich")
-        assert row["state"] == "blocked"
+        assert row["state"] == "blocked", row["metadata_json"]
         assert row["error_code"] == "PREPARATION_RECOVERY_STOPPED"
         assert row["attempt_count"] == 1
         executions = [run async for run in env.client.list_workflows()]
         assert len(executions) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("include_batch", [False, True])
+async def test_recovery_enrich_and_score_overlap_real_preparation(world, monkeypatch, include_batch):
+    from temporalio.worker import Replayer
+    from jobctrl.preparation.workflow import JobPreparationInput, JobPreparationWorkflow
+    from .test_v7_cover_runtime import _seed_approved_resume
+
+    monkeypatch.setattr(recovery, "resolve_pipeline_internal_concurrency", lambda: 3)
+    retry = seed_for_stage(world, 1, "enrich")
+    busy = seed_for_stage(world, 2, "tailor")
+    held_jobs = [busy]
+    batch_busy = seed_for_stage(world, 3, "tailor") if include_batch else None
+    if batch_busy:
+        held_jobs.append(batch_busy)
+    for job in held_jobs:
+        _seed_approved_resume(world.conn, world.app, tenant_id=LOCAL_TENANT, job_id=job)
+    world.conn.commit()
+    accepted = [tuple(row) for row in world.conn.execute("SELECT * FROM job_materials_artifacts ORDER BY artifact_id")]
+    entered, batch_entered, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    @activity.defn(name="tailor_job")
+    async def held_material_port(payload: TailorJobActivityInput) -> TailorJobActivityOutput:
+        set_stage_state(world.conn, payload.job_id, "tailor", "running", attempt_count=1,
+            metadata={"activityOwner": activity.info().workflow_run_id}, validate_transition=False)
+        world.conn.commit()
+        entered.set()
+        await release.wait()
+        set_stage_state(world.conn, payload.job_id, "tailor", "skipped", validate_transition=False)
+        world.conn.commit()
+        return TailorJobActivityOutput(status="skipped", reason="synthetic_hold_released")
+
+    @activity.defn(name="tailor")
+    async def held_batch_port(payload: TailorActivityInput) -> TailorActivityOutput:
+        info = activity.info()
+        assert payload.job_ids == (batch_busy,)
+        set_stage_state(world.conn, batch_busy, "tailor", "running", attempt_count=1,
+            metadata={"activityOwner": info.workflow_run_id, "workflowId": info.workflow_id,
+                      "temporalRunId": info.workflow_run_id, "automaticRecovery": True}, validate_transition=False)
+        world.conn.commit()
+        batch_entered.set()
+        await release.wait()
+        set_stage_state(world.conn, batch_busy, "tailor", "skipped", validate_transition=False)
+        world.conn.commit()
+        return TailorActivityOutput(status="ok", elapsed=0)
+
+    queue = f"qa-overlap-{uuid.uuid4()}"
+    async with local_env() as env:
+        async with Worker(env.client, task_queue=queue,
+            workflows=[JobPipelineWorkflow, JobPreparationWorkflow],
+            activities=[*[port for port in ACTIVITIES if port is not tailor_activity], held_material_port, held_batch_port],
+            max_concurrent_activities=3, workflow_runner=UnsandboxedWorkflowRunner()):
+            handle = await env.client.start_workflow(JobPreparationWorkflow.run,
+                JobPreparationInput(tenant_id="local", job_id=busy, steps=["tailor"],
+                    target_version="synthetic", idempotency_key="held", retailor=True,
+                    expected_app_dir=str(world.app), expected_db_path=str(world.path)),
+                id=f"prep-held-{uuid.uuid4()}", task_queue=queue)
+            held_handles = [handle]
+            histories = []
+            try:
+                await asyncio.wait_for(entered.wait(), 10)
+                if include_batch:
+                    batch_handle = await env.client.start_workflow(JobPipelineWorkflow.run,
+                        JobPipelineWorkflowInput(tenant_id="local", stages=["tailor"], job_ids=(batch_busy,),
+                            workers=1, automatic_recovery=True, expected_app_dir=str(world.app), expected_db_path=str(world.path)),
+                        id=f"prepare-auto-local-tailor-held-{uuid.uuid4()}", task_queue=queue)
+                    held_handles.append(batch_handle)
+                    await asyncio.wait_for(batch_entered.wait(), 10)
+                before = [_stage(world.conn, job, "tailor") for job in held_jobs]
+                for _ in range(100):
+                    visible = {run.id async for run in env.client.list_workflows(query="ExecutionStatus = 'Running'")}
+                    if {held.id for held in held_handles} <= visible:
+                        break
+                    await asyncio.sleep(0.1)
+                else:
+                    raise AssertionError("Held preparations were never visible")
+                for stage in ["enrich", "score"]:
+                    assert await tick(env.client, world, queue) == 1
+                    workflow_id = reserved_id(world, retry, stage)
+                    result = await asyncio.wait_for(env.client.get_workflow_handle(workflow_id).result(), 25)
+                    assert result["stages_completed"] == [stage], result
+                    assert _stage(world.conn, retry, stage)["state"] == "succeeded"
+                    assert [_stage(world.conn, job, "tailor") for job in held_jobs] == before
+                    assert not release.is_set()
+                    histories.append(await env.client.get_workflow_handle(workflow_id).fetch_history())
+                    for _ in range(100):
+                        if workflow_id not in {run.id async for run in env.client.list_workflows(query="ExecutionStatus = 'Running'")}:
+                            break
+                        await asyncio.sleep(0.1)
+                    else:
+                        raise AssertionError("Completed recovery retained active visibility")
+                assert len(world.scrape_calls) == 1 and world.llm.calls == 1
+                assert world.conn.execute("SELECT fit_score FROM job_scores WHERE job_id=?", (str(retry),)).fetchone()[0] == 8
+                assert [tuple(row) for row in world.conn.execute("SELECT * FROM job_materials_artifacts ORDER BY artifact_id")] == accepted
+            finally:
+                release.set()
+                await asyncio.wait_for(asyncio.gather(*(held.result() for held in held_handles)), 10)
+            for held in held_handles:
+                histories.append(await held.fetch_history())
+            runs = [run async for run in env.client.list_workflows()]
+            assert len(runs) == 3 + int(include_batch)
+            assert {run.workflow_type for run in runs} == {"JobPreparationWorkflow", "JobPipelineWorkflow"}
+        replayer = Replayer(workflows=[JobPipelineWorkflow, JobPreparationWorkflow], workflow_runner=UnsandboxedWorkflowRunner())
+        for history in histories:
+            await replayer.replay_workflow(history)
