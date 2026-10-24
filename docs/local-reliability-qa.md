@@ -233,7 +233,7 @@ No application submission is implied by a QA request.
 ## Saved Posting Availability Product QA
 
 This is risk 3 work: evidence freshness, durable claims and reviewed submission
-boundaries need independent exact-candidate review and verification. Run the
+boundaries need verification against the exact candidate. Run the
 full worker suite excluding the two explicitly environment-owned
 `system_browser` cases in `test_apply_chrome_dry_run_guard.py`, cross-stack check,
 API/RPC/readonly/event parity, availability web/a11y tests and web/docs builds.

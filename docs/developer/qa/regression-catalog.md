@@ -364,7 +364,9 @@ pre-pagination approximation must stay visible in the report; the trial does
 not assert that incorrect boxes are correct or require their incorrect values
 as an invariant.
 
-### Results and independent completion
+<a id="results-and-independent-completion"></a>
+
+### Results and completion
 
 On 2026-10-03 the implementation measurement ran with Python 3.12.13 on macOS
 26.6.2 arm64, Playwright 1.58.0, bundled Chromium headless shell 145.0.7632.6
@@ -419,7 +421,7 @@ words) were dense A4 12/926, dense Letter 12/867, below both 0/13, above both
 7/13, oversized A4 29/2139 and oversized Letter 46/2134. Font-bound rectangles
 can intersect between adjacent lines or extend above the page while the painted
 glyphs remain readable; these counts are not confirmed clipping/overlap defects.
-Higher-resolution independent inspection remains a separate QA gate.
+Higher-resolution visual inspection remains a separate QA check.
 
 The oversized role moves to page 2, and its one bullet genuinely fragments
 across pages 3 and 4. Large unused areas on pages 1 and 2 result from the current
@@ -1707,7 +1709,7 @@ approval bindings. Successful saves retain complete material history and resume
 behavior while requiring renewed approval for the new generation. Verify email
 bindings, resume draft rendering/comments, manual decisions/outcomes and jobs
 without a cover as preservation controls. The materials browser spec contains a
-real render/save/reload path; independent candidate-bound review/product gates
+real render/save/reload path; product checks against the exact candidate
 remain governed by the reliability workflow.
 
 Repeat formatting saves and export both carried text sources as DOCX from each
