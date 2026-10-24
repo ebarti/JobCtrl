@@ -286,9 +286,14 @@ restart is required for a preferred-model edit. The initially selected ready
 provider stays process-stable on warm acquisitions so status checks do not rerun
 for every workflow until a real SDK call reports an availability failure.
 Authentication rejection excludes that provider from subsequent automatic
-attempts in the same process. Rate limits, transport failures and service
-outages exclude the failed model route. A durable retry acquires a fresh
-adapter through another ready route. Claude SDK query and message-collection
+attempts in the same process. An explicit exhausted usage allowance or an
+unavailable SDK execution excludes the failed model route. Temporary rate
+limits, overloads, server errors and connection failures do not exclude it:
+the failed call stays visible and existing bounded retries may use the same
+provider/model again. This also preserves concurrent jobs and explicit model
+pins after a temporary failure. When a route is unavailable, an automatic
+durable retry can acquire another ready route. Claude SDK query and
+message-collection
 exceptions are classified at that execution boundary, including otherwise
 untyped SDK exceptions; the current analysis leg stops after that failure.
 Parsing and reviewing returned content remain outside this boundary. The

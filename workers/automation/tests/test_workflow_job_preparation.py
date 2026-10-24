@@ -25,10 +25,12 @@ from jobctrl.pipeline import preparation
 from jobctrl.preparation import workflow as prep_workflow_mod
 from jobctrl.preparation.workflow import JobPreparationInput, JobPreparationWorkflow
 from jobctrl.scoring.activities import score_job_activity
+from jobctrl.infrastructure.llm import llm_client
 from jobctrl.llm import SpendBudgetStatus
 from jobctrl.infrastructure.temporal.finalize import WorkflowOutcomeInput
 
 
+_ROUTED_CHAT_JSON = llm_client.LlmAdapter.chat_json
 _JOB_ID = JobId("10000000-0000-4000-8000-000000000001")
 
 
@@ -1175,3 +1177,76 @@ async def test_preparation_tailor_failure_owns_the_temporal_execution_id(
     assert result.error_code == "attempt_budget_exhausted"
     assert observed_audit_execution_ids == [handle.first_execution_run_id]
     assert observed_audit_execution_ids[0] != logical_workflow_id
+
+
+@pytest.mark.asyncio
+async def test_preparation_recovers_temporary_provider_overload_on_same_model(monkeypatch, tmp_path):
+    import json
+    from jobctrl.database import init_db
+    from jobctrl.domain.determinations import call_model
+    from jobctrl.domain.ports.llm import LlmMessage
+    from jobctrl.infrastructure.llm.provider_errors import ProviderCallError, ProviderFailureEnvelope
+
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"default_llm_model": "codex:synthetic-model"}))
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(config))
+    monkeypatch.setattr("jobctrl.infrastructure.setup_probes.ready_llm_providers", lambda: ("codex",))
+    connection = init_db(tmp_path / "jobctrl.db")
+    monkeypatch.setattr("jobctrl.database.get_connection", lambda: connection)
+    calls = []
+
+    class Backend:
+        provider_id, model = "codex", "synthetic-model"
+
+        def chat_json(self, messages, **kwargs):
+            calls.append((self.provider_id, self.model))
+            if len(calls) == 1:
+                raise ProviderCallError(ProviderFailureEnvelope(
+                    provider="codex", model=self.model, operation="chat_json", category="provider_turn",
+                    error_type="synthetic_provider_failure", code="server_overloaded", retryable=True,
+                ))
+            return {"status": "ok", "score_version": 1}
+
+    monkeypatch.setattr(llm_client, "_make_backend", lambda *_: Backend())
+    monkeypatch.setattr(llm_client.LlmAdapter, "chat_json", _ROUTED_CHAT_JSON)
+    llm_client.reset_llm_adapter()
+
+    def score(_payload, **_kwargs):
+        return call_model(llm=llm_client.get_llm_adapter(),
+                          messages=[LlmMessage(role="user", content="Synthetic provider recovery probe")],
+                          response_schema={"type": "object"}, lane="scoring", preflight=lambda: None)
+
+    @activity.defn(name="record_workflow_started")
+    async def record_started(_payload):
+        return None
+
+    @activity.defn(name="record_workflow_outcome")
+    async def record_outcome(_payload):
+        return None
+
+    @activity.defn(name="recover_preparation_state")
+    async def recover(_payload):
+        return {"restored": 0, "failed": 0}
+
+    monkeypatch.setattr("jobctrl.scoring.activities._score_one_job", score)
+    queue = "provider-overload-" + uuid.uuid4().hex
+    try:
+        async with time_skipping_env() as env:
+            async with Worker(env.client, task_queue=queue, workflows=[JobPreparationWorkflow],
+                              activities=[_check_spend_budget, record_started, record_outcome, recover, score_job_activity],
+                              workflow_runner=UnsandboxedWorkflowRunner()):
+                handle = await env.client.start_workflow(JobPreparationWorkflow.run,
+                    JobPreparationInput(tenant_id="local", job_id=_JOB_ID, steps=["score"],
+                                        target_version="1", idempotency_key=queue), id=queue, task_queue=queue)
+                result = await asyncio.wait_for(handle.result(), timeout=30)
+                history = await handle.fetch_history()
+        assert calls == [("codex", "synthetic-model")] * 2
+        assert result.steps_completed == ["score"] and result.steps_failed == []
+        starts = [event.activity_task_started_event_attributes for event in history.events
+                  if event.event_type == EventType.EVENT_TYPE_ACTIVITY_TASK_STARTED]
+        assert any(start.attempt == 2 for start in starts), [start.attempt for start in starts]
+        assert not any(event.event_type == EventType.EVENT_TYPE_ACTIVITY_TASK_FAILED for event in history.events)
+        await Replayer(workflows=[JobPreparationWorkflow], workflow_runner=UnsandboxedWorkflowRunner()).replay_workflow(history)
+    finally:
+        connection.close()
+        llm_client.reset_llm_adapter()
