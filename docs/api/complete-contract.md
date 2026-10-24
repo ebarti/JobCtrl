@@ -654,6 +654,17 @@ before its final durable event was recorded, the decoder appends the proven
 failed or completed terminal event and refreshes the projection. It never
 promotes a queued or running event to terminal from workflow status alone.
 
+A run-owned successful preparation receipt that completed Score and stopped at
+Tailor can resolve a canonical eligibility hold for cohort completion and ETA.
+The reader also requires the current successful Score owner and accepted score
+version, no unresolved score staleness, and exact non-retryable
+`SCORE_ELIGIBILITY_BLOCKED` gate provenance. Tailor/Cover counts remain `blocked`;
+only effective remaining work, issue classification, paths and swept-backlog
+contention exclude the proven completed hold. Generic/retryable blocks,
+missing/foreign receipts, later scores or owners and reset stages remain
+unresolved. An actual PDF lifecycle is authoritative. This is a read-only
+interpretation; the immutable plan and canonical rows are preserved.
+
 The canonical stage-count object contains non-negative integers for
 `eligible`, `waiting`, `processing`, `succeeded`, `skipped`, `blocked`,
 `failed`, `canceled`, `needsVerification`, `stale`, and `unknown`. The
