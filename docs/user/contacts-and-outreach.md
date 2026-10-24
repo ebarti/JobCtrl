@@ -66,6 +66,21 @@ yourself. The current cadence policy belongs to
 [Apply → Outreach Follow-Ups](apply.md#outreach-follow-ups) and is not duplicated
 here.
 
+## Retrying A Send Log
+
+If **Record send** loses its acknowledgement, retry in the same mounted form.
+The form retains its original draft, channel, date and request identity, and the
+API returns the original send-log record without a second event. The current
+thread is read separately, so replaying a log does not restore an older approval
+or reminder. A retry remains valid if that draft's review has since changed.
+
+Input stays visible and locked until acknowledgement or **Start a new action**.
+That choice creates a distinct identity and can record another attestation; the
+previous action may already exist. Reloading or leaving the form discards its
+in-memory retry state. Inspect sent history before adding a new attestation.
+Fresh actions still require a currently approved draft and current offer sources
+where applicable. None of these actions sends a message.
+
 ## Contact Import
 
 Open **Import contacts**, choose CSV or vCard, enter the source filename, and

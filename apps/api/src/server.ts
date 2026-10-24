@@ -1,3 +1,4 @@
+import { ActionReceiptConflictError } from "./action-receipts.js";
 import { OutreachGenerationError } from "./outreach-generation-errors.js";
 import { registerOfferRoutes } from "./offer-routes.js";
 import { readCompanyBriefing } from "./company-briefings.js";
@@ -4040,12 +4041,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         try {
           return {
             ok: true,
-            thread: logOutreachSend(
+            sendLog: logOutreachSend(
               db,
               decodeRouteParam(request.params.threadId),
-              body.draftId,
-              body.channel,
-              body.sentAt,
+              body,
             ),
           };
         } catch (error) {
@@ -5280,6 +5279,10 @@ async function withWritableDb<T>(
     if (error instanceof ResumeRenderError) {
       void reply.code(502);
       return { ok: false, error: "resume_render_failed", message: error.message };
+    }
+    if (error instanceof ActionReceiptConflictError) {
+      void reply.code(409);
+      return { ok: false, error: "action_identity_conflict", message: error.message };
     }
     if (error instanceof InputError) {
       if (APPLY_REVIEW_PRECONDITION_ERRORS.has(error.message)) {

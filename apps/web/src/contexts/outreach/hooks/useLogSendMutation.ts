@@ -1,7 +1,7 @@
-import type { LogOutreachSendRequest, OutreachThreadResponse } from "@jobctrl/contracts";
+import type { LogOutreachSendRequest, LogOutreachSendResponse, OutreachThreadResponse } from "@jobctrl/contracts";
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
+import { useRef } from "react";
 
-import { createOptimisticMutation } from "../../../shared/lib/createOptimisticMutation.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { markThreadSentInThread } from "../lib/follow-up-patches.js";
@@ -9,36 +9,39 @@ import { outreachKeys } from "../queryKeys.js";
 
 export type LogSendVariables = LogOutreachSendRequest;
 
-/**
- * Record a user-attested send of an approved draft (INV-1 — JobCtrl never
- * sends; this logs a fact). Optimistically appends the send log and flips the
- * cached by-contact thread to `isSent`; the due-follow-ups list is invalidated on
- * settle because logging a send can seed a follow-up. Rolls back on failure.
- */
+/** Reconcile only this fact; never install a historical thread snapshot. */
 export function useLogSendMutation(
   threadId: string,
   contactId: string,
   jobId?: string,
-): UseMutationResult<OutreachThreadResponse, Error, LogSendVariables> {
+): UseMutationResult<LogOutreachSendResponse, Error, LogSendVariables> {
   const tenantId = useTenantId();
   const { api } = usePorts();
   const queryClient = useQueryClient();
+  const attempted = useRef(new Set<string>());
   const threadForContactKey = outreachKeys.threadForContact(tenantId, contactId, jobId ?? null);
-  return useMutation(
-    createOptimisticMutation<OutreachThreadResponse, LogSendVariables>(queryClient, {
-      mutationKey: outreachKeys.thread(tenantId, threadId),
-      mutationFn: (body) => api.logOutreachSend(threadId, body),
-      optimisticUpdates: (variables) => [
-        {
-          queryKey: threadForContactKey,
-          patch: (current) => markThreadSentInThread(current, variables),
-        },
-      ],
-      settle: () => [
-        threadForContactKey,
-        outreachKeys.threads(tenantId),
-        outreachKeys.dueFollowUps(tenantId),
-      ],
-    }),
-  );
+  return useMutation({
+    mutationKey: outreachKeys.thread(tenantId, threadId),
+    mutationFn: (body: LogSendVariables) => api.logOutreachSend(threadId, body),
+    onMutate: async (variables) => {
+      await queryClient.cancelQueries({ queryKey: threadForContactKey, exact: true });
+      // A prior uncertain attempt may already be visible through a current read.
+      // Until the receipt returns, only the server can identify that fact.
+      if (!attempted.current.has(variables.requestId)) {
+        attempted.current.add(variables.requestId);
+        queryClient.setQueryData(threadForContactKey, (current: unknown) => markThreadSentInThread(current, variables));
+      }
+    },
+    onSettled: (data, _error, variables) => {
+      queryClient.setQueryData<OutreachThreadResponse>(threadForContactKey, (current) => {
+        if (!current?.thread || current.thread.threadId !== threadId) return current;
+        const logs = current.thread.sendLogs.filter((log) => log.sendLogId !== `optimistic-send:${variables.requestId}`);
+        if (data && !logs.some((log) => log.sendLogId === data.sendLog.sendLogId)) logs.push(data.sendLog);
+        return { ...current, thread: { ...current.thread, sendLogs: logs, isSent: logs.length > 0 } };
+      });
+      for (const queryKey of [threadForContactKey, outreachKeys.thread(tenantId, threadId), outreachKeys.threads(tenantId), outreachKeys.dueFollowUps(tenantId)]) {
+        void queryClient.invalidateQueries({ queryKey });
+      }
+    },
+  });
 }

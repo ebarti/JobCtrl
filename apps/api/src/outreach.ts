@@ -1,3 +1,5 @@
+import { actionIdentity, readActionReceipt, ActionReceiptConflictError } from "./action-receipts.js";
+import { LogOutreachSendRequestSchema, type LogOutreachSendRequest } from "@jobctrl/contracts";
 import { readOffer } from "./offers.js";
 /**
  * Contact & Outreach (ninth context) — outreach-thread read model + the
@@ -214,10 +216,20 @@ export function rejectOutreachDraft(
 export function logOutreachSend(
   db: SqliteDatabase,
   threadId: string,
-  draftId: string,
-  channel: string,
-  sentAt: string,
-): OutreachThreadDetail {
+  request: LogOutreachSendRequest,
+): OutreachSendLogDto {
+  request = LogOutreachSendRequestSchema.parse(request);
+  const { draftId, channel, sentAt } = request;
+  const identity = actionIdentity(TENANT_ID, "outreach-send-log", threadId, request.requestId, request);
+  const result = db.transaction(() => {
+    const receipt = readActionReceipt(db, TENANT_ID, identity, "OutreachSendLogged", "outreach");
+    if (receipt) {
+      const sendLog = loadSendLogs(db, threadId).find((log) => log.sendLogId === receipt.factId);
+      if (!sendLog || sendLog.draftId !== draftId || sendLog.channel !== channel || sendLog.sentAt !== sentAt) {
+        throw new ActionReceiptConflictError();
+      }
+      return sendLog;
+    }
   const thread = loadThreadRow(db, threadId);
   if (!thread) {
     throw new OutreachNotFoundError(`Outreach thread ${threadId} not found`);
@@ -245,7 +257,6 @@ export function logOutreachSend(
   const now = new Date().toISOString();
   const sendLogId = randomUUID();
   const jobId = thread.job_id ?? null;
-  const transaction = db.transaction(() => {
     db.prepare(
       `INSERT INTO outreach_send_logs (
          tenant_id, send_log_id, thread_id, draft_id, channel, sent_at, logged_at
@@ -255,10 +266,13 @@ export function logOutreachSend(
       `UPDATE outreach_threads SET updated_at = ? WHERE tenant_id = ? AND thread_id = ?`,
     ).run(now, TENANT_ID, threadId);
     recordEvent(db, {
+      idempotencyKey: identity.key,
       jobId,
       eventType: "OutreachSendLogged",
       threadId,
       payload: {
+        receipt: { ...identity.binding, factId: sendLogId },
+        sendLogId,
         tenantId: TENANT_ID,
         threadId,
         draftId,
@@ -267,11 +281,10 @@ export function logOutreachSend(
         loggedAt: now,
       },
     });
-  });
-  transaction();
-
+    return { sendLogId, threadId, draftId, channel: trimmedChannel, sentAt: trimmedSentAt, loggedAt: now };
+  }).immediate();
   refreshOutreachProjections(db, TENANT_ID);
-  return buildThreadDetail(db, loadThreadRow(db, threadId) ?? thread);
+  return result;
 }
 
 export function scheduleOutreachFollowUp(
@@ -769,6 +782,7 @@ function recordEvent(
   event: {
     jobId: string | null;
     eventType: string;
+    idempotencyKey?: string;
     threadId: string;
     payload: Record<string, unknown>;
   },
@@ -790,7 +804,7 @@ function recordEvent(
     JSON.stringify(event.payload),
     "outreach",
     event.threadId,
-    null,
+    event.idempotencyKey ?? null,
   );
 }
 

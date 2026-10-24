@@ -1,3 +1,4 @@
+import type { LogOutreachSendResponse } from "@jobctrl/contracts";
 import { expect, test } from "@playwright/test";
 import Database from "better-sqlite3";
 
@@ -389,7 +390,7 @@ function assertSensitiveValuesStayOutOfEventsAndProjections(
 
 test("Outreach planner: seeded contacts, supervised research, draft review, send log, and follow-up reminders", async ({
   page,
-}) => {
+}, testInfo) => {
   const dbPath = loadE2eDbPath();
   seedOutreachPlanner(dbPath);
 
@@ -517,6 +518,21 @@ test("Outreach planner: seeded contacts, supervised research, draft review, send
   await contactDialog.getByRole("combobox", { name: "Channel" }).click();
   await page.getByRole("option", { name: "LinkedIn message" }).click();
   await contactDialog.getByLabel("Date you sent it").fill("2026-07-06");
+  let acceptedBeforeLoss: LogOutreachSendResponse | undefined;
+  let originalPayload: string | null = null;
+  await page.route(`**/v1/outreach/threads/${CONTACT_THREAD_ID}/send-logs`, async (route) => {
+    if (acceptedBeforeLoss) return route.continue();
+    originalPayload = route.request().postData();
+    const response = await route.fetch();
+    expect(response.status()).toBe(200);
+    acceptedBeforeLoss = await response.json() as LogOutreachSendResponse;
+    await route.abort("failed");
+  });
+  await contactDialog.getByRole("button", { name: "Record send" }).click();
+  await expect(contactDialog.locator(".send-log-form").getByRole("alert")).toBeVisible();
+  await expect(contactDialog.getByLabel("Date you sent it")).toHaveValue("2026-07-06");
+  await expect(contactDialog.getByLabel("Date you sent it")).toBeDisabled();
+  await page.screenshot({ path: testInfo.outputPath("send-log-lost-ack.png") });
   const [sendLogResponse] = await Promise.all([
     page.waitForResponse(
       (response) =>
@@ -529,6 +545,14 @@ test("Outreach planner: seeded contacts, supervised research, draft review, send
     contactDialog.getByRole("button", { name: "Record send" }).click(),
   ]);
   expect(sendLogResponse.status()).toBe(200);
+  expect(await sendLogResponse.json()).toEqual(acceptedBeforeLoss);
+  expect(sendLogResponse.request().postData()).toBe(originalPayload);
+  const acceptedId = acceptedBeforeLoss!.sendLog.sendLogId;
+  const verificationDb = new Database(dbPath, { readonly: true });
+  try {
+    expect(verificationDb.prepare("SELECT count(*) AS n FROM outreach_send_logs WHERE tenant_id='local' AND send_log_id=?").get(acceptedId)).toEqual({ n: 1 });
+    expect(verificationDb.prepare("SELECT count(*) AS n FROM job_events WHERE tenant_id='local' AND event_type='OutreachSendLogged' AND json_extract(payload_json, '$.sendLogId')=?").get(acceptedId)).toEqual({ n: 1 });
+  } finally { verificationDb.close(); }
   await expect(contactDialog.getByText("linkedin_message")).toBeVisible();
 
   const [completeResponse] = await Promise.all([

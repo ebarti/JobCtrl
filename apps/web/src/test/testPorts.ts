@@ -1,3 +1,4 @@
+import { BrowserRequestIdentityAdapter } from "../shared/adapters/local/BrowserRequestIdentityAdapter.js";
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import { vi } from "vitest";
 
@@ -346,6 +347,7 @@ export function buildTestPorts(overrides: BuildTestPortsOptions = {}): Ports {
         templateApiDefaults,
       );
   return {
+    requestIdentity: new BrowserRequestIdentityAdapter(),
     api,
     eventStream: overrides.eventStream ?? new FakeEventStreamPort(),
     storage: new InMemoryStoragePort(),

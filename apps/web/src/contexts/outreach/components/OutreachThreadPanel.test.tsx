@@ -1,6 +1,9 @@
+import { LOCAL_TENANT } from "@jobctrl/domain-types";
+import { outreachKeys } from "../queryKeys.js";
+import { buildTestPorts } from "../../../test/testPorts.js";
 import { http, HttpResponse } from "msw";
-import { fireEvent, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { act, fireEvent, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   makeOutreachDraft,
@@ -15,6 +18,23 @@ import { renderWithProviders } from "../../../test/render.js";
 import { OutreachThreadPanel } from "./OutreachThreadPanel.js";
 
 describe("<OutreachThreadPanel>", () => {
+  it("keeps the uncertain send form and original draft binding when a later read has no approved draft", async () => {
+    const logOutreachSend = vi.fn(async (_threadId: string, _body: import("@jobctrl/contracts").LogOutreachSendRequest) => ({ ok: true as const, sendLog: makeOutreachSendLog() }));
+    logOutreachSend.mockRejectedValueOnce(new Error("Lost acknowledgement"));
+    const view = renderWithProviders(<OutreachThreadPanel contactId="contact-1" />, { ports: buildTestPorts({ api: { logOutreachSend } }) });
+    fireEvent.click(await view.findByRole("button", { name: "Log a send" }));
+    fireEvent.click(view.getByRole("button", { name: "Record send" }));
+    await view.findByRole("alert");
+    const original = logOutreachSend.mock.calls[0]![1];
+    const newer = makeOutreachThreadResponse(makeCandidateThread());
+    server.use(http.get("*/v1/contacts/:contactId/outreach", () => HttpResponse.json(newer)));
+    await act(async () => { view.queryClient.setQueryData(outreachKeys.threadForContact(LOCAL_TENANT, "contact-1", null), newer); });
+    expect(view.getByRole("button", { name: "Record send" })).toBeInTheDocument();
+    fireEvent.click(view.getByRole("button", { name: "Record send" }));
+    await waitFor(() => expect(logOutreachSend).toHaveBeenCalledTimes(2));
+    expect(logOutreachSend.mock.calls[1]![1]).toEqual(original);
+  });
+
   it("shows the approved draft, the candidate under review, and the full generation history (INV-5)", async () => {
     const view = renderWithProviders(<OutreachThreadPanel contactId="contact-1" />);
     await waitFor(() =>

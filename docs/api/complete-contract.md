@@ -1416,7 +1416,7 @@ verification-code MCP server:
   repeat_application_confirmation_not_required`.
 - `GET /v1/outcomes` and `GET /v1/jobs/:jobKey/outcomes` return reviewed
   outcomes and any outcome suggestions.
-- `POST /v1/jobs/:jobKey/outcomes` writes a manual reviewed outcome. For
+- `POST /v1/jobs/:jobKey/outcomes` requires UUID `requestId` and writes a manual reviewed outcome. For
   `kind: "interview"`, callers may include `interviewPrepGeneration` to link a
   post-interview reflection to an accepted or superseded prep generation for the
   same job. The link is nullable and invalid generations are rejected.
@@ -1447,6 +1447,35 @@ Manual outcomes and suggestion corrections require canonical ISO-8601 UTC
 `occurredAt` timestamps when the field is supplied. Application outcome
 responses include nullable `interviewPrepGeneration`; it is set only for linked
 manual interview reflections.
+
+### Manual Action Retry Contract
+
+Manual outcomes (including prep-linked reflections) and Outreach send logs require
+`requestId` as a UUID. It is scoped by the trusted local tenant, operation
+(`manual-outcome`, `interview-reflection`, or `outreach-send-log`) and canonical
+target (job or thread). Job URL aliases resolve to the same canonical job scope.
+The API never takes tenant authority from the request body.
+
+The first accepted request atomically persists its canonical fact and one domain
+event bearing the durable receipt. The receipt binds a fingerprint of validated
+fields to safe fact references. Equal retries, including concurrent requests,
+lost HTTP responses and API restarts, return the original result IDs and
+timestamps. An omitted `occurredAt` remains omitted in the fingerprint; it does
+not become the generated first-acceptance timestamp on retry.
+
+Different validated fields under the same scope and identity return
+`409 { ok: false, error: "action_identity_conflict", message }` without applying
+any mutation. Invalid or inconsistent persisted receipt bindings also fail closed.
+Missing/malformed identities return `400` before mutation. An identity in another
+tenant, operation or target cannot retrieve this receipt. A deliberate new
+action uses a new identity and may append another fact/event.
+
+Replay reads the immutable canonical fact before current approval, offer-source
+or prep checks, and cannot overwrite later thread/review/reminder state. Fresh
+actions retain those checks. Reflections accept only stored accepted or
+superseded prep generations for the same job. Private note/reflection text stays
+in canonical private history, outside receipt events and conflict errors.
+Suggestion-decision semantics and external delivery authority are unchanged.
 
 These routes create `application_review_decisions`,
 `application_repeat_overrides`, `application_repeat_override_consumptions`,
@@ -1607,12 +1636,14 @@ in the TypeScript API. **No route sends anything (INV-1)** — `send-logs` recor
 user-attested fact, and the follow-up routes manage a surfaced-only reminder:
 
 - `POST /v1/outreach/threads/:threadId/send-logs` records that the **user** sent an
-  approved draft (`LogOutreachSendRequest`: `draftId`, `channel`, `sentAt`). It is
+  approved draft (`LogOutreachSendRequest`: UUID `requestId`, `draftId`, `channel`, `sentAt`). It is
   the ONLY way a thread reaches a "sent" state; it rejects any draft that is not
   approved with `400 { error: "invalid_outreach_transition" }` (approving and
-  logging a send are distinct actions), and returns the updated
-  `OutreachThreadDetail` (`sendLogs`, `isSent`). The written `OutreachSendLogged`
-  event carries only ids, the channel label, and timestamps.
+  logging a send are distinct actions), and returns `{ ok: true, sendLog: OutreachSendLogDto }`. The immutable
+  `sendLog` contains `sendLogId`, `threadId`, `draftId`, `channel`, `sentAt` and
+  `loggedAt`. Read the current thread through the contact Outreach GET. The
+  written `OutreachSendLogged` event carries safe references, the channel label,
+  timestamps and receipt metadata.
 - `POST /v1/outreach/threads/:threadId/follow-up/schedule` schedules the next
   follow-up (`ScheduleFollowUpRequest`: optional `dueAt`, `basis`, `submittedAt`,
   `hasLoggedReply`). When `dueAt` is omitted the date is DERIVED from the

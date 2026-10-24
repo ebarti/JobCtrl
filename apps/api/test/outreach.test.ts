@@ -487,10 +487,12 @@ describe("outreach API", () => {
     const res = await app.inject({
       method: "POST",
       url: "/v1/outreach/threads/thread-send/send-logs",
-      payload: { draftId: "draft-send", channel: "email", sentAt: "2026-07-07" },
+      payload: { requestId: "11720000-0000-4000-8000-000000000001", draftId: "draft-send", channel: "email", sentAt: "2026-07-07" },
     });
     expect(res.statusCode).toBe(200);
-    const thread = (res.json() as ThreadResponse).thread!;
+    const current = await app.inject({ method: "GET", url: `/v1/contacts/contact-send/outreach?jobId=${JOB_ID}` });
+    const thread = (current.json() as ThreadResponse).thread!;
+    expect(res.json().sendLog).toEqual(thread.sendLogs[0]);
     expect(thread.isSent).toBe(true);
     expect(thread.sendLogs).toHaveLength(1);
     expect(thread.sendLogs[0]!.channel).toBe("email");
@@ -522,7 +524,7 @@ describe("outreach API", () => {
     const res = await app.inject({
       method: "POST",
       url: "/v1/outreach/threads/thread-channel/send-logs",
-      payload: { draftId: "draft-channel", channel: "dana.lee@example.test", sentAt: "2026-07-07" },
+      payload: { requestId: "11720000-0000-4000-8000-000000000001", draftId: "draft-channel", channel: "dana.lee@example.test", sentAt: "2026-07-07" },
     });
     expect(res.statusCode).toBe(400);
     expect((res.json() as ThreadResponse).error).toBe("invalid_outreach_send_log");
@@ -541,7 +543,7 @@ describe("outreach API", () => {
     const res = await app.inject({
       method: "POST",
       url: "/v1/outreach/threads/thread-c/send-logs",
-      payload: { draftId: "draft-c1", channel: "email", sentAt: "2026-07-07" },
+      payload: { requestId: "11720000-0000-4000-8000-000000000001", draftId: "draft-c1", channel: "email", sentAt: "2026-07-07" },
     });
     expect(res.statusCode).toBe(400);
     expect((res.json() as ThreadResponse).error).toBe("invalid_outreach_transition");
