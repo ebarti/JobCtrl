@@ -21,6 +21,7 @@ tests can swap fakes without monkey-patching.
 from __future__ import annotations
 
 import logging
+import hashlib
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any
@@ -184,6 +185,18 @@ def _build_requirement_fit_inputs_blob(
     }
     return "REQUIREMENT FIT INPUTS:\n" + json_dumps(payload)
 
+
+
+def _scoring_source_fingerprint(employer_analysis, interpretation) -> str:
+    """Compare exact non-profile inputs, without interpreting their meaning."""
+    if interpretation is None:
+        raise DeterminationFailure("job_interpretation_unavailable")
+    payload = {
+        "requirement_fit_inputs": _build_requirement_fit_inputs_blob(employer_analysis=employer_analysis),
+        "interpretation": interpretation.model_dump(mode="json"),
+        "interpretation_id": interpretation._determination_id,
+    }
+    return hashlib.sha256(json_dumps(payload).encode("utf-8")).hexdigest()
 
 def _optional_prompt_section(text: str) -> str:
     if not text:
@@ -351,6 +364,9 @@ class ScoreJobUseCase:
                     and previous_score.trace.model == str(getattr(self._llm, "model", "llm-port-default"))
                     and all(old.get(key) == current.model_dump()[key] for key in (
                         "posting_hash", "criteria_text", "target_criteria", "min_fit_score"))
+                    and bool(previous_score.trace.scoring_source_fingerprint)
+                    and previous_score.trace.scoring_source_fingerprint == _scoring_source_fingerprint(
+                        _matching_employer_analysis(job, employer_analysis), self._job_interpretation_reader(job))
                 )
                 if decision.verdict == "insignificant" and comparable:
                     return ScoreParseResult(ok=True, fit_score=previous_score.fit_score,
@@ -522,9 +538,11 @@ class ScoreJobUseCase:
                 confirmed_preferences = self._confirmed_preferences_reader(profile_snapshot, criteria)
                 from jobctrl.domain.scoring.profile_impact import profile_inputs
 
-                trace = replace(trace, profile_inputs=profile_inputs(
-                    profile_snapshot, criteria, confirmed_preferences, job,
-                ).model_dump())
+                trace = replace(trace,
+                    scoring_source_fingerprint=_scoring_source_fingerprint(matched_employer_analysis, interpretation),
+                    profile_inputs=profile_inputs(
+                        profile_snapshot, criteria, confirmed_preferences, job,
+                    ).model_dump())
                 sources = [
                     Source(source_id="posting", text=build_jd_snapshot(job)),
                     *authored,

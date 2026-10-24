@@ -1078,6 +1078,7 @@ class ScoreTrace:
     """Non-sensitive trace metadata for one score version."""
 
     determination_id: str = ""
+    scoring_source_fingerprint: str = ""
     prompt_version: str = "score-fit-assessment-v1"
     schema_version: str = "score-fit-assessment-v1"
     model: str = "llm-port-default"
@@ -1101,6 +1102,7 @@ class ScoreTrace:
     def __post_init__(self) -> None:
         for name in (
             "determination_id",
+            "scoring_source_fingerprint",
             "prompt_version",
             "schema_version",
             "model",
@@ -1153,6 +1155,7 @@ class ScoreTrace:
         data = data or {}
         return cls(
             determination_id=str(data.get("determination_id") or ""),
+            scoring_source_fingerprint=str(data.get("scoring_source_fingerprint") or ""),
             prompt_version=str(data.get("prompt_version", data.get("promptVersion", "score-fit-assessment-v1"))),
             schema_version=str(data.get("schema_version", data.get("schemaVersion", "score-fit-assessment-v1"))),
             model=str(data.get("model") or "llm-port-default"),
@@ -1248,6 +1251,7 @@ class ScoreTrace:
     def to_dict(self) -> dict[str, Any]:
         return {
             "determination_id": self.determination_id,
+            **({"scoring_source_fingerprint": self.scoring_source_fingerprint} if self.scoring_source_fingerprint else {}),
             "prompt_version": self.prompt_version,
             "schema_version": self.schema_version,
             "model": self.model,

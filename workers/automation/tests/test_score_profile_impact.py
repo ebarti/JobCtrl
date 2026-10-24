@@ -257,7 +257,8 @@ def test_old_review_cannot_retain_a_newer_score_version(env):
     after = update(env)
     use_case = scorer._build_use_case(tenant_id=LOCAL_TENANT, llm_port=env.model)
     job = SqlitePreparationTargetReader(env.conn).load(LOCAL_TENANT, _job_id(URL))
-    parsed = use_case.compute(job=job, profile_snapshot=after, criteria=ScoringCriteria(), previous_score=first)
+    parsed = use_case.compute(job=job, profile_snapshot=after, criteria=ScoringCriteria(), previous_score=first,
+                              employer_analysis=env.analyzer.execute(job=job).analysis)
     assert parsed.retained_score_version == 1
     SqliteScoreRepository(env.conn).save(replace(first, version=2))
     with pytest.raises(DeterminationFailure, match="score_profile_binding_invalid"):
@@ -423,3 +424,57 @@ def test_independent_scoring_contract_changes_still_require_new_assessment(env, 
     result = score(env, rescore=True)
     assert result.ok and result.score.version == 2 and not result.retained
     assert len(env.model.review_calls) == 1 and env.model.calls == 2
+
+
+@pytest.mark.parametrize("changed_source", ["analysis_generation", "requirement_weight", "interpretation_id", "interpretation", "legacy"])
+@pytest.mark.parametrize("replacement_fails", [False, True])
+def test_insignificant_profile_cannot_retain_changed_scoring_sources(env, monkeypatch, changed_source, replacement_fails):
+    first = score(env)
+    assert first.ok and first.score.trace.scoring_source_fingerprint
+    before = rows(env)
+    fit_before = [tuple(row) for row in env.conn.execute("SELECT * FROM job_requirement_fit_reports")]
+    update(env)
+    if changed_source == "analysis_generation":
+        env.analyzer.generation = 2
+    elif changed_source == "requirement_weight":
+        execute = env.analyzer.execute
+        def changed_analysis(**kwargs):
+            result = execute(**kwargs)
+            analysis = result.analysis
+            requirements = [row.model_copy(update={"weight": 0.25 if row.weight != 0.25 else 0.5}) for row in analysis.canonical.requirements]
+            return SimpleNamespace(analysis=replace(analysis, canonical=analysis.canonical.model_copy(update={"requirements": requirements})))
+        monkeypatch.setattr(env.analyzer, "execute", changed_analysis)
+    elif changed_source in {"interpretation_id", "interpretation"}:
+        build = scorer._build_use_case
+        def changed_interpretation(**kwargs):
+            use_case = build(**kwargs)
+            read = use_case._job_interpretation_reader
+            def read_changed(job):
+                result = read(job)
+                if changed_source == "interpretation_id":
+                    result._determination_id = "2" * 64
+                else:
+                    result = result.model_copy(update={"seniority": result.seniority.model_copy(update={"value": "staff"})})
+                return result
+            use_case._job_interpretation_reader = read_changed
+            return use_case
+        monkeypatch.setattr(scorer, "_build_use_case", changed_interpretation)
+    else:
+        env.conn.execute("UPDATE job_scores SET trace_json=json_remove(trace_json, '$.scoring_source_fingerprint')")
+        env.conn.commit()
+        before = rows(env)
+    env.model.score_failure = replacement_fails
+    result = score(env, rescore=True)
+    assert not result.retained
+    if replacement_fails:
+        assert not result.ok
+        assert rows(env) == before
+        assert [tuple(row) for row in env.conn.execute("SELECT * FROM job_requirement_fit_reports")] == fit_before
+    else:
+        assert result.ok and result.score.version == 2, result.error
+        assert len(env.model.review_calls) == 1
+        if changed_source != "legacy":
+            assert result.score.trace.scoring_source_fingerprint != first.score.trace.scoring_source_fingerprint
+        if changed_source == "analysis_generation":
+            report = env.conn.execute("SELECT employer_analysis_generation,score_version FROM job_requirement_fit_reports ORDER BY score_version DESC LIMIT 1").fetchone()
+            assert tuple(report) == (2, 2)

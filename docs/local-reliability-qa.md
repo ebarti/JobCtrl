@@ -364,7 +364,10 @@ Run locked `pytest tests/test_score_profile_impact.py tests/test_score_batch_own
 and the full worker suite. Opposite valid model verdicts for identical owned
 synthetic inputs must control retention versus rescoring. Exercise unchanged
 cache reuse, new profile versions, provider/spend/schema/citation/binding failures,
-missing historical sources and profile edits during in-flight scoring. Preserve
+missing historical sources and profile edits during in-flight scoring. An insignificant
+profile verdict must not retain changed employer-analysis generations, requirement
+weights, interpretation contents or determination IDs; failed replacement scoring
+must preserve the previous accepted score and requirement report. Preserve
 score/date/attempts/requirements/material bytes for retained scores and failed
 refreshes. Fence review publication against replacement score and stage owners.
 Use real Temporal dispatch/history replay and the actual API/Jobs UI; profile
