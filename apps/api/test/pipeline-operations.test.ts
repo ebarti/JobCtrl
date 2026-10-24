@@ -154,6 +154,128 @@ describe("pipeline operations read model", () => {
     expect(result.activeItemsTruncated).toBe(false);
   });
 
+  it.each([
+    ["score_job", "score"], ["tailor_job", "tailor"],
+    ["cover_letter", "cover"], ["render_pdf", "pdf_render"],
+  ])("labels standalone %s from its exact preparation execution without inventing a Discover", (activityType, expectedStage) => {
+    const fixture = createFixture();
+    const preparation = insertStandalonePreparation(fixture, "standalone-label");
+    const opaqueId = "op_000000000000000000000044";
+    insertHeartbeat(fixture, { activeSlots: 1, counts: { [activityType]: 1 }, details: [
+      activityDetail(activityType, opaqueId, preparation.workflowId, PREPARATION_RUN_ID),
+    ] });
+    const writesBefore = fixture.db.prepare("SELECT total_changes() AS count").get();
+
+    const result = snapshot(fixture);
+    expect(result.execution).toBeNull();
+    expect(result.activeItems).toEqual([expect.objectContaining({
+      kind: "resolved_job", activityType, stage: expectedStage, jobKey: opaqueId,
+      workflowId: preparation.workflowId, executionId: PREPARATION_RUN_ID,
+      title: "Standalone role", company: "Standalone company",
+    })]);
+    expect(result.activeItemsTotal).toBe(1);
+    expect(result.activeItemsTruncated).toBe(false);
+    expect(result.projectionCoverage?.status).toBe("recovering");
+    expect(fixture.db.prepare("SELECT total_changes() AS count").get()).toEqual(writesBefore);
+    expect(JSON.stringify(result)).not.toContain("private-runtime-input-sentinel");
+    expect(JSON.stringify(result)).not.toContain(preparation.jobId);
+    expect(JSON.stringify(result)).not.toContain("https://private.invalid/");
+  });
+
+  it("hydrates global preparation labels without changing an unrelated selected Discover", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertMember(fixture, { key: "selected-unrelated", requiredSteps: ["score"] });
+    insertStageState(fixture, "selected-unrelated", "score", "pending");
+    const workflowId = unmatchedWorkflowRef("standalone-selected");
+    insertHeartbeat(fixture, { activeSlots: 1, counts: { tailor_job: 1 }, details: [
+      activityDetail("tailor_job", "op_000000000000000000000045", workflowId, PREPARATION_RUN_ID),
+    ] });
+    const before = snapshot(fixture);
+    insertStandalonePreparation(fixture, "standalone-selected", workflowId);
+    const after = snapshot(fixture);
+    expect(after.activeItems[0]).toMatchObject({ kind: "resolved_job", title: "Standalone role" });
+    expect(before.activeItems[0]).toMatchObject({ kind: "unresolved_runtime_activity" });
+    const { activeItems: _beforeItems, ...beforeMetrics } = before;
+    const { activeItems: _afterItems, ...afterMetrics } = after;
+    expect(afterMetrics).toEqual(beforeMetrics);
+  });
+
+  it.each([
+    "missing projection", "foreign workflow tenant", "foreign job tenant", "wrong workflow type",
+    "stale run", "missing run", "malformed JSON", "missing job", "unknown job",
+    "null job", "numeric job", "array job", "object job", "empty job", "padded job",
+    "batch selection", "missing runtime run", "missing runtime workflow",
+  ])("keeps standalone preparation %s unresolved", (fault) => {
+    const fixture = createFixture();
+    const preparation = insertStandalonePreparation(fixture, "invalid-standalone");
+    const updateInput = (value: unknown) => fixture.db.prepare(
+      "UPDATE workflow_run_projections SET input_summary_json = ? WHERE workflow_id = ?",
+    ).run(JSON.stringify(value), preparation.workflowId);
+    if (fault === "missing projection") fixture.db.prepare("DELETE FROM workflow_run_projections").run();
+    if (fault === "foreign workflow tenant") fixture.db.prepare("UPDATE workflow_run_projections SET tenant_id = 'other'").run();
+    if (fault === "foreign job tenant") fixture.db.prepare("UPDATE jobs SET tenant_id = 'other'").run();
+    if (fault === "wrong workflow type") fixture.db.prepare("UPDATE workflow_run_projections SET workflow_type = 'JobPipelineWorkflow'").run();
+    if (fault === "stale run") fixture.db.prepare("UPDATE workflow_run_projections SET temporal_run_id = ?").run(DISCOVER_RUN_ID);
+    if (fault === "missing run") fixture.db.prepare("UPDATE workflow_run_projections SET temporal_run_id = NULL").run();
+    if (fault === "malformed JSON") fixture.db.prepare("UPDATE workflow_run_projections SET input_summary_json = '{'").run();
+    if (fault === "missing job") updateInput({});
+    if (fault === "unknown job") updateInput({ jobId: jobIdFor("absent") });
+    if (fault === "null job") updateInput({ jobId: null });
+    if (fault === "numeric job") updateInput({ jobId: 123 });
+    if (fault === "array job") updateInput({ jobId: [preparation.jobId] });
+    if (fault === "object job") updateInput({ jobId: { id: preparation.jobId } });
+    if (fault === "empty job") updateInput({ jobId: "" });
+    if (fault === "padded job") updateInput({ jobId: ` ${preparation.jobId} ` });
+    if (fault === "batch selection") updateInput({ jobIds: [preparation.jobId] });
+    const detail = activityDetail("tailor_job", "op_000000000000000000000046", preparation.workflowId, PREPARATION_RUN_ID);
+    if (fault === "missing runtime run") detail.executionRef = null;
+    if (fault === "missing runtime workflow") detail.workflowRef = null;
+    insertHeartbeat(fixture, { activeSlots: 1, counts: { tailor_job: 1 }, details: [detail] });
+    const result = snapshot(fixture);
+    expect(result.activeItems).toEqual([expect.objectContaining({ kind: "unresolved_runtime_activity" })]);
+    expect(result.activeItemsTotal).toBe(1);
+    expect(JSON.stringify(result)).not.toContain("Standalone role");
+    expect(JSON.stringify(result)).not.toContain("private-runtime-input-sentinel");
+  });
+
+  it.each(["score", "tailor", "cover"])("does not assign a batch %s activity to one preparation job", (activityType) => {
+    const fixture = createFixture();
+    const preparation = insertStandalonePreparation(fixture, "batch-preparation");
+    insertHeartbeat(fixture, { activeSlots: 1, counts: { [activityType]: 1 }, details: [
+      activityDetail(activityType, "op_000000000000000000000050", preparation.workflowId, PREPARATION_RUN_ID),
+    ] });
+    expect(snapshot(fixture).activeItems).toEqual([expect.objectContaining({ kind: "unresolved_runtime_activity" })]);
+  });
+
+  it("fences selected membership labels to the exact preparation run", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    const member = insertMember(fixture, { key: "selected-run-label", requiredSteps: ["tailor"], title: "Selected role" });
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, "in_progress", PREPARATION_RUN_ID);
+    insertHeartbeat(fixture, { activeSlots: 2, counts: { tailor_job: 2 }, details: [
+      activityDetail("tailor_job", "op_000000000000000000000047", member.preparationWorkflowId, PREPARATION_RUN_ID),
+      activityDetail("tailor_job", "op_000000000000000000000048", member.preparationWorkflowId, DISCOVER_RUN_ID),
+    ] });
+    expect(snapshot(fixture).activeItems).toEqual([
+      expect.objectContaining({ kind: "resolved_job", title: "Selected role", executionId: PREPARATION_RUN_ID }),
+      expect.objectContaining({ kind: "unresolved_runtime_activity", executionId: DISCOVER_RUN_ID }),
+    ]);
+  });
+
+  it("does not hydrate stale preparation telemetry from a valid canonical binding", () => {
+    const fixture = createFixture();
+    const preparation = insertStandalonePreparation(fixture, "stale-bound-preparation");
+    insertHeartbeat(fixture, { activeSlots: 1, counts: { tailor_job: 1 }, details: [
+      activityDetail("tailor_job", "op_000000000000000000000049", preparation.workflowId, PREPARATION_RUN_ID),
+    ] });
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET last_seen_at = ?").run(new Date(NOW.getTime() - 60_000).toISOString());
+    const result = snapshot(fixture);
+    expect(result.activeItems).toEqual([]);
+    expect(result.activeItemsTotal).toBeNull();
+    expect(JSON.stringify(result)).not.toContain("Standalone role");
+  });
+
   it("preserves a truncated standalone runtime inventory without a selected execution", () => {
     const fixture = createFixture();
     insertHeartbeat(fixture, {
@@ -1863,6 +1985,21 @@ function recoveryKeyDigest(
     .digest("hex");
 }
 
+function insertStandalonePreparation(
+  fixture: Fixture,
+  key: string,
+  workflowId = unmatchedWorkflowRef(key),
+): { workflowId: string; jobId: string } {
+  const jobId = jobIdFor(key);
+  fixture.db.prepare(
+    "INSERT INTO jobs (tenant_id, job_id, url, title, company) VALUES ('local', ?, ?, 'Standalone role', 'Standalone company')",
+  ).run(jobId, `https://private.invalid/${key}`);
+  insertWorkflowProjection(fixture, workflowId, "in_progress", PREPARATION_RUN_ID, {
+    jobId, privateNote: "private-runtime-input-sentinel",
+  });
+  return { workflowId, jobId };
+}
+
 function insertExecution(
   fixture: Fixture,
   input: { status: string; workflowId?: string; runId?: string; inputSummary?: Record<string, unknown> },
@@ -2080,6 +2217,10 @@ function activityDetail(
     render_pdf: "job-pdf-render",
     score_job: "job-scoring",
     tailor_job: "job-tailoring",
+    cover_letter: "job-cover-letter",
+    score: "scoring-batch",
+    tailor: "tailoring-batch",
+    cover: "cover-letter-batch",
     discovery_source_family: "discovery-source-family",
     discovery_enrichment: "discovery-enrichment",
     discovery_preparation_fanout: "discovery-preparation-fanout",
