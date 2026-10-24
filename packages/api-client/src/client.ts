@@ -86,6 +86,8 @@ import type {
   JobListQuery,
   JobUrlImportRequest,
   JobUrlImportResponse,
+  JobUrlImportExecution,
+  JobUrlImportStatusResponse,
   LearningRecommendationEvidenceListQuery,
   LearningRecommendationEvidenceListResponse,
   TailoringPolicyRevisionListQuery,
@@ -671,6 +673,10 @@ export class JobCtrlApiClient {
 
   importJobUrl(body: JobUrlImportRequest): Promise<JobUrlImportResponse> {
     return this.post("/v1/jobs/import-url", body);
+  }
+
+  jobUrlImportStatus(execution: JobUrlImportExecution): Promise<JobUrlImportStatusResponse> {
+    return this.get(`/v1/jobs/import-url/${encodeURIComponent(execution.workflowId)}/${encodeURIComponent(execution.executionId)}`);
   }
 
   job(jobKey: string): Promise<JobDetail> {

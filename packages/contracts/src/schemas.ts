@@ -6331,11 +6331,12 @@ export const JobUrlImportUrlSchema = z
 export const JobUrlImportRequestSchema = z
   .object({
     url: JobUrlImportUrlSchema,
+    awaitResult: z.boolean().optional(),
   })
   .strict();
 export type JobUrlImportRequest = z.infer<typeof JobUrlImportRequestSchema>;
 
-export type JobUrlImportResponse =
+export type JobUrlImportCompletedResponse =
   | {
       ok: true;
       status: "imported";
@@ -6349,6 +6350,22 @@ export type JobUrlImportResponse =
       itemId: string;
       reason: ManualActionReasonValue;
     };
+
+export interface JobUrlImportExecution {
+  workflowId: string;
+  executionId: string;
+}
+
+export type JobUrlImportResponse = JobUrlImportCompletedResponse | (
+  JobUrlImportExecution & { ok: true; status: "started" }
+);
+
+export type JobUrlImportStatusResponse = JobUrlImportCompletedResponse | (
+  JobUrlImportExecution & (
+    | { ok: true; status: "pending" }
+    | { ok: true; status: "failed" | "canceled" | "timed_out" | "terminated"; message: string; failureCode?: string }
+  )
+);
 
 export const ManualCaptureImportSchema = z
   .object({

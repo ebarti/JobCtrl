@@ -64,6 +64,7 @@ import {
   JobResumeTemplateAssignmentRequestSchema,
   JobListQuerySchema,
   JobUrlImportRequestSchema,
+  JobUrlImportStatusParamsSchema,
   LearningRecommendationEvidenceListQuerySchema,
   LearningRecommendationIdSchema,
   TailoringPolicyRevisionListQuerySchema,
@@ -286,6 +287,8 @@ import {
 } from "./manual-capture-worker.js";
 import {
   createWorkerJobUrlImporter,
+  createWorkerJobUrlImportStatusReader,
+  type JobUrlImportStatusReader,
   JobUrlImportError,
   type JobUrlImporter,
 } from "./job-url-import-worker.js";
@@ -462,6 +465,7 @@ export interface BuildAppOptions {
   manualCaptureImporter?: ManualCaptureImporter;
   discoveryBrowserBroker?: DiscoveryBrowserBroker;
   jobUrlImporter?: JobUrlImporter;
+  jobUrlImportStatusReader?: JobUrlImportStatusReader;
   /** Test seam for the pre-dispatch public-destination guard. */
   jobUrlValidator?: PublicUrlValidator;
   gmailFeedbackScanner?: GmailFeedbackScanner;
@@ -520,6 +524,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     options.manualCaptureImporter ?? createWorkerManualCaptureImporter({ pythonRuntime });
   const discoveryBrowserBroker = options.discoveryBrowserBroker ?? new DiscoveryBrowserBroker();
   const jobUrlImporter = options.jobUrlImporter ?? createWorkerJobUrlImporter({ pythonRuntime });
+  const jobUrlImportStatusReader = options.jobUrlImportStatusReader ?? createWorkerJobUrlImportStatusReader({ pythonRuntime });
   const jobUrlValidator = options.jobUrlValidator ?? validatePublicHttpUrl;
   const gmailFeedbackScanner =
     options.gmailFeedbackScanner ?? createWorkerGmailFeedbackScanner(providerDispatcher);
@@ -1522,7 +1527,9 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       return undefined;
     }
     try {
-      return await jobUrlImporter(body, { appDir, dbPath: options.dbPath });
+      const result = await jobUrlImporter(body, { appDir, dbPath: options.dbPath });
+      if (result.status === "started") void reply.code(202);
+      return result;
     } catch (error) {
       if (error instanceof JobUrlImportError) {
         void reply.code(error.statusCode);
@@ -1536,6 +1543,20 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       throw error;
     }
   });
+
+  app.get<{ Params: { workflowId: string; executionId: string } }>(
+    "/v1/jobs/import-url/:workflowId/:executionId", async (request, reply) => {
+      const execution = parseBody(reply, JobUrlImportStatusParamsSchema.pick({ workflowId: true, executionId: true }), request.params);
+      if (!execution) return undefined;
+      try {
+        return await jobUrlImportStatusReader(execution, { appDir, dbPath: options.dbPath });
+      } catch (error) {
+        if (!(error instanceof JobUrlImportError)) throw error;
+        void reply.code(error.statusCode);
+        return { ok: false, error: "job_url_import_status_unavailable", message: error.message };
+      }
+    },
+  );
 
   app.get("/v1/evidence-map", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => listEvidenceMap(db)),

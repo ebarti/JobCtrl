@@ -99,6 +99,8 @@ import type {
   JobSummary,
   JobUrlImportRequest,
   JobUrlImportResponse,
+  JobUrlImportExecution,
+  JobUrlImportStatusResponse,
   LearningRecommendationEvidenceListQuery,
   LearningRecommendationEvidenceListResponse,
   TailoringPolicyRevisionListQuery,
@@ -263,6 +265,7 @@ export interface ApiClientPort extends EndpointClientMethods {
   ): Promise<QuarantineDecisionResponse>;
   manualCaptureQueue(): Promise<ManualCaptureListResponse>;
   importJobUrl(body: JobUrlImportRequest): Promise<JobUrlImportResponse>;
+  jobUrlImportStatus(execution: JobUrlImportExecution): Promise<JobUrlImportStatusResponse>;
   importManualCapture(
     itemId: string,
     body: ManualCaptureImportRequest,

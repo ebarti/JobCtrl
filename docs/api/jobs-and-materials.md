@@ -22,7 +22,8 @@ Existing accepted materials remain available.
 | Route family | What it exposes |
 | --- | --- |
 | `GET /v1/jobs` and `GET /v1/jobs/:jobKey` | List/detail projections, stage state, score summary, and audit links. |
-| `POST /v1/jobs/import-url` | Fetch and import one public posting immediately, or return a typed Manual Capture fallback without creating a placeholder job. |
+| `POST /v1/jobs/import-url` | Start one public posting import and follow completion or its typed Manual Capture fallback. |
+| `GET /v1/jobs/import-url/:workflowId/:executionId` | Read the acknowledged import execution without starting or waiting for more work. |
 | `GET /v1/scoring/keywords` | Current projected score-version keyword aggregation with canonical normalized keys. |
 | `GET /v1/evidence-map` | Canonical career evidence used by scoring and materials. |
 | `GET/POST /v1/evidence-map/learning` | Read retained selected-job comparisons; preview sources, compare an explicit dated cohort, choose proposals and record milestone activity. |
@@ -42,9 +43,21 @@ employer conditions remain visible with zero `maxPoints` and `awardedPoints`.
 These readers expose stored arithmetic without recalculating it. Legacy
 reports without a recorded scope source retain their earlier shape and formula.
 
-`POST /v1/jobs/import-url` accepts `{ url }`, validates that the destination is
-public HTTP(S), and awaits `JobUrlImportWorkflow` on the local worker. A readable
-posting returns `{ ok, status: "imported", jobKey, importedAt,
+`POST /v1/jobs/import-url` validates a public HTTP(S) destination. The Jobs UI
+sends `{ url, awaitResult: false }` and receives `202` with
+`{ ok: true, status: "started", workflowId, executionId }` as soon as Temporal
+accepts the import. It follows that exact execution through
+`GET /v1/jobs/import-url/:workflowId/:executionId`; a running import returns
+`status: "pending"` without awaiting its result. The dialog retains this handle
+when a status read fails, retries the read, and links to Runs. It never resubmits
+the import to check progress. Terminal failed, canceled, timed-out and terminated
+histories remain explicit stopped outcomes. The worker checks the tenant,
+app/database, import workflow type and exact execution identity before reading a
+result; it does not follow a newer execution with the same workflow ID.
+
+Existing callers may omit `awaitResult` or set it to `true` to retain the awaited
+`200` response. Both the awaited response and a completed status read map a
+readable posting to `{ ok, status: "imported", jobKey, importedAt,
 alreadyExisted }`. A blocked, login-walled, rate-limited, or ambiguous page
 returns `{ ok, status: "manual_capture_required", itemId, reason }`; that
 outcome creates no Job row. Repeating an already-imported URL resolves the same

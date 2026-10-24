@@ -2,6 +2,8 @@ import type { TenantId } from "@jobctrl/domain-types";
 
 export const discoveryKeys = {
   all: (tenantId: TenantId) => ["tenant", tenantId, "discovery"] as const,
+  jobUrlImportStatus: (tenantId: TenantId, workflowId: string, executionId: string) =>
+    ["tenant", tenantId, "discovery", "job-url-import", workflowId, executionId] as const,
   settings: (tenantId: TenantId) =>
     ["tenant", tenantId, "discovery", "settings"] as const,
   sourceLocator: (tenantId: TenantId) =>
