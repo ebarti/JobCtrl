@@ -50,7 +50,7 @@ preferences, rather than silently reapplying an older named view's filters.
 
 Use **Discovery → Runtime settings** for boards, results per site, posting age,
 schedule, bounded source-family parallelism, and the
-outbound user-agent identity. Every saved value goes to SQLite. Schedule
+optional browser request headers. Every saved value goes to SQLite. Schedule
 changes need a worker restart; boards, limits, and parallelism apply on the
 next run; user-agent changes apply to the next source family.
 
@@ -145,14 +145,21 @@ the worker's available activity slots. The next run snapshots the limit;
 downstream enrichment remains separately bounded.
 
 <a id="runtime-setting-crawler-product-name"></a>
-**Crawler product name.** Set the product token in JobCtrl's honest outbound
-user-agent identity. It identifies the crawler without impersonating a browser.
-A change applies to the next source family.
-
 <a id="runtime-setting-crawler-contact"></a>
-**Crawler contact.** Optionally add a URL or contact address to the outbound
-user-agent identity so site owners can identify the operator. A change applies
-to the next source family.
+<a id="runtime-setting-use-browser-headers"></a>
+**Use browser headers.** This checkbox is off by default. Enable it to use
+`ua-generator` for a desktop Chrome User-Agent and matching client hints on
+JobCtrl-managed HTTP and anonymous browser requests. Each new gateway session
+uses one consistent generated identity from the latest versions known to the
+installed package; it does not look up versions online. Saved changes apply to
+new request sessions, including the next source family.
+
+When off, JobCtrl builds its existing `<product>/<version> (+<contact>)` header.
+Previously saved crawler product/contact values are preserved. This checkbox
+replaces those two text fields; it does not change connected Chrome's own
+headers, cookies, or session. It changes request headers, not the HTTP/TLS
+transport, and does not guarantee that a site will accept a request. Pacing,
+request budgets, URL validation, and server rate-limit handling still apply.
 
 <a id="runtime-setting-enable-scheduled-discovery"></a>
 **Enable scheduled discovery.** Control whether worker startup reconciles a
@@ -478,13 +485,15 @@ guard. Public destinations, redirects, authentication boundaries, host pacing,
 concurrency, request budgets, and cancellation remain enforced in both modes.
 Broad-board traversal has the narrower accounting boundary below.
 
-The **outbound user-agent** under **Discovery → Runtime settings** remains the
-configured identity for non-extension gateways and integrated anonymous
-broad-board requests, as well as opted-in contact research. Its effective form is
+The **Use browser headers** option under **Discovery → Runtime settings**
+selects the identity for non-extension gateways, including compensation lookups
+and opted-in contact research. When off, the effective form remains
 `<product>/<version> (+<contact>)`—for example
-`JobCtrl/0.3 (+https://github.com/ebarti/JobCtrl)`—and `jobctrl doctor` prints
-it. Integrated live-profile Discovery does not overwrite Chrome's real user
-agent with that value.
+`JobCtrl/0.3 (+https://github.com/ebarti/JobCtrl)`. When on, controlled HTTP and
+anonymous Playwright requests receive the generated User-Agent and client hints.
+Integrated anonymous broad-board requests receive the selected User-Agent;
+JobStreaming owns their remaining transport headers. `jobctrl doctor` prints an
+identity for the selected mode. Connected Chrome retains its real browser identity.
 
 The rest of crawl policy also lives on the SQLite-backed Discovery boundary, so
 per-source overrides ride the existing registry rather than a parallel config
@@ -527,6 +536,6 @@ only when you start a run from the UI. Its posture is conservative by design:
 - **Login-walled / paywalled / bot-protected pages are never auto-fetched** — they
   are routed to the manual-capture path instead.
 - **Fetching reuses the crawl-politeness gateway above** (per-host
-  rate limit + per-run budget + the same honest user-agent).
+  rate limit + per-run budget + the selected request identity).
 - **LLM spend reuses the daily budget** (`dailyBudgetUsd`) and the same preflight
   as every other spendful workflow — there is no separate research budget.

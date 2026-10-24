@@ -3274,16 +3274,16 @@ def politeness_doctor_notices(conn, search_cfg: dict) -> list[tuple[str, str, st
     search-config dict. ``doctor`` maps the levels to its status marks.
     """
     from jobctrl.config import resolve_jobspy_boards
-    from jobctrl.infrastructure.network import resolve_honest_user_agent
+    from jobctrl.infrastructure.network.politeness import resolve_request_headers
 
     rows: list[tuple[str, str, str]] = []
 
-    user_agent = resolve_honest_user_agent().header_value()
+    user_agent = resolve_request_headers(search_cfg)["User-Agent"]
     rows.append(
         (
             "crawl user-agent",
             "ok",
-            f"{user_agent} — review before real crawls; edit it in Discovery runtime settings",
+            f"{user_agent} — review before real crawls; header mode is set in Discovery runtime settings",
         )
     )
 

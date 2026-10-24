@@ -1,8 +1,8 @@
 """Gateway-routed urllib HTTP client (R10 P2).
 
 The single ``urllib`` transport for non-browser fetch surfaces. Every request is
-wrapped in a :class:`PolitenessSession` guard so robots.txt, per-host rate limit
-+ concurrency, the per-run request budget, and the honest user-agent all apply at
+wrapped in a :class:`PolitenessSession` guard so per-host rate limit
++ concurrency, the per-run request budget, and the selected request headers apply at
 one choke point. A blocked decision returns ``None`` (the block is recorded as a
 first-class outcome by the session, never raised as a scrape error). A server
 ``429``/``503`` is honored as a rate-limit outcome (``Retry-After`` fed back to
@@ -131,6 +131,8 @@ class GatewayHttpClient:
             request.add_header("Accept", accept)
             if json_body is not None:
                 request.add_header("Content-Type", "application/json")
+            for key, value in decision.request_headers.items():
+                request.add_header(key, value)
             request.add_header("User-Agent", decision.user_agent)
             for key, value in (extra_headers or {}).items():
                 request.add_header(key, value)

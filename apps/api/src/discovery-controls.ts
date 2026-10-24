@@ -74,6 +74,7 @@ const DEFAULT_DISCOVERY_SETTINGS: DiscoverySettings = {
   schedulingEnabled: false,
   scheduleCron: "0 7 * * *",
   maxParallelFamilies: 1,
+  useBrowserHeaders: false,
   crawlUserAgentProduct: "JobCtrl",
   crawlUserAgentContact: "https://github.com/ebarti/JobCtrl",
   source: "database",
@@ -257,6 +258,7 @@ export function writeDiscoverySettings(
     schedulingEnabled: request.schedulingEnabled ?? current.schedulingEnabled,
     scheduleCron: request.scheduleCron ?? current.scheduleCron,
     maxParallelFamilies: request.maxParallelFamilies ?? current.maxParallelFamilies,
+    useBrowserHeaders: request.useBrowserHeaders ?? current.useBrowserHeaders,
     crawlUserAgentProduct: request.crawlUserAgentProduct ?? current.crawlUserAgentProduct,
     crawlUserAgentContact: request.crawlUserAgentContact ?? current.crawlUserAgentContact,
   };
@@ -316,6 +318,7 @@ function discoverySettingsFromConfig(config: Record<string, unknown>): Discovery
     schedulingEnabled: boolValue(config.scheduling_enabled, DEFAULT_DISCOVERY_SETTINGS.schedulingEnabled),
     scheduleCron: nonEmptyString(config.schedule_cron, DEFAULT_DISCOVERY_SETTINGS.scheduleCron),
     maxParallelFamilies: boundedInt(config.max_parallel_families, DEFAULT_DISCOVERY_SETTINGS.maxParallelFamilies, 1, 4),
+    useBrowserHeaders: recordValue(config.crawl_user_agent).use_browser_headers === true,
     crawlUserAgentProduct: nonEmptyString(
       recordValue(config.crawl_user_agent).product,
       DEFAULT_DISCOVERY_SETTINGS.crawlUserAgentProduct,
@@ -347,6 +350,7 @@ function configFromDiscoverySettings(
     max_parallel_families: settings.maxParallelFamilies,
     crawl_user_agent: {
       ...recordValue(base.crawl_user_agent),
+      use_browser_headers: settings.useBrowserHeaders,
       product: settings.crawlUserAgentProduct,
       contact: settings.crawlUserAgentContact,
     },
@@ -414,6 +418,11 @@ function resolvedDiscoverySettings(
       stored.maxParallelFamilies,
       "next_run",
       persisted && Object.hasOwn(config, "max_parallel_families"),
+    ),
+    useBrowserHeaders: setting(
+      stored.useBrowserHeaders,
+      "next_source_family",
+      persisted && Object.hasOwn(recordValue(config.crawl_user_agent), "use_browser_headers"),
     ),
     crawlUserAgentProduct: setting(
       stored.crawlUserAgentProduct,

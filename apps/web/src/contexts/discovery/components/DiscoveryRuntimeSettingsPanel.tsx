@@ -64,17 +64,11 @@ const RUNTIME_SETTING_HELP = {
       "Limit how many source families may crawl concurrently in a Discover run. JobCtrl caps the value at four and at available worker activity slots. The next run snapshots it.",
     href: `${DISCOVERY_GUIDE_URL}#runtime-setting-parallel-source-families`,
   },
-  crawlUserAgentProduct: {
-    title: "Crawler product name",
+  useBrowserHeaders: {
+    title: "Use browser headers",
     description:
-      "Set the product token in JobCtrl's honest outbound user-agent identity. The next source family uses the updated identity.",
-    href: `${DISCOVERY_GUIDE_URL}#runtime-setting-crawler-product-name`,
-  },
-  crawlUserAgentContact: {
-    title: "Crawler contact",
-    description:
-      "Optionally add a contact URL or address to the outbound user-agent identity. The next source family uses the updated identity.",
-    href: `${DISCOVERY_GUIDE_URL}#runtime-setting-crawler-contact`,
+      "Use ua-generator for browser User-Agent and matching client-hint headers on JobCtrl-managed requests. Off by default; when off, requests use the existing JobCtrl identity. Changes apply to new request sessions. Your connected browser keeps its own headers.",
+    href: `${DISCOVERY_GUIDE_URL}#runtime-setting-use-browser-headers`,
   },
   schedulingEnabled: {
     title: "Enable scheduled discovery",
@@ -101,8 +95,7 @@ function toFormValues(response: DiscoverySettingsResponse): DiscoverySettingsUpd
   };
   for (const field of [
     "maxParallelFamilies",
-    "crawlUserAgentProduct",
-    "crawlUserAgentContact",
+    "useBrowserHeaders",
   ] as const) {
     if (effectiveSettings[field].editable) {
       Object.assign(values, { [field]: settings[field] });
@@ -152,7 +145,13 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
       const scheduleChanged =
         value.schedulingEnabled !== initial.settings.schedulingEnabled ||
         value.scheduleCron !== initial.settings.scheduleCron;
-      const response = await updateSettings.mutateAsync(value);
+      let response: DiscoverySettingsResponse;
+      try {
+        response = await updateSettings.mutateAsync(value);
+      } catch {
+        // The mutation owns error presentation and cache rollback; retain the draft.
+        return;
+      }
       formApi.reset(toValues(response));
       setStatusMessage(
         scheduleChanged
@@ -235,11 +234,25 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
         <form.Field name="maxParallelFamilies">
           {(field) => <NumberControl help={RUNTIME_SETTING_HELP.maxParallelFamilies} id="discovery-max-parallel" name="maxParallelFamilies" label="Parallel source families" min={1} max={4} value={field.state.value ?? initial.settings.maxParallelFamilies} metadata={effective.maxParallelFamilies} onChange={field.handleChange} />}
         </form.Field>
-        <form.Field name="crawlUserAgentProduct">
-          {(field) => <TextControl help={RUNTIME_SETTING_HELP.crawlUserAgentProduct} id="discovery-ua-product" name="crawlUserAgentProduct" label="Crawler product name" value={String(field.state.value ?? initial.settings.crawlUserAgentProduct)} metadata={effective.crawlUserAgentProduct} onChange={field.handleChange} />}
-        </form.Field>
-        <form.Field name="crawlUserAgentContact">
-          {(field) => <TextControl help={RUNTIME_SETTING_HELP.crawlUserAgentContact} id="discovery-ua-contact" name="crawlUserAgentContact" label="Crawler contact" value={String(field.state.value ?? "")} metadata={effective.crawlUserAgentContact} optional onChange={field.handleChange} />}
+        <form.Field name="useBrowserHeaders">
+          {(field) => (
+            <Field className="field check" orientation="horizontal">
+              <Checkbox
+                id="discovery-browser-headers"
+                checked={field.state.value ?? initial.settings.useBrowserHeaders}
+                disabled={!effective.useBrowserHeaders.editable}
+                onCheckedChange={(checked) => field.handleChange(checked)}
+              />
+              <FieldContent>
+                <DiscoverySettingLabel
+                  help={RUNTIME_SETTING_HELP.useBrowserHeaders}
+                  htmlFor="discovery-browser-headers"
+                >
+                  Use browser headers
+                </DiscoverySettingLabel>
+              </FieldContent>
+            </Field>
+          )}
         </form.Field>
         <form.Field name="schedulingEnabled">
           {(field) => (
@@ -373,27 +386,6 @@ function NumberControl({ help, name, id, label, min, max, metadata, value, onCha
     <Field className="field">
       <DiscoverySettingLabel help={help} htmlFor={id}>{label}</DiscoverySettingLabel>
       <Input id={id} name={name} type="number" min={min} max={max} value={value} onChange={(event) => onChange(Number(event.target.value))} />
-    </Field>
-  );
-}
-
-function TextControl({ help, id, name, label, value, metadata, onChange, optional = false }: {
-  help: DiscoverySettingHelpContent;
-  id: string;
-  name: "crawlUserAgentProduct" | "crawlUserAgentContact";
-  label: string;
-  value: string;
-  metadata: EffectiveSetting<string | null> | EffectiveSetting<string>;
-  onChange: (value: string) => void;
-  optional?: boolean;
-}) {
-  if (!metadata.editable) {
-    return <ReadOnlyField help={help} id={id} label={label} value={metadata.value ?? ""} />;
-  }
-  return (
-    <Field className="field">
-      <DiscoverySettingLabel help={help} htmlFor={id} optional={optional}>{label}</DiscoverySettingLabel>
-      <Input id={id} name={name} type="text" value={value} onChange={(event) => onChange(event.target.value)} />
     </Field>
   );
 }

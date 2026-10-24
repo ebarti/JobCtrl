@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -608,6 +608,7 @@ wheels = [
 name = "jobctrl"
 version = "0.3.1"
 source = { editable = "." }
+default-groups = ["provider-runtime"]
 dependencies = [
     { name = "agent-runtime-kit" },
     { name = "beautifulsoup4" },
@@ -629,6 +630,7 @@ dependencies = [
     { name = "rich" },
     { name = "temporalio" },
     { name = "typer" },
+    { name = "ua-generator" },
     { name = "websocket-client" },
 ]
 
@@ -709,6 +711,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.15.8" },
     { name = "temporalio", specifier = ">=1.26" },
     { name = "typer", specifier = ">=0.9.0" },
+    { name = "ua-generator", specifier = ">=2.1.7" },
     { name = "websocket-client", specifier = ">=1.8" },
 ]
 provides-extras = ["dev", "providers"]
@@ -2041,6 +2044,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/5e/a7/c202b344c5ca7daf398f3b8a477eeb205cf3b6f32e7ec3a6bac0629ca975/tzdata-2025.3.tar.gz", hash = "sha256:de39c2ca5dc7b0344f2eba86f49d614019d29f060fc4ebc8a417896a620b56a7", size = 196772, upload-time = "2025-12-13T17:45:35.667Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c7/b0/003792df09decd6849a5e39c28b513c06e84436a54440380862b5aeff25d/tzdata-2025.3-py2.py3-none-any.whl", hash = "sha256:06a47e5700f3081aab02b2e513160914ff0694bce9947d6b76ebd6bf57cfc5d1", size = 348521, upload-time = "2025-12-13T17:45:33.889Z" },
+]
+
+[[package]]
+name = "ua-generator"
+version = "2.1.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/62/9c/8635199ad10b670220157c92a75a1d433c473aecf98aad28553fc4e40aca/ua_generator-2.1.7.tar.gz", hash = "sha256:3f47656371479a3eed60e2a1a384abe0e9901d0499bad8c1436caa2cbcbc14ba", size = 29858, upload-time = "2026-10-18T12:16:41.348Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/be/ef/29c7191d1b0912b9414d31c56b7eee8cd2feaf55710737e477a1841aec12/ua_generator-2.1.7-py3-none-any.whl", hash = "sha256:8a80cca9568188fa7a63e3764b05f36c6ccff75b32f86255d67cfd28c59b4de9", size = 32926, upload-time = "2026-10-18T12:16:40.186Z" },
 ]
 
 [[package]]

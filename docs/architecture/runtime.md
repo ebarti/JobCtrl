@@ -650,9 +650,14 @@ choke point in `infrastructure/network/`:
   monotonic min-interval per host) so `ThreadPoolExecutor` fan-out cannot bypass
   pacing. A server `Retry-After` is honored but clamped at the sink, so a
   hostile header cannot freeze a pooled worker.
-- The UA is one honest identity resolved from `resolve_honest_user_agent()`
-  (built-in default `JobCtrl/<version> (+repo)`, owner-overridable via env);
-  it never impersonates a browser on a controlled surface.
+- `resolve_request_headers()` snapshots SQLite's
+  `crawl_user_agent.use_browser_headers` for each gateway. Missing/false uses
+  `resolve_honest_user_agent()` to retain the saved product/version/contact UA.
+  True uses `ua-generator`'s latest bundled desktop Chrome identity and matching
+  client hints, generated once per gateway. Controlled HTTP and anonymous
+  Playwright callers carry this set; caller-specific Accept/Content-Type and
+  encoding headers remain unchanged. Connected Chrome retains its own headers;
+  JobStreaming's anonymous integration accepts only the selected UA.
 - Robots-deny / rate-limit / budget-exhaustion are recorded as first-class
   **outcomes** in `operational_attempt_metrics` (`is_scrape_failure=0`,
   `is_operational_failure=0`) via `record_politeness_outcome`, and projected to
