@@ -2938,21 +2938,23 @@ scoring. Provider, spend, structure and missing-baseline failures stay explicit
 and preserve accepted data. No word lists, similarity thresholds or lexical
 fallback decide significance. See [Scoring](architecture/scoring.md#profile-edits-and-explicit-refresh).
 
-## 2026-10-24: Recovery May Overlap Independently Owned Preparation
+## 2026-10-24: Recovery Shares Capacity Across Independently Owned Cohorts
 
 Status: accepted
 
-Automatic recovery no longer waits for all single-job preparation workflows to
-finish. A live `JobPreparationWorkflow` is scoped from its exact execution's
-immutable start event; its local job stays excluded from recovery even between
-activities. Admission rechecks every queued/running canonical stage under the
-SQLite write lock and permits overlap only for those verified owners. Missing
-history, foreign workspace bindings, unknown owners, and active discovery,
-import or batch pipeline workflows retain the dispatch gate.
+Automatic recovery can overlap exact, independently owned per-job preparation
+and one-stage automatic batches. Each live cohort is read from its execution's
+immutable start event; its jobs stay excluded even between activities. Admission
+rechecks canonical ownership and frozen queue manifests under the SQLite write
+lock. Discovery, imports, unscoped/manual batches, foreign workspace bindings,
+missing history and conflicting owners retain the dispatch gate.
 
-This removes an unrelated material-generation delay after a retry cooldown has
-already elapsed. At most one recovery batch remains active, using the existing
-worker slots, internal concurrency, attempt limits, cooldowns, spend preflight
-and source politeness. Frozen reservations, cancellation/skip decisions and
-accepted artifacts retain their existing protections. No workflow command
-sequence changes. See [Operations](architecture/pipeline/operations.md#automatic-preparation-recovery).
+Automatic batches share the saved internal concurrency budget. A batch accounts
+for the smaller of its immutable worker count and unfinished cohort membership;
+the next dispatch receives only remaining parallelism. Existing workflow input
+and frozen cohort identities are preserved. A recorded queued owner requires its
+exact execution before settlement, and missing history cannot start a replacement.
+Attempt limits, cooldowns, spend preflight, source politeness, cancellation/skip
+decisions and accepted artifacts remain protected. Worker activity slots remain
+an independent bound. No workflow command sequence changes. See
+[Operations](architecture/pipeline/operations.md#automatic-preparation-recovery).

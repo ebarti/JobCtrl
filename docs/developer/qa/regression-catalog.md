@@ -1209,16 +1209,20 @@ Use the real Temporal recovery fixture to prove worker replacement, late
 provider results after cancellation, and exact stopped-owner settlement.
 Missing workflow history must retain ownership; a recovered enrichment lease
 must reject a late predecessor write.
-Hold a real per-job preparation activity open and prove normal recovery can
-enrich and score an unrelated job before releasing that activity. Resolve the
-busy job from the exact run's first history event, including ordinary fanout
-with absent workspace paths; reject explicit foreign paths, copied/wrong-run
-history, missing payloads, and conflicting executions. Exclude the busy job even
-between activities, and retain its attempts, owner and approved materials.
-Unknown canonical owners and active discovery/import/batch workflows still gate
-dispatch. Race an independent owner replacement against admission, then race two
-SQLite writers: require one frozen recovery reservation and one queued event.
-Replay the observed production workflow histories and prove no Apply dispatch.
+Hold real per-job and one-stage automatic batch activities open together, then
+prove normal recovery can enrich and score an unrelated job before either is
+released. Resolve exact cohorts from immutable start events, including ordinary
+per-job fanout with absent workspace paths; reject foreign paths, copied/wrong-run
+history, empty/malformed cohorts and conflicting executions. Exclude every busy
+member between activities and retain its attempts, owner and accepted materials.
+Verify shared internal capacity, full-capacity refusal and capacity released by
+completed members. Active queued manifests must not starve unrelated work.
+Unscoped/manual batches, discovery/import workflows and unknown canonical owners
+still gate dispatch. Race owner replacement and independent SQLite writers;
+require one frozen reservation and one queued event. Recognize Enrich's compound
+activity/run/attempt lease, require the exact recorded execution for closed queue
+settlement, and prove missing history cannot start a replacement. Replay all
+observed production histories and prove no Apply dispatch.
 For an automatic batch interrupted by an activity timeout, include one consumed
 job and one reservation that never started. Prove the latter returns to pending
 with unchanged attempt counters and can enter a new workflow after cooldown,
