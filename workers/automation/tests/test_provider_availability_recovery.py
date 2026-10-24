@@ -80,11 +80,11 @@ def test_next_automatic_attempt_uses_a_new_provider_without_relabeling_the_faile
     assert calls == [("claude", "model-a"), ("codex", "model-b")]
 
 
-def test_rate_failure_excludes_the_model_route_and_reset_retries_it(monkeypatch, tmp_path):
+def test_quota_failure_excludes_the_model_route_and_reset_retries_it(monkeypatch, tmp_path):
     path = tmp_path / "config.json"
     path.write_text('{"preferred_models":{"codex":"rate-limited"}}')
     monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(path))
-    assert record_provider_failure("codex", "rate-limited", failure(code="response_too_many_failed_attempts", status=429))
+    assert record_provider_failure("codex", "rate-limited", failure(code="usage_limit_exceeded", status=429))
     assert not provider_route_available("codex")
     assert provider_route_available("codex", "other-model")
     llm_client.reset_llm_adapter()
@@ -103,7 +103,7 @@ async def test_analysis_leg_never_calls_a_previously_discarded_sdk_route():
             raise AssertionError("Discarded SDK route must never be called")
 
     assert record_provider_failure(
-        "codex", "unavailable-model", failure(code="response_too_many_failed_attempts", status=429),
+        "codex", "unavailable-model", failure(code="provider_unavailable", status=None),
     )
     with pytest.raises(DeterminationFailure, match="provider_error"):
         await _draft_with_retry(UnavailableDraft(), system_prompt="synthetic", jd_snapshot="synthetic",
@@ -116,12 +116,12 @@ def test_response_failures_do_not_discard_a_provider(error):
     assert provider_route_available("codex", "model")
 
 
-@pytest.mark.parametrize("kind", ["AntigravityConnectionError", "AntigravityExecutionError"])
-def test_google_sdk_operational_failures_discard_the_route(kind):
+@pytest.mark.parametrize("kind,discard", [("AntigravityConnectionError", False), ("AntigravityExecutionError", True)])
+def test_google_sdk_operational_failure_preserves_temporary_routes(kind, discard):
     from google.antigravity import types
 
-    assert record_provider_failure("google", "model", getattr(types, kind)("private SDK detail"))
-    assert not provider_route_available("google", "model")
+    assert record_provider_failure("google", "model", getattr(types, kind)("private SDK detail")) is discard
+    assert provider_route_available("google", "model") is not discard
     assert provider_route_available("google", "another-model")
 
 
@@ -139,14 +139,14 @@ def test_budget_failure_does_not_discard_a_provider():
     assert provider_route_available("codex", "model")
 
 
-def test_default_model_failure_excludes_the_implicit_route(monkeypatch, tmp_path):
+def test_default_model_overload_preserves_the_implicit_route(monkeypatch, tmp_path):
     path = tmp_path / "config.json"
     path.write_text("{}")
     monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(path))
-    assert record_provider_failure(
+    assert not record_provider_failure(
         "codex", "sdk-default", failure(code="server_overloaded", status=503), default_model=True,
     )
-    assert not provider_route_available("codex")
+    assert provider_route_available("codex")
     assert provider_route_available("codex", "another-model")
 
 
