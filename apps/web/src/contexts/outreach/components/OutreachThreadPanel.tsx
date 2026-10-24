@@ -75,7 +75,7 @@ function OutreachThreadBody({
   jobId?: string;
 }): JSX.Element {
   const [revisionTarget, setRevisionTarget] = useState<"approved" | "candidate" | null>(null);
-  const [loggingSend, setLoggingSend] = useState(false);
+  const [loggingSend, setLoggingSend] = useState<string | null>(null);
   const [pendingDecision, setPendingDecision] = useState<DraftDecision | null>(null);
   const decisionLock = useRef<DraftDecision | null>(null);
   const decisionMutationObserved = useRef(false);
@@ -182,13 +182,13 @@ function OutreachThreadBody({
           here so the thread reflects it.
         </p>
         <OutreachSendLogList thread={thread} />
-        {approved ? (
+        {approved || loggingSend ? (
           <div className="outreach-send-log-actions">
             <Button
               type="button"
               variant="outline"
-              aria-expanded={loggingSend}
-              onClick={() => setLoggingSend((value) => !value)}
+              aria-expanded={Boolean(loggingSend)}
+              onClick={() => setLoggingSend((value) => value ? null : approved?.draftId ?? null)}
             >
               {loggingSend ? "Cancel" : "Log a send"}
             </Button>
@@ -196,8 +196,8 @@ function OutreachThreadBody({
               <SendLogForm
                 threadId={thread.threadId}
                 contactId={contactId}
-                draftId={approved.draftId}
-                onLogged={() => setLoggingSend(false)}
+                draftId={approved?.draftId ?? loggingSend}
+                onLogged={() => setLoggingSend(null)}
                 {...(jobId ? { jobId } : {})}
               />
             ) : null}
@@ -309,7 +309,7 @@ export function OutreachThreadPanel({ contactId, jobId, draftKind, offerRevision
         <Empty title="No outreach drafts yet. Generate one to review it before you send." />
       ) : null}
       {thread ? (
-        <OutreachThreadBody thread={thread} contactId={contactId} {...(jobId ? { jobId } : {})} />
+        <OutreachThreadBody key={thread.threadId} thread={thread} contactId={contactId} {...(jobId ? { jobId } : {})} />
       ) : null}
     </section>
   );

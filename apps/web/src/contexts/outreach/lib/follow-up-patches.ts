@@ -10,6 +10,7 @@ function isThreadResponse(value: unknown): value is OutreachThreadResponse {
 }
 
 export interface SendLogPatchInput {
+  requestId?: string;
   draftId: string;
   channel: string;
   sentAt: string;
@@ -29,7 +30,7 @@ export function markThreadSentInThread(current: unknown, log: SendLogPatchInput)
   }
   const thread: OutreachThreadDetail = current.thread;
   const sendLog: OutreachSendLogDto = {
-    sendLogId: `optimistic-send:${log.draftId}:${log.sentAt}`,
+    sendLogId: log.requestId ? `optimistic-send:${log.requestId}` : `optimistic-send:${log.draftId}:${log.sentAt}`,
     threadId: thread.threadId,
     draftId: log.draftId,
     channel: log.channel,
@@ -38,7 +39,7 @@ export function markThreadSentInThread(current: unknown, log: SendLogPatchInput)
   };
   return {
     ...current,
-    thread: { ...thread, sendLogs: [...thread.sendLogs, sendLog], isSent: true },
+    thread: { ...thread, sendLogs: [...thread.sendLogs.filter((entry) => entry.sendLogId !== sendLog.sendLogId), sendLog], isSent: true },
   };
 }
 

@@ -272,6 +272,16 @@ explicit workflow/action, not a read-time side effect.
 | Outcomes | job outcome routes plus `/v1/outcomes` and `/v1/analytics/outcomes` |
 | Gmail suggestions | bounded scan plus accept/reject decision routes |
 
+Manual `POST /v1/jobs/:jobKey/outcomes` and user-attested
+`POST /v1/outreach/threads/:threadId/send-logs` require a UUID `requestId`.
+Keep the same identity and validated payload for a retry. Equal retries return
+the original immutable result; a changed payload in that tenant/operation/target
+scope returns `409 action_identity_conflict` without mutation. A new deliberate
+action uses a new identity. Missing or malformed identities return `400`.
+Send logging returns `{ ok: true, sendLog }`, not a thread snapshot; use the
+existing contact Outreach read for current thread state. See the
+[complete retry contract](complete-contract.md#manual-action-retry-contract).
+
 `POST /v1/outcomes/gmail/scan` returns bounded evidence and suggestion summaries
 with canonical `jobId` values. It never returns raw message bodies. Scan events
 use that same identity to invalidate the matching outcome detail.

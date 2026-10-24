@@ -1135,13 +1135,10 @@ export const handlers = [
   // R6 Phase 4: user-attested send log + follow-ups. `send-logs` RECORDS a fact
   // (no transport, INV-1); the follow-up routes schedule/complete/dismiss a
   // surfaced-only reminder; `follow-ups/due` is the derived due list.
-  http.post("*/v1/outreach/threads/:threadId/send-logs", () =>
-    HttpResponse.json(
-      makeOutreachThreadResponse(
-        makeOutreachThreadDetail({ sendLogs: [makeOutreachSendLog()], isSent: true }),
-      ),
-    ),
-  ),
+  http.post("*/v1/outreach/threads/:threadId/send-logs", async ({ params, request }) => {
+    const body = await request.json() as { draftId: string; channel: string; sentAt: string };
+    return HttpResponse.json({ ok: true, sendLog: makeOutreachSendLog({ ...body, threadId: String(params["threadId"]) }) });
+  }),
   http.post("*/v1/outreach/threads/:threadId/follow-up/schedule", () =>
     HttpResponse.json(
       makeOutreachThreadResponse(

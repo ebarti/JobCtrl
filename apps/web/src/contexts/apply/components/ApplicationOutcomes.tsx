@@ -1,3 +1,4 @@
+import { useRetryableAction } from "../../../shared/lib/useRetryableAction.js";
 import { OfferPanel } from "./OfferPanel.js";
 import {
   APPLICATION_OUTCOME_KINDS,
@@ -83,7 +84,7 @@ function isoTimestampFromLocalInput(value: string): string | undefined {
 
 function manualOutcomePayload(
   values: ManualOutcomeFormValues,
-): ManualApplicationOutcomeRequest {
+): Omit<ManualApplicationOutcomeRequest, "requestId"> {
   return {
     kind: values.kind,
     occurredAt: isoTimestampFromLocalInput(values.occurredAt),
@@ -94,7 +95,7 @@ function manualOutcomePayload(
 function interviewReflectionPayload(
   values: InterviewReflectionFormValues,
   prepGeneration: number,
-): ManualApplicationOutcomeRequest {
+): Omit<ManualApplicationOutcomeRequest, "requestId"> {
   return {
     kind: "interview",
     occurredAt: isoTimestampFromLocalInput(values.occurredAt),
@@ -165,7 +166,7 @@ export function JobOutcomePanel({ jobId }: JobOutcomePanelProps) {
         <>
           {data.interpretationStatus?.status === "unavailable" ? <div className="banner inline" role="status">Email outcome interpretation unavailable: {data.interpretationStatus.failureCode}. Retry feedback sync after resolving the model or budget failure.</div> : null}
           <OfferPanel key={jobId} jobId={jobId} />
-          <ManualOutcomeForm jobId={jobId} />
+          <ManualOutcomeForm key={jobId} jobId={jobId} />
           <OutcomeTimeline outcomes={data.outcomes} />
           <OutcomeSuggestionsPanel suggestions={pendingSuggestions} />
         </>
@@ -180,6 +181,7 @@ export interface ManualOutcomeFormProps {
 
 export function ManualOutcomeForm({ jobId }: ManualOutcomeFormProps) {
   const recordOutcome = useRecordManualApplicationOutcomeMutation();
+  const action = useRetryableAction<ManualApplicationOutcomeRequest>(jobId);
   const [statusMessage, setStatusMessage] = useState<FeedbackMessage | null>(
     null,
   );
@@ -192,7 +194,7 @@ export function ManualOutcomeForm({ jobId }: ManualOutcomeFormProps) {
     validators: {
       onSubmit: ({ value }) => {
         const result = ManualApplicationOutcomeRequestSchema.safeParse(
-          manualOutcomePayload(value),
+          { ...manualOutcomePayload(value), requestId: action.requestId },
         );
         return result.success
           ? undefined
@@ -202,7 +204,7 @@ export function ManualOutcomeForm({ jobId }: ManualOutcomeFormProps) {
     onSubmit: async ({ value, formApi }) => {
       setStatusMessage(null);
       const result = ManualApplicationOutcomeRequestSchema.safeParse(
-        manualOutcomePayload(value),
+        { ...manualOutcomePayload(value), requestId: action.requestId },
       );
       if (!result.success) {
         setStatusMessage({
@@ -212,10 +214,11 @@ export function ManualOutcomeForm({ jobId }: ManualOutcomeFormProps) {
         return;
       }
       try {
-        await recordOutcome.mutateAsync({ jobId, body: result.data });
+        await recordOutcome.mutateAsync({ jobId, body: action.prepare(result.data) });
       } catch {
         return;
       }
+      action.newAction();
       formApi.reset({
         kind: "applied_confirmation",
         occurredAt: "",
@@ -234,6 +237,13 @@ export function ManualOutcomeForm({ jobId }: ManualOutcomeFormProps) {
         void form.handleSubmit();
       }}
     >
+      {action.pending ? (
+        <div role="status">
+          Retry keeps the original submitted values; the action may already be recorded.
+          <Button type="button" disabled={recordOutcome.isPending} onClick={() => { action.newAction(); recordOutcome.reset(); }}>Start a new action</Button>
+        </div>
+      ) : null}
+      <fieldset disabled={action.pending}>
       <form.Field name="kind">
         {(field) => (
           <Field className="field">
@@ -299,9 +309,10 @@ export function ManualOutcomeForm({ jobId }: ManualOutcomeFormProps) {
           </Field>
         )}
       </form.Field>
+      </fieldset>
       {recordOutcome.isError ? (
         <div aria-live="assertive" className="danger" role="alert">
-          Outcome save failed
+          {recordOutcome.error?.message || "Outcome save failed"}
         </div>
       ) : null}
       {statusMessage ? (
@@ -358,7 +369,7 @@ export function InterviewReflectionPanel({
       className="interview-reflection-panel"
       aria-label="Post-interview reflections"
     >
-      <InterviewReflectionForm jobId={jobId} prepGeneration={prepGeneration} />
+      <InterviewReflectionForm key={jobId} jobId={jobId} prepGeneration={prepGeneration} />
       {message ? <div className="banner inline">{message}</div> : null}
       {!data && !message ? (
         <Empty
@@ -380,6 +391,7 @@ export function InterviewReflectionForm({
   prepGeneration,
 }: InterviewReflectionFormProps) {
   const recordOutcome = useRecordManualApplicationOutcomeMutation();
+  const action = useRetryableAction<ManualApplicationOutcomeRequest>(jobId);
   const [statusMessage, setStatusMessage] = useState<FeedbackMessage | null>(
     null,
   );
@@ -391,7 +403,7 @@ export function InterviewReflectionForm({
     validators: {
       onSubmit: ({ value }) => {
         const result = ManualApplicationOutcomeRequestSchema.safeParse(
-          interviewReflectionPayload(value, prepGeneration),
+          { ...interviewReflectionPayload(value, prepGeneration), requestId: action.requestId },
         );
         return result.success
           ? undefined
@@ -401,7 +413,7 @@ export function InterviewReflectionForm({
     onSubmit: async ({ value, formApi }) => {
       setStatusMessage(null);
       const result = ManualApplicationOutcomeRequestSchema.safeParse(
-        interviewReflectionPayload(value, prepGeneration),
+        { ...interviewReflectionPayload(value, prepGeneration), requestId: action.requestId },
       );
       if (!result.success) {
         setStatusMessage({
@@ -411,10 +423,11 @@ export function InterviewReflectionForm({
         return;
       }
       try {
-        await recordOutcome.mutateAsync({ jobId, body: result.data });
+        await recordOutcome.mutateAsync({ jobId, body: action.prepare(result.data) });
       } catch {
         return;
       }
+      action.newAction();
       formApi.reset({
         occurredAt: "",
         note: "",
@@ -432,6 +445,12 @@ export function InterviewReflectionForm({
         void form.handleSubmit();
       }}
     >
+      {action.pending ? (
+        <div role="status">
+          Retry keeps the original submitted values; the action may already be recorded.
+          <Button type="button" disabled={recordOutcome.isPending} onClick={() => { action.newAction(); recordOutcome.reset(); }}>Start a new action</Button>
+        </div>
+      ) : null}
       {/* Native hidden controls preserve the named reflection metadata. */}
       <input name="kind" readOnly type="hidden" value="interview" />
       <input
@@ -440,6 +459,7 @@ export function InterviewReflectionForm({
         type="hidden"
         value={prepGeneration}
       />
+      <fieldset disabled={action.pending}>
       <form.Field name="occurredAt">
         {(field) => (
           <Field className="field">
@@ -473,9 +493,10 @@ export function InterviewReflectionForm({
           </Field>
         )}
       </form.Field>
+      </fieldset>
       {recordOutcome.isError ? (
         <div aria-live="assertive" className="danger" role="alert">
-          Reflection save failed
+          {recordOutcome.error?.message || "Reflection save failed"}
         </div>
       ) : null}
       {statusMessage ? (

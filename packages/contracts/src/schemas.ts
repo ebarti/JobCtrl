@@ -1394,6 +1394,7 @@ export type ApplicationOutcomeSource = (typeof APPLICATION_OUTCOME_SOURCES)[numb
 
 export const ManualApplicationOutcomeRequestSchema = z
   .object({
+    requestId: z.string().uuid(),
     kind: z.enum(APPLICATION_OUTCOME_KINDS),
     occurredAt: IsoTimestampSchema.optional(),
     note: z.string().trim().max(4000).optional(),
@@ -6984,6 +6985,11 @@ export interface OutreachSendLogDto {
   loggedAt: string;
 }
 
+export interface LogOutreachSendResponse {
+  ok: true;
+  sendLog: OutreachSendLogDto;
+}
+
 export const FOLLOW_UP_STATES = ["none", "scheduled", "completed", "dismissed"] as const;
 export type FollowUpState = (typeof FOLLOW_UP_STATES)[number];
 
@@ -7020,6 +7026,7 @@ export interface DueFollowUpsResponse {
 
 export const LogOutreachSendRequestSchema = z
   .object({
+    requestId: z.string().uuid(),
     draftId: z.string().trim().min(1).max(200),
     channel: z.enum(OUTREACH_SEND_CHANNELS),
     sentAt: z.string().trim().min(1).max(40),

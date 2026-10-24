@@ -1794,7 +1794,7 @@ describe("application feedback API", () => {
     const write = await app.inject({
       method: "POST",
       url: `/v1/jobs/${encodeURIComponent(READY_JOB)}/outcomes`,
-      payload: {
+      payload: { requestId: "11720000-0000-4000-8000-000000000001",
         kind: "interview",
         occurredAt: "2026-06-01T11:00:00.000Z",
         note,
@@ -1840,7 +1840,7 @@ describe("application feedback API", () => {
     const write = await app.inject({
       method: "POST",
       url: `/v1/jobs/${encodeURIComponent(READY_JOB)}/outcomes`,
-      payload: {
+      payload: { requestId: "11720000-0000-4000-8000-000000000001",
         kind: "interview",
         occurredAt: "2026-06-01T12:00:00.000Z",
         note,
@@ -1882,7 +1882,7 @@ describe("application feedback API", () => {
     const write = await app.inject({
       method: "POST",
       url: `/v1/jobs/${encodeURIComponent(READY_JOB)}/outcomes`,
-      payload: {
+      payload: { requestId: "11720000-0000-4000-8000-000000000001",
         kind: "interview",
         occurredAt: "2026-06-01T12:00:00.000Z",
         note: "private reflection",
@@ -2042,7 +2042,7 @@ describe("application feedback API", () => {
     const manual = await app.inject({
       method: "POST",
       url: `/v1/jobs/${encodeURIComponent(READY_JOB)}/outcomes`,
-      payload: {
+      payload: { requestId: "11720000-0000-4000-8000-000000000001",
         kind: "interview",
         occurredAt: privateTimestampText,
         note: "manual note",

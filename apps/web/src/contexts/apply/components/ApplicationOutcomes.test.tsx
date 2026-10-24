@@ -1,3 +1,4 @@
+import type { ManualApplicationOutcomeRequest } from "@jobctrl/contracts";
 import { screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -13,6 +14,41 @@ import {
 } from "./ApplicationOutcomes.js";
 
 describe("application outcome components", () => {
+  it.each(["manual", "reflection"] as const)("keeps %s identity and frozen input through uncertain retry/conflict, and rotates for explicit and acknowledged new actions", async (family) => {
+    const user = userEvent.setup();
+    const recordManualApplicationOutcome = vi.fn(async (jobId: string, body: ManualApplicationOutcomeRequest) => {
+      if (recordManualApplicationOutcome.mock.calls.length <= 2) throw new Error("Original action may have committed; retry or start a new action.");
+      return { ok: true as const, outcome: { ...sampleApplicationOutcomes.outcomes[0]!, jobKey: jobId, outcomeId: body.requestId, note: body.note ?? null } };
+    });
+    renderWithProviders(family === "manual" ? <ManualOutcomeForm jobId="job-2" /> : <InterviewReflectionForm jobId="job-2" prepGeneration={2} />, {
+      ports: buildTestPorts({ api: { recordManualApplicationOutcome } }),
+    });
+    const note = screen.getByLabelText(family === "manual" ? "Local note" : "Reflection note");
+    const submit = screen.getByRole("button", { name: family === "manual" ? "Record outcome" : "Record reflection" });
+    await user.type(note, "Private synthetic attempted input");
+    await user.click(submit);
+    await screen.findByRole("alert");
+    expect(note).toHaveValue("Private synthetic attempted input");
+    expect(note).toBeDisabled();
+    const original = recordManualApplicationOutcome.mock.calls[0]![1];
+    expect(original.requestId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(original.occurredAt).toBeUndefined();
+    await user.click(submit);
+    await waitFor(() => expect(recordManualApplicationOutcome).toHaveBeenCalledTimes(2));
+    expect(recordManualApplicationOutcome.mock.calls[1]![1]).toEqual(original);
+    expect(note).toHaveValue("Private synthetic attempted input");
+    await user.click(screen.getByRole("button", { name: "Start a new action" }));
+    expect(note).toBeEnabled();
+    await user.type(note, " deliberately new");
+    await user.click(submit);
+    await waitFor(() => expect(recordManualApplicationOutcome).toHaveBeenCalledTimes(3));
+    expect(recordManualApplicationOutcome.mock.calls[2]![1].requestId).not.toBe(original.requestId);
+    await waitFor(() => expect(note).toHaveValue(""));
+    await user.click(submit);
+    await waitFor(() => expect(recordManualApplicationOutcome).toHaveBeenCalledTimes(4));
+    expect(recordManualApplicationOutcome.mock.calls[3]![1].requestId).not.toBe(recordManualApplicationOutcome.mock.calls[2]![1].requestId);
+  });
+
   it("renders the job outcome timeline and manual outcome form", async () => {
     renderWithProviders(<JobOutcomePanel jobId="job-2" />);
 
@@ -120,9 +156,9 @@ describe("application outcome components", () => {
     await user.click(screen.getByRole("button", { name: /record outcome/i }));
 
     expect(
-      await screen.findByText("Outcome save failed"),
+      await screen.findByText("Save failed"),
     ).toHaveAttribute("role", "alert");
-    expect(await screen.findByText("Outcome save failed")).toHaveAttribute(
+    expect(await screen.findByText("Save failed")).toHaveAttribute(
       "aria-live",
       "assertive",
     );

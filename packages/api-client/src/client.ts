@@ -21,6 +21,7 @@ import type {
   RejectOutreachDraftRequest,
   OutreachThreadResponse,
   LogOutreachSendRequest,
+  LogOutreachSendResponse,
   LlmLane,
   ScheduleFollowUpRequest,
   DueFollowUpsResponse,
@@ -800,7 +801,7 @@ export class JobCtrlApiClient {
   logOutreachSend(
     threadId: string,
     body: LogOutreachSendRequest,
-  ): Promise<OutreachThreadResponse> {
+  ): Promise<LogOutreachSendResponse> {
     return this.post(
       `/v1/outreach/threads/${encodeURIComponent(threadId)}/send-logs`,
       body,

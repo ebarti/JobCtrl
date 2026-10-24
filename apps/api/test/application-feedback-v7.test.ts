@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { seedApplicationUrl } from "./seed-enrichment.js";
 import fs from "node:fs";
 import os from "node:os";
@@ -99,7 +100,7 @@ describe("application feedback exact current identity", () => {
        ) VALUES (?, 'other-outcome', ?, 'rejection', 'manual', '2026-07-31T12:01:00Z', '2026-07-31T12:01:00Z')`,
     ).run(OTHER_TENANT, JOB_ID);
 
-    const manual = recordManualApplicationOutcome(db, JOB_ID, {
+    const manual = recordManualApplicationOutcome(db, JOB_ID, { requestId: crypto.randomUUID(),
       kind: "interview",
       note: PRIVATE_NOTE,
       occurredAt: "2026-07-31T12:02:00Z",
@@ -154,7 +155,7 @@ describe("application feedback exact current identity", () => {
     expect(hasExactV14SchemaManifest(db)).toBe(true);
 
     expect(() =>
-      recordManualApplicationOutcome(db, "not-a-canonical-job-id", { kind: "interview" }),
+      recordManualApplicationOutcome(db, "not-a-canonical-job-id", { requestId: crypto.randomUUID(), kind: "interview" }),
     ).toThrow(InputError);
     expect(hasExactV14SchemaManifest(db)).toBe(true);
   });

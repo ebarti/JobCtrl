@@ -1,3 +1,4 @@
+import type { ApplicationOutcomeWriteResponse } from "@jobctrl/contracts";
 import { test, expect } from "@playwright/test";
 import Database from "better-sqlite3";
 
@@ -66,7 +67,7 @@ function seedAcceptedPrep(dbPath: string, occurredAt: string): void {
 
 test("Interview prep: explicit generation queues and accepted prep surfaces with provenance link", async ({
   page,
-}) => {
+}, testInfo) => {
   const dbPath = loadE2eDbPath();
   refreshWorkerHeartbeat(dbPath);
   page.on("dialog", (dialog) => void dialog.accept());
@@ -117,6 +118,21 @@ test("Interview prep: explicit generation queues and accepted prep surfaces with
   const reflectionNote = "Asked how the platform migration should be sequenced.";
   await drawer.getByLabel("Interview date").fill("2026-06-01T13:20");
   await drawer.getByLabel("Reflection note").fill(reflectionNote);
+  let acceptedBeforeLoss: ApplicationOutcomeWriteResponse | undefined;
+  let originalPayload: string | null = null;
+  await page.route("**/v1/jobs/*/outcomes", async (route) => {
+    if (route.request().method() !== "POST" || acceptedBeforeLoss) return route.continue();
+    originalPayload = route.request().postData();
+    const response = await route.fetch();
+    expect(response.status()).toBe(200);
+    acceptedBeforeLoss = await response.json() as ApplicationOutcomeWriteResponse;
+    await route.abort("failed"); // The production mutation has committed before acknowledgement loss.
+  });
+  await drawer.getByRole("button", { name: /record reflection/i }).click();
+  await expect(drawer.locator(".interview-reflection-form").getByRole("alert")).toBeVisible();
+  await expect(drawer.getByLabel("Reflection note")).toHaveValue(reflectionNote);
+  await expect(drawer.getByLabel("Reflection note")).toBeDisabled();
+  await page.screenshot({ path: testInfo.outputPath("reflection-lost-ack.png") });
   const [outcomeResponse] = await Promise.all([
     page.waitForResponse(
       (response) =>
@@ -134,9 +150,49 @@ test("Interview prep: explicit generation queues and accepted prep surfaces with
       note: reflectionNote,
     },
   });
+  expect(await outcomeResponse.json()).toEqual(acceptedBeforeLoss);
+  expect(outcomeResponse.request().postData()).toBe(originalPayload);
+  const acceptedId = acceptedBeforeLoss!.outcome.outcomeId;
+  const verificationDb = new Database(dbPath, { readonly: true });
+  try {
+    expect(verificationDb.prepare("SELECT count(*) AS n FROM application_outcomes WHERE tenant_id='local' AND outcome_id=?").get(acceptedId)).toEqual({ n: 1 });
+    expect(verificationDb.prepare("SELECT count(*) AS n FROM job_events WHERE tenant_id='local' AND event_type='ApplicationOutcomeRecorded' AND json_extract(payload_json, '$.outcomeId')=?").get(acceptedId)).toEqual({ n: 1 });
+  } finally { verificationDb.close(); }
   const reflections = drawer.getByLabel("Post-interview reflections");
   await expect(reflections.getByText(reflectionNote)).toBeVisible();
   await expect(reflections.getByText("prep generation 1")).toBeVisible();
+
+  await page.unroute("**/v1/jobs/*/outcomes");
+  await drawer.getByRole("button", { name: /· Application outcomes/ }).click();
+  const manualForm = drawer.locator(".outcome-form:not(.interview-reflection-form)");
+  await manualForm.getByRole("combobox", { name: "Outcome", exact: true }).click();
+  await page.getByRole("option", { name: "Interview", exact: true }).click();
+  await manualForm.getByLabel("Local note").fill("Synthetic ordinary interview observation");
+  let manualAccepted: ApplicationOutcomeWriteResponse | undefined;
+  let manualPayload: string | null = null;
+  await page.route("**/v1/jobs/*/outcomes", async (route) => {
+    if (route.request().method() !== "POST" || manualAccepted) return route.continue();
+    manualPayload = route.request().postData();
+    expect(JSON.parse(manualPayload!).occurredAt).toBeUndefined();
+    const response = await route.fetch();
+    expect(response.status()).toBe(200);
+    manualAccepted = await response.json() as ApplicationOutcomeWriteResponse;
+    await route.abort("failed");
+  });
+  await manualForm.getByRole("button", { name: "Record outcome" }).click();
+  await expect(manualForm.getByRole("alert")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("manual-outcome-lost-ack.png") });
+  const [manualResponse] = await Promise.all([
+    page.waitForResponse((response) => response.url().includes("/outcomes") && response.request().method() === "POST"),
+    manualForm.getByRole("button", { name: "Record outcome" }).click(),
+  ]);
+  expect(await manualResponse.json()).toEqual(manualAccepted);
+  expect(manualResponse.request().postData()).toBe(manualPayload);
+  const manualDb = new Database(dbPath, { readonly: true });
+  try {
+    expect(manualDb.prepare("SELECT count(*) AS n FROM application_outcomes WHERE tenant_id='local' AND outcome_id=?").get(manualAccepted!.outcome.outcomeId)).toEqual({ n: 1 });
+    expect(manualDb.prepare("SELECT count(*) AS n FROM job_events WHERE tenant_id='local' AND event_type='ApplicationOutcomeRecorded' AND json_extract(payload_json, '$.outcomeId')=?").get(manualAccepted!.outcome.outcomeId)).toEqual({ n: 1 });
+  } finally { manualDb.close(); }
 
   const evidenceLink = drawer.getByRole("link", {
     name: "Owned platform reliability improvements for incident response.",
