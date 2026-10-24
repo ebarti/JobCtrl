@@ -5,7 +5,7 @@ import math
 from typing import Any
 from urllib.parse import urljoin
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 from datetime import datetime, timezone
 import hashlib
 
@@ -125,6 +125,32 @@ def _text(value: Any) -> str:
     return BeautifulSoup(str(value or ""), "html.parser").get_text(" ", strip=True)
 
 
+# These names parse declared HTML formatting, never posting meaning.
+_DESCRIPTION_FORMAT_TAGS = frozenset({
+    "p", "div", "section", "article", "br", "ul", "ol", "li", "dl", "dt", "dd",
+    "h1", "h2", "h3", "h4", "h5", "h6", "strong", "em", "b", "i", "span",
+    "table", "thead", "tbody", "tr", "th", "td", "blockquote",
+})
+
+
+def _description_text(value: Any) -> str:
+    """Normalize one extra escaped markup layer before source-span selection.
+
+    Parse only text nodes beginning with declared rich-text formatting. Keep
+    literal technical angle brackets and code/pre examples as captured; do not
+    repeatedly unescape the whole posting or render its HTML in the UI.
+    """
+    soup = BeautifulSoup(str(value or ""), "html.parser")
+    for node in list(soup.find_all(string=True)):
+        if node.find_parent(["code", "pre", "script", "style"]):
+            continue
+        fragment = BeautifulSoup(str(node), "html.parser")
+        first = next((child for child in fragment.contents if str(child).strip()), None)
+        if isinstance(first, Tag) and first.name in _DESCRIPTION_FORMAT_TAGS:
+            node.replace_with(*list(fragment.contents))
+    return soup.get_text(" ", strip=True)
+
+
 def rendered_page_text(page):
     status = getattr(page, "status_html", "")
     captured = (
@@ -167,7 +193,7 @@ def posting_page_sources(page, *, entity_id):
             fields = {
                 "title": _text(posting.get("title")),
                 "employer": _employer_name(posting),
-                "description": _text(posting.get("description")),
+                "description": _description_text(posting.get("description")),
                 "location": _location_text(posting),
                 "salary": _salary_text(posting),
             }

@@ -358,3 +358,21 @@ def test_concurrent_identical_requests_make_one_paid_call():
         results = list(pool.map(lambda _: call(model, repository), range(2)))
     assert results[0] == results[1]
     assert len(model.calls) == 1
+
+
+@pytest.mark.parametrize("retryable,code", [(True, "provider_error"), (False, "provider_non_retryable")])
+def test_provider_retry_authority_survives_the_safe_determination_protocol(retryable, code):
+    from jobctrl.domain.determinations import serialized_determination_failure
+    from jobctrl.infrastructure.llm.provider_errors import ProviderCallError, ProviderFailureEnvelope
+
+    failure = ProviderCallError(ProviderFailureEnvelope(
+        provider="openai", model="synthetic", operation="chat_json", category="provider_turn",
+        error_type="codex_turn_error", code="other", retryable=retryable,
+    ))
+    model = Model(failure)
+    with pytest.raises(DeterminationFailure) as raised:
+        call(model, Repository())
+    assert raised.value.code == code
+    assert raised.value.retryable is retryable
+    assert serialized_determination_failure(str(raised.value)).retryable is retryable
+    assert len(model.calls) == 1

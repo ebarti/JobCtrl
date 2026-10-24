@@ -23,6 +23,7 @@ from pathlib import Path
 
 from jobctrl.config import COVER_LETTER_DIR
 from jobctrl.database import effective_tailoring_min_score, get_connection
+from jobctrl.domain.determinations import serialized_determination_failure
 from jobctrl.domain.discovery.value_objects import PostingUrl
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.services import ContentValidator
@@ -491,6 +492,8 @@ def cover_letter_by_id(
 
     failed_attempts = current_attempt
     exhausted = failed_attempts >= _COVER_MAX_ATTEMPTS
+    semantic_failure = serialized_determination_failure(outcome.error)
+    retryable = not exhausted and (semantic_failure is None or semantic_failure.retryable)
     with SqliteUnitOfWork(conn):
         commit_guard()
         set_stage_state(
@@ -503,9 +506,9 @@ def cover_letter_by_id(
             max_attempts=_COVER_MAX_ATTEMPTS,
             started_at=started_at,
             finished_at=finished_at,
-            error_code="COVER_FAILED",
+            error_code=semantic_failure.code.upper() if semantic_failure else "COVER_FAILED",
             error_message=outcome.error or f"Cover letter generation failed ({outcome.status})",
-            retryable=not exhausted,
+            retryable=retryable,
             next_action=(
                 f"jobctrl retry cover {url or stable_job_id} --reset-attempts"
                 if exhausted

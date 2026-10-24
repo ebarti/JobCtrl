@@ -31,6 +31,55 @@ afterEach(() => {
 });
 
 describe("pipeline operations read model", () => {
+  it.each([
+    ["failed", 0, "blocked"], ["exhausted", 0, "blocked"], ["canceled", 0, "canceled"],
+  ] as const)("finishes a stopped preparation plan with an unexecuted PDF after %s", (state, retryable, bucket) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    for (const cohort of ["observed_this_run", "existing_backlog"] as const) {
+      const key = `terminal-before-pdf-${cohort}`;
+      const member = insertMember(fixture, { key, cohort, requiredSteps: ["score", "tailor", "pdf"] });
+      insertStageState(fixture, key, "enrich", "succeeded");
+      insertStageState(fixture, key, "score", "succeeded");
+      insertStageState(fixture, key, "tailor", state, null, null, retryable);
+      insertWorkflowProjection(fixture, member.preparationWorkflowId, "failed", PREPARATION_RUN_ID);
+    }
+    const result = snapshot(fixture);
+    expect(result.execution).toMatchObject({
+      phase: "completed_with_issues", currentExecution: { terminal: 1, remaining: 0 },
+      sweptExistingBacklog: { terminal: 1, remaining: 0 },
+    });
+    expect(stage(result, "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, [bucket]: 1, succeeded: 0, unknown: 0,
+    });
+  });
+
+  it("keeps an actual PDF activity authoritative over a later failed prerequisite", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    const member = insertMember(fixture, { key: "actual-pdf-running", requiredSteps: ["tailor", "pdf"] });
+    insertStageState(fixture, "actual-pdf-running", "tailor", "failed", null, null, 0);
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, "failed", PREPARATION_RUN_ID);
+    insertStep(fixture, { stepKind: "pdf_render", itemKey: pdfItemKey(member.preparationWorkflowId), state: "running" });
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({
+      processing: 1, blocked: 0, unknown: 0,
+    });
+    expect(snapshot(fixture).execution?.currentExecution.remaining).toBe(1);
+  });
+
+  it.each(["failed", "queued", "running"])("does not settle the missing PDF while recovery is %s", (state) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    const member = insertMember(fixture, { key: "recovering-before-pdf", requiredSteps: ["score", "tailor", "pdf"] });
+    insertStageState(fixture, "recovering-before-pdf", "score", "succeeded");
+    insertStageState(fixture, "recovering-before-pdf", "tailor", state, null, null, 1);
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, "failed", PREPARATION_RUN_ID);
+    expect(stage(snapshot(fixture), "pdf_render", "current_execution").currentExecution).toMatchObject({
+      eligible: 1, unknown: 1, blocked: 0, canceled: 0, succeeded: 0,
+    });
+  });
+
   it.each(["enrich", "score", "tailor", "cover"])("reports the %s recovery batch stage and exact execution without inventing job membership", (stageName) => {
     const fixture = createFixture();
     const workflowId = `prepare-auto-local-${stageName}-${"a".repeat(24)}`;

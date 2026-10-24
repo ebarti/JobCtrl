@@ -34,6 +34,7 @@ from jobctrl import database as db_module
 from jobctrl import config
 from jobctrl.config import TAILORED_DIR
 from jobctrl.database import get_connection, get_jobs_by_stage
+from jobctrl.domain.determinations import serialized_determination_failure
 from jobctrl.domain.discovery.value_objects import PostingUrl
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.services import ContentValidator, ResumeAssembler
@@ -107,6 +108,9 @@ def _tailor_failure_details(result: dict) -> tuple[str, str, str]:
     """Return bounded canonical diagnostics for one Tailor failure."""
 
     status = str(result.get("status") or "error")
+    semantic_failure = serialized_determination_failure(result.get("error"))
+    if semantic_failure is not None:
+        return semantic_failure.code.upper(), str(semantic_failure), "semantic_determination_failed"
     error = str(result.get("error") or "").strip().casefold()
     if any(message in error for message in _TAILOR_INPUTS_CHANGED_ERRORS):
         return (
@@ -1046,6 +1050,8 @@ def tailor_job_by_id(
             exhausted = current_attempt >= MAX_ATTEMPTS
             durable_exhausted = exhausted
             error_code, error_message, failure_reason = _tailor_failure_details(result)
+            semantic_failure = serialized_determination_failure(result.get("error"))
+            retryable = not exhausted and (semantic_failure is None or semantic_failure.retryable)
             set_stage_state(
                 conn,
                 stable_job_id,
@@ -1058,7 +1064,7 @@ def tailor_job_by_id(
                 finished_at=finished_at,
                 error_code=error_code,
                 error_message=error_message,
-                retryable=not exhausted,
+                retryable=retryable,
                 next_action=(
                     f"jobctrl retry tailor {job['url']} --reset-attempts"
                     if exhausted
@@ -1079,7 +1085,7 @@ def tailor_job_by_id(
                     "generationAttempts": generation_attempts,
                     "generationStatus": str(result.get("status") or "error"),
                     "failureReason": failure_reason,
-                    "retryable": not exhausted,
+                    "retryable": retryable,
                 },
             )
     if durable_exhausted:

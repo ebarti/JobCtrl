@@ -980,3 +980,27 @@ async def test_legacy_cover_activity_payload_defaults_to_no_low_fit_exception() 
     [decoded] = await converter.decode(payloads, [CoverLetterActivityInput])
     assert decoded.min_score == 7
     assert decoded.allow_low_fit_override is False
+
+
+@pytest.mark.parametrize("retryable", [True, False])
+def test_cover_persists_provider_failure_retry_authority(conn, tmp_path, retryable):
+    from jobctrl.domain.ports.llm import LlmFailure
+
+    class TypedFailureLlm(_CoverLlm):
+        def chat_json(self, *args, **kwargs):
+            raise LlmFailure("turn_failed", retryable=retryable)
+
+    _seed_target(conn, tenant_id=_TENANT_A)
+    _seed_eligible_score(conn, tenant_id=_TENANT_A)
+    _seed_approved_resume(conn, tmp_path, tenant_id=_TENANT_A)
+    result = cover_letter_module.cover_letter_by_id(
+        _JOB_ID, tenant_id=_TENANT_A, snapshot=_snapshot(_TENANT_A),
+        repository=SqliteMaterialsRepository(conn), llm_port=TypedFailureLlm(), pdf_renderer=_PdfRenderer(),
+    )
+    assert result["status"] == "error"
+    row = conn.execute(
+        "SELECT state,error_code,retryable FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage='cover'",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()
+    code = "PROVIDER_ERROR" if retryable else "PROVIDER_NON_RETRYABLE"
+    assert tuple(row) == ("failed", code, int(retryable))

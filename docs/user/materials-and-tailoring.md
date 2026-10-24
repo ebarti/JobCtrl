@@ -96,6 +96,11 @@ last accepted resume.
    Cover-letter drafts also use that budget to correct malformed structure or
    source IDs. Corrected drafts still pass factual and quality review before
    acceptance; provider failures do not become content-repair attempts.
+   Resume corrections receive the rejected candidate and specific structural
+   validation errors, including errors found before paid review. Those details
+   are repair data; current saved facts and permissions remain authoritative.
+   A provider failure classified as non-retryable stops automatic generation;
+   retryable provider failures retain bounded workflow recovery.
    Exhausted content review stops with its recorded findings instead of
    restarting the entire generation budget as a temporary provider failure.
    Later resume and cover reviews receive the earlier recorded decisions and
