@@ -291,3 +291,35 @@ def test_inventory_keeps_only_projection_resolvable_workflow_and_execution_refs(
     detail = inventory.snapshot().active_details[0]
     assert detail.workflow_ref == workflow_id
     assert detail.execution_ref == temporal_run_id
+
+
+@pytest.mark.parametrize("stage", ["enrich", "score", "tailor", "cover"])
+def test_inventory_retains_only_generated_recovery_identity(stage):
+    workflow_id = f"prepare-auto-local-{stage}-{'a' * 24}"
+    assert activity_runtime_telemetry._safe_workflow_ref(workflow_id) == workflow_id
+    inventory = ActiveActivityInventory()
+    inventory.start(
+        activity_type=stage,
+        activity_id="owned-batch",
+        workflow_id=workflow_id,
+        workflow_run_id="12345678-1234-4abc-8def-1234567890ab",
+        attempt=1,
+        started_at=datetime(2026, 7, 14, 9, 0, tzinfo=UTC),
+    )
+    assert inventory.snapshot().active_details[0].workflow_ref == workflow_id
+
+
+@pytest.mark.parametrize(
+    "workflow_id",
+    [
+        f"prepare-auto-local-apply-{'a' * 24}",
+        f"prepare-auto-local-score-{'a' * 23}",
+        f"prepare-auto-local-score-{'a' * 25}",
+        f"prepare-auto-local-score-{'A' * 24}",
+        f"prepare-auto-local-score-{'a' * 24}\n",
+        "prepare-auto-local-score-private-profile",
+        "https://example.test/private?token=secret",
+    ],
+)
+def test_inventory_rejects_non_generated_recovery_identity(workflow_id):
+    assert activity_runtime_telemetry._safe_workflow_ref(workflow_id) is None

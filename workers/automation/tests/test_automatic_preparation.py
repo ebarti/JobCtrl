@@ -301,6 +301,22 @@ def test_pending_score_is_preferred_and_never_starts_apply(conn):
     assert options["id_reuse_policy"] is WorkflowIDReusePolicy.REJECT_DUPLICATE
 
 
+def test_recovery_snapshots_saved_internal_concurrency_and_reattaches_unchanged(conn, tmp_path, monkeypatch):
+    config = tmp_path / "config.json"
+    config.write_text('{"pipeline_internal_concurrency": 10, "worker_activity_slots": 4}')
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(config))
+    _job(conn, enriched=True)
+    client = _Client()
+    client.lose_ack = True
+    with pytest.raises(RPCError):
+        asyncio.run(_tick(client))
+    assert client.starts[0][1].workers == 10
+    config.write_text('{"pipeline_internal_concurrency": 2}')
+    assert asyncio.run(_tick(client)) == 0
+    assert len(client.starts) == 1
+    assert client.starts[0][1].workers == 10
+
+
 def test_lost_ack_and_second_worker_reattach_to_the_reserved_execution(conn):
     job_id = _job(conn)
     client = _Client()

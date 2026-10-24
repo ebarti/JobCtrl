@@ -26,6 +26,7 @@ from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.enrichment.sqlite_repository import SqliteEnrichmentRepository
 from jobctrl.infrastructure.preparation_recovery import MANUAL_APPLY_DECLINE_SQL
+from jobctrl.infrastructure.temporal.concurrency import resolve_pipeline_internal_concurrency
 from jobctrl.pipeline.public_fetch_recovery import reconcile_public_fetch_failures
 from jobctrl.state import record_job_event, set_stage_state
 
@@ -95,7 +96,7 @@ async def reconcile_automatic_preparation(
         stages=[batch.stage],
         job_ids=batch.job_ids,
         min_score=batch.min_score,
-        workers=1,
+        workers=resolve_pipeline_internal_concurrency(),
         expected_app_dir=expected_app_dir,
         expected_db_path=expected_db_path,
         automatic_recovery=True,
