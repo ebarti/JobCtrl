@@ -82,8 +82,11 @@ insignificant, and supplies rationale and verbatim citations. There is no prose
 heuristic or fallback. Batch compute runs these reviews in its existing bounded
 pool; unchanged inputs reuse the persisted receipt without another provider call.
 
-Only an insignificant verdict with unchanged posting, policy, prompt/schema, model and guidance may
-retain the score. Retention preserves its version, date, requirements and accepted
+Only an insignificant verdict with unchanged posting, policy, prompt/schema, model, guidance
+and scoring sources may retain the score. The score trace stores an exact fingerprint
+of employer-analysis generation and requirement inputs plus the job interpretation
+and its determination ID. Changed or missing historical source identity requires
+a fresh assessment; profile significance cannot override changed job requirements. Retention preserves its version, date, requirements and accepted
 materials, charges no new Score attempt and admits no material work. The review
 binds to the exact previous score/determination and reviewed profile version under
 the Score ownership and latest-score writer fence. New profile versions invalidate
