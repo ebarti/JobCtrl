@@ -61,7 +61,7 @@ and their dependent rows, preserving the pre-existing synthetic jobs.
 Retain JUnit, complete request/response observations, synthetic inputs,
 source/lock hashes, traces and page screenshots. Inspect the screenshots as
 well as assertions. Final API regressions, 100/1,000/10,000-job scale evidence,
-independent review/QA and publication/resume checks bind to their controller
+product QA and publication/resume checks bind to their controller
 candidate; historical observations never certify a later stack tip. The
 [benchmark owner](../local-scale-benchmark.md#bounded-job-page-contract-and-supplied-comparisons)
 defines sampling and comparison limits.
@@ -86,7 +86,7 @@ identity and observations across runs. An unlisted peer is excluded mechanically
 postings, literal exclusions, limits and interruption before consumption. No
 alias table or geography sentence corpus decides suitability.
 These fixtures contact no live board and use no real user data. Local fixture
-proof does not replace the independent review, QA, or CI gates.
+proof does not replace the product QA or CI gates.
 
 ## Temporal Fault Injection
 
@@ -364,7 +364,9 @@ pre-pagination approximation must stay visible in the report; the trial does
 not assert that incorrect boxes are correct or require their incorrect values
 as an invariant.
 
-### Results and independent completion
+<a id="results-and-independent-completion"></a>
+
+### Results and completion
 
 On 2026-10-03 the implementation measurement ran with Python 3.12.13 on macOS
 26.6.2 arm64, Playwright 1.58.0, bundled Chromium headless shell 145.0.7632.6
@@ -419,7 +421,7 @@ words) were dense A4 12/926, dense Letter 12/867, below both 0/13, above both
 7/13, oversized A4 29/2139 and oversized Letter 46/2134. Font-bound rectangles
 can intersect between adjacent lines or extend above the page while the painted
 glyphs remain readable; these counts are not confirmed clipping/overlap defects.
-Higher-resolution independent inspection remains a separate QA gate.
+Higher-resolution visual inspection remains a separate QA check.
 
 The oversized role moves to page 2, and its one bullet genuinely fragments
 across pages 3 and 4. Large unused areas on pages 1 and 2 result from the current
@@ -487,7 +489,7 @@ unreadable clipping/overlap or nondeterministic page assignment as High;
 layout highlight correspondence errors and isolated orphan headings are
 Medium unless they make approval materially misleading. Extraction gaps and
 visual-review candidates remain unresolved measurements until corroborated.
-Any unresolved Blocker/High prevents completion. Independent QA must inspect
+Any unresolved Blocker/High prevents completion. Visual QA must inspect
 **every measured page of every repeat**, record outcomes for all five dimensions,
 and reconcile its findings with the JSON and JUnit evidence. Eight passing
 automated cases alone do not complete visual QA or prove universal stability.
@@ -498,7 +500,7 @@ nonblank pages and repeat comparisons; it has no hardcoded dense-page count
 or assertion that the DOM layout map is physically accurate. More fonts,
 densities, themes, non-ASCII scripts, viewer versions and arbitrary document
 sizes are outside this bounded sample. The controller owns current-issue
-reconciliation, independent review/QA, mandatory checks and publication at an
+reconciliation, product QA, mandatory checks and publication at an
 unmerged verified head. After it records the summary, remove only the owned
 trial artifacts and processes; retain no generated candidate material in Git.
 
@@ -1707,7 +1709,7 @@ approval bindings. Successful saves retain complete material history and resume
 behavior while requiring renewed approval for the new generation. Verify email
 bindings, resume draft rendering/comments, manual decisions/outcomes and jobs
 without a cover as preservation controls. The materials browser spec contains a
-real render/save/reload path; independent candidate-bound review/product gates
+real render/save/reload path; product checks against the exact candidate
 remain governed by the reliability workflow.
 
 Repeat formatting saves and export both carried text sources as DOCX from each
