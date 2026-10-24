@@ -169,6 +169,11 @@ Two knobs that look like Temporal concurrency but are not:
   re-observing a recoverable job does not leave it stranded behind the ordinary
   pending-only selector; non-retryable failures remain excluded. Per-family
   preparation fan-outs remain as best-effort backstops.
+  Explicit cooperative stops use a typed enrichment-cancellation signal. The
+  drain propagates that signal to its activity without recording a crash;
+  unexpected network and programming errors keep the normal failure path.
+  Temporal 1.31 or newer supplies the SDK cancellation fix so an awaited
+  activity cancellation does not produce an orphan shielded-future error.
   The live enrichment and backstop fan-outs are **progress-silent**
   (`progress_total=0`) so the Runs bar stays monotonic on the family + terminal
   spine — see

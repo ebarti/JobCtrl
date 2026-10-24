@@ -33,6 +33,12 @@ class TransientNetworkError(JobCtrlError):
     code = "transient_network"
 
 
+class EnrichmentCanceledError(TransientNetworkError):
+    """A cooperative enrichment stop, distinct from a failed acquisition."""
+
+    code = "enrichment_canceled"
+
+
 class LlmTransientError(JobCtrlError):
     code = "llm_transient"
 
@@ -81,6 +87,7 @@ __all__ = [
     "AttemptBudgetExhaustedError",
     "BudgetExceededError",
     "ConfigurationError",
+    "EnrichmentCanceledError",
     "JobCtrlError",
     "LlmTransientError",
     "MATERIAL_REJECTION_STATUSES",

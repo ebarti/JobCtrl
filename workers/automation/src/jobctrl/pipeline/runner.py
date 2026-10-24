@@ -35,11 +35,11 @@ from jobctrl.domain.discovery.source_registry import SourceKind, SourcePriority,
 from jobctrl.domain.errors import (
     AttemptBudgetExhaustedError,
     ConfigurationError,
+    EnrichmentCanceledError,
     LlmTransientError,
     MATERIAL_REJECTION_STATUSES,
     MaterialRejectedError,
     SourceUnavailableError,
-    TransientNetworkError,
 )
 from jobctrl.domain.enrichment import (
     EnrichmentExecutionLease,
@@ -2087,7 +2087,7 @@ def _run_enrich(
 ) -> dict:
     """Stage: Detail enrichment — scrape full descriptions and apply URLs."""
     if cancel_event is not None and cancel_event.is_set():
-        raise TransientNetworkError("enrichment canceled before start")
+        raise EnrichmentCanceledError("enrichment canceled before start")
     from jobctrl.enrichment.detail import run_enrichment
 
     enrich_kwargs: dict[str, Any] = {
@@ -2113,7 +2113,7 @@ def _run_enrich(
     else:
         stats = run_enrichment(cancel_event=cancel_event, **enrich_kwargs)
     if cancel_event is not None and cancel_event.is_set():
-        raise TransientNetworkError("enrichment canceled")
+        raise EnrichmentCanceledError("enrichment canceled")
     site_errors = stats.get("site_errors") or {}
     return {
         "status": "partial" if site_errors else "ok",
@@ -2686,7 +2686,7 @@ def _run_discovery_enrichment_until_idle(
     try:
         while True:
             if cancel_event is not None and cancel_event.is_set():
-                raise TransientNetworkError("discovery enrichment canceled")
+                raise EnrichmentCanceledError("discovery enrichment canceled")
             scoped_job_ids = (
                 _execution_pending_enrichment_job_ids(discovery_execution) if discovery_execution is not None else ()
             )
@@ -2803,6 +2803,9 @@ def _run_discovery_enrichment_until_idle(
                     discovery_done.wait(timeout=_DISCOVERY_ENRICH_POLL_INTERVAL)
             else:
                 no_progress_passes = 0
+    except EnrichmentCanceledError:
+        log.info("Discovery detail enrichment stopped cooperatively")
+        raise
     except Exception as exc:
         log.exception("Discovery detail enrichment worker crashed")
         result.update(
