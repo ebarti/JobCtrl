@@ -72,7 +72,7 @@ For a schema transition, require native cross-runtime migration proof with the
 locked Python and installed Node runtimes bound as documented in
 [Reliability & QA](../local-reliability-qa.md). Use only owned synthetic workspaces.
 Check candidate activation, paired backup, preservation, readiness failure,
-rollback, and supported source schemas. Applicable review and QA gates must pass;
+rollback, and supported source schemas. Applicable checks and product QA must pass;
 version parity and a successful build do not establish migration safety.
 
 Use a signed-off Conventional Commit, open the PR, inspect its final diff, and
