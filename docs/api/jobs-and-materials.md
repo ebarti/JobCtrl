@@ -358,3 +358,13 @@ values and `offerRevisionId`. The worker loads canonical sources, applies the
 existing claim/quality gates and fences source changes at persistence. Stale
 offer bindings return `409 draft_gates_not_passed` on approval/send logging.
 Provider, spend and structural failures retain the last approved message.
+
+Manual `mark-skipped` records a durable local Apply stop. Its response message
+explains that an in-flight submission may still complete. Job Detail's existing
+`applyAudit.hardBlockers` distinguishes `manual_apply_skip` from
+`submission_intent_recorded`; the latter retains original intent run IDs from
+canonical events, independently of the latest run. A recorded successful
+submission or manual Applied attestation retains the intent source without
+labeling the accepted outcome as uncertain; neither authorizes blind retry. `submission_outcome_uncertain`
+retains a prior Needs verification stop even if its intent receipt is missing. See [Skip and safe
+reset](../user/apply.md#skip-and-safe-reset) for recovery limits.

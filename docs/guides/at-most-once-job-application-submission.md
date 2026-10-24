@@ -59,6 +59,23 @@ At-most-once chooses the safer failure mode:
 The result may require manual recovery, but it avoids turning uncertainty into
 a duplicate application.
 
+## Local Stops Do Not Resolve External Uncertainty
+
+Manual Skip prevents later targeted, batch and standing claims. It is a local
+disposition, not confirmation that an in-flight provider operation stopped.
+Claim selection checks it before expensive work and under the claim lock after
+availability refresh. The final intent writer also requires the original run
+and a running stage, so a Skip committed before that boundary prevents intent.
+After intent, one overlapping external attempt may still complete.
+
+All recorded submit intents for the exact tenant and job remain retry blockers,
+regardless of the latest run projection or stage label. Failed settlement,
+connection restart, Skip and generic reset cannot establish that no send occurred.
+The audit keeps the original run IDs inspectable. A retained Needs verification
+stop also survives Skip when its intent receipt is absent. Verify the provider outcome;
+manual Mark Applied can record a confirmed application. There is no generic
+reset-based permission to retry an uncertain submission.
+
 ## Approval Is Bound At The Mutation Boundary
 
 With approval required—the default—the latest Apply Review decision must bind

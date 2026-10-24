@@ -14558,3 +14558,56 @@ describe("registered provider endpoint family", () => {
     } finally { await app.close(); }
   });
 });
+
+it.each(["pending", "failed", "needs_verification", "running"])("HTTP Skip from %s retains original intent and refuses reset after reload", async (state) => {
+  const db = new Database(options.dbPath);
+  const url = "https://example.com/jobs/ready";
+  const job = db.prepare("SELECT job_id FROM jobs WHERE url=? AND tenant_id='local'").get(url) as { job_id: string };
+  db.prepare("UPDATE job_stage_states SET state=?,attempt_count=2 WHERE tenant_id='local' AND job_id=? AND stage='apply'").run(state, job.job_id);
+  db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,payload_json,occurred_at) VALUES ('local',?,1,'apply','ApplySubmitIntended',?,'2026-10-24')").run(job.job_id, JSON.stringify({ run_id: "original-1173" }));
+  db.close();
+  const dispatch = vi.fn(async () => ({ status: "queued" }));
+  const app = buildApp({ ...options, actionDispatcher: dispatch });
+  try {
+    const skipped = await app.inject({ method: "POST", url: `/v1/jobs/${job.job_id}/actions/mark-skipped`, payload: {} });
+    expect(skipped.statusCode, skipped.body).toBe(200);
+    expect(skipped.json().message).toContain("in-flight submission may still complete");
+    const reset = await app.inject({ method: "POST", url: `/v1/jobs/${job.job_id}/actions/retry-stage`, payload: { stage: "apply", resetAttempts: true } });
+    expect(reset.statusCode, reset.body).toBe(409);
+    const loaded = await app.inject({ method: "GET", url: `/v1/jobs/${job.job_id}` });
+    expect(loaded.statusCode, loaded.body).toBe(200);
+    expect(loaded.json().applyAudit).toMatchObject({ state: "blocked", reviewEvidenceAvailable: true });
+    expect(loaded.json().applyAudit.hardBlockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "submission_intent_recorded", detail: expect.stringContaining("original-1173") }),
+      expect.objectContaining({ code: "manual_apply_skip" }),
+    ]));
+    const marked = await app.inject({ method: "POST", url: `/v1/jobs/${job.job_id}/actions/mark-applied`, payload: { reason: "Verified externally in synthetic QA" } });
+    expect(marked.statusCode, marked.body).toBe(200);
+    const resolved = await app.inject({ method: "GET", url: `/v1/jobs/${job.job_id}` });
+    expect(resolved.json().applyAudit.hardBlockers).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "submission_intent_recorded" })]));
+    expect(resolved.json().applyAudit.sources).toContainEqual(expect.objectContaining({ kind: "submit_intent", detail: expect.stringContaining("original-1173; manually recorded Applied") }));
+    expect(dispatch).not.toHaveBeenCalled();
+  } finally { await app.close(); }
+});
+
+it("HTTP Skip retains prior verification authority when the intent receipt is unavailable", async () => {
+  const db = new Database(options.dbPath);
+  const job = db.prepare("SELECT job_id FROM jobs WHERE tenant_id='local' AND url=?").get("https://example.com/jobs/ready") as { job_id: string };
+  expect(db.prepare("SELECT COUNT(*) AS n FROM job_events WHERE job_id=? AND event_type='ApplySubmitIntended'").get(job.job_id)).toEqual({ n: 0 });
+  db.prepare("UPDATE job_stage_states SET state='needs_verification' WHERE job_id=? AND stage='apply'").run(job.job_id);
+  db.close();
+  const app = buildApp(options);
+  try {
+    for (let repeat = 0; repeat < 2; repeat++) {
+      expect((await app.inject({ method: "POST", url: `/v1/jobs/${job.job_id}/actions/mark-skipped`, payload: {} })).statusCode).toBe(200);
+    }
+    const loaded = await app.inject({ method: "GET", url: `/v1/jobs/${job.job_id}` });
+    expect(loaded.json().applyAudit.hardBlockers).toContainEqual(expect.objectContaining({ code: "submission_outcome_uncertain" }));
+    const reset = await app.inject({ method: "POST", url: `/v1/jobs/${job.job_id}/actions/retry-stage`, payload: { stage: "apply" } });
+    expect(reset.statusCode, reset.body).toBe(409);
+    const marked = await app.inject({ method: "POST", url: `/v1/jobs/${job.job_id}/actions/mark-applied`, payload: {} });
+    expect(marked.statusCode, marked.body).toBe(200);
+    const resolved = await app.inject({ method: "GET", url: `/v1/jobs/${job.job_id}` });
+    expect(resolved.json().applyAudit.hardBlockers).not.toContainEqual(expect.objectContaining({ code: "submission_outcome_uncertain" }));
+  } finally { await app.close(); }
+});

@@ -44,6 +44,7 @@ from rich.console import Console
 from rich.live import Live
 
 from jobctrl import config
+from jobctrl.infrastructure.apply_controls import APPLY_ADMISSIBLE_SQL, APPLY_MANUAL_STOP_SQL
 from jobctrl.domain.apply.value_objects import Applied, DryRunComplete, Failed, SubmissionResult
 from jobctrl.apply import prompt as prompt_mod  # noqa: F401  -- kept for back-compat imports
 from jobctrl.apply.chrome import (
@@ -691,7 +692,7 @@ def _apply_candidate_select_parts() -> tuple[str, str]:
     return columns, joins
 
 
-def _select_apply_candidates(conn, tenant_id, target_job_id, min_score):
+def _select_apply_candidates(conn, tenant_id, target_job_id, min_score, *, check_controls=True):
     common_columns, common_joins = _apply_candidate_select_parts()
 
     if target_job_id is not None:
@@ -702,6 +703,7 @@ def _select_apply_candidates(conn, tenant_id, target_job_id, min_score):
             WHERE jobs.tenant_id = ?
               AND jobs.job_id = ?
               AND {_READY_TAILORED_RESUME_WITH_PDF}
+              AND {APPLY_ADMISSIBLE_SQL if check_controls else '1=1'}
               AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM}
               AND {_SCORE_CURRENT_FOR_DOWNSTREAM}
               AND {_NOT_CLOSED_ACTIVE_STATE}
@@ -732,6 +734,7 @@ def _select_apply_candidates(conn, tenant_id, target_job_id, min_score):
             FROM jobs {common_joins}
             WHERE jobs.tenant_id = ?
               AND {_READY_TAILORED_RESUME_WITH_PDF}
+              AND {APPLY_ADMISSIBLE_SQL if check_controls else '1=1'}
               AND {_EFFECTIVE_APPLY_TARGET_URL} IS NOT NULL
               AND {_EFFECTIVE_APPLY_TARGET_URL} != ''
               AND NOT EXISTS (
@@ -1299,6 +1302,61 @@ def mark_result(
     run_ctx: dict | None = None,
     tenant_id: TenantId | None = None,
 ) -> None:
+    """Settle under the writer, preserving local stops and successor ownership."""
+    conn = get_connection()
+    owned = not conn.in_transaction
+    if owned:
+        conn.execute("BEGIN IMMEDIATE")
+    else:
+        conn.execute("SAVEPOINT apply_settlement")
+    try:
+        stable_tenant = TenantId(str(tenant_id or (run_ctx or {}).get("tenant_id") or LOCAL_TENANT))
+        owner = _latest_apply_run_started_run_id(conn, tenant_id=stable_tenant, job_id=job_id)
+        run_id = task_id or (run_ctx or {}).get("run_id")
+        row = conn.execute(
+            "SELECT state FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage='apply'",
+            (str(stable_tenant), str(job_id)),
+        ).fetchone()
+        manual_stop = conn.execute(
+            f"SELECT 1 FROM jobs WHERE tenant_id=? AND job_id=? AND ({APPLY_MANUAL_STOP_SQL})",
+            (str(stable_tenant), str(job_id)),
+        ).fetchone()
+        if not manual_stop and (owner is None or (owner == run_id and row and row[0] == "running")):
+            _mark_result_locked(job_id, status, error, permanent, duration_ms, task_id, run_ctx, tenant_id)
+        elif run_id and _has_apply_event(
+            conn, tenant_id=stable_tenant, job_id=job_id, run_id=str(run_id), event_types={"ApplyRunStarted"},
+        ):
+            # Preserve that this exact local execution returned, without
+            # replacing a manual stop, newer owner or external uncertainty.
+            _record_apply_terminal_event_once(
+                conn, tenant_id=stable_tenant, job_id=job_id, run_id=str(run_id),
+                event_type="LockReleased", level="info",
+                message="Apply execution returned after its disposition changed; current stage preserved.",
+                payload={"run_id": str(run_id), "late_status": status, "stage_preserved": True},
+            )
+        if owned:
+            conn.commit()
+        else:
+            conn.execute("RELEASE SAVEPOINT apply_settlement")
+    except BaseException:
+        if owned:
+            conn.rollback()
+        else:
+            conn.execute("ROLLBACK TO SAVEPOINT apply_settlement")
+            conn.execute("RELEASE SAVEPOINT apply_settlement")
+        raise
+
+
+def _mark_result_locked(
+    job_id: JobId,
+    status: str,
+    error: str | None = None,
+    permanent: bool = False,
+    duration_ms: int | None = None,
+    task_id: str | None = None,
+    run_ctx: dict | None = None,
+    tenant_id: TenantId | None = None,
+) -> None:
     """Update a job's apply outcome.
 
     Writes go to ``job_stage_states.apply`` (canonical lifecycle row),
@@ -1546,7 +1604,6 @@ def mark_result(
         run_id=str(run_id),
         occurred_at=now,
     )
-    conn.commit()
 
 
 def _latest_apply_run_started_run_id(
@@ -1617,8 +1674,11 @@ def release_lock(
 
 def recover_ambiguous_running_apply(console: Console | None = None) -> int:
     """Recover apply rows inherited from a prior dead workflow/activity."""
+    conn = get_connection()
+    owned = not conn.in_transaction
     try:
-        conn = get_connection()
+        if owned:
+            conn.execute("BEGIN IMMEDIATE")
         rows = conn.execute(
             "SELECT tenant_id, job_id FROM job_stage_states WHERE stage = 'apply' AND state = 'running'"
         ).fetchall()
@@ -1687,12 +1747,15 @@ def recover_ambiguous_running_apply(console: Console | None = None) -> int:
                     job_id,
                 )
                 continue
-        if recovered:
+        if owned:
             conn.commit()
+        if recovered:
             if console is not None:
                 console.print(f"[yellow]Recovered {recovered} ambiguous apply run(s) from prior crash[/yellow]")
         return recovered
     except Exception:  # noqa: BLE001
+        if owned:
+            conn.rollback()
         logger.exception("Apply recovery sweep failed")
         return 0
 
@@ -1883,63 +1946,24 @@ def reset_failed() -> int:
     purged); only the live state row is rewound. Returns the number of
     jobs reset.
     """
+    from jobctrl.pipeline.retry import reset_retry_stages
+
     conn = get_connection()
     rows = conn.execute(
-        """
-        SELECT tenant_id, job_id FROM job_stage_states
-        WHERE stage = 'apply' AND state IN ('failed', 'exhausted')
-        """
+        "SELECT tenant_id, job_id FROM job_stage_states "
+        "WHERE stage='apply' AND state IN ('failed', 'exhausted')"
     ).fetchall()
     count = 0
     for row in rows:
-        tenant_id = TenantId(str(row["tenant_id"] if hasattr(row, "keys") else row[0]))
-        job_id = canonical_job_id(str(row["job_id"] if hasattr(row, "keys") else row[1]))
-        posting_url = _posting_url_for_job_id(
-            conn,
-            tenant_id=tenant_id,
-            job_id=job_id,
-        )
-        # Skip jobs that already succeeded on a prior run.
-        if _has_succeeded_apply(
-            conn,
-            tenant_id=str(tenant_id),
-            job_id=str(job_id),
-        ):
-            continue
-        ensure_job_stage_rows(
-            conn,
-            job_id,
-            tenant_id=tenant_id,
-        )
-        # Per-row try/except so one race-induced failure (e.g., another
-        # worker flipped the row to ``running`` between the SELECT and
-        # this write) doesn't strand every subsequent row in the batch
-        # without a commit. Admin-initiated rewind so the runner owns the
-        # transition policy: validate_transition=False bypasses the
-        # canonical state-machine table (Failed -> Pending is fine but
-        # Running -> Pending is not).
+        tenant_id, job_id = TenantId(str(row[0])), canonical_job_id(str(row[1]))
         try:
-            set_stage_state(
-                conn,
-                job_id,
-                "apply",
-                "pending",
-                tenant_id=tenant_id,
-                attempt_count=0,
-                error_code=None,
-                error_message=None,
-                next_action=(f"jobctrl apply --url {posting_url}" if posting_url else None),
-                validate_transition=False,
+            reset_retry_stages(
+                conn, [(str(job_id), "apply")], tenant_id=tenant_id,
+                reset_attempts=True, only_failed=True, _allow_apply_only=True,
             )
             count += 1
-        except Exception as exc:  # noqa: BLE001 — keep batch reset alive
-            logger.warning(
-                "reset_failed: skipping %s/%s — %s",
-                tenant_id,
-                job_id,
-                exc,
-            )
-    conn.commit()
+        except ValueError as exc:
+            logger.info("Apply reset refused for %s/%s: %s", tenant_id, job_id, exc)
     return count
 
 
@@ -2061,7 +2085,7 @@ def _has_current_apply_review(conn, tenant_id: str, job_id: str) -> bool:
             return False
     except (ValueError, TypeError):
         return False
-    rows = _select_apply_candidates(conn, tenant_id, canonical_job_id(job_id), 0)
+    rows = _select_apply_candidates(conn, tenant_id, canonical_job_id(job_id), 0, check_controls=False)
     if not rows:
         return False
     row = rows[0]
@@ -2112,7 +2136,11 @@ def _authorize_posting_before_submit(tenant_id: str, job_id: str, posting_url: s
             "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
             (tenant_id, job_id),
         ).fetchone()
-        if not owner or owner[0] != run_id or not running or running[0] != "running":
+        manual_stop = conn.execute(
+            f"SELECT 1 FROM jobs WHERE tenant_id=? AND job_id=? AND ({APPLY_MANUAL_STOP_SQL})",
+            (tenant_id, job_id),
+        ).fetchone()
+        if not owner or owner[0] != run_id or not running or running[0] != "running" or manual_stop:
             raise MissingInputError("Apply intent no longer owns the original posting attempt")
         yield
         conn.commit()

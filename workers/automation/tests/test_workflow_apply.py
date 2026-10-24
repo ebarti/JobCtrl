@@ -339,3 +339,81 @@ async def test_apply_workflow_does_not_retry_lookup_errors():
     assert result.ok is False
     assert result.status == "failed"
     assert "no matching JobId" in (result.error or "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry", ["targeted", "batch", "standing"])
+async def test_registered_apply_rpc_real_activity_main_never_reclaims_manual_skip(tmp_path, monkeypatch, entry):
+    """Owned exact schema + native RPC/Temporal/activity/launcher, no Apply-core stubs."""
+    import asyncio
+    import threading
+    from jobctrl import config, database
+    from jobctrl.domain.rpc.messages import JsonRpcRequest
+    from jobctrl.infrastructure.rpc.handlers import register_default_handlers
+    from jobctrl.infrastructure.rpc.server import JsonRpcServer
+    from jobctrl.infrastructure.temporal.finalize import record_workflow_started, record_workflow_outcome
+    from jobctrl.llm import check_spend_budget
+    from jobctrl.apply import launcher
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state
+    from tests.test_exact_v7_apply_acquire_job_identity import _insert_ready_job, LOCAL_JOB_ID
+
+    monkeypatch.setattr(launcher, "_stop_event", threading.Event())
+    db_path = tmp_path / "owned.db"
+    monkeypatch.setattr(config, "APP_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    monkeypatch.setattr(config, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setattr(database, "DB_PATH", db_path)
+    monkeypatch.setattr(config, "ensure_dirs", lambda: None)
+    # These are external browser/profile transports only. No browser may start.
+    monkeypatch.setattr(launcher, "kill_all_chrome", lambda: None)
+    monkeypatch.setattr(launcher, "_load_profile_snapshot", lambda: SimpleNamespace())
+    monkeypatch.setattr("jobctrl.browser_capabilities.require_system_browser_capability", lambda _: Path("/synthetic/Chromium"))
+    monkeypatch.setattr(launcher, "run_job", lambda *a, **k: pytest.fail("manual stop reached sender/use-case"))
+    conn = database.init_db(db_path)
+    _insert_ready_job(conn, "local", LOCAL_JOB_ID)
+    ensure_job_stage_rows(conn, LOCAL_JOB_ID)
+    set_stage_state(conn, LOCAL_JOB_ID, "score", "succeeded", validate_transition=False)
+    set_stage_state(conn, LOCAL_JOB_ID, "apply", "skipped", retryable=False, validate_transition=False, attempt_count=2)
+    conn.commit()
+    before = [tuple(row) for row in conn.execute("SELECT * FROM job_materials_artifacts")]
+    loop = asyncio.get_running_loop()
+    queue = f"skip-{uuid.uuid4()}"
+    async with time_skipping_env() as env:
+        async def starter(spec):
+            future = asyncio.run_coroutine_threadsafe(env.client.start_workflow(
+                spec.workflow.run, args=spec.args, id=spec.workflow_id or f"skip-{uuid.uuid4()}", task_queue=queue,
+            ), loop)
+            return await asyncio.wrap_future(future)
+
+        async def canceler(_):
+            return None
+
+        rpc = JsonRpcServer(workflow_starter=starter)
+        register_default_handlers(rpc, canceler=canceler)
+        async with Worker(env.client, task_queue=queue, workflows=[ApplyWorkflow],
+                          activities=[apply_activity, check_spend_budget, record_workflow_started, record_workflow_outcome],
+                          workflow_runner=UnsandboxedWorkflowRunner()):
+            params = {"tenantId": "local", "expectedAppDir": str(tmp_path), "expectedDbPath": str(db_path),
+                      "limit": 2, "workers": 1, "continuous": entry == "standing"}
+            if entry == "targeted":
+                params["jobId"] = LOCAL_JOB_ID
+            response = await asyncio.to_thread(rpc.dispatch, JsonRpcRequest(method="apply", id=1173, params=params))
+            assert response.error is None, response
+            workflow_id = response.result["workflowId"]
+            handle = env.client.get_workflow_handle(workflow_id)
+            if entry == "standing":
+                async with asyncio.timeout(45):
+                    while conn.execute("SELECT COUNT(*) FROM operational_attempt_metrics WHERE attempt_kind='apply_batch' AND outcome != 'started'").fetchone()[0] < 1:
+                        await asyncio.sleep(0.05)
+                await handle.cancel()
+                with pytest.raises(WorkflowFailureError):
+                    await handle.result()
+            else:
+                result = await handle.result()
+                assert result["ok"] and result["applied"] == result["failed"] == 0
+            assert conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type IN ('ApplyRunStarted','ApplySubmitIntended')").fetchone()[0] == 0
+            assert tuple(conn.execute("SELECT state,attempt_count FROM job_stage_states WHERE job_id=? AND stage='apply'", (LOCAL_JOB_ID,)).fetchone()) == ("skipped", 2)
+            assert [tuple(row) for row in conn.execute("SELECT * FROM job_materials_artifacts")] == before
+            print({"entry": entry, "job": LOCAL_JOB_ID, "workflow": workflow_id,
+                   "temporal_run": (await handle.describe()).run_id, "claims": 0, "intents": 0, "sender_calls": 0})
+    database.close_connection(db_path)

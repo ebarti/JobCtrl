@@ -545,6 +545,24 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For durable Apply Skip and submit-intent recovery, run locked
+`pytest tests/test_exact_v7_apply_acquire_job_identity.py tests/test_apply_queue_selectors.py tests/test_enrichment_retry.py tests/test_exact_v7_state_reset.py`.
+Use exact-schema synthetic jobs and actual claims, final-intent writer, saga and
+SQLite event persistence with fake sender/browser/agent transports. Cover manual
+Skip from pending/failed/needs_verification across targeted/batch polling,
+approval settings and dry runs; retain an eligible peer and retryable DRY_RUN.
+An independent writer commits Skip during availability refresh and before final
+intent. Post-intent Skip and lost acknowledgement permit at most one fake send;
+restart/stage relabel/reset cannot authorize another. Repeat Needs verification
+without an intent receipt, retaining its prior state through repeated Skip and
+later stage labels. Assert exact intent/sender
+counts, original run identity, preserved artifact fingerprints and late-result
+ownership. Exercise CLI/registered RPC mixed-cohort rollback and caller-owned
+transactions. API HTTP Skip/reload/reset and focused UI mutation/rollback tests
+must preserve visible active-run and verification evidence. These regressions
+do not establish live-provider or installed-runtime behavior.
+
+
 For interpretation metadata citation sources, run locked
 `pytest tests/test_interpretation_citable_fields.py tests/test_remaining_determinations.py tests/test_binding_repair_feedback.py tests/test_analysis_retry_boundaries.py`.
 Use owned exact-schema storage and explicit synthetic model decisions. Omit

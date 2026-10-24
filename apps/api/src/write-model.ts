@@ -1,3 +1,4 @@
+import { applySubmitIntentRunIds, hasUnsettledApplyRun, hasUnresolvedSkippedOutcome, hasManualApplyStop } from "./apply-controls.js";
 import { resolveJobLocator } from "./job-locators.js";
 import crypto from "node:crypto";
 
@@ -26,6 +27,7 @@ import { updateConfigObject } from "./config-file.js";
 import { rebuildTenantDeleteProjections } from "./projections.js";
 
 export class InputError extends Error {}
+export class ApplyResetRefusedError extends InputError {}
 
 export interface RetryFailedJobTarget {
   readonly jobUrl: string;
@@ -151,6 +153,25 @@ function resolveJobIdentity(
   return resolveJobLocator(db, tenantId, jobLocator);
 }
 
+
+function assertSafeApplyReset(db: SqliteDatabase, tenantId: string, jobId: string): void {
+  if (applySubmitIntentRunIds(db, tenantId, jobId).length) {
+    throw new ApplyResetRefusedError("Apply submission intent is recorded. Verify the external outcome; reset cannot authorize retry.");
+  }
+  if (hasUnresolvedSkippedOutcome(db, tenantId, jobId)) {
+    throw new ApplyResetRefusedError("Apply outcome still needs verification. Skip and reset do not resolve external uncertainty.");
+  }
+  const row = getRow<{ state: string; error_code: string | null }>(db,
+    "SELECT state,error_code FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage='apply'", [tenantId, jobId]);
+  if ((row?.state === "skipped" || hasManualApplyStop(db, tenantId, jobId)) && hasUnsettledApplyRun(db, tenantId, jobId)) {
+    throw new ApplyResetRefusedError("Apply reset refused: the prior admitted run has no confirmed local settlement. Stop and verify that run first.");
+  }
+  if (row && (["queued", "running", "succeeded", "needs_verification"].includes(row.state) ||
+      (row.state === "skipped" && row.error_code !== null && row.error_code !== "DRY_RUN"))) {
+    throw new ApplyResetRefusedError("Apply reset refused: active, applied or unresolved state requires explicit resolution.");
+  }
+}
+
 export function resetJobStage(
   db: SqliteDatabase,
   jobKey: string,
@@ -159,7 +180,7 @@ export function resetJobStage(
 ): { jobUrl: string; stage: StageSummary } {
   const job = resolveJobIdentity(db, LOCAL_TENANT, jobKey);
   if (!job) throw new InputError("Job not found.");
-  return resetResolvedJobStage(db, job, stage, options);
+  return db.transaction(() => resetResolvedJobStage(db, job, stage, options)).immediate();
 }
 
 function resetResolvedJobStage(
@@ -183,6 +204,7 @@ function resetResolvedJobStage(
       LIMIT 1`,
     [LOCAL_TENANT, job.jobId, stage],
   );
+  if (stage === "apply") assertSafeApplyReset(db, LOCAL_TENANT, job.jobId);
   const resetAttempts = options.resetAttempts || current?.state === "exhausted";
   const stageOptions: Parameters<typeof upsertStageStateById>[5] = {
     retryable: true,
@@ -210,17 +232,18 @@ function resetResolvedJobStage(
 }
 
 export function retryFailedJobs(db: SqliteDatabase, request: BulkJobMutationRequest): RetryFailedJobsResult {
-  const targets = retryFailedJobTargets(db, request).map((target) => {
-    const job = resolveJobIdentity(db, LOCAL_TENANT, target.jobUrl);
-    if (!job) throw new InputError("Job not found.");
-    return { job, stage: target.stage };
-  });
-  const transaction = db.transaction((rows: typeof targets) => {
-    for (const { job, stage } of rows) {
+  const transaction = db.transaction(() => {
+    const targets = retryFailedJobTargets(db, request).map((target) => {
+      const job = resolveJobIdentity(db, LOCAL_TENANT, target.jobUrl);
+      if (!job) throw new InputError("Job not found.");
+      return { job, stage: target.stage };
+    });
+    for (const { job, stage } of targets) {
       resetResolvedJobStage(db, job, stage, { resetAttempts: false });
     }
+    return targets;
   });
-  transaction(targets);
+  const targets = transaction.immediate();
   const responseTargets = targets.map(({ job, stage }) => ({ jobUrl: job.jobUrl, stage }));
   return {
     ok: true,
@@ -367,29 +390,32 @@ export function markJobSkipped(
   if (!job) {
     throw new InputError("Job not found.");
   }
-  // Manual mark-skipped — admin override, bypasses §8.5 (parity with
-  // Python's `mark_skipped` JSON-RPC handler).
-  upsertStageStateById(db, LOCAL_TENANT, job.jobId, "apply", "skipped", {
-    retryable: false,
-    finishedAt: new Date().toISOString(),
-    skipValidation: true,
-  });
-  recordActionEventById(db, {
-    tenantId: LOCAL_TENANT,
-    jobId: job.jobId,
-    stage: "apply",
-    // H1 (round-1 review): align with domain catalog — `StageSkipped`
-    // already exists in `domain/events/orchestration.py`.  The Python RPC
-    // `mark_skipped` handler writes the same string.
-    eventType: "StageSkipped",
-    level: "info",
-    message: "Job marked skipped from the local API.",
-    payload: { reason: request.reason ?? "" },
-  });
-  return {
-    jobUrl: job.jobUrl,
-    stage: getStageStateById(db, LOCAL_TENANT, job.jobId, "apply"),
-  };
+  return db.transaction(() => {
+    const previousState = getStageStateById(db, LOCAL_TENANT, job.jobId, "apply").state;
+    // Manual mark-skipped — admin override, bypasses §8.5 (parity with
+    // Python's `mark_skipped` JSON-RPC handler).
+    upsertStageStateById(db, LOCAL_TENANT, job.jobId, "apply", "skipped", {
+      retryable: false,
+      finishedAt: new Date().toISOString(),
+      skipValidation: true,
+    });
+    recordActionEventById(db, {
+      tenantId: LOCAL_TENANT,
+      jobId: job.jobId,
+      stage: "apply",
+      // H1 (round-1 review): align with domain catalog — `StageSkipped`
+      // already exists in `domain/events/orchestration.py`.  The Python RPC
+      // `mark_skipped` handler writes the same string.
+      eventType: "StageSkipped",
+      level: "info",
+      message: "Skipped locally. Future Apply is stopped; an in-flight submission may still complete. Verify any uncertain external outcome.",
+      payload: { reason: request.reason ?? "", previousState, manualDisposition: "skip" },
+    });
+    return {
+      jobUrl: job.jobUrl,
+      stage: getStageStateById(db, LOCAL_TENANT, job.jobId, "apply"),
+    };
+  }).immediate();
 }
 
 export function cancelJobAction(
@@ -1624,7 +1650,7 @@ function upsertStageStateById(
   const updateEntries = Object.entries(updates);
   const assignments = updateEntries.map(([name]) => `${name} = ?`).join(", ");
   const result = db
-    .prepare(`UPDATE job_stage_states SET ${assignments} WHERE tenant_id = ? AND job_id = ? AND stage = ?`)
+    .prepare(`UPDATE job_stage_states SET ${assignments}, version = version + CASE WHEN stage = 'apply' THEN 1 ELSE 0 END WHERE tenant_id = ? AND job_id = ? AND stage = ?`)
     .run(...updateEntries.map(([, value]) => value), tenantId, jobId, stage);
   if (result.changes > 0) {
     return;

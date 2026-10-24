@@ -47,3 +47,24 @@ describe("useMarkSkippedMutation", () => {
     expect(queryClient.getQueryData(jobsKeys.detail(LOCAL_TENANT, "job-1"))).toEqual(initialDetail);
   });
 });
+
+it.each(["running", "needs_verification"])("keeps %s work and verification evidence visible during local Skip", async (state) => {
+  const { result, queryClient } = renderHookWithProviders(() => useMarkSkippedMutation());
+  const detail = { ...initialDetail, job: { jobKey: "job-1", applyStatus: "in_progress" },
+    activeApplyRun: { runId: "original" }, stages: [{ stage: "apply", state }],
+    applyAudit: { hardBlockers: [{ code: "submission_intent_recorded" }] } };
+  queryClient.setQueryData(jobsKeys.detail(LOCAL_TENANT, "job-1"), detail);
+  await act(async () => { result.current.mutate({ jobId: "job-1" }); });
+  await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  expect(queryClient.getQueryData(jobsKeys.detail(LOCAL_TENANT, "job-1"))).toEqual(detail);
+});
+
+it("retains unresolved outcome evidence after the active run has ended", async () => {
+  const { result, queryClient } = renderHookWithProviders(() => useMarkSkippedMutation());
+  const detail = { ...initialDetail, job: { jobKey: "job-1", applyStatus: "failed" }, activeApplyRun: null,
+    stages: [{ stage: "apply", state: "skipped" }], applyAudit: { hardBlockers: [{ code: "submission_outcome_uncertain" }] } };
+  queryClient.setQueryData(jobsKeys.detail(LOCAL_TENANT, "job-1"), detail);
+  await act(async () => { result.current.mutate({ jobId: "job-1" }); });
+  await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  expect(queryClient.getQueryData(jobsKeys.detail(LOCAL_TENANT, "job-1"))).toEqual(detail);
+});
