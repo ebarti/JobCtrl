@@ -37,6 +37,7 @@ from jobctrl.infrastructure.network import (
     RunBudgetCounter,
     validate_public_http_url,
 )
+from jobctrl.infrastructure.network.http_client import record_rate_limited_response
 from jobctrl.infrastructure.network.proxy import ProxyConfig
 from jobctrl.infrastructure.network.fetch_failures import PublicFetchFailureKind
 
@@ -142,7 +143,8 @@ class PlaywrightDetailPageFetcher:
             )
         # R10 pre-navigation gate: a robots-deny / budget-exhaustion performs
         # zero navigation and returns an empty page rather than fetching.
-        with self._politeness_session().guard(url) as decision:
+        session = self._politeness_session()
+        with session.guard(url) as decision:
             if not decision.allowed:
                 log.warning(
                     "PlaywrightDetailPageFetcher: navigation skipped by politeness gate %s: %s",
@@ -164,9 +166,15 @@ class PlaywrightDetailPageFetcher:
                     fetched_at=fetched_at,
                 )
             # Carry the same selected identity and client hints into the browser.
-            return self._fetch_page(url, fetched_at, user_agent=decision.user_agent, request_headers=dict(decision.request_headers))
+            return self._fetch_page(
+                url, fetched_at, user_agent=decision.user_agent,
+                request_headers=dict(decision.request_headers), session=session,
+            )
 
-    def _fetch_page(self, url: str, fetched_at: str, *, user_agent: str, request_headers: dict[str, str]) -> DetailPage:
+    def _fetch_page(
+        self, url: str, fetched_at: str, *, user_agent: str, request_headers: dict[str, str],
+        session: PolitenessSession | None = None,
+    ) -> DetailPage:
         # Imported lazily because Playwright is heavyweight + optional
         # in some test environments (see workers/automation/pyproject).
         from playwright.sync_api import sync_playwright
@@ -266,6 +274,19 @@ class PlaywrightDetailPageFetcher:
                             json_ld=(),
                             status=status,
                             fetched_at=fetched_at,
+                        )
+                    retry_after = record_rate_limited_response(
+                        session or self._politeness_session(), final_url, status, getattr(resp, "headers", None),
+                    )
+                    if retry_after is not None:
+                        message = f"HTTP {status}: the server deferred this request; retry after the host cooldown."
+                        if self._raise_on_unavailable:
+                            if status == 429:
+                                raise DetailPageFetchBlocked("rate_limited", message)
+                            raise DetailPageFetchUnavailable(message)
+                        return DetailPage(
+                            url=url, final_url=final_url, page_title="", html="", json_ld=(),
+                            status=status, fetched_at=fetched_at,
                         )
                     _dismiss_optional_linkedin_dialog(page)
                     page_title = ""

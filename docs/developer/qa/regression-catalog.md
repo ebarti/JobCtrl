@@ -758,6 +758,18 @@ parameters and private exception messages must remain absent from model span
 attributes/events/status. Verify a fresh owned operation's actual exported
 parent links after activation; a time-window match is not a workflow join.
 
+For posting-server rate limits, run locked
+`pytest tests/test_browser_rate_limit_recovery.py tests/test_gateway_http_client.py tests/test_enrichment_politeness_gate.py tests/test_enrichment_url_safety.py`.
+Exercise 429/503 responses through batch, connected and one-off acquisition.
+Assert no posting capture/model extraction, a recorded HTTP status and cooldown,
+server Retry-After pacing before another same-host request, independent other
+hosts, bounded long delays and safe handling of absent or malformed headers.
+Keep the host slot until response feedback is recorded. A deferred refresh must
+retain accepted content and attempt history while the batch processes other
+targets. Pair the fixtures with real Chromium and owned synthetic responses to
+prove a throttled capture is empty and a later successful capture occurs only
+after admission. Never contact live boards from these regression tests.
+
 For anonymous enrichment capture, run locked
 `pytest tests/test_enrichment_visible_capture.py tests/test_enrichment_extractors.py tests/test_optional_extension.py`.
 Exercise real owned browser DOMs with hidden dialog/comment preambles longer than
