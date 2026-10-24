@@ -47,6 +47,23 @@ defers work without replacing accepted scores or recording a stage attempt.
 The acquisition and scheduling policy is owned by
 [saved posting availability](../user/enrichment-and-extraction.md#saved-posting-availability).
 
+## Activity Ownership Across Entry Points
+
+Global sweeps, including profile continuations, honor the same Score ownership
+as per-job preparation. They skip canceled rows, foreign pending/running owners
+and queued automatic reservations before acquisition, then recheck under the
+writer lock before claiming work. Score publication and terminal stage writes
+also check the current owner. A revoked job records a skipped result without
+replacing its successor, accepted score or attempt count; independent jobs keep
+running. If a duplicate's shared donor is revoked, the independently owned
+posting uses normal per-job scoring instead of publishing an uncommitted donor.
+
+Selected batches handle only the typed reservation-loss signal as a skip and
+report its job IDs and count. Other exceptions and failed determinations remain
+failures. The global stage wrapper propagates its failed-job count and safe
+semantic failure codes through the normal activity error boundary; accepted
+peer results stay saved when that activity fails.
+
 ## Retrieval Before Scoring
 
 `PendingJobSelector` orders eligible work mechanically by recency and stable job ID. `--limit` applies a spend/work cap to that order. No vocabulary overlap, BM25 or embedding fallback decides which pending jobs are relevant. Provider searches execute saved settings directly. Fetched listings enter canonical ingestion without a separate model admission gate; scoring uses the full posting and current canonical job interpretation.

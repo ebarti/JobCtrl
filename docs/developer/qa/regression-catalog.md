@@ -545,6 +545,26 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For batch Score ownership, run locked
+`pytest tests/test_score_batch_ownership.py tests/test_scorer.py tests/test_score_activity_recovery.py tests/test_automatic_preparation.py tests/test_preparation_score_cancellation.py tests/test_v7_score_runtime.py tests/test_activity_score.py tests/test_workflow_job_pipeline.py`
+and the full worker suite. In owned exact-schema SQLite, overlap a global
+profile-continuation sweep with foreign pending/running ownership, queued
+reservations and canonical cancellation. Preserve complete stage and accepted
+score bytes while an independent peer succeeds. Race a second writer after
+acquisition and revoke ownership after compute and after valid publication;
+publication and terminal fences must each preserve the successor. Also cancel during
+inference through both global and ordinary selected batch entry points; late
+success and provider failure must preserve accepted score bytes and publish no
+completion or failure event. Exercise
+shared-donor loss without dropping an independently owned duplicate. Selected
+sequential/parallel batches skip only typed reservation loss; genuine provider,
+structural and determination failures remain visible. Run the actual Temporal
+pipeline/Score activity and replay both global and selected paths, including a
+global provider failure with a saved healthy peer. Synthetic model ports and
+controlled typed scoring seams prove ownership and error propagation, not
+semantic accuracy or live provider reliability.
+
+
 For compensation lookup diagnostics, run locked
 `pytest tests/test_compensation_source_outcomes.py tests/test_automatic_compensation_refresh.py tests/test_compensation_refresh_state.py tests/test_market_compensation_repository.py tests/test_levels_fyi_public.py tests/test_compensation_refresh_temporal.py`.
 Use owned synthetic acquisition and persisted refresh paths to distinguish
