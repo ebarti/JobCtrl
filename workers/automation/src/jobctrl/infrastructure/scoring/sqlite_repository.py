@@ -562,6 +562,53 @@ class SqliteScoreRepository:
             return None
         return self._row_to_score(row)
 
+    def record_profile_review(self, score, *, entity_version, determination_id):
+        from pydantic import ValidationError
+        from jobctrl.domain.determinations import DeterminationFailure
+        from jobctrl.domain.scoring.profile_impact import ProfileImpactDecision
+        from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+
+        owns_writer = not self._conn.in_transaction
+        if owns_writer:
+            self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._conn.execute("SAVEPOINT score_profile_review")
+            try:
+                current = self.load(score.tenant_id, score.job_id)
+                repository = SqliteDeterminationRepository(self._conn)
+                envelope = repository.find(str(score.tenant_id), determination_id)
+                try:
+                    result = ProfileImpactDecision.model_validate(envelope.result) if envelope else None
+                except ValidationError:
+                    raise DeterminationFailure("score_profile_binding_invalid") from None
+                if (current is None or current.version != score.version
+                        or current.trace.determination_id != score.trace.determination_id
+                        or envelope is None or envelope.kind != "score_profile_impact"
+                        or envelope.entity_id != str(score.job_id) or envelope.lane != "scoring"
+                        or envelope.schema_version != "1" or envelope.prompt_version != "score-profile-impact-v1"
+                        or result is None or result.score_version != score.version
+                        or result.job_id != str(score.job_id)
+                        or result.scoring_determination_id != score.trace.determination_id
+                        or result.scored_profile_version != score.trace.profile_snapshot_version
+                        or result.profile_id != score.trace.profile_inputs.get("profile_id")
+                        or result.reviewed_profile_version <= result.scored_profile_version
+                        or entity_version != f"{score.version}:{result.profile_id}:{result.reviewed_profile_version}"):
+                    raise DeterminationFailure("score_profile_binding_invalid")
+                repository.bind(tenant_id=str(score.tenant_id), entity_kind="score_profile_review",
+                    entity_id=str(score.job_id), entity_version=entity_version,
+                    determination_kind="score_profile_impact", determination_id=determination_id)
+            except BaseException:
+                self._conn.execute("ROLLBACK TO score_profile_review")
+                raise
+            finally:
+                self._conn.execute("RELEASE score_profile_review")
+            if owns_writer:
+                self._conn.commit()
+        except BaseException:
+            if owns_writer:
+                self._conn.rollback()
+            raise
+
     def list_pending(self, tenant_id: TenantId, *, limit: int = 0) -> list[JobId]:
         """Return enriched canonical JobIds that have no score row yet."""
         params: list[Any] = [str(tenant_id)]

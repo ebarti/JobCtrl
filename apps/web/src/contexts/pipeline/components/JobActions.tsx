@@ -70,7 +70,7 @@ export function JobActions({
         <RescoreJobButton
           className={buttonVariants({ size: "sm", variant: "outline" })}
           jobId={jobId}
-          label="Rescore current policy"
+          label="Update score"
         />
         <GenerateMaterialsButton
           className={buttonVariants({ size: "sm", variant: "outline" })}

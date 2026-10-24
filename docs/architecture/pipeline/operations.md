@@ -338,16 +338,15 @@ run is appropriate only when the exact execution is genuinely absent and the
 runtime inventory confirms that no work remains. Workflow IDs, Temporal run
 IDs, and the raw reason code stay in a collapsed technical disclosure.
 
-Condition-driven preparation is resumed by the mutation that resolves the
-condition. A genuine candidate-profile change and its outbox event commit in
-the same SQLite transaction. Before Temporal start, the API appends a durable
-dispatch-intent fact. Startup and every later profile save drain that outbox,
-reattach and await any older intended execution, coalesce only revisions that
-provably never started, and use one deterministic Temporal identity per
-delivered profile event. The
-continuation runs Score, Tailor, and Cover without forcing a rescore, so valid
-current scores are reused; a normalized no-op or an unrelated style/template
-save does not start preparation. A selected live-profile extension connection
+A candidate-profile edit and its audit event commit in one SQLite transaction,
+but saving a profile never schedules Score, Tailor or Cover. API startup leaves
+historical profile-continuation events intact without dispatching them. Already
+admitted work retains its frozen profile version. Explicit score refresh uses
+the [source-bound profile impact check](../scoring.md#profile-edits-and-explicit-refresh);
+material generation remains an explicit action.
+
+Other condition-driven preparation keeps its existing ownership. A selected
+live-profile extension connection
 maps the resolved `discovery_browser_extension_unavailable` condition to
 canonical `enrich` rows blocked with `ENRICH_ROBOTS_DISALLOWED`, selects only
 LinkedIn jobs carrying that typed condition (including the former

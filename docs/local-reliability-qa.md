@@ -357,3 +357,21 @@ stage and committed results. Replay generated old remote histories and new local
 histories. Check that control database work runs off the worker event loop and
 closes thread-local connections on success and failure. No provider calls or
 personal workspace data belong in this regression.
+
+## Explicit Profile Score Refresh
+
+Run locked `pytest tests/test_score_profile_impact.py tests/test_score_batch_ownership.py tests/test_scorer.py`
+and the full worker suite. Opposite valid model verdicts for identical owned
+synthetic inputs must control retention versus rescoring. Exercise unchanged
+cache reuse, new profile versions, provider/spend/schema/citation/binding failures,
+missing historical sources and profile edits during in-flight scoring. An insignificant
+profile verdict must not retain changed employer-analysis generations, requirement
+weights, interpretation contents or determination IDs; failed replacement scoring
+must preserve the previous accepted score and requirement report. Preserve
+score/date/attempts/requirements/material bytes for retained scores and failed
+refreshes. Fence review publication against replacement score and stage owners.
+Use real Temporal dispatch/history replay and the actual API/Jobs UI; profile
+save and API restart must make zero scoring/material dispatches, including old
+undelivered/intended profile events. Show updated, unknown and reviewed-unchanged
+profile states and visible model rationale. These prove model authority and
+structural binding, not semantic judgment quality.

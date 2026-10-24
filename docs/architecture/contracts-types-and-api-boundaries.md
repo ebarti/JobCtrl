@@ -261,22 +261,17 @@ failures, allowing each feature to preserve its HTTP error mapping. Worker
 error envelopes, request IDs, progress notifications, timeouts and close
 behavior remain transport concerns.
 
-Profile continuation keeps its `profile_updated:<eventId>` reason through the
-registered handler and deterministic workflow identity. The enforcing action
-dispatcher awaits completion before the server records a handled marker;
-structural, start, wait or transport failure leaves the durable intent available
-for startup reattachment. A validated terminal failed completion records one
-`ProfileContinuationFailed` event with its source event, execution identity and
-bounded error code. It receives no successful handled marker and is excluded
-from pending dispatch, allowing newer profile revisions to proceed. Its original
-workflow and failed job stages remain inspectable and retain their retry policy;
-reattachment never reruns a completed failed workflow or claims it succeeded.
-The route integration tests in `apps/api/test/server.test.ts` use exact-schema
-owned workspaces and the registered Python handlers through the real adapter.
-Their synthetic WorkflowStarter and completion handle expose workflow input and
-ordering, returning the production result dataclasses. Held completion also
-checks marker ordering during startup reattachment. These fixtures do not
-exercise live acquisition, Temporal persistence or model quality.
+Legacy `profile_updated:<eventId>` reasons and awaited pipeline result contracts
+remain decodable for already admitted workflow histories. New profile saves and
+API startup never dispatch or reattach these continuations. The profile and audit
+event still commit atomically. Explicit score refresh uses a strict
+`score_profile_impact` result bound to the saved score and reviewed profile;
+Jobs reads join the recorded determination ID and expose its rationale without
+raw profile sources. Route tests prove repeated saves and API restart preserve
+accepted data and dispatch no preparation. Real Temporal fixtures separately
+exercise insignificant/significant/provider-failure results and fresh-history
+replay without model calls.
+
 
 The shared suite also covers parameter and parse errors, unknown-method
 mapping, workflow acknowledgments, and a negative registration/schema mutation.

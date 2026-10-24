@@ -17,6 +17,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from jobctrl.domain.profile.search_targets import (
+    split_target_text as _split_target_text,
+    split_target_rows as _split_target_rows,
+)
+
 from jobctrl.runtime import is_bundled_runtime, owned_env_path
 from jobctrl.native_credentials import (
     NativeCredentialDiagnostic,
@@ -761,21 +766,6 @@ def _profile_target_column(columns: set[str], column: str) -> str:
     if column in columns:
         return column
     return f"'' AS {column}"
-
-
-def _split_target_text(value: object) -> list[str]:
-    if value is None:
-        return []
-    cleaned = re.sub(r"^\s*Target (?:roles?|locations?):\s*", "", str(value), flags=re.IGNORECASE)
-    return [item.strip() for item in re.split(r"[;\n]+", cleaned) if item.strip()]
-
-
-def _split_target_rows(value: object) -> list[str]:
-    """Keep empty positional counterparts in saved location/model rows."""
-    if value is None or not str(value).strip():
-        return []
-    cleaned = re.sub(r"^\s*Target (?:roles?|locations?):\s*", "", str(value), flags=re.IGNORECASE)
-    return [item.strip() for item in re.split(r"[;\n]", cleaned)]
 
 
 def _dedupe_strings(values: list[str]) -> list[str]:

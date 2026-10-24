@@ -124,6 +124,13 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
               )}
               <TagGroup label="Keywords" values={job.scoreKeywords} />
               <ScoreMetadata detail={detail} />
+              {job.scoreProfileFreshness?.review ? (
+                <p className="muted" role="note" aria-label="Profile change review">
+                  {job.scoreProfileFreshness.review.rationale}{" "}
+                  Reviewed with {job.scoreProfileFreshness.review.model}.
+                  {job.scoreProfileFreshness.status === "reviewed_unchanged" ? " The score, date and original profile version were retained." : " A new assessment is warranted; the previous score remains available."}
+                </p>
+              ) : null}
               {job.scoreStaleness.isStale ? (
                 <div className="score-policy-row">
                   <ScoreStalenessBadge staleness={job.scoreStaleness} />
