@@ -48,8 +48,12 @@ export function readActionReceipt(
     [identity.key]);
   if (!row) return null;
   try {
-    const receipt = ReceiptSchema.parse(JSON.parse(row.payload_json).receipt);
+    const payload = JSON.parse(row.payload_json);
+    const receipt = ReceiptSchema.parse(payload.receipt);
+    const eventFactId = eventType === "ApplicationOutcomeRecorded" ? payload.outcomeId
+      : eventType === "OutreachSendLogged" ? payload.sendLogId : undefined;
     if (row.tenant_id !== tenant || row.event_type !== eventType || row.entity_kind !== entityKind || row.entity_ref !== identity.binding.target
+      || eventFactId !== receipt.factId
       || Object.entries(identity.binding).some(([key, value]) => receipt[key as keyof ActionReceipt] !== value)) {
       throw new ActionReceiptConflictError();
     }

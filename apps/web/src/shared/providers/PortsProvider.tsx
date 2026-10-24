@@ -37,7 +37,20 @@ export function PortsProvider({ ports, children }: { ports: Ports; children: Rea
   const resolved = useMemo(() => ({
     ...ports,
     requestIdentity: ports.requestIdentity ?? defaultRequestIdentity,
-  }), [ports]);
+  }), [
+    ports,
+    ports.api,
+    ports.artifactDownload,
+    ports.eventStream,
+    ports.storage,
+    ports.session,
+    ports.clipboard,
+    ports.openInOs,
+    ports.pdfExport,
+    ports.telemetry,
+    ports.featureFlags,
+    ports.requestIdentity,
+  ]);
   return <PortsContext.Provider value={resolved}>{children}</PortsContext.Provider>;
 }
 

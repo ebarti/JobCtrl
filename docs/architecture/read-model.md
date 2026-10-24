@@ -116,7 +116,9 @@ lookup; rollback removes all three. Nested calls retain the outer transaction's
 ownership, including the internal first-offer milestone. Equal replay joins the
 recorded fact ID and returns its original IDs/timestamps before mutable gates.
 Changed payloads or inconsistent receipt/fact bindings fail closed with a safe
-conflict. An omitted occurrence timestamp remains distinct from an explicitly
+conflict. The receipt fact ID must agree with the outcomeId or sendLogId recorded
+on that same domain event; an equal-payload fact from another action cannot
+substitute for the original result. An omitted occurrence timestamp remains distinct from an explicitly
 supplied one in the fingerprint.
 
 Outreach send-log responses contain the immutable send log only. Current thread,

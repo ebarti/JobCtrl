@@ -165,8 +165,8 @@ export function JobOutcomePanel({ jobId }: JobOutcomePanelProps) {
       {data ? (
         <>
           {data.interpretationStatus?.status === "unavailable" ? <div className="banner inline" role="status">Email outcome interpretation unavailable: {data.interpretationStatus.failureCode}. Retry feedback sync after resolving the model or budget failure.</div> : null}
-          <OfferPanel key={jobId} jobId={jobId} />
-          <ManualOutcomeForm key={jobId} jobId={jobId} />
+          <OfferPanel key={`offer:${jobId}`} jobId={jobId} />
+          <ManualOutcomeForm key={`manual-outcome:${jobId}`} jobId={jobId} />
           <OutcomeTimeline outcomes={data.outcomes} />
           <OutcomeSuggestionsPanel suggestions={pendingSuggestions} />
         </>

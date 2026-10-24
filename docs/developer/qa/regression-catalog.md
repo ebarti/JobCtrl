@@ -558,7 +558,8 @@ is insufficient.
 
 Cover ordinary outcomes, prep-linked reflections and send logs, including omitted
 `occurredAt`, canonical job aliases, foreign tenant/operation/target bindings,
-malformed identities, missing receipt facts, changed draft/prep bindings, event
+malformed identities, missing receipt facts, receipt IDs redirected to another
+equal-payload action, missing or different event fact references, changed draft/prep bindings, event
 failure, deferred commit failure and outer-transaction rollback. Replay after a
 later deliberate action, changed draft review or reminder must preserve that
 newer state. Fresh requests retain approved-draft, offer-source and

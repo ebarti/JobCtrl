@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
-import { JobCtrlApiClient } from "@jobctrl/api-client";
+import { JobCtrlApiClient, JobCtrlApiError } from "@jobctrl/api-client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { recordManualApplicationOutcome } from "../src/application-feedback.js";
@@ -213,6 +213,44 @@ describe.each(families)("durable %s action identity through HTTP", (family) => {
     expect(counts(dbPath, family)).toEqual({ facts: 0, events: 1 });
   }, 45_000);
 });
+
+it.each(families)("rejects redirected %s receipt fact IDs without replacing either accepted action", async (family) => {
+  const dbPath = seed();
+  const api = await server(dbPath);
+  const firstRequest = body(family);
+  const secondRequest = { ...firstRequest, requestId: randomUUID() };
+  const first = await mutate(api.client, family, firstRequest);
+  const second = await mutate(api.client, family, secondRequest);
+  const firstId = "sendLog" in first ? first.sendLog.sendLogId : first.outcome.outcomeId;
+  const secondId = "sendLog" in second ? second.sendLog.sendLogId : second.outcome.outcomeId;
+  expect(firstId).not.toBe(secondId);
+  const operation = family === "send" ? "outreach-send-log" : family === "reflection" ? "interview-reflection" : "manual-outcome";
+  const identity = actionIdentity("local", operation, family === "send" ? "thread" : JOB, firstRequest.requestId, firstRequest);
+  const db = new Database(dbPath);
+  try {
+    const row = db.prepare("SELECT payload_json FROM job_events WHERE idempotency_key=?").get(identity.key) as { payload_json: string };
+    const reference = family === "send" ? "sendLogId" : "outcomeId";
+    const original = JSON.parse(row.payload_json) as Record<string, unknown> & { receipt: { factId: string } };
+    expect(original[reference]).toBe(firstId);
+    const conflictStatuses: number[] = [];
+    for (const damage of ["redirected-receipt", "missing-event-reference", "wrong-event-reference"] as const) {
+      const damaged = structuredClone(original);
+      if (damage === "redirected-receipt") damaged.receipt.factId = secondId;
+      if (damage === "missing-event-reference") delete damaged[reference];
+      if (damage === "wrong-event-reference") damaged[reference] = secondId;
+      db.prepare("UPDATE job_events SET payload_json=? WHERE idempotency_key=?").run(JSON.stringify(damaged), identity.key);
+      const conflict = await mutate(api.client, family, firstRequest).catch((error: unknown) => error);
+      expect(conflict).toMatchObject({ status: 409, responseBody: { error: "action_identity_conflict" } });
+      if (!(conflict instanceof JobCtrlApiError)) throw new Error("Expected a typed HTTP conflict");
+      conflictStatuses.push(conflict.status);
+      expect(counts(dbPath, family)).toEqual({ facts: 2, events: 2 });
+      expect(await mutate(api.client, family, secondRequest)).toEqual(second);
+    }
+    db.prepare("UPDATE job_events SET payload_json=? WHERE idempotency_key=?").run(row.payload_json, identity.key);
+    expect(await mutate(api.client, family, firstRequest)).toEqual(first);
+    console.log(JSON.stringify({ scenario: "damaged-fact-binding", family, firstId, secondId, conflictStatuses, counts: counts(dbPath, family) }));
+  } finally { db.close(); }
+}, 45_000);
 
 it.each(families)("rolls back %s fact/event failures and failed commits; nested caller owns rollback", (family) => {
   const dbPath = seed();

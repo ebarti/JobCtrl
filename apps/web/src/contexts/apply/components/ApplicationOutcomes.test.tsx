@@ -1,4 +1,7 @@
-import type { ManualApplicationOutcomeRequest } from "@jobctrl/contracts";
+import { act } from "react";
+import { LOCAL_TENANT } from "@jobctrl/domain-types";
+import { outcomesKeys } from "../../operations/outcomesKeys.js";
+import type { JobApplicationOutcomeListResponse, ManualApplicationOutcomeRequest } from "@jobctrl/contracts";
 import { screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -14,6 +17,22 @@ import {
 } from "./ApplicationOutcomes.js";
 
 describe("application outcome components", () => {
+  it("keeps one offer panel and the unsaved manual form while refreshed outcomes reconcile", async () => {
+    const user = userEvent.setup();
+    const view = renderWithProviders(<JobOutcomePanel jobId="job-2" />);
+    const note = await screen.findByLabelText("Local note", { selector: "#manual-outcome-note" });
+    await user.type(note, "Unsaved synthetic observation");
+    const key = outcomesKeys.detail(LOCAL_TENANT, "job-2");
+    const current = view.queryClient.getQueryData<JobApplicationOutcomeListResponse>(key)!;
+    for (let index = 0; index < 2; index += 1) {
+      await act(async () => { view.queryClient.setQueryData(key, { ...current, outcomes: [...current.outcomes, { ...current.outcomes[0]!, outcomeId: `refresh-${index}` }] }); });
+      expect(screen.getAllByRole("region", { name: "Offer terms and decisions" })).toHaveLength(1);
+      expect(screen.getAllByLabelText("Local note", { selector: "#manual-outcome-note" })).toHaveLength(1);
+      expect(screen.getByLabelText("Local note", { selector: "#manual-outcome-note" })).toBe(note);
+      expect(note).toHaveValue("Unsaved synthetic observation");
+    }
+  });
+
   it.each(["manual", "reflection"] as const)("keeps %s identity and frozen input through uncertain retry/conflict, and rotates for explicit and acknowledged new actions", async (family) => {
     const user = userEvent.setup();
     const recordManualApplicationOutcome = vi.fn(async (jobId: string, body: ManualApplicationOutcomeRequest) => {
