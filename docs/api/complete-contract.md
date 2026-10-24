@@ -1572,9 +1572,10 @@ hosted in the TypeScript API (`apps/api/src/outreach.ts`); approval is HARD-gate
 the persisted `gate_results_json.passed` (INV-5). There is no send route anywhere —
 an approved draft is copied out by the browser clipboard, never sent (INV-1).
 
-Sensitivity: the draft `bodyText`, gate results, and claim provenance live only in
-canonical `outreach_drafts` and reach the client through the thread detail read
-below; the draft-lifecycle events written to `job_events` (`entity_kind =
+Sensitivity: published draft `bodyText`, gate results, and claim provenance live
+in canonical `outreach_drafts` and reach the client through the thread detail
+read below. A stale completion returns its private unpublished proposal directly
+to its caller; it does not enter canonical history or event payloads; the draft-lifecycle events written to `job_events` (`entity_kind =
 'outreach'`, `entity_ref = <threadId>`) carry only ids, kinds, generation, and
 timestamps.
 
@@ -1601,6 +1602,55 @@ timestamps.
 - `POST /v1/outreach/threads/:threadId/drafts/:draftId/reject` rejects a candidate
   draft (`RejectOutreachDraftRequest`: optional `reason`); the last approved draft
   is left untouched (INV-5).
+
+Both generation and revision can return HTTP `409`:
+
+```json
+{
+  "ok": false,
+  "error": "outreach_publication_conflict",
+  "message": "Outreach changed while this draft was being verified. Your edits and completed checks are retained. Compare the current thread before deliberately retrying.",
+  "outcome": "conflict",
+  "threadId": "thread-id",
+  "unpublishedDraft": {
+    "bodyText": "The completed proposal",
+    "kind": "intro_request",
+    "gateResults": {
+      "passed": true,
+      "computedAgainst": "rendered_draft",
+      "determinationIds": ["claim-determination-id", "quality-determination-id"],
+      "lineAnchors": [],
+      "sourceContext": null,
+      "fabrications": [],
+      "validation": { "passed": true, "errors": [], "warnings": [] },
+      "judge": { "approved": true, "score": 0.9, "criterionScores": {}, "issues": [], "notes": "" }
+    },
+    "provenance": []
+  }
+}
+```
+
+The registered RPC returns the strict `{ outcome, threadId, unpublishedDraft }`
+variant for this case; successful results keep their existing shape and all six
+draft kinds. The proposal has no accepted `draftId`, generation or review status.
+Its gate results retain their determination IDs, line anchors and source context;
+provenance retains recorded source citations. Neither the conflict nor a failed
+publication creates a successful lifecycle event. Completed determinations may
+remain recorded independently of publication.
+
+Refetch by contact and optional job to inspect the current thread; a competing
+first creation may have a different thread ID. Reconcile explicitly before
+retrying against that state. There is no automatic regeneration, send replay or
+idempotency guarantee in this protocol. The web editor and generation control
+retain unpublished text, completed checks and provenance separately from a
+mutation error across query/SSE refresh and a failed deliberate retry. The normal
+generation caller re-reads by contact/job after conflict, so a competing creation
+can resolve to the winner's different thread ID. Retained sessions belong to their
+recipient/job; switching targets suspends the previous controls until returning
+to that target. Generation additionally scopes purpose and offer revision. A
+comparison is required before retrying; no automatic generation retry occurs.
+Private proposals clear on success or explicit discard. They are not persisted
+across panel unmount, tenant change, page reload or navigation.
 
 Send logging and follow-ups (Phase 4) are simple state transitions hosted directly
 in the TypeScript API. **No route sends anything (INV-1)** — `send-logs` records a

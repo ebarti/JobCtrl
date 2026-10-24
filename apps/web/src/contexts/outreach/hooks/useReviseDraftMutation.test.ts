@@ -34,3 +34,20 @@ describe("useReviseDraftMutation", () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
   });
 });
+
+it("retains an explicit conflict and request variables without an automatic retry", async () => {
+  const { makeOutreachPublicationConflict } = await import("../../../test/fixtures/outreach.js");
+  const { JobCtrlApiError } = await import("@jobctrl/api-client");
+  let calls = 0;
+  server.use(http.post("*/v1/outreach/threads/:threadId/drafts", () => {
+    calls += 1;
+    return HttpResponse.json(makeOutreachPublicationConflict(), { status: 409 });
+  }));
+  const { result } = renderHookWithProviders(() => useReviseDraftMutation("thread-1", "contact-1"));
+  act(() => result.current.mutate({ editedBodyText: "My retained message" }));
+  await waitFor(() => expect(result.current.isError).toBe(true));
+  expect(result.current.error).toBeInstanceOf(JobCtrlApiError);
+  expect((result.current.error as InstanceType<typeof JobCtrlApiError>).responseBody).toMatchObject({ outcome: "conflict" });
+  expect(result.current.variables?.editedBodyText).toBe("My retained message");
+  expect(calls).toBe(1);
+});

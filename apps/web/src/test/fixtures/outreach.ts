@@ -253,3 +253,23 @@ export function makeRejectedCandidateThread(): OutreachThreadDetail {
     ],
   });
 }
+
+/** Presentation fixture only; worker/API tests establish publication authority. */
+export function makeOutreachPublicationConflict(bodyText = "My retained message") {
+  return {
+    ok: false,
+    error: "outreach_publication_conflict",
+    message: "Outreach changed while this draft was being verified.",
+    outcome: "conflict" as const,
+    threadId: "thread-1",
+    unpublishedDraft: {
+      bodyText, kind: "intro_request" as const,
+      gateResults: {
+        ...makeOutreachDraft().gateResults,
+        determinationIds: ["synthetic-claim-review", "synthetic-quality-review"],
+        lineAnchors: [], sourceContext: null,
+      },
+      provenance: makeOutreachDraft().provenance,
+    },
+  };
+}

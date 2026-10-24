@@ -1,3 +1,4 @@
+import { OutreachPublicationConflictSchema } from "./outreach-publication.js";
 import { DeterminationCitationSchema, DeterminationEnvelopeSchema, FormSnapshotSchema, FormMappingResponseSchema, ResumeEditReviewSchema, ResumeEditIntentReviewSchema } from "./semantic-determinations.js";
 import { CoverLetterSettingsSchema, COVER_LETTER_RENDERER_VERSION } from "./cover-letter.js";
 /**
@@ -545,18 +546,19 @@ export const GenerateOutreachDraftParamsSchema = z
   });
 export type GenerateOutreachDraftParams = z.infer<typeof GenerateOutreachDraftParamsSchema>;
 
-export const GenerateOutreachDraftResultSchema = z
+const PublishedOutreachDraftResultSchema = z
   .object({
     threadId: z.string(),
     contactId: z.string(),
     jobId: z.string().nullable(),
     draftId: z.string(),
     generation: z.number().int().nonnegative(),
-    kind: z.enum(["intro_request", "follow_up"]),
+    kind: z.enum(["intro_request", "follow_up", "offer_negotiation", "offer_clarification", "offer_acceptance", "offer_decline"]),
     status: z.enum(["candidate", "approved", "rejected", "superseded"]),
     gatePassed: z.boolean(),
   })
   .strict();
+export const GenerateOutreachDraftResultSchema = z.union([PublishedOutreachDraftResultSchema, OutreachPublicationConflictSchema]);
 export type GenerateOutreachDraftResult = z.infer<typeof GenerateOutreachDraftResultSchema>;
 
 export const RetailorJobParamsSchema = z
