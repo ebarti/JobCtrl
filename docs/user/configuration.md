@@ -411,15 +411,17 @@ Score, Tailor, Cover, or the number of Temporal activities the worker can run.
 ### Pipeline internal concurrency {#runtime-setting-pipeline-internal-concurrency}
 
 **Pipeline internal concurrency** (`pipelineInternalConcurrency`, default `1`)
-is one saved value shared by manual Pipeline actions and automatic Score →
-Tailor → Cover preparation after a profile update. Changing the field on the
-Pipelines page saves the same `config.json` value shown under **Settings →
-General**; newly started batches use it. Existing in-flight workflows keep the
-value they started with.
+is one saved value used by manual Pipeline actions and automatic preparation
+recovery. Changing it on the Pipelines page saves the same `config.json` value
+shown under **Settings → General**. Existing workflows keep their original input.
+Profile edits themselves do not start scoring or material preparation.
 
-This setting controls parallel work inside a pipeline batch. It does not create
-Temporal activity slots, and effective execution remains bounded by the active
-worker capacity.
+Manual batches use it to bound parallel work within the batch. Concurrent
+automatic recovery batches share that budget: newly dispatched work receives
+only the parallelism left by other active automatic cohorts. This lets unrelated
+jobs recover while preparation continues without multiplying model parallelism
+for each recovery batch. Worker activity slots and source politeness still
+apply independently. See [Automatic preparation recovery](../architecture/pipeline/operations.md#automatic-preparation-recovery).
 
 ### Worker activity slots {#runtime-setting-worker-activity-slots}
 

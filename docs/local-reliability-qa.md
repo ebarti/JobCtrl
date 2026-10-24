@@ -407,11 +407,12 @@ structural binding, not semantic judgment quality.
 ## Concurrent Preparation Recovery
 
 Run `test_automatic_preparation.py`, `test_automatic_preparation_overlap.py`,
-and `test_automatic_preparation_temporal_qa.py` with the affected ownership and
-politeness tests. The real Temporal case must complete recovery Enrich and Score
-while an unrelated per-job material activity remains open, then replay all
-observed histories. Require exact-run ownership, unchanged accepted material,
-no duplicate reservation under independent writers, and the fail-closed cases
-in the [regression catalog](developer/qa/regression-catalog.md). Worker-wide
+and `test_automatic_preparation_temporal_qa.py` with affected ownership and
+politeness tests. Real Temporal cases must complete peer Enrich and Score while
+per-job and automatic batch activities remain open, then replay every history.
+Require unchanged accepted artifacts and owners, shared capacity under the saved
+internal limit, frozen reservation reuse under independent writers, and exact
+recorded-run settlement without a preflight retry loop. Exercise the fail-closed
+cases in the [regression catalog](developer/qa/regression-catalog.md). Worker-wide
 scheduler changes also require the full worker suite and a restarted runtime
 using the tested candidate.
