@@ -836,7 +836,7 @@ function PipelineStageRow({
   );
 }
 
-interface ExecutionFailureCopy {
+interface ExecutionNoticeCopy {
   readonly description: string;
   readonly title: string;
 }
@@ -844,7 +844,7 @@ interface ExecutionFailureCopy {
 function executionFailureCopy(
   phase: "completed_with_issues" | "failed",
   errorCode: string | null,
-): ExecutionFailureCopy {
+): ExecutionNoticeCopy {
   if (phase === "completed_with_issues") {
     if (errorCode === "source_retry_exhausted") {
       return {
@@ -904,12 +904,26 @@ function PipelineExecutionNotice({
   const isClosedDraining =
     execution.phase === "draining" &&
     execution.workflowStatus !== "in_progress";
-  let copy: ExecutionFailureCopy;
+  const canStartNewRun = canSafelyPrepareNewDiscoverRun(snapshot);
+  const showPreparationProgress =
+    isClosedDraining &&
+    execution.workflowStatus === "succeeded" &&
+    execution.errorCode === null &&
+    !canStartNewRun;
+  let copy: ExecutionNoticeCopy;
   if (
     execution.phase === "failed" ||
     execution.phase === "completed_with_issues"
   ) {
     copy = executionFailureCopy(execution.phase, execution.errorCode);
+  } else if (showPreparationProgress) {
+    const remaining =
+      execution.currentExecution.remaining + execution.sweptExistingBacklog.remaining;
+    copy = {
+      title: "Source collection complete",
+      description:
+        `${remaining} ${remaining === 1 ? "job remains" : "jobs remain"} in scoring or material preparation. Follow the live stages below for running and waiting work; progress updates automatically.`,
+    };
   } else if (isClosedDraining) {
     copy = {
       title: "This Discover run has ended",
@@ -920,8 +934,10 @@ function PipelineExecutionNotice({
     return null;
   }
 
-  const activityCopy = failedExecutionActivityCopy(snapshot.activeItemsTotal);
-  const canStartNewRun = canSafelyPrepareNewDiscoverRun(snapshot);
+  const activityCopy =
+    showPreparationProgress && snapshot.activeItemsTotal !== null
+      ? null
+      : failedExecutionActivityCopy(snapshot.activeItemsTotal);
   return (
     <div className="pipeline-recovery-notice">
       <Alert
