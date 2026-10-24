@@ -1,3 +1,4 @@
+import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import { http, HttpResponse } from "msw";
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
@@ -270,4 +271,34 @@ describe("<OutreachThreadPanel>", () => {
     await waitFor(() => expect(view.getByRole("button", { name: "Approve draft" })).toBeEnabled());
     expect(view.getByRole("button", { name: "Reject draft" })).toBeEnabled();
   });
+});
+
+it.each(["replacement", "removed"])("keeps the editor and conflict checks when refresh leaves the original card %s", async (change) => {
+  const { act } = await import("react");
+  const { outreachKeys } = await import("../queryKeys.js");
+  const { makeOutreachPublicationConflict } = await import("../../../test/fixtures/outreach.js");
+  let current = makeOutreachThreadResponse(makeCandidateThread());
+  let settle: (response: Response) => void = () => {};
+  server.use(
+    http.get("*/v1/contacts/:contactId/outreach", () => HttpResponse.json(current)),
+    http.post("*/v1/outreach/threads/:threadId/drafts", () => new Promise<Response>((resolve) => { settle = resolve; })),
+  );
+  const view = renderWithProviders(<OutreachThreadPanel contactId="contact-1" />);
+  await waitFor(() => expect(view.getByRole("heading", { name: "Draft under review" })).toBeInTheDocument());
+  fireEvent.click(view.getByRole("button", { name: "Revise draft" }));
+  fireEvent.change(view.getByRole("textbox"), { target: { value: "My retained message" } });
+  fireEvent.click(view.getAllByRole("button", { name: "Revise draft" })[0]!);
+  await waitFor(() => expect(view.getByRole("button", { name: "Revising…" })).toBeDisabled());
+  current = makeOutreachThreadResponse(change === "removed" ? null : makeOutreachThreadDetail({ drafts: [makeOutreachDraft({ status: "approved", approvedAt: "2026-10-24", bodyText: "Newer accepted message" })] }));
+  await act(async () => {
+    view.queryClient.setQueryData(outreachKeys.threadForContact(LOCAL_TENANT, "contact-1", null), current);
+  });
+  expect(view.getByRole("textbox")).toHaveValue("My retained message");
+  await waitFor(() => expect(view.queryByRole("heading", { name: "Draft under review" })).not.toBeInTheDocument());
+  settle(HttpResponse.json(makeOutreachPublicationConflict(), { status: 409 }));
+  await waitFor(() => expect(view.getByRole("group", { name: "Unpublished revision" })).toBeInTheDocument());
+  expect(view.getByRole("textbox")).toHaveValue("My retained message");
+  expect(view.getByText(/synthetic-quality-review/)).toBeInTheDocument();
+  expect(view.getByRole("button", { name: "Revise draft" })).toBeDisabled();
+  if (change === "replacement") expect(view.getAllByText("Newer accepted message")).toHaveLength(2);
 });

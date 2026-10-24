@@ -895,7 +895,7 @@ def generate_outreach_draft(params: dict[str, Any]) -> dict[str, Any]:
     import uuid
 
     from jobctrl.database import get_connection, load_job_with_enrichment
-    from jobctrl.domain.contact.outreach import OutreachDraftKind
+    from jobctrl.domain.contact.outreach import OutreachDraftKind, OutreachPublicationConflict
     from jobctrl.domain.contact.outreach_use_cases import (
         GenerateOutreachDraftUseCase,
         OutreachDraftInputError,
@@ -1016,6 +1016,18 @@ def generate_outreach_draft(params: dict[str, Any]) -> dict[str, Any]:
                 application_role=application_role,
                 model=model,
             )
+    except OutreachPublicationConflict as exc:
+        draft = exc.proposal.latest_draft
+        return {
+            "outcome": "conflict",
+            "threadId": thread_id,
+            "unpublishedDraft": {
+                "bodyText": draft.body_text,
+                "kind": draft.kind.value,
+                "gateResults": draft.gate_results.to_read_model(),
+                "provenance": [claim.to_read_model() for claim in draft.provenance],
+            },
+        }
     except OutreachDraftInputError as exc:
         raise invalid_params(str(exc)) from exc
 
