@@ -1128,6 +1128,14 @@ def _acquire_job_candidate(
                 ),
             },
         )
+        # Capture canonical sources before releasing claim admission. A writer
+        # must not replace accepted material in the claim-to-capture gap.
+        job_dict = _row_to_job_dict(row, run_id=run_id)
+        job_dict["email_source_binding"] = _email_source_binding(conn, tenant_id, job_id, job_dict)
+        decision = _latest_apply_review_decision(conn, tenant_id=tenant_id, job_id=job_id)
+        if decision:
+            job_dict["approved_email_recipient"] = str(decision.get("email_recipient") or "")
+            job_dict["approved_email_attachment_artifact_id"] = str(decision.get("email_attachment_artifact_id") or "")
         conn.commit()
 
         if run_ctx is not None:
@@ -1137,25 +1145,12 @@ def _acquire_job_candidate(
             run_ctx["application_url"] = apply_url
             run_ctx["tenant_id"] = tenant_id
             run_ctx["job_id"] = job_id
-            run_ctx["profile_version"] = _current_profile_version(
-                conn,
-                tenant_id=tenant_id,
-            )
+            run_ctx["profile_version"] = job_dict["email_source_binding"]["profile_version"]
             run_ctx["repeat_application_override_id"] = repeat_override_id
             run_ctx["repeat_application_evidence_fingerprint"] = (
                 repeat_assessment.get("evidenceFingerprint") if repeat_assessment else None
             )
 
-        job_dict = _row_to_job_dict(row, run_id=run_id)
-        job_dict["email_source_binding"] = _email_source_binding(conn, tenant_id, job_id, job_dict)
-        decision = _latest_apply_review_decision(
-            conn,
-            tenant_id=tenant_id,
-            job_id=job_id,
-        )
-        if decision:
-            job_dict["approved_email_recipient"] = str(decision.get("email_recipient") or "")
-            job_dict["approved_email_attachment_artifact_id"] = str(decision.get("email_attachment_artifact_id") or "")
         return job_dict
     except Exception:
         conn.rollback()
@@ -2123,6 +2118,25 @@ def _email_source_binding(conn, tenant_id: str, job_id: str, job) -> dict[str, A
     }
 
 
+def _email_binding_digest(value):
+    """Shared with the API: compact UTF-8 JSON arrays, preserving field order."""
+    return sha256(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _email_materials_digest(source):
+    return _email_binding_digest([row + [source["files"].get(str(row[3]))] for row in source["artifacts"]])
+
+
+def _email_candidate_digest(candidate):
+    return _email_binding_digest([candidate[key] for key in (
+        "recipient", "subject", "body", "attachment_artifact_id", "attachment_name",
+    )])
+
+
+def _email_posting_inputs_digest(source):
+    return _email_binding_digest([source["job"][key] for key in ("title", "site", "description", "full_description")])
+
+
 def _assert_current_email_approval(conn, tenant_id, job_id, candidate, context):
     from jobctrl.domain.apply.process_manager import EmailApprovalRefused
 
@@ -2159,6 +2173,24 @@ def _assert_current_email_approval(conn, tenant_id, job_id, candidate, context):
         "attachment_artifact_id": candidate.attachment_artifact_id,
         "attachment_name": candidate.attachment_name,
     }
+    event = conn.execute(
+        "SELECT payload_json FROM job_events WHERE tenant_id=? AND job_id=? "
+        "AND event_type='ApplyReviewDecisionRecorded' AND json_extract(payload_json,'$.decisionId')=? "
+        "ORDER BY event_id DESC LIMIT 1", (tenant_id, job_id, decision.get("decision_id")),
+    ).fetchone()
+    authority = _payload_from_row(event).get("emailApprovalBinding") if event else None
+    # Legacy recipient/attachment-only decisions are not complete email authority.
+    # Never substitute a newer rehearsal for the preview actually approved.
+    if not isinstance(authority, dict) or type(authority.get("version")) is not int or authority["version"] != 1:
+        raise EmailApprovalRefused("approval_stale_email_candidate")
+    if authority.get("postingUrlSha256") != _email_binding_digest([current["posting_url"]]):
+        raise EmailApprovalRefused("approval_stale_url")
+    if authority.get("materialsSha256") != _email_materials_digest(current):
+        raise EmailApprovalRefused("approval_stale_materials")
+    if authority.get("candidateSha256") != _email_candidate_digest(expected):
+        raise EmailApprovalRefused("approval_stale_email_candidate")
+    if authority.get("postingInputsSha256") != _email_posting_inputs_digest(current):
+        raise EmailApprovalRefused("approval_stale_email_candidate")
     if (not reviewed or any(reviewed.get(key) != value for key, value in expected.items())
             or decision.get("email_recipient", "").lower() != candidate.recipient_email.lower()
             or decision.get("email_attachment_artifact_id") != candidate.attachment_artifact_id

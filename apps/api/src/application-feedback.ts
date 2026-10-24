@@ -4,6 +4,7 @@ import { MessageOutcomeDeterminationSchema } from "@jobctrl/contracts";
 import { readArtifactLineAnchors, readDetermination } from "./semantic-determinations.js";
 import crypto from "node:crypto";
 import path from "node:path";
+import { emailApprovalBinding } from "./email-approval-binding.js";
 
 import type {
   ApplicationOutcome,
@@ -385,6 +386,8 @@ function recordApplyReviewDecisionSnapshot(db: SqliteDatabase, jobLocator: strin
       throw new InputError("approval_stale_email_candidate");
     }
   }
+  const emailBinding = emailCandidate ? emailApprovalBinding(db, jobId, emailCandidate) : null;
+  if (emailCandidate && !emailBinding) throw new InputError("approval_stale_materials");
   const decidedAt = new Date().toISOString();
   const decision: ApplyReviewDecision = {
     decisionId: crypto.randomUUID(),
@@ -432,6 +435,7 @@ function recordApplyReviewDecisionSnapshot(db: SqliteDatabase, jobLocator: strin
       tenantId: DEFAULT_TENANT,
       jobId,
       decisionId: decision.decisionId,
+      emailApprovalBinding: emailBinding,
       coverLetterBinding: safeCoverLetterAccepted(db, jobId, appDir),
       decision: decision.decision,
       reasonPresent: Boolean(decision.reason),

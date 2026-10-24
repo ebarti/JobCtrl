@@ -1574,7 +1574,7 @@ describe("application feedback API", () => {
         recipient: "apply@example.com",
         subject: "Application for Staff Engineer",
         body: "Hello",
-        attachment_artifact_id: "resume-pdf-1",
+        attachment_artifact_id: "apply-ready-resume-pdf",
         attachment_name: "Resume.pdf",
       }),
     );
@@ -1585,7 +1585,7 @@ describe("application feedback API", () => {
     expect(queueItem(queue.json(), READY_JOB_ID)?.emailApplication).toMatchObject({
       recipient: "apply@example.com",
       subject: "Application for Staff Engineer",
-      attachmentArtifactId: "resume-pdf-1",
+      attachmentArtifactId: "apply-ready-resume-pdf",
       attachmentName: "Resume.pdf",
       candidateRunId: "dry-run-email-candidate",
     });
@@ -1615,15 +1615,35 @@ describe("application feedback API", () => {
         profileVersion: 7,
         applicationUrl: READY_JOB,
         emailRecipient: "apply@example.com",
-        emailAttachmentArtifactId: "resume-pdf-1",
+        emailAttachmentArtifactId: "apply-ready-resume-pdf",
       },
     });
     expect(bound.statusCode, bound.body).toBe(200);
     expect(bound.json().decision).toMatchObject({
       emailRecipient: "apply@example.com",
-      emailAttachmentArtifactId: "resume-pdf-1",
+      emailAttachmentArtifactId: "apply-ready-resume-pdf",
     });
 
+    const audit = new Database(options.dbPath);
+    const recorded = audit.prepare("SELECT payload_json FROM job_events WHERE event_type='ApplyReviewDecisionRecorded' AND json_extract(payload_json,'$.decisionId')=?").get(bound.json().decision.decisionId) as { payload_json: string };
+    const binding = JSON.parse(recorded.payload_json).emailApprovalBinding;
+    expect(binding).toMatchObject({ version: 1, candidateSha256: expect.stringMatching(/^[0-9a-f]{64}$/), materialsSha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    // Same recipient/attachment IDs do not let a newer rehearsal rewrite A's authority.
+    audit.prepare("UPDATE job_events SET payload_json=json_set(payload_json,'$.subject','Different role','$.body','Different body') WHERE event_type='EmailApplicationCandidateRecorded'").run();
+    expect(JSON.parse((audit.prepare("SELECT payload_json FROM job_events WHERE event_type='ApplyReviewDecisionRecorded'").get() as { payload_json: string }).payload_json).emailApprovalBinding).toEqual(binding);
+    // Reapproval captures the complete new preview; unreadable material refuses atomically.
+    const request = { decision: "approve_submit", materialsGeneration: 1, profileVersion: 7, applicationUrl: READY_JOB, emailRecipient: "apply@example.com", emailAttachmentArtifactId: "apply-ready-resume-pdf" };
+    const reapproved = await app.inject({ method: "POST", url: `/v1/jobs/${readyKey}/apply-review/decision`, payload: request });
+    expect(reapproved.statusCode, reapproved.body).toBe(200);
+    const updated = JSON.parse((audit.prepare("SELECT payload_json FROM job_events WHERE event_type='ApplyReviewDecisionRecorded' AND json_extract(payload_json,'$.decisionId')=?").get(reapproved.json().decision.decisionId) as { payload_json: string }).payload_json).emailApprovalBinding;
+    expect(updated.candidateSha256).not.toBe(binding.candidateSha256);
+    expect(updated.materialsSha256).toBe(binding.materialsSha256);
+    fs.unlinkSync(path.join(tempDir, "resume.pdf"));
+    const missing = await app.inject({ method: "POST", url: `/v1/jobs/${readyKey}/apply-review/decision`, payload: request });
+    expect(missing.statusCode, missing.body).toBe(409);
+    expect(missing.json().error).toBe("approval_stale_materials");
+    expect((audit.prepare("SELECT count(*) AS count FROM application_review_decisions WHERE job_id=?").get(READY_JOB_ID) as { count: number }).count).toBe(2);
+    audit.close();
     await app.close();
   });
 

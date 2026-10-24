@@ -563,6 +563,15 @@ attempt through settlement. The unchanged control requires one committed intent
 before one fake send, with decision/source/candidate provenance on the intent.
 Use a second real SQLite connection before and after repository save to prove
 neither writer admission nor intent visibility can cross validation-to-commit.
+Also gate the first source-binding read during claim: the running stage must
+remain uncommitted and another writer must be excluded. Replace attachment
+bytes/metadata or the accepted tailored-resume identity before claim and after
+claim separately; neither a new snapshot nor an unchanged generation may adopt
+the replacement under older approval. Approve candidate A, change the job title,
+and run another production rehearsal to produce B with the same recipient and
+attachment but different subject/body. A's recorded fingerprint must refuse B
+under both approval-wait settings. The API approval tests also require complete
+fingerprint persistence and atomic refusal when accepted file bytes are unavailable.
 Fail intent insertion to prove rollback, then exercise lost acknowledgement and
 crash after intent through restart and repeated targeted/standing polls: uncertainty
 stays `needs_verification` with no resend. Emit scenario identities, exact event

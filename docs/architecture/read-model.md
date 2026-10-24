@@ -71,9 +71,20 @@ Inside `BEGIN IMMEDIATE`, the launcher rechecks freshness and run/stage ownershi
 then validates the latest canonical approval against current sources and the
 outgoing candidate. The claim carries a source binding covering profile version,
 effective URLs, material generation, accepted artifact identities and file hashes.
+It captures that binding inside claim admission, before committing the running
+stage, so another SQLite writer cannot change sources between claim and capture.
+The API approval transaction records `emailApprovalBinding` on the
+`ApplyReviewDecisionRecorded` event joined by the exact decision ID. Version 1
+contains SHA-256 fingerprints of the complete reviewed candidate and all current
+approved material identities, metadata and nonempty file bytes, as well as the
+posting URL and job/posting inputs. The fingerprints
+use fixed-position arrays encoded as compact UTF-8 JSON in API and worker.
 The final reader also checks cover approval and rehearsal evidence and compares
 the complete current email preview with the outgoing recipient, subject, body and
-attachment. A fresh approval for changed inputs cannot authorize an older run.
+attachment **and with the fingerprint retained by the approving decision**.
+A later preview with the same recipient and attachment ID cannot replace the
+approved subject/body. Legacy approvals lacking this binding require fresh review.
+A fresh approval for changed inputs cannot authorize an older run.
 Missing, malformed or unavailable authority refuses before intent. This final
 check is unconditional even when claim-time approval waiting is disabled.
 

@@ -1987,6 +1987,16 @@ def owned_email_path(tmp_path, monkeypatch, request):
                             application_url=row["application_url"], decision_id="a-approved")
     conn.execute("UPDATE application_review_decisions SET email_recipient=?,email_attachment_artifact_id=?",
                  (candidate.recipient_email, candidate.attachment_artifact_id))
+    source = launcher_module._email_source_binding(conn, LOCAL_TENANT, job_id, row)
+    record_job_event(conn, job_id, "apply", "ApplyReviewDecisionRecorded", payload={
+        "decisionId": "a-approved", "emailApprovalBinding": {
+            "version": 1,
+            "candidateSha256": launcher_module._email_candidate_digest(payload),
+            "materialsSha256": launcher_module._email_materials_digest(source),
+            "postingUrlSha256": launcher_module._email_binding_digest([source["posting_url"]]),
+            "postingInputsSha256": launcher_module._email_posting_inputs_digest(source),
+        },
+    })
     conn.commit()
     state = SimpleNamespace(conn=conn, db_path=db_path, job_id=job_id, snapshot=snapshot,
                             candidate=candidate, payload=payload, sends=[], sender_calls=0, late=lambda: None)
@@ -2030,8 +2040,8 @@ def owned_email_path(tmp_path, monkeypatch, request):
     # Synthetic DNS transport, retaining production URL safety validation.
     monkeypatch.setattr("socket.getaddrinfo", lambda *args, **kwargs: [(2, 1, 6, "", ("93.184.216.34", 443))])
 
-    def execute(approval_required=True):
-        ctx = {"workflow_id": "synthetic-email-1168"}
+    def execute(approval_required=True, *, dry_run=False):
+        ctx = {"workflow_id": "synthetic-email-1168", "dry_run": dry_run}
         state.attempts_before_claim = conn.execute("SELECT attempt_count FROM job_stage_states WHERE stage='apply'").fetchone()[0]
         job = acquire_job(target_job_id=job_id, worker_id=1, approval_required=approval_required, run_ctx=ctx)
         assert job is not None
@@ -2039,7 +2049,7 @@ def owned_email_path(tmp_path, monkeypatch, request):
         state.attempts_after_claim = conn.execute("SELECT attempt_count FROM job_stage_states WHERE stage='apply'").fetchone()[0]
         state.job = job
         result, _ = launcher_module.run_job(job, 9222, worker_id=1, snapshot=snapshot, run_ctx=ctx,
-                                            tenant_id=TenantId(LOCAL_TENANT))
+                                            tenant_id=TenantId(LOCAL_TENANT), dry_run=dry_run)
         state.result = result
         return result
 
@@ -2203,6 +2213,91 @@ def test_owned_email_unchanged_approval_commits_then_sends_once(owned_email_path
     assert acquire_job(target_job_id=s.job_id, approval_required=False) is None
     assert acquire_job(approval_required=False) is None
     assert len(s.sends) == 1
+
+
+@pytest.mark.parametrize("approval_required", [True, False])
+@pytest.mark.parametrize("change", ["attachment_bytes", "tailored_identity"])
+def test_owned_email_sources_are_captured_inside_claim_admission(owned_email_path, monkeypatch, approval_required, change):
+    s = owned_email_path
+    original = launcher_module._email_source_binding
+    writer = sqlite3.connect(s.db_path, timeout=0)
+    observed = []
+
+    def capture(conn, tenant_id, job_id, job):
+        if not observed:
+            # Gate the FIRST source read, precisely where an independent writer
+            # could previously commit while the claim was already visible.
+            assert conn.in_transaction
+            assert writer.execute("SELECT state,attempt_count FROM job_stage_states WHERE stage='apply'").fetchone() == ("pending", 0)
+            with pytest.raises(sqlite3.OperationalError, match="locked"):
+                writer.execute("UPDATE job_materials_artifacts SET metadata_json='{}'")
+            writer.rollback()
+            observed.append("claim_writer_excluded_before_source_capture")
+        return original(conn, tenant_id, job_id, job)
+
+    def replace():
+        assert writer.execute("SELECT state,attempt_count FROM job_stage_states WHERE stage='apply'").fetchone() == ("running", 1)
+        if change == "attachment_bytes":
+            Path(s.candidate.attachment_path).write_bytes(b"second writer replacement")
+            writer.execute("UPDATE job_materials_artifacts SET metadata_json=? WHERE artifact_type='resume_pdf'", (json.dumps({"replacement": True}),))
+        else:
+            writer.execute("UPDATE job_materials_artifacts SET artifact_id='replacement-text' WHERE artifact_type='tailored_resume'")
+        writer.commit()
+        observed.append("replacement_committed_after_claim")
+
+    s.writer_order = observed
+    s.late = replace
+    monkeypatch.setattr(launcher_module, "_email_source_binding", capture)
+    try:
+        result = s.execute(approval_required)
+        assert result.error == "approval_stale_materials"
+        assert _email_facts(s)["ApplySubmitIntended"] == s.sender_calls == 0
+        assert s.attempts_after_claim == 1
+        assert observed == ["claim_writer_excluded_before_source_capture", "replacement_committed_after_claim"]
+    finally:
+        writer.close()
+
+
+@pytest.mark.parametrize("approval_required", [True, False])
+@pytest.mark.parametrize("change", ["attachment_bytes", "tailored_identity"])
+def test_owned_email_approval_bound_material_survives_replacement_before_claim(owned_email_path, approval_required, change):
+    s = owned_email_path
+    with sqlite3.connect(s.db_path) as writer:
+        if change == "attachment_bytes":
+            Path(s.candidate.attachment_path).write_bytes(b"replacement before source capture")
+            writer.execute("UPDATE job_materials_artifacts SET metadata_json='null' WHERE artifact_type='resume_pdf'")
+        else:
+            writer.execute("UPDATE job_materials_artifacts SET artifact_id='replacement-text' WHERE artifact_type='tailored_resume'")
+    # Even a new claim snapshot cannot adopt replacement bytes under old authority.
+    assert s.execute(approval_required).error == "approval_stale_materials"
+    assert _email_facts(s)["ApplySubmitIntended"] == s.sender_calls == 0
+    assert s.attempts_after_claim == 1
+
+
+@pytest.mark.parametrize("approval_required", [True, False])
+def test_owned_email_new_rehearsal_does_not_replace_approved_candidate(owned_email_path, approval_required):
+    s = owned_email_path
+    old_decision = tuple(s.conn.execute("SELECT * FROM application_review_decisions").fetchone())
+    s.conn.execute("UPDATE jobs SET title='A different role after approval'")
+    s.conn.commit()
+    assert s.execute(False, dry_run=True).kind == "dry_run_complete"
+    mark_result(s.job_id, "dry_run", run_ctx=s.ctx)
+    newer = launcher_module._latest_email_application_candidate(s.conn, tenant_id=LOCAL_TENANT, job_id=s.job_id)
+    assert newer["subject"] != s.payload["subject"]
+    assert newer["body"] != s.payload["body"]
+    assert s.execute(approval_required).error == "approval_stale_email_candidate"
+    assert _email_facts(s)["ApplySubmitIntended"] == s.sender_calls == 0
+    assert tuple(s.conn.execute("SELECT * FROM application_review_decisions").fetchone()) == old_decision
+    assert s.attempts_after_claim == 2  # One rehearsal and one live claim; no extra refusal attempt.
+
+
+@pytest.mark.parametrize("binding", [None, [], {}, {"version": 2}])
+def test_owned_email_incomplete_recorded_authority_requires_fresh_review(owned_email_path, binding):
+    s = owned_email_path
+    s.conn.execute("UPDATE job_events SET payload_json=json_set(payload_json,'$.emailApprovalBinding',json(?)) WHERE event_type='ApplyReviewDecisionRecorded'", (json.dumps(binding),))
+    s.conn.commit()
+    assert s.execute().error == "approval_stale_email_candidate"
+    assert _email_facts(s)["ApplySubmitIntended"] == s.sender_calls == 0
 
 
 def test_owned_email_writer_cannot_cross_validation_to_intent_commit(owned_email_path, monkeypatch):

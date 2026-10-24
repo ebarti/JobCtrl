@@ -79,6 +79,13 @@ commits. A changed profile or attachment followed by a fresh approval still does
 not authorize a delayed run using the older inputs. Refusals preserve accepted
 history and the claimed attempt; they create no intent and call no sender.
 
+The claim captures source identities before committing. The approval decision
+retains fingerprints of the complete reviewed email and accepted material bytes;
+the final guard checks those fingerprints as well as the claim snapshot. A later
+rehearsal with a different subject/body or a same-generation file replacement
+therefore needs fresh approval, even when recipient and attachment IDs match.
+Recipient/attachment-only historical approvals cannot authorize an email send.
+
 Turning the general approval wait off does not create generic submission
 authority. Browser final submit remains manual, the Gmail sender still requires
 its current exact send scope at intent commit, and repeat-application protection
