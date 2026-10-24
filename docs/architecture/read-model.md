@@ -66,7 +66,27 @@ need approval because browser-layer guards block submission.
 Model-driven browser runs are transport-locked and final browser submit remains
 manual. For an exact-approved email candidate, the saga rechecks the active
 capability and records `ApplySubmitIntended` immediately before invoking the
-owned Gmail sender. If the run dies after that checkpoint without a terminal
+owned Gmail sender. Availability transport runs before acquiring the writer.
+Inside `BEGIN IMMEDIATE`, the launcher rechecks freshness and run/stage ownership,
+then validates the latest canonical approval against current sources and the
+outgoing candidate. The claim carries a source binding covering profile version,
+effective URLs, material generation, accepted artifact identities and file hashes.
+The final reader also checks cover approval and rehearsal evidence and compares
+the complete current email preview with the outgoing recipient, subject, body and
+attachment. A fresh approval for changed inputs cannot authorize an older run.
+Missing, malformed or unavailable authority refuses before intent. This final
+check is unconditional even when claim-time approval waiting is disabled.
+
+`SqliteApplyRunRepository.save` participates in an inherited transaction without
+committing it; the final authorizer owns commit/rollback. The intent retains the
+authorizing decision ID and hashes of source/candidate bindings. A refusal records
+a stable reason without replacing a newer canonical candidate or deleting review
+or material history. Settlement and restart retain the claimed attempt count.
+SQLite serializes participating approval writers through intent commit; a review
+committed afterward cannot cancel the already admitted external effect. File
+hashes detect source replacements at validation, but are not filesystem locks.
+
+If the run dies after that checkpoint without a terminal
 result, or the provider raises with an ambiguous outcome, JobCtrl parks it in
 `needs_verification` instead of retrying. A run that never reached submit intent
 can return safely to `pending`.

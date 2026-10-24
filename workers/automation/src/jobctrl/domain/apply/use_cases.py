@@ -582,6 +582,8 @@ def _email_application_context(
         attachment_path=resume_path,
         approved_recipient_email=str(job.get("approved_email_recipient") or ""),
         approved_attachment_artifact_id=str(job.get("approved_email_attachment_artifact_id") or ""),
+        source_binding=job.get("email_source_binding"),
+        profile_version=getattr(snapshot, "version", None),
     )
 
 

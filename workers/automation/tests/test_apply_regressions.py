@@ -1312,10 +1312,11 @@ def test_apply_recovery_rewinds_before_submit_intent(tmp_path, monkeypatch):
         recovered = recover_ambiguous_running_apply()
         assert recovered == 1
         row = conn.execute(
-            "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            "SELECT state, attempt_count FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
             (LOCAL_TENANT, job["job_id"]),
         ).fetchone()
         assert row["state"] == "pending"
+        assert row["attempt_count"] == 1
     finally:
         close_connection(db_path)
 
@@ -1944,3 +1945,382 @@ def test_dashboard_dry_runs_excludes_soft_deleted_jobs(tmp_path):
         assert dash["dry_runs"] == 1
     finally:
         close_connection(db_path)
+
+
+@pytest.fixture
+def owned_email_path(tmp_path, monkeypatch, request):
+    """Real launcher/use case/saga/storage; only external transports are synthetic."""
+    from types import SimpleNamespace
+    from jobctrl.domain.apply import EmailOnlyApplication
+    from jobctrl.domain.apply.process_manager import _build_email_application_candidate, _candidate_payload
+    from jobctrl.domain.apply.use_cases import _email_application_context
+    from jobctrl.domain.ports.apply import AgentResult, BrowserSession, EmailApplicationSendResult
+    from jobctrl.domain.profile.aggregate import Profile
+    from jobctrl.domain.profile.snapshot import ProfileSnapshot
+    from jobctrl.domain.tenant import TenantId
+    import jobctrl.infrastructure.apply as adapters
+
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    job_id = _insert_ready_job(conn)
+    _seed_current_apply_binding(conn)
+    conn.execute("UPDATE job_enrichments SET full_description='Send to apply@example.com or other@example.com'")
+    for kind, filename in (("tailored_resume", "resume.txt"), ("resume_pdf", "resume.pdf")):
+        path = tmp_path / filename
+        path.write_bytes(b"accepted synthetic resume")
+        conn.execute("UPDATE job_materials_artifacts SET path=? WHERE artifact_type=?", (str(path), kind))
+    snapshot = ProfileSnapshot.from_profile(Profile.from_dict(
+        TenantId(LOCAL_TENANT), {
+            "personal": {"full_name": "Synthetic Applicant"},
+            "resume": {"experience_entries": [
+                {"id": "synthetic-role", "title": "Engineer", "company": "Synthetic Co"},
+            ]},
+        },
+    ), version=1)
+    columns, joins = launcher_module._apply_candidate_select_parts()
+    row = dict(conn.execute(f"SELECT {columns} FROM jobs {joins}").fetchone())
+    candidate = _build_email_application_candidate("apply@example.com", _email_application_context(row, snapshot))
+    payload = _candidate_payload(candidate, run_id="reviewed-rehearsal", duration_ms=0)
+    record_job_event(conn, job_id, "apply", "EmailApplicationCandidateRecorded", payload=payload)
+    conn.commit()
+    _insert_review_decision(conn, materials_generation=1, profile_version=1,
+                            application_url=row["application_url"], decision_id="a-approved")
+    conn.execute("UPDATE application_review_decisions SET email_recipient=?,email_attachment_artifact_id=?",
+                 (candidate.recipient_email, candidate.attachment_artifact_id))
+    conn.commit()
+    state = SimpleNamespace(conn=conn, db_path=db_path, job_id=job_id, snapshot=snapshot,
+                            candidate=candidate, payload=payload, sends=[], sender_calls=0, late=lambda: None)
+
+    class Browser:
+        def launch(self, config):
+            return BrowserSession(config=config, pid=42, worker_dir=str(tmp_path))
+
+        def cleanup(self, session):
+            pass
+
+    class Agent:
+        def submit_application(self, **kwargs):
+            state.late()
+            return AgentResult(submission_result=EmailOnlyApplication(recipient_email="apply@example.com"), duration_ms=1)
+
+    class Sender:
+        def send_email_application(self, outgoing):
+            state.sender_calls += 1
+            # Independent read proves intent COMMIT precedes external admission.
+            with sqlite3.connect(db_path) as observer:
+                assert observer.execute("SELECT count(*) FROM job_events WHERE event_type='ApplySubmitIntended'").fetchone()[0] == 1
+            if getattr(state, "crash_before_sender", False):
+                raise SystemExit("synthetic crash before external admission")
+            state.sends.append(outgoing)
+            if getattr(state, "sender_error", False):
+                raise RuntimeError("synthetic lost acknowledgement")
+            return EmailApplicationSendResult(provider="gmail", message_id="synthetic-m1", thread_id="synthetic-t1")
+
+    def capability(_):
+        if getattr(state, "capability_revoked", False):
+            raise RuntimeError("synthetic revoked capability")
+        return Path("/synthetic/Chromium")
+
+    monkeypatch.setattr(browser_capabilities, "require_system_browser_capability", capability)
+    monkeypatch.setattr(launcher_module, "get_connection", lambda: get_connection(db_path))
+    monkeypatch.setattr(launcher_module, "reset_worker_dir", lambda _: tmp_path / "worker")
+    monkeypatch.setattr(adapters, "LocalChromeAdapter", Browser)
+    monkeypatch.setattr(adapters, "ClaudeCodeCliAdapter", Agent)
+    monkeypatch.setattr(adapters, "GmailEmailApplicationSender", Sender)
+    # Synthetic DNS transport, retaining production URL safety validation.
+    monkeypatch.setattr("socket.getaddrinfo", lambda *args, **kwargs: [(2, 1, 6, "", ("93.184.216.34", 443))])
+
+    def execute(approval_required=True):
+        ctx = {"workflow_id": "synthetic-email-1168"}
+        state.attempts_before_claim = conn.execute("SELECT attempt_count FROM job_stage_states WHERE stage='apply'").fetchone()[0]
+        job = acquire_job(target_job_id=job_id, worker_id=1, approval_required=approval_required, run_ctx=ctx)
+        assert job is not None
+        state.ctx = ctx
+        state.attempts_after_claim = conn.execute("SELECT attempt_count FROM job_stage_states WHERE stage='apply'").fetchone()[0]
+        state.job = job
+        result, _ = launcher_module.run_job(job, 9222, worker_id=1, snapshot=snapshot, run_ctx=ctx,
+                                            tenant_id=TenantId(LOCAL_TENANT))
+        state.result = result
+        return result
+
+    state.execute = execute
+    yield state
+    facts = _email_facts(state)
+    stage = state.conn.execute("SELECT state,attempt_count FROM job_stage_states WHERE stage='apply'").fetchone()
+    decisions = [dict(row) for row in state.conn.execute(
+        "SELECT decision_id,decision,profile_version,materials_generation FROM application_review_decisions ORDER BY decided_at,decision_id"
+    )]
+    intents = [json.loads(row[0]) for row in state.conn.execute(
+        "SELECT payload_json FROM job_events WHERE event_type='ApplySubmitIntended'"
+    )]
+    print("OWNED_EMAIL_EVIDENCE " + json.dumps({
+        "scenario": request.node.name, "tenant_id": LOCAL_TENANT, "job_id": job_id,
+        "workflow_id": getattr(state, "ctx", {}).get("workflow_id"),
+        "run_id": getattr(state, "ctx", {}).get("run_id"), "decisions": decisions,
+        "source_binding": getattr(state, "job", {}).get("email_source_binding"),
+        "intent_records": intents, "event_counts": dict(facts),
+        "sender_calls": state.sender_calls, "external_send_calls": len(state.sends),
+        "final_stage": list(stage), "attachment_sha256": sha256(Path(candidate.attachment_path).read_bytes()).hexdigest(),
+        "writer_order": getattr(state, "writer_order", []),
+        "attempts_before_claim": getattr(state, "attempts_before_claim", None),
+        "attempts_after_claim": getattr(state, "attempts_after_claim", None),
+        "result_kind": getattr(getattr(state, "result", None), "kind", None),
+        "result_error": getattr(getattr(state, "result", None), "error", None),
+        "connection_in_transaction": state.conn.in_transaction,
+        "history_preserved": (
+            [tuple(row) for row in state.conn.execute("SELECT * FROM application_review_decisions ORDER BY decision_id")]
+            == state.history_after_user_change
+        ) if hasattr(state, "history_after_user_change") else None,
+        "materials_preserved": (
+            [tuple(row) for row in state.conn.execute("SELECT * FROM job_materials_artifacts ORDER BY generation,artifact_type")]
+            == state.materials_after_user_change
+        ) if hasattr(state, "materials_after_user_change") else None,
+    }, sort_keys=True))
+    close_connection(db_path)
+
+
+def _email_facts(state):
+    return Counter(row[0] for row in state.conn.execute("SELECT event_type FROM job_events WHERE job_id=?", (state.job_id,)))
+
+
+
+def _copy_email_review(conn, *, decision_id, decision=None, profile_version=None, recipient=None):
+    """Append a synthetic review, retaining the prior decision and tied clock."""
+    conn.execute(
+        """INSERT INTO application_review_decisions (
+            tenant_id,decision_id,job_id,decision,reason,decided_by,decided_at,
+            materials_generation,profile_version,application_url,partial_override_run_id,
+            email_recipient,email_attachment_artifact_id
+        ) SELECT tenant_id,?,job_id,COALESCE(?,decision),reason,decided_by,decided_at,
+            materials_generation,COALESCE(?,profile_version),application_url,partial_override_run_id,
+            COALESCE(?,email_recipient),email_attachment_artifact_id
+          FROM application_review_decisions WHERE decision_id='a-approved'""",
+        (decision_id, decision, profile_version, recipient),
+    )
+
+
+@pytest.mark.parametrize("approval_required", [True, False])
+@pytest.mark.parametrize("change,reason", [
+    ("defer", "awaiting_approval"), ("reset", "awaiting_approval"),
+    ("profile", "approval_stale_profile"), ("url", "approval_stale_url"),
+    ("materials", "approval_stale_materials"), ("recipient", "approval_stale_email_candidate"),
+    ("attachment", "approval_stale_email_candidate"), ("candidate_body", "approval_stale_email_candidate"),
+    ("same_generation", "approval_stale_materials"), ("cover", "approval_stale_materials"),
+    ("profile_reapproved", "approval_stale_profile"), ("recipient_reapproved", "approval_stale_email_candidate"),
+    ("missing_candidate", "approval_stale_email_candidate"),
+    ("attachment_bytes", "approval_stale_materials"), ("cover_binding", "approval_stale_materials"),
+    ("missing_review", "awaiting_approval"), ("missing_profile", "approval_stale_profile"),
+    ("rehearsal", "awaiting_dry_run"),
+])
+def test_owned_email_refuses_independent_late_changes(owned_email_path, approval_required, change, reason):
+    s = owned_email_path
+    accepted_bytes = Path(s.candidate.attachment_path).read_bytes()
+
+    def late():
+        # A real independent SQLite writer commits after claim and agent entry.
+        with sqlite3.connect(s.db_path) as writer:
+            if change in {"defer", "reset"}:
+                _copy_email_review(writer, decision_id="z-new", decision=change)
+            elif change.startswith("profile"):
+                writer.execute("UPDATE candidate_profiles SET version=2")
+                if change.endswith("reapproved"):
+                    _copy_email_review(writer, decision_id="z-approved", profile_version=2)
+                    writer.execute("UPDATE job_events SET payload_json=json_set(payload_json,'$.profile_version',2) WHERE event_type IN ('DryRunCompleted','ApplyRunStarted') AND json_extract(payload_json,'$.dry_run')=1")
+            elif change == "attachment_bytes":
+                Path(s.candidate.attachment_path).write_bytes(b"replacement synthetic bytes")
+            elif change == "cover_binding":
+                record_job_event(writer, s.job_id, "apply", "ApplyReviewDecisionRecorded",
+                                 payload={"decisionId": "a-approved", "coverLetterBinding": {"source": {}}})
+            elif change == "missing_review":
+                writer.execute("DELETE FROM application_review_decisions")
+            elif change == "missing_profile":
+                writer.execute("DELETE FROM candidate_profiles")
+            elif change == "rehearsal":
+                writer.execute("DELETE FROM job_events WHERE event_type='DryRunCompleted'")
+            elif change == "url":
+                writer.execute("UPDATE job_enrichments SET application_url='https://example.com/new-apply'")
+            elif change == "materials":
+                writer.execute("INSERT INTO job_materials (tenant_id,job_id,generation,status,created_at,updated_at) SELECT tenant_id,job_id,2,status,created_at,updated_at FROM job_materials")
+                writer.execute("INSERT INTO job_materials_artifacts (tenant_id,job_id,generation,artifact_type,artifact_id,status,path,render_format,created_at) SELECT tenant_id,job_id,2,artifact_type,artifact_id,status,path,render_format,created_at FROM job_materials_artifacts")
+            elif change == "same_generation":
+                writer.execute("UPDATE job_materials_artifacts SET artifact_id='replacement-resume' WHERE artifact_type='resume_pdf'")
+            elif change == "cover":
+                writer.execute("INSERT INTO job_materials_artifacts (tenant_id,job_id,generation,artifact_type,artifact_id,status,path,render_format,created_at) VALUES ('local',?,1,'cover_letter','new-cover','approved','/missing/synthetic-cover','text',?)", (s.job_id, utc_now()))
+            elif change == "missing_candidate":
+                writer.execute("UPDATE job_events SET payload_json='[]' WHERE event_type='EmailApplicationCandidateRecorded'")
+            else:
+                changed = dict(s.payload)
+                field = "recipient" if change.startswith("recipient") else "attachment_artifact_id" if change == "attachment" else "body"
+                changed[field] = "other@example.com" if field == "recipient" else "different"
+                record_job_event(writer, s.job_id, "apply", "EmailApplicationCandidateRecorded", payload=changed)
+                if change.endswith("reapproved"):
+                    _copy_email_review(writer, decision_id="z-approved", recipient="other@example.com")
+
+        s.history_after_user_change = [tuple(row) for row in s.conn.execute("SELECT * FROM application_review_decisions ORDER BY decision_id")]
+        s.materials_after_user_change = [tuple(row) for row in s.conn.execute("SELECT * FROM job_materials_artifacts ORDER BY generation,artifact_type")]
+        s.bytes_after_user_change = Path(s.candidate.attachment_path).read_bytes()
+
+    s.late = late
+    result = s.execute(approval_required)
+    assert result.error == reason
+    assert s.sends == []
+    assert s.sender_calls == 0
+    facts = _email_facts(s)
+    assert facts["ApplySubmitIntended"] == facts["EmailApplicationSent"] == 0
+    assert facts["ApplySubmissionBlocked"] == 1
+    refusal = s.conn.execute("SELECT payload_json FROM job_events WHERE event_type='ApplySubmissionBlocked'").fetchone()[0]
+    assert json.loads(refusal)["reason"] == reason
+    assert s.conn.execute("SELECT attempt_count FROM job_stage_states WHERE stage='apply'").fetchone()[0] == 1
+    assert Path(s.candidate.attachment_path).read_bytes() == s.bytes_after_user_change
+    if change != "attachment_bytes":
+        assert s.bytes_after_user_change == accepted_bytes
+    assert [tuple(row) for row in s.conn.execute("SELECT * FROM application_review_decisions ORDER BY decision_id")] == s.history_after_user_change
+    assert [tuple(row) for row in s.conn.execute("SELECT * FROM job_materials_artifacts ORDER BY generation,artifact_type")] == s.materials_after_user_change
+    mark_result(s.job_id, "failed", result.error, run_ctx=s.ctx)
+    assert s.conn.execute("SELECT attempt_count FROM job_stage_states WHERE stage='apply'").fetchone()[0] == 1
+    assert _email_facts(s)["ApplicationFailed"] == 1
+    if change in {"recipient", "recipient_reapproved", "attachment", "candidate_body"}:
+        latest = launcher_module._latest_email_application_candidate(s.conn, tenant_id=LOCAL_TENANT, job_id=s.job_id)
+        assert latest["recipient" if change.startswith("recipient") else "attachment_artifact_id" if change == "attachment" else "body"] != s.payload["recipient" if change.startswith("recipient") else "attachment_artifact_id" if change == "attachment" else "body"]
+
+
+@pytest.mark.parametrize("approval_required", [True, False])
+def test_owned_email_unchanged_approval_commits_then_sends_once(owned_email_path, approval_required):
+    s = owned_email_path
+    result = s.execute(approval_required)
+    assert result.kind == "applied"
+    assert s.sends == [s.candidate]
+    assert s.sender_calls == 1
+    facts = _email_facts(s)
+    assert facts["ApplySubmitIntended"] == facts["EmailApplicationSent"] == 1
+    intent = json.loads(s.conn.execute("SELECT payload_json FROM job_events WHERE event_type='ApplySubmitIntended'").fetchone()[0])
+    assert intent["approval_decision_id"] == "a-approved"
+    assert intent["email_source_sha256"] == sha256(json.dumps(s.job["email_source_binding"], sort_keys=True).encode()).hexdigest()
+    expected = {key: s.payload[key] for key in ("recipient", "subject", "body", "attachment_artifact_id", "attachment_name")}
+    assert intent["email_candidate_sha256"] == sha256(json.dumps(expected, sort_keys=True).encode()).hexdigest()
+    mark_result(s.job_id, "applied", run_ctx=s.ctx)
+    assert recover_ambiguous_running_apply() == 0
+    assert acquire_job(target_job_id=s.job_id, approval_required=False) is None
+    assert acquire_job(approval_required=False) is None
+    assert len(s.sends) == 1
+
+
+def test_owned_email_writer_cannot_cross_validation_to_intent_commit(owned_email_path, monkeypatch):
+    s = owned_email_path
+    ordered = []
+    s.writer_order = ordered
+    writer = sqlite3.connect(s.db_path, timeout=0)
+    original_validate = launcher_module._assert_current_email_approval
+    original_save = launcher_module.SqliteApplyRunRepository.save
+
+    def second_writer(label):
+        assert s.conn.in_transaction
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            writer.execute("UPDATE candidate_profiles SET version=version+1")
+        writer.rollback()
+        ordered.append(label)
+
+    def validate(*args):
+        authority = original_validate(*args)
+        second_writer("validated_writer_excluded")
+        return authority
+
+    def save(self, run):
+        has_intent = any(event.event_type == "ApplySubmitIntended" for event in run.events)
+        original_save(self, run)
+        if has_intent and s.conn.in_transaction:
+            second_writer("saved_writer_excluded")
+            # The intent is still invisible on the independent reader.
+            assert writer.execute("SELECT count(*) FROM job_events WHERE event_type='ApplySubmitIntended'").fetchone()[0] == 0
+
+    monkeypatch.setattr(launcher_module, "_assert_current_email_approval", validate)
+    monkeypatch.setattr(launcher_module.SqliteApplyRunRepository, "save", save)
+    try:
+        assert s.execute().kind == "applied"
+        ordered.append("intent_committed_and_sent")
+        writer.execute("UPDATE candidate_profiles SET version=version+1")
+        writer.commit()
+        ordered.append("second_writer_committed")
+        assert ordered == ["validated_writer_excluded", "saved_writer_excluded", "intent_committed_and_sent", "second_writer_committed"]
+        assert len(s.sends) == _email_facts(s)["ApplySubmitIntended"] == 1
+    finally:
+        writer.close()
+
+
+def test_owned_email_failed_intent_persistence_rolls_back_entire_checkpoint(owned_email_path):
+    s = owned_email_path
+    before = [tuple(row) for row in s.conn.execute("SELECT * FROM job_materials_artifacts")]
+    accepted = Path(s.candidate.attachment_path).read_bytes()
+    s.conn.execute("CREATE TRIGGER reject_intent BEFORE INSERT ON job_events WHEN NEW.event_type='ApplySubmitIntended' BEGIN SELECT RAISE(ABORT,'synthetic intent persistence failure'); END")
+    s.conn.commit()
+    result = s.execute()
+    assert result.kind == "failed"
+    assert result.error.startswith("APPLY_INTENT_PERSISTENCE_FAILED:")
+    assert s.sends == []
+    assert s.sender_calls == 0
+    assert _email_facts(s)["ApplySubmitIntended"] == 0
+    # Failed transaction must not publish the pending candidate either.
+    assert _email_facts(s)["EmailApplicationCandidateRecorded"] == 1
+    assert [tuple(row) for row in s.conn.execute("SELECT * FROM job_materials_artifacts")] == before
+    assert Path(s.candidate.attachment_path).read_bytes() == accepted
+    assert s.conn.execute("SELECT attempt_count FROM job_stage_states WHERE stage='apply'").fetchone()[0] == 1
+    assert not s.conn.in_transaction
+
+
+@pytest.mark.parametrize("crash", [False, True])
+def test_owned_email_post_intent_uncertainty_stays_parked_after_restart(owned_email_path, crash):
+    s = owned_email_path
+    s.sender_error = not crash
+    s.crash_before_sender = crash
+    if crash:
+        with pytest.raises(SystemExit, match="synthetic crash"):
+            s.execute()
+        assert recover_ambiguous_running_apply() == 1
+    else:
+        result = s.execute()
+        assert result.kind == "failed" and not result.retryable
+        mark_result(s.job_id, "failed", result.error, permanent=True, run_ctx=s.ctx)
+    close_connection(s.db_path)
+    s.conn = get_connection(s.db_path)
+    assert recover_ambiguous_running_apply() == 0
+    row = s.conn.execute("SELECT state,attempt_count FROM job_stage_states WHERE stage='apply'").fetchone()
+    assert tuple(row) == ("needs_verification", 1)
+    for _ in range(2):
+        assert acquire_job(target_job_id=s.job_id, approval_required=False) is None
+        assert acquire_job(approval_required=False) is None
+    facts = _email_facts(s)
+    assert facts["ApplySubmitIntended"] == 1
+    assert facts["EmailApplicationSent"] == 0
+    assert facts["EmailApplicationSendFailed"] == (0 if crash else 1)
+    assert s.sender_calls == 1
+    assert len(s.sends) == (0 if crash else 1)
+
+
+@pytest.mark.parametrize("boundary", ["capability", "availability", "ownership", "authority_unavailable"])
+def test_owned_email_preserves_independent_submission_guards(owned_email_path, monkeypatch, boundary):
+    s = owned_email_path
+
+    def late():
+        if boundary == "capability":
+            s.capability_revoked = True
+        elif boundary == "availability":
+            from .availability_fixture import seed_fresh_availability
+            s.conn.execute("UPDATE jobs SET url='https://example.com/changed-posting'")
+            seed_fresh_availability(s.conn, s.job_id)
+            s.conn.commit()
+        elif boundary == "ownership":
+            record_job_event(s.conn, s.job_id, "apply", "ApplyRunStarted", payload={"run_id": "successor"})
+            s.conn.commit()
+        else:
+            def unavailable(*args, **kwargs):
+                raise sqlite3.OperationalError("synthetic authority read failure")
+            monkeypatch.setattr(launcher_module, "_assert_current_email_approval", unavailable)
+
+    s.late = late
+    result = s.execute()
+    assert result.kind == "failed"
+    assert s.sends == []
+    assert s.sender_calls == 0
+    assert _email_facts(s)["ApplySubmitIntended"] == 0
+    if boundary == "authority_unavailable":
+        assert result.error == "approval_authority_unavailable"
