@@ -1914,7 +1914,14 @@ function PipelineWorkspace({
             title="Overall completion estimate"
           >
             <div className="pipeline-estimate-summary">
-              <PipelineStatus status={snapshot.overallEta.status}>
+              <PipelineStatus
+                status={
+                  snapshot.overallEta.status === "unavailable" &&
+                  snapshot.overallEta.reason === "no_work"
+                    ? "completed"
+                    : snapshot.overallEta.status
+                }
+              >
                 {etaLabel(snapshot.overallEta)}
               </PipelineStatus>
               <span data-typography="metadata">
