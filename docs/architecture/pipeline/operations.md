@@ -52,7 +52,13 @@ It waits while Temporal reports another discovery, import, or preparation
 workflow, or canonical stage rows are queued/running. An unavailable Temporal
 inventory prevents dispatch.
 
-Each recovery workflow handles one stage for at most 25 local jobs. Canonical
+Each recovery workflow handles one stage for at most 25 local jobs. New dispatches
+snapshot the saved `pipeline_internal_concurrency` (default 1, bounded 1–16);
+reattaching to an existing execution preserves its original input. Worker activity
+slots and source politeness remain separate limits. Heartbeats retain only the
+generated `prepare-auto-local-<stage>-<24 hex>` workflow ID and Temporal run ID.
+Pipelines uses the literal activity type to show its stage without assigning the
+batch to an individual job or inventing Discovery membership. Canonical
 queue predicates determine description, score, policy, threshold, and approved
 material prerequisites. A later heartbeat selects the next eligible stage.
 Recovery excludes explicit cancellation, blocked/non-retryable and exhausted

@@ -127,8 +127,8 @@ Two knobs that look like Temporal concurrency but are not:
 
 - The Pipelines page's **Internal concurrency** field and **Settings → General →
   Pipeline internal concurrency** edit one shared `config.json` value. Newly
-  started manual Pipeline actions and automatic profile-update Score → Tailor →
-  Cover batches snapshot that value. Source adapters use it for supported
+  started manual Pipeline actions, automatic profile-update Score → Tailor →
+  Cover batches, and idle preparation recovery batches snapshot that value. Source adapters use it for supported
   internal scraping parallelism, and preparation uses it for its bounded job
   batch; it does not create Temporal activity slots.
 - Resumable JobStreaming execution inside the broad-board source family is

@@ -344,6 +344,7 @@ _SAFE_WORKFLOW_REF_PATTERNS: Final[tuple[re.Pattern[str], ...]] = (
     re.compile(r"^discover-local$"),
     re.compile(r"^prep-preparation:[a-f0-9]{64}$"),
     re.compile(r"^run-[a-f0-9]{32}$"),
+    re.compile(r"^prepare-auto-local-(?:enrich|score|tailor|cover)-[a-f0-9]{24}$"),
 )
 _SAFE_TEMPORAL_RUN_REF = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"

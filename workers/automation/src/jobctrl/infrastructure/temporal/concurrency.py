@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Literal
 
 from jobctrl.infrastructure.scoring.criteria_provider import read_config_settings
@@ -48,6 +49,15 @@ def resolve_max_concurrent_activities(
         value=DEFAULT_MAX_CONCURRENT_ACTIVITIES,
         source="default",
     )
+
+
+def resolve_pipeline_internal_concurrency(config_path: Path | str | None = None) -> int:
+    """Snapshot Settings internal parallelism for a newly dispatched workflow."""
+    raw = read_config_settings(config_path).get("pipeline_internal_concurrency")
+    # Match the Settings reader's decimal-prefix parsing for saved numeric and
+    # legacy string values. This is format parsing, not a semantic decision.
+    match = re.match(r"^[+-]?[0-9]+", str(raw).strip())
+    return min(16, max(1, int(match[0]))) if match else 1
 
 
 def resolved_max_parallel_discovery_families(
