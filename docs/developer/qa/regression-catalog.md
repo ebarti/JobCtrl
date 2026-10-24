@@ -61,7 +61,7 @@ and their dependent rows, preserving the pre-existing synthetic jobs.
 Retain JUnit, complete request/response observations, synthetic inputs,
 source/lock hashes, traces and page screenshots. Inspect the screenshots as
 well as assertions. Final API regressions, 100/1,000/10,000-job scale evidence,
-independent review/QA and publication/resume checks bind to their controller
+product QA and publication/resume checks bind to their controller
 candidate; historical observations never certify a later stack tip. The
 [benchmark owner](../local-scale-benchmark.md#bounded-job-page-contract-and-supplied-comparisons)
 defines sampling and comparison limits.
@@ -86,7 +86,7 @@ identity and observations across runs. An unlisted peer is excluded mechanically
 postings, literal exclusions, limits and interruption before consumption. No
 alias table or geography sentence corpus decides suitability.
 These fixtures contact no live board and use no real user data. Local fixture
-proof does not replace the independent review, QA, or CI gates.
+proof does not replace the product QA or CI gates.
 
 ## Temporal Fault Injection
 
@@ -487,7 +487,7 @@ unreadable clipping/overlap or nondeterministic page assignment as High;
 layout highlight correspondence errors and isolated orphan headings are
 Medium unless they make approval materially misleading. Extraction gaps and
 visual-review candidates remain unresolved measurements until corroborated.
-Any unresolved Blocker/High prevents completion. Independent QA must inspect
+Any unresolved Blocker/High prevents completion. Visual QA must inspect
 **every measured page of every repeat**, record outcomes for all five dimensions,
 and reconcile its findings with the JSON and JUnit evidence. Eight passing
 automated cases alone do not complete visual QA or prove universal stability.
@@ -498,7 +498,7 @@ nonblank pages and repeat comparisons; it has no hardcoded dense-page count
 or assertion that the DOM layout map is physically accurate. More fonts,
 densities, themes, non-ASCII scripts, viewer versions and arbitrary document
 sizes are outside this bounded sample. The controller owns current-issue
-reconciliation, independent review/QA, mandatory checks and publication at an
+reconciliation, product QA, mandatory checks and publication at an
 unmerged verified head. After it records the summary, remove only the owned
 trial artifacts and processes; retain no generated candidate material in Git.
 
