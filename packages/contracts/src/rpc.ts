@@ -99,6 +99,7 @@ export const RpcMethods = {
   Apply: "apply",
   ProfileImport: "profile_import",
   JobUrlImport: "job_url_import",
+  JobUrlImportStatus: "job_url_import_status",
   ManualCaptureImport: "manual_capture_import",
   CancelRun: "cancel_run",
   ProviderStatus: "provider_status",
@@ -276,7 +277,7 @@ export const JobUrlImportParamsSchema = z
     expectedAppDir: z.string().trim().min(1).optional(),
     expectedDbPath: z.string().trim().min(1).optional(),
     url: JobUrlImportUrlSchema,
-    awaitResult: z.literal(true),
+    awaitResult: z.boolean().optional(),
   })
   .strict();
 export type JobUrlImportParams = z.infer<typeof JobUrlImportParamsSchema>;
@@ -935,7 +936,22 @@ export type ProfileImportWorkflowResult = z.infer<typeof ProfileImportWorkflowRe
 export type ProfileImportResult = z.infer<typeof ProfileImportResultSchema>;
 
 export const JobUrlImportResultSchema = ApplyResultSchema.extend({
-  result: JobUrlImportWorkflowResultSchema,
+  result: JobUrlImportWorkflowResultSchema.optional(),
+});
+export const JobUrlImportStatusParamsSchema = z.object({
+  tenantId: TenantParam,
+  expectedAppDir: z.string().trim().min(1),
+  expectedDbPath: z.string().trim().min(1),
+  workflowId: z.string().min(1).max(180),
+  executionId: z.string().uuid(),
+}).strict();
+export const JobUrlImportStatusResultSchema = z.object({
+  workflowId: z.string().min(1).max(180),
+  executionId: z.string().uuid(),
+  status: z.enum(["pending", "succeeded", "failed", "canceled", "timed_out", "terminated"]),
+  result: JobUrlImportWorkflowResultSchema.optional(),
+}).strict().refine((value) => (value.status === "succeeded") === (value.result !== undefined), {
+  message: "only completed import executions carry a result",
 });
 export const ManualCaptureImportResultSchema = ApplyResultSchema.extend({
   result: ManualCaptureImportWorkflowResultSchema,
@@ -984,6 +1000,7 @@ export const RpcContracts = {
   [RpcMethods.Apply]: { params: ApplyParamsSchema, result: ApplyResultSchema },
   [RpcMethods.ProfileImport]: { params: ProfileImportParamsSchema, result: ProfileImportResultSchema },
   [RpcMethods.JobUrlImport]: { params: JobUrlImportParamsSchema, result: JobUrlImportResultSchema },
+  [RpcMethods.JobUrlImportStatus]: { params: JobUrlImportStatusParamsSchema, result: JobUrlImportStatusResultSchema },
   [RpcMethods.ManualCaptureImport]: { params: ManualCaptureImportParamsSchema, result: ManualCaptureImportResultSchema },
   [RpcMethods.RefreshCompensation]: { params: RefreshCompensationParamsSchema, result: RefreshCompensationResultSchema },
   [RpcMethods.CheckPostingAvailability]: { params: CheckPostingAvailabilityParamsSchema, result: AvailabilityWorkflowStartSchema },

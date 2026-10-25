@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { JsonRpcResponse, RpcMethod } from "../src/contracts.js";
 import {
   createWorkerJobUrlImporter,
+  createWorkerJobUrlImportStatusReader,
   JobUrlImportError,
 } from "../src/job-url-import-worker.js";
 import type { JsonRpcDispatcher } from "../src/json-rpc-adapter.js";
@@ -154,5 +155,43 @@ describe("createWorkerJobUrlImporter", () => {
       statusCode: 500,
       message: "Job import returned an invalid worker result.",
     } satisfies Partial<JobUrlImportError>);
+  });
+});
+
+
+describe("durable import acknowledgement and status", () => {
+  const execution = { workflowId: "job-url-import-execution", executionId: "11111111-1111-4111-8111-111111111111" };
+  const imported = { status: "succeeded", outcome: "imported", job_id: "22222222-2222-4222-8222-222222222222",
+    imported_at: "2026-10-24T12:00:00Z", already_existed: false, item_id: null, reason: null, error: null, error_code: null };
+  function reader(payload: object) {
+    const dispatcher = new FakeDispatcher({ jsonrpc: "2.0", id: 1, result: payload });
+    return { read: createWorkerJobUrlImportStatusReader({ dispatcherFactory: () => dispatcher }), dispatcher };
+  }
+  it("accepts a workflow handle without waiting for a nested result", async () => {
+    const dispatcher = new FakeDispatcher({ jsonrpc: "2.0", id: 1,
+      result: { workflowId: execution.workflowId, runId: execution.workflowId, firstExecutionRunId: execution.executionId } });
+    const start = createWorkerJobUrlImporter({ dispatcherFactory: () => dispatcher });
+    expect(await start({ ...input, awaitResult: false }, context)).toEqual({ ok: true, status: "started", ...execution });
+    expect(dispatcher.calls[0]?.params.awaitResult).toBe(false);
+  });
+  it("keeps a running execution pending", async () => {
+    const { read, dispatcher } = reader({ ...execution, status: "pending" });
+    expect(await read(execution, context)).toEqual({ ok: true, ...execution, status: "pending" });
+    expect(dispatcher.calls[0]).toMatchObject({ method: "job_url_import_status", params: { ...execution, tenantId: "local", expectedAppDir: context.appDir, expectedDbPath: context.dbPath } });
+  });
+  it("maps completed imports and typed failures without waiting again", async () => {
+    expect(await reader({ ...execution, status: "succeeded", result: imported }).read(execution, context))
+      .toMatchObject({ status: "imported", jobKey: imported.job_id });
+    expect(await reader({ ...execution, status: "succeeded", result: {
+      ...imported, status: "failed", outcome: null, job_id: null, imported_at: null,
+      error: "private provider error", error_code: "semantic_determination_provider_non_retryable",
+    } }).read(execution, context)).toMatchObject({ status: "failed", failureCode: "provider_non_retryable" });
+  });
+  it.each(["failed", "canceled", "timed_out", "terminated"])("preserves terminal %s state", async (status) => {
+    expect(await reader({ ...execution, status }).read(execution, context)).toMatchObject({ status });
+  });
+  it("rejects a response for another execution", async () => {
+    await expect(reader({ ...execution, executionId: "22222222-2222-4222-8222-222222222222", status: "pending" })
+      .read(execution, context)).rejects.toBeInstanceOf(JobUrlImportError);
   });
 });

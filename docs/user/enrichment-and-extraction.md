@@ -266,7 +266,12 @@ Without it, acquisition uses anonymous access. Neither mode consults robots.txt;
 a page that remains inaccessible stays on the manual path.
 
 The Jobs page's **Import job** action applies the same boundary to one explicit
-public URL. A readable page is ingested immediately with its extracted title,
+public URL. It acknowledges the import promptly and follows its progress without
+holding one browser request open until all interpretation work finishes. You can
+close the dialog while it runs and follow it through **View import run**. If a
+progress check is temporarily unavailable, the dialog keeps the accepted import
+pending and checks again; it does not submit another import or claim the work
+failed because the browser request timed out. A readable page is ingested immediately with its extracted title,
 employer, description, location, and posted salary evidence. A blocked or
 ambiguous page creates a pending Manual Capture item and never a fabricated
 "imported" job. Credential-bearing, private, loopback, and otherwise

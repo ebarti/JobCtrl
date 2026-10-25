@@ -1307,6 +1307,9 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     server.register("profile_required_bullet_suggestions", profile_required_bullet_suggestions, mode="sync")
     server.register("profile_import", profile_import, mode="workflow")
     server.register("job_url_import", job_url_import, mode="workflow")
+    from jobctrl.infrastructure.rpc.job_url_import_status import job_url_import_status
+
+    server.register("job_url_import_status", job_url_import_status, mode="sync")
     server.register("manual_capture_import", manual_capture_import, mode="workflow")
     # Workflow starters.
     server.register("run_stage", run_stage, mode="workflow")

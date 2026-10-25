@@ -197,14 +197,14 @@ describe("current RPC caller controls and dispatch results", () => {
     expect(ProfileImportResultSchema.safeParse({ ...ack, result: { status: "succeeded" } }).success).toBe(false);
   });
 
-  it("retains required awaited import payloads and rejects missing or malformed nested results", () => {
+  it("permits async URL acknowledgements and validates completed import payloads", () => {
     const jobUrlResult = { status: "succeeded", outcome: "imported", job_id: CANONICAL_JOB_ID, item_id: null, reason: null, imported_at: "2026-10-17T00:00:00Z", already_existed: false, error: null, error_code: null };
     const captureResult = { status: "succeeded", job_id: CANONICAL_JOB_ID, item_id: "synthetic-capture", imported_at: "2026-10-17T00:00:00Z", retry_context: { synthetic: true }, error: null, error_code: null };
-    for (const [schema, result] of [
-      [JobUrlImportResultSchema, jobUrlResult], [ManualCaptureImportResultSchema, captureResult],
+    for (const [schema, result, allowsAcknowledgement] of [
+      [JobUrlImportResultSchema, jobUrlResult, true], [ManualCaptureImportResultSchema, captureResult, false],
     ] as const) {
       expect(schema.parse({ ...ack, result })).toEqual({ ...ack, result });
-      expect(schema.safeParse(ack).success).toBe(false);
+      expect(schema.safeParse(ack).success).toBe(allowsAcknowledgement);
       expect(schema.safeParse({ ...ack, result: { status: "succeeded" } }).success).toBe(false);
     }
   });

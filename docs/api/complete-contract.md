@@ -466,10 +466,26 @@ membership to persisted exhaustion, including when combined with `q` or
 `stages`. Public summaries keep the failed-state presentation and failure
 reason above.
 
-`POST /v1/jobs/import-url` accepts the strict body `{ url: string }`. The URL
-must be public HTTP(S); credential-bearing, private, loopback, unresolved, and unsafe redirect
-destinations fail closed. The API awaits the worker-owned Temporal import and
-returns one of:
+`POST /v1/jobs/import-url` accepts the strict body
+`{ url: string, awaitResult?: boolean }`. The URL must be public HTTP(S);
+credential-bearing, private, loopback, unresolved and unsafe redirect destinations
+fail closed. With `awaitResult: false`, the API returns `202` and
+`{ ok: true, status: "started", workflowId, executionId }` after the worker has
+acknowledged the durable import. The Jobs UI uses this mode. Omitting the flag or
+setting it to `true` retains the awaited `200` response for existing callers.
+
+`GET /v1/jobs/import-url/:workflowId/:executionId` reads only that exact local
+import history and returns `200` with `status: "pending"` while it is running.
+It never waits for running work and cannot start an import. The worker validates
+the tenant, expected app/database, workflow type, logical workflow ID and exact
+Temporal execution ID. It refuses foreign or mismatched histories and does not
+follow retries or a later run. A temporary read error returns an unavailable
+response; the UI keeps the acknowledged import pending and retries the read.
+Terminal `failed`, `canceled`, `timed_out` and `terminated` responses include a
+safe `message` and may include a closed interpretation `failureCode`; none is
+reported as an imported job.
+
+A completed status read and an awaited POST return one of:
 
 - `{ ok: true, status: "imported", jobKey, importedAt, alreadyExisted }` after
   deterministic page extraction, canonical Discovery ingestion, and snapshot
