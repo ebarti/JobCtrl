@@ -101,6 +101,11 @@ last accepted resume.
    and repairs. Diagnostic length limits never permit approval of an unresolved
    defect. Older accepted review details remain available as originally saved.
 
+   Generation and all reviewers receive the same evidence and role-selection
+   rules. They cannot require a summary quantity that generation was instructed
+   to omit, or assume an omitted role supplies visible context for the summary.
+   Reviewers inspect all criteria together and retain independent decisions.
+
    The current saved fit score selects this additional review, including when
    material generation was requested manually.
 4. **Repair bounded failures.** Model findings and recorded fit gaps guide

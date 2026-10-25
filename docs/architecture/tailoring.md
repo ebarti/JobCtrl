@@ -14,6 +14,18 @@ Tailoring generates a selective resume from saved profile sources and the curren
 | Fit bands, weights and caps over typed requirement verdicts | Code |
 | Line-to-source and line-to-finding display | Persisted ID joins |
 
+Generation, factual verification, quality review and the high-fit persona review
+receive the same summary-quantity and selected-role rendering constraints before
+their first decision. A rewritten summary uses a quantity only when its cited
+achievement supports that exact claim; baseline-only quantities are omitted and
+tenure is not inferred from dates. Only selected experience updates render, so a
+summary using evidence from an omitted role must supply its employer attribution
+within the permitted mutable text. These constraints do not add roles, bullets,
+source permissions or layout changes. Quality reviews evaluate every supplied
+criterion and report all actionable defects together, while retaining their own
+pass/fail authority. The shared rules enter determination fingerprints; prior
+accepted receipts remain immutable.
+
 Provider availability never selects a lexical path. A blocked refresh retains the last accepted generation and records its safe failure code.
 
 ## Short Version

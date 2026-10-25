@@ -547,6 +547,16 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For shared Materials review constraints, run locked
+`pytest tests/test_materials_review_constraints.py tests/test_materials_use_cases.py tests/test_material_review_history.py tests/test_parallel_resume_reviews.py`
+and the full worker suite. Through the actual use case in owned synthetic
+SQLite, inspect the first generator, factual, quality and high-fit persona
+requests: summary quantity authority and selected-role rendering constraints
+must agree before any repair. Opposing model verdicts remain authoritative;
+a failed refresh preserves accepted artifact IDs and bytes. These request
+checks establish contract consistency, not prose quality or a latency gain.
+Measure any timing benefit through the normal clean UI flow.
+
 For compact factual-review transport, run locked
 `pytest tests/test_claim_review_response.py tests/test_artifact_determinations.py`
 and the full worker suite, plus API semantic receipt-version checks. Require
