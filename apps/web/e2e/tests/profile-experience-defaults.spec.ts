@@ -36,6 +36,9 @@ test("experience defaults preserve all roles until the user explicitly makes one
     for (let index = 0; index < baseline.resume.experience_entries.length; index += 1) {
       await expect(entries.nth(index).getByRole("checkbox", { name: "Must appear in final resume", exact: true })).toBeChecked();
     }
+    // Exercise add/remove before the saved addition: no deleted-role pin may survive.
+    await page.getByRole("button", { name: "Add experience", exact: true }).click();
+    await entries.last().getByRole("button", { name: "Remove experience", exact: true }).click();
     await page.getByRole("button", { name: "Add experience", exact: true }).click();
     const added = entries.last();
     await added.getByLabel("Title", { exact: true }).fill("New included role");

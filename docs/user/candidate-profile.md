@@ -93,6 +93,10 @@ The checkboxes show that effective default, and newly added experiences start
 included. You can explicitly uncheck optional roles while keeping at least one
 role required. Existing saved subsets remain intact. This controls whether a
 whole role may be omitted; the per-role bullet ceiling still controls detail.
+Removing a role also removes its required-role and required-bullet references,
+without changing the remaining roles or their pins.
+A role with Required bullets also stays included, even outside an explicit role
+selection. Unpin those bullets first to make that role optional.
 
 Adding an experience, education entry or skill category creates its internal
 identity immediately. You edit its descriptive fields; changing a title or label

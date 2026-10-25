@@ -91,3 +91,75 @@ describe("experience inclusion defaults", () => {
     expect(roles.slice(0, 3)).toEqual(recordAt(initial, "resume")["experience_entries"]);
   });
 });
+
+describe("experience removal references", () => {
+  it("removing a newly included role removes its pin and preserves the previous selection", async () => {
+    const user = userEvent.setup();
+    const initial = profileWithRoles(["second"]);
+    let latest = initial;
+    render(<Editor initial={initial} onChange={(value) => { latest = value; }} />);
+    expandExperience();
+    await user.click(screen.getByRole("button", { name: "Add experience" }));
+    await user.click(screen.getAllByRole("button", { name: "Remove experience" }).at(-1)!);
+    expect(recordAt(latest, "resume")["experience_entries"]).toEqual(recordAt(initial, "resume")["experience_entries"]);
+    expect(included(latest)).toEqual(["second"]);
+  });
+
+  it("removing a pinned role removes only its required bullet and role references", async () => {
+    const user = userEvent.setup();
+    const initial = profileWithRoles(["first", "second"]);
+    const rules = recordAt(initial, "resume.tailoring_rules");
+    rules["required_bullets_by_experience_id"] = { first: ["first synthetic work."], second: ["second synthetic work."] };
+    let latest = initial;
+    render(<Editor initial={initial} onChange={(value) => { latest = value; }} />);
+    expandExperience();
+    await user.click(within(screen.getByRole("group", { name: "first company - first role" })).getByRole("button", { name: "Remove experience" }));
+    expect(included(latest)).toEqual(["second"]);
+    expect(recordAt(latest, "resume.tailoring_rules")["required_bullets_by_experience_id"]).toEqual({ second: ["second synthetic work."] });
+  });
+});
+
+describe("required bullet owner inclusion", () => {
+  it("shows a required bullet's owner as included without rewriting the stored role selection", () => {
+    const initial = profileWithRoles(["second"]);
+    recordAt(initial, "resume.tailoring_rules")["required_bullets_by_experience_id"] = { first: ["first synthetic work."] };
+    const changed = vi.fn();
+    render(<Editor initial={initial} onChange={changed} />);
+    expandExperience();
+    expect(requiredControl("first")).toBeChecked();
+    expect(requiredControl("first")).toHaveAttribute("aria-disabled", "true");
+    expect(changed).not.toHaveBeenCalled();
+  });
+
+  it("adding a role preserves another role's implicit bullet requirement", async () => {
+    const user = userEvent.setup();
+    const initial = profileWithRoles(["second"]);
+    recordAt(initial, "resume.tailoring_rules")["required_bullets_by_experience_id"] = { first: ["first synthetic work."] };
+    let latest = initial;
+    render(<Editor initial={initial} onChange={(value) => { latest = value; }} />);
+    expandExperience();
+    await user.click(screen.getByRole("button", { name: "Add experience" }));
+    const addedId = recordArrayAt(latest, "resume.experience_entries").at(-1)!["id"];
+    expect(included(latest)).toEqual(["second", addedId]);
+    expect(requiredControl("first")).toBeChecked();
+    const firstRole = screen.getByRole("group", { name: "first company - first role" });
+    await user.click(within(firstRole).getByRole("checkbox", { name: "Required" }));
+    expect(requiredControl("first")).not.toBeChecked();
+    expect(included(latest)).toEqual(["second", addedId]);
+  });
+
+  it("releases an implicit role requirement only after its required bullet is unpinned", async () => {
+    const user = userEvent.setup();
+    const initial = profileWithRoles(["second"]);
+    recordAt(initial, "resume.tailoring_rules")["required_bullets_by_experience_id"] = { first: ["first synthetic work."] };
+    let latest = initial;
+    render(<Editor initial={initial} onChange={(value) => { latest = value; }} />);
+    expandExperience();
+    expect(requiredControl("first")).toBeChecked();
+    const firstRole = screen.getByRole("group", { name: "first company - first role" });
+    await user.click(within(firstRole).getByRole("checkbox", { name: "Required" }));
+    expect(requiredControl("first")).not.toBeChecked();
+    expect(requiredControl("second")).toBeChecked();
+    expect(included(latest)).toEqual(["second"]);
+  });
+});
