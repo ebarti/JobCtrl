@@ -330,6 +330,13 @@ and verbatim quote; model unavailability creates no suggestion. Compensation
 shows evidence matched by persisted taxonomy codes. Affected demo capabilities
 report unavailable.
 
+For parallel resume repairs, pair a valid factual rejection with a completed
+quality finding in owned file-backed SQLite. The next generator request must
+carry both canonical determination IDs and finding sets. Retained speculative
+quality feedback is repair data only: it cannot approve a rejected draft, replace
+a fresh verdict for changed inputs or expand the canonical retry evidence
+catalogue. A failed refresh preserves the accepted artifact and bytes.
+
 For high-fit resumes, exercise all six typed persona verdicts and read actual
 worker-produced metadata through the API; a persisted receipt must accompany the
 persona audit. New requests must bound nested diagnostics without omitting any

@@ -563,8 +563,12 @@ review-history and voice-audit suites, then the full worker suite. In owned
 file-backed SQLite, prove actual factual/quality overlap, exact complete-request
 reuse, a fresh quality verdict after any request change, opposite model verdicts,
 unused receipt references on candidate rejection, parent-thread ownership
-guards and draining of admitted siblings on cancellation. Preserve accepted
-bytes and all six high-fit persona decisions. Custom ports and in-memory
+guards and draining of admitted siblings on cancellation. Reproduce a factual
+rejection paired with a quality finding and require both recorded finding sets
+in the same next repair. A speculative pass cannot approve a rejected candidate
+or survive as the final verdict after a changed draft; repair evidence stays
+inside the current catalogue and a final judge supersedes speculative feedback.
+Preserve accepted bytes and all six high-fit persona decisions. Custom ports and in-memory
 construction remain sequential. Measure live time savings through the normal
 UI with the configured model, effort and required reviews unchanged.
 

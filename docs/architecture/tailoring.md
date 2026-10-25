@@ -165,6 +165,11 @@ A quality verdict is used only after every factual/local gate passes and the
 complete quality request (artifact kind, entity, ordered lines and allowlists,
 sources and rubric) still has the same fingerprint. A changed request gets a
 fresh quality determination; a rejected candidate records the unused receipt.
+Its completed quality findings are retained separately as
+`parallel_quality_feedback` for the next generator repair. They do not fill the
+candidate's `judge` record, enter accepted review history or authorize approval.
+Repair evidence selections still intersect the current canonical retry catalogue;
+a later final judge takes precedence over speculative feedback.
 High-fit six-persona review still follows the accepted pair. Custom ports and
 in-memory databases retain sequential execution. Cancellation and shutdown
 drain admitted siblings before releasing resources.

@@ -24,14 +24,14 @@ def owned_review_pool(monkeypatch):
     letter_reviews.close_letter_reviews()
 
 
-def file_case(tmp_path, monkeypatch, model):
+def file_case(tmp_path, monkeypatch, model, *, retries=0):
     filename = tmp_path / "owned.db"
     monkeypatch.setattr(database, "DB_PATH", filename)
     conn = database.get_connection(filename)
     source = connection()
     source.backup(conn)
     source.close()
-    case = resume_case(conn, model)
+    case = resume_case(conn, model, retries=retries)
     deps = dict(
         llm=model, repository=SqliteDeterminationRepository(conn), tenant_id="local",
         provider="fake", model="synthetic", lane="tailoring", preflight=lambda: None,
@@ -236,3 +236,95 @@ def test_resume_factory_enrolls_only_default_file_backed_review_ports(tmp_path, 
     assert tailor._build_use_case(**arguments)._parallel_reviews is None
     memory.close()
     conn.close()
+
+
+
+def test_rejected_facts_keep_completed_quality_findings_for_the_same_repair(tmp_path, monkeypatch):
+    class RepairModel(ResumeModel):
+        def chat_json(self, messages, *, response_schema, **kwargs):
+            if response_schema["title"] == "ArtifactQuality":
+                self.quality = "fail" if self.generations == 1 else "pass"
+            return super().chat_json(messages, response_schema=response_schema, **kwargs)
+
+    model = RepairModel(repair=True)
+    conn, case, _deps = file_case(tmp_path, monkeypatch, model, retries=1)
+    outcome = case.execute(**request(tmp_path))
+    assert outcome.status == "approved"
+    first, second = [row["candidates"][0] for row in outcome.report["attempt_history"]]
+    assert first["status"] == "failed_fabrication_gate"
+    assert not first.get("judge")
+    assert first["parallel_reviews"]["quality_usage"] == "not_used_candidate_rejected"
+    identity = first["parallel_reviews"]["quality_determination_id"]
+    recorded = json.loads(conn.execute(
+        "SELECT envelope_json FROM semantic_determinations WHERE determination_id=?", (identity,),
+    ).fetchone()[0])
+    feedback = first["parallel_quality_feedback"]
+    assert feedback["determination_id"] == identity
+    assert feedback["result"] == recorded["result"]
+    assert feedback["result"]["verdict"] == "fail"
+    assert feedback["usage"] == "repair_only_candidate_rejected"
+    generations = [messages for title, _lane, messages in model.calls if title == "GeneratedResumeDraft"]
+    packets = []
+    for message in generations[1]:
+        try:
+            value = json.loads(message.content)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and "review_feedback" in value:
+            packets.extend(value["review_feedback"])
+    assert len(packets) == 1
+    repair = packets[0]
+    assert repair["claim_findings"] == first["claim_verification_findings"]
+    assert repair["quality_determination_id"] == identity
+    assert repair["quality_findings"] == recorded["result"]["findings"]
+    assert second["judge"]["passed"] is True
+    assert second["judge"]["determination_id"] != identity
+    conn.close()
+
+
+def test_speculative_pass_is_repair_data_and_cannot_approve_a_failed_refresh(tmp_path, monkeypatch):
+    conn, initial, deps = file_case(tmp_path, monkeypatch, ResumeModel(text="Owned accepted material"))
+    accepted = initial.execute(**request(tmp_path))
+    previous = accepted.materials.tailored_resume
+    previous_bytes = Path(previous.path).read_bytes()
+
+    class RepairModel(ResumeModel):
+        def chat_json(self, messages, *, response_schema, **kwargs):
+            if response_schema["title"] == "ArtifactQuality":
+                self.quality = "pass" if self.generations == 1 else "fail"
+            return super().chat_json(messages, response_schema=response_schema, **kwargs)
+
+    model = RepairModel(repair=True, text="Owned revised material")
+    case = resume_case(conn, model, retries=1)
+    case._parallel_reviews = ParallelLetterReviews(
+        (tmp_path / "owned.db").resolve(), {**deps, "llm": model},
+    )
+    outcome = case.execute(**request(tmp_path, retailor=True))
+    assert outcome.status != "approved"
+    first, second = [row["candidates"][0] for row in outcome.report["attempt_history"]]
+    assert first["status"] == "failed_fabrication_gate"
+    assert not first.get("judge")
+    assert first["parallel_quality_feedback"]["result"]["verdict"] == "pass"
+    assert second["judge"]["passed"] is False
+    assert second["judge"]["determination_id"] != first["parallel_reviews"]["quality_determination_id"]
+    assert sum(title == "ArtifactQuality" for title, _lane, _messages in model.calls) == 2
+    assert Path(previous.path).read_bytes() == previous_bytes
+    assert conn.execute(
+        "SELECT status FROM job_materials_artifacts WHERE artifact_id=?", (previous.artifact_id,),
+    ).fetchone()[0] == "approved"
+    conn.close()
+
+
+def test_parallel_repair_evidence_stays_within_current_authority_and_defers_to_a_final_judge():
+    from jobctrl.domain.materials.use_cases import _RetryEvidenceTarget, _retry_evidence_targets
+
+    allowed = _RetryEvidenceTarget("owned-evidence", "owned-role", ("owned-requirement",), ("owned-edge",))
+    record = {"parallel_quality_feedback": {
+        "determination_id": "owned-parallel-receipt",
+        "retry_evidence_ids": ["owned-evidence", "foreign-evidence"],
+    }}
+    assert _retry_evidence_targets([record], (allowed,)) == [allowed.to_dict()]
+    record["judge"] = {
+        "determination_id": "owned-final-receipt", "retry_evidence_ids": ["foreign-evidence"],
+    }
+    assert _retry_evidence_targets([record], (allowed,)) == []
