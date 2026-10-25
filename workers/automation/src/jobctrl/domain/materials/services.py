@@ -31,9 +31,9 @@ from typing import Any
 
 from jobctrl.domain.ports.artifact_review import ValidationResult
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
+from jobctrl.domain.profile.canonical_sources import experience_bullet_evidence_ids_by_role
 from jobctrl.resume_profile import (
     experience_updates_by_id,
-    get_achievement_evidence,
     get_education_entries,
     get_experience_entries,
     get_max_experience_bullets,
@@ -143,7 +143,7 @@ def _validate_master_json_fields(data: dict, profile: dict, mode: str = "normal"
     all_experience_ids = {entry.get("id") for entry in experience_entries}
     required_experience_ids = set(get_required_experience_entry_ids(profile)) & all_experience_ids
     required_bullets_by_entry = get_required_bullets_by_experience_id(profile)
-    evidence_entry_ids = {item["experience_entry_id"] for item in get_achievement_evidence(profile)}
+    evidence_entry_ids = {ident for ident, evidence in experience_bullet_evidence_ids_by_role(profile).items() if evidence}
     required_skill_ids = set(get_required_skill_category_ids(profile))
     max_bullets = get_max_experience_bullets(profile)
 

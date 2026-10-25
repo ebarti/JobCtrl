@@ -244,6 +244,14 @@ coverage edge or expand the artifact budget. A required role without active
 coverage or a bullet pin retains its single positioning-bullet constraint;
 additional saved evidence outside the permitted revision set cannot become an
 impossible drafting requirement.
+
+Empty-bullet permissions use the plan's actual achievement inventory, including
+authored baseline bullets as well as confirmed achievement-ledger records.
+Standalone prompt construction and field validation share the canonical profile
+source inventory. Fixed role metadata and unconfirmed ledger records do not
+become achievement evidence. A required role with baseline evidence cannot be
+listed as allowing empty bullets solely because its separate ledger is empty;
+a role with neither evidence nor a bullet pin preserves its fixed metadata.
 Quality correction IDs are checked against admitted revision targets plus
 canonical sources already bound to the verified rendered candidate. The full
 profile remains available for factual review; its mere presence cannot grant a

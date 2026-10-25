@@ -18,6 +18,13 @@ recorded as skipped because the setting is off; existing accepted letters and
 work already generating are preserved. New direct cover-only requests also
 require the setting to be enabled.
 
+A required experience can use its existing authored baseline bullets even when
+it has no separate achievement record. Required roles without target-covered or
+pinned bullets retain one supported positioning bullet when evidence exists.
+A required role with no achievement evidence or bullet pins keeps its fixed role
+details without an invented bullet. Unconfirmed achievement records do not
+supply facts for generation.
+
 Before generating a resume or cover letter, JobCtrl reuses a posting observation
 from the preceding six hours, including an uncertain observation. It attempts a
 refresh when no recent observation exists. Usable content can feed preparation
