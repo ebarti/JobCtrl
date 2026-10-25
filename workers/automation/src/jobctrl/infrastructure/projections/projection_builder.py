@@ -990,6 +990,7 @@ class ProjectionBuilder:
         dirty_job_ids.update(self._stale_artifact_projection_jobs())
         dirty_job_ids.update(self._stale_stage_projection_jobs())
         dirty_job_ids.update(self._stale_compensation_projection_jobs())
+        dirty_job_ids.update(self._backfill_late_apply_settlements())
 
         # One-time score-audit backfill (see SCORE_AUDIT_BACKFILL): rebuild any
         # already-projected scored job whose audit columns are still NULL. This
@@ -3951,6 +3952,28 @@ class ProjectionBuilder:
                 continue
             self._store.upsert_apply_run(projection)
 
+    def _backfill_late_apply_settlements(self) -> set[str]:
+        """Repair existing fallback rows once, even with a current event cursor.
+
+        The refresh writer/savepoint owns both the repair and marker. History,
+        canonical stage state and tenant boundaries retain their authority.
+        """
+        marker = f"late_apply_settlement_v1:{self._tenant_id}"
+        if self._conn.execute("SELECT 1 FROM projection_backfills WHERE name=?", (marker,)).fetchone():
+            return set()
+        jobs = {str(row[0]) for row in self._conn.execute(
+            "SELECT DISTINCT job_id FROM job_events WHERE tenant_id=? AND stage='apply' "
+            "AND event_type='LockReleased' AND json_extract("
+            "CASE WHEN json_valid(payload_json) THEN payload_json ELSE '{}' END,'$.stage_preserved')=1",
+            (str(self._tenant_id),),
+        )}
+        if jobs:
+            self._rebuild_apply_runs()
+        self._conn.execute(
+            "INSERT INTO projection_backfills (name,completed_at) VALUES (?,?)", (marker, _utc_now()),
+        )
+        return jobs
+
     def _collect_apply_events_by_run(self) -> dict[str, list[dict]]:
         try:
             rows = self._conn.execute(
@@ -4062,6 +4085,28 @@ class ProjectionBuilder:
                 if event_type == "LockReleased" and result is not None:
                     continue
                 term_status, term_result = self._TERMINAL_EVENT_STATUS[event_type]
+                if event_type == "LockReleased" and payload.get("stage_preserved") is True:
+                    # Settlement reports the original run's result independently
+                    # of a newer/local stage disposition. This is display evidence,
+                    # not an ApplicationSubmitted fact or retry authority.
+                    late_status = payload.get("late_status")
+                    if late_status == "applied":
+                        if any(
+                            item["event_type"] == "EmailApplicationSent" and item["job_id"] == job_id
+                            for item in events
+                        ):
+                            term_status, term_result = "succeeded", "applied"
+                        else:
+                            # Use the shared terminal lifecycle status; the
+                            # result retains the unresolved external outcome.
+                            term_status, term_result = "manual", "needs_verification"
+                    elif late_status == "dry_run":
+                        term_status, term_result = "dry_run_complete", "dry_run_complete"
+                        dry_run = True
+                    elif late_status == "failed" and any(
+                        item["event_type"] == "ApplySubmitIntended" and item["job_id"] == job_id for item in events
+                    ):
+                        term_status, term_result = "manual", "needs_verification"
                 status = term_status
                 result = str(payload.get("result")) if isinstance(payload.get("result"), str) else term_result
                 finished_at = (

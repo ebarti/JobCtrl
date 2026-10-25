@@ -522,7 +522,11 @@ and rechecks all durable tenant/job submit intents and unresolved skipped
 outcomes under that same writer lock. This also fences an inherited attempt
 that was admitted before earlier submission evidence became visible.
 Settlement holds the writer and rejects a stopped stage or a successor run;
-recovery reads running ownership under the writer as well. Durable intent remains
+recovery reads running ownership under the writer as well. Restart recovery and
+manual Applied resolution retain the claimed attempt count. Original-run
+settlement evidence remains visible independently of Skip; the
+[Apply projector](../read-model.md#late-apply-settlement) retains a corroborated
+late email outcome or unresolved submission uncertainty. Durable intent remains
 a retry blocker even if a late terminal event is recorded after a local stop.
 
 Any admitted run retains its owner across local stage changes: reset waits for its exact

@@ -1729,6 +1729,7 @@ def recover_ambiguous_running_apply(console: Console | None = None) -> int:
                         "apply",
                         "needs_verification",
                         tenant_id=tenant_id,
+                        attempt_count=_attempt_count_for(conn, tenant_id=str(tenant_id), job_id=str(job_id)),
                         error_code="APPLY_NEEDS_VERIFICATION",
                         error_message="Live apply reached the submit-intent checkpoint without a terminal result.",
                         retryable=False,
@@ -1742,6 +1743,7 @@ def recover_ambiguous_running_apply(console: Console | None = None) -> int:
                         "apply",
                         "pending",
                         tenant_id=tenant_id,
+                        attempt_count=_attempt_count_for(conn, tenant_id=str(tenant_id), job_id=str(job_id)),
                         next_action=(f"jobctrl apply --url {posting_url}" if posting_url else None),
                         validate_transition=False,
                     )
@@ -1913,6 +1915,7 @@ def mark_job(
             "apply",
             "succeeded",
             tenant_id=stable_tenant_id,
+            attempt_count=_attempt_count_for(conn, tenant_id=str(stable_tenant_id), job_id=str(stable_job_id)),
             finished_at=now,
             duration_ms=0,
             retryable=False,

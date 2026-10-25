@@ -78,6 +78,26 @@ recipient/attachment approval. The Preferences UI keeps that state visibly
 warned.
 :::
 
+### Late Apply Settlement
+
+Local disposition and original-run outcome have separate authority. When a run
+returns after Skip or a successor takes ownership, settlement records
+`LockReleased` with `stage_preserved` and `late_status`, leaving the canonical
+stage untouched. The Python projector uses this reported result only as a
+fallback when no authoritative terminal result exists. A matching
+`EmailApplicationSent` for the same job and run corroborates a late successful
+email outcome; without it, a reported success remains Needs verification. A
+failed post-intent return also remains uncertain. These uncertain runs use the
+existing `manual` lifecycle status with a `needs_verification` result, so readers
+do not mistake a completed run for active work. A completed rehearsal stays a
+dry run. An ordinary legacy cleanup retains its existing fallback behavior.
+
+This display evidence creates no `ApplicationSubmitted` fact and cannot release
+Skip or remove durable intent as a retry blocker. A per-tenant projection
+backfill repairs previously cached late-settlement rows even when the event
+cursor is current. Repair and its marker share the refresh transaction or
+caller savepoint; original events and canonical application state are preserved.
+
 ### Resume Review Drafts
 
 Apply Review edits are a feedback layer, not in-place mutations of an accepted

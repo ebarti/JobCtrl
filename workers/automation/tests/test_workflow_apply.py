@@ -540,6 +540,17 @@ async def test_registered_rpc_to_real_submission_settlement_and_restart(tmp_path
             if dispositions:
                 assert final == dispositions[-1]  # Late settlement cannot alter this committed Skip.
             assert fingerprint() == before
+            from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
+            ProjectionBuilder(conn_factory=lambda: conn).refresh()
+            projected_run = conn.execute(
+                "SELECT run_id,status,result FROM apply_run_projections WHERE job_id=? "
+                "ORDER BY started_at DESC LIMIT 1", (LOCAL_JOB_ID,),
+            ).fetchone()
+            expected_outcome = ('succeeded', 'applied') if overlap in {'unchanged', 'after_intent'} else (
+                ('manual', 'needs_verification') if overlap == 'lost_ack' else ('failed', 'failed')
+            )
+            assert (projected_run['status'], projected_run['result']) == expected_outcome
+            assert dict(conn.execute("SELECT state,version,attempt_count FROM job_stage_states WHERE job_id=? AND stage='apply'", (LOCAL_JOB_ID,)).fetchone()) == final
             # Close/reopen canonical storage, then use registered RPC again. It must not
             # enter the agent or sender, including after a provider's lost acknowledgement.
             conn.close()
@@ -560,6 +571,6 @@ async def test_registered_rpc_to_real_submission_settlement_and_restart(tmp_path
                 'temporal_run': (await handle.describe()).run_id, 'restart_workflow': response2.result['workflowId'], 'restart_temporal_run': response2.result['firstExecutionRunId'],
                 'run_events': [{'event_id': r['event_id'], 'event_type': r['event_type'], 'payload': json.loads(r['payload_json'])} for r in conn.execute("SELECT event_id,event_type,payload_json FROM job_events WHERE stage='apply' AND event_type IN ('ApplyRunStarted','ApplySubmitIntended') ORDER BY event_id")],
                 'events': counts, 'events_after_restart': dict(conn.execute("SELECT event_type,COUNT(*) FROM job_events WHERE stage='apply' GROUP BY event_type")),
-                'sender_calls': len(sender.sent), 'committed_local_dispositions': dispositions, 'stage': final, 'artifacts_before': before, 'artifacts_after': fingerprint()}))
+                'sender_calls': len(sender.sent), 'committed_local_dispositions': dispositions, 'stage': final, 'original_run_projection': dict(projected_run), 'artifacts_before': before, 'artifacts_after': fingerprint()}))
     conn.close()
     database.close_connection(path)

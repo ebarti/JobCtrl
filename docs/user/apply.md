@@ -92,6 +92,9 @@ accepted materials and existing attempt history.
 Skip does not cancel a provider operation already in flight or prove an
 application was stopped externally. Use the separate run controls for active
 work, and inspect the employer site or provider history for an uncertain outcome.
+If an owned email send completes after Skip, its original run history retains
+the recorded send outcome. A lost acknowledgement remains Needs verification.
+Neither outcome removes the local stop or permits an automatic retry.
 Recorded submit intent remains visible in Apply Audit even after Skip, later
 stage changes or restart. Ordinary reset cannot clear that evidence or permit
 another send. Skip also retains a prior Needs verification stop when no intent
@@ -101,7 +104,8 @@ outcome.
 An explicit Apply reset can release a local pre-submission Skip, a retryable
 failure, exhaustion or cancellation when no submit intent exists. It refuses
 active/queued work, Applied, Needs verification and policy-owned skip causes.
-It preserves accepted artifacts and events; the attempt budget is retained unless
+Recovery after a restart and manual **Mark Applied** also preserve the existing
+attempt count. Reset preserves accepted artifacts and events; the budget is retained unless
 reset explicitly (or exhausted). A retryable `DRY_RUN` completion remains eligible
 for another rehearsal without resetting a manual Skip.
 

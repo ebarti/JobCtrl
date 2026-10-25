@@ -1213,6 +1213,8 @@ def test_owned_email_skip_overlap_retains_durable_authority(conn, monkeypatch, t
     def skip():
         with sqlite3.connect(tmp_path / "jobctrl.db") as writer:
             writer.execute("UPDATE job_stage_states SET state='skipped',error_code=NULL,retryable=0,version=version+1 WHERE tenant_id=? AND job_id=? AND stage='apply'", (LOCAL_TENANT, LOCAL_JOB_ID))
+            from jobctrl.state import record_job_event
+            record_job_event(writer, JobId(LOCAL_JOB_ID), 'apply', 'StageSkipped', payload={'manualDisposition': 'skip', 'previousState': 'running'})
 
     class Agent(_FakeAgent):
         def submit_application(self, **kwargs):
@@ -1538,4 +1540,53 @@ def test_apply_settlement_preserves_claimed_attempt_budget(conn, monkeypatch, re
     before = [tuple(r) for r in conn.execute('SELECT * FROM job_materials_artifacts')]
     mark_result(JobId(LOCAL_JOB_ID), result, run_ctx={'run_id': 'settling'})
     assert tuple(conn.execute("SELECT state,attempt_count FROM job_stage_states WHERE job_id=? AND stage='apply'", (LOCAL_JOB_ID,)).fetchone()) == (expected, 2)
+    assert [tuple(r) for r in conn.execute('SELECT * FROM job_materials_artifacts')] == before
+
+
+@pytest.mark.parametrize('intended', [False, True])
+def test_apply_restart_recovery_retains_budget(conn, monkeypatch, intended):
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state, record_job_event
+    _insert_ready_job(conn, LOCAL_TENANT, LOCAL_JOB_ID)
+    ensure_job_stage_rows(conn, LOCAL_JOB_ID)
+    set_stage_state(conn, LOCAL_JOB_ID, 'score', 'succeeded', validate_transition=False)
+    set_stage_state(conn, LOCAL_JOB_ID, 'apply', 'running', attempt_count=2, validate_transition=False)
+    record_job_event(conn, JobId(LOCAL_JOB_ID), 'apply', 'ApplyRunStarted', payload={'run_id': 'dead-owner'})
+    if intended:
+        record_job_event(conn, JobId(LOCAL_JOB_ID), 'apply', 'ApplySubmitIntended', payload={'run_id': 'dead-owner'})
+    conn.commit()
+    monkeypatch.setattr('jobctrl.apply.launcher.get_connection', lambda: conn)
+    before = [tuple(r) for r in conn.execute('SELECT * FROM job_materials_artifacts')]
+    assert recover_ambiguous_running_apply() == 1
+    expected = 'needs_verification' if intended else 'pending'
+    assert tuple(conn.execute("SELECT state,attempt_count FROM job_stage_states WHERE job_id=? AND stage='apply'", (LOCAL_JOB_ID,)).fetchone()) == (expected, 2)
+    assert recover_ambiguous_running_apply() == 0
+    if intended:
+        assert acquire_job(target_job_id=JobId(LOCAL_JOB_ID), approval_required=False) is None
+    else:
+        assert acquire_job(target_job_id=JobId(LOCAL_JOB_ID), approval_required=False)
+        assert conn.execute("SELECT attempt_count FROM job_stage_states WHERE job_id=? AND stage='apply'", (LOCAL_JOB_ID,)).fetchone()[0] == 3
+    assert [tuple(r) for r in conn.execute('SELECT * FROM job_materials_artifacts')] == before
+
+
+@pytest.mark.parametrize('prior', ['needs_verification', 'skipped'])
+def test_cli_mark_applied_retains_budget_and_intent(conn, monkeypatch, prior):
+    from jobctrl import cli, database
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state, record_job_event
+    from typer.testing import CliRunner
+    _insert_ready_job(conn, LOCAL_TENANT, LOCAL_JOB_ID)
+    ensure_job_stage_rows(conn, LOCAL_JOB_ID)
+    set_stage_state(conn, LOCAL_JOB_ID, 'apply', prior, attempt_count=2, validate_transition=False)
+    record_job_event(conn, JobId(LOCAL_JOB_ID), 'apply', 'ApplySubmitIntended', payload={'run_id': 'uncertain'})
+    conn.commit()
+    monkeypatch.setattr(cli, '_bootstrap', lambda: None)
+    monkeypatch.setattr(database, 'get_connection', lambda: conn)
+    monkeypatch.setattr('jobctrl.apply.launcher.get_connection', lambda: conn)
+    before = [tuple(r) for r in conn.execute('SELECT * FROM job_materials_artifacts')]
+    result = CliRunner().invoke(cli.app, ['apply', '--mark-applied', SHARED_URL])
+    assert result.exit_code == 0, result.output
+    assert 'Marked as applied' in result.output
+    assert tuple(conn.execute("SELECT state,attempt_count FROM job_stage_states WHERE job_id=? AND stage='apply'", (LOCAL_JOB_ID,)).fetchone()) == ('succeeded', 2)
+    assert conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type='ApplySubmitIntended'").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type='ApplicationManuallyMarked'").fetchone()[0] == 1
+    assert acquire_job(target_job_id=JobId(LOCAL_JOB_ID), approval_required=False) is None
     assert [tuple(r) for r in conn.execute('SELECT * FROM job_materials_artifacts')] == before

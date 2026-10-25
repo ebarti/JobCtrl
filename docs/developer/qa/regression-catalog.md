@@ -565,6 +565,14 @@ Job Detail readers after relabel/restart. Exercise the real CLI manual-failure
 command: active ownership, Skip and uncertainty must produce a nonzero refusal,
 while safe local failure preserves attempts/materials. Settlement must retain
 the claimed attempt count for success, rehearsal, failure and uncertainty.
+Also cover both restart recovery branches and real CLI Mark Applied with an
+existing budget. Run `test_apply_runs_projection_from_events.py` and
+`test/apply-late-settlement.test.ts` for actual claim/saga/fake-sender/Skip/late
+settlement through the Python projector and HTTP readers. Successful original-run
+history must not become a fabricated submit failure; lost acknowledgement stays
+uncertain, Skip and intent still block retry, and accepted artifacts remain
+unchanged. Check already-cached fallback repair without new events, rollback and
+caller transaction ownership, prior terminal outcomes and foreign send evidence.
 Regress an automatic score-threshold reset after a relabeled manual Skip: no claim
 is admitted until a validated explicit release. Refuse canceled/failed/pending
 resets without the exact original owner settlement, including mixed-cohort RPC
