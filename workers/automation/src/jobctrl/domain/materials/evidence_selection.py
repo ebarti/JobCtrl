@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 from collections.abc import Callable
-from typing import Protocol
+from typing import ClassVar, Protocol
 
 from pydantic import Field, StrictStr
 
@@ -27,6 +27,8 @@ class RequirementEvidenceSelection(DeterminationModel):
 
 
 class MaterialEvidenceSelection(DeterminationModel):
+    compatible_prompt_versions: ClassVar = ("material-evidence-selection-v1",)
+
     decisions: list[RequirementEvidenceSelection] = Field(max_length=200)
 
 
@@ -166,7 +168,7 @@ class ModelMaterialEvidenceSelector:
             kind="material_evidence_selection",
             schema=MaterialEvidenceSelection,
             schema_version="1",
-            prompt_version="material-evidence-selection-v1",
+            prompt_version="material-evidence-selection-v2-baseline-retention",
             instruction=(
                 "Select a truthful, relevant resume evidence plan within the supplied per-role bullet ceiling. "
                 "The seeded edges are a menu, not mandatory inclusion. Return one decision for EVERY supplied requirement. "
@@ -174,6 +176,7 @@ class ModelMaterialEvidenceSelector:
                 "Explicit user pins remain mandatory and also consume slots, even when their requirement is omitted. "
                 "Prefer strong relevant coverage of important requirements, reuse supported evidence where appropriate, and use admitted alternatives from other roles. "
                 "If all supported requirements cannot fit, leave the less useful ones uncovered with a specific rationale; never invent an edge, broaden a claim, or change the ceiling. "
+                "Keep as many applicable baseline accomplishments as possible within the configured hard ceiling; they are not explicit user pins. A baseline does not need an active coverage edge to be relevant. Generation must record any baseline omission for independent quality review. Do not infer semantic equivalence from IDs. "
                 "Canonical context marked requires_generated_claim=false remains factual context rather than a new required bullet. "
                 "Each decision must cite its requirement source; a selected edge must additionally cite its exact achievement source. "
                 "Selection does not establish shipped coverage: independent factual and quality reviews still decide the generated artifact."
@@ -182,6 +185,7 @@ class ModelMaterialEvidenceSelector:
             context={
                 "profile_version": profile_snapshot.version,
                 "per_role_bullet_ceiling": get_max_experience_bullets(profile),
+                "baseline_evidence_ids_by_role": plan.baseline_evidence_ids_by_role,
                 "explicit_pins": plan.requirement_led_controls.required_content_pins.to_dict(),
                 "required_evidence_ids": list(plan.required_evidence_ids),
                 "coverage_graph": graph.to_dict(),

@@ -91,7 +91,7 @@ def draft_payload(text="Synthetic draft"):
                 "claim_label": "positioning",
                 "coverage_edge_ids": [],
                 "requirement_ids": [],
-                "evidence_ids": [evidence],
+                "evidence_ids": [evidence, "experience:entry:source:0"] if evidence == "fact" else [evidence],
                 "non_requirement_reason": "positioning",
                 "review_required": False,
             }
@@ -440,7 +440,8 @@ def test_unaffirmed_generator_anchor_identifies_the_line_and_source_for_repair(t
     feedback = next(json.loads(row.content) for row in messages if row.content.startswith('{"review_feedback"'))
     finding = next(row for row in feedback["review_feedback"][0]["claim_findings"] if row["kind"] == "source_anchor_binding_invalid")
     assert finding["line_id"] == "experience:entry#0"
-    assert '["fact"]' in finding["rationale"]
+    assert '"fact"' in finding["rationale"]
+    assert '"experience:entry:source:0"' in finding["rationale"]
 
 
 @pytest.mark.parametrize("stage", ["GeneratedResumeDraft", "ClaimVerification", "ArtifactQuality", "ResumeAdversarialReview"])
@@ -565,7 +566,10 @@ def test_structural_repair_receives_rejected_candidate_and_exact_errors_as_untru
                 else:
                     row = feedback[0]["review_feedback"][0]
                     assert row["rejected_candidate"]["generated_claim_mappings"][1]["evidence_ids"] == ["owned-invalid-binding"]
-                    assert row["validation_errors"] == ["Generated claim claim:1 references unknown evidence owned-invalid-binding."]
+                    assert set(row["validation_errors"]) == {
+                        "Generated claim claim:1 references unknown evidence owned-invalid-binding.",
+                        "Missing baseline selection decision in experience entry: experience:entry:source:0",
+                    }
                     assert all("owned-invalid-binding" not in message.content for message in messages if message.role == "system")
                     assert "untrusted repair data" in feedback[0]["repair_contract"]
             return result

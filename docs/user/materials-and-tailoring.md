@@ -18,10 +18,23 @@ recorded as skipped because the setting is off; existing accepted letters and
 work already generating are preserved. New direct cover-only requests also
 require the setting to be enabled.
 
-A required experience can use its existing authored baseline bullets even when
-it has no separate achievement record. Required roles without target-covered or
-pinned bullets retain one supported positioning bullet when evidence exists.
-A required role with no achievement evidence or bullet pins keeps its fixed role
+Tailoring keeps as many applicable baseline accomplishments as possible in each
+selected role, up to **Max bullets per role**. The configured maximum is a hard
+cap even when your baseline has more bullets. Tailoring can reorder or rewrite
+kept evidence, while preserving its action, ownership, scope, outcomes, tools
+and metrics. A baseline fact does not need a job-requirement link to be useful.
+
+Each omitted baseline bullet has a recorded source ID, reason and rationale.
+A bullet can be omitted because it clearly does not apply, or because the role
+already fills its limit with better applicable evidence. A cap explanation is
+invalid when the role is below its limit. The independent quality review judges
+those proposals and rejects unjustified omissions or underfilled roles; it does
+not accept the generator's rationale as fact. Related facts may share a coherent
+bullet only when independent reviews confirm their substance survives. These
+checks use the existing generation and review calls, without an extra model
+stage. The saved setting and profile are unchanged.
+
+A required role without applicable achievement evidence can keep its fixed role
 details without an invented bullet. Unconfirmed achievement records do not
 supply facts for generation.
 
@@ -99,8 +112,9 @@ last accepted resume.
    checks source IDs, versions and the available artifact budget. When the
    initial evidence selection exceeds a role's bullet limit, the configured
    model chooses a smaller supported selection and records any requirements
-   left uncovered. Your explicit pins and saved limit remain authoritative;
-   pins that cannot fit produce an actionable block before drafting.
+   left uncovered. Your explicit pins and configured per-role limit remain
+   authoritative; pins that cannot fit produce an actionable block before
+   drafting. The configured limit remains a hard cap.
 2. **Generate candidates with anchors.** Each candidate records its line IDs,
    evidence IDs, requirement IDs, transform and reason. A posting provides
    employer context and cannot establish a candidate fact.

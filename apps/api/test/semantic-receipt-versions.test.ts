@@ -62,7 +62,14 @@ const scoring = {
   },
 };
 
-it.each([quality, adversarial, scoring, claims, { ...claims, previous: "claim-verification-v2" }])("keeps known $kind history readable while current-only reads remain strict", (contract) => {
+const evidenceSelection = {
+  kind: "material_evidence_selection" as const,
+  previous: "material-evidence-selection-v1",
+  current: "material-evidence-selection-v2-baseline-retention",
+  result: { decisions: [] },
+};
+
+it.each([quality, adversarial, scoring, claims, evidenceSelection, { ...claims, previous: "claim-verification-v2" }])("keeps known $kind history readable while current-only reads remain strict", (contract) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-receipt-versions-"));
   const filename = path.join(directory, "owned.db");
   initializeExactDatabase(filename);

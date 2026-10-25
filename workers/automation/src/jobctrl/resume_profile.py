@@ -373,6 +373,11 @@ def experience_updates_by_id(tailored_payload: dict) -> dict:
         str(update.get("id", "")).strip(): {
             **update,
             _MANDATORY_BULLET_OVERFLOW_KEY: preserve_accepted_overflow,
+            "_jobctrl_baseline_selection_recorded": isinstance(tailored_payload.get("experience_omissions"), list),
+            "_jobctrl_baseline_omission_proposals": [
+                row for row in tailored_payload.get("experience_omissions", ())
+                if isinstance(row, dict) and row.get("experience_entry_id") == str(update.get("id", "")).strip()
+            ],
         }
         for update in tailored_payload.get("experience_updates") or []
         if isinstance(update, dict) and update.get("id")
@@ -382,12 +387,28 @@ def experience_updates_by_id(tailored_payload: dict) -> dict:
 def tailored_experience_bullets(entry: dict, update: dict, profile: dict) -> list[str]:
     """Return bullets allowed by policy, with required baseline bullets preserved."""
     policy = get_tailoring_policy(profile)
-    source = update.get("bullets") if policy["allow_achievement_rewriting"] and isinstance(update, dict) else None
+    baseline = entry.get("bullets", [])
+    entry_id = str(entry.get("id", ""))
+    required = get_required_bullets_by_experience_id(profile).get(entry_id, [])
+    source = update.get("bullets") if isinstance(update, dict) else None
+    if not policy["allow_achievement_rewriting"] and isinstance(source, list):
+        # New selection can keep exact authored strings; legacy exports retain
+        # their prior baseline fallback. Neither path permits a rewrite.
+        if not update.get("_jobctrl_baseline_selection_recorded") or any(
+            str(bullet).strip() not in baseline for bullet in source
+        ):
+            source = None
+    if source == [] and not required:
+        baseline_ids = {f"experience:{entry_id}:source:{index}" for index, bullet in enumerate(baseline)
+                        if str(bullet).strip()}
+        omitted_ids = {row.get("evidence_id") for row in update.get("_jobctrl_baseline_omission_proposals", ())
+                       if isinstance(row, dict) and row.get("reason") == "clearly_inapplicable"}
+        if baseline_ids and baseline_ids == omitted_ids:
+            return []  # accepted only after independent quality review of these proposals
     if not isinstance(source, list) or not source:
-        source = entry.get("bullets", [])
+        source = baseline
 
     bullets = [str(bullet).strip() for bullet in source if str(bullet).strip()]
-    required = get_required_bullets_by_experience_id(profile).get(str(entry.get("id", "")), [])
     seen = {_normalize_text(bullet) for bullet in bullets}
     for bullet in required:
         normalized = _normalize_text(bullet)

@@ -542,7 +542,7 @@ def _claim_mapping(
             "claim_label": "evidence_reframed",
             "coverage_edge_ids": list(coverage_edge_ids),
             "requirement_ids": list(requirement_ids),
-            "evidence_ids": ["ev_latency"],
+            "evidence_ids": ["ev_latency", "experience:acme_swe:source:0"],
             "non_requirement_reason": "",
             "review_required": False,
         },
@@ -676,7 +676,7 @@ def test_accepted_resume_records_provenance_and_publishes_event(tmp_path: Path) 
     experience = next(row for row in saved.bullets if row.section == "experience" and "#" in row.bullet_id)
     assert "req_latency" in experience.requirement_ids  # FK bound to the analysis
     assert experience.matched_keywords == ()
-    assert experience.evidence_ids == ("ev_latency",)
+    assert experience.evidence_ids == ("ev_latency", "experience:acme_swe:source:0")
 
     # The BulletProvenanceRecorded event was published with the bullet count.
     provenance_events = [e for e in publisher.events if getattr(e, "event_type", "") == "BulletProvenanceRecorded"]
@@ -913,7 +913,7 @@ class _EvidenceCorrectionLlm:
                 claim_id=f"claim_{evidence_id}",
                 location=f"experience.{role_id}.bullets[0]",
                 text=bullet,
-                evidence_ids=[evidence_id],
+                evidence_ids=[evidence_id, f"experience:{role_id}:source:0"],
                 requirement_ids=target["requirement_ids"],
                 coverage_edge_ids=target["coverage_edge_ids"],
             )
@@ -969,7 +969,7 @@ class _AdvertisedEdgesLlm(_EvidenceCorrectionLlm):
             mapping.update(
                 claim_id=f"claim_{evidence_id}",
                 location=f"experience.{role_id}.bullets[0]",
-                evidence_ids=[evidence_id],
+                evidence_ids=[evidence_id, f"experience:{role_id}:source:0"],
                 requirement_ids=[edge["requirement_id"]],
                 coverage_edge_ids=[edge["edge_id"]],
             )
@@ -1053,7 +1053,7 @@ def test_generator_following_all_advertised_edges_accepts_reselected_artifacts(
     assert "Synthetic optional_b" not in text and "Synthetic out_of_plan" not in text
     saved = provenance.load(LOCAL_TENANT, JOB_ID)
     row = next(row for row in saved.bullets if row.source_id == "optional_a" and "#" in row.bullet_id)
-    assert row.evidence_ids == ("optional_a_latency",)
+    assert row.evidence_ids == ("optional_a_latency", "experience:optional_a:source:0")
     assert row.requirement_ids == (graph["coverage_edges"][0]["requirement_id"],)
     assert row.generated_text in text and row.generated_text in html
 
@@ -1190,7 +1190,7 @@ def test_canonical_retry_feedback_changes_selection_and_accepted_artifacts(
         assert f"Synthetic {other}" not in text and "Synthetic out_of_plan" not in text
         saved = provenance_repo.load(LOCAL_TENANT, JOB_ID)
         row = next(row for row in saved.bullets if row.source_id == role_id and "#" in row.bullet_id)
-        assert row.evidence_ids == (f"{role_id}_latency",)
+        assert row.evidence_ids == (f"{role_id}_latency", f"experience:{role_id}:source:0")
         assert row.generated_text in text and row.generated_text in html
         assert row.requirement_ids == ("req_latency",)
         retry = outcome.report["attempt_history"][1]["retry_evidence_targets"]

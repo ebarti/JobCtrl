@@ -591,6 +591,20 @@ disabled item rewriting and opposing factual/quality verdict cases. Inspect ever
 page of the owned synthetic PDF; a document-structure assertion alone does not
 prove exported selection.
 
+For baseline accomplishment retention, include locked
+`pytest tests/test_baseline_accomplishment_retention.py` with the Materials,
+requirement-led tailoring and evidence-selection suites, then the full worker
+suite. Through real owned Materials persistence, prove selected-role baseline
+keep/omit source accounting, same-role ownership, no duplicates, separate pins,
+independent opposing factual/quality verdicts and accepted-artifact preservation.
+Exercise a baseline larger than the saved hard cap, reject cap omissions from
+underfilled roles, and preserve independent opposing relevance judgments. Include
+related combined sources, omitted optional roles, wholly inapplicable baselines,
+metadata-only roles and disabled rewriting. Render an owned synthetic PDF at the
+configured cap with recorded omissions and inspect every page.
+These assertions verify the contract, not semantic quality or a speed gain;
+inspect the next normal UI-generated resume and its recorded review decisions.
+
 For compact factual-review transport, run locked
 `pytest tests/test_claim_review_response.py tests/test_artifact_determinations.py`
 and the full worker suite, plus API semantic receipt-version checks. Require

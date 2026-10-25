@@ -3024,3 +3024,27 @@ unchanged. Structural regressions exercise overlapping clients/threads, real
 process exit without cleanup, active-store protection and foreign-path
 preservation. The pinned native SDK check must prove shared temporary state,
 independent ephemeral threads and the existing credential-read fence.
+
+
+## 2026-10-25: Retain Applicable Accomplishments Within The Saved Bullet Limit
+
+Status: accepted
+
+Tailoring keeps as many applicable baseline accomplishments as possible within
+the configured maximum bullets per role. The maximum is a hard cap and is never
+raised from baseline length. Role presence alone does not establish completeness,
+and an absent target keyword or selected fit edge does not justify an omission.
+
+The generation response accounts for each selected role's baseline source IDs
+through a kept experience claim or a typed, source-bound omission proposal.
+Code rejects unknown/duplicate/conflicting decisions, dropped literal pins and
+cap omissions from an underfilled role. Independent quality review evaluates
+every omission, applicability and relative evidence selection. Independent
+factual review still verifies all source contributions and preserved substance.
+Neither generator rationale nor ID presence establishes semantic correctness.
+
+The source inventory, omission proposals and review receipt remain inspectable
+in the ordinary attempt audit. This uses existing generation and review calls;
+it adds no model stage. Optional role selection, immutable metadata, explicit
+pins, selected model/effort and accepted-artifact preservation remain in force.
+The owning contract is [Tailoring](architecture/tailoring.md).

@@ -1519,7 +1519,12 @@ export function StructuredProfileEditor({
                 "resume.tailoring_rules.max_experience_bullets",
                 "Max bullets per role",
                 "number",
-                { min: 1, max: 99, step: 1 },
+                {
+                  min: 1,
+                  max: 99,
+                  step: 1,
+                  helperText: "Hard maximum per role. Tailoring keeps as many applicable baseline accomplishments as possible within this limit.",
+                },
               )}
             </AdaptiveFieldGrid>
             <AdaptiveFieldGrid>
