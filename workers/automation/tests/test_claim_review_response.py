@@ -100,7 +100,7 @@ def test_both_formats_keep_every_model_decision_and_full_canonical_receipt(repos
     assert envelope.result == result.model_dump() == decision(data, verdict)
     assert ClaimVerification.model_validate(envelope.result).model_dump() == envelope.result
     assert repository.find("local", envelope.determination_id).result == envelope.result
-    assert envelope.prompt_version == "claim-verification-v3"
+    assert envelope.prompt_version == "claim-verification-v4-grounded-span-references"
     assert envelope.schema_version == "2" and envelope.reasoning_effort == "max"
     assert admissions == [True]
     assert isinstance(wire["lines"][0]["source_evidence"][0], str) == whole
@@ -261,3 +261,144 @@ def test_accepted_artifact_readers_keep_historical_and_current_receipts(tmp_path
         "body:1": {"evidence_ids": ["fact"], "requirement_ids": []},
     }
     conn.close()
+
+
+def span_request(quote="Authored 3\u00a0units"):
+    arguments = request()
+    arguments["evidence"][0].text = "Unrelated context. " * 250 + "Authored 3\u00a0units. More context."
+    arguments["supporting_spans"] = [Source(source_id="fact-1", text=quote)]
+    return arguments
+
+
+def select_span(result, data):
+    reference = next(ref for ref, entry in data["context"]["citation_refs"].items()
+                     if "span_reference_quote" in entry)
+    row = result["lines"][0]
+    row["source_evidence"] = [reference]
+    row["claims"][0]["evidence"] = [reference]
+    return reference
+
+
+@pytest.mark.parametrize("verdict", ["pass", "fail"])
+def test_selected_supporting_span_retains_exact_unicode_source_and_model_verdict(repository, verdict):
+    arguments, admissions = span_request(), []
+    model = Model(verdict, mutate=select_span)
+    result, receipt = verifier(repository, model, admissions).verify(**arguments)
+    data, wire, schema = model.calls[0]
+    refs = data["context"]["citation_refs"]
+    selected = wire["lines"][0]["source_evidence"][0]
+    assert refs[selected]["source_id"] == "fact-1"
+    assert refs[selected]["span_reference_quote"] == "Authored 3\u00a0units"
+    assert not refs[selected]["whole_source_reference_allowed"]
+    assert result.verdict == receipt.result["verdict"] == verdict
+    assert result.lines[0].claims[0].support == ("supported" if verdict == "pass" else "uncertain")
+    assert result.lines[0].source_evidence[0].model_dump() == {
+        "source_id": "fact-1", "quote": "Authored 3\u00a0units", "exact_values": [],
+    }
+    assert result.lines[0].claims[0].evidence == result.lines[0].source_evidence
+    assert receipt.result == ClaimVerification.model_validate(receipt.result).model_dump()
+    assert admissions == [True] and len(model.calls) == 1
+    # Aliases retain the original allowlist and cannot become explicit line IDs.
+    assert refs[data["context"]["lines"][0]["allowed_evidence_ids"][0]]["source_id"] == "fact-1"
+    assert selected not in schema["$defs"]["ClaimCitationSpan"]["properties"]["source_id"]["enum"]
+    validate_citations(result, [Source(**source) for source in data["sources"]])
+    cached, cached_receipt = verifier(repository, model, admissions).verify(**arguments)
+    assert cached == result and cached_receipt == receipt
+    assert len(model.calls) == len(admissions) == 1
+
+
+@pytest.mark.parametrize("source_id,quote,code", [
+    ("foreign", "Authored 3\u00a0units", "foreign_source_id"),
+    ("fact-1", "Authored 4 units", "non_verbatim_quote"),
+    ("fact-1", "", "non_verbatim_quote"),
+])
+def test_invalid_supporting_span_never_reaches_provider(repository, source_id, quote, code):
+    arguments = span_request()
+    arguments["supporting_spans"] = [Source(source_id=source_id, text=quote)]
+    model, admissions = Model(), []
+    with pytest.raises(DeterminationFailure, match=code):
+        verifier(repository, model, admissions).verify(**arguments)
+    assert model.calls == admissions == []
+
+
+def test_changed_span_fences_cache_and_caller_mutation_cannot_rebind_it(repository):
+    arguments = span_request()
+    model = Model(mutate=select_span, after_call=lambda: setattr(arguments["supporting_spans"][0], "text", "3\u00a0units"))
+    first, first_receipt = verifier(repository, model).verify(**arguments)
+    second_model = Model(mutate=select_span)
+    second, second_receipt = verifier(repository, second_model).verify(**arguments)
+    assert first.lines[0].source_evidence[0].quote == "Authored 3\u00a0units"
+    assert second.lines[0].source_evidence[0].quote == "3\u00a0units"
+    assert first_receipt.determination_id != second_receipt.determination_id
+    assert len(model.calls) == len(second_model.calls) == 1
+
+
+@pytest.mark.parametrize("fault,code", [
+    ("foreign_line", "foreign_source_id"),
+    ("changed_number", "mismatched_value"),
+    ("claim_reference", "schema_violation"),
+    ("span_as_explicit_source", "foreign_source_id"),
+])
+def test_span_references_keep_permissions_values_and_failed_refresh_preservation(repository, fault, code):
+    _, accepted = verifier(repository, Model()).verify(**request())
+    accepted_json = repository._connection.execute(
+        "SELECT envelope_json FROM semantic_determinations WHERE determination_id=?", (accepted.determination_id,),
+    ).fetchone()[0]
+    arguments = span_request()
+    if fault == "changed_number":
+        arguments["lines"][0].text = "Delivered 4 units"
+
+    def corrupt_span(result, data):
+        reference = select_span(result, data)
+        row = result["lines"][0]
+        if fault == "foreign_line":
+            result["lines"][1]["source_evidence"] = [reference]
+        elif fault == "claim_reference":
+            row["claims"][0]["text"] = reference
+        elif fault == "span_as_explicit_source":
+            row["claims"][0]["evidence"] = [{
+                "source_id": reference, "quote": "Authored 3\u00a0units", "exact_values": [],
+            }]
+
+    model, admissions = Model(mutate=corrupt_span), []
+    with pytest.raises(DeterminationFailure, match=code):
+        verifier(repository, model, admissions).verify(**arguments)
+    assert len(model.calls) == len(admissions) == 3
+    assert repository._connection.execute(
+        "SELECT envelope_json FROM semantic_determinations WHERE determination_id=?", (accepted.determination_id,),
+    ).fetchone()[0] == accepted_json
+    assert repository._connection.execute("SELECT COUNT(*) FROM semantic_determinations").fetchone()[0] == 1
+
+
+def test_supporting_span_maps_remain_request_local_during_concurrent_decoding():
+    barrier = Barrier(2)
+
+    def decode(quote):
+        sources = [Source(source_id="owned", text="Prefix " + quote + " suffix")]
+        selected = Source(source_id="owned", text=quote)
+        response, refs = claim_review_response_model(sources, supporting_spans=[selected])
+        ref = next(ref for ref, entry in refs.items() if "span_reference_quote" in entry)
+        sources[0].text = selected.text = "Changed caller text"
+        barrier.wait(timeout=5)
+        result = response.model_validate(dict(verdict="pass", rationale="Explicit model verdict", lines=[dict(
+            line_id="owned", verdict="pass", source_evidence=[ref], served_requirements=[], claims=[], findings=[],
+        )]))
+        return result.lines[0].source_evidence[0].quote
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert list(pool.map(decode, ["First 3\u00a0units", "Second 4\u00a0units"])) == [
+            "First 3\u00a0units", "Second 4\u00a0units",
+        ]
+
+
+def test_duplicate_full_oversized_and_colliding_span_references_stay_unambiguous():
+    sources = [Source(source_id="@0/span/0", text="Prefix selected suffix"),
+               Source(source_id="long", text="X" * 4500)]
+    _, refs = claim_review_response_model(sources, supporting_spans=[
+        Source(source_id="@0/span/0", text="selected"),
+        Source(source_id="@0/span/0", text="selected"),
+        Source(source_id="@0/span/0", text="Prefix selected suffix"),
+        Source(source_id="long", text="X" * 4001),
+    ])
+    assert set(refs).isdisjoint(source.source_id for source in sources)
+    assert [entry["span_reference_quote"] for entry in refs.values() if "span_reference_quote" in entry] == ["selected"]

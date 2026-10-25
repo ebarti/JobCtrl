@@ -154,13 +154,20 @@ class AnalyzeJobUseCase:
         verification_ids = {}
 
         def verify_prose(analysis):
-            lines = self._analysis_lines(analysis)
+            # The existing gate supplies exact posting excerpts, never model
+            # support decisions. Referencing them avoids copying those bytes.
+            grounded = ground_and_snap(analysis, jd_snapshot)
+            lines = self._analysis_lines(grounded)
+            excerpts = dict.fromkeys(
+                row.evidence_span for row in [*grounded.requirements, *grounded.keywords]
+            )
             result, envelope = self._claim_verifier.verify(
                 artifact_kind="employer_analysis",
                 entity_id=str(job_id),
                 lines=lines,
                 evidence=[],
                 requirements=[Source(source_id="posting", text=jd_snapshot)],
+                supporting_spans=[Source(source_id="posting", text=text) for text in excerpts],
                 rubric={
                     "process_narration": "Describe only employer needs and ideal candidate capabilities. No narration about models, drafts, experts, reconciliation or the analysis process.",
                     "support": "Employer statements and target-role requirements must rest on the posting. Candidate fact claims have no personal evidence.",

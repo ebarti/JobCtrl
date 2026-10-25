@@ -183,24 +183,32 @@ failed or forced generation never destroys the previous accepted rows.
 
 A strict model determination extracts each final proposition, classifies candidate fact/hypothetical/target-role/employer/advice, and judges support from allowed evidence. Findings cite exact line IDs and verbatim spans. Code verifies IDs, quotes and exact values; it does not classify English. Generators record anchors and the verifier affirms source contributions. Resume, cover letter, outreach, interview and analysis use the shared port, with separate artifact quality review. Failed refreshes preserve accepted artifacts. See [Tailoring Contract](tailoring.md#validation-layers).
 
-`claim-verification-v3` uses request-local citation references to reduce copied
-output. The request maps each short reference to one exact canonical source and uses
-those references in per-line evidence/requirement allowlists. A
-supporting citation may select that entire source as its verbatim quote when it
-fits the existing 4,000-character limit, or provide an explicit quote and literal
-values. Claim text and findings always cite an explicit final-line span. The
-model still chooses every source and makes every claim, contribution,
-requirement and verdict judgment.
+`claim-verification-v4-grounded-span-references` uses request-local citation
+references to reduce copied output. Each reference maps to one exact canonical
+source. A supporting citation may select an entire source within the existing
+4,000-character quote limit, an explicitly supplied grounded excerpt, or a
+shorter explicit quote with declared literal values. Employer analysis supplies
+its exact grounded requirement and keyword excerpts; each excerpt reference
+retains the original posting source ID. Duplicate and oversized excerpts add no
+references. The full posting stays available for explicit citations.
 
-The response decoder expands references against an immutable request snapshot
+Per-line allowlists remain bound to canonical source IDs through their primary
+references. An excerpt never adds source authority. Claim text and findings
+still require explicit final-line spans. The model chooses every source and
+makes every claim, contribution, requirement and verdict judgment; a supplied
+excerpt is untrusted evidence, not a support decision.
+
+The response decoder resolves selections against an immutable request snapshot
 before the unchanged canonical verifier checks quotes, values, line allowlists
-and source contributions. Unknown references, oversized whole-source selections
-and incorrect bindings use the existing bounded structural correction loop;
-there is no replacement evidence or inferred support. The response schema and
-canonical result schema both bind cache identity. Stored schema version 2 keeps
-full IDs, quotes and declared literal values. Python and API readers retain
-known v2 and v3 receipts; current-only reads require v3. Transport size alone
-does not establish a measured latency improvement.
+and source contributions. Unknown references, malformed spans and incorrect
+bindings use the existing bounded structural correction loop. Excerpts must be
+nonempty verbatim substrings of their existing canonical source before a model
+call. No copied output is normalized or repaired by code. The response schema,
+canonical result schema and exact reference map bind cache identity. Stored
+schema version 2 keeps full IDs, quotes and declared literal values. Python and
+API readers retain known v2 and v3 history; current-only reads require v4.
+Transport size and reduced copying opportunities do not establish a measured
+latency improvement.
 
 The shared determination owner permits at most two correction calls after a
 mechanical response failure, including invalid citation spans, line/requirement

@@ -587,7 +587,11 @@ oversized/empty-source cases retain safe failures and the existing three-call
 budget. Concurrent maps cannot cross; changed inputs cannot reuse an accepted
 receipt. Preserve accepted artifacts and known v2 history. Verify one configured
 provider request with owned synthetic facts and inspect actual UI completion
-timings before claiming a performance gain.
+timings before claiming a performance gain. For grounded excerpts, prove exact
+Unicode/whitespace preservation, duplicate and alias-collision handling, original
+source/line permissions, immutable concurrent maps and changed-excerpt cache
+fences. Exercise employer analysis through its real grounding and persistence
+boundaries; excerpt references cannot add evidence or a positive verdict.
 
 For bounded high-fit review output, run locked
 `pytest tests/test_resume_review_response_bounds.py tests/test_artifact_determinations.py tests/test_materials_use_cases.py tests/test_material_review_history.py tests/test_tailor_voice_audit_integration.py`
