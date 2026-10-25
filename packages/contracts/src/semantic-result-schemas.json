@@ -4210,9 +4210,10 @@
   "resume_adversarial": {
     "compatiblePromptVersions": [
       "resume-adversarial-v1",
-      "resume-adversarial-v2"
+      "resume-adversarial-v2",
+      "resume-adversarial-v3"
     ],
-    "promptVersion": "resume-adversarial-v2",
+    "promptVersion": "resume-adversarial-v3",
     "schema": {
       "$defs": {
         "Citation": {

@@ -188,6 +188,10 @@ must pass before acceptance. Scores remain diagnostic. The canonical stored
 review reader retains its historical wider shape, so old accepted receipts and
 their original diagnostics remain readable without truncation or rewriting.
 The prompt revision and response schema participate in determination identity.
+The response model explicitly names its wider `stored_result_schema`; generated
+TypeScript readers publish that canonical shape and current/compatible prompt
+versions rather than applying new response-size limits to historical receipts.
+
 
 
 For each cover-letter draft, factual verification and quality review read separate

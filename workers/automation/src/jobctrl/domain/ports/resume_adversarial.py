@@ -63,6 +63,7 @@ class _PersonaResponse(PersonaJudgment):
 class ResumeAdversarialResponse(ResumeAdversarialReview):
     """Concise response format; every persona keeps its explicit model verdict."""
 
+    stored_result_schema: ClassVar[type[ResumeAdversarialReview]] = ResumeAdversarialReview
     model_config = ConfigDict(title="ResumeAdversarialReview")
     rationale: StrictStr = Field(min_length=1, max_length=512)
     personas: list[_PersonaResponse] = Field(min_length=6, max_length=6)
