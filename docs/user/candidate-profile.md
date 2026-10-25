@@ -88,6 +88,10 @@ inspector stack instead of compressing the three-pane desktop workspace.
 Saving your edits does not call a model. Choose **Get suggestions for target
 roles** in Discovery when you want evidence-backed suggestions.
 
+Adding an experience, education entry or skill category creates its internal
+identity immediately. You edit its descriptive fields; changing a title or label
+keeps its identity and any **Must appear in final resume** selection intact.
+
 Target Search can propose a small set of evidence-backed role titles and
 historical location/work-model rows. JobCtrl generates them from the saved
 profile version, even when the browser form has new unsaved edits. Each role

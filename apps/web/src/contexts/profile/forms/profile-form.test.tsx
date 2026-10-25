@@ -88,6 +88,57 @@ async function renderSkillProjection(items: string[]) {
 }
 
 describe("<ProfileForm>", () => {
+  it("saves newly added skill categories with stable IDs and unchanged unrelated profile fields", async () => {
+    const user = userEvent.setup();
+    const initial = structuredClone(sampleProfileResponse);
+    const profile = ProfileSchema.parse(initial.profile);
+    profile.resume.skill_categories = [{ id: "skill-1", label: "Original skills", items: ["Python"] }];
+    profile.resume.tailoring_rules.required_skill_category_ids = ["skill-1"];
+    profile.resume.tailoring_rules.required_experience_entry_ids = [profile.resume.experience_entries[0]!.id];
+    initial.profile = profile;
+    const updateProfile = vi.fn(async (request: ProfileUpdateRequest) => ({
+      ...initial, profileVersion: (initial.profileVersion ?? 0) + 1, profile: JSON.parse(request.profileText!),
+    }));
+    const targetRoleSuggestions = vi.fn();
+    renderWithProviders(<ProfileForm initial={initial} />, {
+      ports: buildTestPorts({ api: { updateProfile, targetRoleSuggestions } }), withRouter: true,
+    });
+    await user.click(await screen.findByRole("button", { name: /^Skill categories\b/ }));
+    await user.click(screen.getByRole("button", { name: "Add skill category" }));
+    await user.click(screen.getByRole("button", { name: "Add skill category" }));
+    const categories = screen.getAllByRole("group", { name: /^(Original skills|Skill category [23])$/ });
+    const cloud = within(categories[1]!);
+    const architecture = within(categories[2]!);
+    fireEvent.change(cloud.getByLabelText("Label"), { target: { value: "Cloud" } });
+    fireEvent.change(cloud.getByLabelText("Skill 1"), { target: { value: "Kubernetes" } });
+    await user.click(cloud.getByRole("checkbox", { name: "Must appear in final resume" }));
+    fireEvent.change(cloud.getByLabelText("Label"), { target: { value: "Platform & Cloud" } });
+    fireEvent.change(architecture.getByLabelText("Label"), { target: { value: "Architecture" } });
+    fireEvent.change(architecture.getByLabelText("Skill 1"), { target: { value: "Microservices" } });
+    fireEvent.change(screen.getByLabelText("Full name"), { target: { value: "Edited synthetic candidate" } });
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    const request = updateProfile.mock.calls[0]![0];
+    expect(request.expectedProfileVersion).toBe(initial.profileVersion);
+    const saved = JSON.parse(request.profileText!) as ProfileShape;
+    expect(ProfileSchema.safeParse(saved).success).toBe(true);
+    const savedCategories = saved.resume.skill_categories;
+    expect(savedCategories).toHaveLength(3);
+    expect(new Set(savedCategories.map((entry) => entry.id)).size).toBe(3);
+    expect(savedCategories.map((entry) => entry.id)).not.toContain("");
+    expect(savedCategories[0]).toEqual(profile.resume.skill_categories[0]);
+    expect(savedCategories.slice(1).map(({ label, items }) => ({ label, items }))).toEqual([
+      { label: "Platform & Cloud", items: ["Kubernetes"] }, { label: "Architecture", items: ["Microservices"] },
+    ]);
+    expect(saved.resume.tailoring_rules.required_skill_category_ids).toEqual(["skill-1", savedCategories[1]!.id]);
+    const expected = structuredClone(profile);
+    expected.personal.full_name = "Edited synthetic candidate";
+    expected.resume.skill_categories = savedCategories;
+    expected.resume.tailoring_rules.required_skill_category_ids = ["skill-1", savedCategories[1]!.id];
+    expect(saved).toEqual(expected);
+    expect(targetRoleSuggestions).not.toHaveBeenCalled();
+  });
+
   it.each(coachingFixtures.flatMap((fixture) => fixture.expected.suggestions
     .filter((item) => item.kind === "grammar" && item.canApply)
     .map((_item, applicableIndex) => ({ name: `${fixture.name} (${applicableIndex + 1})`, fixture, applicableIndex }))))(

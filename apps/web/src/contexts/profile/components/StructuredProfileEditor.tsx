@@ -202,6 +202,7 @@ export function StructuredProfileEditor({
 }: StructuredProfileEditorProps) {
   const focusTargetsRef = useRef(new Map<string, HTMLElement>());
   const pendingFocusKeyRef = useRef<string | null>(null);
+  const reservedRepeatIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
     const focusKey = pendingFocusKeyRef.current;
@@ -344,7 +345,34 @@ export function StructuredProfileEditor({
   const addRepeatItem = (path: string) => {
     updateProfileDraft((draft) => {
       const items = recordArrayAt(draft, path);
-      setPathValue(draft, path, [...items, defaultRepeatItem(path)]);
+      // Identity is structural and allocated once, never derived from labels.
+      // Keep removed draft IDs reserved and avoid imported/required identities.
+      for (const entryPath of ["resume.experience_entries", "resume.education_entries", "resume.skill_categories"]) {
+        for (const entry of recordArrayAt(draft, entryPath)) {
+          reservedRepeatIdsRef.current.add(textFrom(entry["id"]));
+        }
+      }
+      for (const requiredPath of [
+        "resume.tailoring_rules.required_experience_entry_ids",
+        "resume.tailoring_rules.required_education_entry_ids",
+        "resume.tailoring_rules.required_skill_category_ids",
+      ]) {
+        for (const id of textArrayAt(draft, requiredPath)) {
+          reservedRepeatIdsRef.current.add(id);
+        }
+      }
+      for (const requiredMapPath of [
+        "resume.tailoring_rules.required_bullets_by_experience_id",
+        "resume.tailoring_rules.required_skills_by_category_id",
+      ]) {
+        for (const id of Object.keys(recordAt(draft, requiredMapPath))) {
+          reservedRepeatIdsRef.current.add(id);
+        }
+      }
+      const item = defaultRepeatItem(path, reservedRepeatIdsRef.current);
+      const id = textFrom(item["id"]);
+      if (id) reservedRepeatIdsRef.current.add(id);
+      setPathValue(draft, path, [...items, item]);
     });
   };
 
