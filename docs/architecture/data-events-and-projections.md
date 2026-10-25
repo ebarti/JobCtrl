@@ -285,8 +285,10 @@ the product can aggregate into source-quality and operations views. Those rows
 are application data and follow SQLite privacy rules.
 
 OpenTelemetry spans are diagnostic exports. The LLM-generation path explicitly
-limits attributes to safe metadata and omits raw prompts, completions, job text,
-profiles, materials, credentials, and exception messages. Generic tracing can
+defaults to safe metadata. The separate `JOBCTRL_TRACE_CONTENT=1` debugging
+opt-in adds the actual LLM request/response bodies, which can contain job,
+profile and material text, to the configured trace destination. Credentials,
+arbitrary parameters and exception messages remain excluded. Generic tracing can
 still record exception text and status descriptions, so exceptions must not
 contain sensitive values. Telemetry can explain an execution, but it never
 becomes the source for job stage, score, materials, apply status, or projection

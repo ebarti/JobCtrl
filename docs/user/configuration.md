@@ -453,9 +453,12 @@ not general settings and must never be committed.
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` | Enable OpenTelemetry export of LLM, workflow, and JSON-RPC spans to Langfuse. |
 | `LANGFUSE_DISABLE=1` | Disable export even when credentials are present. |
 | `LANGFUSE_OTEL_TIMEOUT_SECONDS` | OTLP/HTTP export timeout, default `5.0`. |
+| `JOBCTRL_TRACE_CONTENT=1` | Explicit debugging opt-in to capture LLM messages, returned output and adapter-supplied schema/runtime instructions at the configured tracing destination. Off by default; may contain private profile/job/material text. |
 | `JOBCTRL_ENV` | Environment attribute stamped on exported traces, default `local`. |
 
-When enabled, export is metadata-only: provider/model identifiers, operation or
-stage, success/failure, token counts, and safe size metrics. Raw prompts,
-messages, job text, profiles, generated materials, completions, credentials,
-local paths, logs, and database content are not span attributes.
+When enabled, export defaults to provider/model identifiers, operation or stage,
+success/failure, token counts and safe size metrics. Prompt/completion capture
+requires the separate `JOBCTRL_TRACE_CONTENT` opt-in above. Credentials, arbitrary
+parameters, runtime paths, logs, database content and exception messages remain
+excluded; captured input/output text can itself contain private user data. See
+[Telemetry](data-and-safety.md#telemetry) for the destination and retention boundary.
