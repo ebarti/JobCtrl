@@ -1529,7 +1529,7 @@ def test_tailor_job_by_id_allows_temporal_retry_to_reenter_generation(
     assert tuple(state) == ("succeeded", 2)
 
 
-def test_tailor_job_by_id_keeps_inner_retry_exhaustion_outer_retryable(
+def test_tailor_job_by_id_keeps_inner_content_exhaustion_terminal_but_explicitly_retryable(
     conn: sqlite3.Connection,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1568,7 +1568,7 @@ def test_tailor_job_by_id_keeps_inner_retry_exhaustion_outer_retryable(
     assert tuple(state) == (
         "failed",
         1,
-        1,
+        0,
         "jobctrl retry tailor https://example.com/inner-retries",
     )
     event_payload = json.loads(
@@ -1591,7 +1591,7 @@ def test_tailor_job_by_id_keeps_inner_retry_exhaustion_outer_retryable(
         "attempts": 1,
         "generationAttempts": 4,
         "generationStatus": "exhausted_retries",
-        "retryable": True,
+        "retryable": False,
     }
 
 
@@ -1800,7 +1800,7 @@ def test_legacy_tailor_batch_counts_all_failures_and_exhausts_durable_budget(
             "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
             (str(LOCAL_TENANT), str(job_id)),
         ).fetchone()
-    ) == ("failed", 1, 1)
+    ) == ("failed", 1, 0)
 
     conn.execute(
         "UPDATE job_stage_states SET state = 'failed', attempt_count = 4, retryable = 1 "

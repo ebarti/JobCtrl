@@ -24,6 +24,7 @@ from pathlib import Path
 from jobctrl.config import COVER_LETTER_DIR
 from jobctrl.database import effective_tailoring_min_score, get_connection
 from jobctrl.domain.determinations import serialized_determination_failure
+from jobctrl.domain.errors import MATERIAL_REJECTION_STATUSES
 from jobctrl.domain.discovery.value_objects import PostingUrl
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.services import ContentValidator
@@ -492,7 +493,10 @@ def cover_letter_by_id(
     failed_attempts = current_attempt
     exhausted = failed_attempts >= _COVER_MAX_ATTEMPTS
     semantic_failure = serialized_determination_failure(outcome.error)
-    retryable = not exhausted and (semantic_failure is None or semantic_failure.retryable)
+    retryable = (
+        not exhausted and outcome.status not in MATERIAL_REJECTION_STATUSES
+        and (semantic_failure is None or semantic_failure.retryable)
+    )
     with SqliteUnitOfWork(conn):
         commit_guard()
         set_stage_state(
@@ -523,6 +527,7 @@ def cover_letter_by_id(
             tenant_id=tenant_id,
             level="error",
             message=outcome.error or f"Cover letter generation failed ({outcome.status})",
+            payload={"attempts": failed_attempts, "generationStatus": outcome.status, "retryable": retryable},
         )
     return {
         "jobId": str(stable_job_id),

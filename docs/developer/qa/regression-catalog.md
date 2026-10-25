@@ -155,7 +155,7 @@ abandoned generation must be distinct from Temporal's synchronous-activity
 executor so capacity recovery cannot break marker or reconciliation activities.
 Tailor's inner candidate-repair attempts are audit metadata, not the durable
 stage retry counter. Each durable activity execution increments that outer
-counter exactly once; repeated failures reach non-retryable `exhausted` at the
+counter exactly once; repeated transient failures reach non-retryable `exhausted` at the
 configured maximum and are excluded from automatic pickup until an explicit
 attempt reset. Repeated durable executions of one materials generation must
 append audit entries keyed by execution and durable attempt rather than replace
@@ -1007,7 +1007,12 @@ and explicitly pinned context still require their claims. Keep the existing
 unaffirmed-source rejection checks: context must not be pruned into acceptance.
 Through real Temporal Tailor and Cover activity entry points, a bounded content
 rejection must fail once as non-retryable `material_rejected`; provider/network
-faults must still exercise their configured retries.
+faults must still exercise their configured retries. Include
+`tests/test_terminal_material_rejection.py`: all terminal material statuses must
+persist non-retryable Tailor/Cover rows and events, remain ineligible for automatic
+pickup after cooldown and preserve accepted artifacts. A new explicit Tailor
+request may still consume its next durable attempt. Keep the opposing transient
+and non-retryable provider cases through the real per-job entry points.
 
 For an overflowing initial material selection, use owned synthetic supported
 edges that require five distinct achievements under a four-bullet role ceiling.
