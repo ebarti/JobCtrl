@@ -35,6 +35,7 @@ from jobctrl import config
 from jobctrl.config import TAILORED_DIR
 from jobctrl.database import get_connection, get_jobs_by_stage
 from jobctrl.domain.determinations import serialized_determination_failure
+from jobctrl.domain.errors import MATERIAL_REJECTION_STATUSES
 from jobctrl.domain.discovery.value_objects import PostingUrl
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.services import ContentValidator, ResumeAssembler
@@ -1060,7 +1061,10 @@ def tailor_job_by_id(
             durable_exhausted = exhausted
             error_code, error_message, failure_reason = _tailor_failure_details(result)
             semantic_failure = serialized_determination_failure(result.get("error"))
-            retryable = not exhausted and (semantic_failure is None or semantic_failure.retryable)
+            retryable = (
+                not exhausted and str(result.get("status") or "error") not in MATERIAL_REJECTION_STATUSES
+                and (semantic_failure is None or semantic_failure.retryable)
+            )
             set_stage_state(
                 conn,
                 stable_job_id,
