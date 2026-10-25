@@ -67,9 +67,10 @@ class JobInterpretation(DeterminationModel):
 
 
 class ModelJobInterpreter:
-    def __init__(self, *, llm, repository, tenant_id, provider, model, preflight, lane="enrichment"):
+    def __init__(self, *, llm, repository, tenant_id, provider, model, preflight, lane="enrichment", on_terminal_failure=None):
         self._llm, self._repository, self._tenant_id = llm, repository, tenant_id
         self._provider, self._model, self._preflight, self._lane = provider, model, preflight, lane
+        self._on_terminal_failure = on_terminal_failure
 
     def interpret(self, *, entity_id, posting, fields, requirements):
         from decimal import Decimal
@@ -122,4 +123,5 @@ class ModelJobInterpreter:
             repository=self._repository,
             preflight=self._preflight,
             validate=validate,
+            on_terminal_failure=self._on_terminal_failure,
         )
