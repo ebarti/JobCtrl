@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sqlite3
 import stat
 import threading
 import tomllib
@@ -591,8 +592,10 @@ def test_redirected_runtime_directories_are_refused_before_auth_or_chmod(monkeyp
 def _runtime_root(config: Any) -> Path:
     overrides = tomllib.loads("\n".join(config.config_overrides[-2:]))
     sqlite_root = Path(overrides["sqlite_home"])
-    assert Path(overrides["log_dir"]).parent == sqlite_root.parent
-    return sqlite_root.parent
+    log_root = Path(overrides["log_dir"]).parent
+    assert sqlite_root.parent != log_root
+    assert sqlite_root.parent.name.startswith("jobctrl-codex-state-")
+    return log_root
 
 
 @pytest.mark.asyncio
@@ -621,8 +624,8 @@ async def test_runtime_storage_is_removed_on_every_client_exit(
             root = _runtime_root(config)
             roots.append(root)
             _assert_private_mode(root, 0o700)
-            (root / "sqlite").mkdir()
-            (root / "sqlite/logs_2.sqlite").write_bytes(b"synthetic runtime log")
+            (root / "logs").mkdir()
+            (root / "logs/client.log").write_bytes(b"synthetic runtime log")
             if failure == "constructor":
                 raise RuntimeError("synthetic constructor failure")
 
@@ -847,3 +850,45 @@ async def test_pooled_native_storage_survives_reuse_then_closes_before_removal(m
     assert (stable_home / "auth.json").read_bytes() == auth
     assert (source_home / "auth.json").read_bytes() == auth
     assert retained.read_bytes() == b"retained provider state"
+
+
+@pytest.mark.asyncio
+async def test_pinned_clients_share_temporary_state_and_keep_threads_ephemeral(monkeypatch, tmp_path):
+    app_dir, source_home = _isolate_homes(monkeypatch, tmp_path)
+    auth = b'{"OPENAI_API_KEY":"sk-owned-shared-runtime"}'
+    (source_home / "auth.json").write_bytes(auth)
+    factory = adapter._load_async_codex_factory()
+    async with factory() as first:
+        first_config = first._client._sync.config
+        first_overrides = tomllib.loads("\n".join(first_config.config_overrides[-2:]))
+        state = Path(first_overrides["sqlite_home"])
+        first_logs = _runtime_root(first_config)
+        async with factory() as second:
+            second_config = second._client._sync.config
+            second_overrides = tomllib.loads("\n".join(second_config.config_overrides[-2:]))
+            assert Path(second_overrides["sqlite_home"]) == state
+            second_logs = _runtime_root(second_config)
+            assert first_logs != second_logs
+            one = await first.thread_start(
+                approval_mode=adapter._deny_all_approval_mode(), ephemeral=True,
+                model=adapter.CODEX_ANALYSIS_MODEL, cwd=first_config.cwd,
+                config={"model_reasoning_effort": "max"},
+            )
+            two = await second.thread_start(
+                approval_mode=adapter._deny_all_approval_mode(), ephemeral=True,
+                model=adapter.CODEX_ANALYSIS_MODEL, cwd=second_config.cwd,
+                config={"model_reasoning_effort": "max"},
+            )
+            assert one.id != two.id
+            with sqlite3.connect(state / "state_5.sqlite") as connection:
+                assert connection.execute(
+                    "SELECT count(*) FROM threads WHERE id IN (?, ?)", (one.id, two.id)
+                ).fetchone()[0] == 0
+            connection.close()
+        assert not second_logs.exists()
+        assert first_logs.exists() and state.exists()
+    assert not state.parent.exists()
+    assert not first_logs.exists()
+    assert (app_dir / "codex_home/auth.json").read_bytes() == auth
+    assert (source_home / "auth.json").read_bytes() == auth
+    assert not list((app_dir / "codex_home").glob("*.sqlite*"))

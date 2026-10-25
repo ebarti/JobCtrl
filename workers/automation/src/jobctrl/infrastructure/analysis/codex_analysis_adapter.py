@@ -39,6 +39,7 @@ from jobctrl.domain.materials.analysis import (
     JobAnalysisDraft,
 )
 from jobctrl.infrastructure.analysis.strict_schema import strict_json_schema
+from jobctrl.infrastructure.llm.codex_runtime_storage import shared_codex_storage
 from jobctrl.infrastructure.llm.provider_errors import ProviderCallError, provider_exception_error
 from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
 from jobctrl.llm_lanes import lane_bound
@@ -204,20 +205,23 @@ def _codex_config_kwargs(dirs: _CodexHomeDirs) -> dict[str, Any]:
 async def _codex_client_context(
     async_codex: Any, codex_config: Any, *, configuration: dict[str, Any]
 ) -> AsyncIterator[Any]:
-    """Keep auth stable while tying provider databases/logs to client lifetime.
+    """Keep auth stable and share temporary metadata across live native clients.
 
     Close the app server before removing its private runtime directory, including
     on failed startup, provider errors and cancellation. Never clean up the
     credential home or any pre-existing provider state.
     """
 
-    with tempfile.TemporaryDirectory(prefix="jobctrl-codex-runtime-") as runtime_dir:
+    with (
+        shared_codex_storage(Path(configuration["env"]["CODEX_HOME"])) as sqlite_root,
+        tempfile.TemporaryDirectory(prefix="jobctrl-codex-runtime-") as runtime_dir,
+    ):
         runtime_root = Path(runtime_dir).resolve()
         runtime_configuration = {
             **configuration,
             "config_overrides": (
                 *configuration["config_overrides"],
-                f"sqlite_home={json.dumps(str(runtime_root / 'sqlite'))}",
+                f"sqlite_home={json.dumps(str(sqlite_root))}",
                 f"log_dir={json.dumps(str(runtime_root / 'logs'))}",
             ),
         }

@@ -85,10 +85,16 @@ configuration discovery cannot inherit unrelated settings from its physical
 ancestors. Its initialization and validation are defined in
 [Agent Runtime Ownership](agent-runtime.md#codex).
 Only `auth.json` is reused; user configuration, instructions, skills, sessions
-and logs are never copied. Generation threads are ephemeral. Each pooled generation client
-or model-catalog app-server client uses a private temporary `sqlite_home` and
-`log_dir`, removed after the app server closes, including startup failures and
-cancellation. Existing files in the stable credential home are preserved.
+and logs are never copied. Generation threads are ephemeral. Live native clients
+in one process share a private temporary `sqlite_home` for the same isolated
+credential home, avoiding repeated imports of retained provider history into
+separate databases. Each client has its own temporary `log_dir`. The last client
+removes the shared SQLite store, including SQLite logs, only after every client
+has closed; startup failures and cancellation release the same leases. An OS
+lease protects active stores from reclamation. A later startup can reclaim an
+abandoned store only when its private ownership record matches the same
+credential home and its OS lease is available. Unknown or redirected paths are
+preserved. Existing files in the stable credential home are preserved.
 JobCtrl retains its own provider-error, usage and provenance records.
 SDK processes clear ambient credential values and pin refresh/revocation URLs
 to OpenAI's default HTTPS endpoints. These URL overrides cannot be blank:
