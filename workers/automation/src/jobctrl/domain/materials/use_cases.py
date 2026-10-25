@@ -124,7 +124,7 @@ from jobctrl.domain.job_snapshot import build_jd_snapshot
 from jobctrl.domain.ports.claim_verification import ArtifactLine, ClaimVerifier
 from jobctrl.domain.ports.job_interpretation import JobInterpreter
 from jobctrl.domain.ports.artifact_quality import ArtifactQualityJudge
-from jobctrl.domain.profile.canonical_sources import profile_sources
+from jobctrl.domain.profile.canonical_sources import experience_bullet_evidence_ids_by_role, profile_sources
 from jobctrl.domain.materials.generation import GeneratedResumeDraft
 from jobctrl.domain.ports.artifact_generation import GeneratedProseDraft
 from jobctrl.llm_lanes import lane_bound
@@ -142,7 +142,6 @@ from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.resume_profile import (
-    get_achievement_evidence,
     get_custom_tailoring_prompt,
     get_education_entries,
     get_experience_entries,
@@ -1407,12 +1406,6 @@ def build_master_tailor_prompt(
     resume = get_resume_master(profile)
     required_experience_ids = get_required_experience_entry_ids(profile)
     required_bullets = get_required_bullets_by_experience_id(profile)
-    evidence_entry_ids = {item["experience_entry_id"] for item in get_achievement_evidence(profile)}
-    required_roles_allowing_empty_bullets = [
-        entry_id
-        for entry_id in required_experience_ids
-        if entry_id not in evidence_entry_ids and not required_bullets.get(entry_id)
-    ]
     required_skill_ids = get_required_skill_category_ids(profile)
     experience_entries = get_experience_entries(profile)
     all_skill_categories = get_skill_categories(profile)
@@ -1480,12 +1473,16 @@ def build_master_tailor_prompt(
         {
             str(entry["id"]): [
                 item.evidence_id for item in tailoring_plan.evidence_items
-                if item.experience_entry_id == str(entry["id"])
+                if item.requires_generated_claim and item.experience_entry_id == str(entry["id"])
             ]
             for entry in experience_entries
         }
-        if tailoring_plan is not None else {}
+        if tailoring_plan is not None else experience_bullet_evidence_ids_by_role(profile)
     )
+    required_roles_allowing_empty_bullets = [
+        entry_id for entry_id in required_experience_ids
+        if not bullet_evidence_by_role.get(entry_id) and not required_bullets.get(entry_id)
+    ]
     learned_rule_lines = (learned_tailoring_rules or LearnedTailoringRules()).prompt_lines()
     learned_rule_block = (
         "\nACCEPTED LEARNING RULES FOR FUTURE MATERIALS:\n" + "\n".join(learned_rule_lines) + "\n"

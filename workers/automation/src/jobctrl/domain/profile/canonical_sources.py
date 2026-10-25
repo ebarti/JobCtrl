@@ -61,3 +61,20 @@ def profile_sources(profile):
             )
         )
     return result
+
+
+def experience_bullet_evidence_ids_by_role(profile):
+    """Join authored baseline bullets and confirmed achievements by role ID.
+
+    Fixed metadata and unconfirmed ledger entries never become bullet evidence.
+    This inventory supplies structural permissions only; models judge support.
+    """
+    entries = get_experience_entries(profile)
+    result = {str(entry["id"]): [] for entry in entries}
+    for item in get_achievement_evidence(profile):
+        if item.get("user_confirmed"):
+            result[item["experience_entry_id"]].append(str(item["id"]))
+    for entry in entries:
+        ident = str(entry["id"])
+        result[ident].extend(f"experience:{ident}:source:{index}" for index, _ in enumerate(entry.get("bullets") or []))
+    return {ident: list(dict.fromkeys(identifiers)) for ident, identifiers in result.items()}
