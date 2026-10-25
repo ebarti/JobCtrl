@@ -309,6 +309,18 @@ judgments or build eval sets, labeled corpora, baseline comparisons or recorded
 output replay fixtures. Fake `LlmPort` tests provide opposing valid verdicts for
 identical canonical inputs and prove the model controls the resulting behavior.
 
+For compact factual citations, run locked
+`pytest tests/test_claim_review_response.py tests/test_artifact_determinations.py`
+and the full worker suite, then API receipt-version checks. Prove full-source
+references and explicit spans retain every canonical model decision, source ID,
+quote and declared literal value. Reject unknown references, wrong-line and
+wrong-source citations, changed numbers, forbidden fields and oversized/empty
+whole-source selections within the existing correction budget. Exercise
+request-local concurrent decoding, caller mutation, stale-input cache fencing,
+failed-refresh preservation and known historical receipts. Use the configured
+provider with synthetic facts, then measure the unchanged model/effort and
+required review policy through the real UI; smaller JSON alone is not speed proof.
+
 For every determination, exercise provider unavailability, budget denial,
 malformed JSON, forbidden extra fields, unknown enums, foreign IDs, non-verbatim
 quotes and mismatched values. Each failure has a distinct safe status, makes no

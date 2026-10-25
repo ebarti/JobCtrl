@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, Protocol
+from typing import ClassVar, Literal, Protocol
 
 from pydantic import Field, StrictStr
 
@@ -67,6 +67,8 @@ class VerificationFinding(DeterminationModel):
 
 
 class ClaimVerification(DeterminationModel):
+    # The compact response format retains this full canonical result contract.
+    compatible_prompt_versions: ClassVar[tuple[str, ...]] = ("claim-verification-v2", "claim-verification-v3")
     verdict: Literal["pass", "fail"]
     lines: list[LineVerification] = Field(min_length=1, max_length=1000)
     rationale: StrictStr = Field(min_length=1, max_length=1500)

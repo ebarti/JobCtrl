@@ -10,6 +10,7 @@ from jobctrl.domain.determinations import DeterminationFailure
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.materials.sqlite_repository import SqliteMaterialsRepository
+from tests.determination_fakes import claim_verification_response
 from tests.test_artifact_determinations import (
     JOB_ID, PROFILE, Model, connection, cover_case, cover_request, seed_resume,
 )
@@ -25,16 +26,18 @@ class SelectedSourcesModel(Model):
         if response_schema["title"] == "GeneratedProseDraft":
             result["lines"][0]["evidence_ids"] = list(self.proposed)
         elif response_schema["title"] == "ClaimVerification":
+            data = json.loads(messages[1].content)
+            refs = data["context"]["citation_refs"]
             for row in result["lines"]:
                 row["source_evidence"] = [
-                    citation for citation in row["source_evidence"] if citation["source_id"] in self.endorsed
+                    citation for citation in row["source_evidence"] if refs.get(citation["source_id"], {}).get("source_id", citation["source_id"]) in self.endorsed
                 ]
                 row["served_requirements"] = [{
                     "requirement_id": "posting",
                     "citation": {"source_id": "posting", "quote": "Canonical posting", "exact_values": []},
                     "rationale": "Independent model requirement binding",
                 }]
-        return result
+        return claim_verification_response(json.loads(messages[1].content), result) if response_schema["title"] == "ClaimVerification" else result
 
 
 def request(tmp_path):

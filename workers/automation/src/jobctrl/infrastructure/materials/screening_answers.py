@@ -400,7 +400,7 @@ class ScreeningAnswerRepository:
         versions = {
             "screening_context": {("1", "screening-context-v1")},
             "screening_draft": {("1", "screening-draft-v1")},
-            "claim_verification": {("2", "claim-verification-v2")},
+            "claim_verification": {("2", prompt) for prompt in ClaimVerification.compatible_prompt_versions},
             "artifact_quality": {
                 (ARTIFACT_QUALITY_SCHEMA_VERSION, prompt) for prompt in ArtifactQuality.compatible_prompt_versions
             },

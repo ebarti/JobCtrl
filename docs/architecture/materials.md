@@ -183,6 +183,25 @@ failed or forced generation never destroys the previous accepted rows.
 
 A strict model determination extracts each final proposition, classifies candidate fact/hypothetical/target-role/employer/advice, and judges support from allowed evidence. Findings cite exact line IDs and verbatim spans. Code verifies IDs, quotes and exact values; it does not classify English. Generators record anchors and the verifier affirms source contributions. Resume, cover letter, outreach, interview and analysis use the shared port, with separate artifact quality review. Failed refreshes preserve accepted artifacts. See [Tailoring Contract](tailoring.md#validation-layers).
 
+`claim-verification-v3` uses request-local citation references to reduce copied
+output. The request maps each short reference to one exact canonical source and uses
+those references in per-line evidence/requirement allowlists. A
+supporting citation may select that entire source as its verbatim quote when it
+fits the existing 4,000-character limit, or provide an explicit quote and literal
+values. Claim text and findings always cite an explicit final-line span. The
+model still chooses every source and makes every claim, contribution,
+requirement and verdict judgment.
+
+The response decoder expands references against an immutable request snapshot
+before the unchanged canonical verifier checks quotes, values, line allowlists
+and source contributions. Unknown references, oversized whole-source selections
+and incorrect bindings use the existing bounded structural correction loop;
+there is no replacement evidence or inferred support. The response schema and
+canonical result schema both bind cache identity. Stored schema version 2 keeps
+full IDs, quotes and declared literal values. Python and API readers retain
+known v2 and v3 receipts; current-only reads require v3. Transport size alone
+does not establish a measured latency improvement.
+
 The shared determination owner permits at most two correction calls after a
 mechanical response failure, including invalid citation spans, line/requirement
 bindings, missing stated-pay citations or inconsistent aggregate verdicts. Each

@@ -24,6 +24,7 @@ from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
 from jobctrl.infrastructure.materials.sqlite_repository import SqliteMaterialsRepository
 from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
 from jobctrl.llm_lanes import current_llm_lane
+from tests.determination_fakes import claim_verification_input, claim_verification_response
 
 JOB_ID = canonical_job_id("90000000-0000-4000-8000-000000000055")
 JOB = {
@@ -81,14 +82,14 @@ class Model:
                     }
                 ]
             }
-        data = json.loads(messages[1].content)
+        data = claim_verification_input(json.loads(messages[1].content))
         sources = {row["source_id"]: row["text"] for row in data["sources"]}
         if title == "ResumeAdversarialReview":
             from tests.determination_fakes import persona_decision
 
             return persona_decision(data, self.adversarial)
         if title == "ClaimVerification":
-            return {
+            result = {
                 "verdict": self.verdict,
                 "rationale": "Model support decision",
                 "lines": [
@@ -118,6 +119,7 @@ class Model:
                     for row in data["context"]["lines"]
                 ],
             }
+            return claim_verification_response(data, result)
         if title == "ArtifactQuality":
             return {
                 "verdict": self.quality,
@@ -357,7 +359,7 @@ class _SentenceNumberModel:
     def chat_json(self, messages, **kwargs):
         self.calls.append(messages)
         evidence = {"source_id": "fact", "quote": self.source, "exact_values": []}
-        return {
+        result = {
             "verdict": self.verdict, "rationale": "Synthetic model decision", "lines": [{
                 "line_id": "line", "verdict": self.verdict, "source_evidence": [evidence],
                 "served_requirements": [], "findings": [], "claims": [{
@@ -367,6 +369,7 @@ class _SentenceNumberModel:
                 }],
             }],
         }
+        return claim_verification_response(json.loads(messages[1].content), result)
 
 
 def test_supported_numeric_claim_cannot_borrow_values_from_another_source():
@@ -374,7 +377,7 @@ def test_supported_numeric_claim_cannot_borrow_values_from_another_source():
 
     class NumericModel:
         def chat_json(self, messages, **kwargs):
-            return {
+            result = {
                 "verdict": "pass",
                 "rationale": "Model judgment",
                 "lines": [
@@ -396,6 +399,7 @@ def test_supported_numeric_claim_cannot_borrow_values_from_another_source():
                     }
                 ],
             }
+            return claim_verification_response(json.loads(messages[1].content), result)
 
     verifier, _ = ports(conn, NumericModel())
     with pytest.raises(DeterminationFailure, match="mismatched_value"):
@@ -419,13 +423,14 @@ def test_supported_candidate_citation_must_be_in_its_declared_contributions(kind
         def chat_json(self, messages, **kwargs):
             self.calls += 1
             fact = {"source_id": "fact", "quote": "3 units", "exact_values": []}
-            return {"verdict": "pass", "rationale": "Synthetic model decision", "lines": [{
+            result = {"verdict": "pass", "rationale": "Synthetic model decision", "lines": [{
                 "line_id": "line", "verdict": "pass", "served_requirements": [], "findings": [],
                 "source_evidence": [fact] if self.calls > 1 else [],
                 "claims": [{"kind": kind, "support": "supported", "rationale": "Synthetic reason",
                             "text": {"source_id": "line:line", "quote": "3 units", "exact_values": []},
                             "evidence": [fact]}],
             }]}
+            return claim_verification_response(json.loads(messages[1].content), result)
 
     conn, model = connection(), ContributionModel()
     verifier, _ = ports(conn, model)
@@ -443,7 +448,7 @@ def test_quality_and_persona_finding_slots_repair_without_overriding_a_failed_ve
     class FindingModel(Model):
         def chat_json(self, messages, *, response_schema, **kwargs):
             result = super().chat_json(messages, response_schema=response_schema, **kwargs)
-            data = json.loads(messages[1].content)
+            data = claim_verification_input(json.loads(messages[1].content))
             assert data["context"]["line_ids"] == ["owned:line"]
             result["verdict"] = "fail"
             target = result["personas"][0] if persona else result
