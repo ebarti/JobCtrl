@@ -71,6 +71,11 @@ Generation, analysis and voice use the shared
 process creates a fresh ephemeral thread for every semantic request; a judge
 never inherits the generator's conversation. Model, effort, source bindings,
 review ordering and accepted-artifact authority remain owned here.
+New high-fit persona responses use the
+[bounded diagnostic format](tailoring.md#bounded-persona-diagnostics) while
+retaining all six cited verdicts. Historical accepted review results keep
+their original wider diagnostics and immutable determination bindings.
+
 
 ## Canonical Employer Analysis
 

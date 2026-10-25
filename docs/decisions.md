@@ -2967,3 +2967,28 @@ Attempt limits, cooldowns, spend preflight, source politeness, cancellation/skip
 decisions and accepted artifacts remain protected. Worker activity slots remain
 an independent bound. No workflow command sequence changes. See
 [Operations](architecture/pipeline/operations.md#automatic-preparation-recovery).
+
+
+## 2026-10-25: Bound Generated Persona Review Diagnostics
+
+Status: accepted
+
+The six-persona high-fit review retains the complete supplied résumé, rubric,
+explicit per-persona pass/fail decisions and its separate acceptance gate.
+Only its new structured response format is narrowed: each persona returns at
+most three short citations and six prioritized actionable findings, with finite
+nested quote, rationale, repair and literal-value strings. Repeated defects
+may be grouped; unresolved defects still require fail even when summarized
+rather than individually enumerated. Diagnostic size and scores never decide
+meaning or override a model verdict.
+
+This prevents unnecessarily expansive diagnostic output from exhausting a
+provider response before returning a usable review. It does not lower effort,
+change the model, skip a persona, truncate model text after generation or
+fabricate an accepted result. Existing source-binding checks and the bounded
+structural-correction budget remain authoritative. New requests use prompt
+`resume-adversarial-v3`; old accepted receipts retain their wider canonical
+reader and original bytes. The response schema and prompt participate in the
+request fingerprint. Failed refreshes preserve accepted artifacts. Measure any
+latency benefit through the normal UI and recorded model calls; a finite schema
+alone does not prove a faster or more accurate review.

@@ -17,8 +17,8 @@ const quality = {
 };
 const adversarial = {
   kind: "resume_adversarial" as const,
-  previous: "resume-adversarial-v1",
-  current: "resume-adversarial-v2",
+  previous: "resume-adversarial-v2",
+  current: "resume-adversarial-v3",
   result: {
     verdict: "pass", score: 0.8, rationale: "Owned model verdict",
     personas: ["ats_parser", "skeptical_recruiter", "hiring_manager_domain_expert", "evidence_auditor", "anti_ai_voice_critic", "interview_defensibility_critic"].map((persona) => ({
@@ -104,6 +104,36 @@ it.each([undefined, null, "a".repeat(64)])("reads the exact optional task profil
       write();
       expect(() => readDetermination(db, "local", id)).toThrow("determination_binding_invalid");
     }
+  } finally {
+    db.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+
+it.each(["resume-adversarial-v1", "resume-adversarial-v2"])("preserves complete historical persona diagnostics for %s", (prompt) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-persona-reader-"));
+  const filename = path.join(directory, "owned.db");
+  initializeExactDatabase(filename);
+  const db = new Database(filename);
+  try {
+    const result = structuredClone(adversarial.result);
+    for (const persona of result.personas) {
+      persona.rationale = "Owned historical diagnostic. ".repeat(25);
+      persona.citations = Array.from({ length: 4 }, () => ({
+        source_id: "line:owned", quote: "Owned original quotation. ".repeat(12), exact_values: [],
+      }));
+    }
+    const id = recordModelDecision(db, adversarial.kind, "owned", result, "local", prompt);
+    const row = db.prepare("SELECT envelope_json FROM semantic_determinations WHERE determination_id=?").get(id) as { envelope_json: string };
+    const envelope = JSON.parse(row.envelope_json);
+    envelope.prompt_version = prompt;
+    const original = JSON.stringify(envelope);
+    db.prepare("UPDATE semantic_determinations SET prompt_version=?,envelope_json=? WHERE determination_id=?")
+      .run(prompt, original, id);
+    expect(readDetermination(db, "local", id)?.result).toEqual(result);
+    expect(readDetermination(db, "local", id, { currentOnly: true })).toBeNull();
+    expect((db.prepare("SELECT envelope_json FROM semantic_determinations WHERE determination_id=?").get(id) as { envelope_json: string }).envelope_json).toBe(original);
   } finally {
     db.close();
     fs.rmSync(directory, { recursive: true, force: true });

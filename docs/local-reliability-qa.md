@@ -322,7 +322,9 @@ report unavailable.
 
 For high-fit resumes, exercise all six typed persona verdicts and read actual
 worker-produced metadata through the API; a persisted receipt must accompany the
-persona audit. Optional voice provider or shape failures retain the already
+persona audit. New requests must bound nested diagnostics without omitting any
+persona or overriding a failed model verdict; historical accepted wider
+receipts remain readable in full. Optional voice provider or shape failures retain the already
 verified candidate and record the rejected rewrite. An unresolved repeat check
 parks its own candidate while another eligible candidate can be claimed. Broad-board retry drains durable unprocessed events before fetching more results, retains exact execution/lease ownership and honors cancellation and remaining new-job limits. Company ATS observations retain exact provider identity across retries. Historical captures stay preserved without an active model admission path.
 
