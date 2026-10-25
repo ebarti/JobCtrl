@@ -993,14 +993,19 @@ Discovery hygiene or policy deletion. Its durable event-ledger leases serialize
 checks per job and reserve each actual request host; independent jobs can overlap,
 with foreground capacity reserved in the hourly acquisition quota; acquisition
 runs after short writer transactions commit. Each check
-caps a full acquisition at 120 seconds, including rendered capture and browser
-cleanup. Browser supervision reserves the final three seconds for cancellation
+caps cumulative posting-acquisition time at 120 seconds, including rendered
+capture and browser cleanup. Independent page-model interpretation pauses only
+that network clock; its actual monotonic duration is credited back, capped at
+the original job lease's deadline. After interpretation, cancellation and the
+owner/URL/deletion fence run before fallback can start. Browser supervision
+reserves the final three seconds for cancellation
 and reaping. Its admission and pacing waits in the shared politeness gateway
 also receive the remaining deadline; other fetch surfaces retain their existing
 wait policy. Public requests run in an owned spawned
 transport process with a 20-second total DNS/header/body deadline; timeout kills
 and reaps it before releasing the host reservation. The aggregate page/fallback
-budget remains below the five-minute lease lifetime.
+deadline never exceeds the original five-minute lease; model work does not renew
+ownership or authorize a stale result.
 Preparation uses a separate local availability guard. Score, résumé and cover
 entry points reuse an exact-URL observation attempted within six hours, including
 unknown evidence, only while the current candidate remains usable. Otherwise they

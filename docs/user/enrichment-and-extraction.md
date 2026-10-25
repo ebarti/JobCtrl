@@ -196,7 +196,12 @@ ordinary Discovery/Enrich extension selection keeps its own behavior.
 CSS-dependent status must be verified by the guarded renderer; hidden templates
 cannot close a posting. Blocked subresources and incomplete rendering remain
 unknown. Each outbound request has a 20-second total deadline and a full check
-has a 120-second acquisition budget, below crash-lease expiry.
+has a cumulative 120-second posting-acquisition budget. Time spent in the
+independent page-interpretation model does not consume that network/browser
+budget. The original five-minute crash lease still caps the remaining deadline;
+model work cannot extend ownership, and cancellation or a changed posting stops
+fallback before a browser starts. Browser cleanup and all resource limits remain
+inside the acquisition deadline.
 
 The anonymous fallback checks popup and frame requests through the same host
 limits and URL checks. It blocks service workers and unsupported socket or
