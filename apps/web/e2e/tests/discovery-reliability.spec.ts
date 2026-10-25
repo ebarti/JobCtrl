@@ -19,7 +19,7 @@ test("a confirmed Target search save stays saved while its profile query catches
   const initial = await (await page.request.get("/v1/profile")).json();
   await page.goto("/discovery");
   await expect(page).toHaveTitle(/JobCtrl.*Discovery/);
-  await expect(page.getByRole("button", { name: "Suggest roles" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Get suggestions for target roles" })).toBeEnabled();
   const laggingRead = async (route: Route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({ json: initial });
@@ -33,7 +33,7 @@ test("a confirmed Target search save stays saved while its profile query catches
   await expect(page.getByText("Discovery settings saved", { exact: true })).toBeVisible();
   await expect(page.getByText("Your changes are saved. Updating suggestions to use the latest profile.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Update draft with saved changes" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Suggest roles" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Get suggestions for target roles" })).toBeDisabled();
   const saved = await (await page.request.get("/v1/profile")).json();
   expect(saved.profileVersion).toBeGreaterThan(initial.profileVersion);
   expect(saved.profile.experience.target_role).toContain("Synthetic Saved Director");
@@ -41,7 +41,7 @@ test("a confirmed Target search save stays saved while its profile query catches
   await page.unroute("**/v1/profile", laggingRead);
   await page.reload();
   await expect(page.getByRole("textbox", { name: "Target roles 1", exact: true })).toHaveValue("Synthetic Saved Director");
-  await expect(page.getByRole("button", { name: "Suggest roles" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Get suggestions for target roles" })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Update draft with saved changes" })).toHaveCount(0);
   await expect(page.locator("vite-error-overlay")).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("target-search-saved.png") });

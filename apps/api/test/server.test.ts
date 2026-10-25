@@ -10277,10 +10277,13 @@ describe("local TypeScript API", () => {
   it("discards model output if a concurrent save replaces the inspected version", async () => {
     let app: ReturnType<typeof buildApp>;
     const call = vi.fn(async (_method: string, params: Record<string, unknown>) => {
+      const db = new Database(options.dbPath);
+      let result;
+      try { result = recordCoachingDecision(db, params); } finally { db.close(); }
       const save = await app.inject({ method: "PATCH", url: "/v1/profile",
         payload: { profile: requiredModelProfile("Replacement synthetic bullet."), expectedProfileVersion: params.expectedProfileVersion } });
       expect(save.statusCode, save.body).toBe(200);
-      return { jsonrpc: "2.0" as const, id: 1, result: { profileVersion: params.expectedProfileVersion, suggestions: [] } };
+      return { jsonrpc: "2.0" as const, id: 1, result };
     });
     app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
     const saved = (await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: requiredModelProfile() } })).json();
@@ -10408,6 +10411,42 @@ describe("local TypeScript API", () => {
     expect((await app.inject({ method: "GET", url: "/v1/profile" })).json().profileVersion)
       .toBe(version);
     await app.close();
+  });
+
+  it("saves authored profile edits without requesting model suggestions", async () => {
+    const providerCall = vi.fn(async () => {
+      throw new Error("Synthetic provider unavailable");
+    });
+    const app = buildApp({
+      ...options,
+      providerDispatcher: { call: providerCall, close: vi.fn(async () => undefined) },
+    });
+    try {
+      const first = await app.inject({
+        method: "PATCH", url: "/v1/profile",
+        payload: { profile: validProfileFixture("Authored Candidate") },
+      });
+      expect(first.statusCode, first.body).toBe(200);
+      const firstVersion = first.json().profileVersion as number;
+      expect(providerCall).not.toHaveBeenCalled();
+      const second = await app.inject({
+        method: "PATCH", url: "/v1/profile",
+        payload: {
+          expectedProfileVersion: firstVersion,
+          profile: validProfileFixture("Updated Authored Candidate"),
+        },
+      });
+      expect(second.statusCode, second.body).toBe(200);
+      expect(second.json()).toMatchObject({
+        profileVersion: firstVersion + 1,
+        profile: { personal: { full_name: "Updated Authored Candidate" } },
+      });
+      expect(providerCall).not.toHaveBeenCalled();
+      expect((await app.inject({ method: "GET", url: "/v1/profile" })).json())
+        .toMatchObject({ profileVersion: firstVersion + 1 });
+    } finally {
+      await app.close();
+    }
   });
 
   it("generates version-bound target role suggestions without mutating the profile", async () => {
@@ -10587,10 +10626,7 @@ describe("local TypeScript API", () => {
 
   it("rejects a delayed suggestion response after an intervening profile edit", async () => {
     const pending = deferred<Awaited<ReturnType<JsonRpcDispatcher["call"]>>>();
-    const providerCall = vi.fn((_method:string,params:Record<string,unknown>) => {
-      if(params.maximumSuggestions===5){const db=new Database(options.dbPath);try{return Promise.resolve({jsonrpc:"2.0" as const,id:1,result:recordCandidateProposal(db,params)});}finally{db.close();}}
-      return pending.promise;
-    });
+    const providerCall = vi.fn(() => pending.promise);
     const app = buildApp({
       ...options,
       providerDispatcher: { call: providerCall, close: vi.fn(async () => undefined) },
@@ -10601,12 +10637,13 @@ describe("local TypeScript API", () => {
       payload: { profile: profileWithTargetSearch("Initial Candidate", "Barcelona", "Remote") },
     });
     const version = initial.json().profileVersion as number;
+    expect(providerCall).not.toHaveBeenCalled();
     const suggestionResponse = app.inject({
       method: "POST",
       url: "/v1/profile/target-role-suggestions",
       payload: { expectedProfileVersion: version },
     });
-    await vi.waitFor(() => expect(providerCall).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(providerCall).toHaveBeenCalledTimes(1));
     const intervening = await app.inject({
       method: "PATCH",
       url: "/v1/profile",
@@ -10616,6 +10653,7 @@ describe("local TypeScript API", () => {
       },
     });
     expect(intervening.statusCode, intervening.body).toBe(200);
+    expect(providerCall).toHaveBeenCalledTimes(1);
     pending.resolve({
       jsonrpc: "2.0",
       id: 1,

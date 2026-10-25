@@ -3070,11 +3070,9 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     const db = openDatabase(options.dbPath);
     let profileResponse: ProfileConfigResponse | undefined;
-    let profileUpdatedEvent: ReturnType<typeof persistProfileUpdate>["recorded"] = null;
     try {
       const update = persistProfileUpdate(db, body);
       profileResponse = update.profile;
-      profileUpdatedEvent = update.recorded;
     } catch (error) {
       if (error instanceof ProfileVersionConflictError) {
         void reply.code(409);
@@ -3094,17 +3092,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     } finally {
       db.close();
     }
-    if (profileUpdatedEvent && profileResponse?.profileVersion) {
-      try {
-        await callRpc(providerDispatcher, RpcMethods.ProfileTargetRoleSuggestions, {
-          expectedAppDir: actionContext.appDir, expectedDbPath: options.dbPath,
-          expectedProfileVersion: profileResponse.profileVersion, maximumSuggestions: 5,
-        });
-      } catch {
-        // The worker records a distinct blocked interpretation state. A user's
-        // authored profile save remains successful and can be retried separately.
-      }
-    }
+    // Authored saves must not start semantic work. Suggestions are requested
+    // explicitly through POST /v1/profile/target-role-suggestions.
     if(profileResponse){
       const current=openReadOnlyDatabase(options.dbPath);
       try {

@@ -33,6 +33,11 @@ a mismatch returns `409
 stale_profile_version`, writes no profile row, records no `ProfileUpdated`
 event, and creates no preparation-continuation work.
 
+Saving authored profile or preference edits never starts an LLM call. It returns
+the committed version without waiting for target-role interpretation, scoring, or
+material generation. Target-role suggestions run only after the user chooses
+**Get suggestions for target roles** in Discovery.
+
 The target-role suggestion route accepts `{ expectedProfileVersion, maximumSuggestions }`,
 where the maximum is `1–5` and defaults to `3`. It reads only that canonical
 saved snapshot and returns `profileVersion`, `strategy`, bounded `warnings`, and
@@ -78,7 +83,10 @@ must explicitly rebase non-overlapping edits onto the refreshed snapshot,
 regenerate suggestions, review them, and then save against that new version.
 The guard covers accepted roles and historical preference rows, including
 subsequent edits to those draft values.
-Overlapping edits remain blocked for manual resolution or discard.
+A common sequence of appended bullets can be combined with later additions and
+independent edits to existing bullets. Deletions, reordered originals, duplicate
+texts, competing appended sequences and conflicting edits to the same original
+bullet remain blocked for manual resolution or discard.
 
 Required-bullet coaching accepts a saved `expectedProfileVersion` and optional
 `maximumSuggestions` (`1–24`, default `12`). It calls the configured LLM once

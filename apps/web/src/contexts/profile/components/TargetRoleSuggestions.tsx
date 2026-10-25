@@ -177,7 +177,7 @@ export function TargetRoleSuggestions({
             disabled={profileVersion === null || isFormBaseStale || generation.isPending}
             onClick={() => void generate()}
           >
-            {generation.isPending ? "Generating…" : "Suggest roles"}
+            {generation.isPending ? "Generating…" : "Get suggestions for target roles"}
           </Button>
         </CardAction>
       </CardHeader>
