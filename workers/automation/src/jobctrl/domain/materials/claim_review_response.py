@@ -31,6 +31,8 @@ def _field(owner, name, description=None):
 
 def claim_review_response_model(
     sources: Sequence[Source],
+    *,
+    supporting_spans: Sequence[Source] = (),
 ) -> tuple[type[ClaimVerification], dict[str, dict[str, Any]]]:
     """Bind one response model to one request's exact source inventory."""
     identifiers = {source.source_id for source in sources}
@@ -38,16 +40,37 @@ def claim_review_response_model(
         raise DeterminationFailure("duplicate_source_id")
     if not sources:
         raise DeterminationFailure("source_schema_violation")
+    # Snapshot caller-owned values before validating or building any decoder.
+    canonical = {source.source_id: source.text for source in sources}
+    quote_limit = Citation.model_json_schema()["properties"]["quote"]["maxLength"]
+    selected_spans = []
+    seen_spans = set()
+    for selected in supporting_spans:
+        ident, quote = selected.source_id, selected.text
+        if ident not in canonical:
+            raise DeterminationFailure("foreign_source_id")
+        if not quote or quote not in canonical[ident]:
+            raise DeterminationFailure("non_verbatim_quote")
+        # Large excerpts retain the existing explicit-span path. Duplicates and
+        # a whole source already have a compact representation; add no aliases.
+        if len(quote) > quote_limit or quote == canonical[ident] or (ident, quote) in seen_spans:
+            continue
+        selected_spans.append((ident, quote))
+        seen_spans.add((ident, quote))
     nonce = 0
     while True:
         references = [f"@{nonce}/{index}" for index in range(len(sources))]
-        if identifiers.isdisjoint(references):
+        span_references = [f"@{nonce}/span/{index}" for index in range(len(selected_spans))]
+        if identifiers.isdisjoint([*references, *span_references]):
             break
         nonce += 1
-    # Capture only immutable values, with no global or cross-request registry.
-    by_ref = {ref: (source.source_id, source.text) for ref, source in zip(references, sources, strict=True)}
-    quote_limit = Citation.model_json_schema()["properties"]["quote"]["maxLength"]
-    whole_refs = [ref for ref, (_ident, text) in by_ref.items() if 0 < len(text) <= quote_limit]
+    # A span reference selects precisely its supplied quote within the original
+    # canonical source. It never creates a new source or expands permissions.
+    by_ref = {ref: (ident, text) for ref, (ident, text) in zip(references, canonical.items(), strict=True)}
+    by_ref.update(zip(span_references, selected_spans, strict=True))
+    explicit_refs = frozenset(references)
+    whole_refs = [ref for ref in references if 0 < len(by_ref[ref][1]) <= quote_limit]
+    supporting_refs = [*whole_refs, *span_references]
     reference_field = _field(
         Citation, "source_id", "Use a key from context.citation_refs, never an ID found inside source text."
     )
@@ -67,6 +90,8 @@ def claim_review_response_model(
 
     def decode_span(value):
         supplied = span.model_validate(value)
+        if supplied.source_id not in explicit_refs:
+            raise DeterminationFailure("foreign_source_id")
         ident, _text = source(supplied.source_id)
         return Citation(source_id=ident, quote=supplied.quote, exact_values=supplied.exact_values)
 
@@ -74,7 +99,7 @@ def claim_review_response_model(
         if not isinstance(value, str):
             return decode_span(value)
         ident, text = source(value)
-        if value not in whole_refs:
+        if value not in supporting_refs:
             raise DeterminationFailure(
                 "schema_violation",
                 repair_context={
@@ -87,8 +112,8 @@ def claim_review_response_model(
 
     span_citation = Annotated[Citation, BeforeValidator(decode_span, json_schema_input_type=span)]
     reference_input = span
-    if whole_refs:
-        whole = Annotated[StrictStr, Field(json_schema_extra={"enum": whole_refs})]
+    if supporting_refs:
+        whole = Annotated[StrictStr, Field(json_schema_extra={"enum": supporting_refs})]
         reference_input = whole | span
     source_citation = Annotated[
         Citation,
@@ -141,4 +166,6 @@ def claim_review_response_model(
         ref: {"source_id": ident, "whole_source_reference_allowed": ref in whole_refs}
         for ref, (ident, _text) in by_ref.items()
     }
+    for ref in span_references:
+        context[ref]["span_reference_quote"] = by_ref[ref][1]
     return cast(type[ClaimVerification], response), context

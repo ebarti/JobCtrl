@@ -68,7 +68,9 @@ class VerificationFinding(DeterminationModel):
 
 class ClaimVerification(DeterminationModel):
     # The compact response format retains this full canonical result contract.
-    compatible_prompt_versions: ClassVar[tuple[str, ...]] = ("claim-verification-v2", "claim-verification-v3")
+    compatible_prompt_versions: ClassVar[tuple[str, ...]] = (
+        "claim-verification-v2", "claim-verification-v3", "claim-verification-v4-grounded-span-references",
+    )
     verdict: Literal["pass", "fail"]
     lines: list[LineVerification] = Field(min_length=1, max_length=1000)
     rationale: StrictStr = Field(min_length=1, max_length=1500)
@@ -84,4 +86,5 @@ class ClaimVerifier(Protocol):
         evidence: list[Source],
         requirements: list[Source],
         rubric: dict[str, str],
+        supporting_spans: list[Source] | None = None,
     ) -> tuple[ClaimVerification, DeterminationEnvelope]: ...

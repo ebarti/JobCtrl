@@ -317,7 +317,10 @@ quote and declared literal value. Reject unknown references, wrong-line and
 wrong-source citations, changed numbers, forbidden fields and oversized/empty
 whole-source selections within the existing correction budget. Exercise
 request-local concurrent decoding, caller mutation, stale-input cache fencing,
-failed-refresh preservation and known historical receipts. Use the configured
+failed-refresh preservation and known historical receipts. Grounded excerpt
+references must preserve their original source ID and exact Unicode bytes, add
+no line permissions, reject foreign/non-verbatim excerpts before provider work,
+and leave oversized excerpts on the explicit-span path. Use the configured
 provider with synthetic facts, then measure the unchanged model/effort and
 required review policy through the real UI; smaller JSON alone is not speed proof.
 

@@ -30,8 +30,8 @@ const adversarial = {
 
 const claims = {
   kind: "claim_verification" as const,
-  previous: "claim-verification-v2",
-  current: "claim-verification-v3",
+  previous: "claim-verification-v3",
+  current: "claim-verification-v4-grounded-span-references",
   result: {
     verdict: "pass", rationale: "Owned model verdict",
     lines: [{ line_id: "owned", verdict: "pass", served_requirements: [],
@@ -62,7 +62,7 @@ const scoring = {
   },
 };
 
-it.each([quality, adversarial, scoring, claims])("keeps known $kind history readable while current-only reads remain strict", (contract) => {
+it.each([quality, adversarial, scoring, claims, { ...claims, previous: "claim-verification-v2" }])("keeps known $kind history readable while current-only reads remain strict", (contract) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-receipt-versions-"));
   const filename = path.join(directory, "owned.db");
   initializeExactDatabase(filename);

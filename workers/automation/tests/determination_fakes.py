@@ -297,7 +297,8 @@ def claim_verification_response(data, result, *, whole_sources=False):
     if references is None:
         return result
     result = copy.deepcopy(result)
-    by_id = {value["source_id"]: key for key, value in references.items()}
+    by_id = {value["source_id"]: key for key, value in references.items()
+             if "span_reference_quote" not in value}
     texts = {value["source_id"]: value["text"] for value in data["sources"]}
 
     def citation(value, *, supporting):

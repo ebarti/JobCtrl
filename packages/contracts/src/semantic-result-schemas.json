@@ -1292,9 +1292,10 @@
   "claim_verification": {
     "compatiblePromptVersions": [
       "claim-verification-v2",
-      "claim-verification-v3"
+      "claim-verification-v3",
+      "claim-verification-v4-grounded-span-references"
     ],
-    "promptVersion": "claim-verification-v3",
+    "promptVersion": "claim-verification-v4-grounded-span-references",
     "schema": {
       "$defs": {
         "Citation": {

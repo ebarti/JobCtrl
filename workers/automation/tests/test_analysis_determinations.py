@@ -232,3 +232,32 @@ def test_single_draft_never_spends_on_an_agreement_diagnostic():
     result = use_case(connection(), model).execute(job=JOB).analysis
     assert result.agreement.score is None
     assert "DraftAgreement" not in model.calls
+
+
+def test_analysis_supplies_exact_grounded_excerpts_without_expanding_posting_permissions():
+    class CapturingModel(Model):
+        def __init__(self):
+            super().__init__()
+            self.requests = []
+
+        def chat_json(self, messages, *, response_schema, **kwargs):
+            if response_schema["title"] == "ClaimVerification":
+                self.requests.append(json.loads(messages[1].content))
+            return super().chat_json(messages, response_schema=response_schema, **kwargs)
+
+    conn, model = connection(), CapturingModel()
+    accepted = use_case(conn, model).execute(job=JOB)
+    assert len(model.requests) == 1  # Draft and identical canonical reuse one receipt.
+    data = model.requests[0]
+    posting = next(source["text"] for source in data["sources"] if source["source_id"] == "posting")
+    references = data["context"]["citation_refs"]
+    selected = [entry for entry in references.values() if "span_reference_quote" in entry]
+    assert selected == [{"source_id": "posting", "whole_source_reference_allowed": False,
+                         "span_reference_quote": "Canonical posting"}]
+    assert selected[0]["span_reference_quote"] in posting
+    for line in data["context"]["lines"]:
+        assert line["allowed_evidence_ids"] == []
+        assert [references[ref]["source_id"] for ref in line["allowed_requirement_ids"]] == ["posting"]
+        assert all("span_reference_quote" not in references[ref] for ref in line["allowed_requirement_ids"])
+    assert accepted.analysis.determination_ids["canonical"] == accepted.analysis.determination_ids["fake:leg"]
+    conn.close()

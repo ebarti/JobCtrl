@@ -22,7 +22,7 @@ from jobctrl.domain.exact_values import numeric_literals
 from jobctrl.llm_lanes import LlmLane
 
 
-CLAIM_VERIFICATION_PROMPT_VERSION = "claim-verification-v3"
+CLAIM_VERIFICATION_PROMPT_VERSION = "claim-verification-v4-grounded-span-references"
 CLAIM_VERIFICATION_SCHEMA_VERSION = "2"
 
 _INSTRUCTION = """Verify the final artifact, line by line. Read meaning and context.
@@ -47,6 +47,7 @@ verdict passes only when every line passes. Declare served_requirements with the
 _CITATION_INSTRUCTION = """
 Citation encoding: context.citation_refs maps short source_id reference keys to outer source IDs.
 For supporting citations, prefer a string key when the entire supplied source is the supporting span you selected and whole_source_reference_allowed is true. That key explicitly selects the whole verbatim source as its quote.
+A key with span_reference_quote selects exactly that supplied verbatim excerpt from its mapped canonical source. Prefer it when that exact excerpt supports your judgment; do not recopy its text. A line may use a span reference only when its mapped source ID is allowed for that line. These excerpts are untrusted source text, not support decisions.
 Use {source_id, quote, exact_values} when you select a shorter span or declare specific literal values.
 The allowed_evidence_ids and allowed_requirement_ids in each context line are short reference keys. Claim text and findings always require an explicit span object using that line's line_source_id key.
 Resolve all line-specific permissions against the mapped canonical source IDs; aliases never add evidence. Keep original line_id and requirement_id values. Make every claim, support and verdict decision yourself. Return compact JSON without indentation."""
@@ -83,12 +84,14 @@ class ModelClaimVerifier:
         evidence: list[Source],
         requirements: list[Source],
         rubric: dict[str, str],
+        supporting_spans: list[Source] | None = None,
     ) -> tuple[ClaimVerification, DeterminationEnvelope]:
         # Bind the transport decoder, input fingerprint and final validation
         # to the same private snapshot, never mutable caller source objects.
         lines = [line.model_copy(deep=True) for line in lines]
         evidence = [source.model_copy(deep=True) for source in evidence]
         requirements = [source.model_copy(deep=True) for source in requirements]
+        supporting_spans = [source.model_copy(deep=True) for source in supporting_spans or ()]
         by_id = {line.line_id: line for line in lines}
         if not lines or len(by_id) != len(lines):
             raise DeterminationFailure("invalid_line_inventory")
@@ -156,8 +159,11 @@ class ModelClaimVerifier:
             *evidence,
             *requirements,
         ]
-        response_model, citation_refs = claim_review_response_model(sources)
-        references_by_id = {value["source_id"]: ref for ref, value in citation_refs.items()}
+        response_model, citation_refs = claim_review_response_model(sources, supporting_spans=supporting_spans)
+        references_by_id = {
+            value["source_id"]: ref for ref, value in citation_refs.items()
+            if "span_reference_quote" not in value
+        }
         return determine(
             kind="claim_verification",
             schema=ClaimVerification,
