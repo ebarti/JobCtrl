@@ -12,8 +12,10 @@ participate; this page owns how that accepted input becomes a fit decision.
 For a shorter conceptual introduction, read
 [Evidence-based Job Fit Scoring](../guides/evidence-based-job-fit-scoring.md).
 
-Before a new scoring attempt, JobCtrl requires a successfully verified active
-posting check from the last six hours. An uncertain or unavailable posting stops
+Before a new scoring attempt, JobCtrl reuses a posting observation or a
+trustworthy, source-bound canonical capture from the last six hours. Missing,
+changed or older evidence uses the normal availability check. Usable content can
+proceed while availability stays unknown; confirmed unavailable postings stop
 new provider work while preserving the accepted score and evidence. Use Job
 Detail’s **Check availability** to retry; see
 [saved posting availability](enrichment-and-extraction.md#saved-posting-availability).

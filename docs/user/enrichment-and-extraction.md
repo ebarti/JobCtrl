@@ -213,9 +213,17 @@ Each check permits 12 posting/API requests and 64 browser resources, at most one
 million bytes per response and 12 million bytes in total.
 
 Scoring, tailoring and cover generation reuse a posting observation from the
-preceding six hours and attempt a check when that observation is missing or older.
-An unknown observation can be reused for preparation without another foreground
-request; it stays unknown, and its background retry schedule remains unchanged.
+preceding six hours. They also reuse a trustworthy canonical posting capture
+from that window when its saved page interpretation and description-quality
+judgments match the current tenant, job, posting URL and exact description.
+This avoids fetching and interpreting the same posting again immediately after
+enrichment. Stale, quarantined, changed or unbound captures use the normal check;
+known closure and deletion still prevent preparation. Capture freshness uses its
+actual capture time, never a later metadata update.
+An unknown observation or captured availability verdict can be reused for
+preparation without another foreground request; it stays unknown, and its
+background retry schedule remains unchanged. Capture reuse creates no new
+availability observation and does not satisfy unattended Apply's separate gate.
 Preparation can proceed with usable content while availability stays unknown. Unknown is shown honestly and remains retryable; confirmed
 unavailable postings stop preparation. Dry-run rehearsals and human-reviewed
 Apply can also proceed when availability stays unknown, using the existing exact

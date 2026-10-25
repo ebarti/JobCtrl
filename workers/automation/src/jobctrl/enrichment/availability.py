@@ -1390,6 +1390,90 @@ def require_fresh_active(
         raise MissingInputError("Posting is unavailable. Check availability before retrying.")
 
 
+def _recent_preparation_capture(
+    conn: sqlite3.Connection,
+    job_id: str,
+    *,
+    posting_url: str,
+    tenant_id: str,
+    max_age: timedelta,
+) -> bool:
+    """Join existing capture judgments; never create an availability observation."""
+    from jobctrl.domain.determinations import DeterminationFailure, parse_model_result
+    from jobctrl.domain.enrichment.page_interpretation import DescriptionQuality, PageInterpretation
+    from jobctrl.domain.enrichment.snapshot_value_objects import SnapshotConfidence, SnapshotDescriptionHash
+    from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+    from jobctrl.infrastructure.enrichment.sqlite_repository import SqlitePostingSnapshotSetRepository
+
+    row = conn.execute(
+        "SELECT full_description FROM job_enrichments WHERE tenant_id = ? AND job_id = ?",
+        (tenant_id, job_id),
+    ).fetchone()
+    if row is None or not row[0]:
+        return False
+    description = row[0]
+    try:
+        snapshot_set = SqlitePostingSnapshotSetRepository(conn).load(TenantId(tenant_id), canonical_job_id(job_id))
+        if (
+            snapshot_set is None
+            or str(snapshot_set.tenant_id) != tenant_id
+            or str(snapshot_set.job_id) != job_id
+        ):
+            return False
+        snapshot = snapshot_set.latest_snapshot
+        if (
+            snapshot is None
+            or snapshot.is_quarantined
+            or snapshot.confidence is SnapshotConfidence.LOW
+            or snapshot.active_state not in {ActiveState.ACTIVE, ActiveState.UNKNOWN}
+            or snapshot.description_hash != SnapshotDescriptionHash.from_text(description)
+        ):
+            return False
+        captured = _instant(snapshot.captured_at)
+        if captured is None or not timedelta(0) <= _now() - captured <= max_age:
+            return False
+        repository = SqliteDeterminationRepository(conn)
+
+        def receipt(prefix, *, kind, entity_id, prompt):
+            identifiers = [entry[len(prefix):] for entry in snapshot.evidence if entry.startswith(prefix)]
+            if len(identifiers) != 1:
+                return None
+            envelope = repository.find(tenant_id, identifiers[0])
+            if (
+                envelope is None
+                or envelope.kind != kind
+                or envelope.entity_id != entity_id
+                or envelope.lane != "enrichment"
+                or envelope.schema_version != "1"
+                or envelope.prompt_version != prompt
+            ):
+                return None
+            return envelope
+
+        page = receipt(
+            "page_interpretation_determination:", kind="page_interpretation",
+            entity_id=posting_url, prompt="page-interpretation-v1",
+        )
+        quality = receipt(
+            "description_quality_determination:", kind="description_quality",
+            entity_id=hashlib.sha256(description.encode()).hexdigest(), prompt="description-quality-v1",
+        )
+        if page is None or quality is None:
+            return False
+        interpretation = parse_model_result(PageInterpretation, page.result)
+        description_quality = parse_model_result(DescriptionQuality, quality.result)
+        return bool(
+            interpretation.availability.value == snapshot.active_state.value
+            and interpretation.page_kind.value == "posting"
+            and interpretation.access_state.value == "clear"
+            and description_quality.confidence == snapshot.confidence.value
+        )
+    except (ValueError, TypeError, KeyError, DeterminationFailure):
+        # Legacy or damaged capture metadata is not a reuse authority. The
+        # normal acquisition path retains its existing diagnostics and fencing.
+        return False
+
+
 def require_preparation_available(
     job_id: str,
     *,
@@ -1398,10 +1482,11 @@ def require_preparation_available(
     tenant_id: str = str(LOCAL_TENANT),
     conn: sqlite3.Connection | None = None,
 ) -> None:
-    """Reuse a recent observation for preparation without declaring it active.
+    """Reuse recent observations or trustworthy captures for preparation.
 
     Preparation permits unknown availability. Its six-hour refresh window is
-    measured from the last actual attempt, including an uncertain observation;
+    measured from the actual observation attempt or canonical content capture.
+    Capture reuse joins the saved page and exact-description quality judgments;
     automatic and explicit checks keep their independent retry schedules.
     Apply continues to use ``require_fresh_active`` and its own freshness gate.
     """
@@ -1419,6 +1504,15 @@ def require_preparation_available(
         and attempted is not None
         and timedelta(0) <= _now() - attempted <= max_age
         and candidate_ready(conn, job_id, tenant_id=tenant_id, max_age=max_age, allow_unknown=True)
+    ):
+        return
+    if (
+        row is not None
+        and row[0] == expected_posting_url
+        and candidate_ready(conn, job_id, tenant_id=tenant_id, max_age=max_age, allow_unknown=True)
+        and _recent_preparation_capture(
+            conn, job_id, posting_url=expected_posting_url, tenant_id=tenant_id, max_age=max_age,
+        )
     ):
         return
     require_fresh_active(
