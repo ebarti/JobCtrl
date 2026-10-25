@@ -995,6 +995,14 @@ wait policy. Public requests run in an owned spawned
 transport process with a 20-second total DNS/header/body deadline; timeout kills
 and reaps it before releasing the host reservation. The aggregate page/fallback
 budget remains below the five-minute lease lifetime.
+Preparation uses a separate local availability guard. Score, résumé and cover
+entry points reuse an exact-URL observation attempted within six hours, including
+unknown evidence, only while the current candidate remains usable. Otherwise they
+run the existing fenced acquisition. Cache hits write no observation or retry
+clocks and never declare unknown evidence active. Publication still rechecks the
+canonical candidate under the stage writer. Apply retains its independent active
+success and reviewed-uncertainty freshness gates.
+
 The explicit API/RPC/CLI command uses the same activity and runtime identity
 guard. Availability uses exact
 public ATS APIs, guarded HTTP, and guarded anonymous Playwright. It does not

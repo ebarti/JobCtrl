@@ -816,18 +816,17 @@ def tailor_job_by_id(
             "reason": "not_eligible",
         }
 
-    # Eligibility/idempotency are local reads. Acquire current evidence before
-    # provider setup and release any reconciler writes before network I/O.
+    # Resolve preparation availability before provider setup; any refresh runs
+    # after releasing reconciler writes. Recent uncertainty needs no acquisition.
     conn.commit()
-    from jobctrl.enrichment.availability import require_fresh_active
+    from jobctrl.enrichment.availability import require_preparation_available
 
     expected_posting_url = job["url"]
-    require_fresh_active(
+    require_preparation_available(
         str(stable_job_id),
         tenant_id=str(tenant_id),
         conn=conn,
         expected_posting_url=expected_posting_url,
-        allow_unknown=True,
     )
     with claim_preparation_reservation(
         conn,

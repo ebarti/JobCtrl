@@ -385,7 +385,7 @@ def run_scoring(
     log.info("Scoring %d jobs with %d worker(s)...", len(jobs), worker_count)
 
     conn.commit()
-    from jobctrl.enrichment.availability import require_fresh_active
+    from jobctrl.enrichment.availability import require_preparation_available
     from jobctrl.infrastructure.preparation_recovery import PreparationReservationLost
 
     ownership_skipped: set[str] = set()
@@ -398,12 +398,11 @@ def run_scoring(
             ownership_skipped.add(str(job["job_id"]))
             continue
         try:
-            require_fresh_active(
+            require_preparation_available(
                 str(job["job_id"]),
                 tenant_id=str(tenant_id),
                 conn=conn,
                 expected_posting_url=job["url"],
-                allow_unknown=True,
             )
         except Exception as exc:
             log.info("Scoring deferred for %s: %s", job["job_id"], exc)
@@ -855,19 +854,18 @@ def score_job_by_id(
     if workflow_id and not enforce_workflow_ownership:
         _assert_direct_score_admission(conn, tenant_id, stable_job_id, workflow_id, cancel_event)
 
-    from jobctrl.enrichment.availability import require_fresh_active, assert_fresh_candidate
+    from jobctrl.enrichment.availability import require_preparation_available, assert_fresh_candidate
     from jobctrl.infrastructure.preparation_recovery import PreparationReservationLost, claim_preparation_reservation
 
     expected_posting_url = job["url"]
     conn.commit()
-    require_fresh_active(
+    require_preparation_available(
         str(stable_job_id),
         tenant_id=str(tenant_id),
         conn=conn,
         expected_posting_url=expected_posting_url,
-        allow_unknown=True,
     )
-    # Acquisition released its writer and fenced URL; reload the preparation target.
+    # Any refresh released its writer and fenced URL; reload the preparation target.
     with claim_preparation_reservation(
         conn,
         tenant_id=tenant_id,

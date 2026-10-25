@@ -116,7 +116,7 @@ def test_global_sweep_rechecks_other_writer_at_locked_admission(conn, monkeypatc
 
     _seed(conn, _FOREIGN)
     _seed(conn, _PEER)
-    original = availability.require_fresh_active
+    original = availability.require_preparation_available
     before = []
 
     def acquire(jid, **kwargs):
@@ -129,7 +129,7 @@ def test_global_sweep_rechecks_other_writer_at_locked_admission(conn, monkeypatc
             other.close()
         return result
 
-    monkeypatch.setattr(availability, "require_fresh_active", acquire)
+    monkeypatch.setattr(availability, "require_preparation_available", acquire)
     llm = _ScriptedLlm(_GOOD, _GOOD)
     result = _run(conn, monkeypatch, profile_snapshot, llm)
     assert before and _row(conn, _FOREIGN) == before[0]

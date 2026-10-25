@@ -1374,6 +1374,43 @@ def require_fresh_active(
         raise MissingInputError("Posting is unavailable. Check availability before retrying.")
 
 
+def require_preparation_available(
+    job_id: str,
+    *,
+    expected_posting_url: str,
+    max_age: timedelta = timedelta(hours=6),
+    tenant_id: str = str(LOCAL_TENANT),
+    conn: sqlite3.Connection | None = None,
+) -> None:
+    """Reuse a recent observation for preparation without declaring it active.
+
+    Preparation permits unknown availability. Its six-hour refresh window is
+    measured from the last actual attempt, including an uncertain observation;
+    automatic and explicit checks keep their independent retry schedules.
+    Apply continues to use ``require_fresh_active`` and its own freshness gate.
+    """
+    from jobctrl.database import get_connection
+
+    conn = conn if conn is not None else get_connection()
+    row = conn.execute(
+        "SELECT url FROM jobs WHERE tenant_id = ? AND job_id = ?", (tenant_id, job_id)
+    ).fetchone()
+    value = read_availability(conn, job_id, tenant_id=tenant_id)
+    attempted = _instant(value.get("lastAttemptedAt"))
+    if (
+        row is not None
+        and row[0] == expected_posting_url == value.get("postingUrl")
+        and attempted is not None
+        and timedelta(0) <= _now() - attempted <= max_age
+        and candidate_ready(conn, job_id, tenant_id=tenant_id, max_age=max_age, allow_unknown=True)
+    ):
+        return
+    require_fresh_active(
+        job_id, conn=conn, tenant_id=tenant_id, max_age=max_age,
+        expected_posting_url=expected_posting_url, allow_unknown=True,
+    )
+
+
 def assert_fresh_candidate(
     conn: sqlite3.Connection,
     job_id: str,
