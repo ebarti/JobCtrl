@@ -191,6 +191,13 @@ function TargetPreferenceCard({
   );
 }
 
+function effectiveRequiredExperienceIds(profile: JsonRecord): string[] {
+  const configured = textArrayAt(profile, "resume.tailoring_rules.required_experience_entry_ids");
+  return configured.length > 0 ? configured : recordArrayAt(profile, "resume.experience_entries")
+    .map((entry) => textFrom(entry["id"]))
+    .filter(Boolean);
+}
+
 export function StructuredProfileEditor({
   applicationConfigurationFields,
   mode = "profile",
@@ -281,7 +288,9 @@ export function StructuredProfileEditor({
       return;
     }
     updateProfileDraft((draft) => {
-      const values = new Set(textArrayAt(draft, path));
+      const isExperience = path === "resume.tailoring_rules.required_experience_entry_ids";
+      const values = new Set(isExperience ? effectiveRequiredExperienceIds(draft) : textArrayAt(draft, path));
+      if (isExperience && !checked && values.has(id) && values.size === 1) return;
       if (checked) {
         values.add(id);
       } else {
@@ -373,6 +382,11 @@ export function StructuredProfileEditor({
       const id = textFrom(item["id"]);
       if (id) reservedRepeatIdsRef.current.add(id);
       setPathValue(draft, path, [...items, item]);
+      if (path === "resume.experience_entries" && id) {
+        const included = new Set(effectiveRequiredExperienceIds(draft));
+        included.add(id);
+        setPathValue(draft, "resume.tailoring_rules.required_experience_entry_ids", Array.from(included));
+      }
     });
   };
 
@@ -1407,9 +1421,7 @@ export function StructuredProfileEditor({
   const experienceEntries = recordArrayAt(profile, "resume.experience_entries");
   const educationEntries = recordArrayAt(profile, "resume.education_entries");
   const skillCategories = recordArrayAt(profile, "resume.skill_categories");
-  const requiredExperienceIds = new Set(
-    textArrayAt(profile, "resume.tailoring_rules.required_experience_entry_ids"),
-  );
+  const requiredExperienceIds = new Set(effectiveRequiredExperienceIds(profile));
   const requiredEducationIds = new Set(
     textArrayAt(profile, "resume.tailoring_rules.required_education_entry_ids"),
   );
@@ -1519,6 +1531,10 @@ export function StructuredProfileEditor({
                 The resume follows this order. Sort by date, or move individual roles into a custom
                 sequence.
               </FieldDescription>
+              <p className="field-help">
+                All roles appear by default. Uncheck a role to let tailoring omit it.
+                At least one role stays required; new experiences start included.
+              </p>
               {experienceEntries.map((entry, index) => {
                 const entryId = textFrom(entry["id"]);
                 const entryLabel =
@@ -1577,7 +1593,7 @@ export function StructuredProfileEditor({
                           <Checkbox
                             id={requiredEntryId}
                             checked={requiredExperienceIds.has(entryId)}
-                            disabled={!entryId}
+                            disabled={!entryId || (requiredExperienceIds.has(entryId) && requiredExperienceIds.size === 1)}
                             onCheckedChange={(checked) =>
                               setRequiredId(
                                 "resume.tailoring_rules.required_experience_entry_ids",

@@ -88,6 +88,12 @@ inspector stack instead of compressing the three-pane desktop workspace.
 Saving your edits does not call a model. Choose **Get suggestions for target
 roles** in Discovery when you want evidence-backed suggestions.
 
+Experience inclusion defaults to every role, matching the tailoring backend.
+The checkboxes show that effective default, and newly added experiences start
+included. You can explicitly uncheck optional roles while keeping at least one
+role required. Existing saved subsets remain intact. This controls whether a
+whole role may be omitted; the per-role bullet ceiling still controls detail.
+
 Adding an experience, education entry or skill category creates its internal
 identity immediately. You edit its descriptive fields; changing a title or label
 keeps its identity and any **Must appear in final resume** selection intact.
