@@ -35,7 +35,7 @@ GENERATED_CLAIM_LABELS = (
     "positioning",
     "structure",
 )
-NON_REQUIREMENT_REASONS = ("pinned", "positioning", "structure")
+NON_REQUIREMENT_REASONS = ("pinned", "positioning", "structure", "baseline_retained")
 BULLET_LIMIT_OVERFLOW_REASONS = (
     "pinned_required_bullet",
     "requirement_coverage",

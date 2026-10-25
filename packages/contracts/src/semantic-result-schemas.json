@@ -2847,7 +2847,10 @@
     "schemaVersion": "1"
   },
   "material_evidence_selection": {
-    "promptVersion": "material-evidence-selection-v1",
+    "compatiblePromptVersions": [
+      "material-evidence-selection-v1"
+    ],
+    "promptVersion": "material-evidence-selection-v2-baseline-retention",
     "schema": {
       "$defs": {
         "Citation": {

@@ -125,7 +125,7 @@ from jobctrl.domain.ports.claim_verification import ArtifactLine, ClaimVerifier
 from jobctrl.domain.ports.job_interpretation import JobInterpreter
 from jobctrl.domain.ports.artifact_quality import ArtifactQualityJudge
 from jobctrl.domain.profile.canonical_sources import experience_bullet_evidence_ids_by_role, profile_sources
-from jobctrl.domain.materials.generation import GeneratedResumeDraft
+from jobctrl.domain.materials.generation import ExperienceOmission, GeneratedResumeDraft
 from jobctrl.domain.ports.artifact_generation import GeneratedProseDraft
 from jobctrl.llm_lanes import lane_bound
 from jobctrl.domain.ports.materials import (
@@ -176,8 +176,8 @@ class ClaimIssue:
 
 log = logging.getLogger(__name__)
 
-TAILORING_PROMPT_VERSION = "tailor.v17.shared-review-constraints"
-TAILORING_SCHEMA_VERSION = "tailored-resume.v5"
+TAILORING_PROMPT_VERSION = "tailor.v18.applicable-baseline-retention"
+TAILORING_SCHEMA_VERSION = "tailored-resume.v6"
 TAILORING_JUDGE_SCHEMA_VERSION = "artifact-quality.v2"
 TAILORING_JUDGE_CRITERIA: tuple[str, ...] = (
     "relevance_to_job",
@@ -187,7 +187,7 @@ TAILORING_JUDGE_CRITERIA: tuple[str, ...] = (
     "ats_readability",
     "specificity_and_metrics",
     "semantic_fidelity",
-    "bullet_selection_focus",
+    "applicable_accomplishment_retention",
     "professional_register",
 )
 
@@ -214,6 +214,14 @@ def _resume_generation_constraints() -> dict[str, str]:
 def _tailored_resume_response_schema(plan: TailoringPlan) -> dict[str, Any]:
     """Constrain provider output to the same active edge namespace as validation."""
     schema = GeneratedResumeDraft.model_json_schema()
+    schema["required"] = list(schema["properties"])
+    omissions = schema["$defs"]["ExperienceOmission"]["properties"]
+    baseline_ids = sorted({ident for values in plan.baseline_evidence_ids_by_role.values() for ident in values})
+    if baseline_ids:
+        omissions["evidence_id"]["enum"] = baseline_ids
+        omissions["experience_entry_id"]["enum"] = sorted(plan.baseline_evidence_ids_by_role)
+    else:
+        schema["properties"]["experience_omissions"]["maxItems"] = 0
     properties = schema["$defs"]["GeneratedClaim"]["properties"]
     properties["claim_label"]["enum"] = list(
         generated_claim_labels_for_policy(plan.requirement_led_controls.claim_policy)
@@ -719,13 +727,10 @@ def _experience_bullet_curation_errors(
     mappings: Iterable[GeneratedClaimMapping],
     tailoring_plan: TailoringPlan,
 ) -> tuple[str, ...]:
-    """Enforce a smallest-sufficient, evidence-backed bullet set.
+    """Retain selected roles' baseline facts without inventing pins or fit edges.
 
-    ``max_experience_bullets`` remains a ceiling. It is never a target. Each
-    bullet represents exactly one achievement. Target-covered and explicit
-    pinned achievements may appear; a required role with neither gets exactly
-    one evidence-backed positioning bullet so the role remains representable.
-    A required role with no achievement evidence retains only its fixed metadata.
+    Exact source IDs enforce presence and ownership. Independent models decide
+    whether combined or rewritten claims preserve each accomplishment.
     """
 
     mapping_tuple = tuple(mappings)
@@ -734,10 +739,39 @@ def _experience_bullet_curation_errors(
     pins = tailoring_plan.requirement_led_controls.required_content_pins
     required_roles = set(pins.experience_entry_ids)
     explicit_evidence_pins = set(tailoring_plan.required_evidence_ids)
+    baseline_by_role = tailoring_plan.baseline_evidence_ids_by_role
     seen_experience_evidence: set[str] = set()
     errors: list[str] = []
 
     updates = payload.get("experience_updates")
+    role_counts = {
+        str(update.get("id") or "").strip(): len(update.get("bullets") or [])
+        for update in updates if isinstance(update, dict)
+    } if isinstance(updates, list) else {}
+    omissions_by_role: dict[str, set[str]] = {}
+    proposals = payload.get("experience_omissions", ())
+    if not isinstance(proposals, (list, tuple)):
+        errors.append("Experience omissions must be a list of source-bound decisions.")
+        proposals = ()
+    for proposal in proposals:
+        try:
+            omission = ExperienceOmission.model_validate(proposal)
+        except ValueError:
+            errors.append("Malformed experience omission decision.")
+            continue
+        entry_id, evidence_id = omission.experience_entry_id, omission.evidence_id
+        if entry_id not in role_counts or evidence_id not in baseline_by_role.get(entry_id, ()):
+            errors.append(f"Experience omission references an unknown or unselected baseline source: {evidence_id}")
+            continue
+        omitted = omissions_by_role.setdefault(entry_id, set())
+        if evidence_id in omitted:
+            errors.append(f"Duplicate experience omission: {evidence_id}")
+        omitted.add(evidence_id)
+        evidence = evidence_by_id[evidence_id]
+        if evidence_id in explicit_evidence_pins or evidence.source_text in pins.bullets_by_experience_id.get(entry_id, ()):
+            errors.append(f"Experience omission cannot drop an explicit user pin: {evidence_id}")
+        if omission.reason == "role_bullet_limit" and role_counts[entry_id] != tailoring_plan.max_experience_bullets:
+            errors.append(f"Bullet-limit omission requires a full role at the configured maximum: {entry_id}")
     for update_index, update in enumerate(updates if isinstance(updates, list) else ()):
         if not isinstance(update, dict):
             continue
@@ -758,25 +792,24 @@ def _experience_bullet_curation_errors(
                 continue  # the binding validator reports missing/duplicate mappings
             mapping = matches[0]
             role_claims.append(mapping)
-            if len(mapping.evidence_ids) != 1:
+            baseline_ids = set(baseline_by_role.get(entry_id, ()))
+            if not mapping.evidence_ids or len(set(mapping.evidence_ids) - baseline_ids) > 1:
                 errors.append(
-                    f"Experience bullet {entry_id}[{bullet_index}] must cite exactly "
-                    "one primary achievement evidence id."
+                    f"Experience bullet {entry_id}[{bullet_index}] must cite baseline "
+                    "accomplishments and at most one additional primary achievement evidence id."
                 )
-                continue
-            evidence_id = mapping.evidence_ids[0]
-            evidence = evidence_by_id.get(evidence_id)
-            if evidence is not None and evidence.experience_entry_id != entry_id:
-                errors.append(
-                    f"Experience bullet {entry_id}[{bullet_index}] cites achievement "
-                    f"{evidence_id} from {evidence.experience_entry_id}."
-                )
-            if evidence_id in seen_experience_evidence:
-                errors.append(
-                    f"Achievement evidence {evidence_id} is repeated across experience "
-                    "bullets; one achievement must produce one bullet."
-                )
-            seen_experience_evidence.add(evidence_id)
+            for evidence_id in mapping.evidence_ids:
+                evidence = evidence_by_id.get(evidence_id)
+                if evidence is not None and evidence.experience_entry_id != entry_id:
+                    errors.append(
+                        f"Experience bullet {entry_id}[{bullet_index}] cites achievement "
+                        f"{evidence_id} from {evidence.experience_entry_id}."
+                    )
+                if evidence_id in seen_experience_evidence:
+                    errors.append(f"Achievement evidence {evidence_id} is repeated across experience bullets.")
+                seen_experience_evidence.add(evidence_id)
+            if mapping.non_requirement_reason == "baseline_retained" and not baseline_ids.intersection(mapping.evidence_ids):
+                errors.append(f"Experience bullet {entry_id}[{bullet_index}] has no retained baseline source.")
 
             if mapping.non_requirement_reason == "structure":
                 errors.append(f"Experience bullet {entry_id}[{bullet_index}] cannot be structure-only.")
@@ -786,7 +819,7 @@ def _experience_bullet_curation_errors(
                 }
                 if (
                     _normalize_generated_claim_text(text) not in required_texts
-                    and evidence_id not in explicit_evidence_pins
+                    and not explicit_evidence_pins.intersection(mapping.evidence_ids)
                 ):
                     errors.append(
                         f"Experience bullet {entry_id}[{bullet_index}] is labeled pinned "
@@ -797,12 +830,25 @@ def _experience_bullet_curation_errors(
             mapping
             for mapping in role_claims
             if mapping.coverage_edge_ids or mapping.non_requirement_reason == "pinned"
+            or set(mapping.evidence_ids).intersection(baseline_by_role.get(entry_id, ()))
         ]
         positioning = [
             mapping
             for mapping in role_claims
             if not mapping.coverage_edge_ids and mapping.non_requirement_reason == "positioning"
         ]
+        retained_ids = {ident for mapping in role_claims for ident in mapping.evidence_ids}
+        omitted_ids = omissions_by_role.get(entry_id, set())
+        errors.extend(
+            f"Missing baseline selection decision in experience {entry_id}: {ident}"
+            for ident in baseline_by_role.get(entry_id, ()) if ident not in retained_ids | omitted_ids
+        )
+        errors.extend(
+            f"Baseline source is both retained and omitted: {ident}"
+            for ident in sorted(retained_ids & omitted_ids)
+        )
+        positioning = [mapping for mapping in positioning
+                       if not set(mapping.evidence_ids).intersection(baseline_by_role.get(entry_id, ()))]
         if covered_or_pinned and positioning:
             errors.extend(
                 f"Experience {entry_id} has target-covered or pinned evidence; "
@@ -810,6 +856,8 @@ def _experience_bullet_curation_errors(
                 for mapping in positioning
             )
         elif not covered_or_pinned:
+            if baseline_by_role.get(entry_id) and not role_claims and set(baseline_by_role[entry_id]) == omitted_ids:
+                continue  # independent quality review must affirm every omission
             if entry_id in required_roles and entry_id in evidence_entry_ids and len(positioning) != 1:
                 errors.append(
                     f"Required experience {entry_id} without target-covered or pinned "
@@ -1445,7 +1493,7 @@ def build_master_tailor_prompt(
     generation_constraints = _resume_generation_constraints()
     writing_style = get_writing_style(profile)
     custom_tailoring_prompt = get_custom_tailoring_prompt(profile)
-    max_bullets = get_max_experience_bullets(profile)
+    bullet_limits = {str(entry["id"]): get_max_experience_bullets(profile) for entry in experience_entries}
     banned_str = "Apply the user's writing style naturally; avoid inflated or generic language."
     policy_lines = [
         f"- Rewrite executive profile: {'yes' if tailoring_policy['allow_summary_rewrite'] else 'no, preserve the baseline summary'}",
@@ -1529,8 +1577,9 @@ HARD RULES:
 - Skill items must be exact strings from MASTER SKILL CATEGORIES; do NOT add job-only skills
 - Preserve each retained metric exactly and bind it to the achievement that supplied it
 - Do NOT invent companies, roles, degrees, or certifications
-- Max {max_bullets} bullets per experience entry is a hard ceiling, never a target;
-  requirement coverage and required bullets do not permit an overflow
+- Max {get_max_experience_bullets(profile)} bullets per role is a hard ceiling.
+  It remains authoritative when more baseline accomplishments are available.
+  Retain as many applicable accomplishments as possible within this limit
 - No em dashes
 - VOICE RUBRIC: {banned_str}
 - Use TARGET_PROFILE, COVERAGE_GRAPH, claim policy, generation permissions,
@@ -1539,7 +1588,7 @@ HARD RULES:
 - For every generated summary sentence, experience bullet, and selected skill
   group, emit a generated_claim_mappings entry that references valid
   coverage_edge_ids, requirement_ids, and evidence_ids; use non_requirement_reason
-  only for pinned, positioning, or structure claims
+  only for baseline_retained, pinned, positioning, or structure claims
 - Return executive_profile_sentences as the ordered 1-4 grammatical sentences
   that form executive_profile; joining them with one space must reproduce
   executive_profile exactly
@@ -1564,24 +1613,40 @@ HARD RULES:
   by the renderer. Cite a context source only when it contributes to the actual
   rendered line; omit unused context bindings. The final verifier decides which
   sources and requirements that line supports
-- Each experience bullet must cite exactly one primary achievement evidence id
-- For an experience bullet, choose that evidence id only from its matching entry
+- Every baseline evidence ID of a selected role must have either one bound
+  experience claim in that role or one experience_omissions decision. Kept
+  baseline facts are not explicit user pins and do not need a target coverage edge
+- Omit a baseline accomplishment only when it clearly does not apply to this
+  role, or when the role already fills its configured maximum with better
+  applicable accomplishments. Mere absence of a target keyword or active
+  coverage edge does not justify omission. Do not underfill a role when more
+  applicable accomplishments are available
+- Each omission must give its exact experience_entry_id and evidence_id, reason
+  clearly_inapplicable or role_bullet_limit, and a source-bound rationale. These
+  are proposals for the independent quality reviewer, not approved judgments
+- A bullet may cite related baseline sources plus at most one additional
+  achievement source from the same role. Combine only facts that belong together,
+  preserve their actions, agency, scope, outcomes and metrics; never attach a
+  baseline ID to prose that leaves its accomplishment out
+- For an experience bullet, choose evidence IDs only from its matching entry
   in EXPERIENCE BULLET EVIDENCE IDS BY ROLE. General summary, skill and education
   sources may support their corresponding surfaces but do not belong to another role
 - Use each achievement evidence id in at most one experience bullet
-- If a required role has target-covered or explicitly pinned evidence, include
-  only those bullets and no positioning-only filler. If it has neither, include
-  exactly one positioning bullet citing an achievement from that role when one exists
+- Retain as many applicable baseline accomplishments as possible alongside
+  target-covered or explicitly pinned evidence, within the configured maximum. Without an active coverage edge use baseline_retained as the
+  non-requirement reason; do not invent a requirement binding to justify retention
+- A required role with no baseline, active coverage or explicit bullet pin may
+  have one grounded positioning bullet if a confirmed achievement exists
 - For REQUIRED EXPERIENCE IDS ALLOWING EMPTY BULLETS, return bullets: []
   and title: "". The code preserves the source role details. Do not invent a
   positioning bullet or cite an achievement from another role. This exception
   applies only to roles with neither achievement evidence nor required bullet pins
-- non_requirement_reason is a required fallback classification. Choose pinned,
-  positioning, or structure. When coverage_edge_ids is non-empty it is ignored;
+- non_requirement_reason is a required fallback classification. Choose
+  baseline_retained, pinned, positioning, or structure. When coverage_edge_ids is non-empty it is ignored;
   when coverage_edge_ids is empty it must truthfully classify the claim
 - A required role is not a pinned bullet. For an experience bullet, use pinned
   only for an explicit REQUIRED BULLET or required_evidence item. When a required
-  role has no active coverage or explicit bullet pin, use positioning for its one grounded bullet,
+  role has no baseline, active coverage or explicit bullet pin, use positioning for its one grounded bullet,
   even though the role itself is mandatory. Do not use pinned when the response
   schema excludes it
 - Use only claim_label values permitted by the response schema and current claim policy.
@@ -1593,9 +1658,11 @@ HARD RULES:
 WRITING METHOD:
 - Treat required evidence and required bullets as pinned must-include achievements:
   keep the fact, metric, and meaning visible in the matching experience entry
-- Select the smallest sufficient set of achievements. Order selected bullets
-  strongest-to-weakest for this job; omit every optional bullet that does not
-  add distinct requirement evidence
+- Keep as many applicable baseline accomplishments as possible up to the hard
+  maximum per role. Prefer retention; omit only clearly inapplicable evidence
+  or a justified choice at the full limit. Order useful proof for this job.
+  Keep baseline wording when rewriting adds no useful supported improvement.
+  Preserve the actions, agency, scope, outcomes, tools and metrics of kept facts
 - Express one accomplishment per bullet: precise actor/agency, concrete action,
   supported outcome or significance, and useful scope or metric when present
 - Preserve semantic roles and causal status. "Reduced operating spend" is not
@@ -1633,6 +1700,9 @@ WRITING STYLE:
 EXPERIENCE BULLET EVIDENCE IDS BY ROLE:
 {json.dumps(bullet_evidence_by_role, indent=2, ensure_ascii=False)}
 
+CONFIGURED BULLET LIMITS BY ROLE:
+{json.dumps(bullet_limits, ensure_ascii=False)}
+
 REQUIRED EXPERIENCE IDS:
 {json.dumps(required_experience_ids, ensure_ascii=False)}
 
@@ -1649,6 +1719,7 @@ OUTPUT ONLY VALID JSON:
 {{
   "executive_profile": "2-4 sentences tailored to the target role.",
   "executive_profile_sentences": ["Sentence 1.", "Sentence 2."],
+  "experience_omissions": [],
   "experience_updates": [
     {{"id": "{required_experience_ids[0] if required_experience_ids else "experience_entry_id"}", "title": "", "bullets": ["bullet 1", "bullet 2"]}}
   ],
@@ -1740,7 +1811,7 @@ def _candidate_review_history(record):
     return history
 
 
-def _resume_review_rubric(profile, plan, *, rows=(), review_history=()):
+def _resume_review_rubric(profile, plan, *, rows=(), review_history=(), experience_omissions=()):
     return _with_review_history({
         "criteria": json.dumps(TAILORING_JUDGE_CRITERIA),
         "writing_style": json.dumps(plan.writing_style),
@@ -1752,6 +1823,7 @@ def _resume_review_rubric(profile, plan, *, rows=(), review_history=()):
             "required_experience_entry_ids": get_required_experience_entry_ids(profile),
             "required_skill_category_ids": get_required_skill_category_ids(profile),
             "max_bullets_per_experience": get_max_experience_bullets(profile),
+            "baseline_evidence_ids_by_role": plan.baseline_evidence_ids_by_role,
             "allow_layout_changes": False,
             "allow_skill_category_reorder": False,
             "fixed_skill_category_order": [row.source_id for row in rows if row.section == "skills"],
@@ -1762,8 +1834,10 @@ def _resume_review_rubric(profile, plan, *, rows=(), review_history=()):
         ], ensure_ascii=False),
         "allowed_evidence_correction_ids": json.dumps(_resume_review_evidence_ids(profile, plan, rows)),
         "review_scope": "Evaluate every supplied criterion and report all actionable defects in the current draft together, including actionable secondary findings. Apply the generation permissions when assessing completeness; do not require an omission to be reversed when those permissions require it. Each review still decides the current draft independently, and unresolved defects must fail.",
-        "revision_authority": "The current coverage graph and required evidence pins constrain generation. The retry evidence targets are the canonical alternatives that a bounded revision may reconsider; they do not authorize new coverage edges or a larger artifact budget. A required role without active coverage or an explicit bullet pin permits exactly one positioning bullet, or no bullet when it has no achievement evidence. Assess the best truthful artifact within these constraints; do not require additional bullets or evidence that neither the active plan nor the revision targets permit. Source verification and your semantic pass/fail decision remain independent gates.",
+        "revision_authority": "The current coverage graph and required evidence pins constrain generation. The retry evidence targets are the canonical alternatives that a bounded revision may reconsider; they do not authorize new coverage edges or a larger artifact budget. Keep as many applicable baseline accomplishments as possible within the configured hard maximum. Evaluate every omission independently: clearly_inapplicable requires a clear source-bound incompatibility; role_bullet_limit requires a full role with better applicable evidence. An absent target keyword or active fit edge never suffices. Related same-role sources may share a bullet only if their facts remain intact. A required role without baseline, active coverage or an explicit bullet pin permits one positioning bullet, or no bullet when it has no achievement evidence. Assess the best truthful artifact within these constraints; do not require additional bullets or evidence that neither the active plan nor the revision targets permit. Source verification and your semantic pass/fail decision remain independent gates.",
         "role_scope": "Use the canonical posting's actual responsibilities. A seniority label alone does not establish people-management duties or direct reports.",
+        "experience_omissions": json.dumps(list(experience_omissions), ensure_ascii=False),
+        "baseline_retention": "Retain as many applicable baseline accomplishments as possible up to the configured hard maximum for each role. Inspect all kept sources and all omission proposals. Reject an underfilled role if additional available accomplishments are applicable. Clearly inapplicable requires source-bound semantic judgment, not a missing keyword or fit edge; at the full cap assess whether omitted proof should replace weaker selected proof. Kept facts must preserve agency, action, scope, outcomes, tools and metrics. Declared IDs or omission rationales do not prove correctness. Related same-role sources may share a coherent bullet, but do not merge unrelated achievements. Baseline retention never establishes target requirement coverage.",
         "selection": "Required experience entries are a minimum; a complete career inventory is not required. An omitted optional role alone is not a completeness defect. Recommend additional saved evidence when it adds distinct role-relevant proof within the generation permissions.",
         "fixed_structure": "Historical titles, employers, dates, locations, role summaries, education, contacts and skill-category labels are source-controlled. Section layout and skill-category order are fixed by the saved profile and template. Skill reorder permission applies to items within a category, not category order. Repairs must preserve these surfaces and stay within the permitted mutable fields.",
         "candidate_fit_boundary": "Judge whether the artifact presents available supported evidence clearly for this role. Do not demand unsupported qualifications or treat a known candidate qualification gap alone as a drafting defect.",
@@ -3186,6 +3260,7 @@ class TailorResumeUseCase:
                 rubric=_resume_review_rubric(
                     profile_snapshot.as_dict(), tailoring_plan, rows=rows,
                     review_history=record.get("review_history", ()),
+                    experience_omissions=payload.get("experience_omissions", ()),
                 ),
             )
             record["adversarial_review_result"] = review.model_dump()
@@ -3262,6 +3337,7 @@ class TailorResumeUseCase:
             sources=_resume_review_sources(profile_snapshot.as_dict(), job, employer_analysis),
             rubric=_resume_review_rubric(
                 profile_snapshot.as_dict(), tailoring_plan, rows=rows, review_history=review_history,
+                experience_omissions=tailored_payload.get("experience_omissions", ()),
             ),
         )
 
@@ -3404,6 +3480,8 @@ class TailorResumeUseCase:
                 "prohibited_claims": json.dumps(plan.prohibited_claims),
                 "required_evidence": json.dumps(plan.required_evidence_ids),
                 "target_seniority": plan.target_seniority,
+                "baseline_retention": "Declared baseline IDs do not prove retention: verify that each kept baseline accomplishment, agency, action, scope, outcome, tools and metrics remain in its bound line. When sources share a bullet, verify every contribution without moving facts or metrics between achievements. Fail missing or weakened facts; do not infer target coverage from retention.",
+                "baseline_evidence_ids_by_role": json.dumps(plan.baseline_evidence_ids_by_role),
                 "requirement_alignment": "Judge each declared requirement binding against the final line; cite only requirements that this line serves.",
             },
         )

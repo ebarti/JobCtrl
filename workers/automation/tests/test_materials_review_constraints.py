@@ -84,7 +84,7 @@ def test_baseline_only_required_role_reaches_reviews_without_contradictory_permi
 
     def bind_baseline(payload):
         for mapping in payload["generated_claim_mappings"]:
-            if mapping["evidence_ids"] == ["fact"]:
+            if "fact" in mapping["evidence_ids"]:
                 mapping["evidence_ids"] = [evidence_id]
 
     conn = connection()

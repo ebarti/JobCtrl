@@ -365,7 +365,7 @@ def _claim_mapping(bullet: str, *, summary: str) -> list[dict[str, object]]:
             "claim_label": "evidence_reframed",
             "coverage_edge_ids": ["edge_req_latency_ev_latency_direct"],
             "requirement_ids": ["req_latency"],
-            "evidence_ids": ["ev_latency"],
+            "evidence_ids": ["ev_latency", "experience:acme_swe:source:0"],
             "non_requirement_reason": "",
             "review_required": False,
         },
@@ -634,7 +634,7 @@ def test_gate_grounding_and_shipped_fit_persist_with_lifecycle_labels(tmp_path: 
     assert saved is not None
     experience = next(row for row in saved.bullets if row.section == "experience" and "#" in row.bullet_id)
     assert "req_latency" in experience.requirement_ids
-    assert all(evidence_id == "ev_latency" for evidence_id in experience.evidence_ids)
+    assert experience.evidence_ids == ("ev_latency", "experience:acme_swe:source:0")
 
 
 def test_voiced_bullet_is_recorded_as_voice_transform(tmp_path: Path) -> None:

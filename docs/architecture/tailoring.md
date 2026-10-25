@@ -1,6 +1,6 @@
 # Tailoring Contract
 
-Tailoring generates a selective resume from saved profile sources and the current employer analysis/requirement-fit ledger. [Semantic Judgments Are LLM Determinations](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) defines model authority. [Materials Audit](materials.md) owns shared truthfulness and line provenance.
+Tailoring generates a resume that keeps as many applicable baseline accomplishments as possible within saved per-role limits from saved profile sources and the current employer analysis/requirement-fit ledger. [Semantic Judgments Are LLM Determinations](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) defines model authority. [Materials Audit](materials.md) owns shared truthfulness and line provenance.
 
 ## The Contract At A Glance
 
@@ -76,12 +76,40 @@ source contribution and served requirement. Unused context cannot become an
 extra provenance anchor, and an unrepresented context edge receives no automatic
 generated-coverage credit.
 
+The plan stores `baseline_evidence_ids_by_role` and the configured
+`max_experience_bullets`, separately from explicit pins and target coverage.
+Each baseline ID of a selected role must occur once in a bound experience claim
+or once in `experience_omissions`. Every omission proposal supplies its exact
+role/source IDs, a rationale and the typed reason `clearly_inapplicable` or
+`role_bullet_limit`. Code rejects missing, foreign, duplicate and contradictory
+decisions, dropped explicit pins and cap omissions when the role is not full.
+The configured maximum remains a hard cap; baseline length never raises it.
+
+Generation keeps as many applicable accomplishments as possible up to that cap.
+The existing independent quality determination reads the full baseline inventory,
+final lines and omission proposals. It rejects unjustified omissions, underfilled
+roles and weaker evidence chosen over more useful available proof. Missing job
+keywords or an active fit edge do not establish irrelevance. Code does not decide
+applicability or infer semantic equivalence. Multiple related baseline sources
+and at most one additional achievement source may share a coherent bullet only
+when independent factual and quality reviews affirm their contributions and
+preserve agency, action, scope, outcomes, tools and metrics. Retention never
+grants target coverage or an explicit user pin. `baseline_retained` identifies
+a retained factual claim without a target edge. A fully inapplicable baseline
+can leave role metadata alone after its omission proposals pass quality review.
+
+These selection proposals are part of the existing generation response and
+quality request, not another paid model stage. Their IDs and decisions remain
+in the attempt audit; the quality receipt remains authoritative. Current prompts
+use `tailor.v18.applicable-baseline-retention` and `tailored-resume.v6`. Existing
+accepted artifacts and historical plan metadata remain unchanged.
+
 An overflowing seeded graph is still an evidence menu. If explicit user pins
-fit but the seeded selection exceeds a saved per-role bullet ceiling, Materials
+fit but the seeded selection exceeds the configured per-role bullet ceiling, Materials
 requests a `material_evidence_selection` determination from the configured
 generator route before drafting. It selects only admitted requirement/evidence
 edges, cites their canonical sources, and records a reason for each requirement
-left uncovered. Code enforces exact IDs, pins and the unchanged ceiling; the
+left uncovered. Code enforces exact IDs, pins and the configured ceiling; the
 existing artifact-budget guard runs again on the selected plan. The plan audit
 stores the determination ID. Feasible seeds make no additional call, impossible
 pins still block before spend, and failed selection preserves accepted materials.

@@ -147,7 +147,6 @@ def _validate_master_json_fields(data: dict, profile: dict, mode: str = "normal"
     evidence_entry_ids = {ident for ident, evidence in experience_bullet_evidence_ids_by_role(profile).items() if evidence}
     required_skill_ids = set(get_required_skill_category_ids(profile))
     all_skill_ids = {category.get("id") for category in get_skill_categories(profile)}
-    max_bullets = get_max_experience_bullets(profile)
 
     all_text_parts: list[str] = [executive_profile]
     seen_experience_ids: set[str] = set()
@@ -164,8 +163,20 @@ def _validate_master_json_fields(data: dict, profile: dict, mode: str = "normal"
             errors.append(f"Duplicate experience update: {entry_id}")
             continue
         seen_experience_ids.add(entry_id)
+        baseline_ids = {f"experience:{entry_id}:source:{index}" for index, bullet in
+                        enumerate(entry_by_id.get(entry_id, {}).get("bullets") or []) if str(bullet).strip()}
+        omission_records = data.get("experience_omissions", ())
+        if not isinstance(omission_records, (list, tuple)):
+            omission_records = ()
+        omission_ids = {row.get("evidence_id") for row in omission_records
+                        if isinstance(row, dict) and row.get("experience_entry_id") == entry_id
+                        and row.get("reason") == "clearly_inapplicable"}
+        all_baseline_omitted = bool(baseline_ids) and baseline_ids == omission_ids
         if not isinstance(bullets, list) or (
-            not bullets and (entry_id in evidence_entry_ids or required_bullets_by_entry.get(entry_id))
+            not bullets and (
+                (entry_id in evidence_entry_ids and not all_baseline_omitted)
+                or required_bullets_by_entry.get(entry_id)
+            )
         ):
             errors.append(f"Experience update '{entry_id}' must include bullets")
             continue
@@ -176,6 +187,7 @@ def _validate_master_json_fields(data: dict, profile: dict, mode: str = "normal"
             if normalized_required and normalized_required not in seen_effective:
                 effective_bullets.append(required_bullet)
                 seen_effective.add(normalized_required)
+        max_bullets = get_max_experience_bullets(profile)
         if len(effective_bullets) > max_bullets:
             errors.append(f"Experience update '{entry_id}' exceeds {max_bullets} bullets")
         title = str(update.get("title") or "").strip()

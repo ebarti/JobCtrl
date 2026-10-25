@@ -153,6 +153,8 @@ class TailoringPlan:
     target_profile: TargetProfile | None = None
     coverage_graph: CoverageGraph | None = None
     selection_determination_id: str | None = None
+    baseline_evidence_ids_by_role: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    max_experience_bullets: int = 4
 
     @property
     def evidence_by_id(self) -> dict[str, EvidencePlanItem]:
@@ -165,6 +167,8 @@ class TailoringPlan:
             "target_seniority": self.target_seniority,
             "job_keywords": list(self.job_keywords),
             "requirement_directives": [directive.prompt_dict for directive in self.requirement_directives],
+            "baseline_evidence_ids_by_role": {key: list(value) for key, value in self.baseline_evidence_ids_by_role.items()},
+            "max_experience_bullets": self.max_experience_bullets,
             "required_evidence": [
                 required[evidence_id].prompt_dict
                 for evidence_id in self.required_evidence_ids
@@ -236,6 +240,8 @@ class TailoringPlan:
             "target_seniority": self.target_seniority,
             "job_keywords": list(self.job_keywords),
             "required_evidence_ids": list(self.required_evidence_ids),
+            "baseline_evidence_ids_by_role": {key: list(value) for key, value in self.baseline_evidence_ids_by_role.items()},
+            "max_experience_bullets": self.max_experience_bullets,
             "verified_metric_count": len(self.verified_metrics),
             "requirement_directives": [directive.metadata_dict for directive in self.requirement_directives],
             "prohibited_claims": list(self.prohibited_claims),
@@ -546,6 +552,14 @@ def build_tailoring_plan(
         evidence_items=evidence_items,
         requirement_directives=requirement_directives,
         prohibited_claims=_directive_prohibited_claims(requirement_directives),
+        max_experience_bullets=get_max_experience_bullets(profile),
+        baseline_evidence_ids_by_role={
+            str(entry["id"]): tuple(
+                f"experience:{entry['id']}:source:{index}"
+                for index, bullet in enumerate(entry.get("bullets") or []) if str(bullet).strip()
+            )
+            for entry in get_experience_entries(profile)
+        },
         requirement_led_controls=requirement_led_controls,
         target_profile=target_profile,
         coverage_graph=coverage_graph,
