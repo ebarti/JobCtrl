@@ -122,10 +122,10 @@ IDs, source citations and accepted artifact bindings remain the canonical
 read authority. Failed refreshes preserve the last accepted artifact.
 
 The request-scoped model-attempt guard is carried through thread and async context.
-Letter-review cancellation checks it before determination repairs and at the shared
+Artifact-review cancellation checks it before determination repairs and at the shared
 provider-generation admission boundary, before spend checking. Calls admitted
 before stop may finish with usage accounting; this does not claim control over
-SDK-internal retries. The separate bounded review pool drains before runtime close.
+SDK-internal retries. The shared bounded résumé/letter review pool drains before runtime close.
 
 The extra post-approval voice pass is admitted by the Materials factory only
 when its saved opt-in policy or an explicitly injected port requests it. Its

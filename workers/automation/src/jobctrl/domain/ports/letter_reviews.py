@@ -1,4 +1,4 @@
-"""Scheduling seam for two independent judgments of one frozen letter draft."""
+"""Scheduling seam for two independent judgments of one frozen artifact draft."""
 from __future__ import annotations
 
 from collections.abc import Callable
