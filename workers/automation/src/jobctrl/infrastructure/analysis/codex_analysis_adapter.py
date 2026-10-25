@@ -337,10 +337,11 @@ class CodexAnalysisAdapter:
     @lane_bound("discovery")
     async def draft(self, system_prompt: str, jd_snapshot: str) -> JobAnalysisDraft:
         factory = self._async_codex_factory or _load_async_codex_factory()
-        from jobctrl.infrastructure.llm.task_instructions import CODEX_TASK_INSTRUCTION_PROFILE
+        from jobctrl.infrastructure.llm.task_instructions import CODEX_TASK_INSTRUCTIONS, CODEX_TASK_INSTRUCTION_PROFILE
 
         effort = self.reasoning_effort or "high"
         prompt = f"{system_prompt}\n\nJOB DESCRIPTION:\n{jd_snapshot}"
+        output_schema = strict_json_schema(JobAnalysis.model_json_schema())
         span_input = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": jd_snapshot},
@@ -351,6 +352,9 @@ class CodexAnalysisAdapter:
             params={"structured": True, "effort": effort},
             scope_name=_CODEX_SCOPE,
             instruction_profile=CODEX_TASK_INSTRUCTION_PROFILE,
+            response_schema=output_schema,
+            runtime_instructions=CODEX_TASK_INSTRUCTIONS,
+            runtime_prompt=prompt,
         ) as record:
             try:
                 from jobctrl.infrastructure.llm.agent_runtime_codex import call_codex_runtime
@@ -358,7 +362,7 @@ class CodexAnalysisAdapter:
                 outcome = await call_codex_runtime(
                     factory=factory, approval=_deny_all_approval_mode,
                     model=self._model, effort=effort, prompt=prompt, operation="chat_json",
-                    output_schema=strict_json_schema(JobAnalysis.model_json_schema()),
+                    output_schema=output_schema,
                     record_usage=lambda input_tokens, output_tokens: record(
                         "", input_tokens=input_tokens, output_tokens=output_tokens,
                     ),

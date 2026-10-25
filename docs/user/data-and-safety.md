@@ -379,10 +379,18 @@ Current estimated spend appears on the health surface.
 
 ## Telemetry
 
-Langfuse export is off unless configured. When enabled, it exports metadata-only
-LLM, workflow, and JSON-RPC spans. Raw prompts, messages, job/profile/material
-text, completions, credentials, local paths, logs, and database content are not
-exported as span attributes. Set `LANGFUSE_DISABLE=1` to force opt-out.
+Langfuse export is off unless configured. Its default is metadata-only LLM,
+workflow and JSON-RPC spans. Set `LANGFUSE_DISABLE=1` to force opt-out.
+
+For deliberate debugging, `JOBCTRL_TRACE_CONTENT=1` additionally captures LLM
+messages and returned completions on their generation spans. When supplied by the
+adapter, the capture also includes the response schema and exact runtime prompt
+and instructions. This sends job, profile and generated-material text contained
+in those inputs/outputs to your configured Langfuse destination. Use a destination
+you intend to receive that private data; unset the flag to resume metadata-only
+capture. Existing captured bodies remain in that destination until removed there.
+Arbitrary request parameters, authentication/configuration objects, runtime paths,
+logs, databases and exception messages are not added by this opt-in.
 
 ## Public Bug Reports
 

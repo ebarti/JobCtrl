@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from contextlib import contextmanager
 from typing import Callable, Iterator
@@ -52,6 +53,9 @@ def llm_generation_span(
     scope_name: str = "jobctrl.llm",
     schema_fingerprint: str | None = None,
     instruction_profile: str | None = None,
+    response_schema: dict | None = None,
+    runtime_instructions: str | None = None,
+    runtime_prompt: str | None = None,
 ) -> Iterator[RecordResponse]:
     """Open a ``langfuse.observation.type=generation`` span around an LLM call.
 
@@ -59,6 +63,8 @@ def llm_generation_span(
     so the caller can attach content-free response size + token counts after
     the LLM returns. Exceptions raised inside the ``with`` block mark the span
     failed without exporting their potentially private messages, then re-raise.
+    JOBCTRL_TRACE_CONTENT explicitly opts into request/response bodies on recording
+    spans; credentials, arbitrary parameters and exception text remain excluded.
     """
     from jobctrl.llm import enforce_spend_budget
     from jobctrl.llm_lanes import current_llm_lane
@@ -106,7 +112,30 @@ def llm_generation_span(
         if provider is not None:
             span.set_attribute("gen_ai.provider.name", provider)
 
+        capture_content = (
+            os.environ.get("JOBCTRL_TRACE_CONTENT", "").strip().lower() in {"1", "true", "yes"}
+            and span.is_recording()
+        )
+        if capture_content:
+            request_body = {"messages": messages}
+            for name, value in (
+                ("response_schema", response_schema),
+                ("runtime_instructions", runtime_instructions),
+                ("runtime_prompt", runtime_prompt),
+            ):
+                if value is not None:
+                    request_body[name] = value
+            try:
+                encoded = json.dumps(request_body, ensure_ascii=False, separators=(",", ":"))
+            except (TypeError, ValueError):
+                # Diagnostic serialization must not change a provider call.
+                span.set_attribute("jobctrl.llm.content_capture", "input_serialization_failed")
+            else:
+                span.set_attribute("langfuse.observation.input", encoded)
+                span.set_attribute("jobctrl.llm.content_capture", "enabled")
+
         usage_recorded = False
+        response_recorded = False
 
         def record(
             text: str,
@@ -117,9 +146,15 @@ def llm_generation_span(
             reasoning_output_tokens: int | None = None,
             runtime_metadata: dict | None = None,
         ) -> None:
-            nonlocal usage_recorded
+            nonlocal usage_recorded, response_recorded
             span.set_attribute("gen_ai.response.model", model)
-            span.set_attribute("jobctrl.llm.output.character_count", len(text))
+            if text or not response_recorded:
+                span.set_attribute("jobctrl.llm.output.character_count", len(text))
+            response_recorded = response_recorded or bool(text)
+            # SDK usage callbacks pass empty text. They must not overwrite the
+            # final response, including when accounting arrives after it.
+            if capture_content and text:
+                span.set_attribute("langfuse.observation.output", text)
             if input_tokens is not None and output_tokens is not None:
                 span.set_attribute(
                     "langfuse.observation.usage_details",

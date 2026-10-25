@@ -11,6 +11,7 @@ from jobctrl.llm_lanes import bind_llm_lane
 
 @pytest.fixture(autouse=True)
 def _llm_lane(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("JOBCTRL_TRACE_CONTENT", raising=False)
     monkeypatch.setattr("jobctrl.llm.enforce_spend_budget", lambda _lane=None: None)
     with bind_llm_lane("tailoring"):
         yield
@@ -278,3 +279,100 @@ def test_unknown_detail_values_and_arbitrary_identity_content_are_not_exported(i
     span = in_memory_exporter.get_finished_spans()[0]
     assert not any(key.startswith("jobctrl.llm.usage.") for key in _attrs(span))
     assert "PRIVATE" not in _exported_span_text(span)
+
+
+@pytest.mark.parametrize("flag", ["1", "true", " yes "])
+def test_explicit_content_capture_snapshots_request_and_retains_final_response(
+    monkeypatch, in_memory_exporter, flag,
+):
+    from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
+
+    monkeypatch.setenv("JOBCTRL_TRACE_CONTENT", flag)
+    messages = [{"role": "user", "content": "Synthetic fact: café team of 3."}]
+    schema = {"type": "object", "properties": {"answer": {"type": "string"}}}
+    with llm_generation_span(
+        model="gpt-test", messages=messages, params={"private_extension": "DO_NOT_EXPORT"},
+        response_schema=schema, runtime_instructions="Synthetic runtime instructions",
+        runtime_prompt="Synthetic exact provider prompt",
+    ) as record:
+        messages[0]["content"] = "caller mutation"
+        schema["type"] = "caller mutation"
+        record("", input_tokens=10, output_tokens=5)
+        record('{"answer":"Synthetic response"}')
+        record("", cached_input_tokens=0, reasoning_output_tokens=2)
+    span = in_memory_exporter.get_finished_spans()[0]
+    attrs = _attrs(span)
+    request = json.loads(attrs["langfuse.observation.input"])
+    assert request["messages"][0]["content"] == "Synthetic fact: café team of 3."
+    assert request["response_schema"]["type"] == "object"
+    assert request["runtime_instructions"] == "Synthetic runtime instructions"
+    assert request["runtime_prompt"] == "Synthetic exact provider prompt"
+    assert attrs["langfuse.observation.output"] == '{"answer":"Synthetic response"}'
+    assert attrs["jobctrl.llm.output.character_count"] == len('{"answer":"Synthetic response"}')
+    assert attrs["jobctrl.llm.content_capture"] == "enabled"
+    assert "DO_NOT_EXPORT" not in _exported_span_text(span)
+
+
+@pytest.mark.parametrize("flag", ["", "0", "false", "enabled", "PRIVATE_FLAG"])
+def test_content_capture_requires_explicit_flag(monkeypatch, in_memory_exporter, flag):
+    from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
+
+    monkeypatch.setenv("JOBCTRL_TRACE_CONTENT", flag)
+    with llm_generation_span(
+        model="gpt-test", messages=[{"role": "user", "content": "PRIVATE_INPUT"}], params={},
+        response_schema={"description": "PRIVATE_SCHEMA"}, runtime_instructions="PRIVATE_RUNTIME",
+    ) as record:
+        record("PRIVATE_OUTPUT")
+    text = _exported_span_text(in_memory_exporter.get_finished_spans()[0])
+    assert "PRIVATE" not in text
+    assert "langfuse.observation.input" not in text
+    assert "langfuse.observation.output" not in text
+
+
+def test_enabled_capture_keeps_failure_text_private(monkeypatch, in_memory_exporter):
+    from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
+
+    monkeypatch.setenv("JOBCTRL_TRACE_CONTENT", "1")
+    with pytest.raises(RuntimeError):
+        with llm_generation_span(model="gpt-test", messages=[], params={}):
+            raise RuntimeError("PRIVATE_EXCEPTION_MESSAGE")
+    attrs = _attrs(in_memory_exporter.get_finished_spans()[0])
+    assert json.loads(attrs["langfuse.observation.input"]) == {"messages": []}
+    assert "langfuse.observation.output" not in attrs
+    assert "PRIVATE_EXCEPTION_MESSAGE" not in _exported_span_text(in_memory_exporter.get_finished_spans()[0])
+
+
+def test_capture_serialization_failure_does_not_fail_model_work(monkeypatch, in_memory_exporter):
+    from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
+
+    monkeypatch.setenv("JOBCTRL_TRACE_CONTENT", "1")
+    with llm_generation_span(model="gpt-test", messages=[], params={}, response_schema={"value": object()}) as record:
+        record("Synthetic response")
+    attrs = _attrs(in_memory_exporter.get_finished_spans()[0])
+    assert attrs["jobctrl.llm.content_capture"] == "input_serialization_failed"
+    assert attrs["jobctrl.llm.success"] is True
+
+
+
+def test_content_opt_in_without_recording_does_not_serialize_bodies(monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from opentelemetry import trace
+
+    from jobctrl.infrastructure.observability import llm_spans
+
+    monkeypatch.setenv("JOBCTRL_TRACE_CONTENT", "1")
+    monkeypatch.setattr(llm_spans.trace, "get_tracer", lambda _name: SimpleNamespace(
+        start_as_current_span=lambda *_args, **_kwargs: nullcontext(trace.NonRecordingSpan(trace.INVALID_SPAN_CONTEXT)),
+    ))
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("A nonrecording span must not serialize private request bodies")
+
+    monkeypatch.setattr(llm_spans.json, "dumps", forbidden)
+    with llm_spans.llm_generation_span(
+        model="gpt-test", messages=[{"role": "user", "content": "Synthetic input"}], params={},
+        response_schema={"unused_non_json_value": object()},
+    ) as record:
+        record("Synthetic output")

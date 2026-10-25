@@ -110,7 +110,8 @@ worker rechecks due saved postings:
 - **Gmail, if connected:** verification-code and outcome lookups, and the
   application emails you approve.
 - **Google Maps** (address autocomplete), **CapSolver** (CAPTCHA solving), and
-  **Langfuse** (metadata-only traces): only if you configure them.
+  **Langfuse** (metadata-only traces by default; prompt/completion capture requires
+  an additional explicit debugging opt-in): only if you configure them.
 
 Details: [Data, Privacy & Safety](https://jobctrl.dev/user/data-and-safety) ·
 [Security](https://jobctrl.dev/user/security)

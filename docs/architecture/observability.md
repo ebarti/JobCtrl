@@ -44,7 +44,7 @@ Langfuse instance for LLM tracing. The wiring lives under
   sets the GenAI semantic-conventions attributes (`gen_ai.request.model`,
   `gen_ai.response.model`, `gen_ai.usage.input_tokens`,
   `gen_ai.usage.output_tokens`) so OTel-native dashboards work too. Exported
-  LLM attributes are metadata-only: provider/model, operation/scope, outcome,
+  LLM attributes default to metadata-only: provider/model, operation/scope, outcome,
   token counts, safe request/response sizes, and known reasoning-effort protocol
   values in `gen_ai.request.reasoning_effort`. Arbitrary parameter values remain
   excluded. Codex spans also retain the versioned instruction-profile hash,
@@ -59,7 +59,16 @@ Langfuse instance for LLM tracing. The wiring lives under
   bounded `jobctrl.llm.failure.*` dimensions for provider, model, operation,
   category, type, code, retryability, and an allowlisted provider code or HTTP
   status; structured calls also carry a schema fingerprint. Raw messages,
-  parameters, completions, SDK objects, and exception messages are omitted.
+  parameters, completions, SDK objects, and exception messages are omitted by default.
+  `JOBCTRL_TRACE_CONTENT=1` explicitly adds JSON-encoded messages and any supplied
+  response schema/runtime instructions/exact runtime prompt as observation input,
+  plus returned text as observation output. The flag is captured once per span;
+  only recording spans serialize input. Request serialization failures remain
+  diagnostic and do not fail model work. Usage-only empty callbacks cannot erase
+  a captured response. Arbitrary parameters, credentials, SDK/config objects,
+  runtime paths and exception messages remain excluded. This opt-in sends private
+  request/output text to the configured tracing destination and does not alter
+  model, effort, spend admission, review requirements or determination authority.
 
 ## Span Sources
 
@@ -140,7 +149,7 @@ synthesizer, and the optional post-selection resume voice pass wrap
 their SDK model call in the same `llm_generation_span` the `LLMClient` uses, so
 every frontier-model call reports its provider/model, stage, outcome, safe
 content sizes, latency, and — when the SDK surfaces usage — input/output token
-counts to Langfuse. Prompts and completions are not exported. Distinct
+counts to Langfuse. Prompts and completions require the separate capture opt-in above. Distinct
 instrumentation scopes keep the drafts, synthesizer, and voice pass separable
 even though they share the `llm.<model>` span name. Because the legs run inside
 the enclosing pipeline-stage / JSON-RPC span (OTel context propagates through the

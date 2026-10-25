@@ -391,6 +391,7 @@ class ClaudeSdkBackend:
                 "thinking_budget": thinking_budget,
             },
             scope_name="jobctrl.llm.claude",
+            response_schema=response_schema,
         ) as record:
             sdk_messages = await _collect_sdk_messages(
                 query_fn, prompt=prompt, options=options_factory(**kwargs), model=self.model,
@@ -406,6 +407,7 @@ class ClaudeSdkBackend:
                 value = _structured_output_from_messages(sdk_messages)
             else:
                 value = _claude_text(sdk_messages)
+            record(value if isinstance(value, str) else json.dumps(value, ensure_ascii=False))
             return value
 
     def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
@@ -501,6 +503,8 @@ class CodexSdkBackend:
         approval = self._approval_mode_factory or _deny_all_approval_mode
         operation = "chat_json" if response_schema is not None else "chat"
         schema_fingerprint = _schema_fingerprint(response_schema)
+        output_schema = strict_json_schema(response_schema) if response_schema is not None else None
+        from jobctrl.infrastructure.llm.task_instructions import CODEX_TASK_INSTRUCTIONS
         with llm_generation_span(
             model=self.model,
             messages=messages,
@@ -508,6 +512,9 @@ class CodexSdkBackend:
             scope_name="jobctrl.llm.codex",
             schema_fingerprint=schema_fingerprint,
             instruction_profile=self.instruction_profile,
+            response_schema=output_schema,
+            runtime_instructions=CODEX_TASK_INSTRUCTIONS,
+            runtime_prompt=combined,
         ) as record:
             try:
                 from jobctrl.infrastructure.llm.agent_runtime_codex import call_codex_runtime
@@ -515,7 +522,7 @@ class CodexSdkBackend:
                 outcome = await call_codex_runtime(
                     factory=factory, approval=approval, model=self.model, effort=effort,
                     prompt=combined, operation=operation,
-                    output_schema=strict_json_schema(response_schema) if response_schema is not None else None,
+                    output_schema=output_schema,
                     record_usage=lambda input_tokens, output_tokens: record(
                         "", input_tokens=input_tokens, output_tokens=output_tokens,
                     ),
@@ -666,6 +673,7 @@ class GoogleSdkBackend:
                 "thinking_budget": thinking_budget,
             },
             scope_name="jobctrl.llm.google",
+            response_schema=response_schema,
         ) as record:
             from jobctrl.infrastructure.llm.agent_runtime_antigravity import call_antigravity_runtime
 
@@ -687,6 +695,7 @@ class GoogleSdkBackend:
                 value = outcome.text
                 if not value:
                     raise RuntimeError("Google SDK returned no final text result")
+            record(value if isinstance(value, str) else json.dumps(value, ensure_ascii=False))
             return value
 
     def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
