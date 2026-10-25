@@ -55,10 +55,16 @@ project is excluded.
 A narrow SDK facade consumes the public turn stream. The native convenience
 `run` method loses structured `TurnError` fields; the facade retains JobCtrl's
 bounded provider-error envelope and observed token accounting while the kit
-owns process lifecycle. Each native client owns private temporary `sqlite_home`
-and `log_dir` storage through its pooled lifetime, including reuse across requests.
-The storage is removed only after the client closes on eviction, failure,
-cancellation or process shutdown. Stable authentication and existing provider
+owns process lifecycle. Overlapping native clients in the same process share
+one private temporary `sqlite_home` per isolated credential home. This avoids
+parallel imports of the same retained provider history into a database per
+client. SQLite metadata and SQLite logs remain temporary: reference-counted
+leases remove the store after the last client closes on eviction, failure,
+cancellation or process shutdown. Each client retains an independent temporary
+`log_dir`. An exclusive OS lease prevents another process from reclaiming a live
+store; a new owner reclaims only unlocked private stores with the same recorded
+credential-home identity and recognized layout. Unfamiliar, linked or redirected
+ownership paths are preserved. Stable authentication and existing provider
 files remain unchanged. Process creation is shielded and joined before cleanup;
 the subsequent initialize handshake remains cancellable. Repeated cancellation
 waits for shutdown before storage removal. Catalog clients use the same temporary

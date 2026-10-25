@@ -2992,3 +2992,31 @@ reader and original bytes. The response schema and prompt participate in the
 request fingerprint. Failed refreshes preserve accepted artifacts. Measure any
 latency benefit through the normal UI and recorded model calls; a finite schema
 alone does not prove a faster or more accurate review.
+
+
+## 2026-10-25: Share Temporary Provider SQLite Storage
+
+Status: accepted
+
+Native Codex clients in one process and credential home share a temporary
+SQLite store. A separate SQLite home per client makes the runtime import the
+same retained provider history repeatedly, multiplying startup work and disk
+use. The pinned runtime also keeps its SQLite logs in that directory, so moving
+metadata into persistent storage would change log retention as well.
+
+Keep metadata and SQLite logs temporary. Reference-counted client leases remove
+the shared store only after every client has closed. Each client keeps an
+independent temporary text-log directory. A process-owned OS lease protects
+active stores; later startup reclaims only unlocked, private stores whose
+ownership version, exact credential-home identity and recognized directory
+layout match. Linked ownership files, redirected paths and unfamiliar contents
+remain untouched. A forced shutdown therefore does not require duplicating or
+deleting the original provider history to recover disk space.
+
+Authentication stays in its stable isolated home; generation requests remain
+ephemeral. Workspace permissions, native policy validation, selected model/effort,
+process reuse, lane/spend admission and all semantic acceptance rules remain
+unchanged. Structural regressions exercise overlapping clients/threads, real
+process exit without cleanup, active-store protection and foreign-path
+preservation. The pinned native SDK check must prove shared temporary state,
+independent ephemeral threads and the existing credential-read fence.

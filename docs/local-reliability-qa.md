@@ -56,6 +56,16 @@ verified purge with bundle/free-space/compaction guidance and no restore or purg
 retry instruction. A separate post-commit invariant failure must retain restore
 guidance.
 
+For provider SQLite ownership changes, prove overlapping clients and threads
+share one temporary store per process and credential home, and the last fully
+closed client removes it. Exercise a real owned subprocess exit without cleanup:
+the next acquisition must reclaim only that unlocked matching store. Active
+leases, other homes, unfamiliar versions/files, linked ownership records and
+redirected roots must survive. Use the pinned native SDK to verify shared state,
+independent ephemeral thread IDs, temporary logs and the credential-read fence;
+then observe disk use and model availability through the real UI flow. Never
+delete the original provider history as an automatic repair.
+
 <a id="required-commands"></a>
 
 | Surface | Starting command / selected recipe |
