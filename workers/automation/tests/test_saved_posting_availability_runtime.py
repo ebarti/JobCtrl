@@ -716,8 +716,9 @@ def test_real_anonymous_fallback_renders_resource_rich_closed_page_without_exhau
     assert all(step["rawHash"] for step in value["lineage"])
 
 
+@pytest.mark.parametrize("evidence", ["observation", "fresh_capture"])
 @pytest.mark.parametrize("stage", ["score", "tailor", "cover"])
-def test_unknown_availability_reaches_real_preparation_provider_boundary(runtime, monkeypatch, profile_snapshot, stage):
+def test_unknown_availability_reaches_real_preparation_provider_boundary(runtime, monkeypatch, profile_snapshot, stage, evidence):
     runtime.page_decisions.extend(["unknown", "unknown"])
     from jobctrl.scoring import scorer, tailor, cover_letter
     from jobctrl.domain.identifiers import JobId
@@ -726,10 +727,39 @@ def test_unknown_availability_reaches_real_preparation_provider_boundary(runtime
     job_id = _insert_ready_job(runtime.conn, url=POSTING_URL + "-preparation")
     runtime.conn.execute("UPDATE job_materials SET status='resume_approved' WHERE job_id=?", (job_id,))
     runtime.conn.commit()
-    claim, _ = availability.claim_job(runtime.conn, job_id)
-    availability.complete_check(
-        runtime.conn, claim, verdict="unknown", reason="access_challenge", method="fixture", lineage=[]
-    )
+    if evidence == "observation":
+        claim, _ = availability.claim_job(runtime.conn, job_id)
+        availability.complete_check(
+            runtime.conn, claim, verdict="unknown", reason="access_challenge", method="fixture", lineage=[]
+        )
+    else:
+        # The shared Apply fixture seeds positive availability. Remove only
+        # that owned observation to exercise fresh capture as the sole evidence.
+        runtime.conn.execute(
+            "DELETE FROM job_events WHERE tenant_id='local' AND entity_kind='posting_availability' AND entity_ref=?",
+            (job_id,),
+        )
+        runtime.conn.commit()
+        from jobctrl.enrichment import detail
+        from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+        from tests.page_fakes import PageModel
+
+        monkeypatch.setattr(
+            "jobctrl.infrastructure.enrichment.page_interpretation.determination_dependencies",
+            lambda conn, **_: dict(
+                llm=PageModel(availability="unknown"), repository=SqliteDeterminationRepository(conn),
+                tenant_id="local", provider="synthetic", model="synthetic", lane="enrichment", preflight=lambda: None,
+            ),
+        )
+        description = runtime.conn.execute("SELECT full_description FROM job_enrichments WHERE job_id=?", (job_id,)).fetchone()[0]
+        detail._record_posting_snapshot_from_cascade(
+            runtime.conn, job_id=job_id, url=POSTING_URL + "-preparation", source_id="synthetic", title="Synthetic role",
+            cascade_result={"full_description": description, "tier_used": 1},
+            captured_at=datetime.now(timezone.utc).isoformat(),
+        )
+        monkeypatch.setattr(
+            availability, "check_availability", lambda *_a, **_kw: pytest.fail("fresh capture repeated availability acquisition")
+        )
     for module in (scorer, tailor, cover_letter):
         monkeypatch.setattr(module, "get_connection", lambda: runtime.conn)
 
@@ -766,7 +796,7 @@ def test_unknown_availability_reaches_real_preparation_provider_boundary(runtime
             )
         else:
             cover_letter.cover_letter_by_id(JobId(job_id), tenant_id=LOCAL_TENANT, snapshot=profile_snapshot)
-    assert availability.read_availability(runtime.conn, job_id)["verdict"] == "unknown"
+    assert availability.read_availability(runtime.conn, job_id).get("verdict") == ("unknown" if evidence == "observation" else None)
     assert not runtime.conn.execute(
         "SELECT 1 FROM job_events WHERE entity_kind='posting_availability_request'"
     ).fetchone()

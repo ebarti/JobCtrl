@@ -557,6 +557,16 @@ original lease, owner/URL/deletion fence and cancellation must prevent browser
 startup after ownership is lost. Keep actual browser-resource, process cleanup,
 quota and accepted-observation preservation checks.
 
+For preparation capture reuse, also run locked
+`pytest tests/test_preparation_capture_reuse.py` with the availability suites.
+Through real canonical capture persistence and the score/tailor/cover entry
+points in owned synthetic SQLite, prove current active and unknown captures
+avoid another acquisition or model call. Repeat reads without adding observations.
+Reject stale/future timestamps, exact description changes, URL/deletion changes,
+quarantine, low confidence, foreign/missing/damaged judgment receipts, wrong
+contracts and later closure. Keep the independent unattended Apply refresh and
+writer fencing; capture reuse never manufactures positive availability.
+
 For shared Materials review constraints, run locked
 `pytest tests/test_materials_review_constraints.py tests/test_materials_use_cases.py tests/test_material_review_history.py tests/test_parallel_resume_reviews.py`
 and the full worker suite. Through the actual use case in owned synthetic
