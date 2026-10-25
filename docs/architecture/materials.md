@@ -51,6 +51,12 @@ enter input fingerprints as context; they never enter the current factual
 source or citation allowlist. Independent verdicts and immutable accepted
 artifacts retain their authority. See the
 [attempt-loop contract](tailoring.md#attempt-loop-and-candidate-selection).
+A candidate rejected by factual or local validation also retains a completed
+parallel quality result under `parallel_quality_feedback`, with its recorded
+determination ID, request fingerprint and explicit repair-only usage. The next
+rewrite receives its cited findings alongside factual defects. This diagnostic
+record never supplies the candidate's approval verdict or broadens source
+permissions; the revised candidate still passes every current acceptance gate.
 
 When `default_llm_model` is configured, `LlmVoiceAdapter` uses the same resolved
 core route as other default calls, including its lane/spend admission and actual

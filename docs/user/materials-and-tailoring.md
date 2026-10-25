@@ -50,8 +50,10 @@ bounded repairs and worker capacity still determine the total duration.
 
 Résumé factual and quality reviews can also run concurrently on an unchanged
 candidate. Both checks and any required high-fit persona review must pass before
-approval. Changed text or review inputs receive fresh checks; a failed refresh
-keeps the previous accepted material available.
+approval. If one check rejects the draft, completed findings from both checks
+can guide the next rewrite together. Those findings do not approve the rejected
+draft or add evidence permissions. Changed text or review inputs receive fresh
+checks; a failed refresh keeps the previous accepted material available.
 
 ## How JobCtrl Chooses A Resume
 
