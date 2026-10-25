@@ -252,6 +252,15 @@ source inventory. Fixed role metadata and unconfirmed ledger records do not
 become achievement evidence. A required role with baseline evidence cannot be
 listed as allowing empty bullets solely because its separate ledger is empty;
 a role with neither evidence nor a bullet pin preserves its fixed metadata.
+
+Required skill-category IDs are a minimum, independent of the full allowed
+source catalogue. The first prompt exposes all authored categories. Field
+validation checks required inclusion against that minimum and foreign IDs against
+the entire catalogue. Text and ResumeDocument share the selection of required
+plus model-selected known categories in source order. Individual skill pins
+require their owning category; existing default-all behavior and item-rewriting
+permissions remain. Source and quality determinations still decide factual
+support and relevance.
 Quality correction IDs are checked against admitted revision targets plus
 canonical sources already bound to the verified rendered candidate. The full
 profile remains available for factual review; its mere presence cannot grant a

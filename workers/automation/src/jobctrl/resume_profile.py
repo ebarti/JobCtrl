@@ -88,12 +88,24 @@ def get_required_education_entry_ids(profile: dict) -> list[str]:
 
 
 def get_required_skill_category_ids(profile: dict) -> list[str]:
-    """Return the required skill category IDs."""
+    """Return mandatory categories, including owners of individually pinned skills."""
     rules = get_resume_master(profile).get("tailoring_rules", {})
     ids = rules.get("required_skill_category_ids")
-    if isinstance(ids, list) and ids:
-        return ids
-    return [entry.get("id", "") for entry in get_skill_categories(profile) if entry.get("id")]
+    known_ids = [entry.get("id", "") for entry in get_skill_categories(profile) if entry.get("id")]
+    required_ids = list(ids) if isinstance(ids, list) and ids else list(known_ids)
+    skill_pins = get_required_skills_by_category_id(profile)
+    required_ids.extend(ident for ident in known_ids if ident in skill_pins and ident not in required_ids)
+    return required_ids
+
+
+def get_selected_skill_categories(profile: dict, tailored_payload: dict) -> list[dict]:
+    """Render mandatory categories plus model-selected known categories in source order."""
+    selected_ids = set(get_required_skill_category_ids(profile))
+    selected_ids.update(
+        update.get("id") for update in tailored_payload.get("skill_category_updates", [])
+        if isinstance(update, dict) and isinstance(update.get("id"), str)
+    )
+    return [category for category in get_skill_categories(profile) if category.get("id") in selected_ids]
 
 
 def get_required_bullets_by_experience_id(profile: dict) -> dict[str, list[str]]:
