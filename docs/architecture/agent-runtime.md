@@ -33,7 +33,7 @@ provider failures retain their identity across the loop boundary.
 The kit owns reusable app-server clients. Each request creates a distinct
 **ephemeral thread**; generation and judging never resume each other's
 conversations. Reuse keys include the exact model, reasoning effort, isolated
-configuration and an authentication fingerprint. Changed keys replace idle
+configuration, task-instruction profile and an authentication fingerprint. Changed keys replace idle
 resources, and the kit verifies loaded named permission profiles before reuse.
 
 The configuration keeps JobCtrl's isolated credential home, deny-all approvals,
@@ -65,6 +65,16 @@ waits for shutdown before storage removal. Catalog clients use the same temporar
 storage without enrolling ambient auth. Completed raw output still reaches
 JobCtrl's strict parser, preserving its distinct schema/citation repair paths.
 A kit schema failure is never treated as an accepted artifact.
+
+JobCtrl supplies a versioned, focused base-instruction profile through the
+supported SDK thread-start field for these tool-free data tasks. All supplied
+task messages and output schemas remain intact; named permissions and deny-all
+approvals still enforce the execution boundary. The profile does not apply to
+browser or application agents. Its SHA-256 identity participates in runtime
+reuse and semantic-determination cache keys and is recorded in new receipts and
+generation metadata. Legacy receipts without a profile remain readable and
+accepted artifacts are retained; a request under the new profile cannot reuse
+an old-profile determination.
 
 ### Claude
 

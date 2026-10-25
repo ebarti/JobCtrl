@@ -191,12 +191,37 @@ class TailoringPlan:
             ],
         }
 
-    def to_prompt_context(self, *, include_alternatives: bool = False) -> str:
-        return "TAILORING QUALITY PLAN:\n" + json.dumps(
-            self.to_prompt_dict(include_alternatives=include_alternatives),
-            indent=2,
-            ensure_ascii=False,
+    def to_prompt_projection(self, *, include_alternatives: bool = False) -> dict[str, Any]:
+        """Lossless prompt encoding; canonical plan and metadata remain unchanged."""
+        value = self.to_prompt_dict(include_alternatives=include_alternatives)
+        target, graph = value["target_profile"], value["coverage_graph"]
+        if isinstance(target, dict) and isinstance(graph, dict):
+            achievements = target.get("profile_achievements")
+            graph_achievements = graph.get("achievements")
+            # Compare complete JSON values, including type, field and list order.
+            # A different catalogue stays inline; never select evidence by prose.
+            if (
+                isinstance(achievements, list) and achievements
+                and isinstance(graph_achievements, list)
+                and json.dumps(achievements, sort_keys=True, ensure_ascii=False)
+                == json.dumps(graph_achievements, sort_keys=True, ensure_ascii=False)
+            ):
+                graph["achievements"] = {"$ref": "#/target_profile/profile_achievements"}
+                value["prompt_encoding"] = (
+                    "A $ref is a local reference within this plan object. Read the "
+                    "complete referenced catalogue in place; every field, source ID "
+                    "and record order is retained. It authorizes no additional evidence."
+                )
+        return value
+
+    def to_prompt_json(self, *, include_alternatives: bool = False) -> str:
+        return json.dumps(
+            self.to_prompt_projection(include_alternatives=include_alternatives),
+            ensure_ascii=False, separators=(",", ":"),
         )
+
+    def to_prompt_context(self, *, include_alternatives: bool = False) -> str:
+        return "TAILORING QUALITY PLAN:\n" + self.to_prompt_json(include_alternatives=include_alternatives)
 
     def to_metadata(self) -> dict[str, Any]:
         return {

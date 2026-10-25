@@ -1740,7 +1740,7 @@ def _resume_review_rubric(profile, plan, *, rows=(), review_history=()):
             "allow_skill_category_reorder": False,
             "fixed_skill_category_order": [row.source_id for row in rows if row.section == "skills"],
         }),
-        "tailoring_plan": json.dumps(plan.to_prompt_dict(), ensure_ascii=False),
+        "tailoring_plan": plan.to_prompt_json(),
         "retry_evidence_targets": json.dumps([
             item.to_dict() for item in _eligible_retry_evidence(profile, plan)
         ], ensure_ascii=False),

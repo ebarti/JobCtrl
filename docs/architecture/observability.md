@@ -47,7 +47,15 @@ Langfuse instance for LLM tracing. The wiring lives under
   LLM attributes are metadata-only: provider/model, operation/scope, outcome,
   token counts, safe request/response sizes, and known reasoning-effort protocol
   values in `gen_ai.request.reasoning_effort`. Arbitrary parameter values remain
-  excluded. Typed provider failures add
+  excluded. Codex spans also retain the versioned instruction-profile hash,
+  validated determination kind and exact determination ID for recorded joins.
+  Known nonnegative cached-input and reasoning-output counters use
+  jobctrl.llm.usage.*; they are subsets of the existing input/output totals,
+  never additional billed token categories. Unknown counters stay absent.
+  Only the known process-reuse boolean and start/reuse counts are copied from
+  kit metadata; private runtime paths and arbitrary SDK metadata stay excluded.
+  Usage observed before terminal provider failure or cancellation is retained.
+  Typed provider failures add
   bounded `jobctrl.llm.failure.*` dimensions for provider, model, operation,
   category, type, code, retryability, and an allowlisted provider code or HTTP
   status; structured calls also carry a schema fingerprint. Raw messages,

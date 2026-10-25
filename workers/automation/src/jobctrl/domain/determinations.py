@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError
 
 from jobctrl.domain.ports.llm import LlmFailure, LlmMessage, LlmPort
 from jobctrl.llm_lanes import LlmLane, bind_llm_lane
+from jobctrl.llm_request_context import bind_determination_request
 
 
 from jobctrl.domain.errors import JobCtrlError
@@ -76,6 +77,7 @@ class DeterminationEnvelope(DeterminationModel):
     provider: StrictStr
     model: StrictStr
     reasoning_effort: StrictStr | None = None
+    instruction_profile: StrictStr | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     lane: LlmLane
     input_fingerprint: StrictStr
     created_at: StrictStr
@@ -239,6 +241,11 @@ def determine(
         if not isinstance(reasoning_effort, str) or not 0 < len(reasoning_effort) <= 40:
             raise DeterminationFailure("configuration_invalid")
         identity["reasoning_effort"] = reasoning_effort
+    instruction_profile = getattr(llm, "instruction_profile", None)
+    if instruction_profile is not None:
+        if not isinstance(instruction_profile, str) or not re.fullmatch(r"[a-f0-9]{64}", instruction_profile):
+            raise DeterminationFailure("configuration_invalid")
+        identity["instruction_profile"] = instruction_profile
     encoded = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     fingerprint = hashlib.sha256(encoded.encode()).hexdigest()
 
@@ -254,6 +261,7 @@ def determine(
             provider=provider,
             model=model,
             reasoning_effort=reasoning_effort,
+            instruction_profile=instruction_profile,
             lane=lane,
         )
         if any(getattr(envelope, key) != value for key, value in expected.items()):
@@ -302,10 +310,11 @@ def determine(
             for attempt in range(3):
                 raw = None
                 try:
-                    raw = call_model(
-                        llm=llm, lane=lane, preflight=preflight,
-                        response_schema=response_schema, messages=messages,
-                    )
+                    with bind_determination_request(kind, fingerprint):
+                        raw = call_model(
+                            llm=llm, lane=lane, preflight=preflight,
+                            response_schema=response_schema, messages=messages,
+                        )
                     result = parse_model_result(schema, raw)
                     validate_citations(result, sources)
                     if validate is not None:
@@ -342,6 +351,7 @@ def determine(
                 provider=provider,
                 model=model,
                 reasoning_effort=reasoning_effort,
+                instruction_profile=instruction_profile,
                 lane=lane,
                 input_fingerprint=fingerprint,
                 created_at=datetime.now(timezone.utc).isoformat(),

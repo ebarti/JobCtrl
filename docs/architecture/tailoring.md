@@ -118,6 +118,14 @@ Inputs are versioned profile facts and confirmed evidence, canonical posting tex
 
 ## The Actual Model Prompt
 
+The generator and review rubric serialize the tailoring plan as compact JSON.
+When the complete ordered achievement catalogues in the target profile and
+coverage graph are identical JSON values, the prompt retains the catalogue once
+and replaces the duplicate with an explicit reference local to that plan object.
+Different or empty catalogues stay inline. This encoding preserves every field,
+record and source ID, does not choose evidence or remove facts, and leaves the
+canonical plan and persisted metadata unchanged.
+
 Prompts contain minimized canonical source IDs/text, allowed mappings, artifact constraints and repair findings. All source text is untrusted data. Lane binding and BR-050 preflight precede calls; envelopes record schema/prompt versions, provider/model and input fingerprint.
 
 ## Output Schema
