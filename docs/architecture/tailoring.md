@@ -158,6 +158,17 @@ reuse. Historical IDs remain as recorded, scoped by their generation and attempt
 
 A generated candidate must pass structural binding, claim verification and the separate quality judge. Model findings supply repair reasons and exact line IDs. Arithmetic may compare accepted typed fit results; it does not assess prose. Provider, spend, JSON, schema and source-binding failures remain distinct and preserve accepted material.
 
+For a structurally valid résumé draft, production factual verification and quality
+review share the bounded review pool and run concurrently on independent
+thread-owned database connections. Facts remain the authority for provenance.
+A quality verdict is used only after every factual/local gate passes and the
+complete quality request (artifact kind, entity, ordered lines and allowlists,
+sources and rubric) still has the same fingerprint. A changed request gets a
+fresh quality determination; a rejected candidate records the unused receipt.
+High-fit six-persona review still follows the accepted pair. Custom ports and
+in-memory databases retain sequential execution. Cancellation and shutdown
+drain admitted siblings before releasing resources.
+
 For each cover-letter draft, factual verification and quality review read separate
 copies of the same frozen lines, sources and rubric. The production runner overlaps
 these independent calls in the bounded [letter-review pool](pipeline/concurrency.md).

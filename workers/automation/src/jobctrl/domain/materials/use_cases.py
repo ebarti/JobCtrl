@@ -1753,6 +1753,15 @@ def _resume_review_rubric(profile, plan, *, rows=(), review_history=()):
     }, review_history)
 
 
+def _quality_request_fingerprint(request):
+    """Bind every quality input, without persisting source text in metadata."""
+    return fingerprint_value({
+        **request,
+        "lines": [row.model_dump() for row in request["lines"]],
+        "sources": [source.model_dump() for source in request["sources"]],
+    })
+
+
 # ---------------------------------------------------------------------------
 # TailorResumeUseCase
 # ---------------------------------------------------------------------------
@@ -1825,6 +1834,7 @@ class TailorResumeUseCase:
         pdf_renderer: PdfRendererPort | None = None,
         unit_of_work: UnitOfWork | None = None,
         evidence_selector: MaterialEvidenceSelector | None = None,
+        parallel_reviews: LetterReviews | None = None,
     ) -> None:
         self._repository = repository
         self._llm = llm
@@ -1835,6 +1845,7 @@ class TailorResumeUseCase:
         self._job_interpreter = job_interpreter
         self._quality_judge = quality_judge
         self._evidence_selector = evidence_selector
+        self._parallel_reviews = parallel_reviews
         self._publisher = publisher
         self._max_retries = max_retries
         self._llm_policy = llm_policy
@@ -2039,6 +2050,7 @@ class TailorResumeUseCase:
             employer_analysis=employer_analysis,
             tailoring_plan=tailoring_plan,
             validation_mode=validation_mode,
+            execution_guard=commit_guard,
         )
         final_payload = final_candidate.payload
         validation = final_candidate.validation
@@ -2605,6 +2617,7 @@ class TailorResumeUseCase:
                     audit_execution_id=audit_execution_id,
                     durable_attempt=durable_attempt,
                     review_history=review_history,
+                    execution_guard=execution_guard,
                 )
                 candidate = replace(candidate, tailoring_plan=tailoring_plan)
                 attempt_record["candidates"].append(candidate.record)
@@ -2846,6 +2859,7 @@ class TailorResumeUseCase:
         audit_execution_id: str | None,
         durable_attempt: int | None,
         review_history=(),
+        execution_guard: Callable[[], None] | None = None,
     ) -> _TailorCandidate:
         candidate_id = f"candidate-{uuid.uuid4().hex}"
         record: dict[str, Any] = {
@@ -2912,6 +2926,7 @@ class TailorResumeUseCase:
             job=job,
             attempt=attempt,
             employer_analysis=employer_analysis,
+            execution_guard=execution_guard,
         )
 
     def _evaluate_candidate(
@@ -2927,6 +2942,7 @@ class TailorResumeUseCase:
         job: dict,
         attempt: int,
         employer_analysis: EmployerAnalysis,
+        execution_guard: Callable[[], None] | None = None,
     ) -> _TailorCandidate:
         """Evaluate one normalized payload once, before paid review or selection."""
         payload = {
@@ -2944,6 +2960,13 @@ class TailorResumeUseCase:
         claim_verification_error: str | None = None
         findings: tuple[ClaimIssue, ...] = ()
         grounding = ClaimGrounding((), ())
+        parallel_quality = None
+        quality_request_fingerprint = None
+        review_context = dict(
+            profile_snapshot=profile_snapshot, tailoring_plan=tailoring_plan,
+            tailored_payload=payload, tailored_text=tailored_text, job=job,
+            employer_analysis=employer_analysis, review_history=record.get("review_history", ()),
+        )
         if validation.passed:
             # A parsed object may still contain malformed nested fields. Only
             # validated structure satisfies the assembler's input contract.
@@ -2964,6 +2987,7 @@ class TailorResumeUseCase:
                 tailoring_plan,
             )
             record["quality_checks"] = quality_result.to_dict()
+            review_context["tailored_text"] = tailored_text
             claim_mapping_errors = _claim_mapping_validation_errors(
                 payload=payload,
                 tailoring_plan=tailoring_plan,
@@ -2982,14 +3006,33 @@ class TailorResumeUseCase:
             # Render this candidate's shipped lines (pure, assembler-mirroring) so
             # the fit gate measures coverage against what would actually ship.
             if not claim_mapping_errors:
-                shipped_rows, claim_verification_error, findings, verification_id = self._compute_provenance(
-                    profile_snapshot=profile_snapshot,
-                    job=job,
-                    tailored_payload=payload,
-                    plan=tailoring_plan,
-                    employer_analysis=employer_analysis,
+                provenance_context = dict(
+                    profile_snapshot=profile_snapshot, job=job, tailored_payload=payload,
+                    plan=tailoring_plan, employer_analysis=employer_analysis,
                     profile_evidence=profile_evidence,
                 )
+                if self._parallel_reviews is not None and validation.passed and not quality_result.errors:
+                    raw_rows, claim_request = self._claim_review_request(**provenance_context)
+                    quality_request = self._resume_quality_request(**review_context, provenance=raw_rows)
+                    quality_request_fingerprint = _quality_request_fingerprint(quality_request)
+                    pair = self._parallel_reviews.review(
+                        claim_request=claim_request, quality_request=quality_request,
+                        execution_guard=execution_guard,
+                    )
+                    parallel_quality = pair.quality
+                    record["parallel_reviews"] = {
+                        "claim_verification_id": pair.claims[1].determination_id,
+                        "quality_determination_id": pair.quality[1].determination_id,
+                        "quality_request_fingerprint": quality_request_fingerprint,
+                        "quality_usage": "awaiting_candidate_gates",
+                    }
+                    shipped_rows, claim_verification_error, findings, verification_id = self._bind_claim_review(
+                        raw_rows, *pair.claims,
+                    )
+                else:
+                    shipped_rows, claim_verification_error, findings, verification_id = self._compute_provenance(
+                        **provenance_context,
+                    )
                 record["claim_verification_id"] = verification_id
                 record["claim_verification_findings"] = [
                     {"line_id": item.line_id, "kind": item.kind, "rationale": item.rationale} for item in findings
@@ -3072,19 +3115,24 @@ class TailorResumeUseCase:
         record["validator"] = validation.to_dict()
 
         if not validation.passed:
+            if parallel_quality is not None:
+                record["parallel_reviews"]["quality_usage"] = "not_used_candidate_rejected"
             record["status"] = "failed_fabrication_gate" if claim_verification_error else "failed_validation"
             return candidate
 
-        verdict = self._judge_resume(
-            profile_snapshot=profile_snapshot,
-            tailoring_plan=tailoring_plan,
-            tailored_payload=payload,
-            tailored_text=tailored_text,
-            job=job,
-            employer_analysis=employer_analysis,
-            provenance=candidate.provenance,
-            review_history=record.get("review_history", ()),
-        )
+        verified_request = self._resume_quality_request(**review_context, provenance=candidate.provenance)
+        if (
+            parallel_quality is not None
+            and quality_request_fingerprint == _quality_request_fingerprint(verified_request)
+        ):
+            # Facts own provenance. A speculative verdict applies only to the
+            # identical complete request after all factual and local gates pass.
+            record["parallel_reviews"]["quality_usage"] = "used"
+            verdict = self._quality_verdict(*parallel_quality)
+        else:
+            if parallel_quality is not None:
+                record["parallel_reviews"]["quality_usage"] = "not_used_request_changed"
+            verdict = self._judge_resume(**review_context, provenance=candidate.provenance)
         record["judge"] = self._judge_record(verdict)
         adversarial_review = AdversarialReviewResult.skipped(
             threshold=ADVERSARIAL_REVIEW_THRESHOLD,
@@ -3164,7 +3212,7 @@ class TailorResumeUseCase:
             **kwargs,
         )
 
-    def _judge_resume(
+    def _resume_quality_request(
         self, *, profile_snapshot, tailoring_plan, tailored_payload, tailored_text, job, employer_analysis, provenance,
         review_history=(),
     ):
@@ -3173,7 +3221,7 @@ class TailorResumeUseCase:
         requirements = [
             Source(source_id=row.id, text=row.evidence_span) for row in employer_analysis.canonical.requirements
         ]
-        result, envelope = self._quality_judge.judge(
+        return dict(
             artifact_kind="resume",
             entity_id=str(job["job_id"]),
             lines=[
@@ -3190,6 +3238,13 @@ class TailorResumeUseCase:
                 profile_snapshot.as_dict(), tailoring_plan, rows=rows, review_history=review_history,
             ),
         )
+
+    def _judge_resume(self, **context):
+        request = self._resume_quality_request(**context)
+        return self._quality_verdict(*self._quality_judge.judge(**request))
+
+    @staticmethod
+    def _quality_verdict(result, envelope):
         notes = {
             "determination_id": envelope.determination_id,
             "result": result.model_dump(),
@@ -3293,7 +3348,7 @@ class TailorResumeUseCase:
     # Generation anchors and independent claim verification
     # ------------------------------------------------------------------
 
-    def _compute_provenance(
+    def _claim_review_request(
         self, *, profile_snapshot, job, tailored_payload, employer_analysis, plan, profile_evidence
     ):
         profile = profile_snapshot.as_dict()
@@ -3311,7 +3366,7 @@ class TailorResumeUseCase:
             )
             for row in rows
         ]
-        verification, envelope = self._claim_verifier.verify(
+        return rows, dict(
             artifact_kind="resume",
             entity_id=str(job["job_id"]),
             lines=lines,
@@ -3325,6 +3380,13 @@ class TailorResumeUseCase:
                 "requirement_alignment": "Judge each declared requirement binding against the final line; cite only requirements that this line serves.",
             },
         )
+
+    def _compute_provenance(self, **context):
+        rows, request = self._claim_review_request(**context)
+        return self._bind_claim_review(rows, *self._claim_verifier.verify(**request))
+
+    @staticmethod
+    def _bind_claim_review(rows, verification, envelope):
         findings = tuple(
             ClaimIssue(row.line_id, finding.kind, finding.rationale)
             for row in verification.lines
@@ -3433,6 +3495,7 @@ class TailorResumeUseCase:
         employer_analysis: EmployerAnalysis,
         tailoring_plan: TailoringPlan,
         validation_mode: str,
+        execution_guard: Callable[[], None] | None = None,
     ) -> tuple[_TailorCandidate, VoicePassRecord]:
         """Reuse unchanged evidence; only a fully accepted rewrite replaces it."""
         if not candidate.validation.passed or candidate.verdict is None or not candidate.verdict.approved:
@@ -3479,6 +3542,7 @@ class TailorResumeUseCase:
             job=job,
             attempt=int(candidate.record.get("inner_attempt", 1)),
             employer_analysis=employer_analysis,
+            execution_guard=execution_guard,
         )
         if not voiced.validation.passed:
             mapping = voiced.record.get("claim_mapping_validation") or {}

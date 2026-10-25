@@ -547,6 +547,17 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For parallel résumé reviews, run locked pytest for
+the parallel-resume, parallel-letter, Materials-use-case, candidate-identity,
+review-history and voice-audit suites, then the full worker suite. In owned
+file-backed SQLite, prove actual factual/quality overlap, exact complete-request
+reuse, a fresh quality verdict after any request change, opposite model verdicts,
+unused receipt references on candidate rejection, parent-thread ownership
+guards and draining of admitted siblings on cancellation. Preserve accepted
+bytes and all six high-fit persona decisions. Custom ports and in-memory
+construction remain sequential. Measure live time savings through the normal
+UI with the configured model, effort and required reviews unchanged.
+
 For material candidate identities, run locked
 `pytest tests/test_material_candidate_identity.py tests/test_material_review_history.py tests/test_materials_use_cases.py tests/test_tailor_voice_audit_integration.py`
 and the full worker suite. Identical requests and common-prefix requests must

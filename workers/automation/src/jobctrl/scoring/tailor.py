@@ -268,7 +268,17 @@ def _build_use_case(
         )
         return ModelMaterialEvidenceSelector(**selection_deps)
 
+    from jobctrl.infrastructure.materials.letter_reviews import ParallelLetterReviews
+
+    database = conn.execute("PRAGMA database_list").fetchone()[2]
+    # Caller-owned ports retain their caller-thread behavior. Production model
+    # reviews use the existing shared bounded pool and thread-owned connections.
+    parallel_reviews = (
+        ParallelLetterReviews(Path(database).resolve(), review_deps)
+        if database and claim_verifier is None and quality_judge is None else None
+    )
     return TailorResumeUseCase(
+        parallel_reviews=parallel_reviews,
         repository=repository,
         llm=llm_port,
         validator=validator,

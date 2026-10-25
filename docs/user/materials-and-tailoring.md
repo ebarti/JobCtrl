@@ -46,6 +46,11 @@ empty evidence for lines that make no candidate claim. An unused proposed source
 does not require rewriting text that both reviewers have approved. Model reasoning,
 bounded repairs and worker capacity still determine the total duration.
 
+Résumé factual and quality reviews can also run concurrently on an unchanged
+candidate. Both checks and any required high-fit persona review must pass before
+approval. Changed text or review inputs receive fresh checks; a failed refresh
+keeps the previous accepted material available.
+
 ## How JobCtrl Chooses A Resume
 
 Tailoring is a candidate-selection pipeline, not one unconstrained prompt:

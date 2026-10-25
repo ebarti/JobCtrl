@@ -1,4 +1,4 @@
-"""Bound independent letter reviews without sharing SQLite connections.
+"""Bound independent artifact reviews without sharing SQLite connections.
 
 The coordinator is never a member of this pool. Already-admitted SDK work is
 allowed to settle and account usage; cancellation rejects subsequent review
