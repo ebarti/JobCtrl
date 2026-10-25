@@ -30,9 +30,13 @@ import { readLlmSpendHealth } from "./worker-health.js";
 const PREPARATION_STEPS = ["score", "tailor", "cover", "pdf"] as const;
 const PreparationStepSchema = z.enum(PREPARATION_STEPS);
 const PreparationStepsSchema = z.array(PreparationStepSchema).max(4);
-const PreparationOutcomeObservationSchema = z.object({
+const DiscoveryExecutionRefSchema = z.object({
   tenantId: z.string().min(1),
-  decoderVersion: z.literal(1),
+  workflowId: z.string().min(1),
+  temporalRunId: z.string().min(1),
+}).strict();
+const PreparationOutcomeObservationBaseSchema = z.object({
+  tenantId: z.string().min(1),
   evidenceKind: z.literal("temporal_history"),
   workflowType: z.literal("JobPreparationWorkflow"),
   workflowId: z.string().min(1),
@@ -40,11 +44,7 @@ const PreparationOutcomeObservationSchema = z.object({
   jobId: z.string().min(1),
   idempotencyKey: z.string().min(1),
   requiredSteps: PreparationStepsSchema.min(1),
-  discoveryExecution: z.object({
-    tenantId: z.string().min(1),
-    workflowId: z.string().min(1),
-    temporalRunId: z.string().min(1),
-  }).strict(),
+  discoveryExecution: DiscoveryExecutionRefSchema,
   terminalHistoryEventId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   result: z.object({
     stepsCompleted: PreparationStepsSchema,
@@ -54,6 +54,17 @@ const PreparationOutcomeObservationSchema = z.object({
     errorCode: z.null(),
   }).strict(),
 });
+
+const PreparationOutcomeObservationSchema = z.discriminatedUnion("decoderVersion", [
+  PreparationOutcomeObservationBaseSchema.extend({ decoderVersion: z.literal(1) }),
+  PreparationOutcomeObservationBaseSchema.extend({
+    decoderVersion: z.literal(2),
+    associationKind: z.literal("recorded_membership"),
+    discoveryCohortKind: z.enum(["observed_this_run", "existing_backlog"]),
+    originDiscoveryExecution: DiscoveryExecutionRefSchema.nullable(),
+    originDiscoveryCohortKind: z.enum(["observed_this_run", "existing_backlog"]).nullable(),
+  }),
+]);
 
 const DEFAULT_TENANT = "local";
 const ETA_SAMPLE_LIMIT = 50;
@@ -196,7 +207,7 @@ interface Cohort {
   stageStates: Map<string, Map<string, StageStateRow>>;
   preparationWorkflowStatuses: Map<string, string>;
   preparationWorkflowRunIds: Map<string, string>;
-  conditionallySkippedPdfJobs: ReadonlySet<string>;
+  observedPdfOutcomes: ReadonlyMap<string, "succeeded" | "skipped">;
   completedEligibilityHolds: ReadonlySet<string>;
   summary: PipelineExecutionCohortSummary;
 }
@@ -423,16 +434,21 @@ function materializeExecution(
   const memberships = loadMemberships(db, tenantId, row.workflow_id, runId);
   const stageStates = loadStageStates(db, tenantId, memberships.map((membership) => membership.job_id));
   const preparationWorkflows = loadPreparationWorkflows(db, tenantId, memberships);
-  const outcomeSkips = loadPreparationOutcomeSkips(
+  const outcomes = loadPreparationOutcomes(
     db, tenantId, row.workflow_id, runId, memberships, preparationWorkflows,
   );
-  const conditionallySkippedPdfJobs = new Set(memberships.filter((member) => {
-    const skipped = outcomeSkips.get(member.job_id);
+  const observedPdfOutcomes = new Map<string, "succeeded" | "skipped">();
+  for (const member of memberships) {
+    const outcome = outcomes.get(member.job_id);
     const required = requiredSteps(member);
-    return skipped !== undefined && required.indexOf("pdf") > required.indexOf(skipped.step);
-  }).map((member) => member.job_id));
+    if (!outcome || !required.includes("pdf")) continue;
+    if (outcome.pdfCompleted) observedPdfOutcomes.set(member.job_id, "succeeded");
+    else if (outcome.step && required.indexOf("pdf") > required.indexOf(outcome.step)) {
+      observedPdfOutcomes.set(member.job_id, "skipped");
+    }
+  }
   const completedEligibilityHolds = loadCompletedEligibilityHolds(
-    db, tenantId, memberships, stageStates, outcomeSkips,
+    db, tenantId, memberships, stageStates, outcomes,
   );
   const steps = loadPipelineSteps(db, tenantId, row.workflow_id, runId);
   const current = cohort(
@@ -441,7 +457,7 @@ function materializeExecution(
     steps,
     preparationWorkflows.statuses,
     preparationWorkflows.runIds,
-    conditionallySkippedPdfJobs,
+    observedPdfOutcomes,
     completedEligibilityHolds,
   );
   const sweep = cohort(
@@ -450,7 +466,7 @@ function materializeExecution(
     steps,
     preparationWorkflows.statuses,
     preparationWorkflows.runIds,
-    conditionallySkippedPdfJobs,
+    observedPdfOutcomes,
     completedEligibilityHolds,
   );
   const membershipClosed = hasTerminalFanout(steps, isTerminalWorkflowStatus(row.status));
@@ -524,20 +540,21 @@ function loadPreparationWorkflows(
   return { statuses, runIds };
 }
 
-interface PreparationOutcomeSkip {
-  step: (typeof PREPARATION_STEPS)[number];
+interface PreparationOutcome {
+  step: (typeof PREPARATION_STEPS)[number] | undefined;
+  pdfCompleted: boolean;
   runId: string;
 }
 
-function loadPreparationOutcomeSkips(
+function loadPreparationOutcomes(
   db: SqliteDatabase,
   tenantId: string,
   discoverWorkflowId: string,
   discoverRunId: string,
   members: MembershipRow[],
   owners: { statuses: Map<string, string>; runIds: Map<string, string> },
-): ReadonlyMap<string, PreparationOutcomeSkip> {
-  const skipped = new Map<string, PreparationOutcomeSkip>();
+): ReadonlyMap<string, PreparationOutcome> {
+  const skipped = new Map<string, PreparationOutcome>();
   const byWorkflowId = new Map(members.flatMap((member) =>
     member.preparation_workflow_id ? [[member.preparation_workflow_id, member] as const] : [],
   ));
@@ -561,19 +578,35 @@ function loadPreparationOutcomeSkips(
           owners.statuses.get(receipt.workflowId) !== "succeeded" ||
           owners.runIds.get(receipt.workflowId) !== receipt.temporalRunId ||
           receipt.workflowId !== `prep-${receipt.idempotencyKey}` ||
-          row.idempotency_key !== `preparation-outcome:1:${tenantId}:${receipt.workflowId}:${receipt.temporalRunId}` ||
           receipt.discoveryExecution.tenantId !== tenantId ||
           receipt.discoveryExecution.workflowId !== discoverWorkflowId ||
           receipt.discoveryExecution.temporalRunId !== discoverRunId) continue;
+      const receiptKey = receipt.decoderVersion === 1
+        ? `preparation-outcome:1:${tenantId}:${receipt.workflowId}:${receipt.temporalRunId}`
+        : `preparation-outcome:2:${JSON.stringify([
+          tenantId, receipt.workflowId, receipt.temporalRunId, discoverWorkflowId, discoverRunId,
+          member.job_id, member.cohort_kind, receipt.requiredSteps,
+        ])}`;
+      if (row.idempotency_key !== receiptKey) continue;
+      if (receipt.decoderVersion === 2 && (
+        receipt.discoveryCohortKind !== member.cohort_kind ||
+        (receipt.originDiscoveryExecution === null) !== (receipt.originDiscoveryCohortKind === null) ||
+        (receipt.originDiscoveryExecution !== null && receipt.originDiscoveryExecution.tenantId !== tenantId)
+      )) continue;
       const required = requiredSteps(member);
       if (JSON.stringify(receipt.requiredSteps) !== JSON.stringify(parseJson(member.required_steps_json)) ||
           JSON.stringify(required) !== JSON.stringify(PREPARATION_STEPS.filter((step) => required.includes(step)))) continue;
       const skippedStep = receipt.result.stepsSkipped[0];
-      if (!skippedStep) continue;
-      const skipIndex = required.indexOf(skippedStep);
-      if (skipIndex < 0 ||
-          JSON.stringify(receipt.result.stepsCompleted) !== JSON.stringify(required.slice(0, skipIndex))) continue;
-      skipped.set(member.job_id, { step: skippedStep, runId: receipt.temporalRunId });
+      const done = receipt.result.stepsCompleted;
+      const completed = !skippedStep && JSON.stringify(done) === JSON.stringify(required);
+      const optionalCover = skippedStep === "cover" && required.includes("cover") &&
+        JSON.stringify(done) === JSON.stringify(required.filter((step) => step !== "cover"));
+      const skipIndex = skippedStep ? required.indexOf(skippedStep) : -1;
+      const stopped = skipIndex >= 0 && JSON.stringify(done) === JSON.stringify(required.slice(0, skipIndex));
+      if (!completed && !optionalCover && !stopped) continue;
+      skipped.set(member.job_id, {
+        step: skippedStep, pdfCompleted: done.includes("pdf"), runId: receipt.temporalRunId,
+      });
     }
   }
   return skipped;
@@ -584,7 +617,7 @@ function loadCompletedEligibilityHolds(
   tenantId: string,
   members: MembershipRow[],
   stageStates: Map<string, Map<string, StageStateRow>>,
-  outcomeSkips: ReadonlyMap<string, PreparationOutcomeSkip>,
+  outcomeSkips: ReadonlyMap<string, PreparationOutcome>,
 ): ReadonlySet<string> {
   const held = new Set<string>();
   const candidates = members.filter((member) =>
@@ -670,7 +703,7 @@ function cohort(
   steps: PipelineStepRow[] = [],
   preparationWorkflowStatuses = new Map<string, string>(),
   preparationWorkflowRunIds = new Map<string, string>(),
-  conditionallySkippedPdfJobs: ReadonlySet<string> = new Set(),
+  observedPdfOutcomes: ReadonlyMap<string, "succeeded" | "skipped"> = new Map(),
   completedEligibilityHolds: ReadonlySet<string> = new Set(),
 ): Cohort {
   return {
@@ -678,9 +711,9 @@ function cohort(
     stageStates,
     preparationWorkflowStatuses,
     preparationWorkflowRunIds,
-    conditionallySkippedPdfJobs,
+    observedPdfOutcomes,
     completedEligibilityHolds,
-    summary: cohortSummary(members, stageStates, steps, preparationWorkflowStatuses, conditionallySkippedPdfJobs, completedEligibilityHolds),
+    summary: cohortSummary(members, stageStates, steps, preparationWorkflowStatuses, observedPdfOutcomes, completedEligibilityHolds),
   };
 }
 
@@ -689,7 +722,7 @@ function cohortSummary(
   stageStates: Map<string, Map<string, StageStateRow>>,
   steps: PipelineStepRow[],
   preparationWorkflowStatuses: Map<string, string>,
-  conditionallySkippedPdfJobs: ReadonlySet<string>,
+  observedPdfOutcomes: ReadonlyMap<string, "succeeded" | "skipped">,
   completedEligibilityHolds: ReadonlySet<string>,
 ): PipelineExecutionCohortSummary {
   let planned = 0;
@@ -701,7 +734,7 @@ function cohortSummary(
   for (const member of members) {
     if (member.work_plan_state === "planned") {
       planned += 1;
-      if (plannedMemberResolved(member, stageStates.get(member.job_id), steps, preparationWorkflowStatuses, conditionallySkippedPdfJobs, completedEligibilityHolds)) terminal += 1;
+      if (plannedMemberResolved(member, stageStates.get(member.job_id), steps, preparationWorkflowStatuses, observedPdfOutcomes, completedEligibilityHolds)) terminal += 1;
       else remaining += 1;
       continue;
     }
@@ -724,7 +757,7 @@ function plannedMemberResolved(
   states: Map<string, StageStateRow> | undefined,
   pipelineSteps: PipelineStepRow[],
   preparationWorkflowStatuses: Map<string, string>,
-  conditionallySkippedPdfJobs: ReadonlySet<string>,
+  observedPdfOutcomes: ReadonlyMap<string, "succeeded" | "skipped">,
   completedEligibilityHolds: ReadonlySet<string>,
 ): boolean {
   const required = requiredSteps(member);
@@ -732,7 +765,7 @@ function plannedMemberResolved(
   if (!pdfStepForMember(member, pipelineSteps) && pdfStoppedByPrerequisite(member, states, preparationWorkflowStatuses) !== null) return true;
   return required.every((stage) => {
     const terminalOwner = memberPreparationWorkflowFailed(member, preparationWorkflowStatuses);
-    if (stage === "pdf") return memberPdfResolved(member, pipelineSteps, preparationWorkflowStatuses, conditionallySkippedPdfJobs);
+    if (stage === "pdf") return memberPdfResolved(member, pipelineSteps, preparationWorkflowStatuses, observedPdfOutcomes);
     return isCompletedEligibilityHold(member, stage, completedEligibilityHolds) ||
       isTerminalStageState(states?.get(stage), terminalOwner);
   });
@@ -803,7 +836,7 @@ function hasUnresolvedPlannedMember(cohortValue: Cohort, steps: PipelineStepRow[
         cohortValue.stageStates.get(member.job_id),
         steps,
         cohortValue.preparationWorkflowStatuses,
-        cohortValue.conditionallySkippedPdfJobs,
+        cohortValue.observedPdfOutcomes,
         cohortValue.completedEligibilityHolds,
       ),
   );
@@ -1268,7 +1301,9 @@ function pdfCounts(cohortValue: Cohort, steps: PipelineStepRow[]): PipelineStage
       member, cohortValue.stageStates.get(member.job_id), cohortValue.preparationWorkflowStatuses,
     );
     if (step) addPipelineStepState(counts, step.state);
-    else if (cohortValue.conditionallySkippedPdfJobs.has(member.job_id)) counts.skipped += 1;
+    else if (cohortValue.observedPdfOutcomes.has(member.job_id)) {
+      counts[cohortValue.observedPdfOutcomes.get(member.job_id)!] += 1;
+    }
     else if (stopped) counts[stopped] += 1;
     else if (pdfAwaitsRecordedPrerequisite(cohortValue, member)) counts.waiting += 1;
     else counts.unknown += 1;
@@ -1301,12 +1336,12 @@ function memberPdfResolved(
   member: MembershipRow,
   steps: PipelineStepRow[],
   ownerStatuses: Map<string, string>,
-  conditionallySkippedPdfJobs: ReadonlySet<string>,
+  observedPdfOutcomes: ReadonlyMap<string, "succeeded" | "skipped">,
 ): boolean {
   const step = pdfStepForMember(member, steps);
   return step
     ? isTerminalStepState(step, memberPreparationWorkflowFailed(member, ownerStatuses))
-    : conditionallySkippedPdfJobs.has(member.job_id);
+    : observedPdfOutcomes.has(member.job_id);
 }
 
 function pdfAwaitsRecordedPrerequisite(cohortValue: Cohort, member: MembershipRow): boolean {
@@ -2470,7 +2505,7 @@ function remainingPaths(
     const stageIds = requiredSteps(member).filter((stage) => {
       const terminalOwner = memberPreparationWorkflowFailed(member, cohortValue.preparationWorkflowStatuses);
       if (stage === "pdf") return !memberPdfResolved(
-        member, pipelineSteps, cohortValue.preparationWorkflowStatuses, cohortValue.conditionallySkippedPdfJobs,
+        member, pipelineSteps, cohortValue.preparationWorkflowStatuses, cohortValue.observedPdfOutcomes,
       );
       return !isCompletedEligibilityHold(member, stage, cohortValue.completedEligibilityHolds) &&
         !isTerminalStageState(states?.get(stage), terminalOwner);
@@ -2620,7 +2655,7 @@ function sweepMemberHasRemainingWork(
   return requiredSteps(member).some((stage) =>
     stage === "pdf"
       ? !memberPdfResolved(
-        member, selected.steps, selected.sweep.preparationWorkflowStatuses, selected.sweep.conditionallySkippedPdfJobs,
+        member, selected.steps, selected.sweep.preparationWorkflowStatuses, selected.sweep.observedPdfOutcomes,
       )
       : !isCompletedEligibilityHold(member, stage, selected.sweep.completedEligibilityHolds) &&
         !isTerminalStageState(states?.get(stage), terminalOwner),

@@ -441,6 +441,26 @@ same classification resolves cohort completion and removes PDF demand from
 remaining paths and swept-backlog contention. It does not change the immutable
 plan, create a PDF lifecycle or claim that a document was generated.
 
+A missing PDF is **succeeded** when the exact successful preparation run's
+literal completed result records PDF completion. This includes a cover letter
+disabled after admission: the result may skip Cover while completing all other
+required steps. No receipt can override an actual queued, running or failed PDF
+lifecycle.
+
+Discover can associate an already-started manual or reused preparation with its
+execution sweep. That owner's immutable input retains its actual origin. When
+the origin differs from the observing Discover run, a version-2 outcome receipt
+records the explicit membership association and original origin separately.
+The worker checks the exact job, tenant, owner/run, frozen plan and workspace
+identity against the start input and completed history, then rechecks the
+current membership/cohort and successful owner under its write transaction.
+Receipts are idempotent per association, cohort and frozen plan; an observation
+for one Discover run cannot suppress a different association. The API validates
+the recorded association, current owner/run, plan and indexed identity before
+using its result. Missing history, foreign workspaces, replaced owners or changed
+plans remain unknown. This observation appends an audit receipt only; it never
+rewrites workflow input or fabricates a PDF lifecycle or accepted artifact.
+
 A successful preparation result that completed Score and stopped at Tailor may
 also resolve a recorded eligibility hold. The API requires the exact owner/run
 receipt, the current successful Score owner and accepted score version, no
