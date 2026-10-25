@@ -28,6 +28,21 @@ const adversarial = {
   },
 };
 
+const claims = {
+  kind: "claim_verification" as const,
+  previous: "claim-verification-v2",
+  current: "claim-verification-v3",
+  result: {
+    verdict: "pass", rationale: "Owned model verdict",
+    lines: [{ line_id: "owned", verdict: "pass", served_requirements: [],
+      source_evidence: [{ source_id: "profile:owned", quote: "Owned source", exact_values: [] }],
+      claims: [{ kind: "candidate_fact", support: "supported", rationale: "Owned model support",
+        text: { source_id: "line:owned", quote: "Owned source", exact_values: [] },
+        evidence: [{ source_id: "profile:owned", quote: "Owned source", exact_values: [] }],
+      }], findings: [] }],
+  },
+};
+
 const scoring = {
   kind: "scoring" as const,
   previous: "score-fit-assessment-v10-binding-repair",
@@ -47,7 +62,7 @@ const scoring = {
   },
 };
 
-it.each([quality, adversarial, scoring])("keeps known $kind history readable while current-only reads remain strict", (contract) => {
+it.each([quality, adversarial, scoring, claims])("keeps known $kind history readable while current-only reads remain strict", (contract) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-receipt-versions-"));
   const filename = path.join(directory, "owned.db");
   initializeExactDatabase(filename);

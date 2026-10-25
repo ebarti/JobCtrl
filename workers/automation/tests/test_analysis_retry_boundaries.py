@@ -6,6 +6,8 @@ import json
 
 import pytest
 
+from tests.determination_fakes import claim_verification_input, claim_verification_response
+
 from jobctrl.domain.determinations import DeterminationFailure, Source
 from jobctrl.domain.materials.analysis import EnsembleError
 from jobctrl.domain.ports.claim_verification import ArtifactLine
@@ -65,7 +67,7 @@ class InvalidVerifier(Model):
             citation["quote"] = "Synthetic unbound quote"
         elif self.fault_kind == "mismatched_value":
             citation["exact_values"] = ["999"]
-        return result
+        return claim_verification_response(json.loads(messages[1].content), result)
 
 
 @pytest.mark.parametrize("code", [
@@ -172,7 +174,7 @@ class NumericRepairModel:
 
     def chat_json(self, messages, **kwargs):
         self.calls += 1
-        data = json.loads(messages[1].content)
+        data = claim_verification_input(json.loads(messages[1].content))
         sources = {row["source_id"]: row["text"] for row in data["sources"]}
         if len(messages) > 2:
             feedback = json.loads(messages[-1].content.split("\n", 1)[1])["binding_failure"]
@@ -197,8 +199,10 @@ class NumericRepairModel:
                     "rationale": "Synthetic model judgment",
                 }],
             })
-        return {"verdict": self.verdict if len(self.corrected) == len(rows) else "pass",
+        result = {"verdict": self.verdict if len(self.corrected) == len(rows) else "pass",
                 "rationale": "Synthetic model judgment", "lines": rows}
+
+        return claim_verification_response(data, result)
 
 
 @pytest.mark.parametrize("verdict", ["pass", "fail"])

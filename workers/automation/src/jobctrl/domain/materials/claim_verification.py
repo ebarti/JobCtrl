@@ -17,11 +17,12 @@ from jobctrl.domain.ports.claim_verification import (
     ClaimVerification,
 )
 from jobctrl.domain.ports.llm import LlmPort
+from jobctrl.domain.materials.claim_review_response import claim_review_response_model
 from jobctrl.domain.exact_values import numeric_literals
 from jobctrl.llm_lanes import LlmLane
 
 
-CLAIM_VERIFICATION_PROMPT_VERSION = "claim-verification-v2"
+CLAIM_VERIFICATION_PROMPT_VERSION = "claim-verification-v3"
 CLAIM_VERIFICATION_SCHEMA_VERSION = "2"
 
 _INSTRUCTION = """Verify the final artifact, line by line. Read meaning and context.
@@ -41,6 +42,14 @@ Report one determination for every supplied line ID, with verbatim text citation
 supporting source citations and specific rationales. Findings cite their actual line.
 An unsupported or uncertain factual claim requires a failed line. The overall
 verdict passes only when every line passes. Declare served_requirements with their requirement ID, verbatim requirement citation and rationale only for requirements this final line actually demonstrates. A lexical occurrence or generator assertion is never proof of coverage. No score threshold or lexicon is used."""
+
+
+_CITATION_INSTRUCTION = """
+Citation encoding: context.citation_refs maps short source_id reference keys to outer source IDs.
+For supporting citations, prefer a string key when the entire supplied source is the supporting span you selected and whole_source_reference_allowed is true. That key explicitly selects the whole verbatim source as its quote.
+Use {source_id, quote, exact_values} when you select a shorter span or declare specific literal values.
+The allowed_evidence_ids and allowed_requirement_ids in each context line are short reference keys. Claim text and findings always require an explicit span object using that line's line_source_id key.
+Resolve all line-specific permissions against the mapped canonical source IDs; aliases never add evidence. Keep original line_id and requirement_id values. Make every claim, support and verdict decision yourself. Return compact JSON without indentation."""
 
 
 class ModelClaimVerifier:
@@ -75,6 +84,11 @@ class ModelClaimVerifier:
         requirements: list[Source],
         rubric: dict[str, str],
     ) -> tuple[ClaimVerification, DeterminationEnvelope]:
+        # Bind the transport decoder, input fingerprint and final validation
+        # to the same private snapshot, never mutable caller source objects.
+        lines = [line.model_copy(deep=True) for line in lines]
+        evidence = [source.model_copy(deep=True) for source in evidence]
+        requirements = [source.model_copy(deep=True) for source in requirements]
         by_id = {line.line_id: line for line in lines}
         if not lines or len(by_id) != len(lines):
             raise DeterminationFailure("invalid_line_inventory")
@@ -137,25 +151,30 @@ class ModelClaimVerifier:
             if result.verdict == "pass" and any(row.verdict != "pass" for row in result.lines):
                 raise DeterminationFailure("inconsistent_verdict")
 
+        sources = [
+            *(Source(source_id="line:" + line.line_id, text=line.text) for line in lines),
+            *evidence,
+            *requirements,
+        ]
+        response_model, citation_refs = claim_review_response_model(sources)
+        references_by_id = {value["source_id"]: ref for ref, value in citation_refs.items()}
         return determine(
             kind="claim_verification",
             schema=ClaimVerification,
             schema_version=CLAIM_VERIFICATION_SCHEMA_VERSION,
             prompt_version=CLAIM_VERIFICATION_PROMPT_VERSION,
-            instruction=_INSTRUCTION,
-            sources=[
-                *(Source(source_id="line:" + line.line_id, text=line.text) for line in lines),
-                *evidence,
-                *requirements,
-            ],
+            instruction=_INSTRUCTION + _CITATION_INSTRUCTION,
+            sources=sources,
             context={
                 "artifact_kind": artifact_kind,
                 "rubric": rubric,
+                "citation_refs": citation_refs,
                 "lines": [
                     {
                         "line_id": line.line_id,
-                        "allowed_evidence_ids": line.allowed_evidence_ids,
-                        "allowed_requirement_ids": line.allowed_requirement_ids,
+                        "line_source_id": references_by_id["line:" + line.line_id],
+                        "allowed_evidence_ids": [references_by_id[ident] for ident in line.allowed_evidence_ids],
+                        "allowed_requirement_ids": [references_by_id[ident] for ident in line.allowed_requirement_ids],
                     }
                     for line in lines
                 ],
@@ -170,6 +189,7 @@ class ModelClaimVerifier:
             preflight=self._preflight,
             validate=validate,
             on_terminal_failure=self._on_terminal_failure,
+            response_model=response_model,
         )
 
 

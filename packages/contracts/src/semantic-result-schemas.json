@@ -1290,7 +1290,11 @@
     "schemaVersion": "1"
   },
   "claim_verification": {
-    "promptVersion": "claim-verification-v2",
+    "compatiblePromptVersions": [
+      "claim-verification-v2",
+      "claim-verification-v3"
+    ],
+    "promptVersion": "claim-verification-v3",
     "schema": {
       "$defs": {
         "Citation": {

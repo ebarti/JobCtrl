@@ -284,6 +284,13 @@ Required IDs, pins, artifact budget and exact-value checks remain code. Represen
 
 Every final line receives a typed verdict, factual propositions, verbatim supporting evidence, source contributions and findings. Unsupported/uncertain factual claims fail. Generation anchors must reconcile with verifier-affirmed source IDs. The technology/title/employer lexicons and stemmer are deleted.
 
+The factual response uses request-local short citation references, expanded
+into full canonical evidence before validation and persistence. Every line and
+claim is still reviewed. Whole-source selection is explicit and bounded;
+final-line claims and findings require verbatim spans. The
+[Materials audit contract](materials.md#source-bound-claim-verification) owns the
+format, cache and historical-reader guarantees.
+
 ### 7. Post-Generation Fit Gate
 
 Coverage counts only requirements the verifier declares served by shipped line IDs. The requirement-fit policy owns arithmetic and bands over those typed verdicts. No keyword union launders provenance.

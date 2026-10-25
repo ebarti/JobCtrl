@@ -547,6 +547,18 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For compact factual-review transport, run locked
+`pytest tests/test_claim_review_response.py tests/test_artifact_determinations.py`
+and the full worker suite, plus API semantic receipt-version checks. Require
+strict request-local reference resolution, unchanged canonical claim and
+contribution validation, full persisted citations and explicit span/value
+preservation. Wrong-line, foreign, malformed, non-verbatim, changed-value and
+oversized/empty-source cases retain safe failures and the existing three-call
+budget. Concurrent maps cannot cross; changed inputs cannot reuse an accepted
+receipt. Preserve accepted artifacts and known v2 history. Verify one configured
+provider request with owned synthetic facts and inspect actual UI completion
+timings before claiming a performance gain.
+
 For bounded high-fit review output, run locked
 `pytest tests/test_resume_review_response_bounds.py tests/test_artifact_determinations.py tests/test_materials_use_cases.py tests/test_material_review_history.py tests/test_tailor_voice_audit_integration.py`
 and the full worker suite. In owned synthetic SQLite, prove every generated

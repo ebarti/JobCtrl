@@ -1,5 +1,7 @@
 """Analysis generation gates depend on model determinations, never prose patterns."""
 
+from tests.determination_fakes import claim_verification_input, claim_verification_response
+
 import json
 import sqlite3
 
@@ -23,7 +25,7 @@ class Model:
         self.verdict, self.agreement, self.fault, self.protected, self.calls = verdict, agreement, fault, protected, []
 
     def chat_json(self, messages, *, response_schema, **kwargs):
-        data = json.loads(messages[1].content)
+        data = claim_verification_input(json.loads(messages[1].content))
         sources = {row["source_id"]: row["text"] for row in data["sources"]}
         title = response_schema["title"]
         self.calls.append(title)
@@ -34,7 +36,7 @@ class Model:
             return {"source_id": ident, "quote": sources[ident], "exact_values": []}
 
         if title == "ClaimVerification":
-            return {
+            return claim_verification_response(data, {
                 "verdict": self.verdict,
                 "rationale": "Model review decision",
                 "lines": [
@@ -56,7 +58,7 @@ class Model:
                     }
                     for row in data["context"]["lines"]
                 ],
-            }
+            })
         if title == "DraftAgreement":
             return {
                 "score": self.agreement,

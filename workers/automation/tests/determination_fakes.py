@@ -72,7 +72,7 @@ class VerificationModel:
         self.verdict, self.quality_source, self.calls = verdict, quality_source, []
 
     def chat_json(self, messages, *, response_schema, **kwargs):
-        data = json.loads(messages[1].content)
+        data = claim_verification_input(json.loads(messages[1].content))
         self.calls.append(data)
         verdict = (
             self.verdict[min(len(self.calls) - 1, len(self.verdict) - 1)]
@@ -102,7 +102,7 @@ class VerificationModel:
         def cite(source_id):
             return {"source_id": source_id, "quote": sources[source_id], "exact_values": []}
 
-        return {
+        result = {
             "verdict": verdict,
             "rationale": "Explicit support verdict",
             "lines": [
@@ -128,6 +128,8 @@ class VerificationModel:
                 for row in data["context"]["lines"]
             ],
         }
+
+        return claim_verification_response(data, result)
 
 
 def review_ports(quality_source=None, verdict="pass", lane="tailoring"):
@@ -270,3 +272,55 @@ def record_artifact_authority(conn):
             anchors=anchors,
             expected_entity_id=job,
         )
+
+
+
+def claim_verification_input(data):
+    """Decode structural request references for existing explicit fake decisions."""
+    import copy
+
+    refs = data["context"].get("citation_refs")
+    if refs is None:
+        return data
+    data = copy.deepcopy(data)
+    for line in data["context"]["lines"]:
+        for name in ("allowed_evidence_ids", "allowed_requirement_ids"):
+            line[name] = [refs.get(ident, {}).get("source_id", ident) for ident in line[name]]
+    return data
+
+
+def claim_verification_response(data, result, *, whole_sources=False):
+    """Encode an explicit synthetic decision in the requested citation format."""
+    import copy
+
+    references = data["context"].get("citation_refs")
+    if references is None:
+        return result
+    result = copy.deepcopy(result)
+    by_id = {value["source_id"]: key for key, value in references.items()}
+    texts = {value["source_id"]: value["text"] for value in data["sources"]}
+
+    def citation(value, *, supporting):
+        if isinstance(value, str):
+            return value
+        ident = value["source_id"]
+        ident = references.get(ident, {}).get("source_id", ident)
+        ref = by_id.get(ident, ident)
+        if (
+            whole_sources and supporting and ref in references
+            and references[ref]["whole_source_reference_allowed"]
+            and value["quote"] == texts[ident] and not value.get("exact_values")
+        ):
+            return ref
+        return {**value, "source_id": ref}
+
+    for line in result.get("lines", []):
+        line["source_evidence"] = [citation(value, supporting=True) for value in line["source_evidence"]]
+        for served in line["served_requirements"]:
+            served["citation"] = citation(served["citation"], supporting=True)
+        for claim in line["claims"]:
+            claim["text"] = citation(claim["text"], supporting=False)
+            claim["evidence"] = [citation(value, supporting=True) for value in claim["evidence"]]
+        for finding in line["findings"]:
+            finding["citation"] = citation(finding["citation"], supporting=False)
+    return result
