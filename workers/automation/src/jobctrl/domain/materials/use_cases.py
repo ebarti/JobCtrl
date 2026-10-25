@@ -1408,12 +1408,7 @@ def build_master_tailor_prompt(
     required_bullets = get_required_bullets_by_experience_id(profile)
     required_skill_ids = get_required_skill_category_ids(profile)
     experience_entries = get_experience_entries(profile)
-    all_skill_categories = get_skill_categories(profile)
-    skill_categories = [
-        category
-        for category in all_skill_categories
-        if not required_skill_ids or category.get("id") in required_skill_ids
-    ] or all_skill_categories
+    skill_categories = get_skill_categories(profile)
     education_entries = get_education_entries(profile)
 
     experience_payload = [

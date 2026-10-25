@@ -25,6 +25,13 @@ A required role with no achievement evidence or bullet pins keeps its fixed role
 details without an invented bullet. Unconfirmed achievement records do not
 supply facts for generation.
 
+A skill category marked **Must appear in final resume** is an inclusion minimum.
+Tailoring can also select other relevant categories already in your profile;
+unselected optional categories can be omitted. An individually required skill
+also keeps its containing category required. The same selected categories reach
+the resume text and PDF, and disabling skill reordering preserves their authored
+items. These controls do not authorize new skills.
+
 Before generating a resume or cover letter, JobCtrl reuses a posting observation
 from the preceding six hours, including an uncertain observation. It attempts a
 refresh when no recent observation exists. Usable content can feed preparation

@@ -583,6 +583,13 @@ standalone and plan-backed first prompts. Field validation and curation must use
 the same available authored-evidence authority. Through the real Materials use
 case in owned SQLite, retain one first draft, source IDs and opposing factual
 and quality verdicts; metadata alone never invents an achievement.
+For required skill categories, include `tests/test_required_skill_categories.py`:
+one required, one selected optional and one omitted category must agree across
+first prompt, field validation, text, ResumeDocument and the actual PDF adapter.
+Keep missing required, foreign/duplicate ID, individual skill pin, default-all,
+disabled item rewriting and opposing factual/quality verdict cases. Inspect every
+page of the owned synthetic PDF; a document-structure assertion alone does not
+prove exported selection.
 
 For compact factual-review transport, run locked
 `pytest tests/test_claim_review_response.py tests/test_artifact_determinations.py`

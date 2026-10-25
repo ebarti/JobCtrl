@@ -43,6 +43,7 @@ from jobctrl.resume_profile import (
     get_required_skill_category_ids,
     get_resume_master,
     get_selected_experience_entries,
+    get_selected_skill_categories,
     get_skill_categories,
     get_tailoring_policy,
     require_resume_master,
@@ -145,6 +146,7 @@ def _validate_master_json_fields(data: dict, profile: dict, mode: str = "normal"
     required_bullets_by_entry = get_required_bullets_by_experience_id(profile)
     evidence_entry_ids = {ident for ident, evidence in experience_bullet_evidence_ids_by_role(profile).items() if evidence}
     required_skill_ids = set(get_required_skill_category_ids(profile))
+    all_skill_ids = {category.get("id") for category in get_skill_categories(profile)}
     max_bullets = get_max_experience_bullets(profile)
 
     all_text_parts: list[str] = [executive_profile]
@@ -209,7 +211,7 @@ def _validate_master_json_fields(data: dict, profile: dict, mode: str = "normal"
         all_text_parts.extend(str(item) for item in items)
 
     missing_skill_ids = required_skill_ids - seen_skill_ids
-    extra_skill_ids = seen_skill_ids - required_skill_ids
+    extra_skill_ids = seen_skill_ids - all_skill_ids
     if missing_skill_ids:
         errors.append("Missing skill category updates: " + ", ".join(sorted(missing_skill_ids)))
     if extra_skill_ids:
@@ -362,23 +364,17 @@ def _assemble_resume_text(data: dict, profile: dict) -> str:
     personal = profile.get("personal", {})
     tailoring_policy = get_tailoring_policy(profile)
     resume = get_resume_master(profile)
-    required_skill_ids = get_required_skill_category_ids(profile)
     required_education_ids = set(
         get_resume_master(profile).get("tailoring_rules", {}).get("required_education_entry_ids", [])
     )
     all_education_entries = get_education_entries(profile)
-    all_skill_categories = get_skill_categories(profile)
     experience_entries = get_selected_experience_entries(profile, data)
     education_entries = [
         entry
         for entry in all_education_entries
         if not required_education_ids or entry.get("id") in required_education_ids
     ] or all_education_entries
-    skill_categories = [
-        category
-        for category in all_skill_categories
-        if not required_skill_ids or category.get("id") in required_skill_ids
-    ] or all_skill_categories
+    skill_categories = get_selected_skill_categories(profile, data)
 
     experience_updates = experience_updates_by_id(data)
     skill_updates = {
