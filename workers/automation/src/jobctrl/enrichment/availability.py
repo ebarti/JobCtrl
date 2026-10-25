@@ -805,8 +805,28 @@ class Acquisition:
         self.conn, self.claim, self.transport, self.browser = conn, claim, transport or public_get, browser
         self.lineage: list[dict[str, Any]] = []
         self.bytes_received = 0
-        self.deadline = time.monotonic() + ACQUISITION_TIMEOUT_SECONDS
+        started = time.monotonic()
+        self._lease_deadline = started + max(0, (claim.expires_at - _now()).total_seconds())
+        self.deadline = min(started + ACQUISITION_TIMEOUT_SECONDS, self._lease_deadline)
         self.cancel_event = cancel_event
+
+    def _verify_page(self, page: DetailPage, *, signals: list[dict[str, object]]):
+        # Model reasoning is a separate resource from posting acquisition.
+        # Credit only the time actually spent here, never extend the job lease.
+        started = time.monotonic()
+        try:
+            result = ActiveStateVerifier(
+                page_interpreter=build_page_interpreter(self.conn, tenant_id=self.claim.tenant_id)
+            ).verify(page, signals=signals)
+        finally:
+            self.deadline = min(
+                self._lease_deadline,
+                self.deadline + max(0, time.monotonic() - started),
+            )
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            raise DeferredCheck("check_canceled")
+        _fence(self.conn, self.claim, _now())
+        return result
 
     def _get(self, url: str, method: str, *, deadline: float | None = None) -> Response:
         deadline = min(self.deadline, deadline if deadline is not None else self.deadline)
@@ -1006,9 +1026,7 @@ class Acquisition:
             page_title=soup.title.get_text() if soup.title else "",
         )
         signals: list[dict[str, object]] = []
-        verdict, reason = ActiveStateVerifier(
-            page_interpreter=build_page_interpreter(self.conn, tenant_id=self.claim.tenant_id)
-        ).verify(page, signals=signals)
+        verdict, reason = self._verify_page(page, signals=signals)
         self.lineage[-1]["signals"] = signals
         if verdict is not ActiveState.UNKNOWN or reason in {
             "http_error",
@@ -1055,9 +1073,7 @@ class Acquisition:
             )
             raise
         signals = []
-        verdict, reason = ActiveStateVerifier(
-            page_interpreter=build_page_interpreter(self.conn, tenant_id=self.claim.tenant_id)
-        ).verify(rendered, signals=signals)
+        verdict, reason = self._verify_page(rendered, signals=signals)
         self.lineage.append(
             {
                 "sourceUrl": url,

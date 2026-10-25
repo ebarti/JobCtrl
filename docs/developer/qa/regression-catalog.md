@@ -547,6 +547,16 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For availability model/network budgets, run locked
+`pytest tests/test_availability_model_budget.py tests/test_saved_posting_availability.py tests/test_saved_posting_availability_runtime.py tests/test_posting_availability_rereview.py`
+and the full worker suite. Use a virtual monotonic/UTC clock and explicit,
+source-bound synthetic page-model decisions to reproduce a slow interpretation
+before browser fallback. Model time must leave the remaining cumulative posting
+acquisition budget available; slow transport still exhausts that budget. The
+original lease, owner/URL/deletion fence and cancellation must prevent browser
+startup after ownership is lost. Keep actual browser-resource, process cleanup,
+quota and accepted-observation preservation checks.
+
 For shared Materials review constraints, run locked
 `pytest tests/test_materials_review_constraints.py tests/test_materials_use_cases.py tests/test_material_review_history.py tests/test_parallel_resume_reviews.py`
 and the full worker suite. Through the actual use case in owned synthetic

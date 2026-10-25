@@ -2670,8 +2670,12 @@ artifacts/approvals/outcomes, and closure never invokes Discovery policy deletio
 Job-scoped ownership allows unrelated work to overlap, with 25 jobs/sweep, 100
 posting acquisitions/hour (80 for sweeps and 20 reserved for foreground work),
 once/minute job starts, at least two-second host spacing and
-five-minute leases. Each acquisition charges the quota once; local refusals
-do not increase evidence backoff, including guarded browser-resource refusals.
+five-minute leases. Posting acquisition has a cumulative 120-second budget,
+including browser cleanup. Independent page-model interpretation pauses the
+network clock without renewing the original job lease; cancellation and ownership
+are rechecked before browser fallback. Each acquisition charges the quota once;
+local refusals do not increase evidence backoff, including guarded
+browser-resource refusals.
 Availability uncertainty does not quarantine medium/high-confidence content or
 create a content-review queue item. Failed/redirected required rendered dependencies
 cannot prove closure; only passive resources tolerate failures. Sweeps stop at
