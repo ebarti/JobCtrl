@@ -18,9 +18,11 @@ recorded as skipped because the setting is off; existing accepted letters and
 work already generating are preserved. New direct cover-only requests also
 require the setting to be enabled.
 
-Before generating a resume or cover letter, JobCtrl attempts to refresh active
-evidence older than six hours. Usable content can feed preparation while
-availability remains unknown. Confirmed unavailable postings stop new work;
+Before generating a resume or cover letter, JobCtrl reuses a posting observation
+from the preceding six hours, including an uncertain observation. It attempts a
+refresh when no recent observation exists. Usable content can feed preparation
+while availability remains unknown; reusing uncertainty does not mark the posting
+active or change its background retry schedule. Confirmed unavailable postings stop new work;
 failed checks preserve accepted materials and approvals. Use Job
 Detail’s **Check availability** to retry; see
 [saved posting availability](enrichment-and-extraction.md#saved-posting-availability).

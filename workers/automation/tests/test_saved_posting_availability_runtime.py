@@ -238,7 +238,7 @@ def test_canonical_posting_change_after_real_preflight_stops_costly_preparation_
     job_id = _insert_ready_job(runtime.conn, url=url)
     runtime.conn.execute("UPDATE job_materials SET status = 'resume_approved' WHERE job_id = ?", (job_id,))
     runtime.conn.commit()
-    real_guard = availability.require_fresh_active
+    real_guard = availability.require_preparation_available
 
     def race(*args, **kwargs):
         real_guard(*args, **kwargs)
@@ -247,7 +247,7 @@ def test_canonical_posting_change_after_real_preflight_stops_costly_preparation_
                 "UPDATE jobs SET url = ? WHERE tenant_id = 'local' AND job_id = ?", (url + "-replacement", job_id)
             )
 
-    monkeypatch.setattr(availability, "require_fresh_active", race)
+    monkeypatch.setattr(availability, "require_preparation_available", race)
     for module in (scorer, tailor, cover_letter):
         monkeypatch.setattr(module, "get_connection", lambda: runtime.conn)
     monkeypatch.setattr(
@@ -296,7 +296,7 @@ def test_batch_scoring_fences_posting_changes_before_stage_attempt_or_provider(r
     from jobctrl.domain.profile.aggregate import Profile
     from jobctrl.domain.profile.snapshot import ProfileSnapshot
 
-    real_guard = availability.require_fresh_active
+    real_guard = availability.require_preparation_available
 
     def race(job_id, **kwargs):
         real_guard(job_id, **kwargs)
@@ -306,7 +306,7 @@ def test_batch_scoring_fences_posting_changes_before_stage_attempt_or_provider(r
                 (POSTING_URL + "-replacement", job_id),
             )
 
-    monkeypatch.setattr(availability, "require_fresh_active", race)
+    monkeypatch.setattr(availability, "require_preparation_available", race)
     monkeypatch.setattr(scorer, "get_connection", lambda: runtime.conn)
     monkeypatch.setattr(
         scorer,

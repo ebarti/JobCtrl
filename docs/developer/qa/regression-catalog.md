@@ -1646,6 +1646,15 @@ name, or host path.
 
 ### Saved posting availability
 
+Run `pytest tests/test_preparation_availability_cache.py tests/test_posting_availability_review.py tests/test_saved_posting_availability.py`
+for preparation refresh reuse. A recent unknown observation must remove the
+foreground wait without changing its verdict, accepted-success clocks, background
+due state or ledger bytes. Exercise both six-hour boundaries, expired/missing/
+malformed/future timestamps, exact URL and tenant changes, deletion and every
+confirmed unavailable state. Old evidence still refreshes; Apply still acquires
+its own current evidence. Run the scoring/material entry suites and full worker
+suite, then compare actual foreground acquisition spans in a clean UI run.
+
 Use owned synthetic data to verify current closure status outside historical
 description, malformed/missing identity and metadata, HTTP 403/429/5xx/login/
 timeout uncertainty, timezone-aware deadlines, canonical retained/lost redirects,

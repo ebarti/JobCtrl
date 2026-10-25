@@ -63,7 +63,7 @@ def test_implicit_job_preparation_decline_stops_before_acquisition_or_generation
         acquired.append(True)
         raise AssertionError("Implicit material work crossed the manual decline before acquisition")
 
-    monkeypatch.setattr("jobctrl.enrichment.availability.require_fresh_active", forbidden_acquisition)
+    monkeypatch.setattr("jobctrl.enrichment.availability.require_preparation_available", forbidden_acquisition)
     payload_cls = activities.TailorJobActivityInput if stage == "tailor" else activities.CoverLetterActivityInput
     run = activities._tailor_one_job if stage == "tailor" else activities._cover_one_job
     outcome = run(payload_cls(tenant_id=str(TENANT), job_id=job_id))
@@ -78,7 +78,7 @@ def test_implicit_job_preparation_decline_stops_before_acquisition_or_generation
 
 
 @pytest.mark.parametrize("stage", ["tailor", "cover"])
-def test_decline_committed_during_acquisition_is_rechecked_under_admission_lock(tmp_path, monkeypatch, stage):
+def test_decline_committed_after_availability_preflight_is_rechecked_under_admission_lock(tmp_path, monkeypatch, stage):
     conn, job_id = seed(tmp_path, monkeypatch, stage)
     conn.execute(
         "UPDATE job_stage_states SET state='pending',retryable=1 WHERE tenant_id=? AND job_id=? AND stage='apply'",
@@ -95,7 +95,7 @@ def test_decline_committed_during_acquisition_is_rechecked_under_admission_lock(
             )
         acquisitions.append(True)
 
-    monkeypatch.setattr("jobctrl.enrichment.availability.require_fresh_active", decline_after_early_read)
+    monkeypatch.setattr("jobctrl.enrichment.availability.require_preparation_available", decline_after_early_read)
     payload_cls = activities.TailorJobActivityInput if stage == "tailor" else activities.CoverLetterActivityInput
     run = activities._tailor_one_job if stage == "tailor" else activities._cover_one_job
     outcome = run(payload_cls(tenant_id=str(TENANT), job_id=job_id))
@@ -310,7 +310,7 @@ def test_decline_after_setup_is_rechecked_before_final_stage_started(tmp_path, m
     conn, job_id = seed(tmp_path, monkeypatch, stage)
     conn.execute("UPDATE job_stage_states SET state='pending',retryable=1 WHERE stage='apply'")
     conn.commit()
-    monkeypatch.setattr("jobctrl.enrichment.availability.require_fresh_active", lambda *a, **k: None)
+    monkeypatch.setattr("jobctrl.enrichment.availability.require_preparation_available", lambda *a, **k: None)
     setup = []
 
     def late_decline():
@@ -526,7 +526,7 @@ def test_manual_decline_does_not_require_an_existing_material_stage_row(tmp_path
     )
     conn.commit()
     monkeypatch.setattr(
-        "jobctrl.enrichment.availability.require_fresh_active",
+        "jobctrl.enrichment.availability.require_preparation_available",
         lambda *a, **k: pytest.fail("missing material row hid canonical Apply skip"),
     )
     payload_cls = activities.TailorJobActivityInput if stage == "tailor" else activities.CoverLetterActivityInput

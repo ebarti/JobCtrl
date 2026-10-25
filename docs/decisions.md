@@ -2680,6 +2680,15 @@ cooperative acquisition cancellation. Explicit commands alone own coalesced defe
 feedback. Runtime-offline time leaves freshness honest. Live external
 ATS reliability is not inferred from deterministic transport QA.
 
+
+Preparation freshness clarification (2026-10-25): Score, Tailor and Cover reuse
+an exact-URL observation attempted within the preceding six hours, including an
+uncertain observation. They refresh missing or older observations. A cache hit
+preserves the recorded verdict and both observation clocks; it cannot renew
+positive verification, suppress background/explicit retries or change Apply's
+independent freshness and approval gates. Known unavailability, deletion,
+tenant/URL changes and the stage writer's candidate fence still stop preparation.
+
 ## Required-Bullet Coaching Uses LLM Determinations (2026-10-05)
 
 Grammar, relevance, achieved-result framing and evidence support require a

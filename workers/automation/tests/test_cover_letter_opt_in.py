@@ -55,7 +55,7 @@ def test_disabled_runner_stops_before_acquisition_or_generation_and_preserves_re
         pytest.fail("disabled letter crossed model or availability acquisition")
 
     monkeypatch.setattr(cover_letter, "_build_use_case", forbidden)
-    monkeypatch.setattr("jobctrl.enrichment.availability.require_fresh_active", forbidden)
+    monkeypatch.setattr("jobctrl.enrichment.availability.require_preparation_available", forbidden)
     result = cover_letter.cover_letter_by_id(job_id, tenant_id=TENANT)
     assert result["reason"] == "cover_letter_generation_disabled"
     row = conn.execute("SELECT state,error_code,attempt_count FROM job_stage_states WHERE stage='cover'").fetchone()
@@ -70,7 +70,7 @@ def test_disablement_after_availability_is_rechecked_before_model_and_attempt(ow
     def disable(*args, **kwargs):
         path.write_text('{"cover_letter_generation":false}')
 
-    monkeypatch.setattr("jobctrl.enrichment.availability.require_fresh_active", disable)
+    monkeypatch.setattr("jobctrl.enrichment.availability.require_preparation_available", disable)
     monkeypatch.setattr(
         cover_letter, "_build_use_case", lambda **kwargs: pytest.fail("model constructed after disablement")
     )

@@ -173,9 +173,9 @@ def generate_cover_letter(
 
     if not get_cover_letter_generation_enabled():
         return ""
-    from jobctrl.enrichment.availability import require_fresh_active
+    from jobctrl.enrichment.availability import require_preparation_available
 
-    require_fresh_active(str(job["job_id"]), expected_posting_url=job["url"], allow_unknown=True)
+    require_preparation_available(str(job["job_id"]), expected_posting_url=job["url"])
     _ = resume_text  # use case reads the tailored resume from the repo
     use_case = _build_use_case()
     use_case._max_retries = max_retries  # noqa: SLF001 — DI seam
@@ -283,15 +283,14 @@ def cover_letter_by_id(
             stable_job_id, reason="already_done", url=str(job.get("url") or ""), status="already_done"
         )
 
-    from jobctrl.enrichment.availability import require_fresh_active
+    from jobctrl.enrichment.availability import require_preparation_available
 
     expected_posting_url = job["url"]
-    require_fresh_active(
+    require_preparation_available(
         str(stable_job_id),
         tenant_id=str(tenant_id),
         conn=conn,
         expected_posting_url=expected_posting_url,
-        allow_unknown=True,
     )
     with claim_preparation_reservation(
         conn,

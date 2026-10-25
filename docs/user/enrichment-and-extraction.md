@@ -207,9 +207,11 @@ refusals without invalidating the status capture.
 Each check permits 12 posting/API requests and 64 browser resources, at most one
 million bytes per response and 12 million bytes in total.
 
-Scoring, tailoring and cover generation attempt a check when active evidence
-is older than six hours, and can proceed with usable content while availability
-stays unknown. Unknown is shown honestly and remains retryable; confirmed
+Scoring, tailoring and cover generation reuse a posting observation from the
+preceding six hours and attempt a check when that observation is missing or older.
+An unknown observation can be reused for preparation without another foreground
+request; it stays unknown, and its background retry schedule remains unchanged.
+Preparation can proceed with usable content while availability stays unknown. Unknown is shown honestly and remains retryable; confirmed
 unavailable postings stop preparation. Dry-run rehearsals and human-reviewed
 Apply can also proceed when availability stays unknown, using the existing exact
 approval, material, profile, application-URL and rehearsal bindings, with the
