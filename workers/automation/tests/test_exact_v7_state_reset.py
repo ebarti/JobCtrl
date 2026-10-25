@@ -185,3 +185,27 @@ def test_reset_materials_uses_tenant_scoped_job_id(
         (str(_OTHER_TENANT), str(_JOB_ID)),
     ).fetchone()[0]
     assert other_artifact_count == (4 if stage == "cover" else 2)
+
+
+@pytest.mark.parametrize('state', ['pending', 'failed', 'canceled'])
+def test_apply_reset_requires_owner_ack_independently_of_stage_label(state):
+    from jobctrl.state import record_job_event
+    conn = _exact_v7_candidate('apply')
+    set_stage_state(conn, _JOB_ID, 'apply', state, validate_transition=False)
+    record_job_event(conn, _JOB_ID, 'apply', 'ApplyRunStarted', payload={'run_id': 'admitted'})
+    record_job_event(conn, _JOB_ID, 'apply', 'StageCanceled', payload={'run_id': 'admitted'})
+    conn.commit()
+    before = [tuple(r) for r in conn.execute('SELECT * FROM job_stage_states')]
+    events = conn.execute('SELECT COUNT(*) FROM job_events').fetchone()[0]
+    with pytest.raises(ValueError, match='prior admitted run'):
+        reset_job_stage(conn, _JOB_ID, 'apply')
+    assert [tuple(r) for r in conn.execute('SELECT * FROM job_stage_states')] == before
+    assert conn.execute('SELECT COUNT(*) FROM job_events').fetchone()[0] == events
+    record_job_event(conn, _JOB_ID, 'apply', 'LockReleased', payload={'run_id': 'other'})
+    conn.commit()
+    with pytest.raises(ValueError, match='prior admitted run'):
+        reset_job_stage(conn, _JOB_ID, 'apply')
+    record_job_event(conn, _JOB_ID, 'apply', 'LockReleased', payload={'run_id': 'admitted'})
+    conn.commit()
+    reset_job_stage(conn, _JOB_ID, 'apply')
+    assert conn.execute("SELECT state FROM job_stage_states WHERE tenant_id='local' AND job_id=? AND stage='apply'", (_JOB_ID,)).fetchone()[0] == 'pending'

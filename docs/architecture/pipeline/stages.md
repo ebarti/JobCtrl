@@ -498,7 +498,13 @@ recipient/attachment candidate. Terminal apply outcomes are
 
 Manual Apply controls are canonical stage state plus durable event history.
 Manual Skip records `manualDisposition: "skip"`; that stop remains active across
-later local labels until a safe `StageReset` or manual Applied resolution.
+later local labels until a validated explicit reset or manual Applied resolution.
+The explicit reset records `resetAuthority=explicit_safe_apply_reset` and
+`manualSkipReleasedThroughEventId`, bound to the existing Skip event frontier
+under the same writer lock. Automatic reconciliation `StageReset` events and
+replayed older release frontiers cannot release the stop or a subsequent Skip.
+Older reset events without this provenance remain inspectable but cannot
+establish release authority; a fresh safe explicit reset is required.
 Selectors, readiness counts and the locked claim exclude manual Skip and any
 recorded submit intent for the exact tenant/job, independently of latest-run
 projections. Skip records its previous state in the event: a prior
@@ -519,8 +525,9 @@ Settlement holds the writer and rejects a stopped stage or a successor run;
 recovery reads running ownership under the writer as well. Durable intent remains
 a retry blocker even if a late terminal event is recorded after a local stop.
 
-A Skip over an admitted run also retains that owner: reset waits for its exact
-local terminal result or cleanup acknowledgement (`LockReleased`). A local stage label alone
+Any admitted run retains its owner across local stage changes: reset waits for its exact
+local terminal result or cleanup acknowledgement (`LockReleased`). A cancellation request
+or `StageCanceled` label is not that acknowledgement. A local stage label alone
 cannot establish that active work ended. Submit intent still blocks retry after
 that settlement.
 

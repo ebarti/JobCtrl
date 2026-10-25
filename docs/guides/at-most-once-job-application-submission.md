@@ -61,8 +61,11 @@ a duplicate application.
 
 ## Local Stops Do Not Resolve External Uncertainty
 
-Manual Skip prevents later targeted, batch and standing claims. It is a local
-disposition, not confirmation that an in-flight provider operation stopped.
+Manual Skip prevents later targeted, batch and standing claims. Automatic recovery
+events cannot release it: a validated explicit reset binds its release to the
+existing Skip history, and waits for any admitted owner to acknowledge settlement.
+It is a local disposition, not confirmation that an in-flight provider operation
+stopped.
 Claim selection checks it before expensive work and under the claim lock after
 availability refresh. The final intent writer also requires the original run
 and a running stage, so a Skip committed before that boundary prevents intent.

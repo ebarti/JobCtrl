@@ -1494,3 +1494,48 @@ def test_manual_failure_retains_caller_transaction_and_rolls_back_partial_event_
     assert conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type='ApplicationFailed'").fetchone()[0] == (0 if fail_event else 1)
     conn.rollback()
     assert conn.execute("SELECT state FROM job_stage_states WHERE job_id=? AND stage='apply'", (LOCAL_JOB_ID,)).fetchone()[0] == "pending"
+
+
+def test_automatic_score_recovery_after_relabel_cannot_release_manual_skip(conn, monkeypatch):
+    from jobctrl.state import ensure_job_stage_rows, record_job_event, reset_job_stage, set_stage_state, reconcile_score_threshold_skips
+    from jobctrl.infrastructure.apply_controls import APPLY_MANUAL_STOP_SQL
+
+    _insert_ready_job(conn, LOCAL_TENANT, LOCAL_JOB_ID)
+    ensure_job_stage_rows(conn, LOCAL_JOB_ID)
+    set_stage_state(conn, LOCAL_JOB_ID, 'score', 'succeeded', validate_transition=False)
+    record_job_event(conn, JobId(LOCAL_JOB_ID), 'apply', 'StageSkipped', payload={'manualDisposition': 'skip', 'previousState': 'pending'})
+    set_stage_state(conn, LOCAL_JOB_ID, 'apply', 'pending', validate_transition=False)
+    before = [tuple(r) for r in conn.execute('SELECT * FROM job_materials_artifacts')]
+    reconcile_score_threshold_skips(conn, tenant_id=TenantId(LOCAL_TENANT), job_id=JobId(LOCAL_JOB_ID), fit_score=3, min_score=7)
+    reconcile_score_threshold_skips(conn, tenant_id=TenantId(LOCAL_TENANT), job_id=JobId(LOCAL_JOB_ID), fit_score=9, min_score=7)
+    conn.commit()
+    monkeypatch.setattr('jobctrl.apply.launcher.get_connection', lambda: conn)
+    assert conn.execute(f'SELECT 1 FROM jobs WHERE {APPLY_MANUAL_STOP_SQL}').fetchone()
+    for dry_run in [False, True]:
+        for target in [JobId(LOCAL_JOB_ID), None]:
+            assert acquire_job(target_job_id=target, approval_required=False, run_ctx={'dry_run': dry_run}) is None
+    assert conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type IN ('ApplyRunStarted','ApplySubmitIntended')").fetchone()[0] == 0
+    reset_job_stage(conn, LOCAL_JOB_ID, 'apply')
+    assert acquire_job(target_job_id=JobId(LOCAL_JOB_ID), approval_required=False, run_ctx={'dry_run': True})
+    assert [tuple(r) for r in conn.execute('SELECT * FROM job_materials_artifacts')] == before
+    print({'job': LOCAL_JOB_ID, 'automatic_reset_claims': 0, 'explicit_reset_claims': 1})
+
+
+@pytest.mark.parametrize('result,uncertain,expected', [
+    ('applied', False, 'succeeded'), ('dry_run', False, 'skipped'),
+    ('failed', False, 'failed'), ('failed', True, 'needs_verification'),
+])
+def test_apply_settlement_preserves_claimed_attempt_budget(conn, monkeypatch, result, uncertain, expected):
+    from jobctrl.state import ensure_job_stage_rows, record_job_event, set_stage_state
+    _insert_ready_job(conn, LOCAL_TENANT, LOCAL_JOB_ID)
+    ensure_job_stage_rows(conn, LOCAL_JOB_ID)
+    set_stage_state(conn, LOCAL_JOB_ID, 'apply', 'running', attempt_count=2, validate_transition=False)
+    record_job_event(conn, JobId(LOCAL_JOB_ID), 'apply', 'ApplyRunStarted', payload={'run_id': 'settling'})
+    if uncertain:
+        record_job_event(conn, JobId(LOCAL_JOB_ID), 'apply', 'ApplySubmitIntended', payload={'run_id': 'settling'})
+    conn.commit()
+    monkeypatch.setattr('jobctrl.apply.launcher.get_connection', lambda: conn)
+    before = [tuple(r) for r in conn.execute('SELECT * FROM job_materials_artifacts')]
+    mark_result(JobId(LOCAL_JOB_ID), result, run_ctx={'run_id': 'settling'})
+    assert tuple(conn.execute("SELECT state,attempt_count FROM job_stage_states WHERE job_id=? AND stage='apply'", (LOCAL_JOB_ID,)).fetchone()) == (expected, 2)
+    assert [tuple(r) for r in conn.execute('SELECT * FROM job_materials_artifacts')] == before

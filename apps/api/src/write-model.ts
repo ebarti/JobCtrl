@@ -163,7 +163,7 @@ function assertSafeApplyReset(db: SqliteDatabase, tenantId: string, jobId: strin
   }
   const row = getRow<{ state: string; error_code: string | null }>(db,
     "SELECT state,error_code FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage='apply'", [tenantId, jobId]);
-  if ((row?.state === "skipped" || hasManualApplyStop(db, tenantId, jobId)) && hasUnsettledApplyRun(db, tenantId, jobId)) {
+  if (hasUnsettledApplyRun(db, tenantId, jobId)) {
     throw new ApplyResetRefusedError("Apply reset refused: the prior admitted run has no confirmed local settlement. Stop and verify that run first.");
   }
   if (row && (["queued", "running", "succeeded", "needs_verification"].includes(row.state) ||
@@ -204,7 +204,15 @@ function resetResolvedJobStage(
       LIMIT 1`,
     [LOCAL_TENANT, job.jobId, stage],
   );
-  if (stage === "apply") assertSafeApplyReset(db, LOCAL_TENANT, job.jobId);
+  let releasePayload = {};
+  if (stage === "apply") {
+    assertSafeApplyReset(db, LOCAL_TENANT, job.jobId);
+    const stopped = getRow<{ event_id: number | null }>(db, `SELECT MAX(event_id) AS event_id FROM job_events
+      WHERE tenant_id=? AND job_id=? AND stage='apply' AND event_type='StageSkipped'
+      AND json_extract(CASE WHEN json_valid(payload_json) THEN payload_json ELSE '{}' END,'$.manualDisposition')='skip'`,
+    [LOCAL_TENANT, job.jobId]);
+    releasePayload = { resetAuthority: "explicit_safe_apply_reset", manualSkipReleasedThroughEventId: stopped?.event_id ?? null };
+  }
   const resetAttempts = options.resetAttempts || current?.state === "exhausted";
   const stageOptions: Parameters<typeof upsertStageStateById>[5] = {
     retryable: true,
@@ -226,7 +234,7 @@ function resetResolvedJobStage(
     eventType: "StageReset",
     level: "info",
     message: `Retry reset requested for ${stage}`,
-    payload: { reset_attempts: resetAttempts },
+    payload: { reset_attempts: resetAttempts, ...releasePayload },
   });
   return { jobUrl: job.jobUrl, stage: getStageStateById(db, LOCAL_TENANT, job.jobId, stage) };
 }

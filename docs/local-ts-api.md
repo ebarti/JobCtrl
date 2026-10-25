@@ -335,6 +335,10 @@ confirmation, outreach drafts, send logs, and follow-ups share one route family.
 Global and per-job stage runs, rescore/re-tailor, retry, mark-applied, and
 mark-skipped commands are summarized in
 [Operations & Events](api/operations-and-events.md#starting-work).
+Apply resets refuse recorded intent and unsettled admitted ownership independently
+of the current local stage label. A successful explicit reset records its validated
+Skip-history release frontier; automatic `StageReset` events carry no such authority.
+
 Enrichment resets use the synchronous Python application service through
 `reset_enrichment`; its transaction and preservation rules are defined in
 [Enrichment Retry Ownership](architecture/contracts-types-and-api-boundaries.md#enrichment-retry-ownership).

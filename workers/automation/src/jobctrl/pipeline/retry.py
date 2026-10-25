@@ -75,10 +75,11 @@ def reset_retry_stages(
             ).fetchone()
             if only_failed and (row is None or row[0] not in {"failed", "exhausted"}):
                 raise ValueError("retry target changed; refresh and retry")
+            release_payload = {}
             if stage == "apply":
-                from jobctrl.infrastructure.apply_controls import assert_safe_apply_reset
+                from jobctrl.infrastructure.apply_controls import explicit_apply_reset_payload
 
-                assert_safe_apply_reset(conn, tenant_id=tenant_id, job_id=job_id)
+                release_payload = explicit_apply_reset_payload(conn, tenant_id=tenant_id, job_id=job_id)
             clear_attempts = reset_attempts or (row is not None and row[0] == "exhausted")
             now = utc_now()
             if stage == "enrich":
@@ -106,7 +107,7 @@ def reset_retry_stages(
             record_job_event(
                 conn, job_id, stage, "StageReset", tenant_id=tenant_id,
                 message=f"Retry reset requested for {stage}",
-                payload={"reset_attempts": clear_attempts}, occurred_at=now,
+                payload={"reset_attempts": clear_attempts, **release_payload}, occurred_at=now,
                 publisher=events,
             )
             results.append({"jobId": str(job_id), "jobUrl": identity[1], "stage": stage})

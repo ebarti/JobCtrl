@@ -44,7 +44,15 @@ EXISTS (
                        '$.manualDisposition') = 'skip'
       AND NOT EXISTS (SELECT 1 FROM job_events released
         WHERE released.tenant_id = stopped.tenant_id AND released.job_id = stopped.job_id
-          AND released.stage = 'apply' AND released.event_type IN ('StageReset', 'ApplicationManuallyMarked')
+          AND released.stage = 'apply'
+          AND (released.event_type = 'ApplicationManuallyMarked' OR (
+            released.event_type = 'StageReset'
+            AND json_extract(CASE WHEN json_valid(released.payload_json) THEN released.payload_json ELSE '{}' END,
+                             '$.resetAuthority') = 'explicit_safe_apply_reset'
+            AND json_type(CASE WHEN json_valid(released.payload_json) THEN released.payload_json ELSE '{}' END,
+                          '$.manualSkipReleasedThroughEventId') = 'integer'
+            AND json_extract(CASE WHEN json_valid(released.payload_json) THEN released.payload_json ELSE '{}' END, '$.manualSkipReleasedThroughEventId') >= stopped.event_id
+            AND json_extract(CASE WHEN json_valid(released.payload_json) THEN released.payload_json ELSE '{}' END, '$.manualSkipReleasedThroughEventId') < released.event_id))
           AND released.event_id > stopped.event_id)
 )
 """
@@ -76,13 +84,7 @@ def assert_safe_apply_reset(conn, *, tenant_id, job_id):
         "WHERE tenant_id=? AND job_id=? AND stage='apply'",
         (str(tenant_id), str(job_id)),
     ).fetchone()
-    manual_stop = conn.execute(
-        f"SELECT 1 FROM jobs WHERE tenant_id=? AND job_id=? AND ({APPLY_MANUAL_STOP_SQL})",
-        (str(tenant_id), str(job_id)),
-    ).fetchone()
-    if (manual_stop or (row and row[0] == 'skipped')) and has_unsettled_apply_run(
-        conn, tenant_id=tenant_id, job_id=job_id,
-    ):
+    if has_unsettled_apply_run(conn, tenant_id=tenant_id, job_id=job_id):
         raise ValueError("Apply reset refused: the prior admitted run has no confirmed local settlement. Stop and verify that run first.")
     if row and (row[0] in {'queued', 'running', 'succeeded', 'needs_verification'} or (
         row[0] == 'skipped' and row[1] not in {None, 'DRY_RUN'}
@@ -117,3 +119,20 @@ def has_unsettled_apply_run(conn, *, tenant_id, job_id):
     if terminal:
         return False
     return True
+
+
+def explicit_apply_reset_payload(conn, *, tenant_id, job_id):
+    """Bind this validated user reset to its existing Skip history under the writer.
+
+    Automatic reconciliation also emits StageReset, but cannot release human
+    stops. The event frontier cannot release any subsequent Skip.
+    """
+    assert_safe_apply_reset(conn, tenant_id=tenant_id, job_id=job_id)
+    row = conn.execute(
+        "SELECT MAX(event_id) FROM job_events WHERE tenant_id=? AND job_id=? "
+        "AND stage='apply' AND event_type='StageSkipped' "
+        "AND json_extract(CASE WHEN json_valid(payload_json) THEN payload_json ELSE '{}' END,"
+        "'$.manualDisposition')='skip'",
+        (str(tenant_id), str(job_id)),
+    ).fetchone()
+    return {"resetAuthority": "explicit_safe_apply_reset", "manualSkipReleasedThroughEventId": row[0]}

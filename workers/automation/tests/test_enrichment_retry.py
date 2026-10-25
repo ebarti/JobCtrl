@@ -268,19 +268,22 @@ def test_reset_fences_old_worker_then_new_worker_claims(conn):
 
 
 @pytest.mark.parametrize('entry', ['service', 'rpc', 'cli'])
-def test_apply_intent_refusal_preserves_mixed_cohort_and_caller_transaction(conn, monkeypatch, entry):
+@pytest.mark.parametrize('blocker', ['intent', 'prior admitted run'])
+def test_apply_intent_refusal_preserves_mixed_cohort_and_caller_transaction(conn, monkeypatch, entry, blocker):
     from jobctrl.state import ensure_job_stage_rows, record_job_event
     from jobctrl.domain.rpc.messages import JsonRpcRequest
 
     ensure_job_stage_rows(conn, canonical_job_id(PEER))
     conn.execute("UPDATE job_stage_states SET state='failed' WHERE job_id=? AND stage='apply'", (PEER,))
-    record_job_event(conn, canonical_job_id(PEER), 'apply', 'ApplySubmitIntended', payload={'run_id': 'original-intent'})
+    record_job_event(conn, canonical_job_id(PEER), 'apply', 'ApplySubmitIntended' if blocker == 'intent' else 'ApplyRunStarted', payload={'run_id': 'original-intent'})
+    if blocker != 'intent':
+        record_job_event(conn, canonical_job_id(PEER), 'apply', 'StageCanceled', payload={'run_id': 'original-intent'})
     conn.commit()
     before = snapshot(conn)
     if entry == 'service':
         conn.execute('BEGIN IMMEDIATE')
         conn.execute("UPDATE jobs SET title='caller write' WHERE job_id=?", (JOB,))
-        with pytest.raises(ValueError, match='intent'):
+        with pytest.raises(ValueError, match=blocker):
             reset_retry_stages(conn, [(JOB, 'enrich'), (PEER, 'apply')])
         assert conn.in_transaction
         assert snapshot(conn) == before
@@ -294,12 +297,12 @@ def test_apply_intent_refusal_preserves_mixed_cohort_and_caller_transaction(conn
             'targets': [{'jobId': JOB, 'stage': 'enrich'}, {'jobId': PEER, 'stage': 'apply'}],
         }))
         assert response.error is not None
-        assert 'intent' in response.error.message
+        assert blocker in response.error.message
     else:
         from jobctrl import cli, database
         monkeypatch.setattr(cli, '_bootstrap', lambda: None)
         monkeypatch.setattr(database, 'get_connection', lambda: conn)
         result = CliRunner().invoke(cli.app, ['retry', 'apply', PEER])
         assert result.exit_code != 0
-        assert 'intent' in str(result.exception) or 'intent' in result.output
+        assert blocker in str(result.exception) or blocker in result.output
     assert snapshot(conn) == before

@@ -105,8 +105,9 @@ It preserves accepted artifacts and events; the attempt budget is retained unles
 reset explicitly (or exhausted). A retryable `DRY_RUN` completion remains eligible
 for another rehearsal without resetting a manual Skip.
 
-A Skip over an admitted run also retains that owner: reset waits for its exact
-local terminal result or cleanup acknowledgement (`LockReleased`). A local stage label alone
+Any admitted run retains its owner across local stage changes: reset waits for its exact
+local terminal result or cleanup acknowledgement (`LockReleased`). A cancellation request
+or `StageCanceled` label is not that acknowledgement. A local stage label alone
 cannot establish that active work ended. Submit intent still blocks retry after
 that settlement.
 

@@ -417,3 +417,149 @@ async def test_registered_apply_rpc_real_activity_main_never_reclaims_manual_ski
             print({"entry": entry, "job": LOCAL_JOB_ID, "workflow": workflow_id,
                    "temporal_run": (await handle.describe()).run_id, "claims": 0, "intents": 0, "sender_calls": 0})
     database.close_connection(db_path)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('overlap', ['unchanged', 'before_intent', 'after_intent', 'lost_ack'])
+async def test_registered_rpc_to_real_submission_settlement_and_restart(tmp_path, monkeypatch, overlap):
+    """Keep every Apply layer real; replace only browser, DNS, profile and sender transports."""
+    import asyncio
+    import hashlib
+    import json
+    import socket
+    import sqlite3
+    import threading
+    from jobctrl import config, database
+    from jobctrl.apply import launcher
+    from jobctrl.domain.identifiers import JobId
+    from jobctrl.domain.rpc.messages import JsonRpcRequest
+    from jobctrl.infrastructure import apply as adapters
+    from jobctrl.infrastructure.rpc.handlers import register_default_handlers
+    from jobctrl.infrastructure.rpc.server import JsonRpcServer
+    from jobctrl.state import ensure_job_stage_rows, record_job_event, reset_job_stage, set_stage_state
+    from tests.test_apply_saga import _FakeAgent, _FakeBrowser, _FakeEmailSender
+    from tests.test_apply_use_cases import _FakeSnapshot
+    from tests.test_exact_v7_apply_acquire_job_identity import (
+        _insert_ready_job, _insert_profile, _insert_approval_with_dry_run, LOCAL_JOB_ID,
+    )
+
+    path = tmp_path / 'owned.db'
+    for module in [config, database]:
+        monkeypatch.setattr(module, 'DB_PATH', path)
+    for name, value in [('APP_DIR', tmp_path), ('LOG_DIR', tmp_path / 'logs'),
+                        ('APPLY_WORKER_DIR', tmp_path / 'apply-workers'), ('CHROME_WORKER_DIR', tmp_path / 'chrome-workers')]:
+        monkeypatch.setattr(config, name, value)
+    monkeypatch.setattr(launcher, '_stop_event', threading.Event())
+    monkeypatch.setattr(launcher, 'kill_all_chrome', lambda: None)
+    snapshot = _FakeSnapshot()
+    snapshot.version = 1
+    monkeypatch.setattr(launcher, '_load_profile_snapshot', lambda: snapshot)
+    original_resolver = socket.getaddrinfo
+    def resolver(host, port, *args, **kwargs):
+        if host == 'example.test':
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('93.184.215.14', port))]
+        return original_resolver(host, port, *args, **kwargs)
+    monkeypatch.setattr(socket, 'getaddrinfo', resolver)
+    conn = database.init_db(path)
+    _insert_ready_job(conn, 'local', LOCAL_JOB_ID)
+    _insert_profile(conn, 'local', 1)
+    _insert_approval_with_dry_run(conn, 'local', LOCAL_JOB_ID, profile_version=1)
+    ensure_job_stage_rows(conn, LOCAL_JOB_ID)
+    set_stage_state(conn, LOCAL_JOB_ID, 'score', 'succeeded', validate_transition=False)
+    conn.execute("UPDATE job_enrichments SET full_description='Apply by email to apply@example.com' WHERE job_id=?", (LOCAL_JOB_ID,))
+    artifact_id = f'{LOCAL_JOB_ID}:resume_pdf'
+    conn.execute("UPDATE application_review_decisions SET email_recipient='apply@example.com',email_attachment_artifact_id=? WHERE job_id=?", (artifact_id, LOCAL_JOB_ID))
+    files = []
+    for kind in ['tailored_resume', 'resume_pdf']:
+        material = tmp_path / kind
+        material.write_bytes(b'%PDF-1.7\nowned synthetic\n%%EOF' if kind == 'resume_pdf' else b'Owned synthetic resume')
+        files.append(material)
+        conn.execute('UPDATE job_materials_artifacts SET path=? WHERE job_id=? AND artifact_type=?', (str(material), LOCAL_JOB_ID, kind))
+    conn.commit()
+    def fingerprint():
+        return {'rows': hashlib.sha256(json.dumps([tuple(r) for r in conn.execute('SELECT * FROM job_materials_artifacts')]).encode()).hexdigest(),
+                'files': [hashlib.sha256(f.read_bytes()).hexdigest() for f in files]}
+    before = fingerprint()
+    initial_claims = conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type='ApplyRunStarted'").fetchone()[0]
+
+    dispositions = []
+    def peer_skip():
+        with sqlite3.connect(path) as writer:
+            writer.row_factory = sqlite3.Row
+            writer.execute('BEGIN IMMEDIATE')
+            prior = writer.execute("SELECT state,attempt_count,version FROM job_stage_states WHERE job_id=? AND stage='apply'", (LOCAL_JOB_ID,)).fetchone()
+            set_stage_state(writer, LOCAL_JOB_ID, 'apply', 'skipped', retryable=False, validate_transition=False, attempt_count=prior['attempt_count'], expected_version=prior['version'])
+            record_job_event(writer, JobId(LOCAL_JOB_ID), 'apply', 'StageSkipped', payload={'manualDisposition': 'skip', 'previousState': prior['state']})
+            disposition = dict(writer.execute("SELECT state,version,attempt_count FROM job_stage_states WHERE job_id=? AND stage='apply'", (LOCAL_JOB_ID,)).fetchone())
+        dispositions.append(disposition)
+
+    class Agent(_FakeAgent):
+        def submit_application(self, **kwargs):
+            if overlap == 'before_intent':
+                peer_skip()  # Independent committed writer after real claim, before final-intent lock.
+            return super().submit_application(**kwargs)
+    class Sender(_FakeEmailSender):
+        def send_email_application(self, candidate):
+            if overlap in {'after_intent', 'lost_ack'}:
+                peer_skip()  # The final intent transaction has committed and released its writer.
+            result = super().send_email_application(candidate)
+            database.close_connection(path)  # Reopen worker storage for post-intent settlement.
+            if overlap == 'lost_ack':
+                raise ConnectionError('synthetic provider accepted; acknowledgement lost')
+            return result
+    agent, browser, sender = Agent(behaviour='email_only'), _FakeBrowser(), Sender()
+    monkeypatch.setattr(adapters, 'ClaudeCodeCliAdapter', lambda: agent)
+    monkeypatch.setattr(adapters, 'LocalChromeAdapter', lambda: browser)
+    monkeypatch.setattr(adapters, 'GmailEmailApplicationSender', lambda: sender)
+    loop = asyncio.get_running_loop()
+    queue = f'integrated-skip-{uuid.uuid4()}'
+    async with time_skipping_env() as env:
+        async def starter(spec):
+            return await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(env.client.start_workflow(
+                spec.workflow.run, args=spec.args, id=spec.workflow_id or f'owned-{uuid.uuid4()}', task_queue=queue), loop))
+        async def canceler(_):
+            return None
+        rpc = JsonRpcServer(workflow_starter=starter)
+        register_default_handlers(rpc, canceler=canceler)
+        async with Worker(env.client, task_queue=queue, workflows=[ApplyWorkflow], activities=_activities(), workflow_runner=UnsandboxedWorkflowRunner()):
+            response = await asyncio.to_thread(rpc.dispatch, JsonRpcRequest(method='apply', id=1173, params={
+                'tenantId': 'local', 'expectedAppDir': str(tmp_path), 'expectedDbPath': str(path),
+                'jobId': LOCAL_JOB_ID, 'workers': 1, 'limit': 1}))
+            assert response.error is None, response
+            handle = env.client.get_workflow_handle(response.result['workflowId'], run_id=response.result['firstExecutionRunId'])
+            await handle.result()
+            counts = dict(conn.execute("SELECT event_type,COUNT(*) FROM job_events WHERE stage='apply' GROUP BY event_type"))
+            expected_sends = 0 if overlap == 'before_intent' else 1
+            assert agent.calls == browser.launches == browser.cleanups == 1
+            assert len(sender.sent) == expected_sends
+            assert counts.get('ApplySubmitIntended', 0) == expected_sends
+            assert counts['ApplyRunStarted'] - initial_claims == 1
+            final = dict(conn.execute("SELECT state,version,attempt_count FROM job_stage_states WHERE job_id=? AND stage='apply'", (LOCAL_JOB_ID,)).fetchone())
+            assert final['state'] == ('succeeded' if overlap == 'unchanged' else 'skipped')
+            assert final['attempt_count'] == 1
+            if dispositions:
+                assert final == dispositions[-1]  # Late settlement cannot alter this committed Skip.
+            assert fingerprint() == before
+            # Close/reopen canonical storage, then use registered RPC again. It must not
+            # enter the agent or sender, including after a provider's lost acknowledgement.
+            conn.close()
+            conn = sqlite3.connect(path)
+            conn.row_factory = sqlite3.Row
+            if expected_sends:
+                with pytest.raises(ValueError, match='intent'):
+                    reset_job_stage(conn, LOCAL_JOB_ID, 'apply')
+            response2 = await asyncio.to_thread(rpc.dispatch, JsonRpcRequest(method='apply', id=1174, params={
+                'tenantId': 'local', 'expectedAppDir': str(tmp_path), 'expectedDbPath': str(path),
+                'jobId': LOCAL_JOB_ID, 'workers': 1, 'limit': 1}))
+            assert response2.error is None, response2
+            await env.client.get_workflow_handle(response2.result['workflowId'], run_id=response2.result['firstExecutionRunId']).result()
+            assert len(sender.sent) == expected_sends and agent.calls == 1
+            assert dict(conn.execute("SELECT event_type,COUNT(*) FROM job_events WHERE stage='apply' GROUP BY event_type")) == counts
+            assert fingerprint() == before
+            print(json.dumps({'overlap': overlap, 'job': LOCAL_JOB_ID, 'workflow': handle.id,
+                'temporal_run': (await handle.describe()).run_id, 'restart_workflow': response2.result['workflowId'], 'restart_temporal_run': response2.result['firstExecutionRunId'],
+                'run_events': [{'event_id': r['event_id'], 'event_type': r['event_type'], 'payload': json.loads(r['payload_json'])} for r in conn.execute("SELECT event_id,event_type,payload_json FROM job_events WHERE stage='apply' AND event_type IN ('ApplyRunStarted','ApplySubmitIntended') ORDER BY event_id")],
+                'events': counts, 'events_after_restart': dict(conn.execute("SELECT event_type,COUNT(*) FROM job_events WHERE stage='apply' GROUP BY event_type")),
+                'sender_calls': len(sender.sent), 'committed_local_dispositions': dispositions, 'stage': final, 'artifacts_before': before, 'artifacts_after': fingerprint()}))
+    conn.close()
+    database.close_connection(path)

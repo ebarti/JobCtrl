@@ -563,8 +563,18 @@ admission must create no second intent/send, while foreign tenant/job evidence
 cannot block an unchanged safe submission. Compare the real Apply Review and
 Job Detail readers after relabel/restart. Exercise the real CLI manual-failure
 command: active ownership, Skip and uncertainty must produce a nonzero refusal,
-while safe local failure preserves attempts/materials. Open More job actions
-before inspecting Skip on desktop/mobile and after reload. Exercise CLI/registered RPC mixed-cohort rollback and caller-owned
+while safe local failure preserves attempts/materials. Settlement must retain
+the claimed attempt count for success, rehearsal, failure and uncertainty.
+Regress an automatic score-threshold reset after a relabeled manual Skip: no claim
+is admitted until a validated explicit release. Refuse canceled/failed/pending
+resets without the exact original owner settlement, including mixed-cohort RPC
+rollback. Run `test_workflow_apply.py` through registered RPC, Temporal, real
+launcher/use-case/saga and settlement with fake external transports: unchanged
+authority, pre-intent Skip, post-intent Skip and lost acknowledgement, followed by
+connection restart and repeated RPC. Retain exact event/send counts and artifact
+hashes. Open More job actions, activate Skip on running and Needs verification
+jobs, and inspect retained run/intent evidence on desktop/mobile after reload
+and a refused reset. Exercise CLI/registered RPC mixed-cohort rollback and caller-owned
 transactions. API HTTP Skip/reload/reset and focused UI mutation/rollback tests
 must preserve visible active-run and verification evidence. These regressions
 do not establish live-provider or installed-runtime behavior.

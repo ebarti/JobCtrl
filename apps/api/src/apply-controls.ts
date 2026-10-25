@@ -59,7 +59,12 @@ export function hasManualApplyStop(db: SqliteDatabase, tenantId: string, jobId: 
     AND json_extract(CASE WHEN json_valid(stopped.payload_json) THEN stopped.payload_json ELSE '{}' END,'$.manualDisposition')='skip'
     AND NOT EXISTS (SELECT 1 FROM job_events released WHERE released.tenant_id=stopped.tenant_id
       AND released.job_id=stopped.job_id AND released.stage='apply'
-      AND released.event_type IN ('StageReset','ApplicationManuallyMarked')
+      AND (released.event_type='ApplicationManuallyMarked' OR (
+        released.event_type='StageReset'
+        AND json_extract(CASE WHEN json_valid(released.payload_json) THEN released.payload_json ELSE '{}' END,'$.resetAuthority')='explicit_safe_apply_reset'
+        AND json_type(CASE WHEN json_valid(released.payload_json) THEN released.payload_json ELSE '{}' END,'$.manualSkipReleasedThroughEventId')='integer'
+        AND json_extract(CASE WHEN json_valid(released.payload_json) THEN released.payload_json ELSE '{}' END,'$.manualSkipReleasedThroughEventId') >= stopped.event_id
+        AND json_extract(CASE WHEN json_valid(released.payload_json) THEN released.payload_json ELSE '{}' END,'$.manualSkipReleasedThroughEventId') < released.event_id))
       AND released.event_id > stopped.event_id) LIMIT 1`, [tenantId, jobId]).length > 0;
 }
 
