@@ -547,6 +547,16 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For bounded high-fit review output, run locked
+`pytest tests/test_resume_review_response_bounds.py tests/test_artifact_determinations.py tests/test_materials_use_cases.py tests/test_material_review_history.py tests/test_tailor_voice_audit_integration.py`
+and the full worker suite. In owned synthetic SQLite, prove every generated
+nested string/list is finite, all six explicit model verdicts retain authority,
+oversized responses consume only the existing structural-correction budget,
+failed refreshes preserve the accepted receipt, and historical wider accepted
+reviews remain readable with their complete original diagnostics. Inspect the
+real configured-provider request, final receipt and all PDF pages in the UI;
+a smaller format alone does not establish latency or quality improvement.
+
 For parallel résumé reviews, run locked pytest for
 the parallel-resume, parallel-letter, Materials-use-case, candidate-identity,
 review-history and voice-audit suites, then the full worker suite. In owned

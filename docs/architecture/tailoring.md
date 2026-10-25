@@ -169,6 +169,27 @@ High-fit six-persona review still follows the accepted pair. Custom ports and
 in-memory databases retain sequential execution. Cancellation and shutdown
 drain admitted siblings before releasing resources.
 
+### Bounded Persona Diagnostics
+
+The final high-fit review still assesses every supplied line and the complete
+rubric from all six personas. New `resume-adversarial-v3` requests use a bounded
+response model: each persona records one explicit verdict, up to three cited
+source spans and six actionable findings. Rationale and repair strings are
+limited to 512 characters, quotes to 240, and each citation's literal-value
+list to four values of at most 64 characters. These limits control response
+size; they never compute a semantic verdict or permit a pass when a defect
+remains. The reviewer groups repeated defects, prioritizes repairs and retains
+fail for any unresolved issue, including issues summarized in its rationale.
+
+The provider receives these nested bounds in its structured-output schema.
+Structural, source-ID and verbatim-span validation plus the existing bounded
+correction budget still apply. Every persona and the overall model verdict
+must pass before acceptance. Scores remain diagnostic. The canonical stored
+review reader retains its historical wider shape, so old accepted receipts and
+their original diagnostics remain readable without truncation or rewriting.
+The prompt revision and response schema participate in determination identity.
+
+
 For each cover-letter draft, factual verification and quality review read separate
 copies of the same frozen lines, sources and rubric. The production runner overlaps
 these independent calls in the bounded [letter-review pool](pipeline/concurrency.md).

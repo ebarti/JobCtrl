@@ -5,7 +5,7 @@ from jobctrl.domain.ports.artifact_quality import (
     ArtifactQuality, ARTIFACT_QUALITY_SCHEMA_VERSION, ARTIFACT_QUALITY_PROMPT_VERSION,
 )
 from jobctrl.domain.ports.resume_adversarial import (
-    ResumeAdversarialReview, RESUME_ADVERSARIAL_SCHEMA_VERSION, RESUME_ADVERSARIAL_PROMPT_VERSION,
+    ResumeAdversarialResponse, RESUME_ADVERSARIAL_SCHEMA_VERSION, RESUME_ADVERSARIAL_PROMPT_VERSION,
 )
 from jobctrl.domain.materials.adversarial import ADVERSARIAL_REVIEW_PERSONAS, ADVERSARIAL_REVIEW_PERSONA_RUBRICS
 
@@ -41,10 +41,10 @@ class ModelArtifactQualityJudge:
 
         return determine(
             kind="resume_adversarial",
-            schema=ResumeAdversarialReview,
+            schema=ResumeAdversarialResponse,
             schema_version=RESUME_ADVERSARIAL_SCHEMA_VERSION,
             prompt_version=RESUME_ADVERSARIAL_PROMPT_VERSION,
-            instruction="Review the final resume from all six supplied personas. Each persona decides pass or fail, cites verbatim source spans and gives specific findings bound to the supplied line IDs. Each finding.line_id must be an exact context.line_ids value, and its citation.source_id must be 'line:' plus that line_id, quoting that rendered line. Return an overall pass/fail decision, with a diagnostic score and rationale. Scores do not gate acceptance. Factual support has a separate claim verifier, and general usefulness has a separate quality judge. Do not omit a persona or decide by a word list.",
+            instruction="Review every supplied resume line and the full rubric from all six supplied personas. Each persona independently decides pass or fail. Keep diagnostics concise: cite one to three short verbatim source spans per persona and report at most six distinct actionable findings per persona, prioritizing the most consequential repairs and grouping repeated defects. Do not enumerate positive checks or repeat the resume in findings. A diagnostic limit never permits a pass while a persona finds an unresolved defect; retain fail and summarize any additional issue in its rationale. Each finding.line_id must be an exact context.line_ids value, and its citation.source_id must be 'line:' plus that line_id, quoting a short verbatim span of that rendered line. Keep each rationale and repair instruction within 512 characters, each quote within 240 characters, and exact_values empty unless needed for a cited literal value. Return all six explicit persona verdicts and an overall pass/fail decision. Scores are diagnostic and do not gate acceptance. Factual support has a separate claim verifier, and general usefulness has a separate quality judge. Do not omit a persona or decide by a word list.",
             sources=[*(Source(source_id="line:" + line.line_id, text=line.text) for line in lines), *sources],
             context={"rubric": rubric, "personas": ADVERSARIAL_REVIEW_PERSONA_RUBRICS, "line_ids": [line.line_id for line in lines]},
             entity_id=entity_id,
