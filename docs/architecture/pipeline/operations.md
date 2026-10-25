@@ -454,6 +454,10 @@ records the explicit membership association and original origin separately.
 The worker checks the exact job, tenant, owner/run, frozen plan and workspace
 identity against the start input and completed history, then rechecks the
 current membership/cohort and successful owner under its write transaction.
+Every new preparation producer captures the current workspace identity when
+its caller does not supply an explicit identity. Existing unscoped histories
+that also lack a workspace binding remain unknown; a recorded job row alone
+cannot establish that missing authority.
 Receipts are idempotent per association, cohort and frozen plan; an observation
 for one Discover run cannot suppress a different association. The API validates
 the recorded association, current owner/run, plan and indexed identity before
