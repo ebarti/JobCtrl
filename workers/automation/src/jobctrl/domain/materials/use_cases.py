@@ -177,7 +177,7 @@ class ClaimIssue:
 
 log = logging.getLogger(__name__)
 
-TAILORING_PROMPT_VERSION = "tailor.v16.review-history"
+TAILORING_PROMPT_VERSION = "tailor.v17.shared-review-constraints"
 TAILORING_SCHEMA_VERSION = "tailored-resume.v5"
 TAILORING_JUDGE_SCHEMA_VERSION = "artifact-quality.v2"
 TAILORING_JUDGE_CRITERIA: tuple[str, ...] = (
@@ -191,6 +191,25 @@ TAILORING_JUDGE_CRITERIA: tuple[str, ...] = (
     "bullet_selection_focus",
     "professional_register",
 )
+
+
+def _resume_generation_constraints() -> dict[str, str]:
+    """One evidence/selection contract for generation and every final review."""
+    return {
+        "summary_quantity_authority": (
+            "For a rewritten executive profile, use a metric only when its cited achievement "
+            "evidence supports that exact claim. If baseline years of experience or other "
+            "summary quantities lack that evidence, omit the quantity and use qualitative "
+            "wording. Do not infer tenure from employment dates."
+        ),
+        "rendered_experience_context": (
+            "Only selected experience_updates appear in the rendered experience section. "
+            "Fixed metadata is injected for those selected entries; an omitted source role "
+            "does not provide visible context. When summary evidence comes from an omitted "
+            "role, make its employer attribution clear within the permitted mutable text. "
+            "Do not add disallowed roles, change fixed metadata or exceed the artifact budget."
+        ),
+    }
 
 
 def _tailored_resume_response_schema(plan: TailoringPlan) -> dict[str, Any]:
@@ -1435,6 +1454,7 @@ def build_master_tailor_prompt(
     ]
 
     tailoring_policy = get_tailoring_policy(profile)
+    generation_constraints = _resume_generation_constraints()
     writing_style = get_writing_style(profile)
     custom_tailoring_prompt = get_custom_tailoring_prompt(profile)
     max_bullets = get_max_experience_bullets(profile)
@@ -1481,8 +1501,8 @@ You are ONLY allowed to rewrite the mutable content:
 - the title field for each existing experience entry, only if policy allows it
 - the ordering/content of items inside each existing skill category, if policy allows it
 
-The code will inject all fixed structure from the master resume:
-- experience metadata (date_range, title, company, location)
+The code will inject fixed structure from the master resume:
+- experience metadata (date_range, title, company, location) for selected entries
 - all education entries
 - section order
 
@@ -1492,10 +1512,8 @@ SOURCE OF TRUTH:
   in the TAILORING QUALITY PLAN are the only evidence for candidate claims.
 - A metric belongs only to the achievement evidence that contains it. Never use
   a number from one achievement to quantify another claim.
-- For a rewritten executive profile, use a metric only when its cited achievement
-  evidence supports that exact claim. If baseline years of experience or other
-  summary quantities lack that evidence, omit the quantity and use qualitative
-  wording. Do not infer tenure from employment dates.
+- {generation_constraints["summary_quantity_authority"]}
+- {generation_constraints["rendered_experience_context"]}
 - TARGET JOB text is context only. Do NOT copy target-job technologies,
   systems, responsibilities, business claims, or phrases into the candidate's
   executive profile or bullets unless the same fact appears in the master
@@ -1738,6 +1756,7 @@ def _resume_review_rubric(profile, plan, *, rows=(), review_history=()):
         "target_seniority": plan.target_seniority,
         "generation_permissions": json.dumps({
             "policy": get_tailoring_policy(profile),
+            "shared_constraints": _resume_generation_constraints(),
             "required_experience_entry_ids": get_required_experience_entry_ids(profile),
             "required_skill_category_ids": get_required_skill_category_ids(profile),
             "max_bullets_per_experience": get_max_experience_bullets(profile),
@@ -1750,6 +1769,7 @@ def _resume_review_rubric(profile, plan, *, rows=(), review_history=()):
             item.to_dict() for item in _eligible_retry_evidence(profile, plan)
         ], ensure_ascii=False),
         "allowed_evidence_correction_ids": json.dumps(_resume_review_evidence_ids(profile, plan, rows)),
+        "review_scope": "Evaluate every supplied criterion and report all actionable defects in the current draft together, including actionable secondary findings. Apply the generation permissions when assessing completeness; do not require an omission to be reversed when those permissions require it. Each review still decides the current draft independently, and unresolved defects must fail.",
         "revision_authority": "The current coverage graph and required evidence pins constrain generation. The retry evidence targets are the canonical alternatives that a bounded revision may reconsider; they do not authorize new coverage edges or a larger artifact budget. A required role without active coverage or an explicit bullet pin permits exactly one positioning bullet, or no bullet when it has no achievement evidence. Assess the best truthful artifact within these constraints; do not require additional bullets or evidence that neither the active plan nor the revision targets permit. Source verification and your semantic pass/fail decision remain independent gates.",
         "role_scope": "Use the canonical posting's actual responsibilities. A seniority label alone does not establish people-management duties or direct reports.",
         "selection": "Required experience entries are a minimum; a complete career inventory is not required. An omitted optional role alone is not a completeness defect. Recommend additional saved evidence when it adds distinct role-relevant proof within the generation permissions.",
@@ -3388,6 +3408,7 @@ class TailorResumeUseCase:
             requirements=requirements,
             rubric={
                 "voice": json.dumps(plan.writing_style),
+                "generation_constraints": json.dumps(_resume_generation_constraints()),
                 "prohibited_claims": json.dumps(plan.prohibited_claims),
                 "required_evidence": json.dumps(plan.required_evidence_ids),
                 "target_seniority": plan.target_seniority,
