@@ -454,6 +454,10 @@ def test_import_dispatches_full_preparation_without_apply_and_reuses_workflow_id
     cover_config = tmp_path / "cover-settings.json"
     cover_config.write_text(json.dumps({"cover_letter_generation": cover_enabled}))
     monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(cover_config))
+    from jobctrl import config
+
+    monkeypatch.setattr(config, "APP_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "jobctrl.db")
     conn = init_db(tmp_path / "jobctrl.db")
     requested: list[WorkflowStartSpec] = []
 
@@ -486,6 +490,8 @@ def test_import_dispatches_full_preparation_without_apply_and_reuses_workflow_id
     assert preparation_input.job_id == first.job_id
     assert preparation_input.steps == (["score", "tailor", "cover", "pdf"] if cover_enabled else ["score", "tailor", "pdf"])
     assert "apply" not in preparation_input.steps
+    assert preparation_input.expected_app_dir == str(tmp_path.resolve())
+    assert preparation_input.expected_db_path == str((tmp_path / "jobctrl.db").resolve())
 
 
 def test_quarantined_import_does_not_dispatch_preparation(tmp_path: Path, semantic_workflow_models) -> None:

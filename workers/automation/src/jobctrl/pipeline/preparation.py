@@ -40,6 +40,7 @@ from jobctrl.infrastructure.rpc.workflow_starter import (
     default_workflow_starter,
 )
 from jobctrl.infrastructure.scoring import SqliteScoringPolicyRepository
+from jobctrl.infrastructure.runtime_identity import current_runtime_identity
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobctrl.preparation.workflow import (
     JobPreparationInput,
@@ -388,6 +389,7 @@ def build_preparation_workflow_spec(
         explicit_material_request=explicit_material_request,
         include_cover_letter="tailor" not in steps or "cover" in steps,
     )
+    runtime = current_runtime_identity()
     payload = JobPreparationInput(
         tenant_id=str(tenant_id),
         job_id=stable_job_id,
@@ -405,8 +407,8 @@ def build_preparation_workflow_spec(
         tailor_models=tailor_models,
         tailor_judge_model=tailor_judge_model,
         llm_model=llm_model or DEFAULT_PIPELINE_LLM_MODEL_SPEC,
-        expected_app_dir=expected_app_dir,
-        expected_db_path=expected_db_path,
+        expected_app_dir=expected_app_dir if expected_app_dir is not None else runtime.app_dir,
+        expected_db_path=expected_db_path if expected_db_path is not None else runtime.db_path,
         discovery_execution=discovery_execution,
         discovery_cohort_kind=discovery_cohort_kind,
     )
@@ -682,6 +684,7 @@ def _workflow_spec_for_target(
 ) -> WorkflowStartSpec:
     if target.tenant_id != tenant_id:
         raise ValueError("preparation target tenant does not match workflow tenant")
+    runtime = current_runtime_identity()
     payload = JobPreparationInput(
         tenant_id=str(tenant_id),
         job_id=target.job_id,
@@ -696,6 +699,8 @@ def _workflow_spec_for_target(
         tailor_judge_model=tailor_judge_model,
         discovery_execution=discovery_execution,
         discovery_cohort_kind=(discovery_cohort_kind if discovery_execution is not None else None),
+        expected_app_dir=runtime.app_dir,
+        expected_db_path=runtime.db_path,
     )
     return WorkflowStartSpec(
         workflow=JobPreparationWorkflow,

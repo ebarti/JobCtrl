@@ -15,6 +15,7 @@ import threading
 from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from temporalio.converter import DataConverter
@@ -27,13 +28,14 @@ from jobctrl.domain.discovery.execution import (
 from jobctrl.domain.events.workflow import (
     PreparationWorkflowOutcomeObservedPayload,
     create_preparation_workflow_outcome_observed,
+    validate_preparation_outcome_steps,
 )
 from jobctrl.domain.identifiers import canonical_job_id
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
+from jobctrl.infrastructure.runtime_identity import RuntimeIdentity, current_runtime_identity
 
 log = logging.getLogger(__name__)
 
-DECODER_VERSION = 1
 EVENT_TYPE = "PreparationWorkflowOutcomeObserved"
 MAX_RUNS_PER_PASS = 10
 MAX_HISTORY_EVENTS = 2048
@@ -47,10 +49,20 @@ _cursor_lock = threading.Lock()
 
 
 @dataclass(frozen=True)
+class PreparationOutcomeAssociation:
+    execution: DiscoveryExecutionRef
+    job_id: str
+    required_steps: tuple[str, ...]
+    cohort_kind: str
+    runtime: RuntimeIdentity | None
+
+
+@dataclass(frozen=True)
 class PreparationOutcomeTarget:
     tenant_id: str
     workflow_id: str
     temporal_run_id: str
+    association: PreparationOutcomeAssociation | None = None
 
 
 def _identifier(value: object) -> str:
@@ -138,21 +150,44 @@ async def _preparation_outcome_from_history(
         if not required or required != validate_required_steps(required) or "pdf" not in required:
             return None
         raw_execution = started.get("discovery_execution")
-        if not isinstance(raw_execution, Mapping) or set(raw_execution) != {
-            "tenant_id",
-            "workflow_id",
-            "temporal_run_id",
-        }:
-            return None
-        execution = DiscoveryExecutionRef(
-            tenant_id=_identifier(raw_execution.get("tenant_id")),
-            workflow_id=_identifier(raw_execution.get("workflow_id")),
-            temporal_run_id=_identifier(raw_execution.get("temporal_run_id")),
-        )
-        if execution.tenant_id != target.tenant_id or started.get("discovery_cohort_kind") not in {
-            "observed_this_run",
-            "existing_backlog",
-        }:
+        origin = None
+        origin_cohort = started.get("discovery_cohort_kind")
+        if raw_execution is None:
+            if origin_cohort is not None:
+                return None
+        else:
+            if not isinstance(raw_execution, Mapping) or set(raw_execution) != {
+                "tenant_id",
+                "workflow_id",
+                "temporal_run_id",
+            }:
+                return None
+            origin = DiscoveryExecutionRef(
+                tenant_id=_identifier(raw_execution.get("tenant_id")),
+                workflow_id=_identifier(raw_execution.get("workflow_id")),
+                temporal_run_id=_identifier(raw_execution.get("temporal_run_id")),
+            )
+            if origin.tenant_id != target.tenant_id or origin_cohort not in {"observed_this_run", "existing_backlog"}:
+                return None
+        association = target.association
+        linked_cohort = None
+        execution = origin
+        if association is not None:
+            if (
+                association.execution.tenant_id != target.tenant_id
+                or association.job_id != str(job_id)
+                or association.required_steps != required
+                or association.cohort_kind not in {"observed_this_run", "existing_backlog"}
+            ):
+                return None
+            execution = association.execution
+            if execution != origin:
+                # Foreign or manual owners are usable only through an explicit
+                # membership and an immutable input bound to this workspace.
+                if not _input_matches_runtime(started, association.runtime):
+                    return None
+                linked_cohort = association.cohort_kind
+        if execution is None:
             return None
         if set(completed) != {"steps_completed", "steps_skipped", "steps_failed", "failure", "error_code"}:
             return None
@@ -165,11 +200,7 @@ async def _preparation_outcome_from_history(
             or len(skipped) > 1
         ):
             return None
-        if skipped:
-            if skipped[0] not in required or done != required[: required.index(skipped[0])]:
-                return None
-        elif done != required:
-            return None
+        validate_preparation_outcome_steps(required, done, skipped)
         return PreparationWorkflowOutcomeObservedPayload(
             workflow_id=target.workflow_id,
             temporal_run_id=target.temporal_run_id,
@@ -180,6 +211,9 @@ async def _preparation_outcome_from_history(
             terminal_history_event_id=terminal_event_id,
             steps_completed=done,
             steps_skipped=skipped,
+            association_cohort_kind=linked_cohort,
+            origin_discovery_execution=origin if linked_cohort else None,
+            origin_discovery_cohort_kind=origin_cohort if linked_cohort else None,
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -198,8 +232,46 @@ async def preparation_outcome_from_history(
         return None
 
 
-def _receipt_key(tenant_id: str, workflow_id: str, run_id: str) -> str:
-    return f"preparation-outcome:{DECODER_VERSION}:{tenant_id}:{workflow_id}:{run_id}"
+def _database_path(conn: sqlite3.Connection) -> str:
+    return next((str(row[2]) for row in conn.execute("PRAGMA database_list") if row[1] == "main"), "")
+
+
+def _runtime_for_connection(conn: sqlite3.Connection) -> RuntimeIdentity | None:
+    current = current_runtime_identity()
+    path = _database_path(conn)
+    return current if path and Path(path).resolve() == Path(current.db_path).resolve() else None
+
+
+def _input_matches_runtime(started: Mapping[str, Any], runtime: RuntimeIdentity | None) -> bool:
+    if runtime is None:
+        return False
+    return all(
+        isinstance(started.get(field), str)
+        and bool(started[field])
+        and Path(started[field]).is_absolute()
+        and Path(started[field]).resolve() == Path(expected).resolve()
+        for field, expected in (("expected_app_dir", runtime.app_dir), ("expected_db_path", runtime.db_path))
+    )
+
+
+def _association_key(target: PreparationOutcomeTarget) -> str:
+    association = target.association
+    if association is None:
+        raise ValueError("missing preparation outcome association")
+    return "preparation-outcome:2:" + json.dumps(
+        [
+            target.tenant_id,
+            target.workflow_id,
+            target.temporal_run_id,
+            association.execution.workflow_id,
+            association.execution.temporal_run_id,
+            association.job_id,
+            association.cohort_kind,
+            list(association.required_steps),
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 def missing_preparation_outcomes(
@@ -207,40 +279,68 @@ def missing_preparation_outcomes(
     *,
     tenant_id: str = str(LOCAL_TENANT),
     limit: int = MAX_RUNS_PER_PASS,
-    after_workflow_id: str = "",
+    after_target_key: str = "",
 ) -> list[PreparationOutcomeTarget]:
-    """Select bounded succeeded member owners, including already-closed runs."""
+    """Select bounded successful owners separately for each recorded association."""
     if conn.in_transaction:
         return []
+    key_sql = (
+        "'preparation-outcome:2:' || json_array(wrp.tenant_id, wrp.workflow_id, wrp.temporal_run_id, "
+        "member.discover_workflow_id, member.discover_run_id, member.job_id, member.cohort_kind, "
+        "json(CASE WHEN json_valid(member.required_steps_json) THEN member.required_steps_json ELSE '[]' END))"
+    )
     rows = conn.execute(
-        "SELECT wrp.workflow_id, wrp.temporal_run_id "
-        "FROM workflow_run_projections wrp "
+        "SELECT wrp.workflow_id, wrp.temporal_run_id, member.discover_workflow_id, member.discover_run_id, "
+        "member.job_id, member.cohort_kind, member.required_steps_json, " + key_sql + " AS target_key "
+        "FROM workflow_run_projections wrp JOIN discovery_execution_jobs member "
+        "ON member.tenant_id = wrp.tenant_id AND member.preparation_workflow_id = wrp.workflow_id "
         "WHERE wrp.tenant_id = ? AND wrp.workflow_type = 'JobPreparationWorkflow' "
         "AND wrp.status = 'succeeded' AND wrp.temporal_run_id IS NOT NULL "
-        "AND TRIM(wrp.temporal_run_id) != '' AND wrp.workflow_id > ? "
-        "AND EXISTS (SELECT 1 FROM discovery_execution_jobs member "
-        "WHERE member.tenant_id = wrp.tenant_id "
-        "AND member.preparation_workflow_id = wrp.workflow_id AND member.work_plan_state = 'planned' "
+        "AND TRIM(wrp.temporal_run_id) != '' AND member.work_plan_state = 'planned' "
         "AND CASE WHEN json_valid(member.required_steps_json) "
-        "THEN EXISTS (SELECT 1 FROM json_each(member.required_steps_json) WHERE value = 'pdf') ELSE 0 END) "
+        "THEN EXISTS (SELECT 1 FROM json_each(member.required_steps_json) WHERE value = 'pdf') ELSE 0 END "
+        "AND " + key_sql + " > ? "
         "AND NOT EXISTS (SELECT 1 FROM job_events receipt "
         "WHERE receipt.tenant_id = wrp.tenant_id AND receipt.event_type = ? "
         "AND receipt.entity_kind = 'workflow_run' AND receipt.entity_ref = wrp.workflow_id "
-        "AND receipt.idempotency_key = ? || wrp.workflow_id || ':' || wrp.temporal_run_id) "
-        "ORDER BY wrp.workflow_id LIMIT ?",
+        "AND (receipt.idempotency_key = " + key_sql + " OR ("
+        "receipt.idempotency_key = ? || wrp.workflow_id || ':' || wrp.temporal_run_id "
+        "AND CASE WHEN json_valid(receipt.payload_json) THEN "
+        "json_extract(receipt.payload_json, '$.discoveryExecution.tenantId') = member.tenant_id "
+        "AND json_extract(receipt.payload_json, '$.discoveryExecution.workflowId') = member.discover_workflow_id "
+        "AND json_extract(receipt.payload_json, '$.discoveryExecution.temporalRunId') = member.discover_run_id "
+        "ELSE 0 END))) "
+        "ORDER BY target_key LIMIT ?",
         (
             tenant_id,
-            after_workflow_id,
+            after_target_key,
             EVENT_TYPE,
-            f"preparation-outcome:{DECODER_VERSION}:{tenant_id}:",
+            f"preparation-outcome:1:{tenant_id}:",
             min(MAX_RUNS_PER_PASS, max(1, limit)),
         ),
     ).fetchall()
+    runtime = _runtime_for_connection(conn)
     targets = []
     for row in rows:
         try:
-            targets.append(PreparationOutcomeTarget(_identifier(tenant_id), _identifier(row[0]), _identifier(row[1])))
-        except ValueError:
+            required = _steps(json.loads(row[6]))
+            if required != validate_required_steps(required):
+                continue
+            targets.append(
+                PreparationOutcomeTarget(
+                    _identifier(tenant_id),
+                    _identifier(row[0]),
+                    _identifier(row[1]),
+                    PreparationOutcomeAssociation(
+                        DiscoveryExecutionRef(_identifier(tenant_id), _identifier(row[2]), _identifier(row[3])),
+                        str(canonical_job_id(_identifier(row[4]))),
+                        required,
+                        _identifier(row[5]),
+                        runtime,
+                    ),
+                )
+            )
+        except (TypeError, ValueError):
             continue
     return targets
 
@@ -248,6 +348,8 @@ def missing_preparation_outcomes(
 def record_preparation_outcome(
     conn: sqlite3.Connection,
     observation: PreparationWorkflowOutcomeObservedPayload,
+    *,
+    target: PreparationOutcomeTarget | None = None,
 ) -> bool:
     """Append only if the exact successful owner and frozen plan still match."""
     from jobctrl.state import record_job_event
@@ -259,6 +361,22 @@ def record_preparation_outcome(
         observation,
     )
     execution = observation.discovery_execution
+    linked = observation.association_cohort_kind is not None
+    if linked:
+        association = target.association if target is not None else None
+        if (
+            association is None
+            or association.runtime is None
+            or _runtime_for_connection(conn) != association.runtime
+            or target.tenant_id != execution.tenant_id
+            or target.workflow_id != observation.workflow_id
+            or target.temporal_run_id != observation.temporal_run_id
+            or association.execution != execution
+            or association.job_id != str(observation.job_id)
+            or association.required_steps != observation.required_steps
+            or association.cohort_kind != observation.association_cohort_kind
+        ):
+            return False
     # This runs on the heartbeat's SQLite-owning thread. A busy writer must
     # defer the observation, rather than block that event loop for the normal
     # connection's ten-second busy timeout. Restore the caller's setting.
@@ -267,7 +385,7 @@ def record_preparation_outcome(
     try:
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
-            "SELECT member.required_steps_json FROM discovery_execution_jobs member "
+            "SELECT member.required_steps_json, member.cohort_kind FROM discovery_execution_jobs member "
             "JOIN workflow_run_projections owner ON owner.tenant_id = member.tenant_id "
             "AND owner.workflow_id = member.preparation_workflow_id "
             "WHERE member.tenant_id = ? AND member.discover_workflow_id = ? "
@@ -284,7 +402,11 @@ def record_preparation_outcome(
                 observation.temporal_run_id,
             ),
         ).fetchone()
-        if row is None or _steps(json.loads(row[0])) != observation.required_steps:
+        if (
+            row is None
+            or _steps(json.loads(row[0])) != observation.required_steps
+            or (linked and row[1] != observation.association_cohort_kind)
+        ):
             conn.rollback()
             return False
         before = conn.total_changes
@@ -297,7 +419,11 @@ def record_preparation_outcome(
             payload=dict(event.payload),
             entity_kind="workflow_run",
             entity_ref=observation.workflow_id,
-            idempotency_key=_receipt_key(execution.tenant_id, observation.workflow_id, observation.temporal_run_id),
+            idempotency_key=(
+                _association_key(target)
+                if linked
+                else f"preparation-outcome:1:{execution.tenant_id}:{observation.workflow_id}:{observation.temporal_run_id}"
+            ),
         )
         changed = conn.total_changes > before
         conn.commit()
@@ -338,7 +464,7 @@ async def reconcile_preparation_outcomes(
     scope = _cursor_scope(connection, tenant_id)
     with _cursor_lock:
         cursor = _cursors.get(scope, "")
-    targets = missing_preparation_outcomes(connection, tenant_id=tenant_id, after_workflow_id=cursor)
+    targets = missing_preparation_outcomes(connection, tenant_id=tenant_id, after_target_key=cursor)
     if not targets and cursor:
         targets = missing_preparation_outcomes(connection, tenant_id=tenant_id)
     changed = 0
@@ -347,7 +473,7 @@ async def reconcile_preparation_outcomes(
         remaining = deadline - asyncio.get_running_loop().time()
         if remaining <= 0:
             break
-        _remember_cursor(scope, target.workflow_id)
+        _remember_cursor(scope, _association_key(target))
         try:
             handle = temporal_client.get_workflow_handle(target.workflow_id, run_id=target.temporal_run_id)
             observation = await asyncio.wait_for(
@@ -359,7 +485,7 @@ async def reconcile_preparation_outcomes(
                 timeout=remaining,
             )
             if observation is not None:
-                changed += int(record_preparation_outcome(connection, observation))
+                changed += int(record_preparation_outcome(connection, observation, target=target))
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # one unavailable history must not stop peer recovery

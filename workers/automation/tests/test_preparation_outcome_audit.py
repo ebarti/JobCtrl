@@ -7,6 +7,7 @@ import json
 import sqlite3
 from copy import deepcopy
 from dataclasses import replace
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -23,6 +24,8 @@ from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 from jobctrl import database
 from jobctrl.domain.identifiers import canonical_job_id
 from jobctrl.infrastructure.temporal import preparation_outcome_audit as audit
+from jobctrl.infrastructure.runtime_identity import RuntimeIdentity
+from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.preparation.workflow import JobPreparationInput, JobPreparationWorkflow
 
 from .temporal_env import time_skipping_env
@@ -75,7 +78,16 @@ def seed(conn, suffix="case", *, status="succeeded", cohort="observed_this_run")
         ),
     )
     conn.commit()
-    return target, raw
+    return replace(
+        target,
+        association=audit.PreparationOutcomeAssociation(
+            DiscoveryExecutionRef(**raw["discovery_execution"]),
+            job_id,
+            tuple(raw["steps"]),
+            cohort,
+            audit._runtime_for_connection(conn),
+        ),
+    ), raw
 
 
 def result(*, skipped=True):
@@ -340,7 +352,14 @@ async def test_current_invalid_result_keeps_prior_accepted_receipt_and_promotion
     accepted = receipts(owned)
     owned.execute("UPDATE workflow_run_projections SET temporal_run_id = 'new-run'")
     owned.commit()
-    current = replace(target, temporal_run_id="new-run")
+    current = replace(
+        target,
+        temporal_run_id="new-run",
+        association=replace(
+            target.association,
+            cohort_kind="observed_this_run",
+        ),
+    )
     bad = result()
     bad["failure"] = "failed"
     client = Client({target.workflow_id: Handle("new-run", await history(raw, bad))})
@@ -472,8 +491,9 @@ async def _tailor(_payload):
 
 
 @pytest.mark.asyncio
-async def test_real_preparation_completed_result_backfills_owned_sqlite_without_model_calls(owned):
-    target, raw = seed(owned)
+@pytest.mark.parametrize("manual", [False, True])
+async def test_real_preparation_completed_result_backfills_owned_sqlite_without_model_calls(owned, monkeypatch, manual):
+    target, raw = manual_owner(owned, monkeypatch) if manual else seed(owned)
     queue = "preparation-outcome-" + uuid4().hex
     from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 
@@ -493,8 +513,10 @@ async def test_real_preparation_completed_result_backfills_owned_sqlite_without_
                     steps=raw["steps"],
                     target_version="1",
                     idempotency_key=raw["idempotency_key"],
-                    discovery_execution=DiscoveryExecutionRef(**raw["discovery_execution"]),
-                    discovery_cohort_kind="observed_this_run",
+                    discovery_execution=DiscoveryExecutionRef(**raw["discovery_execution"]) if not manual else None,
+                    discovery_cohort_kind="observed_this_run" if not manual else None,
+                    expected_app_dir=raw.get("expected_app_dir"),
+                    expected_db_path=raw.get("expected_db_path"),
                 ),
                 id=target.workflow_id,
                 task_queue=queue,
@@ -552,3 +574,168 @@ async def test_history_event_bound_and_domain_factory_reject_contradictions(owne
     with pytest.raises(ValueError, match="identity"):
         create_preparation_workflow_outcome_observed("local", replace(observation, terminal_history_event_id=True))
     assert receipts(owned) == []
+
+
+def manual_owner(conn, monkeypatch, *, cohort="existing_backlog"):
+    target, raw = seed(conn, cohort=cohort)
+    raw.pop("discovery_execution")
+    raw.pop("discovery_cohort_kind")
+    path = audit._database_path(conn)
+    runtime = RuntimeIdentity(str(Path(path).parent), path)
+    monkeypatch.setattr(audit, "current_runtime_identity", lambda: runtime)
+    raw.update(expected_app_dir=runtime.app_dir, expected_db_path=runtime.db_path)
+    return audit.missing_preparation_outcomes(conn)[0], raw
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cohort", ["observed_this_run", "existing_backlog"])
+@pytest.mark.parametrize("optional_cover", [False, True])
+async def test_manual_owner_completion_is_observed_through_exact_membership(owned, monkeypatch, cohort, optional_cover):
+    target, raw = manual_owner(owned, monkeypatch, cohort=cohort)
+    value = result(skipped=False)
+    if optional_cover:
+        value.update(steps_completed=["score", "tailor", "pdf"], steps_skipped=["cover"])
+    before = [tuple(row) for row in owned.execute("SELECT * FROM discovery_execution_jobs")]
+    client = Client({target.workflow_id: Handle(target.temporal_run_id, await history(raw, value))})
+    assert await audit.reconcile_preparation_outcomes(client, conn=owned) == 1
+    assert await audit.reconcile_preparation_outcomes(client, conn=owned) == 0
+    row = receipts(owned)[0]
+    payload = json.loads(row["payload_json"])
+    assert row["idempotency_key"] == audit._association_key(target)
+    assert payload["decoderVersion"] == 2 and payload["associationKind"] == "recorded_membership"
+    assert payload["discoveryCohortKind"] == cohort
+    assert payload["originDiscoveryExecution"] is None and payload["originDiscoveryCohortKind"] is None
+    assert payload["result"]["stepsCompleted"] == value["steps_completed"]
+    assert payload["result"]["stepsSkipped"] == value["steps_skipped"]
+    assert (
+        "expected_app_dir" not in row["payload_json"] and target.association.runtime.db_path not in row["payload_json"]
+    )
+    assert before == [tuple(row) for row in owned.execute("SELECT * FROM discovery_execution_jobs")]
+    assert not owned.execute("SELECT 1 FROM pipeline_step_projections").fetchone()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "missing app",
+        "missing database",
+        "foreign app",
+        "foreign database",
+        "relative database",
+        "job",
+        "tenant",
+        "plan",
+        "partial origin",
+        "foreign origin tenant",
+        "missing runtime",
+    ],
+)
+async def test_linked_history_requires_exact_identity_plan_and_workspace(owned, monkeypatch, fault):
+    target, raw = manual_owner(owned, monkeypatch)
+    if fault == "missing app":
+        raw.pop("expected_app_dir")
+    elif fault == "missing database":
+        raw.pop("expected_db_path")
+    elif fault == "foreign app":
+        raw["expected_app_dir"] += "-other"
+    elif fault == "foreign database":
+        raw["expected_db_path"] += "-other"
+    elif fault == "relative database":
+        raw["expected_db_path"] = "outcomes.db"
+    elif fault == "job":
+        raw["job_id"] = str(uuid4())
+    elif fault == "tenant":
+        raw["tenant_id"] = "other"
+    elif fault == "plan":
+        raw["steps"] = ["score", "tailor", "pdf"]
+    elif fault == "partial origin":
+        raw["discovery_cohort_kind"] = "observed_this_run"
+    elif fault == "foreign origin tenant":
+        raw.update(
+            discovery_execution={"tenant_id": "other", "workflow_id": "other", "temporal_run_id": "other"},
+            discovery_cohort_kind="observed_this_run",
+        )
+    else:
+        target = replace(target, association=replace(target.association, runtime=None))
+    assert (
+        await audit.preparation_outcome_from_history(
+            Handle(target.temporal_run_id, await history(raw, result(skipped=False))),
+            target,
+        )
+        is None
+    )
+    assert receipts(owned) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["owner", "run", "status", "plan", "cohort", "member", "runtime", "no target"])
+async def test_linked_append_rechecks_canonical_association_after_history(owned, monkeypatch, change):
+    target, raw = manual_owner(owned, monkeypatch)
+    observation = await audit.preparation_outcome_from_history(
+        Handle(target.temporal_run_id, await history(raw, result(skipped=False))),
+        target,
+    )
+    assert observation is not None
+    if change == "owner":
+        owned.execute("UPDATE discovery_execution_jobs SET preparation_workflow_id = 'prep-new'")
+    elif change == "run":
+        owned.execute("UPDATE workflow_run_projections SET temporal_run_id = 'new-run'")
+    elif change == "status":
+        owned.execute("UPDATE workflow_run_projections SET status = 'in_progress'")
+    elif change == "plan":
+        owned.execute("UPDATE discovery_execution_jobs SET required_steps_json = ?", (json.dumps(["score", "pdf"]),))
+    elif change == "cohort":
+        owned.execute("UPDATE discovery_execution_jobs SET cohort_kind = 'observed_this_run'")
+    elif change == "member":
+        owned.execute("DELETE FROM discovery_execution_jobs")
+    elif change == "runtime":
+        monkeypatch.setattr(audit, "current_runtime_identity", lambda: RuntimeIdentity("/other", "/other/jobctrl.db"))
+    owned.commit()
+    assert not audit.record_preparation_outcome(owned, observation, target=None if change == "no target" else target)
+    assert receipts(owned) == [] and not owned.in_transaction
+
+
+@pytest.mark.asyncio
+async def test_native_receipt_does_not_suppress_another_discovery_association(owned, monkeypatch):
+    native, raw = seed(owned)
+    observation = await audit.preparation_outcome_from_history(
+        Handle(native.temporal_run_id, await history(raw, result(skipped=False))),
+        native,
+    )
+    assert audit.record_preparation_outcome(owned, observation)
+    path = audit._database_path(owned)
+    runtime = RuntimeIdentity(str(Path(path).parent), path)
+    monkeypatch.setattr(audit, "current_runtime_identity", lambda: runtime)
+    raw.update(expected_app_dir=runtime.app_dir, expected_db_path=runtime.db_path)
+    owned.execute(
+        "INSERT INTO discovery_execution_jobs SELECT tenant_id, 'discover-reused', 'discover-reused-run', "
+        "job_id, 'existing_backlog', source_family, source_run_id, preparation_workflow_id, "
+        "work_plan_state, required_steps_json, work_plan_reason, linked_at FROM discovery_execution_jobs"
+    )
+    owned.commit()
+    selected = audit.missing_preparation_outcomes(owned)
+    assert len(selected) == 1 and selected[0].association.execution.workflow_id == "discover-reused"
+    client = Client({native.workflow_id: Handle(native.temporal_run_id, await history(raw, result(skipped=False)))})
+    assert await audit.reconcile_preparation_outcomes(client, conn=owned) == 1
+    assert await audit.reconcile_preparation_outcomes(client, conn=owned) == 0
+    payload = json.loads(receipts(owned)[1]["payload_json"])
+    assert payload["originDiscoveryExecution"]["workflowId"] == raw["discovery_execution"]["workflow_id"]
+    assert payload["discoveryExecution"]["workflowId"] == "discover-reused"
+
+
+@pytest.mark.asyncio
+async def test_selection_rotates_between_associations_of_the_same_owner(owned, monkeypatch):
+    target, raw = manual_owner(owned, monkeypatch)
+    owned.execute(
+        "INSERT INTO discovery_execution_jobs SELECT tenant_id, 'discover-second', 'run-second', "
+        "job_id, cohort_kind, source_family, source_run_id, preparation_workflow_id, work_plan_state, "
+        "required_steps_json, work_plan_reason, linked_at FROM discovery_execution_jobs"
+    )
+    owned.commit()
+    monkeypatch.setattr(audit, "MAX_RUNS_PER_PASS", 1)
+    client = Client({target.workflow_id: Handle(target.temporal_run_id, await history(raw, result(skipped=False)))})
+    assert await audit.reconcile_preparation_outcomes(client, conn=owned) == 1
+    assert await audit.reconcile_preparation_outcomes(client, conn=owned) == 1
+    assert await audit.reconcile_preparation_outcomes(client, conn=owned) == 0
+    assert len({row["idempotency_key"] for row in receipts(owned)}) == 2
