@@ -343,7 +343,7 @@ function rebaseIndexedTextArray(
   const isUniqueText = (items: readonly unknown[]): items is readonly string[] =>
     items.every((item) => typeof item === "string")
     && new Set(items).size === items.length;
-  if (base.length !== local.length || base.length !== remote.length
+  if (local.length < base.length || remote.length < base.length
     || !isUniqueText(base) || !isUniqueText(local) || !isUniqueText(remote)) {
     return { conflicts: [path], value: structuredClone(local) };
   }
@@ -354,11 +354,18 @@ function rebaseIndexedTextArray(
   if (movedOriginal(local) || movedOriginal(remote)) {
     return { conflicts: [path], value: structuredClone(local) };
   }
+  const localTail = local.slice(base.length);
+  const remoteTail = remote.slice(base.length);
+  const shorterTail = localTail.length <= remoteTail.length ? localTail : remoteTail;
+  const longerTail = localTail.length > remoteTail.length ? localTail : remoteTail;
+  if (!shorterTail.every((text, index) => text === longerTail[index])) {
+    return { conflicts: [path], value: structuredClone(local) };
+  }
   const merged = base.map((text, index) => rebaseProfileValue(
     text, local[index], remote[index], `${path}[${index}]`,
   ));
   const conflicts = merged.flatMap((item) => item.conflicts);
-  const value = merged.map((item) => item.value);
+  const value = [...merged.map((item) => item.value), ...longerTail];
   if (new Set(value).size !== value.length) conflicts.push(path);
   return { conflicts, value };
 }
@@ -1483,7 +1490,7 @@ export function ProfileForm({
         </div>
       ) : null}
       {isProfileSection && initial.candidateInterpretation ? <div className="status-line candidate-interpretation-status" data-typography="metadata" role="status">
-        {initial.candidateInterpretation.determination ? <>Candidate interpretation {initial.candidateInterpretation.status === "confirmed" ? "confirmed" : "awaits your confirmation"}. Model {initial.candidateInterpretation.determination.model}; prompt {initial.candidateInterpretation.determination.prompt_version}; input {initial.candidateInterpretation.determination.input_fingerprint}. Review the target-role suggestions before saving them.</> : <>Candidate interpretation unavailable{initial.candidateInterpretation.failureCode ? `: ${initial.candidateInterpretation.failureCode}` : " until a model determination is recorded"}. Use Suggest target roles to retry.</>}
+        {initial.candidateInterpretation.determination ? <>Candidate interpretation {initial.candidateInterpretation.status === "confirmed" ? "confirmed" : "awaits your confirmation"}. Model {initial.candidateInterpretation.determination.model}; prompt {initial.candidateInterpretation.determination.prompt_version}; input {initial.candidateInterpretation.determination.input_fingerprint}. Review the target-role suggestions before saving them.</> : <>Candidate interpretation unavailable{initial.candidateInterpretation.failureCode ? `: ${initial.candidateInterpretation.failureCode}` : " until a model determination is recorded"}. Request target-role suggestions in Discovery when you want them.</>}
       </div> : null}
       <form.Subscribe
         selector={(state) => ({

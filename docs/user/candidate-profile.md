@@ -85,6 +85,9 @@ moves below the editor and the resize handle disappears. Evidence Map follows
 the same rule: its entry list, selected evidence, and gaps/reusable-stories
 inspector stack instead of compressing the three-pane desktop workspace.
 
+Saving your edits does not call a model. Choose **Get suggestions for target
+roles** in Discovery when you want evidence-backed suggestions.
+
 Target Search can propose a small set of evidence-backed role titles and
 historical location/work-model rows. JobCtrl generates them from the saved
 profile version, even when the browser form has new unsaved edits. Each role
