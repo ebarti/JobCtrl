@@ -83,3 +83,29 @@ it.each([quality, adversarial, scoring])("keeps known $kind history readable whi
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+
+it.each([undefined, null, "a".repeat(64)])("reads the exact optional task profile without relabeling legacy receipts: %s", (profile) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-receipt-profile-"));
+  const filename = path.join(directory, "owned.db");
+  initializeExactDatabase(filename);
+  const db = new Database(filename);
+  try {
+    const id = recordModelDecision(db, quality.kind, "owned", quality.result);
+    const row = db.prepare("SELECT envelope_json FROM semantic_determinations WHERE determination_id=?").get(id) as { envelope_json: string };
+    const envelope = JSON.parse(row.envelope_json);
+    if (profile !== undefined) envelope.instruction_profile = profile;
+    const write = () => db.prepare("UPDATE semantic_determinations SET envelope_json=? WHERE determination_id=?")
+      .run(JSON.stringify(envelope), id);
+    write();
+    expect(readDetermination(db, "local", id)?.instruction_profile).toBe(profile);
+    for (const invalid of ["unknown-profile", "A".repeat(64), "a".repeat(65), 1]) {
+      envelope.instruction_profile = invalid;
+      write();
+      expect(() => readDetermination(db, "local", id)).toThrow("determination_binding_invalid");
+    }
+  } finally {
+    db.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

@@ -202,3 +202,31 @@ async def test_cancel_during_sdk_start_waits_for_publication_before_close(servic
     finally:
         publish.set()
         await asyncio.gather(running, return_exceptions=True)
+
+
+
+@pytest.mark.asyncio
+async def test_tool_free_instructions_use_supported_sdk_field_and_preserve_task(service):
+    import inspect
+    from openai_codex import AsyncCodex
+    from jobctrl.infrastructure.llm.task_instructions import CODEX_TASK_INSTRUCTIONS
+
+    assert "base_instructions" in inspect.signature(AsyncCodex.thread_start).parameters
+    transport = Transport()
+    outcome = await call(transport.factory, "owned-task")
+    assert transport.threads[0].kwargs["base_instructions"] == CODEX_TASK_INSTRUCTIONS
+    assert json.loads(outcome.text) == {"marker": "owned-task"}
+    assert transport.threads[0].kwargs["approval_mode"] == "deny-all"
+    assert transport.threads[0].kwargs["config"] == {"model_reasoning_effort": "max"}
+
+
+@pytest.mark.asyncio
+async def test_changed_instruction_profile_replaces_idle_process(service, monkeypatch):
+    transport = Transport()
+    factory = transport.factory
+    await call(factory, "owned-before")
+    monkeypatch.setattr(adapter, "CODEX_TASK_INSTRUCTION_PROFILE", "b" * 64)
+    await call(factory, "owned-after")
+    assert len(transport.clients) == 2
+    assert transport.clients[0].closed
+    assert not transport.clients[1].closed

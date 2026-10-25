@@ -444,6 +444,12 @@ class CodexSdkBackend:
 
     provider_id = "codex"
 
+    @property
+    def instruction_profile(self) -> str:
+        from jobctrl.infrastructure.llm.task_instructions import CODEX_TASK_INSTRUCTION_PROFILE
+
+        return CODEX_TASK_INSTRUCTION_PROFILE
+
     def __init__(
         self,
         *,
@@ -501,6 +507,7 @@ class CodexSdkBackend:
             params={"structured": response_schema is not None, "effort": effort},
             scope_name="jobctrl.llm.codex",
             schema_fingerprint=schema_fingerprint,
+            instruction_profile=self.instruction_profile,
         ) as record:
             try:
                 from jobctrl.infrastructure.llm.agent_runtime_codex import call_codex_runtime
@@ -511,6 +518,9 @@ class CodexSdkBackend:
                     output_schema=strict_json_schema(response_schema) if response_schema is not None else None,
                     record_usage=lambda input_tokens, output_tokens: record(
                         "", input_tokens=input_tokens, output_tokens=output_tokens,
+                    ),
+                    record_usage_details=lambda cached, reasoning: record(
+                        "", cached_input_tokens=cached, reasoning_output_tokens=reasoning,
                     ),
                 )
             except ProviderCallError:
@@ -526,6 +536,7 @@ class CodexSdkBackend:
                 outcome.text,
                 input_tokens=outcome.input_tokens,
                 output_tokens=outcome.output_tokens,
+                runtime_metadata=outcome.runtime_metadata,
             )
             return outcome.text
 
@@ -807,6 +818,10 @@ class LlmAdapter:
     @property
     def reasoning_effort(self) -> str | None:
         return getattr(self._client, "reasoning_effort", None)
+
+    @property
+    def instruction_profile(self) -> str | None:
+        return getattr(self._client, "instruction_profile", None)
 
     def _client_for_model(self, model: str | None) -> Any:
         provider, selected_model, label = _parse_model_spec(model)

@@ -26,6 +26,7 @@ export const DeterminationEnvelopeSchema = z
     provider: z.string().min(1),
     model: z.string().min(1),
     reasoning_effort: z.string().min(1).max(40).nullable().optional(),
+    instruction_profile: z.string().regex(/^[a-f0-9]{64}$/).nullable().optional(),
     lane: z.enum([
       "discovery",
       "enrichment",

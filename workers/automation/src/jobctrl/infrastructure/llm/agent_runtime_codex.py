@@ -22,6 +22,9 @@ from agent_runtime_kit.adapters.codex import CodexAgentRuntime
 from jobctrl.infrastructure.llm.agent_runtime_pool import agent_runtime_service
 from jobctrl.infrastructure.llm.codex_turn import CodexTurnOutcome, run_codex_turn
 from jobctrl.infrastructure.llm.provider_errors import codex_protocol_error
+from jobctrl.infrastructure.llm.task_instructions import (
+    CODEX_TASK_INSTRUCTIONS, CODEX_TASK_INSTRUCTION_PROFILE,
+)
 
 
 @dataclass
@@ -30,6 +33,7 @@ class _Call:
     operation: str
     effort: str
     record_usage: Callable[[int | None, int | None], None] | None
+    record_usage_details: Callable[[int | None, int | None], None] | None = None
     outcome: CodexTurnOutcome | None = None
 
 
@@ -69,6 +73,7 @@ class _Thread:
             self._thread, prompt, model=state.model, operation=state.operation,
             run_kwargs={key: value for key, value in kwargs.items() if value is not None},
             record_usage=state.record_usage,
+            record_usage_details=state.record_usage_details,
         )
         state.outcome = outcome
         return SimpleNamespace(
@@ -135,7 +140,10 @@ class _Client:
         kwargs = dict(approval_mode=approval_mode, sandbox=sandbox, model=model, cwd=cwd,
                       developer_instructions=developer_instructions)
         kwargs = {key: value for key, value in kwargs.items() if value is not None}
-        kwargs.update(ephemeral=True, config={'model_reasoning_effort': state.effort})
+        kwargs.update(
+            ephemeral=True, base_instructions=CODEX_TASK_INSTRUCTIONS,
+            config={'model_reasoning_effort': state.effort},
+        )
         return _Thread(await self._client.thread_start(**kwargs))
 
 
@@ -160,11 +168,12 @@ def _factory_key(factory: Callable[[], Any], model: str, effort: str, approval: 
     if configuration is None:
         # Injected SDK factories remain isolated and are retained by their runtime;
         # their identity cannot be recycled while a cached member still owns them.
-        return ('injected-codex', id(factory), model, effort, id(approval))
+        return ('injected-codex', id(factory), model, effort, id(approval), CODEX_TASK_INSTRUCTION_PROFILE)
     home = Path(configuration['env']['CODEX_HOME'])
     auth = home / 'auth.json'
     auth_fingerprint = hashlib.sha256(auth.read_bytes()).hexdigest() if auth.is_file() else None
-    value = {**configuration, 'auth_fingerprint': auth_fingerprint, 'model': model, 'effort': effort}
+    value = {**configuration, 'auth_fingerprint': auth_fingerprint, 'model': model, 'effort': effort,
+             'instruction_profile': CODEX_TASK_INSTRUCTION_PROFILE}
     return ('codex', hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest())
 
 
@@ -195,11 +204,12 @@ async def call_codex_runtime(
     *, factory: Callable[[], Any], approval: Callable[[], Any], model: str,
     effort: str, prompt: str, operation: str, output_schema: dict | None,
     record_usage: Callable[[int | None, int | None], None] | None = None,
+    record_usage_details: Callable[[int | None, int | None], None] | None = None,
 ) -> AgentGeneration:
     from jobctrl.infrastructure.analysis.codex_analysis_adapter import _CODEX_PERMISSION_PROFILE
 
     configuration = getattr(factory, 'jobctrl_runtime_config', None)
-    state = _Call(model, operation, effort, record_usage)
+    state = _Call(model, operation, effort, record_usage, record_usage_details)
     token = _call.set(state)
     try:
         task = AgentTask(

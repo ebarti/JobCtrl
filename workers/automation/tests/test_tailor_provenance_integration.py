@@ -949,7 +949,11 @@ class _AdvertisedEdgesLlm(_EvidenceCorrectionLlm):
         graph = plan["coverage_graph"]
         # Do not silently filter alternatives: that was the production failure.
         edges = graph["coverage_edges"] + graph.get("alternative_edges", [])
-        roles = {item["achievement_evidence_id"]: item["experience_entry_id"] for item in graph["achievements"]}
+        catalogue = graph["achievements"]
+        if isinstance(catalogue, dict):
+            assert catalogue == {"$ref": "#/target_profile/profile_achievements"}
+            catalogue = plan["target_profile"]["profile_achievements"]
+        roles = {item["achievement_evidence_id"]: item["experience_entry_id"] for item in catalogue}
         bullet = "Owned the API and cut latency 40% with Python by replacing synchronous calls."
         payload = json.loads(_payload(bullet))
         template = deepcopy(payload["generated_claim_mappings"][1])

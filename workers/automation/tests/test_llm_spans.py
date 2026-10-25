@@ -229,3 +229,52 @@ def test_llm_generation_span_exports_safe_provider_failure_attributes(in_memory_
     assert failure.envelope.trace_id is not None
     assert failure.envelope.span_id is not None
     assert private_sentinel not in _exported_span_text(span)
+
+
+
+def test_numeric_subcounts_and_reuse_are_diagnostics_without_additional_spend(monkeypatch, in_memory_exporter):
+    from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
+    from jobctrl.llm_request_context import bind_determination_request
+
+    spend = []
+    monkeypatch.setattr("jobctrl.llm.record_llm_spend", lambda **kwargs: spend.append(kwargs))
+    with bind_determination_request("artifact_quality", "a" * 64):
+        with llm_generation_span(
+            model="gpt-test", messages=[], params={}, instruction_profile="b" * 64,
+        ) as record:
+            record("", input_tokens=19, output_tokens=9)
+            record("", cached_input_tokens=11, reasoning_output_tokens=7)
+            record("owned", input_tokens=19, output_tokens=9, runtime_metadata={
+                "sdk_process_reused": True, "sdk_process_start_count": 1,
+                "sdk_process_reuse_count": 3, "cwd": "PRIVATE_PATH_SENTINEL",
+            })
+    span = in_memory_exporter.get_finished_spans()[0]
+    attrs = _attrs(span)
+    assert attrs["jobctrl.llm.determination_id"] == "a" * 64
+    assert attrs["jobctrl.llm.determination_kind"] == "artifact_quality"
+    assert attrs["jobctrl.llm.instruction_profile"] == "b" * 64
+    assert attrs["jobctrl.llm.usage.cached_input_tokens"] == 11
+    assert attrs["jobctrl.llm.usage.reasoning_output_tokens"] == 7
+    assert attrs["jobctrl.llm.runtime.sdk_process_reused"] is True
+    assert attrs["jobctrl.llm.runtime.sdk_process_reuse_count"] == 3
+    assert json.loads(attrs["langfuse.observation.usage_details"]) == {
+        "input_tokens": 19, "output_tokens": 9, "total_tokens": 28,
+    }
+    assert len(spend) == 1
+    assert "PRIVATE_PATH_SENTINEL" not in _exported_span_text(span)
+
+
+def test_unknown_detail_values_and_arbitrary_identity_content_are_not_exported(in_memory_exporter):
+    from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
+    from jobctrl.llm_request_context import bind_determination_request
+
+    with bind_determination_request("PRIVATE KIND SENTINEL", "PRIVATE ID SENTINEL"):
+        with llm_generation_span(
+            model="gpt-test", messages=[], params={}, instruction_profile="PRIVATE PROFILE SENTINEL",
+        ) as record:
+            record("", cached_input_tokens=-1, reasoning_output_tokens=True,
+                   runtime_metadata={"sdk_process_reused": "PRIVATE REUSE SENTINEL",
+                                     "sdk_process_start_count": -1})
+    span = in_memory_exporter.get_finished_spans()[0]
+    assert not any(key.startswith("jobctrl.llm.usage.") for key in _attrs(span))
+    assert "PRIVATE" not in _exported_span_text(span)

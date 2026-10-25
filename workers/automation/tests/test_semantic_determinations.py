@@ -376,3 +376,71 @@ def test_provider_retry_authority_survives_the_safe_determination_protocol(retry
     assert raised.value.retryable is retryable
     assert serialized_determination_failure(str(raised.value)).retryable is retryable
     assert len(model.calls) == 1
+
+
+
+def test_instruction_profile_changes_receipt_identity_and_preserves_accepted_history():
+    repository = Repository()
+    first_model, second_model = Model(response("accept")), Model(response("reject"))
+    first_model.instruction_profile = "a" * 64
+    second_model.instruction_profile = "b" * 64
+    _, first = call(first_model, repository)
+    result, second = call(second_model, repository)
+    assert result.verdict == "reject"
+    assert first.determination_id != second.determination_id
+    assert first.instruction_profile == "a" * 64
+    assert second.instruction_profile == "b" * 64
+    assert call(first_model, repository)[1] == first
+    assert len(first_model.calls) == len(second_model.calls) == 1
+    assert first.result["verdict"] == "accept"
+    legacy = first.model_dump()
+    legacy.pop("instruction_profile")
+    assert DeterminationEnvelope.model_validate(legacy).instruction_profile is None
+
+
+def test_cached_receipt_cannot_relabel_instruction_profile():
+    repository, model = Repository(), Model(response())
+    model.instruction_profile = "a" * 64
+    _, envelope = call(model, repository)
+    repository.rows[("synthetic", envelope.determination_id)] = envelope.model_copy(
+        update={"instruction_profile": "b" * 64},
+    )
+    with pytest.raises(DeterminationFailure, match="cache_binding_invalid"):
+        call(model, repository)
+    assert len(model.calls) == 1
+
+
+def test_model_call_context_records_exact_receipt_id_and_resets_on_failure():
+    from jobctrl.llm_request_context import current_determination_request
+
+    contexts = []
+    class ObservedModel(Model):
+        def chat_json(self, messages, **kwargs):
+            contexts.append(current_determination_request())
+            return super().chat_json(messages, **kwargs)
+    _, receipt = call(ObservedModel(response()), Repository())
+    assert contexts[0].kind == receipt.kind
+    assert contexts[0].fingerprint == receipt.determination_id
+    assert current_determination_request() is None
+    with pytest.raises(DeterminationFailure, match="provider_error"):
+        call(ObservedModel(RuntimeError("owned failure")), Repository())
+    assert current_determination_request() is None
+
+
+def test_determination_context_isolated_between_threads_and_nested_failures():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from jobctrl.llm_request_context import bind_determination_request, current_determination_request
+
+    barrier = Barrier(2)
+    def observe(marker):
+        assert current_determination_request() is None
+        with bind_determination_request("owned", marker * 64):
+            barrier.wait(timeout=2)
+            with pytest.raises(RuntimeError):
+                with bind_determination_request("inner", "c" * 64):
+                    raise RuntimeError("owned")
+            assert current_determination_request().fingerprint == marker * 64
+        return current_determination_request()
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        assert list(executor.map(observe, ("a", "b"))) == [None, None]

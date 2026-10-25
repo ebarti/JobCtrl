@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from contextlib import contextmanager
 from typing import Callable, Iterator
 
@@ -50,6 +51,7 @@ def llm_generation_span(
     params: dict,
     scope_name: str = "jobctrl.llm",
     schema_fingerprint: str | None = None,
+    instruction_profile: str | None = None,
 ) -> Iterator[RecordResponse]:
     """Open a ``langfuse.observation.type=generation`` span around an LLM call.
 
@@ -85,6 +87,15 @@ def llm_generation_span(
         span.set_attribute("jobctrl.llm.lane", lane)
         if schema_fingerprint is not None:
             span.set_attribute("jobctrl.llm.schema_fingerprint", schema_fingerprint)
+        if isinstance(instruction_profile, str) and re.fullmatch(r"[a-f0-9]{64}", instruction_profile):
+            span.set_attribute("jobctrl.llm.instruction_profile", instruction_profile)
+        from jobctrl.llm_request_context import current_determination_request
+
+        request = current_determination_request()
+        if request is not None and re.fullmatch(r"[a-f0-9]{64}", request.fingerprint):
+            span.set_attribute("jobctrl.llm.determination_id", request.fingerprint)
+            if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", request.kind):
+                span.set_attribute("jobctrl.llm.determination_kind", request.kind)
         span.set_attribute("jobctrl.llm.input.message_count", len(messages))
         span.set_attribute(
             "jobctrl.llm.input.character_count",
@@ -102,6 +113,9 @@ def llm_generation_span(
             *,
             input_tokens: int | None = None,
             output_tokens: int | None = None,
+            cached_input_tokens: int | None = None,
+            reasoning_output_tokens: int | None = None,
+            runtime_metadata: dict | None = None,
         ) -> None:
             nonlocal usage_recorded
             span.set_attribute("gen_ai.response.model", model)
@@ -121,6 +135,22 @@ def llm_generation_span(
                 span.set_attribute("gen_ai.usage.input_tokens", input_tokens)
             if output_tokens is not None:
                 span.set_attribute("gen_ai.usage.output_tokens", output_tokens)
+            # These are subsets of the existing totals, never extra billable
+            # categories. Unknown counters stay absent rather than becoming zero.
+            for name, value in (
+                ("cached_input_tokens", cached_input_tokens),
+                ("reasoning_output_tokens", reasoning_output_tokens),
+            ):
+                if type(value) is int and value >= 0:
+                    span.set_attribute("jobctrl.llm.usage." + name, value)
+            if runtime_metadata is not None:
+                reused = runtime_metadata.get("sdk_process_reused")
+                if type(reused) is bool:
+                    span.set_attribute("jobctrl.llm.runtime.sdk_process_reused", reused)
+                for name in ("sdk_process_start_count", "sdk_process_reuse_count"):
+                    value = runtime_metadata.get(name)
+                    if type(value) is int and value >= 0:
+                        span.set_attribute("jobctrl.llm.runtime." + name, value)
             if usage_recorded or (input_tokens is None and output_tokens is None):
                 return
             from jobctrl.llm import record_llm_spend
