@@ -178,6 +178,10 @@ def call_model(*, llm, messages, response_schema, lane, preflight, **kwargs):
                     raise DeterminationFailure("malformed_json") from None
                 if code == "schema_validation_failed":
                     raise DeterminationFailure("schema_violation") from None
+                if not error.retryable:
+                    # Keep adapter authority in the safe serialized protocol;
+                    # callers must not turn a terminal turn into an automatic retry.
+                    raise DeterminationFailure("provider_non_retryable") from None
             raise DeterminationFailure("provider_error") from None
 
 

@@ -662,40 +662,56 @@ async def reconcile_legacy_discovery_execution(
                 recovery_source="temporal",
             )
         connection.commit()
-        ProjectionBuilder(
-            conn_factory=get_connection if conn is None else (lambda: connection),
-            tenant_id=TenantId(tenant_id),
-        ).refresh()
-        persisted_membership_keys = _persisted_membership_keys(connection, tenant_id, workflow_id, temporal_run_id)
-        persisted_step_keys = _persisted_step_keys(connection, tenant_id, workflow_id, temporal_run_id)
-        if persisted_membership_keys != expected_membership_keys or persisted_step_keys != expected_step_keys:
-            raise LegacyDiscoveryRecoveryError("recovery_manifest_set_mismatch")
-        final_state: Literal["ready", "recovering", "incomplete"] = (
-            "incomplete"
-            if terminal_failed_fanout or native_terminal_lifecycle_missing
-            else "recovering"
-            if legacy_recovery_pending
-            else "ready"
-        )
-        _write_recovery_manifest(
-            connection,
-            execution,
-            state=final_state,
-            mode=mode,
-            history_event_id=history_event_id,
-            expected_memberships=len(expected_membership_keys),
-            persisted_memberships=len(persisted_membership_keys),
-            expected_steps=len(expected_step_keys),
-            persisted_steps=len(persisted_step_keys),
-            key_digest=key_digest,
-            error_code=(
-                "legacy-fanout-terminal-failed"
-                if terminal_failed_fanout
-                else "native-terminal-lifecycle-missing"
-                if native_terminal_lifecycle_missing
-                else None
-            ),
-        )
+        # Fold events and publish the exact proof under one writer reservation.
+        # Native producers can extend this execution while its marker is
+        # recovering; those canonical extensions must join the final proof.
+        # No Temporal/network work runs while this transaction is held.
+        with connection:
+            connection.execute("BEGIN IMMEDIATE")
+            ProjectionBuilder(
+                conn_factory=lambda: connection,
+                tenant_id=TenantId(tenant_id),
+            ).refresh()
+            persisted_membership_keys = _persisted_membership_keys(connection, tenant_id, workflow_id, temporal_run_id)
+            persisted_step_keys = _persisted_step_keys(connection, tenant_id, workflow_id, temporal_run_id)
+            if mode == "native":
+                if not (
+                    expected_membership_keys <= persisted_membership_keys
+                    and expected_step_keys <= persisted_step_keys
+                ):
+                    raise LegacyDiscoveryRecoveryError("recovery_manifest_set_mismatch")
+                expected_membership_keys = persisted_membership_keys
+                expected_step_keys = persisted_step_keys
+            elif persisted_membership_keys != expected_membership_keys or persisted_step_keys != expected_step_keys:
+                raise LegacyDiscoveryRecoveryError("recovery_manifest_set_mismatch")
+            key_digest = _recovery_key_digest(expected_membership_keys, expected_step_keys)
+            final_state: Literal["ready", "recovering", "incomplete"] = (
+                "incomplete"
+                if terminal_failed_fanout or native_terminal_lifecycle_missing
+                else "recovering"
+                if legacy_recovery_pending
+                else "ready"
+            )
+            _write_recovery_manifest(
+                connection,
+                execution,
+                state=final_state,
+                mode=mode,
+                history_event_id=history_event_id,
+                expected_memberships=len(expected_membership_keys),
+                persisted_memberships=len(persisted_membership_keys),
+                expected_steps=len(expected_step_keys),
+                persisted_steps=len(persisted_step_keys),
+                key_digest=key_digest,
+                error_code=(
+                    "legacy-fanout-terminal-failed"
+                    if terminal_failed_fanout
+                    else "native-terminal-lifecycle-missing"
+                    if native_terminal_lifecycle_missing
+                    else None
+                ),
+                commit=False,
+            )
     except Exception as exc:
         _write_recovery_manifest(
             connection,
@@ -1155,6 +1171,7 @@ def _write_recovery_manifest(
     persisted_steps: int,
     key_digest: str,
     error_code: str | None = None,
+    commit: bool = True,
 ) -> None:
     conn.execute(
         """
@@ -1196,7 +1213,8 @@ def _write_recovery_manifest(
             datetime.now(UTC).isoformat(),
         ),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def _transition_existing_recovery_manifest(

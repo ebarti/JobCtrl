@@ -188,7 +188,7 @@ class ProviderCallError(LlmFailure):
 
     def __init__(self, envelope: ProviderFailureEnvelope) -> None:
         self.envelope = envelope
-        super().__init__(envelope.code)
+        super().__init__(envelope.code, retryable=envelope.retryable)
         self.args = (
             f"LLM provider call failed: {envelope.provider}/{envelope.operation} {envelope.category}:{envelope.code}",
         )

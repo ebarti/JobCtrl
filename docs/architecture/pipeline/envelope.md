@@ -388,8 +388,11 @@ retry up to the policy's attempt cap and then surface as a stage/workflow
 failure. `RuntimeIdentityMismatch` is also non-retryable.
 `material_rejected` carries `ApplicationError.non_retryable=true`: an exhausted
 source-bound material correction budget stops immediately, including under an
-already scheduled workflow's retry policy. Transient provider and network
-failures retain their normal retries.
+already scheduled workflow's retry policy. The same native non-retryable flag
+carries `provider_non_retryable` through semantic determinations, durable Tailor
+and Cover states, and per-job activities. A privacy-safe adapter failure must
+not become `llm_transient` just because it crossed a material result boundary.
+Transient provider and network failures retain their normal retries.
 
 ## Availability Workflow Envelope
 

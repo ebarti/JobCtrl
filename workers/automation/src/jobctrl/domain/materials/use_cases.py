@@ -2692,13 +2692,14 @@ class TailorResumeUseCase:
                 {
                     "candidate_id": row.get("candidate_id"),
                     "rejected_candidate": row.get("parsed_json"),
+                    "validation_errors": (row.get("validator") or {}).get("errors", []),
                     "claim_verification_id": row.get("claim_verification_id"),
                     "claim_findings": row.get("claim_verification_findings", []),
                     "quality_determination_id": (row.get("judge") or {}).get("determination_id"),
                     "quality_findings": (row.get("judge") or {}).get("findings", []),
                 }
                 for row in attempt_record["candidates"]
-                if row.get("claim_verification_id") or row.get("judge")
+                if row.get("claim_verification_id") or row.get("judge") or (row.get("validator") or {}).get("errors")
             ]
             for candidate_record in attempt_record["candidates"]:
                 status = str(candidate_record.get("status", ""))

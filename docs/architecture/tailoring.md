@@ -78,8 +78,13 @@ Selection never establishes shipped coverage or replaces independent reviews.
 Exhausted factual or quality correction returns the non-retryable
 `material_rejected` error. It preserves the rejected audit and last accepted
 artifacts; Temporal does not restart the whole correction budget as though a
-provider transport had failed. Provider/network faults retain their separate
-transient retry behavior. A new explicit request can use the existing recovery
+provider transport had failed. Adapter retry authority also survives the safe
+semantic failure protocol: `provider_non_retryable` stops automatic material
+retries, while `provider_error` retains transient recovery. Structural resume
+rejections pass their candidate and exact validator errors to the next bounded
+attempt as untrusted user-message repair data, even without a paid-review receipt.
+They never become generator system instructions. Provider/network faults retain
+their separate transient retry behavior when classified retryable. A new explicit request can use the existing recovery
 controls after the owner addresses the recorded finding.
 
 Selected Tailor and Cover cohorts isolate typed per-job prerequisite failures

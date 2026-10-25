@@ -454,8 +454,15 @@ score or owner, reset stage, foreign/missing receipt, generic setup block or
 retryable block remains unresolved. An actually recorded PDF lifecycle still
 wins. No canonical stage, score, accepted file or frozen plan is rewritten.
 
-Without that exact receipt, missing prerequisites, a terminal owner, or no
-unfinished required prerequisite leave the missing PDF **unknown**. Other missing stage state after work-plan
+A closed failed/canceled preparation owner plus a recorded non-retryable,
+exhausted or canceled prerequisite also proves that its unexecuted PDF cannot
+start. That PDF is **blocked** or **canceled**, and the cohort finishes with
+issues rather than staying in `draining`. This never claims a render succeeded.
+Queued/running successor work, retryable failures and an actual PDF lifecycle
+retain their own authority.
+
+Otherwise, without the exact successful outcome receipt, missing prerequisites,
+a terminal owner alone, or no unfinished required prerequisite leave the missing PDF **unknown**. Other missing stage state after work-plan
 resolution remains **unknown** and actionable; a genuinely missing or failed PDF
 is never hidden by unrelated work.
 The producer-lifetime live enrichment activity is runtime telemetry, not a
@@ -507,6 +514,13 @@ therefore rolls back the native key write instead of exposing a one-row-ahead
 expected sets remain exclusively owned by history reconciliation. A heartbeat
 also keeps an already-verified checkpoint visible while it reads history and
 publishes `recovering` only after it has evidence that repair is needed.
+
+Final recovery publication reserves the SQLite writer while folding projections,
+reading the exact key sets and saving their counts/digest. A native producer may
+have extended the execution while its marker was `recovering`; those canonical
+keys join the final proof. Expected historical keys must still exist. No history
+or network read runs inside this final transaction. Reconstructed proofs retain
+strict expected-set equality.
 
 The worker runs reconciliation before accepting activities and again on every
 heartbeat. Legacy activity history is decoded into queued, running, completed,

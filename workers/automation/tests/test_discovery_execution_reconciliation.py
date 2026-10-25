@@ -2546,3 +2546,108 @@ async def test_empty_native_start_has_explicit_ready_manifest(tmp_path, monkeypa
     assert row["mode"] == "native"
     assert row["history_event_id"] == 0
     assert row["expected_step_count"] == row["persisted_step_count"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["extend", "remove"])
+async def test_native_recovery_publishes_current_keys_without_accepting_missing_expected_keys(
+    tmp_path, monkeypatch, mutation,
+):
+    path = tmp_path / "native-recovering-writer.db"
+    conn = init_db(path)
+    writer = sqlite3.connect(path)
+    writer.row_factory = sqlite3.Row
+    execution = DiscoveryExecutionRef("local", "discover-local", "owned-recovering-writer")
+    first, second = (str(uuid.uuid4()) for _ in range(2))
+    for ident in (first, second):
+        _seed_v7_job(conn, ident)
+    SqliteDiscoveryExecutionRepository(conn).link_job(execution, first, cohort_kind="existing_backlog")
+    _write_recovery_manifest(
+        conn, execution, state="ready", mode="native", history_event_id=1,
+        expected_memberships=1, persisted_memberships=1, expected_steps=0, persisted_steps=0,
+        key_digest=_recovery_key_digest({first}, set()),
+    )
+
+    async def history(*_args):
+        return [{"kind": "watermark", "history_event_id": 2}]
+
+    monkeypatch.setattr(execution_reconciliation, "_normalize_temporal_history", history)
+    original = execution_reconciliation._write_recovery_manifest
+    mutated = False
+
+    def write(*args, **kwargs):
+        nonlocal mutated
+        original(*args, **kwargs)
+        if kwargs["state"] == "recovering" and not mutated:
+            mutated = True
+            if mutation == "extend":
+                SqliteDiscoveryExecutionRepository(writer).link_job(
+                    execution, second, cohort_kind="observed_this_run", source_family="jobspy",
+                )
+            else:
+                writer.execute("DELETE FROM discovery_execution_jobs WHERE job_id=?", (first,))
+                writer.commit()
+
+    monkeypatch.setattr(execution_reconciliation, "_write_recovery_manifest", write)
+    client = type("Client", (), {"data_converter": None, "get_workflow_handle": lambda *a, **k: None})()
+    try:
+        task = execution_reconciliation.reconcile_legacy_discovery_execution(
+            client, workflow_id=execution.workflow_id, temporal_run_id=execution.temporal_run_id, conn=conn,
+        )
+        if mutation == "remove":
+            with pytest.raises(LegacyDiscoveryRecoveryError, match="recovery_manifest_set_mismatch"):
+                await task
+            assert conn.execute("SELECT state FROM discovery_execution_recoveries").fetchone()[0] == "retrying"
+        else:
+            await task
+            row = conn.execute("SELECT state,expected_membership_count,persisted_membership_count FROM discovery_execution_recoveries").fetchone()
+            assert tuple(row) == ("ready", 2, 2)
+            assert execution_reconciliation._recovery_manifest_matches_persisted_keys(
+                conn, tenant_id="local", workflow_id=execution.workflow_id, temporal_run_id=execution.temporal_run_id,
+            )
+    finally:
+        writer.close()
+        conn.close()
+
+
+@pytest.mark.asyncio
+async def test_native_recovery_keeps_the_writer_reservation_through_final_proof_publication(tmp_path, monkeypatch):
+    path = tmp_path / "native-proof-publication.db"
+    conn = init_db(path)
+    writer = sqlite3.connect(path, timeout=0)
+    execution = DiscoveryExecutionRef("local", "discover-local", "owned-proof-publication")
+    ident = str(uuid.uuid4())
+    _seed_v7_job(conn, ident)
+    SqliteDiscoveryExecutionRepository(conn).link_job(execution, ident, cohort_kind="existing_backlog")
+
+    async def history(*_args):
+        return [{"kind": "watermark", "history_event_id": 1}]
+
+    monkeypatch.setattr(execution_reconciliation, "_normalize_temporal_history", history)
+    original = execution_reconciliation._write_recovery_manifest
+    blocked = []
+
+    def write(*args, **kwargs):
+        if kwargs["state"] == "ready":
+            try:
+                writer.execute("BEGIN IMMEDIATE")
+            except sqlite3.OperationalError as error:
+                assert "locked" in str(error)
+                blocked.append(True)
+            else:
+                writer.rollback()
+                blocked.append(False)
+        original(*args, **kwargs)
+
+    monkeypatch.setattr(execution_reconciliation, "_write_recovery_manifest", write)
+    client = type("Client", (), {"data_converter": None, "get_workflow_handle": lambda *a, **k: None})()
+    try:
+        await execution_reconciliation.reconcile_legacy_discovery_execution(
+            client, workflow_id=execution.workflow_id, temporal_run_id=execution.temporal_run_id, conn=conn,
+        )
+        assert blocked == [True]
+        writer.execute("BEGIN IMMEDIATE")
+        writer.rollback()
+    finally:
+        writer.close()
+        conn.close()

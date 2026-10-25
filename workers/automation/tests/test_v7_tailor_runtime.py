@@ -1995,3 +1995,41 @@ def test_tailor_one_job_passes_canonical_id_to_materials_use_case(allow_override
     assert captured["job_id"] == _JOB_ID
     assert captured["audit_execution_id"] == "temporal-run-owned"
     assert captured["allow_low_fit_override"] is allow_override
+
+
+@pytest.mark.parametrize("code,retryable", [("provider_error", 1), ("provider_non_retryable", 0)])
+def test_tailor_persists_semantic_failure_retry_authority(conn, tmp_path, monkeypatch, code, retryable):
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    _seed_job(conn, tenant_id=_TENANT_A, url="https://example.test/provider-failure")
+
+    def fail(*_args, **_kwargs):
+        raise DeterminationFailure(code)
+
+    monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
+    monkeypatch.setattr(tailor_module, "_build_pdf_renderer", lambda: object())
+    monkeypatch.setattr(tailor_module, "_tailor_one_job", fail)
+    result = tailor_module.tailor_job_by_id(_JOB_ID, tenant_id=_TENANT_A, snapshot=SimpleNamespace(), llm_model=None)
+    assert result["status"] == "error"
+    state = conn.execute(
+        "SELECT state,error_code,retryable,attempt_count FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage='tailor'",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()
+    assert tuple(state) == ("failed", code.upper(), retryable, 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["tailor", "cover"])
+async def test_material_activity_does_not_retry_a_terminal_semantic_provider_error(monkeypatch, stage):
+    from jobctrl.materials.activities import CoverLetterActivityInput
+
+    monkeypatch.setattr(activities_module, "_tailor_one_job" if stage == "tailor" else "_cover_one_job", lambda *a, **k: {
+        "status": "error", "error": "semantic_determination:provider_non_retryable",
+    })
+    function = activities_module.tailor_job_activity if stage == "tailor" else activities_module.cover_letter_activity
+    payload = TailorJobActivityInput(tenant_id="local", job_id=_JOB_ID) if stage == "tailor" else CoverLetterActivityInput(tenant_id="local", job_id=_JOB_ID)
+    with pytest.raises(ApplicationError) as raised:
+        await ActivityEnvironment().run(function, payload)
+    assert raised.value.non_retryable
+    assert raised.value.type == "provider_non_retryable"

@@ -92,7 +92,10 @@ Direct URL imports interpret the complete visible page capture, including
 posting details and current controls outside its main-content panel. For the
 description, the model selects a recorded source and contiguous line range;
 the application copies that span exactly and saves the selection, copied text
-and citation in the extraction receipt. Capture includes up to eight visible
+and citation in the extraction receipt. Declared rich-text descriptions are
+normalized before selection, including an extra escaping layer. Literal technical
+angle brackets and code examples remain text; the original structured capture
+and source URL remain available as provenance. Capture includes up to eight visible
 public embedded pages, such as an employer's hosted application frame. Each
 source keeps its observed URL in the receipt, and relative links resolve against
 that source. Short fields retain verbatim-value and citation validation.

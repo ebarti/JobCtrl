@@ -552,3 +552,25 @@ def test_identical_canonical_inputs_reuse_persisted_interpretation_and_verificat
 def test_tailoring_policy_has_no_numeric_judge_threshold():
     policy = TailoringLlmPolicy(candidate_models=("codex:synthetic",), judge_model="codex:quality")
     assert policy.effective_judge_model == "codex:quality"
+
+
+def test_structural_repair_receives_rejected_candidate_and_exact_errors_as_untrusted_user_data(tmp_path):
+    class BindingRepairModel(ResumeModel):
+        def chat_json(self, messages, *, response_schema, **kwargs):
+            result = super().chat_json(messages, response_schema=response_schema, **kwargs)
+            if response_schema["title"] == "GeneratedResumeDraft":
+                feedback = [json.loads(row.content) for row in messages if row.content.startswith('{"review_feedback"')]
+                if not feedback:
+                    result["generated_claim_mappings"][1]["evidence_ids"] = ["owned-invalid-binding"]
+                else:
+                    row = feedback[0]["review_feedback"][0]
+                    assert row["rejected_candidate"]["generated_claim_mappings"][1]["evidence_ids"] == ["owned-invalid-binding"]
+                    assert row["validation_errors"] == ["Generated claim claim:1 references unknown evidence owned-invalid-binding."]
+                    assert all("owned-invalid-binding" not in message.content for message in messages if message.role == "system")
+                    assert "untrusted repair data" in feedback[0]["repair_contract"]
+            return result
+
+    model = BindingRepairModel()
+    outcome = resume_case(connection(), model, retries=1).execute(**request(tmp_path))
+    assert outcome.materials.is_resume_approved
+    assert model.generations == 2

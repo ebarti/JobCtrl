@@ -10,6 +10,7 @@ from typing import Any
 from temporalio import activity
 
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
+from jobctrl.domain.determinations import serialized_determination_failure
 from jobctrl.domain.errors import (
     AttemptBudgetExhaustedError,
     JobCtrlError,
@@ -374,6 +375,9 @@ async def tailor_job_activity(payload: TailorJobActivityInput) -> TailorJobActiv
         if status in MATERIAL_REJECTION_STATUSES:
             raise MaterialRejectedError(str(result.get("error") or f"Tailoring ended with status {status}"))
         if status not in {"approved", "skipped", "not_eligible", "already_done"}:
+            failure = serialized_determination_failure(result.get("error"))
+            if failure is not None and not failure.retryable:
+                raise failure
             raise LlmTransientError(str(result.get("error") or f"Tailoring ended with status {status}"))
         materials = result.get("materials")
         generation = getattr(materials, "generation", None)
@@ -723,6 +727,9 @@ async def cover_letter_activity(payload: CoverLetterActivityInput) -> CoverLette
         if status in MATERIAL_REJECTION_STATUSES:
             raise MaterialRejectedError(str(result.get("error") or f"Cover ended with status {status}"))
         if status not in {"ok", "skipped", "already_done"}:
+            failure = serialized_determination_failure(result.get("error"))
+            if failure is not None and not failure.retryable:
+                raise failure
             raise LlmTransientError(str(result.get("error") or f"Cover ended with status {status}"))
         return CoverLetterActivityOutput(
             status=status,

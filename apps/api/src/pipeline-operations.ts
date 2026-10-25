@@ -729,6 +729,7 @@ function plannedMemberResolved(
 ): boolean {
   const required = requiredSteps(member);
   if (required.length === 0) return false;
+  if (!pdfStepForMember(member, pipelineSteps) && pdfStoppedByPrerequisite(member, states, preparationWorkflowStatuses) !== null) return true;
   return required.every((stage) => {
     const terminalOwner = memberPreparationWorkflowFailed(member, preparationWorkflowStatuses);
     if (stage === "pdf") return memberPdfResolved(member, pipelineSteps, preparationWorkflowStatuses, conditionallySkippedPdfJobs);
@@ -1263,12 +1264,37 @@ function pdfCounts(cohortValue: Cohort, steps: PipelineStepRow[]): PipelineStage
     if (member.work_plan_state !== "planned" || !requiredSteps(member).includes("pdf")) continue;
     counts.eligible += 1;
     const step = pdfStepForMember(member, steps);
+    const stopped = pdfStoppedByPrerequisite(
+      member, cohortValue.stageStates.get(member.job_id), cohortValue.preparationWorkflowStatuses,
+    );
     if (step) addPipelineStepState(counts, step.state);
     else if (cohortValue.conditionallySkippedPdfJobs.has(member.job_id)) counts.skipped += 1;
+    else if (stopped) counts[stopped] += 1;
     else if (pdfAwaitsRecordedPrerequisite(cohortValue, member)) counts.waiting += 1;
     else counts.unknown += 1;
   }
   return counts;
+}
+
+function pdfStoppedByPrerequisite(
+  member: MembershipRow,
+  states: Map<string, StageStateRow> | undefined,
+  ownerStatuses: Map<string, string>,
+): "blocked" | "canceled" | null {
+  const required = requiredSteps(member);
+  const pdfIndex = required.indexOf("pdf");
+  const owner = nullableText(member.preparation_workflow_id);
+  if (pdfIndex < 0 || !owner || !isFailedTerminalWorkflowStatus(ownerStatuses.get(owner))) return null;
+  const prerequisites = required.slice(0, pdfIndex).filter(isJobStage);
+  // A successor may be recovering the job after its original owner closed.
+  // Never declare that active work stopped or fabricate a successful render.
+  if (prerequisites.some((stage) => ["queued", "running"].includes(states?.get(stage)?.state ?? ""))) return null;
+  for (const stage of prerequisites) {
+    const state = states?.get(stage);
+    if (state?.state === "canceled") return "canceled";
+    if (state?.state === "exhausted" || (state && isTerminalStageFailure(state))) return "blocked";
+  }
+  return null;
 }
 
 function memberPdfResolved(
@@ -2440,6 +2466,7 @@ function remainingPaths(
   return cohortValue.members.flatMap((member) => {
     if (member.work_plan_state !== "planned") return [];
     const states = cohortValue.stageStates.get(member.job_id);
+    if (!pdfStepForMember(member, pipelineSteps) && pdfStoppedByPrerequisite(member, states, cohortValue.preparationWorkflowStatuses) !== null) return [];
     const stageIds = requiredSteps(member).filter((stage) => {
       const terminalOwner = memberPreparationWorkflowFailed(member, cohortValue.preparationWorkflowStatuses);
       if (stage === "pdf") return !memberPdfResolved(
@@ -2587,6 +2614,7 @@ function sweepMemberHasRemainingWork(
     selected.sweep.preparationWorkflowStatuses,
   );
   const states = selected.sweep.stageStates.get(member.job_id);
+  if (!pdfStepForMember(member, selected.steps) && pdfStoppedByPrerequisite(member, states, selected.sweep.preparationWorkflowStatuses) !== null) return false;
   if (!isTerminalStageState(states?.get("enrich"), terminalOwner)) return true;
   if (member.work_plan_state !== "planned") return true;
   return requiredSteps(member).some((stage) =>
