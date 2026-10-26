@@ -28,3 +28,5 @@ minimumReleaseAgeExclude:
   - qs@6.16.0
   - sharp@0.35.4
   - undici@7.29.0
+  # Version-bounded Vite security backports; retain the global release-age gate.
+  - vite@7.3.7||6.4.4
