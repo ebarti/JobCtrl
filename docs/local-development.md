@@ -509,6 +509,9 @@ Node security backports use version-bounded overrides and exact-release
 exceptions to the existing eight-day package age gate; the global gate remains
 in force. Prefer a patched supported major line over an unrelated major
 migration, such as Vite 7.3.7 for the app and Vite 6.4.4 for VitePress.
+The repository-root Ruff configuration and the worker project both select the
+existing `E4`, `E7`, `E9`, and `F` rule groups explicitly so tool upgrades do not
+silently expand the contributor lint policy.
 
 ## Test And Documentation Workspaces
 
