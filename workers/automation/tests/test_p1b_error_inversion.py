@@ -214,7 +214,9 @@ class _P1bRunInActivityTimeoutWorkflow:
             _p1b_timeout_capacity_activity,
             block,
             start_to_close_timeout=(timedelta(milliseconds=200) if block else timedelta(seconds=5)),
-            heartbeat_timeout=timedelta(milliseconds=100),
+            # This fixture exercises start-to-close cancellation. Its heartbeat
+            # deadline must not race the 200ms start-to-close deadline.
+            heartbeat_timeout=timedelta(seconds=10),
             retry_policy=RetryPolicy(maximum_attempts=1),
         )
 
@@ -610,6 +612,9 @@ async def test_start_to_close_timeout_rotates_capacity_for_next_activity() -> No
                 workflows=[_P1bRunInActivityTimeoutWorkflow],
                 activities=[_p1b_timeout_capacity_activity],
                 workflow_runner=UnsandboxedWorkflowRunner(),
+                # Timeout cancellation is delivered by a heartbeat response.
+                # Keep the fixture's delivery cadence independent of SDK defaults.
+                max_heartbeat_throttle_interval=timedelta(milliseconds=20),
             ):
                 with pytest.raises(WorkflowFailureError) as exc_info:
                     await env.client.execute_workflow(
