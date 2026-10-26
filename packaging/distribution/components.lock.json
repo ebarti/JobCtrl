@@ -41,9 +41,9 @@
     {
       "id": "chromium-core-headless-archive",
       "componentId": "chromium-core",
-      "version": "145.0.7632.6",
-      "url": "https://cdn.playwright.dev/chrome-for-testing-public/145.0.7632.6/mac-arm64/chrome-headless-shell-mac-arm64.zip",
-      "sha256": "8510b9b1575538aa6a092ed16d981738b2ebf52c5e41ea4c54a7ce16756cdcf5",
+      "version": "156.0.8078.4",
+      "url": "https://cdn.playwright.dev/builds/cft/156.0.8078.4/mac-arm64/chrome-headless-shell-mac-arm64.zip",
+      "sha256": "94e4337b70cbc5638f0935fbc46b9f242bc7416f657e3fbe924baf348404b53d",
       "archiveType": "zip",
       "license": "BSD-3-Clause"
     },

@@ -825,7 +825,7 @@ async function assembleExternalRuntimes(payloadRoot, contracts, cacheDirectory, 
   await chmod(path.join(temporalRoot, "temporal"), 0o755);
 
   const chromiumRoot = componentRoot(payloadRoot, contracts, "chromium-core");
-  const headlessRevisionRoot = path.join(chromiumRoot, "chromium_headless_shell-1208");
+  const headlessRevisionRoot = path.join(chromiumRoot, "chromium_headless_shell-1248");
   const headlessEntries = await extractVerifiedArchive({
     archivePath: archiveById.get("chromium-core-headless-archive"),
     lock: lockById.get("chromium-core-headless-archive"),
@@ -1647,7 +1647,7 @@ async function browserCreditsEvidence(payloadRoot, contracts) {
 async function captureChromiumCredits(payloadRoot, contracts, scratchDirectory) {
   const source = path.join(
     componentRoot(payloadRoot, contracts, "chromium-core"),
-    "chromium_headless_shell-1208",
+    "chromium_headless_shell-1248",
     "chrome-headless-shell-mac-arm64",
     "LICENSE.headless_shell",
   );
@@ -2418,7 +2418,7 @@ async function managedMcpChromiumExecutable(payloadRoot, contracts) {
   invariant(contracts.platform.id === "darwin-arm64", `unsupported MCP Chromium smoke platform: ${contracts.platform.id}`);
   const executable = path.join(
     componentRoot(payloadRoot, contracts, "chromium-core"),
-    "chromium_headless_shell-1208",
+    "chromium_headless_shell-1248",
     "chrome-headless-shell-mac-arm64",
     "chrome-headless-shell",
   );
@@ -2428,11 +2428,11 @@ async function managedMcpChromiumExecutable(payloadRoot, contracts) {
 export async function assertHeadlessChromiumPayload(payloadRoot, contracts) {
   const chromiumRoot = componentRoot(payloadRoot, contracts, "chromium-core");
   const files = await buildFileInventory(chromiumRoot);
-  const required = "chromium_headless_shell-1208/chrome-headless-shell-mac-arm64/chrome-headless-shell";
+  const required = "chromium_headless_shell-1248/chrome-headless-shell-mac-arm64/chrome-headless-shell";
   const executable = files.filter((file) => file.type === "file" && file.path === required);
   invariant(executable.length === 1, "core Chromium payload must contain exactly one managed headless-shell executable");
   const topLevel = [...new Set(files.map((file) => file.path.split("/")[0]))].sort(bytewiseCompare);
-  invariant(JSON.stringify(topLevel) === JSON.stringify(["chromium_headless_shell-1208"]), `core Chromium payload has unexpected browser revisions: ${topLevel.join(", ")}`);
+  invariant(JSON.stringify(topLevel) === JSON.stringify(["chromium_headless_shell-1248"]), `core Chromium payload has unexpected browser revisions: ${topLevel.join(", ")}`);
   invariant(files.filter((file) => file.type === "file" && path.posix.basename(file.path) === "chrome-headless-shell").length === 1, "core Chromium payload must not contain an extra headless-shell revision");
   const forbidden = files.filter((file) => file.path.startsWith("chromium-") || file.path.includes(".app/") || file.path.includes("Google Chrome for Testing"));
   invariant(forbidden.length === 0, `core Chromium payload must exclude the full browser topology: ${forbidden.map((file) => file.path).join(", ")}`);
@@ -2708,7 +2708,7 @@ with sync_playwright() as playwright:
     from pathlib import Path
     import os
     browser_root = Path(os.environ["PLAYWRIGHT_BROWSERS_PATH"])
-    required_headless = browser_root / "chromium_headless_shell-1208" / "chrome-headless-shell-mac-arm64" / "chrome-headless-shell"
+    required_headless = browser_root / "chromium_headless_shell-1248" / "chrome-headless-shell-mac-arm64" / "chrome-headless-shell"
     assert required_headless.is_file(), required_headless
     assert not any(browser_root.glob("chromium-*")), list(browser_root.glob("chromium-*"))
     assert not any(browser_root.rglob("*.app")), "full browser app bundle entered the core payload"
@@ -2806,7 +2806,7 @@ with sync_playwright() as playwright:
     playwrightMcp: mcpProtocol,
     tlsClientNative: "darwin-arm64-load-pass",
     dbBackedRoute: "/v1/jobs",
-    browserRevision: 1208,
+    browserRevision: 1248,
     offlineManualCaptureJob: offlineFixtureUrl,
     semanticModel: { provider: "distribution-smoke", model: "explicit-page-fixture", boundary: "model-port-test-double" },
     manualCaptureWorkflow: {

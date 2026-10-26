@@ -44,10 +44,10 @@
         },
         {
           "package": "cryptography",
-          "version": "50.0.1",
-          "url": "https://files.pythonhosted.org/packages/84/a9/ee16a903f13755e914d1eecc482fe64d1f10761c3960e5d8fa6837377aff/cryptography-50.0.1-cp39-abi3-macosx_11_0_arm64.whl",
-          "sha256": "ca83d00d9e69cd5eb63f2e69c3a5a59e0cecae5ae14c6ae0b35830fe3b37bad0",
-          "sizeBytes": 4035307
+          "version": "50.0.2",
+          "url": "https://files.pythonhosted.org/packages/23/ad/ac987755d00e1e64273760228d2635ae38dae2be83e3c6e0d3289d91dec3/cryptography-50.0.2-cp39-abi3-macosx_11_0_arm64.whl",
+          "sha256": "0ec5f09541743261e66e291b4a0cbf0fb2997aeaab6d9e9c740b9dba1b58d1c2",
+          "sizeBytes": 3943588
         },
         {
           "package": "httpx-sse",
@@ -198,10 +198,10 @@
         },
         {
           "package": "cryptography",
-          "version": "50.0.1",
-          "url": "https://files.pythonhosted.org/packages/84/a9/ee16a903f13755e914d1eecc482fe64d1f10761c3960e5d8fa6837377aff/cryptography-50.0.1-cp39-abi3-macosx_11_0_arm64.whl",
-          "sha256": "ca83d00d9e69cd5eb63f2e69c3a5a59e0cecae5ae14c6ae0b35830fe3b37bad0",
-          "sizeBytes": 4035307
+          "version": "50.0.2",
+          "url": "https://files.pythonhosted.org/packages/23/ad/ac987755d00e1e64273760228d2635ae38dae2be83e3c6e0d3289d91dec3/cryptography-50.0.2-cp39-abi3-macosx_11_0_arm64.whl",
+          "sha256": "0ec5f09541743261e66e291b4a0cbf0fb2997aeaab6d9e9c740b9dba1b58d1c2",
+          "sizeBytes": 3943588
         },
         {
           "package": "distro",
@@ -219,10 +219,10 @@
         },
         {
           "package": "google-auth",
-          "version": "2.53.0",
-          "url": "https://files.pythonhosted.org/packages/4a/c9/db44165ba7c581268c6d46017ef63339110378305062830104fc7fa144cb/google_auth-2.53.0-py3-none-any.whl",
-          "sha256": "6e7449917c599b35126a99ec268ec6880301f2fea41dce198fe8fd83ff642b68",
-          "sizeBytes": 246071
+          "version": "2.62.0",
+          "url": "https://files.pythonhosted.org/packages/eb/a3/87fe9b7203ec2e56ea6a57c75e6d632eaf9487c7f7978cdad1d801bee0af/google_auth-2.62.0-py3-none-any.whl",
+          "sha256": "4ff4319aeb4ad128409759d397a9fcafad126d0031d241cc0dd6b9a00b43e3f3",
+          "sizeBytes": 267911
         },
         {
           "package": "google-genai",

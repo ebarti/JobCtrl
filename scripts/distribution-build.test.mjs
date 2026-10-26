@@ -583,7 +583,7 @@ test("successful distribution CLI invocation accepts the option separator and al
 test("the bundled Playwright headless-shell revision is preseeded with immutable first-launch markers", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-browser-markers-"));
   context.after(async () => rm(root, { recursive: true, force: true }));
-  for (const revision of ["chromium_headless_shell-1208"]) {
+  for (const revision of ["chromium_headless_shell-1248"]) {
     const revisionRoot = path.join(root, revision);
     await mkdir(revisionRoot, { recursive: true });
     await writePlaywrightRevisionMarkers(revisionRoot);
@@ -614,7 +614,7 @@ test("fixture builds are bytewise reproducible in different directories", async 
     measurementStatus: "unavailable-fixture",
     packCount: 3,
     wheelCount: 36,
-    downloadBytes: 237887880,
+    downloadBytes: 237726282,
     installedBytes: null,
     fileCount: null,
     treeSha256: null,
@@ -824,12 +824,12 @@ test("forbidden payload scan blocks Widevine from the redistributable Chromium c
 test("headless Chromium topology rejects a full browser path even without Widevine", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-headless-topology-"));
   context.after(async () => rm(root, { recursive: true, force: true }));
-  const shell = path.join(root, "chromium", "chromium_headless_shell-1208", "chrome-headless-shell-mac-arm64", "chrome-headless-shell");
+  const shell = path.join(root, "chromium", "chromium_headless_shell-1248", "chrome-headless-shell-mac-arm64", "chrome-headless-shell");
   await mkdir(path.dirname(shell), { recursive: true });
   await writeFile(shell, "headless", { mode: 0o755 });
   const contracts = { componentPaths: new Map([["chromium-core", "chromium"]]) };
   assert.match((await assertHeadlessChromiumPayload(root, contracts)).executable, /chrome-headless-shell$/);
-  const fullBrowser = path.join(root, "chromium", "chromium-1208", "chrome-mac-arm64", "browser");
+  const fullBrowser = path.join(root, "chromium", "chromium-1248", "chrome-mac-arm64", "browser");
   await mkdir(path.dirname(fullBrowser), { recursive: true });
   await writeFile(fullBrowser, "not-widevine", { mode: 0o755 });
   await assert.rejects(assertHeadlessChromiumPayload(root, contracts), /unexpected browser revisions|full browser topology/);
