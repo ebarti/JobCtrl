@@ -573,6 +573,9 @@ def _ensure_discovery_settings_table(conn: sqlite3.Connection) -> None:
 def _load_discovery_search_config_from_db() -> dict | None:
     if not DB_PATH.exists():
         return None
+    from jobctrl.database import _refuse_unresolved_initialization
+
+    _refuse_unresolved_initialization(DB_PATH)
     conn: sqlite3.Connection | None = None
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -604,6 +607,9 @@ def _load_discovery_search_config_from_db() -> dict | None:
 def _save_discovery_search_config_to_db(search_cfg: dict) -> None:
     if not DB_PATH.exists():
         return
+    from jobctrl.database import _refuse_unresolved_initialization
+
+    _refuse_unresolved_initialization(DB_PATH)
     conn: sqlite3.Connection | None = None
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -689,6 +695,9 @@ def _positive_int(value: object) -> int:
 def _load_profile_target_search() -> dict[str, list[str]]:
     if not DB_PATH.exists():
         return _empty_target_search()
+    from jobctrl.database import _refuse_unresolved_initialization
+
+    _refuse_unresolved_initialization(DB_PATH)
     conn: sqlite3.Connection | None = None
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -1029,6 +1038,9 @@ def _policy_for_local_source(kind: SourceKind, source_id: str):
 def _local_source_registry_rows() -> list[sqlite3.Row]:
     if not DB_PATH.exists():
         return []
+    from jobctrl.database import _refuse_unresolved_initialization
+
+    _refuse_unresolved_initialization(DB_PATH)
     conn: sqlite3.Connection | None = None
     try:
         conn = sqlite3.connect(DB_PATH)

@@ -327,6 +327,10 @@ def _profile_credential(kind: str) -> str:
     if not db_path.exists():
         raise ValueError("job-site password credential is not configured")
 
+    from jobctrl.database import _refuse_unresolved_initialization
+
+    _refuse_unresolved_initialization(db_path)
+
     try:
         conn = sqlite3.connect(db_path)
         try:

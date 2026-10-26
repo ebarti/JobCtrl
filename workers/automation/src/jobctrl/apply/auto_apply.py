@@ -142,6 +142,9 @@ def _budget_halt_active(
     path = Path(db_path)
     if not path.exists():
         return False
+    from jobctrl.database import _refuse_unresolved_initialization
+
+    _refuse_unresolved_initialization(path)
     try:
         with sqlite3.connect(path) as conn:
             row = conn.execute(

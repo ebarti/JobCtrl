@@ -1471,6 +1471,27 @@ func sqliteOnlineBackup(python, source, destination string) (int64, error) {
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 		return 0, errors.New("source database is not a regular file")
 	}
+	// A retained staging hard link marks an unresolved initial publication.
+	// Do not let the backup subprocess open or recover unknown companions.
+	entries, err := os.ReadDir(filepath.Dir(source))
+	if err != nil {
+		return 0, fmt.Errorf("inspect database initialization state: %w", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), ".jobctrl-init-") {
+			continue
+		}
+		candidate, err := os.Lstat(filepath.Join(filepath.Dir(source), entry.Name(), "candidate.db"))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return 0, fmt.Errorf("inspect database initialization candidate: %w", err)
+		}
+		if candidate.Mode().IsRegular() && os.SameFile(info, candidate) {
+			return 0, errors.New("database initialization has an unresolved publication; preserve the database and companions and inspect the retained staging directory")
+		}
+	}
 	if _, err := os.Lstat(destination); !errors.Is(err, os.ErrNotExist) {
 		return 0, errors.New("backup destination already exists")
 	}

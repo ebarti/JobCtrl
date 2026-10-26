@@ -8,6 +8,7 @@ from contextlib import contextmanager
 
 import typer
 from jobctrl.infrastructure.migrations.schema_manifest import SchemaManifestError
+from jobctrl.database import UnresolvedDatabaseInitializationError
 
 app = typer.Typer(help="Propose sources from saved posting history for explicit review.", no_args_is_help=True)
 
@@ -15,9 +16,10 @@ app = typer.Typer(help="Propose sources from saved posting history for explicit 
 @contextmanager
 def connection(*, readonly: bool = False):
     from jobctrl import config
-    from jobctrl.database import SCHEMA_VERSION, EXACT_V14_MANIFEST, assert_exact_manifest
+    from jobctrl.database import SCHEMA_VERSION, EXACT_V14_MANIFEST, _refuse_unresolved_initialization, assert_exact_manifest
 
     config.load_env()
+    _refuse_unresolved_initialization(config.DB_PATH)
     mode = "ro" if readonly else "rw"
     conn = sqlite3.connect(config.DB_PATH.resolve().as_uri() + f"?mode={mode}", uri=True, timeout=10)
     conn.row_factory = sqlite3.Row
@@ -36,7 +38,7 @@ def run(action, *, readonly: bool = False):
         with connection(readonly=readonly) as conn:
             result = action(conn)
         typer.echo(json.dumps(result, ensure_ascii=False))
-    except (ValueError, sqlite3.Error, SchemaManifestError) as exc:
+    except (ValueError, sqlite3.Error, SchemaManifestError, UnresolvedDatabaseInitializationError) as exc:
         typer.echo(f"Source proposal command failed: {exc}", err=True)
         raise typer.Exit(1) from exc
 

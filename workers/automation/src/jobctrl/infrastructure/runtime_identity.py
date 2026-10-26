@@ -82,6 +82,9 @@ def write_worker_heartbeat(
     )
     db_path = Path(identity.db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    from jobctrl.database import _refuse_unresolved_initialization
+
+    _refuse_unresolved_initialization(db_path)
     conn = sqlite3.connect(db_path)
     try:
         conn.execute("PRAGMA busy_timeout=10000")
@@ -175,6 +178,9 @@ def latest_active_max_concurrent_activities() -> int | None:
     """Return the latest worker-reported active activity limit, when available."""
     identity = current_runtime_identity()
     conn: sqlite3.Connection | None = None
+    from jobctrl.database import _refuse_unresolved_initialization
+
+    _refuse_unresolved_initialization(Path(identity.db_path))
     try:
         conn = sqlite3.connect(identity.db_path)
         row = conn.execute(
