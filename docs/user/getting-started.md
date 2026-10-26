@@ -112,6 +112,14 @@ Use `jobctrl start --no-open` when you do not want a browser window, or
 Your workspace is stored under `~/.jobctrl/` by default and survives stops,
 updates, and rollbacks.
 
+If `jobctrl stop` cannot verify that a recorded service has exited, it reports
+the unresolved state instead of claiming the runtime is stopped. `start`,
+backup, update, and rollback can also refuse while that state remains. Check
+`jobctrl status` and investigate the reported process before retrying after it
+has exited. A process group can contain unrelated processes, so do not assume
+that an occupied group is safe to terminate. Keep the runtime registry and
+workspace data intact while resolving the problem.
+
 ## 3. Complete First-Run Setup
 
 ### Create your profile

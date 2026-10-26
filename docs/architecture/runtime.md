@@ -122,9 +122,17 @@ and waits for Temporal plus API worker-heartbeat health. Each canonical
 `~/Library/Application Support/JobCtrl/instances/<sha256>` (or
 `JOBCTRL_RUNTIME_HOME`); records bind PID, PGID, start identity, executable,
 build ID, manifest digest, and ports so lifecycle cleanup cannot target a
-reused PID. The P6 workflow now makes Developer ID signing, notarization, and
-authenticated publication mandatory for promotion. Public artifacts pass those
-gates before the stable release pointer or Homebrew formula can reference them.
+reused PID. A component runs in its own recorded process group. An occupied
+group or unverifiable component record blocks restart and prevents the
+launcher from reporting a verified stop, even if the recorded leader has
+exited. Group occupancy alone does not establish ownership or authorize a
+signal: group signals require the recorded leader's identity to match. Status
+can report an unresolved group as orphaned. The registry does not identify a
+descendant that has left its recorded group; group emptiness alone is not proof
+that such a process has exited. The P6 workflow now makes Developer ID signing,
+notarization, and authenticated publication mandatory for promotion. Public
+artifacts pass those gates before the stable release pointer or Homebrew formula
+can reference them.
 
 Homebrew caches only prefix-owned release resources. Its build sandbox verifies
 strict Developer ID certificate-chain requirements for the launcher, installer
@@ -144,9 +152,10 @@ transition journal records selector handoff, database-pair backup, pending and
 finalized channel policy, and promotion. Acquisition, update, rollback,
 backup, retention, and uninstall serialize through transition then selection
 locking; selector resolution holds a shared selection lock through supervisor
-readiness. Before a candidate is promoted, the old process tree is quiesced
-with the registry's PID/PGID identity checks and both `JOBCTRL_DIR/jobctrl.db`
-and `JOBCTRL_DIR/temporal.db` receive online, hash-verified paired backups.
+readiness. Before a candidate is promoted, recorded component processes and
+groups must pass the registry's PID/PGID quiescence checks, and both
+`JOBCTRL_DIR/jobctrl.db` and `JOBCTRL_DIR/temporal.db` receive online,
+hash-verified paired backups.
 While a journal is unfinished, ordinary commands remain blocked. Internal
 `start --no-open` and its detached supervisor may proceed only from the exact
 payload authorized by the matching durable journal, executable transition state

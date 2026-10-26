@@ -1503,11 +1503,14 @@ func validateStateBinding(ctx launchContext, state instanceState) error {
 	return nil
 }
 func stateHasLiveProcesses(state instanceState) bool {
-	if recordMatchesLiveProcess(state.Supervisor) {
+	// A reused or unreadable PID cannot prove that the registered supervisor
+	// exited. Never signal it without an identity match, but do not use that
+	// mismatch as evidence that the runtime is quiescent either.
+	if supervisorMayBeLive(state.Supervisor) {
 		return true
 	}
 	for _, record := range state.Components {
-		if recordMatchesLiveProcess(record) {
+		if componentMayBeLive(record) {
 			return true
 		}
 	}
@@ -1521,12 +1524,12 @@ func validateStartState(ctx launchContext, state instanceState) error {
 	if err := validateStateBinding(ctx, state); err != nil && stateHasLiveProcesses(state) {
 		return fmt.Errorf("different JobCtrl release is still running for this state directory; run jobctrl status then jobctrl stop before starting this release")
 	}
-	if recordMatchesLiveProcess(state.Supervisor) {
+	if supervisorMayBeLive(state.Supervisor) {
 		return ErrAlreadyRunning
 	}
-	for _, name := range []string{"temporal", "worker", "api"} {
-		if record, exists := state.Components[name]; exists && recordMatchesLiveProcess(record) {
-			return fmt.Errorf("%w: recorded %s component is still live; run jobctrl stop before starting", ErrAlreadyRunning, name)
+	for name, record := range state.Components {
+		if componentMayBeLive(record) {
+			return fmt.Errorf("%w: recorded %s component may still have live processes or unverifiable ownership; inspect jobctrl status and safely stop it before starting", ErrAlreadyRunning, name)
 		}
 	}
 	return nil
@@ -1582,7 +1585,33 @@ func processPIDAlive(pid int) bool {
 		return false
 	}
 	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
+	// Only ESRCH proves absence. Permission or unexpected kernel errors leave
+	// ownership unresolved and must not permit a destructive transition.
+	return !errors.Is(err, syscall.ESRCH)
+}
+
+// componentMayBeLive is deliberately more conservative than identity
+// matching: a missing leader does not prove that its process group is empty.
+// Group existence is not authority to signal it, since a PGID can be reused.
+func componentMayBeLive(record componentRecord) bool {
+	if record.PID <= 0 || record.PGID <= 0 || record.StartIdentity == "" || record.Executable == "" {
+		return true
+	}
+	return processPIDAlive(record.PID) || processGroupAlive(record.PGID)
+}
+
+// A missing supervisor record is valid before one has been registered. A
+// partially populated record is not evidence that the supervisor has exited.
+// Do not probe its process group: a foreground supervisor can share the
+// caller's group and is not the group leader of the managed components.
+func supervisorMayBeLive(record componentRecord) bool {
+	if record == (componentRecord{}) {
+		return false
+	}
+	if record.PID <= 0 || record.PGID <= 0 || record.StartIdentity == "" || record.Executable == "" {
+		return true
+	}
+	return processPIDAlive(record.PID)
 }
 
 func startDetached(ctx launchContext) error {
@@ -1977,7 +2006,7 @@ func processGroupAlive(pgid int) bool {
 		return false
 	}
 	err := syscall.Kill(-pgid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
+	return !errors.Is(err, syscall.ESRCH)
 }
 
 func waitForProcessGroupExit(pgid int, timeout time.Duration) bool {
@@ -1992,6 +2021,12 @@ func waitForProcessGroupExit(pgid int, timeout time.Duration) bool {
 }
 
 func signalOwnedRecord(record componentRecord, signal syscall.Signal) error {
+	// Managed components and migration helpers are started as their own
+	// process-group leaders. A record naming a shared group is never enough
+	// authority to signal its other members, even if its PID still matches.
+	if record.PID <= 0 || record.PGID != record.PID {
+		return errors.New("record does not identify a dedicated owned process group")
+	}
 	if !recordMatchesLiveProcess(record) {
 		return errors.New("record does not match a live owned process")
 	}
@@ -2037,7 +2072,7 @@ func terminateRecord(record componentRecord) error {
 func shutdownComponents(state *instanceState, children map[string]*exec.Cmd, statePath string) {
 	for _, name := range []string{"api", "worker", "temporal"} {
 		record, exists := state.Components[name]
-		if !exists || record.ExitedAt != nil {
+		if !exists || !componentMayBeLive(record) {
 			continue
 		}
 		if err := terminateRecord(record); err == nil {
@@ -2053,10 +2088,9 @@ func shutdownComponents(state *instanceState, children map[string]*exec.Cmd, sta
 
 func allRecordedComponentsStopped(state instanceState) bool {
 	for _, record := range state.Components {
-		// A still-existing PID might have been reused after identity verification
-		// failed. Keep the registry in a recoverable non-stopped state rather
-		// than claim that an unknown live process exited.
-		if processPIDAlive(record.PID) {
+		// A reused PID, a surviving group, or incomplete ownership metadata
+		// cannot certify quiescence, even when the recorded leader has exited.
+		if componentMayBeLive(record) {
 			return false
 		}
 	}
@@ -2080,8 +2114,8 @@ func stop(ctx launchContext) error {
 	}
 	failed := make([]string, 0)
 	for _, name := range []string{"api", "worker", "temporal"} {
-		if record, exists := state.Components[name]; exists {
-			if err := terminateRecord(record); err != nil && processPIDAlive(record.PID) {
+		if record, exists := state.Components[name]; exists && componentMayBeLive(record) {
+			if err := terminateRecord(record); err != nil && componentMayBeLive(record) {
 				failed = append(failed, name+": "+err.Error())
 			}
 		}
@@ -2096,7 +2130,7 @@ func stop(ctx launchContext) error {
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
-	if len(failed) > 0 || !allRecordedComponentsStopped(state) {
+	if len(failed) > 0 || !allRecordedComponentsStopped(state) || supervisorMayBeLive(state.Supervisor) {
 		state.StoppedAt = nil
 		if err := writeState(ctx.Instance.StatePath, state); err != nil {
 			return err
@@ -2104,7 +2138,7 @@ func stop(ctx launchContext) error {
 		if len(failed) > 0 {
 			return fmt.Errorf("could not safely stop live component groups: %s", strings.Join(failed, ", "))
 		}
-		return errors.New("JobCtrl still has live recorded component PIDs after stop")
+		return errors.New("JobCtrl may still have live recorded processes or unverifiable component ownership after stop")
 	}
 	now := time.Now().UTC()
 	state.StoppedAt = &now
@@ -2158,7 +2192,9 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 			}
 		} else {
 			allReady = false
-			if found && record.ExitedAt == nil {
+			if found && componentMayBeLive(record) {
+				stateName = "orphaned"
+			} else if found && record.ExitedAt == nil {
 				stateName = "stale"
 			}
 		}
@@ -2171,6 +2207,10 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 	} else if !allReady && supervisorLive {
 		overall = "degraded"
 	} else if allReady {
+		overall = "orphaned"
+	} else if stateHasLiveProcesses(state) {
+		// A dead leader can leave an occupied group, and a reused PID cannot
+		// establish quiescence. Neither is a verified stopped runtime.
 		overall = "orphaned"
 	}
 	if differentRelease {
