@@ -84,6 +84,11 @@ wrap below their binding explanation; no decision or audit section is removed.
 
 ## Approval And Automation Modes
 
+For a one-off CLI batch, a finite `--limit` bounds the jobs claimed, including
+jobs skipped after claim; increasing the worker count does not increase that
+limit. A URL-targeted batch remains scoped to that one job. Use `--continuous`
+when you deliberately want to keep polling for eligible jobs.
+
 Apply checks only the locally eligible candidate after repeat-application,
 attempt and approval gates. When availability stays unknown, dry-run rehearsals
 and the existing human-reviewed/manual Apply path remain available; approval must

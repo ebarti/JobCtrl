@@ -95,6 +95,7 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
             headless=payload.headless,
             model=payload.model,
             dry_run=payload.dry_run,
+            continuous=payload.continuous,
             workers=workers,
             approval_required=approval_required,
             workflow_id=workflow_id,

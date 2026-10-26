@@ -2542,6 +2542,10 @@ def worker_loop(
             continue
 
         empty_polls = 0
+        # The finite limit bounds claims, including attempts the use case later
+        # skips or the operator interrupts. Otherwise releasing a skipped job
+        # can let the same worker claim beyond its allocation indefinitely.
+        jobs_done += 1
         job_id = canonical_job_id(str(job["job_id"]))
         job_tenant_id = TenantId(str(job["tenant_id"]))
         try:
@@ -2563,6 +2567,8 @@ def worker_loop(
                     tenant_id=job_tenant_id,
                 )
                 add_event(f"[W{worker_id} {run_ctx['run_id'][:8]}] Skipped: {(job.get('title') or '')[:30]}")
+                if target_job_id is not None:
+                    break
                 continue
             if isinstance(result, Applied):
                 mark_result(
@@ -2610,7 +2616,7 @@ def worker_loop(
                 tenant_id=job_tenant_id,
             )
             add_event(f"[W{worker_id} {run_ctx['run_id'][:8]}] Job skipped (Ctrl+C)")
-            if _stop_event.is_set():
+            if _stop_event.is_set() or target_job_id is not None:
                 break
             continue
         except Exception as exc:  # noqa: BLE001
@@ -2624,7 +2630,6 @@ def worker_loop(
             failed += 1
             update_state(worker_id, jobs_failed=failed)
 
-        jobs_done += 1
         if target_job_id is not None:
             break
 
@@ -2664,6 +2669,21 @@ def main(
     metric_error_message: str | None = None
     stable_tenant_id = TenantId(str(tenant_id or LOCAL_TENANT))
 
+    if continuous:
+        effective_limit = 0
+        mode_label = "continuous"
+    else:
+        effective_limit = limit
+        mode_label = f"{limit} jobs"
+
+    # One explicit target is one job, even when a caller supplies a larger
+    # worker count. This prevents peer workers reclaiming it after a skip.
+    if target_job_id is not None:
+        workers = 1
+    elif effective_limit > 0:
+        # Avoid showing idle dashboard workers that have no finite allocation.
+        workers = min(workers, effective_limit)
+
     _record_apply_batch_metric(
         outcome="started",
         run_id=batch_run_id,
@@ -2681,13 +2701,6 @@ def main(
             snapshot = None
 
     recovered = recover_ambiguous_running_apply(console)
-
-    if continuous:
-        effective_limit = 0
-        mode_label = "continuous"
-    else:
-        effective_limit = limit
-        mode_label = f"{limit} jobs"
 
     total_applied = 0
     total_failed = 0
@@ -2767,7 +2780,11 @@ def main(
                             workflow_id=workflow_id,
                             tenant_id=stable_tenant_id,
                         ): i
+                        # Zero is the continuous sentinel in worker_loop, not
+                        # an empty finite allocation. Do not start such workers
+                        # when the requested batch is bounded.
                         for i in range(workers)
+                        if not effective_limit or limits[i] > 0
                     }
 
                     results: list[tuple[int, int]] = []

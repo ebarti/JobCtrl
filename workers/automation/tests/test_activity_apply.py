@@ -129,6 +129,7 @@ async def test_apply_activity_continuous_calls_apply_main_with_limit_zero():
 
     apply_main_mock.assert_called_once()
     assert apply_main_mock.call_args.kwargs["limit"] == 0
+    assert apply_main_mock.call_args.kwargs["continuous"] is True
 
 
 @pytest.mark.asyncio
