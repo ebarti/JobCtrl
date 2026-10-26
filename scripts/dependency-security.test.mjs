@@ -34,10 +34,13 @@ function versionMajor(version) {
   return Number(version.split(".")[0]);
 }
 
-test("brace-expansion maintenance lines apply the default output-length cap", () => {
+test("brace-expansion maintenance lines apply the default output-length cap", async () => {
   const defaultMaxLength = 4_000_000;
+  const sourceLock = await readFile(path.join(process.cwd(), pnpmLockPaths[0]), "utf8");
+  const lockedVersions = packageVersions(sourceLock, "brace-expansion");
+  assert.ok(lockedVersions.size > 0, "the source lock must contain the exercised package");
 
-  for (const version of ["1.1.18", "2.1.4", "5.0.9"]) {
+  for (const version of lockedVersions) {
     const packagePath = path.join(
       process.cwd(),
       "node_modules",
@@ -72,15 +75,15 @@ test("source and packaging locks exclude every currently alerted dependency rang
     ["@platejs/core", "53.3.11"],
     ["baseline-browser-mapping", "2.11.0"],
     ["browserslist", "4.28.7"],
-    ["fast-uri", "3.1.6"],
-    ["hono", "4.13.5"],
-    ["ip-address", "10.3.1"],
+    ["fast-uri", "3.1.9"],
+    ["hono", "4.13.11"],
+    ["ip-address", "10.7.4"],
     ["js-yaml", "4.3.2"],
     ["pdfjs-dist", "6.2.108"],
     ["postcss", "8.5.23"],
-    ["postcss-selector-parser", "7.1.3"],
+    ["postcss-selector-parser", "7.1.6"],
     ["qs", "6.16.0"],
-    ["sharp", "0.35.4"],
+    ["sharp", "0.35.5"],
   ]);
 
   for (const [packageName, minimum] of minimums) {
@@ -96,12 +99,12 @@ test("source and packaging locks exclude every currently alerted dependency rang
 
   for (const version of packageVersions(lockContents, "brace-expansion")) {
     const major = versionMajor(version);
-    const minimum = major === 1 ? "1.1.18" : major === 2 ? "2.1.4" : major >= 4 ? "5.0.9" : null;
+    const minimum = major === 1 ? "1.1.21" : major === 2 ? "2.1.7" : major >= 4 ? "5.0.12" : null;
     assert.ok(!minimum || compareVersions(version, minimum) >= 0, `brace-expansion@${version} remains vulnerable`);
   }
   for (const version of packageVersions(lockContents, "joi")) {
     const major = versionMajor(version);
-    const minimum = major === 17 ? "17.13.6" : major >= 18 ? "18.2.5" : major >= 16 ? "17.13.6" : null;
+    const minimum = major === 17 ? "17.13.8" : major >= 18 ? "18.2.9" : major >= 16 ? "17.13.8" : null;
     assert.ok(!minimum || compareVersions(version, minimum) >= 0, `joi@${version} remains vulnerable`);
   }
   for (const version of packageVersions(lockContents, "nanoid")) {
@@ -112,7 +115,7 @@ test("source and packaging locks exclude every currently alerted dependency rang
   }
   for (const version of packageVersions(lockContents, "undici")) {
     assert.ok(
-      versionMajor(version) !== 7 || compareVersions(version, "7.29.0") >= 0,
+      versionMajor(version) !== 7 || compareVersions(version, "7.30.1") >= 0,
       `undici@${version} remains vulnerable`,
     );
   }
