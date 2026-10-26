@@ -74,6 +74,9 @@ func sqliteUserVersion(python, database string) (int64, error) {
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 		return 0, errors.New("database is not a regular file")
 	}
+	if err := checkDatabasePublication(database); err != nil {
+		return 0, err
+	}
 	code := `import pathlib,sqlite3,sys
 p=pathlib.Path(sys.argv[1]).resolve().as_uri()+"?mode=ro"
 c=sqlite3.connect(p,uri=True)
@@ -353,6 +356,9 @@ func installSealedV7Candidate(candidate launchContext, candidatePath string) err
 		return errors.New("v7 activation candidate is not an owner-private regular file")
 	}
 	live := filepath.Join(candidate.Instance.StateDir, "jobctrl.db")
+	if err := checkDatabasePublication(live); err != nil {
+		return err
+	}
 	liveInfo, err := os.Lstat(live)
 	if err != nil || !liveInfo.Mode().IsRegular() || liveInfo.Mode()&os.ModeSymlink != 0 {
 		return errors.New("live v6 database is not a regular file")

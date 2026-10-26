@@ -154,6 +154,9 @@ func recoverRevokedTransitionBeforePrepare(env []string, output io.Writer) (bool
 	if err != nil {
 		return true, err
 	}
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return true, err
+	}
 	var pair databasePair
 	if err := decodeStrictRegular(filepath.Join(ctx.Instance.StateDir, "backups", journal.BackupID, "pair.json"), &pair); err != nil || pair.ReleaseReceipt != *journal.Old {
 		return true, errors.New("security transition recovery has no verified predecessor database pair")
@@ -479,6 +482,9 @@ func update(ctx launchContext, args []string, output io.Writer) error {
 		_, err := io.WriteString(output, "usage: jobctrl update [--to BUILD_ID]\n")
 		return err
 	}
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return err
+	}
 	build, err := parseBuildTarget(args, "update")
 	if err != nil {
 		return err
@@ -699,6 +705,9 @@ func readHomebrewFormulaAssets(prefix string) (homebrewFormulaAssets, error) {
 
 func rollback(ctx launchContext, args []string, output io.Writer) error {
 	releaseSelection(&ctx)
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return err
+	}
 	build, err := parseBuildTarget(args, "rollback")
 	if err != nil {
 		return err
@@ -740,6 +749,9 @@ func rollbackExisting(ctx launchContext, store *release.Store, active release.Ac
 		return err
 	}
 	defer selection.Close()
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return err
+	}
 	active, err = store.ReadActive()
 	if err != nil {
 		return err
@@ -801,6 +813,9 @@ func rollbackExisting(ctx launchContext, store *release.Store, active release.Ac
 		return err
 	}
 	fail := func(cause error) error {
+		if errors.Is(cause, errUnresolvedDatabasePublication) {
+			return cause
+		}
 		_ = store.Advance(&journal, release.RollbackRestoring, cause)
 		if stopErr := stop(ctx); stopErr != nil {
 			return fmt.Errorf("%v; refusing to restore the current database pair while the rollback target could not be quiesced: %w", cause, stopErr)
@@ -898,6 +913,11 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 	if !journal.Resumable() {
 		return false, nil
 	}
+	// Never advance the journal, restore a pair, or restart an older release
+	// while a fresh database publication remains unresolved.
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return false, err
+	}
 	if journal.Old == nil {
 		return false, errors.New("unfinished transition has no prior release receipt")
 	}
@@ -934,6 +954,9 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 		if sourceErr == nil && (preactivation || intent != nil) {
 			python := filepath.Join(ctx.PayloadRoot, "python", "bin", "python3")
 			liveVersion, liveErr := sqliteUserVersion(python, filepath.Join(ctx.Instance.StateDir, "jobctrl.db"))
+			if errors.Is(liveErr, errUnresolvedDatabasePublication) {
+				return false, liveErr
+			}
 			preserveUnactivatedSource = liveErr == nil && liveVersion == sourceVersion
 			if intent != nil && !preserveUnactivatedSource {
 				return false, errV14SourceChanged
@@ -1035,6 +1058,9 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 		return fmt.Errorf("acquire exclusive release selection lock: %w", err)
 	}
 	defer selection.Close()
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return err
+	}
 	if existing, journalErr := store.ReadJournal(); journalErr == nil && existing.Resumable() {
 		return fmt.Errorf("unfinished %s transition at %s must be recovered before another promotion", existing.Operation, existing.State)
 	} else if journalErr != nil && !errors.Is(journalErr, os.ErrNotExist) {
@@ -1125,6 +1151,9 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 		return fmt.Errorf("quiesce active release: %w", err)
 	}
 	restartBeforeBackup := func(cause error) error {
+		if errors.Is(cause, errUnresolvedDatabasePublication) {
+			return cause
+		}
 		_ = store.Advance(&journal, release.RollbackRestoring, cause)
 		if stopErr := stop(ctx); stopErr != nil {
 			return fmt.Errorf("%v; old runtime could not be made safe to restart: %w", cause, stopErr)
@@ -1157,6 +1186,9 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 	}
 	databaseVersion, err := jobCtrlSchemaVersion(activeRuntime)
 	if err != nil {
+		if errors.Is(err, errUnresolvedDatabasePublication) {
+			return err
+		}
 		return restartBeforeBackup(fmt.Errorf("read stopped JobCtrl schema before update: %w", err))
 	}
 	switch databaseVersion {
@@ -1185,6 +1217,9 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 	}
 	pair, err := snapshotPair(ctx, active.Receipt)
 	if err != nil {
+		if errors.Is(err, errUnresolvedDatabasePublication) {
+			return err
+		}
 		if databaseVersion != currentJobCtrlSchemaVersion {
 			return restartBeforeBackup(fmt.Errorf("create paired pre-upgrade backup: %w", err))
 		}
@@ -1206,6 +1241,9 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 
 	migrationActivationStarted := false
 	rollbackFailure := func(cause error) error {
+		if errors.Is(cause, errUnresolvedDatabasePublication) {
+			return cause
+		}
 		preserveLiveSource := (databaseVersion != currentJobCtrlSchemaVersion && !migrationActivationStarted) || errors.Is(cause, errV14SourceChanged)
 		if preserveLiveSource {
 			if err := writeV14SourcePreservation(ctx.Instance.StateDir, journal.ID, pair.ID, databaseVersion); err != nil {
@@ -1303,6 +1341,9 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 }
 
 func startRelease(ctx launchContext, receipt release.Receipt, journalID string) error {
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return err
+	}
 	store, err := releaseStore(ctx)
 	if err != nil {
 		return err
@@ -1350,6 +1391,9 @@ func backup(ctx launchContext, args []string, output io.Writer) error {
 	if !filepath.IsAbs(directory) {
 		return errors.New("backup output must be an absolute directory")
 	}
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return err
+	}
 	if err := ensureSafeDirectory(directory); err != nil {
 		return err
 	}
@@ -1388,6 +1432,9 @@ func backup(ctx launchContext, args []string, output io.Writer) error {
 		}
 	}
 	pair, err := snapshotPairTo(ctx, active.Receipt, directory)
+	if errors.Is(err, errUnresolvedDatabasePublication) {
+		return err
+	}
 	if wasRunning {
 		// A stable selector takes a shared selection lock through readiness, so
 		// restart only after releasing our exclusive selection lock. We retain
@@ -1411,6 +1458,9 @@ func backup(ctx launchContext, args []string, output io.Writer) error {
 }
 
 func startSelectedRelease(ctx launchContext) error {
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return err
+	}
 	selector := filepath.Join(ctx.Instance.RuntimeHome, "bin", "jobctrl")
 	if err := VerifyPublicSelectorForExecution(ctx.Instance.RuntimeHome); err != nil {
 		return fmt.Errorf("verify public selector before restart: %w", err)
@@ -1466,16 +1516,24 @@ func snapshotPairTo(ctx launchContext, receipt release.Receipt, parent string) (
 	return pair, nil
 }
 
-func sqliteOnlineBackup(python, source, destination string) (int64, error) {
+var errUnresolvedDatabasePublication = errors.New("database initialization has an unresolved publication; preserve the database and companions and inspect the retained staging directory")
+
+// checkDatabasePublication is filesystem-only: even read-only SQLite access
+// may change a WAL companion. Missing databases are allowed for first install.
+func checkDatabasePublication(source string) error {
 	info, err := os.Lstat(source)
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return 0, errors.New("source database is not a regular file")
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
 	}
-	// A retained staging hard link marks an unresolved initial publication.
-	// Do not let the backup subprocess open or recover unknown companions.
+	if err != nil {
+		return fmt.Errorf("inspect database publication target: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("database publication target is not a regular file")
+	}
 	entries, err := os.ReadDir(filepath.Dir(source))
 	if err != nil {
-		return 0, fmt.Errorf("inspect database initialization state: %w", err)
+		return fmt.Errorf("inspect database initialization state: %w", err)
 	}
 	for _, entry := range entries {
 		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), ".jobctrl-init-") {
@@ -1486,11 +1544,22 @@ func sqliteOnlineBackup(python, source, destination string) (int64, error) {
 			continue
 		}
 		if err != nil {
-			return 0, fmt.Errorf("inspect database initialization candidate: %w", err)
+			return fmt.Errorf("inspect database initialization candidate: %w", err)
 		}
 		if candidate.Mode().IsRegular() && os.SameFile(info, candidate) {
-			return 0, errors.New("database initialization has an unresolved publication; preserve the database and companions and inspect the retained staging directory")
+			return errUnresolvedDatabasePublication
 		}
+	}
+	return nil
+}
+
+func sqliteOnlineBackup(python, source, destination string) (int64, error) {
+	info, err := os.Lstat(source)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return 0, errors.New("source database is not a regular file")
+	}
+	if err := checkDatabasePublication(source); err != nil {
+		return 0, err
 	}
 	if _, err := os.Lstat(destination); !errors.Is(err, os.ErrNotExist) {
 		return 0, errors.New("backup destination already exists")
@@ -1550,6 +1619,9 @@ func describeDatabase(path, name string, version int64) (databaseFile, error) {
 }
 
 func restorePair(ctx launchContext, pair databasePair) error {
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return err
+	}
 	if pair.SchemaVersion != 1 || !pair.ReleaseReceipt.Valid() || len(pair.Files) != 2 {
 		return errors.New("backup is not a complete database pair")
 	}
@@ -1583,6 +1655,9 @@ func restorePair(ctx launchContext, pair databasePair) error {
 	}
 	// No runtime is live (quiescing happened first). The journal makes a crash
 	// between the two renames recoverable; never restore a single DB by itself.
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return err
+	}
 	for _, name := range []string{"jobctrl.db", "temporal.db"} {
 		if err := os.Rename(filepath.Join(staging, name), filepath.Join(ctx.Instance.StateDir, name)); err != nil {
 			return err
