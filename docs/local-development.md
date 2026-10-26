@@ -502,6 +502,13 @@ version updates: advancing them requires a reviewed cutoff change and coupled
 lockfile maintenance. These type-only exclusions preserve security update
 attempts. A security fix published after a cutoff still requires that deliberate
 cutoff and lockfile update before resolution can succeed.
+For the Claude SDK argument-injection fix, the reviewed cutoff advances only
+to 2026-07-18 and both provider groups pin `claude-agent-sdk==0.2.121`.
+The worker and separately shipped provider-pack lock must advance together.
+Node security backports use version-bounded overrides and exact-release
+exceptions to the existing eight-day package age gate; the global gate remains
+in force. Prefer a patched supported major line over an unrelated major
+migration, such as Vite 7.3.7 for the app and Vite 6.4.4 for VitePress.
 
 ## Test And Documentation Workspaces
 

@@ -56,9 +56,9 @@
   "devDependencies": {
     "@jobctrl/tsconfig": "workspace:*",
     "@playwright/test": "^1.64.1",
-    "@storybook/addon-a11y": "^10.3.6",
-    "@storybook/addon-docs": "^10.3.6",
-    "@storybook/react-vite": "^10.3.6",
+    "@storybook/addon-a11y": "^10.6.2",
+    "@storybook/addon-docs": "^10.6.2",
+    "@storybook/react-vite": "^10.6.2",
     "@storybook/test-runner": "^0.24.4",
     "@tailwindcss/vite": "^4.3.3",
     "@tanstack/router-plugin": "^1.168.47",
@@ -72,7 +72,7 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
-    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/coverage-v8": "^4.1.12",
     "axe-core": "^4.14.0",
     "axe-playwright": "^2.2.2",
     "better-sqlite3": "^12.9.0",
@@ -83,11 +83,11 @@
     "msw-storybook-addon": "^3.0.0",
     "prettier": "^3.9.10",
     "start-server-and-test": "^3.0.13",
-    "storybook": "^10.3.6",
+    "storybook": "^10.6.2",
     "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3",
     "vite": "^7.3.7",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   },
   "msw": {
     "workerDirectory": [

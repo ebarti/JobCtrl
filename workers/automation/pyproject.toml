@@ -20,7 +20,7 @@ classifiers = [
 dependencies = [
     # Shared lifecycle, capability and process-reuse boundary for agent SDKs.
     "agent-runtime-kit>=0.5.4,<0.6",
-    "certifi>=2024.2.2",
+    "certifi>=2026.10.19",
     "typer>=0.9.0",
     "click>=8.3.3",
     "rich>=13.0",
@@ -68,7 +68,7 @@ dev = [
     "ruff==0.17.1",
 ]
 providers = [
-    "claude-agent-sdk==0.2.115",
+    "claude-agent-sdk==0.2.121",
     "mcp>=1.28.1",
     "openai-codex==0.163.0",
     "openai-codex-cli-bin==0.163.0",
@@ -81,7 +81,7 @@ providers = [
 # and acquire provider wheels separately through the signed provider-pack path.
 [dependency-groups]
 provider-runtime = [
-    "claude-agent-sdk==0.2.115",
+    "claude-agent-sdk==0.2.121",
     "openai-codex==0.163.0",
     "openai-codex-cli-bin==0.163.0",
     "google-antigravity==0.1.2",
@@ -155,4 +155,4 @@ default-groups = ["provider-runtime"]
 # as a relative timestamp would make an unchanged lockfile fail `uv --locked`
 # as time passes. Provider runtimes and the audited JobStreaming integration
 # retain their explicit reviewed cutoffs.
-exclude-newer-package = { "google-antigravity" = "2026-06-04T21:19:27Z", "claude-agent-sdk" = "2026-07-10T00:00:00Z", "jobstreaming" = "2026-08-29T23:59:59Z" }
+exclude-newer-package = { "google-antigravity" = "2026-06-04T21:19:27Z", "claude-agent-sdk" = "2026-07-18T00:00:00Z", "jobstreaming" = "2026-08-29T23:59:59Z" }
