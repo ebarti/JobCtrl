@@ -702,6 +702,12 @@ function runRefreshPassInTransaction(db: SqliteDatabase, tenantId: string): bool
   // keys, including those suffixed by an opaque tenant ID such as python:local.
   const watermarkName = `typescript:${PROJECTION_WATERMARK_NAME}:${tenantId}`;
   const watermark = readWatermark(db, watermarkName);
+  // Existing workspaces can contain projections written before score/report
+  // publication became atomic. Refresh them once even when there is no event:
+  // an interrupted old publication may never have emitted one.
+  const scoreReportRepairName = `typescript:score-report-version-binding:${tenantId}`;
+  const scoreReportRepairPending = !getRow(db,
+    "SELECT 1 FROM event_watermarks WHERE projection_name = ?", [scoreReportRepairName]);
 
   let dirtyJobs = new Set<string>([...repairedDependencyJobs, ...repairedCoverConflictJobs]);
   let sourceQualityDirty = false;
@@ -761,6 +767,23 @@ function runRefreshPassInTransaction(db: SqliteDatabase, tenantId: string): bool
     ])?.c ?? 0;
   if (evidenceProjectionCount === 0) {
     evidenceUsageDirty = true;
+  }
+  if (scoreReportRepairPending) {
+    evidenceUsageDirty = true;
+    for (const row of allRows<{ job_id: string }>(db,
+      `SELECT p.job_id FROM job_list_projections p
+        WHERE p.tenant_id = ? AND (
+          p.score_version IS NOT (SELECT MAX(s.version) FROM job_scores s
+            WHERE s.tenant_id = p.tenant_id AND s.job_id = p.job_id)
+          OR (EXISTS (SELECT 1 FROM job_requirement_fit_reports old
+               WHERE old.tenant_id = p.tenant_id AND old.job_id = p.job_id)
+              AND NOT EXISTS (SELECT 1 FROM job_requirement_fit_reports current
+               WHERE current.tenant_id = p.tenant_id AND current.job_id = p.job_id
+                 AND current.score_version = (SELECT MAX(s.version) FROM job_scores s
+                   WHERE s.tenant_id = p.tenant_id AND s.job_id = p.job_id)))
+        )`, [tenantId])) {
+      dirtyJobs.add(row.job_id);
+    }
   }
 
   // First-run backfill: if the projection table is empty, force a full
@@ -871,6 +894,9 @@ function runRefreshPassInTransaction(db: SqliteDatabase, tenantId: string): bool
   }
   if (evidenceUsageDirty || dirtyJobs.size > 0) {
     rebuildEvidenceUsageProjection(db, tenantId);
+  }
+  if (scoreReportRepairPending) {
+    setWatermark(db, scoreReportRepairName, 0);
   }
 
   if (maxEventId > watermark) {
@@ -1357,20 +1383,20 @@ function loadRequirementFitReportJson(
   db: SqliteDatabase,
   tenantId: string,
   jobId: string,
+  scoreVersion: number | null,
 ): string | null {
+  if (scoreVersion === null) return null;
   const row = getRow<RequirementFitReportRow>(
     db,
     `SELECT job_id, score_version, tenant_id, employer_analysis_generation,
             profile_snapshot_version, scoring_policy_version, formula_version,
             resolved_fit_score, fit_band, confidence, summary_json
        FROM job_requirement_fit_reports
-      WHERE tenant_id = ? AND job_id = ?
-      ORDER BY score_version DESC
+      WHERE tenant_id = ? AND job_id = ? AND score_version = ?
       LIMIT 1`,
-    [tenantId, jobId],
+    [tenantId, jobId, scoreVersion],
   );
   if (!row) return null;
-  const scoreVersion = Number(row.score_version);
   const items = allRows<RequirementFitItemRow>(
     db,
     `SELECT requirement_id, requirement_text, tier, weight, job_evidence_span,
@@ -1400,15 +1426,16 @@ function loadLatestRequirementFitBand(
   db: SqliteDatabase,
   tenantId: string,
   jobId: string,
+  scoreVersion: number | null,
 ): string | null {
+  if (scoreVersion === null) return null;
   const row = getRow<{ fit_band: string | null }>(
     db,
     `SELECT fit_band
        FROM job_requirement_fit_reports
-      WHERE tenant_id = ? AND job_id = ?
-      ORDER BY score_version DESC
+      WHERE tenant_id = ? AND job_id = ? AND score_version = ?
       LIMIT 1`,
-    [tenantId, jobId],
+    [tenantId, jobId, scoreVersion],
   );
   return nullableString(row?.fit_band);
 }
@@ -1949,10 +1976,10 @@ function attachRequirementUsagesAndGaps(
        ${jobMetadata.joinSql}${lifecycle.joinSql}
       WHERE items.tenant_id = ?${lifecycle.whereSql}
         AND items.score_version = (
-          SELECT MAX(report.score_version)
-            FROM job_requirement_fit_reports AS report
-           WHERE report.tenant_id = items.tenant_id
-             AND report.job_id = items.job_id
+          SELECT MAX(score.version)
+            FROM job_scores AS score
+           WHERE score.tenant_id = items.tenant_id
+             AND score.job_id = items.job_id
         )
       ORDER BY items.job_id, items.position, items.requirement_id`,
     [tenantId],
@@ -2682,13 +2709,15 @@ export function refreshJobDetailProjections(db: SqliteDatabase, tenantId = "loca
 export function ensureJobDetailProjection(db: SqliteDatabase, tenantId: string, jobId: string): boolean {
   const row = getRow<{ last_updated_at: string; score_version: number | null;
     employer_analysis_json: string | null; compensation_summary_json: string | null;
-    compensation_audit_json: string | null }>(db,
+    compensation_audit_json: string | null; requirement_fit_report_json: string | null }>(db,
     "SELECT * FROM job_detail_projections WHERE tenant_id = ? AND job_id = ?", [tenantId, jobId]);
   const obsolete = row && (
     (row.employer_analysis_json !== null &&
       parseProjectionJsonRecord(row.employer_analysis_json)?.prompt_version !== EMPLOYER_ANALYSIS_PROMPT_VERSION) ||
     parseProjectionJsonRecord(row.compensation_summary_json)?.projectionVersion !== COMPENSATION_PROJECTION_VERSION ||
-    parseProjectionJsonRecord(row.compensation_audit_json)?.projectionVersion !== COMPENSATION_PROJECTION_VERSION
+    parseProjectionJsonRecord(row.compensation_audit_json)?.projectionVersion !== COMPENSATION_PROJECTION_VERSION ||
+    (row.requirement_fit_report_json !== null &&
+      parseProjectionJsonRecord(row.requirement_fit_report_json)?.scoreVersion !== row.score_version)
   );
   const list = getRow<{ score_version: number | null; compensation_summary_json: string | null }>(db,
     "SELECT score_version, compensation_summary_json FROM job_list_projections WHERE tenant_id = ? AND job_id = ?",
@@ -2727,7 +2756,7 @@ function rebuildJobDetailProjection(db: SqliteDatabase, tenantId: string, jobId:
   }
   const score = loadLatestScore(db, tenantId, jobId);
   const employerAnalysisJson = loadEmployerAnalysisJson(db, tenantId, jobId);
-  const requirementFitReportJson = loadRequirementFitReportJson(db, tenantId, jobId);
+  const requirementFitReportJson = loadRequirementFitReportJson(db, tenantId, jobId, score.version);
   const interviewPrepJson = loadInterviewPrepJson(db, tenantId, jobId);
   const enrichment = loadEnrichment(db, tenantId, jobId);
   const stages = loadStages(db, tenantId, jobId);
@@ -2809,7 +2838,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobId: stri
   const score = loadLatestScore(db, tenantId, jobId);
   const materials = loadLatestMaterials(db, tenantId, jobId);
   const materialAnalytics = loadMaterialAnalytics(db, tenantId, jobId);
-  const requirementFitBand = fitBand(loadLatestRequirementFitBand(db, tenantId, jobId));
+  const requirementFitBand = fitBand(loadLatestRequirementFitBand(db, tenantId, jobId, score.version));
   const enrichment = loadEnrichment(db, tenantId, jobId);
   const apply = loadLatestApplyRun(db, tenantId, jobId);
   const deletedAt = loadDeletedAt(db, tenantId, jobId);

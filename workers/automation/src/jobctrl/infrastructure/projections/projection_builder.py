@@ -1460,7 +1460,12 @@ class ProjectionBuilder:
         score = self._load_latest_score(job_id)
         materials = self._load_latest_materials(job_id)
         material_analytics = self._load_material_analytics(job_id)
-        requirement_fit_report_json = self._load_requirement_fit_report(job_id)
+        score_version = score.get("version")
+        requirement_fit_report_json = (
+            self._load_requirement_fit_report(job_id, score_version=score_version)
+            if score_version is not None
+            else None
+        )
         requirement_fit_band = _fit_band_from_report_json(requirement_fit_report_json)
         provenance_by_artifact = self._load_bullet_provenance_by_artifact(job_id)
         layout_boxes_by_artifact = self._load_layout_boxes_by_artifact(job_id)
@@ -1915,10 +1920,10 @@ class ProjectionBuilder:
               {job_metadata["join_sql"]}{lifecycle["join_sql"]}
              WHERE items.tenant_id = ?{lifecycle["where_sql"]}
                AND items.score_version = (
-                 SELECT MAX(report.score_version)
-                  FROM job_requirement_fit_reports AS report
-                  WHERE report.tenant_id = items.tenant_id
-                    AND report.job_id = items.job_id
+                 SELECT MAX(score.version)
+                  FROM job_scores AS score
+                  WHERE score.tenant_id = items.tenant_id
+                    AND score.job_id = items.job_id
                )
              ORDER BY items.job_id, items.position, items.requirement_id
             """,
@@ -2507,8 +2512,8 @@ class ProjectionBuilder:
             metadata.extend(_row_nullable_str(row, "metadata_json") for row in rows)
         return metadata
 
-    def _load_requirement_fit_report(self, job_id: str) -> str | None:
-        """Project the latest canonical requirement-fit report read shape.
+    def _load_requirement_fit_report(self, job_id: str, *, score_version: int | None = None) -> str | None:
+        """Project the requirement-fit report for the selected canonical score.
 
         The score aggregate owns the source rows. The detail projection exposes
         the latest ``RequirementFitReport.to_read_model()`` so the UI can show
@@ -2518,7 +2523,12 @@ class ProjectionBuilder:
         from jobctrl.infrastructure.scoring import SqliteRequirementFitReportRepository
 
         try:
-            record = SqliteRequirementFitReportRepository(self._conn).load(self._tenant_id, JobId(job_id))
+            repository = SqliteRequirementFitReportRepository(self._conn)
+            record = (
+                repository.load(self._tenant_id, JobId(job_id), score_version=score_version)
+                if score_version is not None
+                else repository.load(self._tenant_id, JobId(job_id))
+            )
         except sqlite3.OperationalError:
             return None
         if record is None:

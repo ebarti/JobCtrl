@@ -2587,6 +2587,35 @@ describe("apply_run_projections without legacy apply_runs table", () => {
             }),
           ]),
         );
+
+        // Simulate a workspace created by an older release where a score was
+        // committed without its report or event, after projections were made.
+        // The one-time repair must not inherit earlier requirement evidence.
+        const writer = new Database(dbPath);
+        try {
+          writer.prepare(`INSERT INTO job_scores
+            (tenant_id, job_id, version, fit_score, breakdown_json, keywords_json, scored_at)
+            VALUES ('local', ?, 3, 6, '{}', '[]', '2026-07-05T12:21:00Z')`).run(jobId);
+          writer.prepare(`DELETE FROM event_watermarks
+            WHERE projection_name = 'typescript:score-report-version-binding:local'`).run();
+        } finally {
+          writer.close();
+        }
+        const next = await app.inject({ method: "GET", url: "/v1/evidence-map" });
+        expect(next.statusCode, next.body).toBe(200);
+        const nextBody = next.json();
+        const nextEntry = nextBody.entries.find((entry: { evidenceId: string }) => entry.evidenceId === "ev_platform");
+        expect(nextEntry.requirementUsages).toEqual([]);
+        expect(nextBody.gaps.some((gap: { requirementId: string }) => gap.requirementId === "req-kubernetes")).toBe(false);
+        const reader = new Database(dbPath, { readonly: true });
+        try {
+          expect(reader.prepare(`SELECT score_version, fit_band FROM job_list_projections
+            WHERE tenant_id = 'local' AND job_id = ?`).get(jobId)).toEqual({ score_version: 3, fit_band: "unreported" });
+          expect(reader.prepare(`SELECT score_version FROM job_requirement_fit_reports
+            WHERE tenant_id = 'local' AND job_id = ?`).all(jobId)).toEqual([{ score_version: 2 }]);
+        } finally {
+          reader.close();
+        }
       } finally {
         await app.close();
       }
@@ -4483,6 +4512,8 @@ describe("consumer watermark discipline", () => {
           { projection_name: "typescript:job_detail_projections:v1:local", last_event_id: localLast },
           { projection_name: `typescript:${PROJECTION_WATERMARK_NAME}:foreign`, last_event_id: foreignLast },
           { projection_name: watermarkName, last_event_id: localLast },
+          { projection_name: "typescript:score-report-version-binding:foreign", last_event_id: 0 },
+          { projection_name: "typescript:score-report-version-binding:local", last_event_id: 0 },
         ]);
       } finally {
         db.close();

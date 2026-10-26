@@ -250,6 +250,8 @@ describe("exact-v7 read model job ids", () => {
       resolved_fit_score, fit_band, confidence, summary_json, created_at
     ) VALUES ('local', ?, 1, 1, 1, 1, 'requirement-fit-v1', 8, 'strong', 'high', '{}', ?)`).run(JOB_ID, NOW);
     expect(getJobDetail(db, JOB_ID)?.job.scoreAnalysisFreshness?.status).toBe("current");
+    const earlierReport = db.prepare(`SELECT requirement_fit_report_json FROM job_detail_projections
+      WHERE tenant_id = 'local' AND job_id = ?`).get(JOB_ID) as { requirement_fit_report_json: string };
 
     correctScore(db, "local", JOB_ID, { correctedScore: 6, reason: "Synthetic correction" });
 
@@ -260,6 +262,20 @@ describe("exact-v7 read model job ids", () => {
       assessedAnalysisGeneration: 1, assessedScoreVersion: 1,
     });
     expect(detail?.requirementFitReport).toBeNull();
+    expect(db.prepare(`SELECT requirement_fit_report_json FROM job_detail_projections
+      WHERE tenant_id = 'local' AND job_id = ?`).get(JOB_ID)).toEqual({ requirement_fit_report_json: null });
+    expect(db.prepare(`SELECT fit_band FROM job_list_projections
+      WHERE tenant_id = 'local' AND job_id = ?`).get(JOB_ID)).toEqual({ fit_band: "unreported" });
+    expect(db.prepare(`SELECT score_version FROM job_requirement_fit_reports
+      WHERE tenant_id = 'local' AND job_id = ?`).all(JOB_ID)).toEqual([{ score_version: 1 }]);
+
+    // An older installation can already have materialized the wrong report.
+    // A read must repair it even when no newer event arrives.
+    db.prepare(`UPDATE job_detail_projections SET requirement_fit_report_json = ?
+      WHERE tenant_id = 'local' AND job_id = ?`).run(earlierReport.requirement_fit_report_json, JOB_ID);
+    expect(getJobDetail(db, JOB_ID)?.requirementFitReport).toBeNull();
+    expect(db.prepare(`SELECT requirement_fit_report_json FROM job_detail_projections
+      WHERE tenant_id = 'local' AND job_id = ?`).get(JOB_ID)).toEqual({ requirement_fit_report_json: null });
   });
 
   it.each(["waiting", "stopped", "checks_exhausted"])("projects canonical %s fetch recovery without raw request URLs or invented retryability", (status) => {

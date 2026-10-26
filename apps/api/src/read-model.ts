@@ -1134,6 +1134,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
   const latestApplyRun = latestApplyRunForJob(db, jobId);
   const activeApplyRun = activeApplyRunForJob(db, jobId);
   const employerAnalysis = parseEmployerAnalysis(detailRow?.employer_analysis_json ?? null);
+  const projectedFitReport = parseRequirementFitReport(detailRow?.requirement_fit_report_json ?? null);
   if (employerAnalysis) {
     const refs = allRows<{determination_id: string}>(db,
       "SELECT determination_id FROM semantic_entity_bindings WHERE tenant_id=? AND entity_kind='employer_analysis' AND entity_id=? AND entity_version=? ORDER BY determination_kind",
@@ -1174,8 +1175,9 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
     auditHistory,
     employerAnalysis,
     requirementFitReport: jobSummary.scoreAnalysisFreshness?.status === "current"
+      && projectedFitReport?.scoreVersion === jobSummary.scoreVersion
       ? requirementFitForCurrentAnalysis(
-        db, jobId, employerAnalysis, parseRequirementFitReport(detailRow?.requirement_fit_report_json ?? null),
+        db, jobId, employerAnalysis, projectedFitReport,
       )
       : null,
     interviewPrep: parseInterviewPrep(detailRow?.interview_prep_json ?? null),

@@ -14,8 +14,10 @@ The exact-v7 schema owns initialization and accepts only canonical UUID
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from datetime import datetime, timezone
+from contextlib import contextmanager
 from typing import Any, Final
 
 from jobctrl.domain.identifiers import JobId, canonical_job_id
@@ -42,6 +44,7 @@ from jobctrl.state import record_job_event, set_stage_state
 
 
 _SCORE_SAVEPOINT: Final = "score_with_keywords"
+log = logging.getLogger(__name__)
 
 
 class ScoreVersionConflict(ValueError):
@@ -144,7 +147,7 @@ class SqliteScoreStalenessRepository:
         self._conn.commit()
         return marked
 
-    def resolve_for_score(self, score: JobScore, *, commit: bool = True) -> int:
+    def resolve_for_score(self, score: JobScore, *, commit: bool = True, publisher=None) -> int:
         """Resolve markers satisfied by a fresh, non-corrected score version."""
         if score.correction is not None or score.trace.scoring_policy_version <= 0:
             return 0
@@ -181,6 +184,7 @@ class SqliteScoreStalenessRepository:
                     "scoreVersion": score.version,
                     "scoringPolicyVersion": score.trace.scoring_policy_version,
                 },
+                publisher=publisher,
             )
         if commit:
             self._conn.commit()
@@ -305,6 +309,8 @@ class SqliteScoreStalenessRepository:
         event_type: str,
         message: str,
         payload: dict[str, Any],
+        *,
+        publisher=None,
     ) -> None:
         record_job_event(
             self._conn,
@@ -314,6 +320,7 @@ class SqliteScoreStalenessRepository:
             tenant_id=tenant_id,
             message=message,
             payload=payload,
+            publisher=publisher,
         )
 
     @staticmethod
@@ -357,10 +364,13 @@ class SqliteRequirementFitReportRepository:
                  FROM job_requirement_fit_reports
                  WHERE tenant_id = ?
                    AND job_id = ?
-                 ORDER BY score_version DESC
+                   AND score_version = (
+                       SELECT MAX(version) FROM job_scores
+                       WHERE tenant_id = ? AND job_id = ?
+                   )
                  LIMIT 1
                 """,
-                (str(tenant_id), str(stable_job_id)),
+                (str(tenant_id), str(stable_job_id), str(tenant_id), str(stable_job_id)),
             ).fetchone()
         else:
             row = self._conn.execute(
@@ -420,6 +430,16 @@ class SqliteRequirementFitReportRepository:
         )
 
     def save(self, tenant_id: TenantId, report: RequirementFitReport) -> None:
+        self._conn.execute("SAVEPOINT score_requirement_report")
+        try:
+            self._save_report(tenant_id, report)
+        except BaseException:
+            self._conn.execute("ROLLBACK TO SAVEPOINT score_requirement_report")
+            raise
+        finally:
+            self._conn.execute("RELEASE SAVEPOINT score_requirement_report")
+
+    def _save_report(self, tenant_id: TenantId, report: RequirementFitReport) -> None:
         job_id = canonical_job_id(str(report.job_id))
         now = _utc_now()
         self._conn.execute(
@@ -497,7 +517,6 @@ class SqliteRequirementFitReportRepository:
                     position,
                 ),
             )
-        self._conn.commit()
 
     @staticmethod
     def _row_to_assessment(row: sqlite3.Row) -> RequirementFitAssessment:
@@ -536,11 +555,74 @@ class SqliteScoreRepository:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
         self._staleness = SqliteScoreStalenessRepository(conn)
+        self._publication_events = None
 
     @property
     def connection(self) -> sqlite3.Connection:
         """SQLite connection backing this repository."""
         return self._conn
+
+    @contextmanager
+    def publication(self, tenant_id: TenantId, job_id: JobId):
+        """Commit the aggregate and its bindings before notifying subscribers."""
+        if self._publication_events is not None:
+            raise RuntimeError("Nested score publication is unsupported")
+        owns_writer = not self._conn.in_transaction
+        if owns_writer:
+            self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._conn.execute("SAVEPOINT score_publication")
+        except BaseException:
+            if owns_writer:
+                self._conn.rollback()
+            raise
+        released = False
+        events = []
+
+        class BufferedPublisher:
+            def publish(self, event):
+                events.append(event)
+
+        self._publication_events = BufferedPublisher()
+        try:
+            yield
+            self._conn.execute("RELEASE SAVEPOINT score_publication")
+            released = True
+            if owns_writer:
+                self._conn.commit()
+        except BaseException:
+            if owns_writer:
+                self._conn.rollback()
+            elif not released:
+                self._conn.execute("ROLLBACK TO SAVEPOINT score_publication")
+                self._conn.execute("RELEASE SAVEPOINT score_publication")
+            raise
+        finally:
+            self._publication_events = None
+        if owns_writer and events:
+            try:
+                from jobctrl.infrastructure.events import get_default_publisher
+
+                publisher = get_default_publisher()
+                for event in events:
+                    publisher.publish(event)
+            except Exception:  # noqa: BLE001 — already committed; never report a false rollback
+                log.exception("Failed to notify score staleness subscriber")
+        # An inherited transaction is controlled by its caller. Durable event
+        # rows remain part of that transaction; no premature in-process fanout
+        # can claim a commit that the caller may still roll back.
+
+    def bind_score_determination(self, **binding) -> None:
+        """Bind on the writer connection, even when inference used another connection."""
+        from jobctrl.domain.determinations import DeterminationFailure
+        from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+
+        repository = SqliteDeterminationRepository(self._conn)
+        envelope = repository.find(binding["tenant_id"], binding["determination_id"])
+        if (envelope is None or envelope.kind != binding["determination_kind"]
+                or envelope.entity_id != binding["entity_id"] or envelope.lane != "scoring"):
+            raise DeterminationFailure("score_determination_binding_invalid")
+        repository.bind(**binding)
 
     # ------------------------------------------------------------------
     # Read
@@ -670,6 +752,7 @@ class SqliteScoreRepository:
 
     def save(self, score: JobScore) -> None:
         job_id = canonical_job_id(str(score.job_id))
+        owns_writer = not self._conn.in_transaction
         self._conn.execute(f"SAVEPOINT {_SCORE_SAVEPOINT}")
         try:
             latest = self._conn.execute(
@@ -731,13 +814,14 @@ class SqliteScoreRepository:
                     )
                 ),
             )
-            self._staleness.resolve_for_score(score, commit=False)
+            self._staleness.resolve_for_score(score, commit=False, publisher=self._publication_events)
         except BaseException:
             self._conn.execute(f"ROLLBACK TO SAVEPOINT {_SCORE_SAVEPOINT}")
             self._conn.execute(f"RELEASE SAVEPOINT {_SCORE_SAVEPOINT}")
             raise
         self._conn.execute(f"RELEASE SAVEPOINT {_SCORE_SAVEPOINT}")
-        self._conn.commit()
+        if owns_writer:
+            self._conn.commit()
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -791,6 +875,7 @@ class SqliteScoringPolicyRepository:
         return policy
 
     def save(self, policy: ScoringPolicy) -> None:
+        owns_writer = not self._conn.in_transaction
         self._conn.execute(
             """
             INSERT INTO scoring_policies (
@@ -807,7 +892,8 @@ class SqliteScoringPolicyRepository:
                 policy.created_from_event_id,
             ),
         )
-        self._conn.commit()
+        if owns_writer:
+            self._conn.commit()
 
     def save_correction_signal(self, signal: CorrectionSignal) -> ScoringPolicy:
         current = self.get_current(signal.tenant_id)

@@ -354,9 +354,13 @@ def _load_employer_and_fit_context(
         SELECT score_version, employer_analysis_generation, profile_snapshot_version,
                scoring_policy_version, formula_version, created_at
         FROM job_requirement_fit_reports
-        WHERE tenant_id = ? AND job_id = ? ORDER BY score_version DESC LIMIT 1
+        WHERE tenant_id = ? AND job_id = ?
+          AND score_version = (
+              SELECT MAX(version) FROM job_scores WHERE tenant_id = ? AND job_id = ?
+          )
+        LIMIT 1
         """,
-        (str(tenant_id), str(job_id)),
+        (str(tenant_id), str(job_id), str(tenant_id), str(job_id)),
     ).fetchone()
     employer_context = None
     requirements: list[dict[str, Any]] = []
@@ -427,7 +431,7 @@ def _load_employer_and_fit_context(
                 if len(matching) == 1:
                     fit = _load_json(matching[0]["fit_json"])
                     requirement["fitKind"] = fit.get("kind")
-                    requirement["evidenceIds"] = fit.get("evidenceIds", [])
+                    requirement["evidenceIds"] = fit.get("evidence_ids", fit.get("evidenceIds", []))
                 else:
                     requirement["fitStatus"] = "source_identity_mismatch"
     return employer_context, fit_context, tuple(requirements)
