@@ -104,7 +104,7 @@ test("distribution contracts are complete and every version source resolves", as
   assert.equal(report.versions["font-geist"], "5.3.0");
   assert.equal(report.versions["font-jetbrains-mono"], "5.3.0");
   assert.equal(report.versions["pdfjs-renderer"], "6.2.108");
-  assert.equal(report.versions["claude-agent-sdk"], "0.2.115");
+  assert.equal(report.versions["claude-agent-sdk"], "0.2.121");
   assert.equal(typeof report.sourceDependencyReview.hasRecordDrift, "boolean");
   for (const entry of Object.values(report.sourceDependencyReview.recordCounts)) {
     assert.equal(Number.isInteger(entry.baseline), true);
