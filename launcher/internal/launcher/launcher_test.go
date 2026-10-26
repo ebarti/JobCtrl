@@ -29,7 +29,7 @@ import (
 )
 
 const validRuntimeManifest = `{
-  "schemaVersion":1,"launcherProtocol":1,
+  "schemaVersion":1,"launcherProtocol":2,
   "ports":{"temporalGrpc":7233,"temporalUi":8233,"api":8766},
   "components":[
     {"name":"temporal","executable":"temporal/temporal","arguments":["server"]},
@@ -519,7 +519,7 @@ func verifiedPayloadFixture(t *testing.T) (string, distributionManifest) {
 	value := map[string]any{
 		"schemaVersion": 1, "appVersion": "2.0.0", "buildId": "local-test-build", "releaseChannel": "local", "sourceDateEpoch": 0,
 		"platform":              map[string]any{"id": "darwin-arm64", "os": "darwin", "arch": "arm64", "minimumOsVersion": "15.0"},
-		"launcherCompatibility": map[string]any{"minimum": 1, "maximum": 1},
+		"launcherCompatibility": map[string]any{"minimum": 2, "maximum": 2},
 		"components":            components,
 		"capabilities":          []map[string]any{{"id": "core-browser", "defaultEnabled": true, "componentIds": []string{"jobctrl-web"}}},
 		"files":                 filesJSON,

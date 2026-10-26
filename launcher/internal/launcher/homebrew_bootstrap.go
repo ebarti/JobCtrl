@@ -173,9 +173,15 @@ func handoffRecoveryController(store *release.Store, candidate release.Receipt) 
 		return err
 	}
 	defer selection.Close()
+	if err := refusePendingBridgeHandoff(store.Home); err != nil {
+		return err
+	}
 	journal, err := store.ReadJournal()
 	if err != nil || !journal.Resumable() {
 		return errors.New("recovery transition changed while staging its controller")
+	}
+	if journal.PreserveLiveOnFailure {
+		return errors.New("inspect the interrupted protected transition with `jobctrl rollback` before staging another controller")
 	}
 	verified, err := verifyInstalledReleaseForExecution(store, candidate)
 	if err != nil {
@@ -287,6 +293,9 @@ func bootstrapPromoteOrExec(executable string, args, inheritedEnv []string, stdo
 				return lockErr
 			}
 			defer selection.Close()
+			if err := refusePendingBridgeHandoff(store.Home); err != nil {
+				return err
+			}
 			active, lockErr = store.ReadActive()
 			if lockErr != nil {
 				return lockErr
@@ -341,6 +350,9 @@ func bootstrapFirstInstall(store *release.Store, candidate release.Receipt) erro
 		return err
 	}
 	defer selection.Close()
+	if err := refusePendingBridgeHandoff(store.Home); err != nil {
+		return err
+	}
 	if _, err := store.ReadActive(); err == nil {
 		return nil
 	} else if !errors.Is(err, os.ErrNotExist) {

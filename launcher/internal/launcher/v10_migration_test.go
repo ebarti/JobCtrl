@@ -5,17 +5,38 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/ebarti/jobctrl/launcher/internal/release"
 )
+
+// Recovery must not replace either live database or discard evidence once a
+// paired backup can be stale. Capture all owned state, including companions,
+// staged candidates, backups, the selector, active record, and journal.
+func assertFailedRecoveryPreservesV10Fixture(t *testing.T, fixture v6ActivationFixture, journal release.Journal) {
+	t.Helper()
+	before := snapshotPreservedTransition(t, fixture)
+	for attempt := 0; attempt < 2; attempt++ {
+		recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store)
+		if recovered || err == nil || !strings.Contains(err.Error(), "retain the live databases") {
+			t.Fatalf("recovery attempt %d: recovered=%v error=%v", attempt, recovered, err)
+		}
+		if after := snapshotPreservedTransition(t, fixture); !reflect.DeepEqual(before, after) {
+			t.Fatalf("recovery attempt %d changed live files, companions, backup, candidate, journal, selector or active receipt", attempt)
+		}
+		loaded, err := fixture.store.ReadJournal()
+		if err != nil || loaded.ID != journal.ID || loaded.State != journal.State || !loaded.Resumable() {
+			t.Fatalf("recovery attempt %d journal=%#v error=%v", attempt, loaded, err)
+		}
+	}
+}
 
 func fakeV10BuilderContext(t *testing.T, sourceVersion int64) (launchContext, databasePair, string, string) {
 	t.Helper()
@@ -145,7 +166,7 @@ exit 43
 		SourceDataDigest:    strings.Repeat("a", 64),
 		Status:              "ready",
 		TableCount:          128,
-		UserVersion:         currentJobCtrlSchemaVersion,
+		UserVersion:         v14JobCtrlSchemaVersion,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -282,7 +303,28 @@ func v14CandidateArtifactPaths(stateDir, journalID string) []string {
 	return paths
 }
 
-func TestInterruptedV10MigrationRecoveryRemovesCandidatesIntermediatesAndSidecars(t *testing.T) {
+func v15CandidateArtifactPaths(stateDir, journalID string) []string {
+	candidate := v15CandidatePath(stateDir, journalID)
+	v14Intermediate := candidate + ".exact-v14-intermediate"
+	v13Intermediate := v14Intermediate + ".exact-v13-intermediate"
+	v12Intermediate := v13Intermediate + ".exact-v12-intermediate"
+	v11Intermediate := v12Intermediate + ".exact-v11-intermediate"
+	v10Intermediate := v11Intermediate + ".exact-v10-intermediate"
+	basePaths := []string{candidate, candidate + ".source-binding.json", v15SourcePreservationPath(stateDir, journalID),
+		v14Intermediate, v13Intermediate, v12Intermediate, v11Intermediate, v10Intermediate,
+		v10Intermediate + ".exact-v9-intermediate", v10Intermediate + ".exact-v9-intermediate.exact-v8-intermediate",
+		v10Intermediate + ".exact-v9-intermediate.exact-v8-intermediate.exact-v7-intermediate"}
+	var paths []string
+	for _, path := range basePaths {
+		paths = append(paths, path)
+		for _, suffix := range []string{"-journal", "-shm", "-wal"} {
+			paths = append(paths, path+suffix)
+		}
+	}
+	return paths
+}
+
+func TestInterruptedV10MigrationRecoveryPreservesLivePairAndCandidates(t *testing.T) {
 	for _, stage := range []release.State{release.PolicyPending, release.MigrationCandidateReady, release.MigrationActivated} {
 		t.Run(string(stage), func(t *testing.T) {
 			preserveMigrationSeams(t)
@@ -305,6 +347,8 @@ func TestInterruptedV10MigrationRecoveryRemovesCandidatesIntermediatesAndSidecar
 					t.Fatal(err)
 				}
 			}
+			// Commits made after the backup in both databases must survive.
+			setLifecycleSQLitePair(t, fixture.python, fixture.state, "independent")
 			oldStarts := 0
 			startReleaseCommand = func(_ launchContext, receipt release.Receipt, journalID string) error {
 				if receipt != fixture.old || journalID != journal.ID {
@@ -314,41 +358,32 @@ func TestInterruptedV10MigrationRecoveryRemovesCandidatesIntermediatesAndSidecar
 				return nil
 			}
 
-			recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store)
-			if !recovered || err != nil {
-				t.Fatalf("recover interrupted %s = recovered:%v err:%v", stage, recovered, err)
-			}
-			if oldStarts != 1 {
+			assertFailedRecoveryPreservesV10Fixture(t, fixture, journal)
+			if oldStarts != 0 {
 				t.Fatalf("interrupted %s old starts = %d", stage, oldStarts)
 			}
-			for _, path := range artifactPaths {
-				if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-					t.Errorf("interrupted %s left migration artifact %q behind: %v", stage, path, err)
-				}
-			}
-			loaded, err := fixture.store.ReadJournal()
-			if err != nil || loaded.State != release.RolledBack || loaded.Resumable() {
-				t.Fatalf("interrupted %s journal = %#v, %v", stage, loaded, err)
+			if got := lifecycleDatabaseValues(t, fixture.python, fixture.state); got["jobctrl.db"] != "independentjobctrl.db" || got["temporal.db"] != "independenttemporal.db" {
+				t.Fatalf("independent commits were lost: %v", got)
 			}
 		})
 	}
 }
 
-func syntheticV14CandidateBuilder(t *testing.T, python string, expectedSourceVersion int64) func(launchContext, databasePair, string) (string, error) {
+func syntheticV15CandidateBuilder(t *testing.T, python string, expectedSourceVersion int64) func(launchContext, databasePair, string) (string, error) {
 	t.Helper()
 	return func(candidate launchContext, pair databasePair, journalID string) (string, error) {
 		source, err := pairedDatabasePath(candidate.Instance.StateDir, pair, "jobctrl.db", expectedSourceVersion)
 		if err != nil {
 			return "", err
 		}
-		path := v14CandidatePath(candidate.Instance.StateDir, journalID)
+		path := v15CandidatePath(candidate.Instance.StateDir, journalID)
 		if _, err := sqliteOnlineBackup(python, source, path); err != nil {
 			return "", err
 		}
 		if err := os.Chmod(path, 0o600); err != nil {
 			return "", err
 		}
-		code := "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('PRAGMA user_version=14'); c.commit(); c.close()"
+		code := "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('PRAGMA user_version=15'); c.commit(); c.close()"
 		if output, err := exec.Command(python, "-c", code, path).CombinedOutput(); err != nil {
 			return "", errors.New(strings.TrimSpace(string(output)))
 		}
@@ -356,7 +391,7 @@ func syntheticV14CandidateBuilder(t *testing.T, python string, expectedSourceVer
 	}
 }
 
-func TestLifecycleMigratesSupportedSchemasToV14AndRestoresExactSourceOnRollback(t *testing.T) {
+func TestLifecycleMigratesSupportedSchemasToV15AndRestoresExactSourceOnRollback(t *testing.T) {
 	for _, sourceVersion := range []int64{
 		legacyJobCtrlSchemaVersion,
 		exactJobCtrlSchemaVersion,
@@ -366,6 +401,7 @@ func TestLifecycleMigratesSupportedSchemasToV14AndRestoresExactSourceOnRollback(
 		v11JobCtrlSchemaVersion,
 		v12JobCtrlSchemaVersion,
 		v13JobCtrlSchemaVersion,
+		v14JobCtrlSchemaVersion,
 	} {
 		t.Run("source-v"+strconv.FormatInt(sourceVersion, 10), func(t *testing.T) {
 			preserveMigrationSeams(t)
@@ -376,7 +412,7 @@ func TestLifecycleMigratesSupportedSchemasToV14AndRestoresExactSourceOnRollback(
 				proofs++
 				return nil
 			}
-			sealedV7CandidateBuilder = syntheticV14CandidateBuilder(t, fixture.python, sourceVersion)
+			sealedV7CandidateBuilder = syntheticV15CandidateBuilder(t, fixture.python, sourceVersion)
 			sealedV7CandidateInstaller = func(ctx launchContext, path string) error {
 				return os.Rename(path, filepath.Join(ctx.Instance.StateDir, "jobctrl.db"))
 			}
@@ -430,11 +466,11 @@ func TestLifecycleMigratesSupportedSchemasToV14AndRestoresExactSourceOnRollback(
 
 // Cross the production Go/Python boundary using exact, populated source schemas.
 // Startup is intercepted, but admission still runs in both shipped runtimes.
-func TestV14NativeExactSourcesRestorePairedState(t *testing.T) {
+func TestV15NativeExactSourcesRestorePairedState(t *testing.T) {
 	for _, scenario := range []struct {
 		version       int64
 		failReadiness bool
-	}{{7, false}, {8, false}, {9, false}, {9, true}, {10, false}, {10, true}, {11, false}, {11, true}, {12, false}, {12, true}, {13, false}, {13, true}} {
+	}{{7, false}, {8, false}, {9, false}, {9, true}, {10, false}, {10, true}, {11, false}, {11, true}, {12, false}, {12, true}, {13, false}, {13, true}, {14, false}, {14, true}} {
 		name := "source-v" + strconv.FormatInt(scenario.version, 10)
 		if scenario.failReadiness {
 			name += "-readiness-failure"
@@ -468,8 +504,8 @@ c.commit(); c.close()`
 			if output, err := exec.Command(python, "-I", "-B", "-c", code, database, strconv.FormatInt(scenario.version, 10)).CombinedOutput(); err != nil {
 				t.Fatalf("seed exact source: %v %s", err, output)
 			}
-			sealedV7CandidateBuilder = buildSealedV14Candidate
-			sealedV7CandidateInstaller = installSealedV14Candidate
+			sealedV7CandidateBuilder = buildSealedV15Candidate
+			sealedV7CandidateInstaller = installSealedV15Candidate
 			temporalQuiescenceProof = func(_, _ launchContext) error { t.Fatal("v7+ requested v6 Temporal identity proof"); return nil }
 			assertRestored := func() {
 				t.Helper()
@@ -511,9 +547,9 @@ c.close()`
 				}
 				candidateStarts++
 				code := `import json,sys
-from jobctrl.database import open_exact_v14_database,close_connection
-c=open_exact_v14_database(sys.argv[1])
-assert c.execute('PRAGMA user_version').fetchone()[0] == 14
+from jobctrl.database import open_exact_v15_database,close_connection
+c=open_exact_v15_database(sys.argv[1])
+assert c.execute('PRAGMA user_version').fetchone()[0] == 15
 assert 'application_url' not in {r[1] for r in c.execute('PRAGMA table_info(jobs)')}
 assert tuple(c.execute('SELECT title FROM jobs').fetchone()) == ('Preserved title',)
 assert tuple(c.execute('SELECT application_url,updated_at FROM job_enrichments').fetchone()) == ('https://apply.example/canonical','preserved-time')
@@ -528,7 +564,7 @@ close_connection(sys.argv[1])`
 				if output, err := exec.Command(python, "-I", "-B", "-c", code, database, strconv.FormatInt(scenario.version, 10)).CombinedOutput(); err != nil {
 					t.Fatalf("native v14 admission/transfer: %v %s", err, output)
 				}
-				if err := reopenMigratedV14WithTypeScriptAPI(database); err != nil {
+				if err := reopenMigratedV15WithTypeScriptAPI(database); err != nil {
 					t.Fatal(err)
 				}
 				// Make Temporal restoration observable rather than relying on an unchanged file.
@@ -551,6 +587,32 @@ close_connection(sys.argv[1])`
 				if err == nil || !strings.Contains(err.Error(), "synthetic v12 readiness failure") {
 					t.Fatalf("readiness failure result: %v", err)
 				}
+				if journal.State != release.CandidateStarting || !journal.Resumable() || !journal.PreserveLiveOnFailure {
+					t.Fatalf("failed candidate lost durable preservation fence: %#v", journal)
+				}
+				active, err := fixture.store.ReadActive()
+				if err != nil || active.Receipt != fixture.old || candidateStarts != 1 || oldStarts != 0 {
+					t.Fatalf("failed candidate selection=%#v candidate=%d old=%d err=%v", active, candidateStarts, oldStarts, err)
+				}
+				assertFailedRecoveryPreservesV10Fixture(t, fixture, journal)
+				code := `import sqlite3,sys
+c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True);assert c.execute('PRAGMA user_version').fetchone()[0]==15
+assert c.execute('SELECT title FROM jobs').fetchone()==('Preserved title',);c.close()
+c=sqlite3.connect('file:'+sys.argv[2]+'?mode=ro',uri=True);assert c.execute('SELECT v FROM t').fetchone()==('candidate-temporal',);c.close()`
+				if output, err := exec.Command(python, "-I", "-B", "-c", code, database, filepath.Join(fixture.state, "temporal.db")).CombinedOutput(); err != nil {
+					t.Fatalf("failed candidate changed committed data: %v %s", err, output)
+				}
+				pair, err := retainedPairForReceipt(fixture.state, fixture.old)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, expected := range pair.Files {
+					actual, err := sha256Path(filepath.Join(fixture.state, "backups", pair.ID, expected.Name))
+					if err != nil || actual != expected.SHA256 {
+						t.Fatalf("paired backup %s changed: %s, %v", expected.Name, actual, err)
+					}
+				}
+				return
 			} else {
 				if err != nil {
 					t.Fatalf("native promotion: %v", err)
@@ -568,7 +630,7 @@ close_connection(sys.argv[1])`
 				t.Fatalf("final pointer=%#v candidate=%d old=%d err=%v", active, candidateStarts, oldStarts, err)
 			}
 			assertRestored()
-			for _, path := range v14CandidateArtifactPaths(fixture.state, migrationJournalID) {
+			for _, path := range v15CandidateArtifactPaths(fixture.state, migrationJournalID) {
 				if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 					t.Errorf("left migration artifact %s: %v", path, err)
 				}
@@ -577,7 +639,7 @@ close_connection(sys.argv[1])`
 	}
 }
 
-func TestV14FreshRuntimePromotesWithoutMigration(t *testing.T) {
+func TestV15FreshRuntimePromotesWithoutMigration(t *testing.T) {
 	preserveMigrationSeams(t)
 	python := migrationIntegrationPython(t)
 	fixture := newV6ActivationFixtureWithPython(t, python)
@@ -586,16 +648,16 @@ func TestV14FreshRuntimePromotesWithoutMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := `import sys
-from jobctrl.database import create_exact_v14_database,close_connection
-c=create_exact_v14_database(sys.argv[1])
-assert c.execute('PRAGMA user_version').fetchone()[0] == 14
+from jobctrl.database import create_exact_v15_database,close_connection
+c=create_exact_v15_database(sys.argv[1])
+assert c.execute('PRAGMA user_version').fetchone()[0] == 15
 assert 'application_url' not in {r[1] for r in c.execute('PRAGMA table_info(jobs)')}
 close_connection(sys.argv[1])`
 	if output, err := exec.Command(python, "-I", "-B", "-c", code, database).CombinedOutput(); err != nil {
-		t.Fatalf("fresh v14 creation: %v %s", err, output)
+		t.Fatalf("fresh v15 creation: %v %s", err, output)
 	}
 	sealedV7CandidateBuilder = func(_ launchContext, _ databasePair, _ string) (string, error) {
-		t.Fatal("fresh v14 attempted migration")
+		t.Fatal("fresh v15 attempted migration")
 		return "", nil
 	}
 	starts := 0
@@ -604,9 +666,9 @@ close_connection(sys.argv[1])`
 			t.Fatalf("unexpected fresh startup %#v", receipt)
 		}
 		starts++
-		code := "import sys; from jobctrl.database import open_exact_v14_database,close_connection; open_exact_v14_database(sys.argv[1]); close_connection(sys.argv[1])"
+		code := "import sys; from jobctrl.database import open_exact_v15_database,close_connection; open_exact_v15_database(sys.argv[1]); close_connection(sys.argv[1])"
 		if output, err := exec.Command(python, "-I", "-B", "-c", code, database).CombinedOutput(); err != nil {
-			t.Fatalf("fresh v14 admission: %v %s", err, output)
+			t.Fatalf("fresh v15 admission: %v %s", err, output)
 		}
 		return nil
 	}
@@ -710,6 +772,11 @@ c=sqlite3.connect(sys.argv[1]);c.execute("UPDATE jobs SET title='independent lat
 		if output, err := exec.Command(python, "-I", "-B", "-c", code, database).CombinedOutput(); err != nil {
 			t.Fatalf("late writer fixture: %v %s", err, output)
 		}
+		code = `import sqlite3,sys
+c=sqlite3.connect(sys.argv[1]);c.execute("UPDATE t SET v='independent temporal write'");c.commit();c.close()`
+		if output, err := exec.Command(python, "-I", "-B", "-c", code, filepath.Join(fixture.state, "temporal.db")).CombinedOutput(); err != nil {
+			t.Fatalf("late Temporal writer: %v %s", err, output)
+		}
 		return installSealedV14Candidate(candidate, path)
 	}
 	oldStarts := 0
@@ -718,20 +785,13 @@ c=sqlite3.connect(sys.argv[1]);c.execute("UPDATE jobs SET title='independent lat
 			t.Fatal("refused candidate was started")
 		}
 		oldStarts++
-		code := `import sqlite3,sys
-c=sqlite3.connect(sys.argv[1]);assert c.execute('PRAGMA user_version').fetchone()[0]==11
-assert c.execute('SELECT title FROM jobs').fetchone()==('independent late source write',)
-c.close()`
-		if output, err := exec.Command(python, "-I", "-B", "-c", code, database).CombinedOutput(); err != nil {
-			return fmt.Errorf("late write preservation: %w %s", err, output)
-		}
 		return nil
 	}
 	err := promoteExisting(fixture.ctx, fixture.store, fixture.active, fixture.candidate.BuildID, "update", io.Discard)
 	if !errors.Is(err, errV14SourceChanged) {
 		t.Fatalf("late source guard returned %v", err)
 	}
-	if oldStarts != 1 {
+	if oldStarts != 0 {
 		t.Fatalf("old starts = %d", oldStarts)
 	}
 	active, err := fixture.store.ReadActive()
@@ -739,19 +799,22 @@ c.close()`
 		t.Fatalf("old selection not retained: %#v %v", active, err)
 	}
 	journal, err := fixture.store.ReadJournal()
-	if err != nil || journal.State != release.RolledBack {
+	if err != nil || journal.State != release.MigrationCandidateReady || !journal.Resumable() || !journal.PreserveLiveOnFailure {
 		t.Fatalf("refusal journal: %#v %v", journal, err)
 	}
-	for _, path := range v14CandidateArtifactPaths(fixture.state, journal.ID) {
-		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("left artifact %s: %v", path, err)
-		}
+	assertFailedRecoveryPreservesV10Fixture(t, fixture, journal)
+	code = `import sqlite3,sys
+c=sqlite3.connect(sys.argv[1]);assert c.execute('PRAGMA user_version').fetchone()[0]==11
+assert c.execute('SELECT title FROM jobs').fetchone()==('independent late source write',);c.close()
+c=sqlite3.connect(sys.argv[2]);assert c.execute('SELECT v FROM t').fetchone()==('independent temporal write',);c.close()`
+	if output, err := exec.Command(python, "-I", "-B", "-c", code, database, filepath.Join(fixture.state, "temporal.db")).CombinedOutput(); err != nil {
+		t.Fatalf("late write preservation: %v %s", err, output)
 	}
 }
 
 // A crash after restoring the application DB but before restoring Temporal
 // cannot be classified as preactivation merely from the old schema header.
-func TestV12InterruptedRollbackRestoresHalfRestoredPair(t *testing.T) {
+func TestV12InterruptedRollbackPreservesHalfRestoredPair(t *testing.T) {
 	preserveMigrationSeams(t)
 	fixture := newV6ActivationFixture(t)
 	pair, err := snapshotPair(fixture.ctx, fixture.old)
@@ -777,24 +840,18 @@ func TestV12InterruptedRollbackRestoresHalfRestoredPair(t *testing.T) {
 	if output, err := exec.Command(fixture.python, "-I", "-B", "-c", code, filepath.Join(fixture.state, "temporal.db")).CombinedOutput(); err != nil {
 		t.Fatalf("seed interrupted Temporal: %v %s", err, output)
 	}
-	startReleaseCommand = func(_ launchContext, receipt release.Receipt, _ string) error {
-		if receipt != fixture.old {
-			t.Fatal("recovery started candidate")
-		}
-		for _, expected := range pair.Files {
-			actual, err := sha256Path(filepath.Join(fixture.state, expected.Name))
-			if err != nil || actual != expected.SHA256 {
-				return fmt.Errorf("half-restored pair retained %s: %v", expected.Name, err)
-			}
-		}
-		return nil
+	starts := 0
+	startReleaseCommand = func(_ launchContext, _ release.Receipt, _ string) error { starts++; return nil }
+	assertFailedRecoveryPreservesV10Fixture(t, fixture, journal)
+	if starts != 0 {
+		t.Fatalf("recovery started a release %d times", starts)
 	}
-	if recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store); !recovered || err != nil {
-		t.Fatalf("half-restored recovery: %v %v", recovered, err)
+	if got := lifecycleDatabaseValues(t, fixture.python, fixture.state); got["jobctrl.db"] != "oldjobctrl.db" || got["temporal.db"] != "candidate-temporal-before-crash" {
+		t.Fatalf("partially restored live pair changed: %v", got)
 	}
 }
 
-func TestV12InterruptedSourcePreservationSurvivesRecoveryRestartFailure(t *testing.T) {
+func TestV12InterruptedSourcePreservationRefusesRepeatedRecovery(t *testing.T) {
 	for _, stage := range []release.State{release.PairBackedUp, release.PolicyPending, release.MigrationCandidateReady} {
 		t.Run(string(stage), func(t *testing.T) {
 			preserveMigrationSeams(t)
@@ -811,37 +868,18 @@ func TestV12InterruptedSourcePreservationSurvivesRecoveryRestartFailure(t *testi
 			if err := fixture.store.Advance(&journal, stage, nil); err != nil {
 				t.Fatal(err)
 			}
-			code := "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute(\"UPDATE t SET v='independent-source-write'\"); c.commit(); c.close()"
-			if output, err := exec.Command(fixture.python, "-I", "-B", "-c", code, filepath.Join(fixture.state, "jobctrl.db")).CombinedOutput(); err != nil {
-				t.Fatalf("seed independent source: %v %s", err, output)
-			}
+			setLifecycleSQLitePair(t, fixture.python, fixture.state, "independent")
 			starts := 0
 			startReleaseCommand = func(_ launchContext, receipt release.Receipt, _ string) error {
-				if receipt != fixture.old {
-					t.Fatal("recovery started candidate")
-				}
 				starts++
-				if starts == 1 {
-					return errors.New("synthetic old restart interruption")
-				}
-				code := "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); assert c.execute('SELECT v FROM t').fetchone() == ('independent-source-write',); c.close()"
-				if output, err := exec.Command(fixture.python, "-I", "-B", "-c", code, filepath.Join(fixture.state, "jobctrl.db")).CombinedOutput(); err != nil {
-					return fmt.Errorf("independent source overwritten: %w %s", err, output)
-				}
 				return nil
 			}
-			if recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store); recovered || err == nil {
-				t.Fatalf("first recovery: %v %v", recovered, err)
+			assertFailedRecoveryPreservesV10Fixture(t, fixture, journal)
+			if starts != 0 {
+				t.Fatalf("recovery started a release %d times", starts)
 			}
-			intent, err := readV14SourcePreservation(fixture.state, journal.ID)
-			if err != nil || intent == nil || intent.BackupID != pair.ID {
-				t.Fatalf("lost durable refusal intent: %#v %v", intent, err)
-			}
-			if recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store); !recovered || err != nil {
-				t.Fatalf("second recovery: %v %v", recovered, err)
-			}
-			if _, err := os.Lstat(v14SourcePreservationPath(fixture.state, journal.ID)); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("completed recovery retained intent: %v", err)
+			if got := lifecycleDatabaseValues(t, fixture.python, fixture.state); got["jobctrl.db"] != "independentjobctrl.db" || got["temporal.db"] != "independenttemporal.db" {
+				t.Fatalf("independent commits were lost: %v", got)
 			}
 
 		})

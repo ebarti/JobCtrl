@@ -15,7 +15,7 @@ vi.mock("../src/read-model.js", async (importOriginal) => ({
   getJobDetail,
 }));
 
-import { hasExactV14SchemaManifest } from "../src/schema-manifest.js";
+import { hasExactV15SchemaManifest } from "../src/schema-manifest.js";
 import { buildApp } from "../src/server.js";
 import { initializeExactDatabase } from "./exact-schema.js";
 
@@ -104,7 +104,7 @@ describe("score correction exact-current identity", () => {
             event_type: "ScoreCorrected",
           }),
         ]);
-        expect(hasExactV14SchemaManifest(db)).toBe(true);
+        expect(hasExactV15SchemaManifest(db)).toBe(true);
       } finally {
         db.close();
       }
@@ -136,7 +136,7 @@ describe("score correction exact-current identity", () => {
           identity_version: 1,
           event_type: "ScoreRescoreRequested",
         }));
-        expect(hasExactV14SchemaManifest(resetDb)).toBe(true);
+        expect(hasExactV15SchemaManifest(resetDb)).toBe(true);
       } finally {
         resetDb.close();
       }

@@ -49,12 +49,31 @@ command, schedule, or implicit TTL deletion.
 
 The API's job-list query index is app-owned SQLite TEMP state on its retained
 list connection. It adds no table, index, schema-version stamp or migration to
-the canonical exact-v14 database. Python and TypeScript projection ownership
+the canonical exact-v15 database. Python and TypeScript projection ownership
 and exact-manifest admission remain unchanged. TEMP rows and freshness markers
 are disposable and rebuilt after connection close, app restart or database
 replacement; they are not a backup or a new source authority. See
 [job-list selection](read-model.md#job-list-sqlite-selection) for snapshot,
 failure and hydration boundaries.
+
+Exact v15 adds `job_lifecycle_clock` and `job_lifecycle_revisions` as the
+durable authority for removed-job selection freshness. SQLite triggers
+advance a globally monotonic revision for job creation or identity changes and
+for delete/hide tombstone writes, including writes from another connection.
+Per-job rows cascade with their job; the clock retains no job identifiers.
+Unrelated writes, such as worker heartbeats, do not advance a job's revision.
+An already reviewed destructive selection is checked against that revision in
+the same write transaction as deletion. The reviewed-selection receipt itself
+is short-lived process memory, not a substitute for the durable revision.
+
+V15 migration constructs a separate candidate from a stopped source and binds
+activation to the preserved database/Temporal backup pair. Once a paired backup
+is recorded, update and rollback journals require the controller to preserve
+the live pair on an automatic failure or interruption. The journal remains for
+recovery; a user-requested rollback may still restore its selected backup as an
+explicit operation. Runtime admission rejects older schema versions. Installed
+upgrades also require controller and rollback compatibility; a candidate
+migration alone does not prove that an old controller can safely promote it.
 
 The database is easier to understand as a set of ownership families. The
 diagram shows the main relationships; the table below names the exact tables.
@@ -158,15 +177,17 @@ invariants still verify, the command reports the committed purge, recovery
 bundle, and free-space/compaction guidance. A failed post-commit invariant keeps
 the stronger stop-and-restore guidance because the live result was not verified.
 
-### Exact v12 runtime and compatible cutovers
+### Historical v10–v12 cutovers
 
-Schema v12 is the exact runtime contract. The native lifecycle upgrades admitted
-v6, exact-v7, exact-v8, exact-v9, exact-v10, and exact-v11 installations only while the application is
-stopped. It first creates a paired backup of `jobctrl.db` and Temporal state.
+The v12 cutover migrated admitted v6, exact-v7, exact-v8, exact-v9, exact-v10,
+and exact-v11 installations while the application was stopped. It first created
+a paired backup of `jobctrl.db` and Temporal state.
 A v6 source retains the Temporal quiescence proof and identity rewrite through
 private exact-v7/v8/v9 intermediates; newer sources start at their next schema
-step. Only the final exact-v12 candidate can become live. Intermediate databases
-and their sidecars are removed after success and during failure recovery.
+step. The final exact-v12 candidate was the activation target at that cutover.
+Intermediate databases and their sidecars are removed after success and during
+failure recovery. Current v15 source and installed runtime requirements are
+described above.
 
 V10 removes `jobs.application_url`. `job_enrichments.application_url` is the
 canonical application target. A nonempty canonical value wins; otherwise the
@@ -190,8 +211,9 @@ Activation requires exact-manifest, retained-data, exact URL-transfer,
 foreign-key, integrity, source-preservation, permissions, digest, and paired-state
 verification. The receipt's comparable data digests cover every retained cell and
 sequence; the complete changed enrichment rows and alias set are verified
-separately before sealing. Any failed build, verification, activation, or readiness
-check restores the paired backup and leaves the previous version runnable.
+separately before sealing. Earlier cutovers restored the paired backup on failure;
+the current controller instead retains the live pair when an automatic restore
+could overwrite newer committed data, and leaves the transition for recovery.
 V11 replaces the global `llm_spend` primary key with `(day, lane)`. Historical
 v10 rows move byte-for-value into the migration-only `legacy` lane. Global
 totals sum all lane rows, including legacy; new runtime writes accept only the
@@ -223,14 +245,16 @@ the replaced inode. Source-sidecar cleanup completes under this lock before
 publication; sidecars created on the new live database belong to its writers.
 An unmanaged writer or a commit after backup refuses activation. When the candidate has not changed the live database,
 recovery preserves the live source, including an independent committed write,
-instead of restoring an older backup over it. Failed readiness after activation
-still restores the paired application/Temporal backup and previous release.
+instead of restoring an older backup over it. After activation or candidate
+startup, the current controller retains both live databases on a failed readiness
+check rather than automatically replacing them with an earlier pair.
 A private intent receipt binds preactivation source preservation to the exact
 journal, backup and source version, and survives interrupted old-runtime restart.
 An old schema header during partial paired restore cannot bypass Temporal recovery.
 
-The TypeScript API and Python worker accept exact v12 and reject direct v6/v7/v8/v9/v10/v11
-operation; runtime constructors do not migrate schema or commit caller work.
+The v12-era TypeScript API and Python worker accepted exact v12 and rejected
+direct v6/v7/v8/v9/v10/v11 operation; runtime constructors did not migrate
+schema or commit caller work.
 Each projection refresh owns only derived writes and its consumer cursor inside a
 transaction or the caller's savepoint. Refresh compares existing projected targets
 with canonical enrichment even without a new event, so preserved projection rows

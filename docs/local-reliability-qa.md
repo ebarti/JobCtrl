@@ -71,7 +71,7 @@ delete the original provider history as an automatic repair.
 | Surface | Starting command / selected recipe |
 | --- | --- |
 | API | `corepack pnpm api:check`, focused `api:test` / `api` |
-| Destructive job-data purge | `corepack pnpm api:check`; `corepack pnpm --filter @jobctrl/api exec vitest run test/job-data-purge.test.ts test/permanent-delete-v7.test.ts`; then inventory, confirmed purge, and a second inventory against a disposable exact-v14 workspace only |
+| Destructive job-data purge | `corepack pnpm api:check`; `corepack pnpm --filter @jobctrl/api exec vitest run test/job-data-purge.test.ts test/permanent-delete-v7.test.ts`; then inventory, confirmed purge, and a second inventory against a disposable exact-v15 workspace only |
 | Web | `corepack pnpm web:lint`, `corepack pnpm web:check`, focused `web:test`, `web:build`; types/stories/browser when affected |
 | Extension | `extension:check`, `extension:test`, `extension:build`, `extension:e2e` through Corepack |
 | Worker | Locked focused Ruff/pytest; full worker suite for worker-wide changes |
@@ -172,7 +172,7 @@ that its connection-object mutex is independent of `busy_timeout`. Run these pro
 behind subprocess deadlines so a failed concurrency assertion cannot retain a test
 runner thread. Confirm the real activity worker pool reuses a connection only on its
 own thread, and record the production connection budgets (10 seconds for a new WAL
-connection and 30 seconds for a freshly admitted exact-v14 connection). The short
+connection and 30 seconds for a freshly admitted exact-v15 connection). The short
 fixture timeout proves mechanism and recovery; it is not a production latency bound.
 
 Also repeat an already-claimed robots retry with a real enrichment lease, inject
@@ -371,7 +371,7 @@ worker persistence. Opposing-verdict and failure tests exercise the production
 determination services through fake `LlmPort` implementations; these tests prove
 model authority and binding, without grading model decisions.
 
-Use the exact native schema-14 boundary to test migration from every supported
+Use the exact native schema-15 boundary to test migration from every supported
 source schema, stopped-runtime paired backups, source preservation, fenced
 activation, recovery and concurrent-writer refusal. Preserve authored facts and
 accepted artifact bytes while purging heuristic-derived determinations. Temporal
@@ -389,7 +389,7 @@ and TypeScript reopen checks; an unavailable global Python must not silently
 skip that migration evidence. Check every supported source through native
 activation, API reopen, readiness failure and rollback.
 
-Exercise native exact-v14 creation and the stopped-runtime v13-to-v14 cutover,
+Exercise native exact-v15 creation and the stopped-runtime v13-to-v14-to-v15 cutover,
 including source drift and candidate corruption. Preserve authored profile cells,
 canonical jobs, historical envelopes, accepted files and raw pending captures.
 Then use the actual Discovery path with saved targets and no interpretation
@@ -398,8 +398,33 @@ Load the profile editor's actual serialized location rows and comma-separated
 work-model codes, including a location-less Remote row. Inspect their paired
 board parameters. Invalid work-model controls must produce a typed planning
 failure while fetching, scoring and raw source reads remain available. Native
-interruption checks capture stage names from the actual composite executors and
-prove recovery removes every staged candidate and SQLite sidecar.
+interruption checks capture stage names from the actual composite executors.
+Verify cleanup of owned intermediate candidates and sidecars after successful
+execution or a failed prepublication build; after an ambiguous activation or
+preservation refusal, retain the live pair, recovery journal and evidence needed
+to inspect the interrupted transition.
+
+## Reviewed Permanent Deletion
+
+Use an owned exact-v15 synthetic workspace and independent SQLite writers. Read
+the actual Jobs list, select removed items, then restore, unhide or restore and
+re-delete with identical timestamps before preparation and after confirmation.
+The complete selected graph and accepted material references must survive each
+refusal. Unrelated heartbeat commits must not invalidate an unchanged selection.
+Prove all-matching selection freezes the originally observed cohort, including
+newly matching jobs, more than 5,000 matches and overlapping filters; no
+truncation or widening is permitted. Exercise mixed cohorts, aliases, foreign
+tenants, expired/replayed receipts, cancellation, lost acknowledgement, and a
+writer held across the locked final comparison. Existing explicitly authorized
+active-job deletion and purge must retain their behavior. Verify the rendered
+Jobs flow and browser-local demo separately. Run the full worker and native
+migration suites with every supported source version, independent source-drift
+and old-controller compatibility checks before claiming an installed upgrade.
+Commit synthetic writes to both databases after the paired backup and after
+activation, then inject candidate failure and interruption. Verify repeated
+ordinary and revoked recovery attempts retain the live files and resumable
+journal, and do not restart a predecessor or replace newer commits. Include
+same-schema updates and explicit rollback's target-start failure separately.
 
 ## Smart Extract Posting Qualification
 

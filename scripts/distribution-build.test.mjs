@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { generateKeyPairSync } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { chmod, copyFile, lstat, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -16,6 +17,7 @@ import {
   collectPayloadNpmContributors,
   compareMacOsVersions,
   compareSizeReports,
+  copySchemaTransitionContract,
   createNativeLauncherBuildPlan,
   createExtractedRuntimeStackPlan,
   createDeterministicZip,
@@ -48,6 +50,7 @@ import {
 } from "./distribution-archive.mjs";
 import { buildFileInventory } from "./distribution-manifest.mjs";
 import { parseExportedRequirements } from "./distribution-provider-lock.mjs";
+import { signReleaseBytes, verifyReleaseBytes } from "./distribution-release.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -61,6 +64,7 @@ const FIXTURE_BUILD_ROOT_FILES = [
   "workers/automation/pyproject.toml",
   "workers/automation/uv.lock",
   "launcher/GO-LICENSE",
+  "launcher/schema-transition.json",
   "launcher/toolchain.json",
   "packaging/distribution/capability-policy.json",
   "packaging/distribution/component-inventory.json",
@@ -677,6 +681,48 @@ test("fixture manifest covers the exact payload tree", async (context) => {
   assert.equal(await verifyExactPayloadTree(build.payloadRoot, build.manifest), true);
   await writeFile(path.join(build.payloadRoot, "api", "unrecorded"), "mutation\n", { mode: 0o644 });
   await assert.rejects(verifyExactPayloadTree(build.payloadRoot, build.manifest), /does not exactly match/);
+});
+
+test("the v14-to-v15 declaration is bound to the signed payload inventory", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-schema-transition-"));
+  context.after(async () => rm(root, { recursive: true, force: true }));
+  const build = await buildFixturePayload({ outputDirectory: path.join(root, "fixture") });
+  const declarationPath = path.join(build.payloadRoot, "launcher", "schema-transition.json");
+  const declaration = await readFile(declarationPath);
+  assert.equal(declaration.toString("utf8"), '{"schemaVersion":1,"sourceUserVersion":14,"targetUserVersion":15}\n');
+  const entry = build.manifest.files.find((file) => file.path === "launcher/schema-transition.json");
+  assert.deepEqual(entry, {
+    path: "launcher/schema-transition.json",
+    type: "file",
+    sha256: await sha256File(declarationPath),
+    sizeBytes: declaration.length,
+    mode: "0644",
+  });
+  const raw = await readFile(path.join(build.payloadRoot, "manifest.json"), "utf8");
+  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+  const signing = { domain: "jobctrl:manifest:v1\0", raw, keyId: "synthetic", kind: "manifest" };
+  const signature = signReleaseBytes({ ...signing, privateKey });
+  verifyReleaseBytes({ ...signing, signature, publicKey });
+  await writeFile(declarationPath, '{"schemaVersion":1,"sourceUserVersion":14,"targetUserVersion":16}\n');
+  await assert.rejects(verifyExactPayloadTree(build.payloadRoot, build.manifest), /does not exactly match/);
+  assert.throws(() => verifyReleaseBytes({ ...signing, raw: `${raw} `, signature, publicKey }), /verification failed/);
+});
+
+test("packaging refuses a missing, altered or linked schema transition declaration", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-schema-declaration-"));
+  context.after(async () => rm(root, { recursive: true, force: true }));
+  const source = path.join(root, "source", "launcher");
+  const target = path.join(root, "target");
+  await mkdir(source, { recursive: true });
+  await mkdir(target);
+  await assert.rejects(copySchemaTransitionContract(path.join(root, "source"), target), /ENOENT/);
+  await writeFile(path.join(source, "schema-transition.json"), '{"schemaVersion":1,"sourceUserVersion":14,"targetUserVersion":16}\n');
+  await assert.rejects(copySchemaTransitionContract(path.join(root, "source"), target), /does not match v14-to-v15 contract/);
+  await rm(path.join(source, "schema-transition.json"));
+  await writeFile(path.join(root, "declaration.json"), '{"schemaVersion":1,"sourceUserVersion":14,"targetUserVersion":15}\n');
+  await symlink(path.join(root, "declaration.json"), path.join(source, "schema-transition.json"));
+  await assert.rejects(copySchemaTransitionContract(path.join(root, "source"), target), /must be a regular file/);
+  assert.deepEqual(await readdir(target), []);
 });
 
 test("smoke extraction keeps generated state outside the exact immutable payload tree", async (context) => {

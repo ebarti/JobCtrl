@@ -1015,14 +1015,35 @@ function withJobQuerySnapshot<T>(db: SqliteDatabase, read: () => T): T {
   })();
 }
 
+function listJobsInSnapshot(db: SqliteDatabase, query: JobListQuery): PaginatedResponse<JobSummary> {
+  const { ids, total, page } = selectJobPage(db, query, jobSqlFilter(query));
+  // Hydrate only selected IDs, in selection order. Auxiliary availability and
+  // template reads are deliberately absent from index construction.
+  const statement = db.prepare(`SELECT ${jobProjectionSelect()} FROM job_list_projections WHERE tenant_id = ? AND job_id = ?`);
+  const summaries = ids.map((id) => rowToJobSummary(statement.get(DEFAULT_TENANT, id) as JobListProjectionRow, db));
+  return paginateWithTotal(summaries, total, page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
+}
+
 export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResponse<JobSummary> {
+  return withJobQuerySnapshot(db, () => listJobsInSnapshot(db, query));
+}
+
+/** Read a visible page, a bounded matching cohort and caller data in one snapshot. */
+export function withJobsSelectionSnapshot<T>(
+  db: SqliteDatabase,
+  query: JobListQuery,
+  filter: Partial<BulkJobMutationFilter>,
+  limit: number,
+  read: (page: PaginatedResponse<JobSummary>, ids: string[]) => T,
+): T {
   return withJobQuerySnapshot(db, () => {
-    const { ids, total, page } = selectJobPage(db, query, jobSqlFilter(query));
-    // Hydrate only selected IDs, in selection order. Auxiliary availability and
-    // template reads are deliberately absent from index construction.
-    const statement = db.prepare(`SELECT ${jobProjectionSelect()} FROM job_list_projections WHERE tenant_id = ? AND job_id = ?`);
-    const summaries = ids.map((id) => rowToJobSummary(statement.get(DEFAULT_TENANT, id) as JobListProjectionRow, db));
-    return paginateWithTotal(summaries, total, page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
+    const page = listJobsInSnapshot(db, query);
+    const normalized = normalizeMutationFilter(filter);
+    const selection = jobQuerySelection(normalized, jobSqlFilter(normalized));
+    const ids = allRows<{ job_id: string }>(db,
+      `SELECT qi.job_id FROM ${selection.from}${selection.where} LIMIT ?`, [...selection.params, limit])
+      .map((row) => row.job_id);
+    return read(page, ids);
   });
 }
 
@@ -1065,12 +1086,36 @@ export function listScoringKeywords(db: SqliteDatabase): ScoringKeywordAggregati
   };
 }
 
-export function matchingJobKeys(db: SqliteDatabase, filter: Partial<BulkJobMutationFilter> = {}): string[] {
+export function matchingJobKeys(db: SqliteDatabase, filter: Partial<BulkJobMutationFilter> = {}, limit?: number): string[] {
   const query = normalizeMutationFilter(filter);
   return withJobQuerySnapshot(db, () => {
     const selection = jobQuerySelection(query, jobSqlFilter(query));
+    const limitSql = limit === undefined ? "" : " LIMIT ?";
+    const params = limit === undefined ? selection.params : [...selection.params, limit];
     return allRows<{ job_id: string }>(db,
-      `SELECT qi.job_id FROM ${selection.from}${selection.where}`, selection.params).map((row) => row.job_id);
+      `SELECT qi.job_id FROM ${selection.from}${selection.where}${limitSql}`, params).map((row) => row.job_id);
+  });
+}
+
+/** Check filter membership only within a reviewed canonical cohort. */
+export function matchingJobKeysWithin(
+  db: SqliteDatabase,
+  filter: Partial<BulkJobMutationFilter>,
+  jobKeys: readonly string[],
+): string[] {
+  if (!jobKeys.length) return [];
+  const query = normalizeMutationFilter(filter);
+  return withJobQuerySnapshot(db, () => {
+    const selection = jobQuerySelection(query, jobSqlFilter(query));
+    const matching: string[] = [];
+    for (let offset = 0; offset < jobKeys.length; offset += 250) {
+      const batch = jobKeys.slice(offset, offset + 250);
+      const ids = allRows<{ job_id: string }>(db,
+        `SELECT qi.job_id FROM ${selection.from}${selection.where} AND qi.job_id IN (${batch.map(() => "?").join(", ")})`,
+        [...selection.params, ...batch]);
+      matching.push(...ids.map((row) => row.job_id));
+    }
+    return matching;
   });
 }
 

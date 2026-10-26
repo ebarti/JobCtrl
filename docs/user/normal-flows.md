@@ -342,6 +342,12 @@ actions use destructive styling, while restore and unhide remain recovery
 actions. Opening a row uses its keyboard-focusable row action, so the table does
 not add a redundant visible **Open** control to every record.
 
+Permanent deletion confirms a fixed set of removed jobs from the observed list.
+If their lifecycle state changes before confirmation finishes, the app refuses
+the entire deletion and asks you to refresh and select again. The selection
+expires after one minute; existing jobs and materials remain intact when a
+selection is refused. Unrelated workspace changes do not invalidate it.
+
 At 900px and below, the Jobs, Artifacts, Contacts, Discovery, and Settings data
 tables reflow into labelled record cards. Their sorting and filtering controls
 remain available, and at phone width each card becomes a single readable

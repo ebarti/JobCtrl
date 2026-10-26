@@ -91,6 +91,8 @@ export const DEMO_CAPABILITY_MANIFEST = {
   deleteJobs: local("Soft-deletes synthetic jobs locally."),
   permanentlyDeleteJob: local("Permanently deletes only browser-local synthetic data."),
   permanentlyDeleteJobs: local("Permanently deletes only browser-local synthetic data."),
+  reviewableJobs: local("Reads browser-local example jobs and freezes the reviewed selection."),
+  preparePermanentDeleteSelection: local("Reviews the selected browser-local example jobs before deletion."),
   restoreJob: local("Restores a synthetic job locally."),
   restoreJobs: local("Restores synthetic jobs locally."),
   hideJob: local("Hides a synthetic job locally."),

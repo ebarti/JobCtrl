@@ -40,7 +40,7 @@ var (
 )
 
 const (
-	launcherProtocol   = 1
+	launcherProtocol   = 2
 	stateSchemaVersion = 1
 	logLineLimit       = 200
 	startupTimeout     = 30 * time.Second
@@ -283,7 +283,17 @@ var startCommand = executeStart
 // Run is the only public CLI entrypoint. __supervise is reachable only through
 // the re-exec made by `jobctrl start`.
 func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Writer) error {
+	runtimeHome, err := runtimeHomeFromEnv(inheritedEnv)
+	if err != nil {
+		return err
+	}
+	if err := refusePendingBridgeHandoff(runtimeHome); err != nil {
+		return err
+	}
 	if len(args) > 0 && args[0] == "rollback" {
+		if handled, err := recoverBridgeBeforeBootstrap(inheritedEnv, args, stdout); handled {
+			return err
+		}
 		_, controllerErr := homebrewBootstrap(executable, args, inheritedEnv, stdout, stderr, true)
 		if handled, recoveryErr := recoverRevokedTransitionBeforePrepare(inheritedEnv, stdout); handled {
 			if recoveryErr != nil && controllerErr != nil {
@@ -312,6 +322,9 @@ func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Write
 		return err
 	}
 	defer func() { _ = ctx.selection.Close() }()
+	if err := refusePendingBridgeHandoff(ctx.Instance.RuntimeHome); err != nil {
+		return err
+	}
 	if store, storeErr := release.Open(ctx.Instance.RuntimeHome); storeErr == nil {
 		if journal, journalErr := store.ReadJournal(); journalErr == nil && journal.Resumable() && !transitionRecoveryCommand(args) && !authenticatedTransitionStartup(ctx, args) {
 			return fmt.Errorf("unfinished %s transition at %s; run `jobctrl rollback` to recover before starting or dispatching commands", journal.Operation, journal.State)
@@ -623,6 +636,9 @@ func locatePayloadRootLocked(executable string, inheritedEnv []string) (string, 
 	fail := func(cause error) (string, *selectorReceipt, *release.Lock, error) {
 		_ = lock.Close()
 		return "", nil, nil, cause
+	}
+	if err := refusePendingBridgeHandoff(home); err != nil {
+		return fail(err)
 	}
 	selector := filepath.Join(home, "bin", "jobctrl")
 	if path != selector {

@@ -58,6 +58,24 @@ transitive package, binary, dynamic library, and license. A production builder
 must fail when a payload component is absent from the inventory, marked
 developer-only, not approved for bundling, or missing its required attribution.
 
+The schema-v15 candidate requires launcher protocol 2. Historical protocol-1
+controllers, including v0.3.1, must refuse this candidate before beginning a
+database transition: their rollback cannot safely preserve an independent
+source commit after candidate startup refuses. A direct installed upgrade from
+v0.3.1, and a rollback across that protocol boundary, therefore require a
+separately released and verified compatible bridge. That bridge must own a
+v15-aware, source-preserving transition or hand off control before mutation;
+advertising a wider protocol range alone is insufficient. No such bridge is
+provided by this candidate. Fresh installations and interrupted-transition
+recovery still require their own release verification.
+
+The v15 payload includes `launcher/schema-transition.json`, declaring source
+schema 14 and target schema 15. The file is part of the signed payload
+inventory; its mode, size and SHA-256 bind the declaration to the release.
+The builder requires the exact declaration and fails if it is absent or
+altered. A declaration alone does not authorize a transition: the bridge must
+verify the signed release and its transition contract before mutation.
+
 The manifest's `files` array covers every regular file and symbolic link except
 `manifest.json` itself and its detached `manifest.sig`; those two files form the
 signed envelope and cannot self-hash. SBOM, licenses, notices, provenance, and

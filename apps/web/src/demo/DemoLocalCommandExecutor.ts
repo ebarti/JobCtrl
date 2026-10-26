@@ -1,4 +1,5 @@
 import type { ApplyReviewApprovalGateReason } from "@jobctrl/contracts";
+import { JobCtrlApiError } from "@jobctrl/api-client";
 import {
   LOCAL_TENANT,
   createContactCreated,
@@ -54,6 +55,7 @@ import {
   type DemoWorkspaceMutationContext,
   type DemoWorkspaceSnapshot,
 } from "./workspace/index.js";
+import { captureLifecycleRevisions, changedLifecycleJobs } from "./workspace/lifecycleRevisions.js";
 
 export interface DemoCommandClock {
   now(): Date;
@@ -62,6 +64,25 @@ export interface DemoCommandClock {
 export interface DemoLocalCommandExecutorOptions {
   readonly clock?: DemoCommandClock;
   readonly createId?: (prefix: string) => string;
+}
+
+interface DemoPermanentDeleteSelection {
+  workspaceId: string;
+  resetEpoch: number;
+  revision: number;
+  jobRevisions: ReadonlyMap<string, number>;
+  jobKeys: string[];
+  expiresAt: number;
+}
+
+interface DemoPermanentDeleteObservation {
+  workspaceId: string;
+  resetEpoch: number;
+  revision: number;
+  jobRevisions: ReadonlyMap<string, number>;
+  jobKeys: string[];
+  allMatchingAllowed: boolean;
+  expiresAt: number;
 }
 
 const systemClock: DemoCommandClock = { now: () => new Date() };
@@ -144,6 +165,8 @@ export class DemoCommandPersistenceError extends Error {
 export class DemoLocalCommandExecutor {
   private readonly clock: DemoCommandClock;
   private readonly createId: (prefix: string) => string;
+  private readonly permanentDeleteSelections = new Map<string, DemoPermanentDeleteSelection>();
+  private readonly permanentDeleteObservations = new Map<string, DemoPermanentDeleteObservation>();
 
   constructor(
     private readonly workspace: DemoWorkspaceRepository,
@@ -153,16 +176,122 @@ export class DemoLocalCommandExecutor {
     this.createId = options.createId ?? defaultId;
   }
 
+  observePermanentDeleteSelection(
+    snapshot: DemoWorkspaceSnapshot,
+    matchingJobKeys: readonly string[],
+    visibleJobKeys: readonly string[],
+  ): string | null {
+    if (matchingJobKeys.length === 0) return null;
+    const now = this.clock.now().getTime();
+    for (const [id, observation] of this.permanentDeleteObservations) {
+      if (observation.expiresAt <= now) this.permanentDeleteObservations.delete(id);
+    }
+    if (this.permanentDeleteObservations.size >= 64) return null;
+    const allMatchingAllowed = matchingJobKeys.length <= 5000;
+    const observationId = crypto.randomUUID();
+    const jobKeys = [...(allMatchingAllowed ? matchingJobKeys : visibleJobKeys)];
+    this.permanentDeleteObservations.set(observationId, {
+      workspaceId: snapshot.workspaceId,
+      resetEpoch: snapshot.resetEpoch,
+      revision: snapshot.revision,
+      jobKeys,
+      jobRevisions: captureLifecycleRevisions(snapshot, jobKeys),
+      allMatchingAllowed,
+      expiresAt: now + 60_000,
+    });
+    return observationId;
+  }
+
+  async preparePermanentDeleteSelection(
+    request: Parameters<ApiClientPort["preparePermanentDeleteSelection"]>[0],
+  ): ReturnType<ApiClientPort["preparePermanentDeleteSelection"]> {
+    const observation = this.permanentDeleteObservations.get(request.observationId);
+    this.permanentDeleteObservations.delete(request.observationId);
+    const snapshot = await this.workspace.snapshot();
+    const now = this.clock.now().getTime();
+    if (!observation || observation.expiresAt <= now || observation.workspaceId !== snapshot.workspaceId
+      || observation.resetEpoch !== snapshot.resetEpoch
+      || (!observation.allMatchingAllowed && request.selections.some((selection) => selection.allMatching))) {
+      throw permanentDeleteSelectionConflict();
+    }
+    for (const [id, selection] of this.permanentDeleteSelections) {
+      if (selection.expiresAt <= now) this.permanentDeleteSelections.delete(id);
+    }
+    if (this.permanentDeleteSelections.size >= 64) {
+      throw permanentDeleteSelectionConflict();
+    }
+    const allMatching = request.selections.some((selection) => selection.allMatching);
+    if (allMatching && request.selections.some((selection) => !selection.allMatching)) {
+      throw permanentDeleteSelectionConflict();
+    }
+    const matchingKeys = [...new Set(request.selections.flatMap((selection) =>
+      selectJobKeys(snapshot, selection as unknown as Record<string, unknown>),
+    ))];
+    const jobKeys = allMatching ? observation.jobKeys : matchingKeys;
+    const observedKeys = new Set(observation.jobKeys);
+    const currentMatching = new Set(matchingKeys);
+    const changedJobs = changedLifecycleJobs(snapshot, observation.revision, observation.jobRevisions, jobKeys);
+    if (jobKeys.length > 5000 || changedJobs === null) {
+      throw permanentDeleteSelectionConflict();
+    }
+    const changedJobKeys = new Set(changedJobs);
+    const expected = request.expected;
+    if (request.selections.some((selection) => !selection.allMatching) && !expected) {
+      throw permanentDeleteSelectionConflict();
+    }
+    if (expected && new Set(expected.map((entry) => entry.jobKey)).size !== expected.length) {
+      throw permanentDeleteSelectionConflict();
+    }
+    const expectedByKey = new Map((expected ?? []).map((entry) => [entry.jobKey, entry] as const));
+    const explicit = new Set(request.selections.filter((selection) => !selection.allMatching)
+      .flatMap((selection) => selection.jobKeys));
+    const conflicts: string[] = [];
+    for (const jobKey of jobKeys) {
+      const job = snapshot.state.readModel.jobs.details[jobKey]?.job;
+      const expectedJob = expectedByKey.get(jobKey);
+      if (!observedKeys.has(jobKey) || !currentMatching.has(jobKey)
+        || changedJobKeys.has(jobKey)
+        || !job || (!job.deletedAt && !job.hiddenAt)
+        || (explicit.has(jobKey) && (!expectedJob || expectedJob.deletedAt !== job.deletedAt || expectedJob.hiddenAt !== job.hiddenAt))) {
+        conflicts.push(jobKey);
+      }
+    }
+    if (conflicts.length) {
+      const changed = new Set(conflicts);
+      throw permanentDeleteSelectionConflict(conflicts, jobKeys.filter((key) => !changed.has(key)));
+    }
+    const selectionId = crypto.randomUUID();
+    this.permanentDeleteSelections.set(selectionId, {
+      workspaceId: snapshot.workspaceId,
+      resetEpoch: snapshot.resetEpoch,
+      revision: snapshot.revision,
+      jobRevisions: captureLifecycleRevisions(snapshot, jobKeys),
+      jobKeys,
+      expiresAt: now + 60_000,
+    });
+    return { ok: true, selectionId, jobKeys };
+  }
+
+  dispose(): void {
+    this.permanentDeleteSelections.clear();
+    this.permanentDeleteObservations.clear();
+  }
+
   async execute<TMethod extends DemoBrowserLocalCommand>(
     method: TMethod,
     args: Parameters<ApiClientPort[TMethod]>,
   ): Promise<ApiClientResponse<TMethod>> {
+    const selectionId = method === "permanentlyDeleteJobs"
+      ? stringValue(record(args[0]).selectionId)
+      : null;
+    const selection = selectionId ? this.permanentDeleteSelections.get(selectionId) : undefined;
+    if (selectionId) this.permanentDeleteSelections.delete(selectionId);
     const current = await this.workspace.snapshot();
     let response: unknown;
     const now = this.clock.now().toISOString();
     const commit = await this.workspace.mutate(
       (draft, context) => {
-        response = this.apply(method, args as unknown[], draft, context, now);
+        response = this.apply(method, args as unknown[], draft, context, now, selection);
       },
       { expectedResetEpoch: current.resetEpoch },
     );
@@ -178,6 +307,7 @@ export class DemoLocalCommandExecutor {
     draft: DemoWorkspaceSnapshot,
     context: DemoWorkspaceMutationContext,
     now: string,
+    selection?: DemoPermanentDeleteSelection,
   ): unknown {
     switch (method) {
       case "acknowledgeDigest": {
@@ -979,6 +1109,31 @@ export class DemoLocalCommandExecutor {
       case "unhideJobs":
       case "permanentlyDeleteJobs": {
         const body = record(args[0]);
+        if (method === "permanentlyDeleteJobs" && body.selectionId !== undefined) {
+          const keys = arrayValue(body.jobKeys).map(String);
+          const reviewedKeys = new Set(selection?.jobKeys);
+          if (!selection || body.allMatching === true || selection.expiresAt <= this.clock.now().getTime()
+            || selection.workspaceId !== draft.workspaceId || selection.resetEpoch !== draft.resetEpoch
+            || keys.length !== selection.jobKeys.length
+            || new Set(keys).size !== keys.length || keys.some((key) => !reviewedKeys.has(key))) {
+            throw permanentDeleteSelectionConflict();
+          }
+          const changedJobs = changedLifecycleJobs(draft, selection.revision, selection.jobRevisions, keys);
+          if (changedJobs === null) throw permanentDeleteSelectionConflict();
+          const changedJobKeys = new Set(changedJobs);
+          const conflicts: string[] = [];
+          for (const jobKey of keys) {
+            const job = draft.state.readModel.jobs.details[jobKey]?.job;
+            if (!job || (!job.deletedAt && !job.hiddenAt)
+              || changedJobKeys.has(jobKey)) {
+              conflicts.push(jobKey);
+            }
+          }
+          if (conflicts.length) {
+            const changed = new Set(conflicts);
+            throw permanentDeleteSelectionConflict(conflicts, keys.filter((key) => !changed.has(key)));
+          }
+        }
         return this.applyJobMutation(
           method,
           selectJobKeys(draft, body),
@@ -1616,6 +1771,14 @@ export class DemoLocalCommandExecutor {
     if (!permanent) recomputeDemoOutcomeProjections(draft);
     return { ok: true, count: jobKeys.length, jobKeys };
   }
+}
+
+function permanentDeleteSelectionConflict(conflictingJobKeys?: string[], unprocessedJobKeys?: string[]): JobCtrlApiError {
+  return new JobCtrlApiError(409, "Conflict", "The removed job selection changed. Refresh and select the jobs again.", {
+    ok: false,
+    error: "permanent_delete_selection_conflict",
+    ...(conflictingJobKeys ? { deletedJobKeys: [], conflictingJobKeys, unprocessedJobKeys: unprocessedJobKeys ?? [] } : {}),
+  });
 }
 
 function defaultId(prefix: string): string {

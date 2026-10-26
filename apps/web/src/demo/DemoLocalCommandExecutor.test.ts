@@ -52,6 +52,11 @@ async function harness(store: DemoWorkspaceStore = new InMemoryDemoWorkspaceStor
   return { adapter, repository };
 }
 
+function requireObservationId(value: string | null): string {
+  if (!value) throw new Error("Expected a reviewable deletion observation.");
+  return value;
+}
+
 type LocalCase = readonly [
   (typeof DEMO_BROWSER_LOCAL_COMMANDS)[number],
   (api: ApiClientPort, repository: DemoWorkspaceRepository) => Promise<unknown>,
@@ -407,6 +412,286 @@ describe("DemoLocalCommandExecutor", () => {
     expect(snapshot.state.readModel.jobs.details[activeKey!]).toBeDefined();
     expect(snapshot.state.readModel.jobs.details[deletedKey!]).toBeUndefined();
     expect(snapshot.state.readModel.jobs.details[hiddenKey!]).toBeUndefined();
+  });
+
+  it("refuses the entire reviewed removal when a selected job is restored after preparation", async () => {
+    const { adapter, repository } = await harness();
+    const [deletedKey, hiddenKey] = repository.snapshotNow().state.readModel.jobs.list.items
+      .slice(0, 2).map((job) => job.jobKey);
+    await adapter.deleteJob(deletedKey!);
+    await adapter.hideJob(hiddenKey!);
+    const before = repository.snapshotNow();
+    const expected = [deletedKey!, hiddenKey!].map((jobKey) => {
+      const job = before.state.readModel.jobs.details[jobKey]!.job;
+      return { jobKey, deletedAt: job.deletedAt, hiddenAt: job.hiddenAt };
+    });
+    const observation = await adapter.reviewableJobs({ deleted: "all" });
+    const selection = await adapter.preparePermanentDeleteSelection({
+      observationId: requireObservationId(observation.observationId),
+      selections: [{ allMatching: false, jobKeys: [deletedKey!, hiddenKey!] }],
+      expected,
+    });
+    expect(repository.snapshotNow().revision).toBe(before.revision);
+    await adapter.restoreJob(deletedKey!);
+    const afterRestore = repository.snapshotNow();
+    await expect(adapter.permanentlyDeleteJobs({
+      allMatching: false,
+      jobKeys: selection.jobKeys,
+      selectionId: selection.selectionId,
+    })).rejects.toMatchObject({ status: 409, responseBody: {
+      error: "permanent_delete_selection_conflict",
+      deletedJobKeys: [],
+      conflictingJobKeys: [deletedKey],
+      unprocessedJobKeys: [hiddenKey],
+    } });
+    expect(repository.snapshotNow()).toEqual(afterRestore);
+    expect(repository.snapshotNow().state.readModel.jobs.details[deletedKey!]).toBeDefined();
+    expect(repository.snapshotNow().state.readModel.jobs.details[hiddenKey!]).toBeDefined();
+    repository.dispose();
+  });
+
+  it("freezes all-matching removed selections and makes a successful receipt single-use", async () => {
+    const { adapter, repository } = await harness();
+    const [first, second] = repository.snapshotNow().state.readModel.jobs.list.items
+      .slice(0, 2).map((job) => job.jobKey);
+    await adapter.deleteJob(first!);
+    const request = {
+      selections: [{ allMatching: true, jobKeys: [], filter: {
+        q: "", deleted: "deleted" as const, applyStatus: "all" as const, source: "", company: "",
+      } }],
+    };
+    const observation = await adapter.reviewableJobs({ deleted: "deleted" });
+    const stale = await adapter.preparePermanentDeleteSelection({ ...request, observationId: requireObservationId(observation.observationId) });
+    expect(stale.jobKeys).toContain(first);
+    expect(stale.jobKeys).not.toContain(second);
+    await adapter.deleteJob(second!);
+    await expect(adapter.permanentlyDeleteJobs({
+      allMatching: false, jobKeys: stale.jobKeys, selectionId: stale.selectionId,
+    })).resolves.toMatchObject({ ok: true, count: 1, jobKeys: [first] });
+    expect(repository.snapshotNow().state.readModel.jobs.details[second!]).toBeDefined();
+    await expect(adapter.permanentlyDeleteJobs({
+      allMatching: false, jobKeys: stale.jobKeys, selectionId: stale.selectionId,
+    })).rejects.toMatchObject({ status: 409 });
+    const freshObservation = await adapter.reviewableJobs({ deleted: "deleted" });
+    const fresh = await adapter.preparePermanentDeleteSelection({ ...request, observationId: requireObservationId(freshObservation.observationId) });
+    expect(fresh.jobKeys).toEqual(expect.arrayContaining([second]));
+    expect(fresh.jobKeys).not.toContain(first);
+    await expect(adapter.permanentlyDeleteJobs({
+      allMatching: false, jobKeys: fresh.jobKeys, selectionId: fresh.selectionId,
+    })).resolves.toMatchObject({ ok: true, count: fresh.jobKeys.length });
+    await expect(adapter.permanentlyDeleteJobs({
+      allMatching: false, jobKeys: fresh.jobKeys, selectionId: fresh.selectionId,
+    })).rejects.toMatchObject({ status: 409 });
+    repository.dispose();
+  });
+
+  it("rejects stale displayed state before issuing a deletion receipt", async () => {
+    const { adapter, repository } = await harness();
+    const jobKey = repository.snapshotNow().state.readModel.jobs.list.items[0]!.jobKey;
+    await adapter.deleteJob(jobKey);
+    const job = repository.snapshotNow().state.readModel.jobs.details[jobKey]!.job;
+    const expected = { jobKey, deletedAt: job.deletedAt, hiddenAt: job.hiddenAt };
+    const observation = await adapter.reviewableJobs({ deleted: "all" });
+    await adapter.restoreJob(jobKey);
+    const afterRestore = repository.snapshotNow();
+    await expect(adapter.preparePermanentDeleteSelection({
+      observationId: requireObservationId(observation.observationId),
+      selections: [{ allMatching: false, jobKeys: [jobKey] }],
+      expected: [expected],
+    })).rejects.toMatchObject({ status: 409 });
+    expect(repository.snapshotNow()).toEqual(afterRestore);
+    repository.dispose();
+  });
+
+  it("reports changed and unprocessed members when a mixed cohort changes before preparation", async () => {
+    const { adapter, repository } = await harness();
+    const [deletedKey, hiddenKey] = repository.snapshotNow().state.readModel.jobs.list.items
+      .slice(0, 2).map((job) => job.jobKey);
+    await adapter.deleteJob(deletedKey!);
+    await adapter.hideJob(hiddenKey!);
+    const observed = await adapter.reviewableJobs({ deleted: "all" });
+    const expected = [deletedKey!, hiddenKey!].map((jobKey) => {
+      const job = observed.items.find((item) => item.jobKey === jobKey)!;
+      return { jobKey, deletedAt: job.deletedAt, hiddenAt: job.hiddenAt };
+    });
+    await adapter.unhideJob(hiddenKey!);
+    const before = repository.snapshotNow();
+    await expect(adapter.preparePermanentDeleteSelection({
+      observationId: requireObservationId(observed.observationId),
+      selections: [{ allMatching: false, jobKeys: [deletedKey!, hiddenKey!] }],
+      expected,
+    })).rejects.toMatchObject({ status: 409, responseBody: {
+      error: "permanent_delete_selection_conflict",
+      deletedJobKeys: [],
+      conflictingJobKeys: [hiddenKey],
+      unprocessedJobKeys: [deletedKey],
+    } });
+    expect(repository.snapshotNow()).toEqual(before);
+    expect(repository.snapshotNow().state.readModel.jobs.details[deletedKey!]).toBeDefined();
+    expect(repository.snapshotNow().state.readModel.jobs.details[hiddenKey!]).toBeDefined();
+    adapter.dispose(); repository.dispose();
+  });
+
+  it("keeps job browsing available when no removed jobs exist or observation capacity is full", async () => {
+    const repository = new DemoWorkspaceRepository({
+      store: new InMemoryDemoWorkspaceStore(),
+      createWorkspaceId: () => "workspace-observation-capacity",
+    });
+    await repository.initialize();
+    let now = Date.parse(NOW);
+    const adapter = new DemoApiClientAdapter(repository, {
+      clock: { now: () => new Date(now) },
+    });
+    const active = await adapter.reviewableJobs({ deleted: "active" });
+    expect(active.observationId).toBeNull();
+    expect(active.items.length).toBeGreaterThan(0);
+
+    const jobKey = active.items[0]!.jobKey;
+    await adapter.deleteJob(jobKey);
+    for (let index = 0; index < 64; index += 1) {
+      expect((await adapter.reviewableJobs({ deleted: "deleted" })).observationId).toBeTruthy();
+    }
+    const full = await adapter.reviewableJobs({ deleted: "deleted" });
+    expect(full.observationId).toBeNull();
+    expect(full.items.some((job) => job.jobKey === jobKey)).toBe(true);
+    now += 60_000;
+    expect((await adapter.reviewableJobs({ deleted: "deleted" })).observationId).toBeTruthy();
+    adapter.dispose();
+    repository.dispose();
+  });
+
+  it("rejects a noncanonical alias in a guarded selection without mutating any job", async () => {
+    const { adapter, repository } = await harness();
+    const jobKey = repository.snapshotNow().state.readModel.jobs.list.items[0]!.jobKey;
+    await adapter.deleteJob(jobKey);
+    const observed = await adapter.reviewableJobs({ deleted: "deleted" });
+    const job = observed.items.find((item) => item.jobKey === jobKey)!;
+    const before = repository.snapshotNow();
+    await expect(adapter.preparePermanentDeleteSelection({
+      observationId: requireObservationId(observed.observationId),
+      selections: [{ allMatching: false, jobKeys: [job.url] }],
+      expected: [{ jobKey: job.url, deletedAt: job.deletedAt, hiddenAt: job.hiddenAt }],
+    })).rejects.toMatchObject({ status: 409 });
+    expect(repository.snapshotNow()).toEqual(before);
+    repository.dispose();
+  });
+
+  it("rejects restore and re-delete before preparation even when the timestamps collide", async () => {
+    const { adapter, repository } = await harness();
+    const jobKey = repository.snapshotNow().state.readModel.jobs.list.items[0]!.jobKey;
+    await adapter.deleteJob(jobKey);
+    const observed = await adapter.reviewableJobs({ deleted: "all" });
+    const job = observed.items.find((item) => item.jobKey === jobKey)!;
+    const expected = { jobKey, deletedAt: job.deletedAt, hiddenAt: job.hiddenAt };
+    await adapter.restoreJob(jobKey);
+    await adapter.deleteJob(jobKey); // The test clock deliberately does not advance.
+    expect(repository.snapshotNow().state.readModel.jobs.details[jobKey]!.job.deletedAt).toBe(expected.deletedAt);
+    const before = repository.snapshotNow();
+    await expect(adapter.preparePermanentDeleteSelection({
+      observationId: requireObservationId(observed.observationId),
+      selections: [{ allMatching: false, jobKeys: [jobKey] }],
+      expected: [expected],
+    })).rejects.toMatchObject({ status: 409 });
+    expect(repository.snapshotNow()).toEqual(before);
+    repository.dispose();
+  });
+
+  it("preserves a reviewed selection across unrelated lifecycle writes in another tab", async () => {
+    const store = new InMemoryDemoWorkspaceStore();
+    const { adapter, repository } = await harness(store);
+    const otherRepository = new DemoWorkspaceRepository({ store });
+    await otherRepository.initialize();
+    const otherAdapter = new DemoApiClientAdapter(otherRepository, { clock: { now: () => new Date(NOW) } });
+    const [selected, unrelated] = repository.snapshotNow().state.readModel.jobs.list.items
+      .slice(0, 2).map((job) => job.jobKey);
+    await adapter.deleteJob(selected!);
+    const observation = await adapter.reviewableJobs({ deleted: "all" });
+    const job = observation.items.find((item) => item.jobKey === selected)!;
+    await otherAdapter.hideJob(unrelated!);
+    const selection = await adapter.preparePermanentDeleteSelection({
+      observationId: requireObservationId(observation.observationId),
+      selections: [{ allMatching: false, jobKeys: [selected!] }],
+      expected: [{ jobKey: selected!, deletedAt: job.deletedAt, hiddenAt: job.hiddenAt }],
+    });
+    await otherAdapter.unhideJob(unrelated!);
+    await expect(adapter.permanentlyDeleteJobs({
+      allMatching: false, jobKeys: selection.jobKeys, selectionId: selection.selectionId,
+    })).resolves.toMatchObject({ ok: true, count: 1, jobKeys: [selected] });
+    expect(repository.snapshotNow().state.readModel.jobs.details[unrelated!]).toBeDefined();
+    adapter.dispose(); otherAdapter.dispose(); otherRepository.dispose(); repository.dispose();
+  });
+
+  it("rejects a legacy writer's same-value ABA even after a newer writer commits", async () => {
+    const store = new InMemoryDemoWorkspaceStore();
+    const { adapter, repository } = await harness(store);
+    const [selected, unrelated] = repository.snapshotNow().state.readModel.jobs.list.items
+      .slice(0, 2).map((job) => job.jobKey);
+    await adapter.deleteJob(selected!);
+    const observation = await adapter.reviewableJobs({ deleted: "all" });
+    const job = observation.items.find((item) => item.jobKey === selected)!;
+    for (const deletedAt of [null, job.deletedAt]) {
+      await store.transact((current, transaction) => {
+        const draft = structuredClone(current!);
+        draft.state.readModel.jobs.details[selected!]!.job.deletedAt = deletedAt;
+        draft.state.readModel.jobs.list.items.find((item) => item.jobKey === selected)!.deletedAt = deletedAt;
+        transaction.putSnapshot({ ...draft, revision: draft.revision + 1 });
+      });
+    }
+    await adapter.hideJob(unrelated!); // New writer detects the legacy checkpoint gap.
+    await expect(adapter.preparePermanentDeleteSelection({
+      observationId: requireObservationId(observation.observationId),
+      selections: [{ allMatching: false, jobKeys: [selected!] }],
+      expected: [{ jobKey: selected!, deletedAt: job.deletedAt, hiddenAt: job.hiddenAt }],
+    })).rejects.toMatchObject({ status: 409 });
+    expect((await repository.snapshot()).state.readModel.jobs.details[selected!]).toBeDefined();
+    adapter.dispose(); repository.dispose();
+  });
+
+  it("consumes changed receipts and rejects expired or disposed selections", async () => {
+    const repository = new DemoWorkspaceRepository({
+      store: new InMemoryDemoWorkspaceStore(),
+      createWorkspaceId: () => "workspace-delete-test",
+    });
+    await repository.initialize();
+    let now = Date.parse(NOW);
+    let id = 0;
+    const adapter = new DemoApiClientAdapter(repository, {
+      clock: { now: () => new Date(now) },
+      createId: (prefix) => `${prefix}-${++id}`,
+    });
+    const [first, second] = repository.snapshotNow().state.readModel.jobs.list.items
+      .slice(0, 2).map((job) => job.jobKey);
+    await adapter.deleteJob(first!);
+    await adapter.deleteJob(second!);
+    const current = repository.snapshotNow();
+    const expected = [first!, second!].map((jobKey) => {
+      const job = current.state.readModel.jobs.details[jobKey]!.job;
+      return { jobKey, deletedAt: job.deletedAt, hiddenAt: job.hiddenAt };
+    });
+    const request = { selections: [{ allMatching: false, jobKeys: [first!, second!] }], expected };
+    const observation = await adapter.reviewableJobs({ deleted: "all" });
+    const changed = await adapter.preparePermanentDeleteSelection({ ...request, observationId: requireObservationId(observation.observationId) });
+    await expect(adapter.permanentlyDeleteJobs({
+      allMatching: false, jobKeys: [first!], selectionId: changed.selectionId,
+    })).rejects.toMatchObject({ status: 409 });
+    await expect(adapter.permanentlyDeleteJobs({
+      allMatching: false, jobKeys: changed.jobKeys, selectionId: changed.selectionId,
+    })).rejects.toMatchObject({ status: 409 });
+    const expiryObservation = await adapter.reviewableJobs({ deleted: "all" });
+    const expired = await adapter.preparePermanentDeleteSelection({ ...request, observationId: requireObservationId(expiryObservation.observationId) });
+    now += 60_000;
+    await expect(adapter.permanentlyDeleteJobs({
+      allMatching: false, jobKeys: expired.jobKeys, selectionId: expired.selectionId,
+    })).rejects.toMatchObject({ status: 409 });
+    const disposalObservation = await adapter.reviewableJobs({ deleted: "all" });
+    const disposed = await adapter.preparePermanentDeleteSelection({ ...request, observationId: requireObservationId(disposalObservation.observationId) });
+    adapter.dispose();
+    await expect(adapter.permanentlyDeleteJobs({
+      allMatching: false, jobKeys: disposed.jobKeys, selectionId: disposed.selectionId,
+    })).rejects.toMatchObject({ status: 409 });
+    expect(repository.snapshotNow().state.readModel.jobs.details[first!]).toBeDefined();
+    expect(repository.snapshotNow().state.readModel.jobs.details[second!]).toBeDefined();
+    repository.dispose();
   });
 
   it("uses legacy hidden compatibility for all-matching demo unhide", async () => {

@@ -95,6 +95,9 @@ scalar `stage`. The shared API client serializes arrays as comma-separated query
 values, including an empty array as `stages=`. Membership, precedence, metadata,
 and bulk-selection semantics are owned by [Jobs & Materials](api/jobs-and-materials.md)
 and the [complete contract](api/complete-contract.md).
+The Jobs removed-selection action uses `GET /v1/jobs/reviewable-list` and
+`POST /v1/jobs/permanent-delete-selection` to bind the confirmed cohort to its
+observed lifecycle state before permanent deletion.
 The Operations browser adapter validates the raw stage array with the shared
 schema before merging stage-local pages. It preserves explicit empty arrays,
 scalar fallback for invalid or oversized arrays, and the requested scalar in

@@ -289,13 +289,17 @@ func setSignedHomebrewTrust(t *testing.T, public ed25519.PublicKey) {
 }
 
 func newSignedHomebrewBootstrapFixture(t *testing.T, private ed25519.PrivateKey, buildID string, sequence uint64, launcherRuntimeProtocol int, python string) homebrewBootstrapFixture {
+	return newSignedHomebrewBootstrapFixtureWithCompatibility(t, private, buildID, sequence, launcherRuntimeProtocol, python, 1, 2)
+}
+
+func newSignedHomebrewBootstrapFixtureWithCompatibility(t *testing.T, private ed25519.PrivateKey, buildID string, sequence uint64, launcherRuntimeProtocol int, python string, minimum, maximum int) homebrewBootstrapFixture {
 	t.Helper()
 	payloadRoot, manifest := verifiedPayloadFixture(t)
 	launcher := "#!/bin/sh\nif [ \"$1\" = start ] && [ -n \"${JOBCTRL_TEST_START_MARKER:-}\" ]; then\n  printf '%s %s\\n' \"$1\" \"${2:-}\" > \"$JOBCTRL_TEST_START_MARKER\"\nfi\nexit 0\n"
 	if err := os.WriteFile(filepath.Join(payloadRoot, "launcher", "jobctrl"), []byte(launcher), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	runtime := strings.Replace(validRuntimeManifest, `"launcherProtocol":1`, fmt.Sprintf(`"launcherProtocol":%d`, launcherRuntimeProtocol), 1)
+	runtime := strings.Replace(validRuntimeManifest, `"launcherProtocol":2`, fmt.Sprintf(`"launcherProtocol":%d`, launcherRuntimeProtocol), 1)
 	if err := os.WriteFile(filepath.Join(payloadRoot, "launcher", "runtime-manifest.json"), []byte(runtime), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +313,7 @@ func newSignedHomebrewBootstrapFixture(t *testing.T, private ed25519.PrivateKey,
 	}
 	manifest.BuildID = buildID
 	manifest.ReleaseChannel = "stable"
-	manifest.LauncherCompatibility.Minimum, manifest.LauncherCompatibility.Maximum = 1, 2
+	manifest.LauncherCompatibility.Minimum, manifest.LauncherCompatibility.Maximum = minimum, maximum
 	manifest.Signing.ManifestKeyID = "jobctrl-release-v1"
 	manifest.Signing.CodeSigning = "developer-id"
 	manifest.Signing.Notarized = true
@@ -552,7 +556,7 @@ func preseedUnsignedHomebrewRelease(t *testing.T, home string, fixture homebrewB
 func seedHomebrewSQLitePair(t *testing.T, python, state string) {
 	t.Helper()
 	for _, name := range []string{"jobctrl.db", "temporal.db"} {
-		code := "import pathlib,sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('create table t(v)'); c.execute('insert into t values (1)'); c.execute('PRAGMA user_version=14') if pathlib.Path(sys.argv[1]).name == 'jobctrl.db' else None; c.commit()"
+		code := "import pathlib,sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('create table t(v)'); c.execute('insert into t values (1)'); c.execute('PRAGMA user_version=15') if pathlib.Path(sys.argv[1]).name == 'jobctrl.db' else None; c.commit()"
 		if output, err := exec.Command(python, "-c", code, filepath.Join(state, name)).CombinedOutput(); err != nil {
 			t.Fatalf("seed %s: %v %s", name, err, output)
 		}

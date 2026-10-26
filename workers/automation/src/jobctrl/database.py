@@ -26,6 +26,7 @@ from jobctrl.infrastructure.migrations.schema_manifest import (
     EXACT_V11_MANIFEST,
     EXACT_V12_MANIFEST,
     EXACT_V14_MANIFEST,
+    EXACT_V15_MANIFEST,
     SchemaManifestError,
     assert_exact_manifest,
     schema_dump,
@@ -58,7 +59,7 @@ from jobctrl.scoring.eligibility_sql import (
 # without changing any v7 table. v9 adds the optional per-position summary to
 # Candidate Profile experience rows. Posting URLs remain unique locators,
 # never aggregate identity.
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -547,15 +548,49 @@ def open_exact_v14_database(
     return conn
 
 
+
+def create_exact_v15_database(db_path: Path | str | None = None) -> sqlite3.Connection:
+    """Create and admit new exact-v15 storage with ownership-safe publication."""
+    from jobctrl.infrastructure.migrations.schema_v15 import create_exact_v15_schema
+
+    return _create_exact_database(db_path, 15, create_exact_v15_schema)
+
+
+def open_exact_v15_database(
+    db_path: Path | str | None = None,
+) -> sqlite3.Connection:
+    """Open an existing exact-v15 database without performing any writes."""
+    path = Path(db_path or DB_PATH)
+    if not path.exists():
+        raise FileNotFoundError(f"No database to open at {path}")
+    if not stat.S_ISREG(path.lstat().st_mode):
+        raise FileExistsError(f"database path is not a regular file: {path}")
+    _refuse_unresolved_initialization(path)
+    conn = get_connection(path, enable_wal=False, require_existing=True)
+    current_version = _assert_schema_version_supported(conn, supported_version=15)
+    if current_version in (6, 7, 8, 9, 10, 11, 12, 13, 14):
+        raise SchemaMigrationRequiredError(
+            f"JobCtrl database is schema v{current_version}. Run `jobctrl update` so "
+            "the native lifecycle can stop JobCtrl, create the paired backup, "
+            "and activate schema v15 before starting the runtime."
+        )
+    if current_version != 15:
+        raise SchemaMigrationRequiredError(
+            f"JobCtrl can only open the exact schema v15 at runtime; found schema version {current_version}."
+        )
+    assert_exact_manifest(conn, EXACT_V15_MANIFEST)
+    return conn
+
+
 def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
-    """Create missing exact-v14 storage or validate an existing sealed database."""
+    """Create missing exact-v15 storage or validate an existing sealed database."""
     path = Path(db_path or DB_PATH)
     if os.path.lexists(path):
         if not stat.S_ISREG(path.lstat().st_mode):
             raise FileExistsError(f"database path is not a regular file: {path}")
-        return open_exact_v14_database(path)
+        return open_exact_v15_database(path)
     try:
-        return create_exact_v14_database(path)
+        return create_exact_v15_database(path)
     except FileExistsError as conflict:
         # A concurrent publisher may have won after our initial check. Only a
         # regular complete database may be adopted; never follow a new symlink.
@@ -565,7 +600,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
             raise conflict
         if not stat.S_ISREG(existing.st_mode):
             raise
-        return open_exact_v14_database(path)
+        return open_exact_v15_database(path)
 
 
 def ensure_projection_tables_in_db(conn: sqlite3.Connection | None = None) -> list[str]:

@@ -25,7 +25,7 @@ import {
   recordManualApplicationOutcome,
 } from "../src/application-feedback.js";
 import { InputError } from "../src/write-model.js";
-import { hasExactV14SchemaManifest } from "../src/schema-manifest.js";
+import { hasExactV15SchemaManifest } from "../src/schema-manifest.js";
 import { initializeExactDatabase } from "./exact-schema.js";
 
 import { recordOutcomeDecision } from "./semantic-fixtures.js";
@@ -151,11 +151,11 @@ describe("application feedback exact current identity", () => {
 
   it("does not mutate the exact-current schema and refuses an invalid job id", () => {
     const db = seededDatabase();
-    expect(hasExactV14SchemaManifest(db)).toBe(true);
+    expect(hasExactV15SchemaManifest(db)).toBe(true);
 
     expect(() =>
       recordManualApplicationOutcome(db, "not-a-canonical-job-id", { kind: "interview" }),
     ).toThrow(InputError);
-    expect(hasExactV14SchemaManifest(db)).toBe(true);
+    expect(hasExactV15SchemaManifest(db)).toBe(true);
   });
 });

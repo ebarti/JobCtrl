@@ -721,9 +721,14 @@ export const handlers = [
   }),
 
   http.get("*/v1/jobs", () => HttpResponse.json(makeJobsPage())),
+  http.get("*/v1/jobs/reviewable-list", () => HttpResponse.json({ ...makeJobsPage(), observationId: "00000000-0000-4000-8000-000000000001" })),
   http.post("*/v1/jobs/bulk-delete", async ({ request }) => {
     const body = (await request.json()) as { jobKeys?: string[] };
     return HttpResponse.json(jobMutationResponse(body.jobKeys ?? []));
+  }),
+  http.post("*/v1/jobs/permanent-delete-selection", async ({ request }) => {
+    const body = (await request.json()) as { selections?: Array<{ jobKeys?: string[] }> };
+    return HttpResponse.json({ ok: true, selectionId: "synthetic-selection", jobKeys: body.selections?.flatMap((selection) => selection.jobKeys ?? []) ?? [] });
   }),
   http.post("*/v1/jobs/bulk-delete-permanent", async ({ request }) => {
     const body = (await request.json()) as { jobKeys?: string[] };

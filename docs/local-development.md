@@ -427,12 +427,15 @@ consent read, and exact denied/granted cookie boundary.
 
 ## Verify
 
-Schema v14 migrations must run with JobCtrl stopped and must write a separate
-candidate. For a synthetic exact-v13 source, exercise the private boundary with
-`python -m jobctrl.infrastructure.migrations.v13_to_v14_execute --source
+Schema v15 migrations must run with JobCtrl stopped and must write a separate
+candidate. For a synthetic exact-v14 source, exercise the private boundary with
+`python -m jobctrl.infrastructure.migrations.v14_to_v15_execute --source
 <source.db> --candidate <candidate.db>`. The command never installs the
-candidate. Normal installations use `jobctrl update`, whose native lifecycle
-owns quiescence, paired backup, candidate activation, readiness, and rollback.
+candidate. The native lifecycle owns quiescence, paired backup, candidate
+activation, readiness, and rollback. Direct updates and rollbacks between a
+protocol-1 installation and this protocol-2 release are refused; a separately
+released and verified bridge is required. See the compatibility notes in
+[`packaging/distribution/README.md`](../packaging/distribution/README.md).
 Never run a migration executor against the live path as its candidate.
 
 Choose the touched-surface recipe and required gates through

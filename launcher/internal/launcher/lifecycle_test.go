@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -732,12 +733,8 @@ func TestRetentionPreservesReferencedAndNonStableEvidence(t *testing.T) {
 	}
 }
 
-// TestRealTwoReleasePromotionRollbackRestoresPairedSQLiteState runs the real
-// lifecycle transaction, receipt/payload verification, selector handoff,
-// SQLite online backup, restoration, and active-pointer writes. Only launcher
-// process execution is injected: component supervision itself is covered by
-// the hermetic launcher lifecycle test, while this test deliberately forces
-// candidate health failure at the exact promotion boundary.
+// Exercise successful promotion and the explicitly requested paired rollback.
+// Failed candidate startup is tested separately with independent writers.
 func TestRealTwoReleasePromotionRollbackRestoresPairedSQLiteState(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {
@@ -765,24 +762,11 @@ func TestRealTwoReleasePromotionRollbackRestoresPairedSQLiteState(t *testing.T) 
 	ctx := launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(state, "missing-state.json"), ControlPath: filepath.Join(state, "control.lock")}, Environment: []string{"HOME=" + t.TempDir(), "JOBCTRL_RUNTIME_HOME=" + runtime, "JOBCTRL_DIR=" + state}}
 	oldStart := startReleaseCommand
 	t.Cleanup(func() { startReleaseCommand = oldStart })
-	startReleaseCommand = func(_ launchContext, receipt release.Receipt, _ string) error {
-		if receipt.BuildID == candidate.BuildID {
-			setLifecycleSQLitePair(t, python, state, "candidate")
-			return errors.New("forced candidate health failure")
-		}
-		return nil
+	active, err := store.ReadActive()
+	if err != nil {
+		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	if err := promoteExisting(ctx, store, release.Active{SchemaVersion: 1, Generation: 1, Receipt: old, SelectorBuildID: old.BuildID, Acquisition: "local-fixture"}, candidate.BuildID, "update", &output); err == nil || !strings.Contains(err.Error(), "forced candidate health failure") {
-		t.Fatalf("forced promotion failure = %v", err)
-	}
-	active, err := store.ReadActive()
-	if err != nil || active.Receipt != old {
-		t.Fatalf("failed promotion did not restore old active receipt: %#v, %v", active, err)
-	}
-	if after := lifecycleDatabaseValues(t, python, state); !sameDatabaseDigests(after, before) {
-		t.Fatalf("failed promotion did not restore exact SQLite pair: before=%v after=%v", before, after)
-	}
 	startReleaseCommand = func(_ launchContext, receipt release.Receipt, _ string) error {
 		if receipt.BuildID == candidate.BuildID {
 			setLifecycleSQLitePair(t, python, state, "candidate")
@@ -808,6 +792,68 @@ func TestRealTwoReleasePromotionRollbackRestoresPairedSQLiteState(t *testing.T) 
 	}
 	if after := lifecycleDatabaseValues(t, python, state); !sameDatabaseDigests(after, before) {
 		t.Fatalf("rollback did not restore exact target SQLite pair: before=%v after=%v", before, after)
+	}
+}
+
+func TestRealFailedPromotionPreservesPairedSQLiteWrites(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 unavailable")
+	}
+	fixture := newPromotionBoundaryFixture(t, python)
+	oldStart := startReleaseCommand
+	t.Cleanup(func() { startReleaseCommand = oldStart })
+	oldStarts, candidateStarts := 0, 0
+	startReleaseCommand = func(_ launchContext, receipt release.Receipt, _ string) error {
+		if receipt.BuildID == fixture.old.BuildID {
+			oldStarts++
+			return nil
+		}
+		if receipt.BuildID != fixture.candidate.BuildID {
+			t.Fatalf("unexpected start: %s", receipt.BuildID)
+		}
+		candidateStarts++
+		setLifecycleSQLitePair(t, python, fixture.state, "candidate")
+		return errors.New("forced candidate health failure")
+	}
+	initial, err := fixture.store.ReadActive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = promoteExisting(fixture.ctx, fixture.store, initial, fixture.candidate.BuildID, "update", io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "forced candidate health failure") || !strings.Contains(err.Error(), "retain the live databases") || !strings.Contains(err.Error(), "explicit recovery") {
+		t.Fatalf("failed promotion was not explicitly refused: %v", err)
+	}
+	journal, err := fixture.store.ReadJournal()
+	if err != nil || journal.State != release.CandidateStarting || !journal.Resumable() || !journal.PreserveLiveOnFailure || journal.BackupID == "" {
+		t.Fatalf("failed promotion did not retain its fenced journal: %#v, %v", journal, err)
+	}
+	if oldStarts != 0 || candidateStarts != 1 {
+		t.Fatalf("start counts old=%d candidate=%d", oldStarts, candidateStarts)
+	}
+	active, err := fixture.store.ReadActive()
+	if err != nil || active.Receipt != fixture.old {
+		t.Fatalf("failure changed active receipt: %#v, %v", active, err)
+	}
+	if values := lifecycleDatabaseValues(t, python, fixture.state); values["jobctrl.db"] != "candidatejobctrl.db" || values["temporal.db"] != "candidatetemporal.db" {
+		t.Fatalf("post-backup writes were lost: %v", values)
+	}
+	pairDir := filepath.Join(fixture.state, "backups", journal.BackupID)
+	if values := lifecycleDatabaseValues(t, python, pairDir); values["jobctrl.db"] != "oldjobctrl.db" || values["temporal.db"] != "oldtemporal.db" {
+		t.Fatalf("original paired backup was changed: %v", values)
+	}
+	before := snapshotPromotionBoundaryFiles(t, fixture)
+	for attempt := 0; attempt < 2; attempt++ {
+		recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store)
+		if recovered || err == nil || !strings.Contains(err.Error(), "retain the live databases") || !strings.Contains(err.Error(), "explicit recovery") {
+			t.Fatalf("recovery attempt %d = %v, %v", attempt, recovered, err)
+		}
+		if after := snapshotPromotionBoundaryFiles(t, fixture); !reflect.DeepEqual(before, after) {
+			t.Fatalf("recovery attempt %d modified preserved state", attempt)
+		}
+	}
+	if oldStarts != 0 || candidateStarts != 1 {
+		t.Fatalf("recovery started a release: old=%d candidate=%d", oldStarts, candidateStarts)
 	}
 }
 
@@ -927,7 +973,7 @@ func installLifecycleRelease(t *testing.T, runtime, build string, sequence uint6
 func seedLifecycleSQLitePair(t *testing.T, python, state, marker string) {
 	t.Helper()
 	for _, name := range []string{"jobctrl.db", "temporal.db"} {
-		code := "import pathlib,sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('create table t(v)'); c.execute('insert into t values (?)',(sys.argv[2],)); c.execute('PRAGMA user_version=14') if pathlib.Path(sys.argv[1]).name == 'jobctrl.db' else None; c.commit()"
+		code := "import pathlib,sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('create table t(v)'); c.execute('insert into t values (?)',(sys.argv[2],)); c.execute('PRAGMA user_version=15') if pathlib.Path(sys.argv[1]).name == 'jobctrl.db' else None; c.commit()"
 		if output, err := exec.Command(python, "-c", code, filepath.Join(state, name), marker+name).CombinedOutput(); err != nil {
 			t.Fatalf("seed %s: %v %s", name, err, output)
 		}

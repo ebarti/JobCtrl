@@ -42,6 +42,10 @@ import type {
   ArtifactOpenResponse,
   ArtifactSummary,
   BulkJobMutationRequest,
+  BulkPermanentDeleteRequest,
+  PreparePermanentDeleteSelectionRequest,
+  PreparePermanentDeleteSelectionResponse,
+  ReviewableJobsResponse,
   BulkRunPendingPreparationRequest,
   BulkRunPendingPreparationResponse,
   BulkRetryFailedRequest,
@@ -671,6 +675,10 @@ export class JobCtrlApiClient {
     return this.get("/v1/jobs", query);
   }
 
+  reviewableJobs(query: Partial<JobListQuery> = {}): Promise<ReviewableJobsResponse> {
+    return this.get("/v1/jobs/reviewable-list", query);
+  }
+
   importJobUrl(body: JobUrlImportRequest): Promise<JobUrlImportResponse> {
     return this.post("/v1/jobs/import-url", body);
   }
@@ -857,9 +865,15 @@ export class JobCtrlApiClient {
   }
 
   permanentlyDeleteJobs(
-    body: BulkJobMutationRequest,
+    body: BulkPermanentDeleteRequest,
   ): Promise<JobMutationResponse> {
     return this.post("/v1/jobs/bulk-delete-permanent", body);
+  }
+
+  preparePermanentDeleteSelection(
+    body: PreparePermanentDeleteSelectionRequest,
+  ): Promise<PreparePermanentDeleteSelectionResponse> {
+    return this.post("/v1/jobs/permanent-delete-selection", body);
   }
 
   restoreJob(jobKey: string): Promise<JobMutationResponse> {

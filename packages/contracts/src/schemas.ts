@@ -1587,6 +1587,34 @@ export const BulkJobMutationRequestSchema = BulkJobMutationRequestBaseSchema
   });
 export type BulkJobMutationRequest = z.infer<typeof BulkJobMutationRequestSchema>;
 
+/** An explicit removed-job confirmation is prepared from a frozen cohort. */
+export const PreparePermanentDeleteSelectionRequestSchema = z.object({
+  observationId: z.string().uuid(),
+  selections: z.array(BulkJobMutationRequestSchema).min(1).max(50),
+  expected: z.array(z.object({
+    jobKey: z.string().trim().min(1),
+    deletedAt: z.string().nullable(),
+    hiddenAt: z.string().nullable(),
+  }).strict()).max(5000).optional(),
+}).strict();
+export type PreparePermanentDeleteSelectionRequest = z.infer<typeof PreparePermanentDeleteSelectionRequestSchema>;
+
+export const PreparePermanentDeleteSelectionResponseSchema = z.object({
+  ok: z.literal(true),
+  selectionId: z.string().uuid(),
+  jobKeys: z.array(z.string().min(1)).max(5000),
+}).strict();
+export type PreparePermanentDeleteSelectionResponse = z.infer<typeof PreparePermanentDeleteSelectionResponseSchema>;
+
+export const BulkPermanentDeleteRequestSchema = BulkJobMutationRequestBaseSchema.extend({
+  selectionId: z.string().uuid().optional(),
+}).strict().refine((value) => value.allMatching || value.jobKeys.length > 0, {
+  message: "Provide jobKeys or set allMatching.",
+}).refine((value) => !value.selectionId || !value.allMatching, {
+  message: "A reviewed selection must use its exact job keys.",
+});
+export type BulkPermanentDeleteRequest = z.infer<typeof BulkPermanentDeleteRequestSchema>;
+
 export const BulkRetryFailedRequestSchema = BulkJobMutationRequestBaseSchema
   .extend({
     runAfter: z.boolean().default(false),
@@ -3278,6 +3306,10 @@ export interface PaginatedResponse<T> {
     dir: "asc" | "desc";
   };
   filter: Record<string, unknown>;
+}
+
+export interface ReviewableJobsResponse extends PaginatedResponse<JobSummary> {
+  observationId: string | null;
 }
 
 export interface ActivityEventSummary {

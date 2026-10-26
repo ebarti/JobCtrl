@@ -684,6 +684,9 @@ func downloadAndInstall(options Options, descriptor Descriptor, descriptorBytes 
 	if err != nil {
 		return Receipt{}, fmt.Errorf("download release archive: %w", err)
 	}
+	if err := refusePendingBridgeHandoff(home); err != nil {
+		return Receipt{}, err
+	}
 	shared, err := release.Open(home)
 	if err != nil {
 		return Receipt{}, err
@@ -693,6 +696,9 @@ func downloadAndInstall(options Options, descriptor Descriptor, descriptorBytes 
 		return Receipt{}, err
 	}
 	defer transition.Close()
+	if err := refusePendingBridgeHandoff(shared.Home); err != nil {
+		return Receipt{}, err
+	}
 	store, err := openStore(home)
 	if err != nil {
 		return Receipt{}, err
@@ -1005,6 +1011,9 @@ func installArchive(options Options, descriptor Descriptor, descriptorBytes []by
 	if err != nil {
 		return Receipt{}, err
 	}
+	if err := refusePendingBridgeHandoff(home); err != nil {
+		return Receipt{}, err
+	}
 	// Acquisition participates in the same transition -> selection hierarchy as
 	// promotion, rollback, backup, retention, and uninstall. There is no
 	// independent installer flock that can deadlock or race an active record.
@@ -1017,6 +1026,9 @@ func installArchive(options Options, descriptor Descriptor, descriptorBytes []by
 		return Receipt{}, err
 	}
 	defer transition.Close()
+	if err := refusePendingBridgeHandoff(shared.Home); err != nil {
+		return Receipt{}, err
+	}
 	store, err := openStore(home)
 	if err != nil {
 		return Receipt{}, err
