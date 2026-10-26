@@ -1231,7 +1231,7 @@ export function FilterableDataGrid<TData>({
                           rowActivationAppearance === "focus-only" &&
                             "row-activation-focus-only",
                         )}
-                        aria-label={activationLabel}
+                        aria-label={`${activationLabel}: View details`}
                         onClick={(event) => {
                           event.stopPropagation();
                           onRowActivate(row);
@@ -1477,7 +1477,7 @@ export function FilterableDataGrid<TData>({
                               rowActivationAppearance === "focus-only" &&
                                 "row-activation-focus-only",
                             )}
-                            aria-label={activationLabel}
+                            aria-label={`${activationLabel}: View details`}
                             onClick={(event) => {
                               event.stopPropagation();
                               onRowActivate?.(row);

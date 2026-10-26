@@ -47,7 +47,7 @@ test("Dashboard learning review keeps evidence, terminal decisions, and policy r
   ).toBeVisible();
   await expect(policyHistory.getByRole("article", { name: "Version 1" })).toBeVisible();
   await expect(
-    policyHistory.getByRole("button", { name: "Restore tailoring policy version 1" }),
+    policyHistory.getByRole("button", { name: "Restore version 1 of tailoring policy" }),
   ).toHaveCount(0);
 
   await styleRecommendation
@@ -122,7 +122,7 @@ test("Dashboard learning review keeps evidence, terminal decisions, and policy r
       response.request().method() === "GET",
   );
   await policyHistory
-    .getByRole("button", { name: "Restore tailoring policy version 1" })
+    .getByRole("button", { name: "Restore version 1 of tailoring policy" })
     .click();
   expect((await rollbackHistory).status()).toBe(200);
   const rolledBackPolicy = policyHistory.getByRole("article", { name: "Version 3" });
@@ -131,7 +131,7 @@ test("Dashboard learning review keeps evidence, terminal decisions, and policy r
   await expect(rolledBackPolicy.getByText("Restored from version 1")).toBeVisible();
   await expect(rolledBackPolicy.getByText("Reason: user requested")).toBeVisible();
   await expect(
-    policyHistory.getByRole("button", { name: "Restore tailoring policy version 3" }),
+    policyHistory.getByRole("button", { name: "Restore version 3 of tailoring policy" }),
   ).toHaveCount(0);
 });
 

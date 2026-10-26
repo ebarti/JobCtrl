@@ -380,7 +380,7 @@ test("Jobs compensation source-conflict evidence stays product-visible without u
   await expect(row.getByLabel("Job status")).toBeVisible();
   await row
     .getByRole("button", {
-      name: /^Open job Director of Platform Engineering at GitLab$/,
+      name: /^Open job Director of Platform Engineering at GitLab: View details$/,
     })
     .click();
 

@@ -124,7 +124,7 @@ export function InterviewLibraryGraph({ catalog, questions, selectedQuestionId, 
           </svg> : null}
           {groups.map((group) => { const positions = satellitePositions(group.children.length); const extent = Math.max(108, ...positions.map((point) => Math.abs(point.x) * 2 + 24)); const geometry: CSSProperties & { "--interview-atlas-column-span": number; "--interview-atlas-aura-width": string } = { "--interview-atlas-column-span": Math.ceil(extent / 136), "--interview-atlas-aura-width": `${extent}px` }; return <div key={group.id} className="interview-atlas__cluster" style={geometry} data-selected={perspective === "questions" && group.children.some((item) => item.id === selectedQuestionId)}>
             <div className="interview-atlas__aura" aria-hidden="true" />
-            <Button variant="ghost" className="interview-atlas__hub" aria-label={`${group.label}: ${group.children.length} ${perspective === "questions" ? "questions" : "sources"}`} onClick={() => { setPan({ x: 0, y: 0, zoom: 1 }); if (perspective === "questions") onSelectTopic(group.id); else setAuthorId(group.id); }}>
+            <Button variant="ghost" className="interview-atlas__hub" onClick={() => { setPan({ x: 0, y: 0, zoom: 1 }); if (perspective === "questions") onSelectTopic(group.id); else setAuthorId(group.id); }}>
               <span className={`interview-atlas__mark ${perspective === "sources" ? "is-author" : ""}`} aria-hidden="true" /><span>{group.label}</span><small className="muted">{group.children.length} {perspective === "questions" ? "questions" : "sources"}</small>
             </Button>
             {group.children.map((item, index) => {
