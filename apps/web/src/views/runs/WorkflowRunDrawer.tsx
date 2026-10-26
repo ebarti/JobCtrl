@@ -204,7 +204,7 @@ function RunActions({ run }: { readonly run: WorkflowRunDetail }) {
         />
       ) : null}
       <a
-        aria-label={`Open workflow ${run.workflowId} in Temporal Web UI`}
+        aria-label={`View in Temporal: workflow ${run.workflowId}`}
         className={buttonVariants({ size: "sm", variant: "outline" })}
         data-typography="control"
         href={temporalWebUiWorkflowUrl(run.workflowId)}

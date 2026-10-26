@@ -171,7 +171,7 @@ function TailoringPolicyRevisionCard({
             size="sm"
             variant="outline"
             disabled={restoring}
-            aria-label={`Restore tailoring policy version ${revision.version}`}
+            aria-label={restoring ? "Restoring… tailoring policy" : `Restore version ${revision.version} of tailoring policy`}
             onClick={() => onRestore(revision.version)}
           >
             {restoring ? "Restoring…" : `Restore version ${revision.version}`}

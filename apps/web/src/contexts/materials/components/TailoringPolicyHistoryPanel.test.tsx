@@ -57,7 +57,7 @@ describe("TailoringPolicyHistoryPanel", () => {
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", {
-        name: "Restore tailoring policy version 4",
+        name: "Restore version 4 of tailoring policy",
       }),
     ).not.toBeInTheDocument();
     expect(await axe(view.container)).toHaveNoViolations();
@@ -121,7 +121,7 @@ describe("TailoringPolicyHistoryPanel", () => {
     await screen.findByRole("article", { name: "Version 1" });
     await user.click(
       screen.getByRole("button", {
-        name: "Restore tailoring policy version 1",
+        name: "Restore version 1 of tailoring policy",
       }),
     );
 
@@ -153,7 +153,7 @@ describe("TailoringPolicyHistoryPanel", () => {
     await screen.findByRole("article", { name: "Version 2" });
     await user.click(
       screen.getByRole("button", {
-        name: "Restore tailoring policy version 2",
+        name: "Restore version 2 of tailoring policy",
       }),
     );
 

@@ -2397,9 +2397,9 @@ async function smokePlaywrightMcpProtocol(command, args, { cwd, env }) {
       name: "browser_navigate",
       arguments: { url: `data:text/html,<title>${marker}</title><main>${marker}</main>` },
     });
-    invariant(navigation.isError !== true, `bundled Playwright MCP navigation failed: ${JSON.stringify(navigation).slice(-2000)}`);
+    invariant(navigation.error === undefined && navigation.result && navigation.result.isError !== true, `bundled Playwright MCP navigation failed: ${JSON.stringify(navigation).slice(-2000)}`);
     const snapshot = await request("tools/call", { name: "browser_snapshot", arguments: {} });
-    invariant(snapshot.isError !== true, `bundled Playwright MCP snapshot failed: ${JSON.stringify(snapshot).slice(-2000)}`);
+    invariant(snapshot.error === undefined && snapshot.result && snapshot.result.isError !== true, `bundled Playwright MCP snapshot failed: ${JSON.stringify(snapshot).slice(-2000)}`);
     invariant(JSON.stringify(snapshot).includes(marker), "bundled Playwright MCP snapshot did not observe the managed local browser page");
     return {
       protocolVersion: initialize.result.protocolVersion,
@@ -2534,9 +2534,12 @@ finally:
     [
       "--headless",
       "--isolated",
+      // macOS rejects nested Seatbelt sandboxes. This synthetic smoke retains
+      // LOOPBACK_ONLY_SANDBOX_PROFILE; user MCP launches keep their defaults.
+      "--no-sandbox",
       "--output-dir", path.join(canonicalExtractedRoot, "playwright-mcp-smoke-output"),
       "--executable-path", await managedMcpChromiumExecutable(payloadRoot, contracts),
-      "--output-mode", "stdout",
+      "--snapshot-mode", "full",
       "--codegen", "none",
     ],
     { cwd: payloadRoot, env: stockEnvironment },

@@ -465,10 +465,10 @@ test("Outreach planner: seeded contacts, supervised research, draft review, send
   await expect(page.getByText("application_submitted")).toBeVisible();
   await expect(page.getByText("no_reply_nudge")).not.toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Open contact Casey Recruiter" }),
+    page.getByRole("button", { name: "Open contact Casey Recruiter: View details" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Open contact Dana Lee" }),
+    page.getByRole("button", { name: "Open contact Dana Lee: View details" }),
   ).toBeVisible();
 
   await page

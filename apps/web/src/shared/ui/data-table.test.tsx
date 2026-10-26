@@ -113,7 +113,7 @@ describe("DataTable", () => {
     expect(dataRows[0]).not.toHaveAttribute("tabindex");
 
     const openAcme = within(dataRows[0]!).getByRole("button", {
-      name: "Open Acme Studio",
+      name: "Open Acme Studio: View details",
     });
     expect(openAcme).toHaveClass("row-activation-focus-only");
     expect(openAcme).not.toHaveClass("sr-only", "focus:not-sr-only");

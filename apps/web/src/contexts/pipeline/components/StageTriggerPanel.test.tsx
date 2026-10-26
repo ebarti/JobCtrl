@@ -347,7 +347,7 @@ describe("StageTriggerPanel", () => {
     expect(limitInput).toHaveAttribute("max", "1000");
     await user.clear(limitInput);
     await user.type(limitInput, "1000");
-    await user.click(await screen.findByRole("button", { name: "Sources" }));
+    await user.click(await screen.findByRole("button", { name: /^Sources: / }));
     await user.click(
       await screen.findByRole("checkbox", { name: /JobStreaming LinkedIn/ }),
     );
@@ -357,11 +357,11 @@ describe("StageTriggerPanel", () => {
     await user.click(
       screen.getByRole("checkbox", { name: /JobStreaming Indeed/ }),
     );
-    expect(screen.getByRole("button", { name: "Sources" })).toHaveTextContent(
+    expect(screen.getByRole("button", { name: /^Sources: / })).toHaveTextContent(
       "2 sources selected",
     );
     expect(
-      screen.getByRole("button", { name: "Sources" }),
+      screen.getByRole("button", { name: /^Sources: / }),
     ).toHaveAccessibleDescription("2 sources selected");
     await user.click(screen.getByRole("checkbox", { name: "Dry run" }));
     await user.click(
@@ -413,7 +413,7 @@ describe("StageTriggerPanel", () => {
       }),
     });
 
-    const picker = await screen.findByRole("button", { name: "Sources" });
+    const picker = await screen.findByRole("button", { name: /^Sources: / });
     expect(picker).toHaveAccessibleDescription("50 sources selected");
     await user.click(picker);
     expect(screen.getByText("Select up to 50 sources.")).toBeVisible();

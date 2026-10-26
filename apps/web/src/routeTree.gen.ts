@@ -9,112 +9,47 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from "./routes/__root";
-import { Route as SettingsRouteImport } from "./routes/settings";
-import { Route as RunsRouteImport } from "./routes/runs";
-import { Route as ProfileRouteImport } from "./routes/profile";
-import { Route as PreferencesRouteImport } from "./routes/preferences";
-import { Route as PipelinesRouteImport } from "./routes/pipelines";
-import { Route as OutreachRouteImport } from "./routes/outreach";
-import { Route as JobsRouteImport } from "./routes/jobs";
-import { Route as InterviewsRouteImport } from "./routes/interviews";
-import { Route as EvidenceMapRouteImport } from "./routes/evidence-map";
-import { Route as DiscoveryRouteImport } from "./routes/discovery";
-import { Route as DebugRouteImport } from "./routes/debug";
-import { Route as DashboardRouteImport } from "./routes/dashboard";
-import { Route as ArtifactsRouteImport } from "./routes/artifacts";
-import { Route as ApplyReviewRouteImport } from "./routes/apply-review";
-import { Route as AnalyticsRouteImport } from "./routes/analytics";
 import { Route as IndexRouteImport } from "./routes/index";
-import { Route as SettingsIndexRouteImport } from "./routes/settings.index";
-import { Route as RunsIndexRouteImport } from "./routes/runs.index";
-import { Route as ProfileIndexRouteImport } from "./routes/profile.index";
-import { Route as OutreachIndexRouteImport } from "./routes/outreach.index";
-import { Route as JobsIndexRouteImport } from "./routes/jobs.index";
-import { Route as ArtifactsIndexRouteImport } from "./routes/artifacts.index";
-import { Route as SpikesTableFiltersRouteImport } from "./routes/spikes.table-filters";
-import { Route as SettingsModelsRouteImport } from "./routes/settings.models";
-import { Route as SettingsCredentialsRouteImport } from "./routes/settings.credentials";
-import { Route as SettingsBrowserRouteImport } from "./routes/settings.browser";
-import { Route as RunsRunIdRouteImport } from "./routes/runs.$runId";
-import { Route as ProfileImportRouteImport } from "./routes/profile.import";
-import { Route as OutreachContactIdRouteImport } from "./routes/outreach.$contactId";
-import { Route as JobsJobIdRouteImport } from "./routes/jobs.$jobId";
-import { Route as ArtifactsArtifactIdRouteImport } from "./routes/artifacts.$artifactId";
+import { Route as AnalyticsRouteImport } from "./routes/analytics";
+import { Route as ApplyReviewRouteImport } from "./routes/apply-review";
+import { Route as ArtifactsRouteImport } from "./routes/artifacts";
+import { Route as DashboardRouteImport } from "./routes/dashboard";
+import { Route as DebugRouteImport } from "./routes/debug";
+import { Route as DiscoveryRouteImport } from "./routes/discovery";
+import { Route as EvidenceMapRouteImport } from "./routes/evidence-map";
+import { Route as InterviewsRouteImport } from "./routes/interviews";
+import { Route as JobsRouteImport } from "./routes/jobs";
+import { Route as OutreachRouteImport } from "./routes/outreach";
+import { Route as PipelinesRouteImport } from "./routes/pipelines";
+import { Route as PreferencesRouteImport } from "./routes/preferences";
+import { Route as ProfileRouteImport } from "./routes/profile";
+import { Route as RunsRouteImport } from "./routes/runs";
+import { Route as SettingsRouteImport } from "./routes/settings";
 import { Route as ActivityEventIdRouteImport } from "./routes/activity.$eventId";
+import { Route as ArtifactsIndexRouteImport } from "./routes/artifacts.index";
+import { Route as ArtifactsArtifactIdRouteImport } from "./routes/artifacts.$artifactId";
+import { Route as JobsIndexRouteImport } from "./routes/jobs.index";
+import { Route as JobsJobIdRouteImport } from "./routes/jobs.$jobId";
+import { Route as OutreachIndexRouteImport } from "./routes/outreach.index";
+import { Route as OutreachContactIdRouteImport } from "./routes/outreach.$contactId";
+import { Route as ProfileIndexRouteImport } from "./routes/profile.index";
+import { Route as ProfileImportRouteImport } from "./routes/profile.import";
+import { Route as RunsIndexRouteImport } from "./routes/runs.index";
+import { Route as RunsRunIdRouteImport } from "./routes/runs.$runId";
+import { Route as SettingsIndexRouteImport } from "./routes/settings.index";
+import { Route as SettingsBrowserRouteImport } from "./routes/settings.browser";
+import { Route as SettingsCredentialsRouteImport } from "./routes/settings.credentials";
+import { Route as SettingsModelsRouteImport } from "./routes/settings.models";
+import { Route as SpikesTableFiltersRouteImport } from "./routes/spikes.table-filters";
 import { Route as ProfileImportIndexRouteImport } from "./routes/profile.import.index";
-import { Route as ProfileImportUploadRouteImport } from "./routes/profile.import.upload";
-import { Route as ProfileImportPreviewRouteImport } from "./routes/profile.import.preview";
 import { Route as ProfileImportConfirmRouteImport } from "./routes/profile.import.confirm";
+import { Route as ProfileImportPreviewRouteImport } from "./routes/profile.import.preview";
+import { Route as ProfileImportUploadRouteImport } from "./routes/profile.import.upload";
 import { Route as JobsJobIdRunRunIdRouteImport } from "./routes/jobs.$jobId.run.$runId";
 
-const SettingsRoute = SettingsRouteImport.update({
-  id: "/settings",
-  path: "/settings",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const RunsRoute = RunsRouteImport.update({
-  id: "/runs",
-  path: "/runs",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const ProfileRoute = ProfileRouteImport.update({
-  id: "/profile",
-  path: "/profile",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const PreferencesRoute = PreferencesRouteImport.update({
-  id: "/preferences",
-  path: "/preferences",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const PipelinesRoute = PipelinesRouteImport.update({
-  id: "/pipelines",
-  path: "/pipelines",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const OutreachRoute = OutreachRouteImport.update({
-  id: "/outreach",
-  path: "/outreach",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const JobsRoute = JobsRouteImport.update({
-  id: "/jobs",
-  path: "/jobs",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const InterviewsRoute = InterviewsRouteImport.update({
-  id: "/interviews",
-  path: "/interviews",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const EvidenceMapRoute = EvidenceMapRouteImport.update({
-  id: "/evidence-map",
-  path: "/evidence-map",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const DiscoveryRoute = DiscoveryRouteImport.update({
-  id: "/discovery",
-  path: "/discovery",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const DebugRoute = DebugRouteImport.update({
-  id: "/debug",
-  path: "/debug",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const DashboardRoute = DashboardRouteImport.update({
-  id: "/dashboard",
-  path: "/dashboard",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const ArtifactsRoute = ArtifactsRouteImport.update({
-  id: "/artifacts",
-  path: "/artifacts",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const ApplyReviewRoute = ApplyReviewRouteImport.update({
-  id: "/apply-review",
-  path: "/apply-review",
+const IndexRoute = IndexRouteImport.update({
+  id: "/",
+  path: "/",
   getParentRoute: () => rootRouteImport,
 } as any);
 const AnalyticsRoute = AnalyticsRouteImport.update({
@@ -122,54 +57,134 @@ const AnalyticsRoute = AnalyticsRouteImport.update({
   path: "/analytics",
   getParentRoute: () => rootRouteImport,
 } as any);
-const IndexRoute = IndexRouteImport.update({
-  id: "/",
-  path: "/",
+const ApplyReviewRoute = ApplyReviewRouteImport.update({
+  id: "/apply-review",
+  path: "/apply-review",
   getParentRoute: () => rootRouteImport,
 } as any);
-const SettingsIndexRoute = SettingsIndexRouteImport.update({
-  id: "/",
-  path: "/",
-  getParentRoute: () => SettingsRoute,
+const ArtifactsRoute = ArtifactsRouteImport.update({
+  id: "/artifacts",
+  path: "/artifacts",
+  getParentRoute: () => rootRouteImport,
 } as any);
-const RunsIndexRoute = RunsIndexRouteImport.update({
-  id: "/",
-  path: "/",
-  getParentRoute: () => RunsRoute,
+const DashboardRoute = DashboardRouteImport.update({
+  id: "/dashboard",
+  path: "/dashboard",
+  getParentRoute: () => rootRouteImport,
 } as any);
-const ProfileIndexRoute = ProfileIndexRouteImport.update({
-  id: "/",
-  path: "/",
-  getParentRoute: () => ProfileRoute,
+const DebugRoute = DebugRouteImport.update({
+  id: "/debug",
+  path: "/debug",
+  getParentRoute: () => rootRouteImport,
 } as any);
-const OutreachIndexRoute = OutreachIndexRouteImport.update({
-  id: "/",
-  path: "/",
-  getParentRoute: () => OutreachRoute,
+const DiscoveryRoute = DiscoveryRouteImport.update({
+  id: "/discovery",
+  path: "/discovery",
+  getParentRoute: () => rootRouteImport,
 } as any);
-const JobsIndexRoute = JobsIndexRouteImport.update({
-  id: "/",
-  path: "/",
-  getParentRoute: () => JobsRoute,
+const EvidenceMapRoute = EvidenceMapRouteImport.update({
+  id: "/evidence-map",
+  path: "/evidence-map",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const InterviewsRoute = InterviewsRouteImport.update({
+  id: "/interviews",
+  path: "/interviews",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const JobsRoute = JobsRouteImport.update({
+  id: "/jobs",
+  path: "/jobs",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const OutreachRoute = OutreachRouteImport.update({
+  id: "/outreach",
+  path: "/outreach",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const PipelinesRoute = PipelinesRouteImport.update({
+  id: "/pipelines",
+  path: "/pipelines",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const PreferencesRoute = PreferencesRouteImport.update({
+  id: "/preferences",
+  path: "/preferences",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const ProfileRoute = ProfileRouteImport.update({
+  id: "/profile",
+  path: "/profile",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const RunsRoute = RunsRouteImport.update({
+  id: "/runs",
+  path: "/runs",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const SettingsRoute = SettingsRouteImport.update({
+  id: "/settings",
+  path: "/settings",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const ActivityEventIdRoute = ActivityEventIdRouteImport.update({
+  id: "/activity/$eventId",
+  path: "/activity/$eventId",
+  getParentRoute: () => rootRouteImport,
 } as any);
 const ArtifactsIndexRoute = ArtifactsIndexRouteImport.update({
   id: "/",
   path: "/",
   getParentRoute: () => ArtifactsRoute,
 } as any);
-const SpikesTableFiltersRoute = SpikesTableFiltersRouteImport.update({
-  id: "/spikes/table-filters",
-  path: "/spikes/table-filters",
-  getParentRoute: () => rootRouteImport,
+const ArtifactsArtifactIdRoute = ArtifactsArtifactIdRouteImport.update({
+  id: "/$artifactId",
+  path: "/$artifactId",
+  getParentRoute: () => ArtifactsRoute,
 } as any);
-const SettingsModelsRoute = SettingsModelsRouteImport.update({
-  id: "/models",
-  path: "/models",
-  getParentRoute: () => SettingsRoute,
+const JobsIndexRoute = JobsIndexRouteImport.update({
+  id: "/",
+  path: "/",
+  getParentRoute: () => JobsRoute,
 } as any);
-const SettingsCredentialsRoute = SettingsCredentialsRouteImport.update({
-  id: "/credentials",
-  path: "/credentials",
+const JobsJobIdRoute = JobsJobIdRouteImport.update({
+  id: "/$jobId",
+  path: "/$jobId",
+  getParentRoute: () => JobsRoute,
+} as any);
+const OutreachIndexRoute = OutreachIndexRouteImport.update({
+  id: "/",
+  path: "/",
+  getParentRoute: () => OutreachRoute,
+} as any);
+const OutreachContactIdRoute = OutreachContactIdRouteImport.update({
+  id: "/$contactId",
+  path: "/$contactId",
+  getParentRoute: () => OutreachRoute,
+} as any);
+const ProfileIndexRoute = ProfileIndexRouteImport.update({
+  id: "/",
+  path: "/",
+  getParentRoute: () => ProfileRoute,
+} as any);
+const ProfileImportRoute = ProfileImportRouteImport.update({
+  id: "/import",
+  path: "/import",
+  getParentRoute: () => ProfileRoute,
+} as any);
+const RunsIndexRoute = RunsIndexRouteImport.update({
+  id: "/",
+  path: "/",
+  getParentRoute: () => RunsRoute,
+} as any);
+const RunsRunIdRoute = RunsRunIdRouteImport.update({
+  id: "/$runId",
+  path: "/$runId",
+  getParentRoute: () => RunsRoute,
+} as any);
+const SettingsIndexRoute = SettingsIndexRouteImport.update({
+  id: "/",
+  path: "/",
   getParentRoute: () => SettingsRoute,
 } as any);
 const SettingsBrowserRoute = SettingsBrowserRouteImport.update({
@@ -177,34 +192,19 @@ const SettingsBrowserRoute = SettingsBrowserRouteImport.update({
   path: "/browser",
   getParentRoute: () => SettingsRoute,
 } as any);
-const RunsRunIdRoute = RunsRunIdRouteImport.update({
-  id: "/$runId",
-  path: "/$runId",
-  getParentRoute: () => RunsRoute,
+const SettingsCredentialsRoute = SettingsCredentialsRouteImport.update({
+  id: "/credentials",
+  path: "/credentials",
+  getParentRoute: () => SettingsRoute,
 } as any);
-const ProfileImportRoute = ProfileImportRouteImport.update({
-  id: "/import",
-  path: "/import",
-  getParentRoute: () => ProfileRoute,
+const SettingsModelsRoute = SettingsModelsRouteImport.update({
+  id: "/models",
+  path: "/models",
+  getParentRoute: () => SettingsRoute,
 } as any);
-const OutreachContactIdRoute = OutreachContactIdRouteImport.update({
-  id: "/$contactId",
-  path: "/$contactId",
-  getParentRoute: () => OutreachRoute,
-} as any);
-const JobsJobIdRoute = JobsJobIdRouteImport.update({
-  id: "/$jobId",
-  path: "/$jobId",
-  getParentRoute: () => JobsRoute,
-} as any);
-const ArtifactsArtifactIdRoute = ArtifactsArtifactIdRouteImport.update({
-  id: "/$artifactId",
-  path: "/$artifactId",
-  getParentRoute: () => ArtifactsRoute,
-} as any);
-const ActivityEventIdRoute = ActivityEventIdRouteImport.update({
-  id: "/activity/$eventId",
-  path: "/activity/$eventId",
+const SpikesTableFiltersRoute = SpikesTableFiltersRouteImport.update({
+  id: "/spikes/table-filters",
+  path: "/spikes/table-filters",
   getParentRoute: () => rootRouteImport,
 } as any);
 const ProfileImportIndexRoute = ProfileImportIndexRouteImport.update({
@@ -212,9 +212,9 @@ const ProfileImportIndexRoute = ProfileImportIndexRouteImport.update({
   path: "/",
   getParentRoute: () => ProfileImportRoute,
 } as any);
-const ProfileImportUploadRoute = ProfileImportUploadRouteImport.update({
-  id: "/upload",
-  path: "/upload",
+const ProfileImportConfirmRoute = ProfileImportConfirmRouteImport.update({
+  id: "/confirm",
+  path: "/confirm",
   getParentRoute: () => ProfileImportRoute,
 } as any);
 const ProfileImportPreviewRoute = ProfileImportPreviewRouteImport.update({
@@ -222,9 +222,9 @@ const ProfileImportPreviewRoute = ProfileImportPreviewRouteImport.update({
   path: "/preview",
   getParentRoute: () => ProfileImportRoute,
 } as any);
-const ProfileImportConfirmRoute = ProfileImportConfirmRouteImport.update({
-  id: "/confirm",
-  path: "/confirm",
+const ProfileImportUploadRoute = ProfileImportUploadRouteImport.update({
+  id: "/upload",
+  path: "/upload",
   getParentRoute: () => ProfileImportRoute,
 } as any);
 const JobsJobIdRunRunIdRoute = JobsJobIdRunRunIdRouteImport.update({
@@ -480,102 +480,11 @@ export interface RootRouteChildren {
 
 declare module "@tanstack/react-router" {
   interface FileRoutesByPath {
-    "/settings": {
-      id: "/settings";
-      path: "/settings";
-      fullPath: "/settings";
-      preLoaderRoute: typeof SettingsRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/runs": {
-      id: "/runs";
-      path: "/runs";
-      fullPath: "/runs";
-      preLoaderRoute: typeof RunsRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/profile": {
-      id: "/profile";
-      path: "/profile";
-      fullPath: "/profile";
-      preLoaderRoute: typeof ProfileRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/preferences": {
-      id: "/preferences";
-      path: "/preferences";
-      fullPath: "/preferences";
-      preLoaderRoute: typeof PreferencesRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/pipelines": {
-      id: "/pipelines";
-      path: "/pipelines";
-      fullPath: "/pipelines";
-      preLoaderRoute: typeof PipelinesRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/outreach": {
-      id: "/outreach";
-      path: "/outreach";
-      fullPath: "/outreach";
-      preLoaderRoute: typeof OutreachRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/jobs": {
-      id: "/jobs";
-      path: "/jobs";
-      fullPath: "/jobs";
-      preLoaderRoute: typeof JobsRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/interviews": {
-      id: "/interviews";
-      path: "/interviews";
-      fullPath: "/interviews";
-      preLoaderRoute: typeof InterviewsRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/evidence-map": {
-      id: "/evidence-map";
-      path: "/evidence-map";
-      fullPath: "/evidence-map";
-      preLoaderRoute: typeof EvidenceMapRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/discovery": {
-      id: "/discovery";
-      path: "/discovery";
-      fullPath: "/discovery";
-      preLoaderRoute: typeof DiscoveryRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/debug": {
-      id: "/debug";
-      path: "/debug";
-      fullPath: "/debug";
-      preLoaderRoute: typeof DebugRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/dashboard": {
-      id: "/dashboard";
-      path: "/dashboard";
-      fullPath: "/dashboard";
-      preLoaderRoute: typeof DashboardRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/artifacts": {
-      id: "/artifacts";
-      path: "/artifacts";
-      fullPath: "/artifacts";
-      preLoaderRoute: typeof ArtifactsRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/apply-review": {
-      id: "/apply-review";
-      path: "/apply-review";
-      fullPath: "/apply-review";
-      preLoaderRoute: typeof ApplyReviewRouteImport;
+    "/": {
+      id: "/";
+      path: "/";
+      fullPath: "/";
+      preLoaderRoute: typeof IndexRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/analytics": {
@@ -585,47 +494,110 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof AnalyticsRouteImport;
       parentRoute: typeof rootRouteImport;
     };
-    "/": {
-      id: "/";
-      path: "/";
-      fullPath: "/";
-      preLoaderRoute: typeof IndexRouteImport;
+    "/apply-review": {
+      id: "/apply-review";
+      path: "/apply-review";
+      fullPath: "/apply-review";
+      preLoaderRoute: typeof ApplyReviewRouteImport;
       parentRoute: typeof rootRouteImport;
     };
-    "/settings/": {
-      id: "/settings/";
-      path: "/";
-      fullPath: "/settings/";
-      preLoaderRoute: typeof SettingsIndexRouteImport;
-      parentRoute: typeof SettingsRoute;
+    "/artifacts": {
+      id: "/artifacts";
+      path: "/artifacts";
+      fullPath: "/artifacts";
+      preLoaderRoute: typeof ArtifactsRouteImport;
+      parentRoute: typeof rootRouteImport;
     };
-    "/runs/": {
-      id: "/runs/";
-      path: "/";
-      fullPath: "/runs/";
-      preLoaderRoute: typeof RunsIndexRouteImport;
-      parentRoute: typeof RunsRoute;
+    "/dashboard": {
+      id: "/dashboard";
+      path: "/dashboard";
+      fullPath: "/dashboard";
+      preLoaderRoute: typeof DashboardRouteImport;
+      parentRoute: typeof rootRouteImport;
     };
-    "/profile/": {
-      id: "/profile/";
-      path: "/";
-      fullPath: "/profile/";
-      preLoaderRoute: typeof ProfileIndexRouteImport;
-      parentRoute: typeof ProfileRoute;
+    "/debug": {
+      id: "/debug";
+      path: "/debug";
+      fullPath: "/debug";
+      preLoaderRoute: typeof DebugRouteImport;
+      parentRoute: typeof rootRouteImport;
     };
-    "/outreach/": {
-      id: "/outreach/";
-      path: "/";
-      fullPath: "/outreach/";
-      preLoaderRoute: typeof OutreachIndexRouteImport;
-      parentRoute: typeof OutreachRoute;
+    "/discovery": {
+      id: "/discovery";
+      path: "/discovery";
+      fullPath: "/discovery";
+      preLoaderRoute: typeof DiscoveryRouteImport;
+      parentRoute: typeof rootRouteImport;
     };
-    "/jobs/": {
-      id: "/jobs/";
-      path: "/";
-      fullPath: "/jobs/";
-      preLoaderRoute: typeof JobsIndexRouteImport;
-      parentRoute: typeof JobsRoute;
+    "/evidence-map": {
+      id: "/evidence-map";
+      path: "/evidence-map";
+      fullPath: "/evidence-map";
+      preLoaderRoute: typeof EvidenceMapRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/interviews": {
+      id: "/interviews";
+      path: "/interviews";
+      fullPath: "/interviews";
+      preLoaderRoute: typeof InterviewsRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/jobs": {
+      id: "/jobs";
+      path: "/jobs";
+      fullPath: "/jobs";
+      preLoaderRoute: typeof JobsRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/outreach": {
+      id: "/outreach";
+      path: "/outreach";
+      fullPath: "/outreach";
+      preLoaderRoute: typeof OutreachRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/pipelines": {
+      id: "/pipelines";
+      path: "/pipelines";
+      fullPath: "/pipelines";
+      preLoaderRoute: typeof PipelinesRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/preferences": {
+      id: "/preferences";
+      path: "/preferences";
+      fullPath: "/preferences";
+      preLoaderRoute: typeof PreferencesRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/profile": {
+      id: "/profile";
+      path: "/profile";
+      fullPath: "/profile";
+      preLoaderRoute: typeof ProfileRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/runs": {
+      id: "/runs";
+      path: "/runs";
+      fullPath: "/runs";
+      preLoaderRoute: typeof RunsRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/settings": {
+      id: "/settings";
+      path: "/settings";
+      fullPath: "/settings";
+      preLoaderRoute: typeof SettingsRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/activity/$eventId": {
+      id: "/activity/$eventId";
+      path: "/activity/$eventId";
+      fullPath: "/activity/$eventId";
+      preLoaderRoute: typeof ActivityEventIdRouteImport;
+      parentRoute: typeof rootRouteImport;
     };
     "/artifacts/": {
       id: "/artifacts/";
@@ -634,25 +606,74 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof ArtifactsIndexRouteImport;
       parentRoute: typeof ArtifactsRoute;
     };
-    "/spikes/table-filters": {
-      id: "/spikes/table-filters";
-      path: "/spikes/table-filters";
-      fullPath: "/spikes/table-filters";
-      preLoaderRoute: typeof SpikesTableFiltersRouteImport;
-      parentRoute: typeof rootRouteImport;
+    "/artifacts/$artifactId": {
+      id: "/artifacts/$artifactId";
+      path: "/$artifactId";
+      fullPath: "/artifacts/$artifactId";
+      preLoaderRoute: typeof ArtifactsArtifactIdRouteImport;
+      parentRoute: typeof ArtifactsRoute;
     };
-    "/settings/models": {
-      id: "/settings/models";
-      path: "/models";
-      fullPath: "/settings/models";
-      preLoaderRoute: typeof SettingsModelsRouteImport;
-      parentRoute: typeof SettingsRoute;
+    "/jobs/": {
+      id: "/jobs/";
+      path: "/";
+      fullPath: "/jobs/";
+      preLoaderRoute: typeof JobsIndexRouteImport;
+      parentRoute: typeof JobsRoute;
     };
-    "/settings/credentials": {
-      id: "/settings/credentials";
-      path: "/credentials";
-      fullPath: "/settings/credentials";
-      preLoaderRoute: typeof SettingsCredentialsRouteImport;
+    "/jobs/$jobId": {
+      id: "/jobs/$jobId";
+      path: "/$jobId";
+      fullPath: "/jobs/$jobId";
+      preLoaderRoute: typeof JobsJobIdRouteImport;
+      parentRoute: typeof JobsRoute;
+    };
+    "/outreach/": {
+      id: "/outreach/";
+      path: "/";
+      fullPath: "/outreach/";
+      preLoaderRoute: typeof OutreachIndexRouteImport;
+      parentRoute: typeof OutreachRoute;
+    };
+    "/outreach/$contactId": {
+      id: "/outreach/$contactId";
+      path: "/$contactId";
+      fullPath: "/outreach/$contactId";
+      preLoaderRoute: typeof OutreachContactIdRouteImport;
+      parentRoute: typeof OutreachRoute;
+    };
+    "/profile/": {
+      id: "/profile/";
+      path: "/";
+      fullPath: "/profile/";
+      preLoaderRoute: typeof ProfileIndexRouteImport;
+      parentRoute: typeof ProfileRoute;
+    };
+    "/profile/import": {
+      id: "/profile/import";
+      path: "/import";
+      fullPath: "/profile/import";
+      preLoaderRoute: typeof ProfileImportRouteImport;
+      parentRoute: typeof ProfileRoute;
+    };
+    "/runs/": {
+      id: "/runs/";
+      path: "/";
+      fullPath: "/runs/";
+      preLoaderRoute: typeof RunsIndexRouteImport;
+      parentRoute: typeof RunsRoute;
+    };
+    "/runs/$runId": {
+      id: "/runs/$runId";
+      path: "/$runId";
+      fullPath: "/runs/$runId";
+      preLoaderRoute: typeof RunsRunIdRouteImport;
+      parentRoute: typeof RunsRoute;
+    };
+    "/settings/": {
+      id: "/settings/";
+      path: "/";
+      fullPath: "/settings/";
+      preLoaderRoute: typeof SettingsIndexRouteImport;
       parentRoute: typeof SettingsRoute;
     };
     "/settings/browser": {
@@ -662,46 +683,25 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof SettingsBrowserRouteImport;
       parentRoute: typeof SettingsRoute;
     };
-    "/runs/$runId": {
-      id: "/runs/$runId";
-      path: "/$runId";
-      fullPath: "/runs/$runId";
-      preLoaderRoute: typeof RunsRunIdRouteImport;
-      parentRoute: typeof RunsRoute;
+    "/settings/credentials": {
+      id: "/settings/credentials";
+      path: "/credentials";
+      fullPath: "/settings/credentials";
+      preLoaderRoute: typeof SettingsCredentialsRouteImport;
+      parentRoute: typeof SettingsRoute;
     };
-    "/profile/import": {
-      id: "/profile/import";
-      path: "/import";
-      fullPath: "/profile/import";
-      preLoaderRoute: typeof ProfileImportRouteImport;
-      parentRoute: typeof ProfileRoute;
+    "/settings/models": {
+      id: "/settings/models";
+      path: "/models";
+      fullPath: "/settings/models";
+      preLoaderRoute: typeof SettingsModelsRouteImport;
+      parentRoute: typeof SettingsRoute;
     };
-    "/outreach/$contactId": {
-      id: "/outreach/$contactId";
-      path: "/$contactId";
-      fullPath: "/outreach/$contactId";
-      preLoaderRoute: typeof OutreachContactIdRouteImport;
-      parentRoute: typeof OutreachRoute;
-    };
-    "/jobs/$jobId": {
-      id: "/jobs/$jobId";
-      path: "/$jobId";
-      fullPath: "/jobs/$jobId";
-      preLoaderRoute: typeof JobsJobIdRouteImport;
-      parentRoute: typeof JobsRoute;
-    };
-    "/artifacts/$artifactId": {
-      id: "/artifacts/$artifactId";
-      path: "/$artifactId";
-      fullPath: "/artifacts/$artifactId";
-      preLoaderRoute: typeof ArtifactsArtifactIdRouteImport;
-      parentRoute: typeof ArtifactsRoute;
-    };
-    "/activity/$eventId": {
-      id: "/activity/$eventId";
-      path: "/activity/$eventId";
-      fullPath: "/activity/$eventId";
-      preLoaderRoute: typeof ActivityEventIdRouteImport;
+    "/spikes/table-filters": {
+      id: "/spikes/table-filters";
+      path: "/spikes/table-filters";
+      fullPath: "/spikes/table-filters";
+      preLoaderRoute: typeof SpikesTableFiltersRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/profile/import/": {
@@ -711,11 +711,11 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof ProfileImportIndexRouteImport;
       parentRoute: typeof ProfileImportRoute;
     };
-    "/profile/import/upload": {
-      id: "/profile/import/upload";
-      path: "/upload";
-      fullPath: "/profile/import/upload";
-      preLoaderRoute: typeof ProfileImportUploadRouteImport;
+    "/profile/import/confirm": {
+      id: "/profile/import/confirm";
+      path: "/confirm";
+      fullPath: "/profile/import/confirm";
+      preLoaderRoute: typeof ProfileImportConfirmRouteImport;
       parentRoute: typeof ProfileImportRoute;
     };
     "/profile/import/preview": {
@@ -725,11 +725,11 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof ProfileImportPreviewRouteImport;
       parentRoute: typeof ProfileImportRoute;
     };
-    "/profile/import/confirm": {
-      id: "/profile/import/confirm";
-      path: "/confirm";
-      fullPath: "/profile/import/confirm";
-      preLoaderRoute: typeof ProfileImportConfirmRouteImport;
+    "/profile/import/upload": {
+      id: "/profile/import/upload";
+      path: "/upload";
+      fullPath: "/profile/import/upload";
+      preLoaderRoute: typeof ProfileImportUploadRouteImport;
       parentRoute: typeof ProfileImportRoute;
     };
     "/jobs/$jobId/run/$runId": {

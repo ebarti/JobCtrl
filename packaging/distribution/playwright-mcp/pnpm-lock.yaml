@@ -9,45 +9,35 @@ importers:
   .:
     dependencies:
       '@playwright/mcp':
-        specifier: 0.0.77
-        version: 0.0.77
+        specifier: 0.0.83
+        version: 0.0.83
 
 packages:
 
-  '@playwright/mcp@0.0.77':
-    resolution: {integrity: sha512-vf3PmCdOWVvEc3Vmh8DVWvsbz6/rIGi+OG0cyC/2YTn10U8tZMHEiRG62LHdPTTf0qCjoS7/1mbyS5F0RHoTzQ==}
+  '@playwright/mcp@0.0.83':
+    resolution: {integrity: sha512-oNcl+Ae2/IAjhfPeP46BfIkSakfmprY+aOtkv5MjrQ4lPav4/yNtPhL0iq8SlIM90oApWgBDUxaNKvktazUKOg==}
     engines: {node: '>=18'}
     hasBin: true
 
-  fsevents@2.3.2:
-    resolution: {integrity: sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==}
-    engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
-    os: [darwin]
-
-  playwright-core@1.62.0-alpha-2026-06-29:
-    resolution: {integrity: sha512-/13EvW8l9Bmvt9nKHey+OcvZ8nob2FM8BCKBsUNwbXgmT4Hc0XX2b6mOErU0RBYNedOCa9q15USI7SY9K17v4w==}
-    engines: {node: '>=18'}
+  playwright-core@1.64.0-alpha-1790635538000:
+    resolution: {integrity: sha512-pNwaXirhXMRLaRQs4NQ18EpTdtDoFwyPH9FOaaDC7YXG4hpwE2xmwCic/1srbuExVQC7zT9LJSJpDBAru+Vo9A==}
+    engines: {node: '>=20'}
     hasBin: true
 
-  playwright@1.62.0-alpha-2026-06-29:
-    resolution: {integrity: sha512-ugaMuh6rAOqmbaxrM7+XQSs7M6yPXykq5gVugJPClHcJ4Cqxmky5rDHhrCt4wmaILUeMdI7kPBCx3zMx2Qu+bg==}
-    engines: {node: '>=18'}
+  playwright@1.64.0-alpha-1790635538000:
+    resolution: {integrity: sha512-/5XDUMxpOd/9AojJtWDFIRV3EJZNQ0AwvK69wgt3CPzy8wTgiBG9pX45VfxtqtvIRGwfWzMhrvawNKreG69Snw==}
+    engines: {node: '>=20'}
     hasBin: true
 
 snapshots:
 
-  '@playwright/mcp@0.0.77':
+  '@playwright/mcp@0.0.83':
     dependencies:
-      playwright: 1.62.0-alpha-2026-06-29
-      playwright-core: 1.62.0-alpha-2026-06-29
+      playwright: 1.64.0-alpha-1790635538000
+      playwright-core: 1.64.0-alpha-1790635538000
 
-  fsevents@2.3.2:
-    optional: true
+  playwright-core@1.64.0-alpha-1790635538000: {}
 
-  playwright-core@1.62.0-alpha-2026-06-29: {}
-
-  playwright@1.62.0-alpha-2026-06-29:
+  playwright@1.64.0-alpha-1790635538000:
     dependencies:
-      playwright-core: 1.62.0-alpha-2026-06-29
-    optionalDependencies:
-      fsevents: 2.3.2
+      playwright-core: 1.64.0-alpha-1790635538000

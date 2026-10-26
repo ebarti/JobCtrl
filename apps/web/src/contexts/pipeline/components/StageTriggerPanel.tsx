@@ -809,7 +809,7 @@ export function StageTriggerPanel({
                 render={
                   <Button
                     id={fieldId("sources")}
-                    aria-label="Sources"
+                    aria-label={`Sources: ${selectedDiscoverySourceLabel}`}
                     aria-describedby={fieldId("sources-summary")}
                     className="w-full justify-between overflow-hidden font-normal"
                     type="button"

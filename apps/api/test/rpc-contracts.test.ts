@@ -20,6 +20,7 @@ import {
   AvailabilityWorkflowStartSchema,
   CancelRunParamsSchema,
   CancelRunResultSchema,
+  CareerLearningResponseSchema,
   DEFAULT_PIPELINE_LLM_MODEL,
   ENDPOINTS,
   endpointSpecJsonSchemaFixture,
@@ -288,6 +289,16 @@ describe("endpoint spec fixture", () => {
       endpoints: { ...endpointSpecsFixture.endpoints, ...providerEndpointSpecs },
     });
     expect(Object.fromEntries(Object.entries(current.endpoints).filter(([name]) => careerNames.includes(name)).map(([name, schema]) => [name, createHash("sha256").update(JSON.stringify(schema)).digest("hex")]))).toEqual(careerLearningSchemaHashes);
+  });
+
+  it("requires qualified career timestamps with RFC 3339 seconds", () => {
+    const timestamp = CareerLearningResponseSchema.shape.cohorts.element.shape.comparedAt;
+    for (const value of ["2026-01-01T12:30:00Z", "2026-01-01T12:30:00.123+01:00"]) {
+      expect(timestamp.safeParse(value).success).toBe(true);
+    }
+    for (const value of ["2026-01-01T12:30Z", "2026-01-01T12:30:00", "2026-02-30T12:30:00Z"]) {
+      expect(timestamp.safeParse(value).success).toBe(false);
+    }
   });
 
   it("records the indirect worker RPCs used by merged endpoint handlers", () => {

@@ -77,7 +77,7 @@ test("Jobs company stays in its column and remains readable at desktop and card 
   for (const theme of ["light", "dark"] as const) {
     await page.setViewportSize({ width: 1185, height: 844 });
     if (theme === "dark") {
-      await page.getByRole("button", { name: "Switch to dark theme" }).click();
+      await page.getByRole("button", { name: "Light theme: Switch to dark theme" }).click();
     }
     await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
 

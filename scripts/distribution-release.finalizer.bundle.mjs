@@ -7554,14 +7554,13 @@ var EXPECTED_NODE_LICENSE_EVIDENCE = /* @__PURE__ */ new Map([
   ["@radix-ui/react-use-escape-keydown@1.1.1", { license: "MIT", evidenceKind: "license-text" }],
   ["@udecode/react-hotkeys@52.0.11", { license: "MIT", evidenceKind: "license-text" }],
   ["abstract-logging@2.0.1", { license: "MIT", evidenceKind: "package-metadata-plus-canonical-text" }],
-  ["data-uri-to-buffer@4.0.1", { license: "MIT", evidenceKind: "package-metadata-plus-canonical-text" }],
   ["jotai-x@2.3.4", { license: "MIT", evidenceKind: "license-text" }],
   ["react-compiler-runtime@1.0.0", { license: "MIT", evidenceKind: "license-text" }],
   ["react-remove-scroll-bar@2.3.8", { license: "MIT", evidenceKind: "license-text" }],
   ["slate@0.126.2", { license: "MIT", evidenceKind: "license-text" }],
   ["slate-dom@0.126.0", { license: "MIT", evidenceKind: "license-text" }],
-  ["slate-hyperscript@0.125.0", { license: "MIT", evidenceKind: "license-text" }],
-  ["slate-react@0.126.4", { license: "MIT", evidenceKind: "license-text" }],
+  ["slate-hyperscript@0.127.0", { license: "MIT", evidenceKind: "license-text" }],
+  ["slate-react@0.127.1", { license: "MIT", evidenceKind: "license-text" }],
   ["zustand-x@6.2.1", { license: "MIT", evidenceKind: "license-text" }]
 ]);
 function invariant(condition, message) {
@@ -11304,9 +11303,9 @@ async function smokePlaywrightMcpProtocol(command, args, { cwd, env }) {
       name: "browser_navigate",
       arguments: { url: `data:text/html,<title>${marker}</title><main>${marker}</main>` }
     });
-    invariant3(navigation.isError !== true, `bundled Playwright MCP navigation failed: ${JSON.stringify(navigation).slice(-2e3)}`);
+    invariant3(navigation.error === void 0 && navigation.result && navigation.result.isError !== true, `bundled Playwright MCP navigation failed: ${JSON.stringify(navigation).slice(-2e3)}`);
     const snapshot = await request("tools/call", { name: "browser_snapshot", arguments: {} });
-    invariant3(snapshot.isError !== true, `bundled Playwright MCP snapshot failed: ${JSON.stringify(snapshot).slice(-2e3)}`);
+    invariant3(snapshot.error === void 0 && snapshot.result && snapshot.result.isError !== true, `bundled Playwright MCP snapshot failed: ${JSON.stringify(snapshot).slice(-2e3)}`);
     invariant3(JSON.stringify(snapshot).includes(marker), "bundled Playwright MCP snapshot did not observe the managed local browser page");
     return {
       protocolVersion: initialize.result.protocolVersion,
@@ -11428,12 +11427,15 @@ finally:
     [
       "--headless",
       "--isolated",
+      // macOS rejects nested Seatbelt sandboxes. This synthetic smoke retains
+      // LOOPBACK_ONLY_SANDBOX_PROFILE; user MCP launches keep their defaults.
+      "--no-sandbox",
       "--output-dir",
       path3.join(canonicalExtractedRoot, "playwright-mcp-smoke-output"),
       "--executable-path",
       await managedMcpChromiumExecutable(payloadRoot, contracts),
-      "--output-mode",
-      "stdout",
+      "--snapshot-mode",
+      "full",
       "--codegen",
       "none"
     ],
