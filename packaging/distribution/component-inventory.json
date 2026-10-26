@@ -158,8 +158,8 @@
       "id": "playwright-mcp",
       "classification": "core-runtime",
       "owner": "Microsoft Corporation",
-      "version": "0.0.77",
-      "source": "https://www.npmjs.com/package/@playwright/mcp/v/0.0.77",
+      "version": "0.0.83",
+      "source": "https://www.npmjs.com/package/@playwright/mcp/v/0.0.83",
       "license": "Apache-2.0",
       "redistribution": "bundle",
       "requiredInCore": true
