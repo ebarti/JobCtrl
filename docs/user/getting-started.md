@@ -248,6 +248,11 @@ use the updated formula, while bundled-installer installations use their signed
 release channel. Pulling source changes does not publish an update to installed
 users.
 
+The source code contains a candidate bridge for a future launcher protocol
+change. It needs a separately reviewed and published bridge release before an
+installed version can use that path. A source checkout or local test does not
+make the bridge available to installed users.
+
 When a release requires a database migration, the updater requests runtime
 shutdown, backs up the application database and Temporal history together,
 verifies a separate migrated database, and activates it before checking startup

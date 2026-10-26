@@ -83,6 +83,35 @@ delete the original provider history as an automatic repair.
 | Docs | `corepack pnpm docs:build`, diff check |
 | Cross-stack | `corepack pnpm check`, `corepack pnpm test`, affected separate web suites |
 
+## Protocol-2 Bridge Handoff
+
+Use owned synthetic workspaces. Verify signed descriptor and bridge-role
+identity, both complete payload inventories, the protocol-2-only compatibility
+range, channel sequence and revocation policy, and source selection under the
+transition and selection locks. Reject unsigned, altered, stale, mismatched,
+or unsafe inputs before selection. Exercise cooperating update, rollback,
+uninstall, and cleanup contenders that use the release locks; confirm an old
+controller queued before the handoff refuses after the protocol-2 bridge is
+selected. A protocol-2 transition journal must also make the actual old
+controller refuse recovery before a stale backup can overwrite independent
+commits to either database.
+
+Terminate the installer process at each durable evidence, intent, active,
+policy, selector, completion, and cleanup boundary. Retry using retained signed
+evidence after removing the original acquisition files. Verify forward-only
+selection, exact selector and policy readback, idempotent completed retry, and
+unchanged application database, Temporal database, and sidecars. Missing or
+tampered evidence, unexpected selectors, and unfinished or unrecognized legacy
+journals must refuse without destructive repair. These checks demonstrate
+process-interruption behavior, not physical power-loss durability or protection
+against hostile local-disk control.
+
+Before any release, verify the actual signed bridge artifact and installer,
+including their macOS trust checks, through the released old selector and then
+the bridge-controlled upgrade, failure recovery, and rollback. Prove writer
+quiescence and preserve independent commits in both databases through the later
+schema transition. Synthetic handoff tests alone do not qualify that upgrade.
+
 Focused commands live in `scripts/checks.toml`. Run the selected `argv` directly,
 substituting an owned artifact path for `{report_path}`. Required tests must
 execute; zero tests, skipped required cases or a build alone are not product QA.

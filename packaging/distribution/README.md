@@ -187,6 +187,43 @@ channel. Prerelease artifacts use the same release manifest key, Developer ID
 code signature, and notarization gate as stable artifacts; stable promotion
 also requires `stableReleaseStatus` to be `ready`.
 
+### Protocol-2 bridge candidate
+
+The source installer contains a bridge handoff for a separately reviewed
+schema-14 payload whose signed distribution permits launcher protocol 2 only.
+This is a local candidate, not evidence that a bridge has been published or
+that existing installations can update to a later schema. The bridge payload
+and installer must be built and reviewed as release artifacts before use; the
+subsequent database migration and its writer-quiescence and recovery gates
+require their own proof.
+
+The signed cached handoff requires the canonical descriptor URL, descriptor,
+descriptor signature, archive, and a separately signed bridge-role declaration
+and signature. The declaration binds the predecessor and candidate descriptor
+and manifest identities, schema 14, protocol 2, complete payload inventories,
+and the reviewed controller digest. Both distributions, the selected source
+and channel policy are checked before selection. Apart from the controller,
+runtime protocol field, and distribution signature envelopes, the bridge must
+retain the predecessor's payload inventory and runtime configuration. An
+unsigned local descriptor or a protocol-1-compatible target cannot authorize
+this handoff.
+
+The installer holds the transition lock followed by the exclusive selection
+lock, durably retains the authenticated evidence and handoff intent, and changes
+the active receipt before replacing the public selector. It then finalizes the
+signed channel policy and selector, retaining a completion record. A retry
+after the active receipt changes recovers forward using the retained, reverified
+evidence; it does not restore the protocol-1 selection. The handoff itself does
+not stop the runtime or read, migrate, back up, or restore either database. A
+resumable or unrecognized release journal, changed source selection, mismatched
+selector, or invalid evidence refuses the handoff.
+
+The lock contract serializes supported JobCtrl release mutators. As in the
+[security threat model](../../docs/developer/security.md#threat-model-trust-boundaries-and-assumptions),
+it does not establish protection against a hostile process with control of the
+same OS account or local disk. Selector and payload checks do not claim to pin
+every path against that attacker.
+
 ## Production payload builder
 
 The real builder downloads only the locked archives, verifies every

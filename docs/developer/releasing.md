@@ -154,6 +154,37 @@ Confirm the account action, recheck the candidate and current channel, then
 resume the existing run when its source is unchanged. Do not rotate credentials
 or bypass notarization to work around an agreement requirement.
 
+## Protocol-2 bridge candidate
+
+The source installer has a candidate handoff for a separately reviewed
+schema-14 bridge whose signed distribution permits launcher protocol 2 only.
+The bridge is not established by the protocol number alone: the signed bridge
+declaration must bind the exact predecessor and target descriptors and
+manifests, complete payload inventories, schema, channel, platform, and
+reviewed controller digest. The controller must support protocol-2 journal
+fencing and recovery. A real bridge payload and installer have to be built,
+reviewed, and verified before publication; the presence of source code or a
+synthetic test does not make the bridge available to installed users.
+
+The signed cached installer mode requires the descriptor URL, descriptor and
+signature, archive, and the bridge declaration and signature. It retains the
+signed evidence before writing a handoff intent, selects the protocol-2 active
+receipt before replacing the selector, and finalizes channel policy without
+starting or stopping services or touching either database. `--bridge-recover`
+uses retained evidence and accepts no acquisition files. It re-verifies the
+evidence and completes an interrupted handoff forward; it does not restore the
+old active receipt. Unknown journals, changed selections or selectors, and
+invalid evidence refuse the operation.
+
+The handoff uses the transition and selection locks shared by supported
+release mutators. The [threat model](security.md#threat-model-trust-boundaries-and-assumptions)
+excludes a compromised OS account and hostile local-disk control; the handoff
+does not establish a guarantee against a same-user process racing filesystem
+paths outside the release locks. Before a bridge is published, run the bridge
+and migration proof in [Reliability & QA](../local-reliability-qa.md#protocol-2-bridge-handoff),
+including actual historical controllers and independent writer readback. The
+later schema migration, runtime quiescence, and rollback are separate gates.
+
 ## Verify what users receive
 
 Wait for the complete workflow, including PyPI, to succeed. Independently read back:

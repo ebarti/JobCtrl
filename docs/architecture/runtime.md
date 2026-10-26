@@ -49,6 +49,15 @@ checkout or asking the user for a language/runtime toolchain:
 - PDF page previews are rendered by PDF.js in the web client. The installed
   runtime has no Poppler component or `pdftoppm` route.
 
+The source installer also contains a protocol-2 bridge handoff for an
+authenticated, separately reviewed schema-14 payload. It retains signed
+evidence, selects the bridge receipt before replacing the public selector, and
+recovers an interrupted selection forward under the release locks. It does not
+change or open the application and Temporal databases. This candidate is not a
+published bridge or proof that the later database migration is safe; those
+artifacts and the stopped-writer transition require separate verification. See
+the [bridge release contract](../developer/releasing.md#protocol-2-bridge-candidate).
+
 `JOBCTRL_RUNTIME_MODE=bundled` makes this boundary fail closed. The launcher
 must supply an absolute `JOBCTRL_PAYLOAD_DIR`; the API realpaths its Python,
 web, and Chromium roots and rejects paths outside that payload. Python isolated

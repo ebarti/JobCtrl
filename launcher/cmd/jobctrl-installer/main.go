@@ -18,7 +18,8 @@ import (
 
 func main() {
 	var releaseURL, home, descriptorURL, descriptorFile, signatureFile, archiveFile, source string
-	var allowUnsignedLocal, stageOnly, jsonOutput bool
+	var bridgeRoleFile, bridgeRoleSignatureFile string
+	var allowUnsignedLocal, stageOnly, jsonOutput, bridgeRecover bool
 	flag.StringVar(&releaseURL, "release-url", "", "signed release channel-pointer URL (default: compiled channel)")
 	flag.StringVar(&home, "home", "", "JobCtrl runtime home (default: ~/Library/Application Support/JobCtrl)")
 	flag.StringVar(&descriptorURL, "descriptor-url", "", "canonical HTTPS URL for a signed cached descriptor")
@@ -29,6 +30,9 @@ func main() {
 	flag.StringVar(&source, "source", "curl", "acquisition adapter: curl or homebrew")
 	flag.BoolVar(&stageOnly, "stage-only", false, "commit an authenticated immutable release without promoting it")
 	flag.BoolVar(&jsonOutput, "json", false, "write the exact immutable install receipt as JSON")
+	flag.StringVar(&bridgeRoleFile, "bridge-role-file", "", "signed schema-14 bridge declaration")
+	flag.StringVar(&bridgeRoleSignatureFile, "bridge-role-signature-file", "", "signature for the bridge declaration")
+	flag.BoolVar(&bridgeRecover, "bridge-recover", false, "complete a previously interrupted authenticated bridge handoff")
 	flag.Parse()
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		fail("only darwin-arm64 is supported")
@@ -41,16 +45,29 @@ func main() {
 	if source != "curl" && source != "homebrew" {
 		fail("--source must be curl or homebrew")
 	}
-	if source == "homebrew" && (allowUnsignedLocal || descriptorURL == "" || descriptorFile == "" || signatureFile == "" || archiveFile == "") {
+	bridge := bridgeRecover || bridgeRoleFile != "" || bridgeRoleSignatureFile != ""
+	if source == "homebrew" && !bridgeRecover && (allowUnsignedLocal || descriptorURL == "" || descriptorFile == "" || signatureFile == "" || archiveFile == "") {
 		fail("--source homebrew requires the complete signed cached formula descriptor, signature, and archive mode")
 	}
-	if source == "curl" && descriptorURL != "" {
+	if source == "curl" && descriptorURL != "" && !bridge {
 		fail("signed cached release inputs are reserved for the Homebrew acquisition adapter")
 	}
 	options := installer.Options{Home: home, ReleaseURL: releaseURL, Trust: trust, Policy: policy, AllowUnsignedLocal: allowUnsignedLocal, AcquisitionSource: source, StageOnly: stageOnly}
 	var receipt installer.Receipt
 	var err error
-	if allowUnsignedLocal {
+	if bridge {
+		if allowUnsignedLocal || stageOnly || releaseURL != "" {
+			fail("bridge handoff requires signed cached inputs and cannot use stage-only or release-url")
+		}
+		if bridgeRecover {
+			if descriptorURL != "" || descriptorFile != "" || signatureFile != "" || archiveFile != "" || bridgeRoleFile != "" || bridgeRoleSignatureFile != "" {
+				fail("bridge recovery uses only retained signed evidence; do not pass acquisition files")
+			}
+		} else if descriptorURL == "" || descriptorFile == "" || signatureFile == "" || archiveFile == "" || bridgeRoleFile == "" || bridgeRoleSignatureFile == "" {
+			fail("bridge handoff requires the complete signed descriptor, archive and bridge declaration")
+		}
+		receipt, err = installer.InstallSignedCachedBridge(options, installer.CachedBridgeInput{DescriptorURL: descriptorURL, DescriptorPath: descriptorFile, DescriptorSignaturePath: signatureFile, ArchivePath: archiveFile, AttestationPath: bridgeRoleFile, AttestationSignaturePath: bridgeRoleSignatureFile})
+	} else if allowUnsignedLocal {
 		if !policy.AllowUnsignedLocal {
 			fail("unsigned-local fixtures are unavailable in this signed installer build")
 		}
@@ -69,7 +86,7 @@ func main() {
 	if err != nil {
 		fail(err.Error())
 	}
-	if !stageOnly {
+	if !stageOnly && !bridge {
 		if err := promoteStagedIfNeeded(home, source, receipt); err != nil {
 			fail(err.Error())
 		}

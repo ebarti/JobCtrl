@@ -587,8 +587,14 @@ and records each canonical `JOBCTRL_DIR` under
 `~/Library/Application Support/JobCtrl/instances/<sha256>` (override with
 `JOBCTRL_RUNTIME_HOME`). This is an artifact smoke/development surface only;
 `scripts/dev` remains the source-contributor launcher until the installer and
-signing phases land. Use the much smaller contract fixture while changing the
-builder itself:
+signing phases land. The local bridge candidate requires a signed cached
+descriptor, its signature and archive, plus a signed bridge declaration and
+signature; the installer selects it with `--bridge-role-file` and
+`--bridge-role-signature-file`. An interrupted handoff uses `--bridge-recover`
+with retained evidence and no acquisition-file arguments. These flags do not
+create or publish the separately reviewed schema-14 bridge artifact. See the
+[bridge release contract](developer/releasing.md#protocol-2-bridge-candidate).
+Use the much smaller contract fixture while changing the builder itself:
 
 ```bash
 corepack pnpm distribution:build:fixture
