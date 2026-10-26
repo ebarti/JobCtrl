@@ -104,6 +104,13 @@ outcome.
 An explicit Apply reset can release a local pre-submission Skip, a retryable
 failure, exhaustion or cancellation when no submit intent exists. It refuses
 active/queued work, Applied, Needs verification and policy-owned skip causes.
+If an Apply owner exits after Skip but before settlement, use
+`jobctrl apply --recover-stopped` to check recorded local process ownership.
+It starts no application and retains Skip. When the exact owner is confirmed
+exited on the same host, a local acknowledgement permits a later safe explicit
+reset; it does not prove a provider stopped or clear submit evidence. A live or
+reused PID, foreign host, denied process query or older run without process
+provenance remains unacknowledged. Normal Apply startup performs this check too.
 Recovery after a restart and manual **Mark Applied** also preserve the existing
 attempt count. Reset preserves accepted artifacts and events; the budget is retained unless
 reset explicitly (or exhausted). A retryable `DRY_RUN` completion remains eligible

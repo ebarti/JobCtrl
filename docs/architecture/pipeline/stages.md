@@ -535,6 +535,18 @@ or `StageCanceled` label is not that acknowledgement. A local stage label alone
 cannot establish that active work ended. Submit intent still blocks retry after
 that settlement.
 
+Claims record their source-owned PID and SHA-256 host identity in
+`ApplyRunStarted.owner_process`. Recovery also inspects manual skipped rows.
+It may append one exact-run `LockReleased` with `recovery_reason=owner_process_exited`
+only after a same-host process query positively establishes exit. A missing or
+terminal workflow projection is insufficient: its activity thread may still be
+alive. Occupied/reused PIDs, foreign hosts, denied queries and legacy claims
+without provenance remain blocked. The acknowledgement and its rollback share
+the writer/caller transaction; stage, attempts, materials and original events
+remain untouched. Normal Apply startup and the inspection-only
+`apply --recover-stopped` utility use this boundary. Recovery does not reset the
+job or resolve any current/older intent or prior Needs verification evidence.
+
 **Seven safety invariants, and the mechanisms that enforce them:**
 
 1. **No model-owned final browser commit.** The use case stops ordinary live

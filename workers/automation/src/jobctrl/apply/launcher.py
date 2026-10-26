@@ -46,6 +46,7 @@ from rich.live import Live
 from jobctrl import config
 from jobctrl.infrastructure.apply_controls import (
     APPLY_ADMISSIBLE_SQL, APPLY_MANUAL_STOP_SQL, APPLY_SUBMIT_INTENT_SQL, APPLY_UNRESOLVED_SKIP_SQL,
+    apply_owner_process_exited, has_unsettled_apply_run, local_apply_process,
 )
 from jobctrl.domain.apply.value_objects import Applied, DryRunComplete, Failed, SubmissionResult
 from jobctrl.apply import prompt as prompt_mod  # noqa: F401  -- kept for back-compat imports
@@ -1120,6 +1121,7 @@ def _acquire_job_candidate(
                 "model": (run_ctx.get("model") if run_ctx else None),
                 "dry_run": bool(run_ctx.get("dry_run")) if run_ctx else False,
                 "worker_id": worker_id,
+                "owner_process": local_apply_process(),
                 "started_at": now,
                 "headless": bool(run_ctx.get("headless")) if run_ctx else False,
                 "attempts": attempts + 1,
@@ -1678,15 +1680,19 @@ def release_lock(
     conn.commit()
 
 
-def recover_ambiguous_running_apply(console: Console | None = None) -> int:
-    """Recover apply rows inherited from a prior dead workflow/activity."""
+def recover_ambiguous_running_apply(console: Console | None = None, *, only_stopped: bool = False) -> int:
+    """Recover running rows, or acknowledge exited owners while retaining Skip."""
     conn = get_connection()
     owned = not conn.in_transaction
     try:
         if owned:
             conn.execute("BEGIN IMMEDIATE")
         rows = conn.execute(
-            "SELECT tenant_id, job_id FROM job_stage_states WHERE stage = 'apply' AND state = 'running'"
+            "SELECT control.tenant_id, control.job_id, control.state FROM job_stage_states control "
+            "JOIN jobs ON jobs.tenant_id=control.tenant_id AND jobs.job_id=control.job_id "
+            "WHERE control.stage='apply' AND ((control.state='running' AND ?=0) "
+            f"OR (control.state='skipped' AND ({APPLY_MANUAL_STOP_SQL})))",
+            (int(only_stopped),),
         ).fetchall()
         recovered = 0
         for row in rows:
@@ -1703,6 +1709,36 @@ def recover_ambiguous_running_apply(console: Console | None = None) -> int:
                     tenant_id=tenant_id,
                     job_id=job_id,
                 )
+                if (row["state"] if hasattr(row, "keys") else row[2]) == "skipped":
+                    if not run_id or not has_unsettled_apply_run(conn, tenant_id=tenant_id, job_id=job_id):
+                        continue
+                    started = conn.execute(
+                        "SELECT payload_json FROM job_events WHERE tenant_id=? AND job_id=? AND stage='apply' "
+                        "AND event_type='ApplyRunStarted' ORDER BY event_id DESC LIMIT 1",
+                        (str(tenant_id), str(job_id)),
+                    ).fetchone()
+                    owner = json.loads(started[0] or "{}").get("owner_process")
+                    if not apply_owner_process_exited(owner):
+                        continue
+                    # A terminal/missing workflow projection alone cannot prove
+                    # its activity thread stopped. Only the exact claimant's
+                    # confirmed process exit supplies this local acknowledgement.
+                    conn.execute("SAVEPOINT apply_owner_recovery")
+                    try:
+                        _record_apply_terminal_event_once(
+                            conn, tenant_id=tenant_id, job_id=job_id, run_id=run_id,
+                            event_type="LockReleased",
+                            message="Apply owner process exited; local Skip retained. External outcome is not established.",
+                            payload={"run_id": run_id, "stage_preserved": True, "late_status": "skipped",
+                                     "recovery_reason": "owner_process_exited", "owner_process": owner},
+                        )
+                        conn.execute("RELEASE SAVEPOINT apply_owner_recovery")
+                    except BaseException:
+                        conn.execute("ROLLBACK TO SAVEPOINT apply_owner_recovery")
+                        conn.execute("RELEASE SAVEPOINT apply_owner_recovery")
+                        raise
+                    recovered += 1
+                    continue
                 if not _workflow_terminal_or_gone(
                     conn,
                     tenant_id=tenant_id,

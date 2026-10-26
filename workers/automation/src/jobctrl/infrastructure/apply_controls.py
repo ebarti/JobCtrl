@@ -4,6 +4,58 @@ An intent is a permanent no-blind-retry boundary. Neither a failed result nor
 an unrelated local stage label proves that the provider did not accept it.
 """
 
+
+def local_apply_process():
+    """Literal local owner provenance, captured by the claimant, not its caller."""
+    import hashlib
+    import os
+    import platform
+
+    hostname = platform.node()
+    return {"pid": os.getpid(), "hostname_sha256": hashlib.sha256(hostname.encode()).hexdigest() if hostname else None}
+
+
+def apply_owner_process_exited(owner):
+    """Positive local process absence only; uncertainty must retain ownership.
+
+    An occupied/reused PID, foreign host, absent legacy provenance or a denied
+    process query is not proof. This says nothing about a provider's outcome.
+    """
+    import os
+    import sys
+
+    if not isinstance(owner, dict) or type(owner.get("pid")) is not int or not 0 < owner["pid"] <= 0xFFFFFFFF:
+        return False
+    host = local_apply_process()["hostname_sha256"]
+    if not host or owner.get("hostname_sha256") != host:
+        return False
+    try:
+        if sys.platform == "win32":
+            # os.kill(pid, 0) is not a harmless liveness query on Windows.
+            import ctypes
+            from ctypes import wintypes
+
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel.OpenProcess.restype = wintypes.HANDLE
+            kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            kernel.WaitForSingleObject.restype = wintypes.DWORD
+            kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+            kernel.CloseHandle.restype = wintypes.BOOL
+            handle = kernel.OpenProcess(0x00100000, False, owner["pid"])  # SYNCHRONIZE, no mutation rights
+            if not handle:
+                return ctypes.get_last_error() == 87  # ERROR_INVALID_PARAMETER: PID absent
+            try:
+                return kernel.WaitForSingleObject(handle, 0) == 0  # signaled process object
+            finally:
+                kernel.CloseHandle(handle)
+        os.kill(owner["pid"], 0)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        return False
+    return False
+
 # Correlated selectors bind the canonical job to the fixed alias `jobs`.
 APPLY_SUBMIT_INTENT_SQL = """
 EXISTS (

@@ -91,6 +91,8 @@ failed post-intent return also remains uncertain. These uncertain runs use the
 existing `manual` lifecycle status with a `needs_verification` result, so readers
 do not mistake a completed run for active work. A completed rehearsal stays a
 dry run. An ordinary legacy cleanup retains its existing fallback behavior.
+An exited owner's recovered local Skip is shown as a manual stop, without
+asserting provider success or failure. Durable uncertainty remains independent.
 
 This display evidence creates no `ApplicationSubmitted` fact and cannot release
 Skip or remove durable intent as a retry blocker. A per-tenant projection

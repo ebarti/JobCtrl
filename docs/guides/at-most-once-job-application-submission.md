@@ -64,6 +64,11 @@ a duplicate application.
 Manual Skip prevents later targeted, batch and standing claims. Automatic recovery
 events cannot release it: a validated explicit reset binds its release to the
 existing Skip history, and waits for any admitted owner to acknowledge settlement.
+For an owner that died before acknowledgement, the local recovery check can
+record process exit from its claim-bound PID and host provenance. It preserves
+Skip until a separate safe reset; missing or uncertain process evidence cannot
+release ownership. See [Skip and safe reset](../user/apply.md#skip-and-safe-reset)
+for the recovery command and limits.
 It is a local disposition, not confirmation that an in-flight provider operation
 stopped.
 Claim selection checks it before expensive work and under the claim lock after

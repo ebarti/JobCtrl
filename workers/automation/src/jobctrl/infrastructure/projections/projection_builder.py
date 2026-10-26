@@ -4090,7 +4090,9 @@ class ProjectionBuilder:
                     # of a newer/local stage disposition. This is display evidence,
                     # not an ApplicationSubmitted fact or retry authority.
                     late_status = payload.get("late_status")
-                    if late_status == "applied":
+                    if late_status == "skipped" and payload.get("recovery_reason") == "owner_process_exited":
+                        term_status, term_result = "manual", "manual"
+                    elif late_status == "applied":
                         if any(
                             item["event_type"] == "EmailApplicationSent" and item["job_id"] == job_id
                             for item in events

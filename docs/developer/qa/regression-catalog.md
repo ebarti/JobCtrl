@@ -545,6 +545,19 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For a process that exits after manual Apply Skip and before local settlement,
+run locked `pytest tests/test_apply_stopped_owner_recovery.py` and the existing
+Apply claim, workflow, reset and projection selections. Use a real owned child
+process and an independent SQLite Skip writer, then reopen exact-schema storage.
+Confirm the live owner cannot be acknowledged, its exit permits exactly one
+local acknowledgement, and only a separate safe explicit reset admits another
+claim. Current/older intent and prior Needs verification still refuse reset.
+Preserve nonempty accepted artifact fingerprints, counts, event/run identity and
+caller transaction ownership, including failed acknowledgement and rollback.
+The `apply --recover-stopped` CLI must never launch Apply or reset running work.
+Use actual HTTP Skip/reset readback after recovery; fixture-only lifecycle
+projections cannot establish that a process stopped.
+
 For durable Apply Skip and submit-intent recovery, run locked
 `pytest tests/test_exact_v7_apply_acquire_job_identity.py tests/test_apply_queue_selectors.py tests/test_enrichment_retry.py tests/test_exact_v7_state_reset.py`.
 Use exact-schema synthetic jobs and actual claims, final-intent writer, saga and
