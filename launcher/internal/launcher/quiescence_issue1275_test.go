@@ -14,6 +14,188 @@ import (
 	"time"
 )
 
+// The component itself reads the registry before performing its first write.
+// This exercises the real launch gate and does not rely on scheduler timing.
+func TestComponentLaunchPublishesBeforeExecution(t *testing.T) {
+	ctx, state := issue1275State(t, componentRecord{})
+	delete(state.Components, "worker")
+	if err := writeState(ctx.Instance.StatePath, state); err != nil {
+		t.Fatal(err)
+	}
+	ctx.Instance.LogDir = t.TempDir()
+	if err := os.Symlink("/bin/sh", filepath.Join(ctx.PayloadRoot, "shell")); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "executed")
+	ctx.Manifest.Components = []commandSpec{{Name: "worker", Executable: "shell", Arguments: []string{"-c", `grep -q '"worker"' "$1" && printf ready > "$2"`, "worker", ctx.Instance.StatePath, marker}}}
+	cmd, err := startComponent(ctx, &state, "worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("component did not observe published state: %v", err)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "ready" {
+		t.Fatalf("component failed to observe its durable registry: %q, %v", data, err)
+	}
+	recorded, err := readState(ctx.Instance.StatePath)
+	if err != nil || recorded.Components["worker"].PID != cmd.Process.Pid {
+		t.Fatalf("wrong published component: %+v, %v", recorded.Components["worker"], err)
+	}
+}
+
+func TestGatedComponentRejectsIncompleteMessageAndEOF(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "executed")
+	gateRead, gateWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("/bin/bash", "-p", "-c", gatedComponentScript, "fixture", "/bin/sh", "-c", `printf unsafe > "$1"`, "worker", marker)
+	cmd.Env = []string{"BASH_FUNC_read%%=() { gate=start; }"}
+	cmd.ExtraFiles = []*os.File{gateRead}
+	if err := cmd.Start(); err != nil {
+		_ = gateRead.Close()
+		_ = gateWrite.Close()
+		t.Fatal(err)
+	}
+	_ = gateRead.Close()
+	if _, err := gateWrite.WriteString("start"); err != nil {
+		_ = gateWrite.Close()
+		_ = cmd.Wait()
+		t.Fatal(err)
+	}
+	_ = gateWrite.Close()
+	if err := cmd.Wait(); err == nil {
+		t.Fatal("incomplete gate message unexpectedly authorized execution")
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("component executed after incomplete gate message: %v", err)
+	}
+}
+
+func TestGateClosesOnSupervisorCrash(t *testing.T) {
+	if os.Getenv("JOBCTRL_TEST_GATE_HELPER") == "1" {
+		gateRead, gateWrite, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("/bin/bash", "-p", "-c", gatedComponentScript, "fixture", "/bin/sh", "-c", `printf unsafe > "$1"`, "worker", os.Getenv("JOBCTRL_TEST_GATE_MARKER"))
+		cmd.ExtraFiles = []*os.File{gateRead}
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		_ = gateRead.Close()
+		if err := os.WriteFile(os.Getenv("JOBCTRL_TEST_GATE_PID"), []byte(strconv.Itoa(cmd.Process.Pid)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		// The parent test kills this supervisor while it owns the only writer.
+		// Keep a live reference until then so the gate remains open.
+		time.Sleep(time.Minute)
+		_ = gateWrite.Close()
+		_ = cmd.Wait()
+		return
+	}
+	dir := t.TempDir()
+	marker, pidPath := filepath.Join(dir, "executed"), filepath.Join(dir, "pid")
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper := exec.Command(binary, "-test.run=^TestGateClosesOnSupervisorCrash$")
+	helper.Env = append(os.Environ(), "JOBCTRL_TEST_GATE_HELPER=1", "JOBCTRL_TEST_GATE_MARKER="+marker, "JOBCTRL_TEST_GATE_PID="+pidPath)
+	if err := helper.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = helper.Process.Kill(); _ = helper.Wait() })
+	var child componentRecord
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if raw, err := os.ReadFile(pidPath); err == nil {
+			if pid, err := strconv.Atoi(string(raw)); err == nil {
+				if record, err := recordForProcess(pid, "", "/bin/bash"); err == nil {
+					child = record
+					break
+				}
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if child.PID == 0 {
+		t.Fatal("helper did not start its gated child")
+	}
+	t.Cleanup(func() {
+		if recordMatchesLiveProcess(child) {
+			_ = syscall.Kill(child.PID, syscall.SIGKILL)
+		}
+	})
+	if err := helper.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = helper.Wait()
+	if !waitForPIDExit(child.PID, 5*time.Second) {
+		t.Fatal("gated child survived supervisor crash")
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("component executed after supervisor crash: %v", err)
+	}
+}
+
+func TestComponentLaunchRefusesUnpublishedExecution(t *testing.T) {
+	ctx, state := issue1275State(t, componentRecord{})
+	delete(state.Components, "worker")
+	ctx.Instance.LogDir = t.TempDir()
+	if err := os.Symlink("/bin/sh", filepath.Join(ctx.PayloadRoot, "shell")); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "executed")
+	ctx.Instance.StatePath = filepath.Join(t.TempDir(), "missing", "state.json")
+	// Exported Bash functions must not bypass the admission gate.
+	ctx.Environment = []string{"BASH_FUNC_read%%=() { gate=start; }", "BASH_FUNC_exec%%=() { command \"$@\"; }"}
+	ctx.Manifest.Components = []commandSpec{{Name: "worker", Executable: "shell", Arguments: []string{"-c", `printf unsafe > "$1"`, "worker", marker}}}
+	if cmd, err := startComponent(ctx, &state, "worker"); err == nil || cmd != nil {
+		t.Fatalf("launch should fail before the component executes: %v", err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("component executed without a published registry: %v", err)
+	}
+}
+
+func TestGatedComponentRetainsRecordedIdentityAfterExec(t *testing.T) {
+	ctx, state := issue1275State(t, componentRecord{})
+	delete(state.Components, "worker")
+	ctx.Instance.LogDir = t.TempDir()
+	if err := os.Symlink("/bin/sleep", filepath.Join(ctx.PayloadRoot, "sleep")); err != nil {
+		t.Fatal(err)
+	}
+	ctx.Manifest.Components = []commandSpec{{Name: "worker", Executable: "sleep", Arguments: []string{"60"}}}
+	cmd, err := startComponent(ctx, &state, "worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- cmd.Wait() }()
+	t.Cleanup(func() {
+		if recordMatchesLiveProcess(state.Components["worker"]) {
+			_ = syscall.Kill(cmd.Process.Pid, syscall.SIGKILL)
+		}
+		select {
+		case <-waited:
+		case <-time.After(2 * time.Second):
+		}
+	})
+	deadline := time.Now().Add(5 * time.Second)
+	for !recordMatchesLiveProcess(state.Components["worker"]) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !recordMatchesLiveProcess(state.Components["worker"]) {
+		t.Fatal("component did not retain its published identity across exec")
+	}
+	if err := terminateRecord(state.Components["worker"]); err != nil {
+		t.Fatalf("published component could not be safely stopped: %v", err)
+	}
+}
+
 // startOrphanedGroup starts an owned process group, obtains an independent
 // identity for its child, then kills and reaps only the leader.  Cleanup never
 // signals a PID unless its current identity still matches that owned child.

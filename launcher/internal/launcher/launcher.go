@@ -1454,15 +1454,31 @@ func writeState(path string, state instanceState) error {
 	if err != nil {
 		return err
 	}
-	temporary := path + ".tmp-" + strconv.Itoa(os.Getpid())
-	if err := os.WriteFile(temporary, append(encoded, '\n'), 0o600); err != nil {
+	file, err := os.CreateTemp(filepath.Dir(path), ".runtime-state-*")
+	if err != nil {
 		return err
 	}
-	if err := os.Chmod(temporary, 0o600); err != nil {
-		_ = os.Remove(temporary)
+	temporary := file.Name()
+	defer os.Remove(temporary)
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
 		return err
 	}
-	return os.Rename(temporary, path)
+	if _, err := file.Write(append(encoded, '\n')); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(temporary, path); err != nil {
+		return err
+	}
+	return syncDirectory(filepath.Dir(path))
 }
 func readState(path string) (instanceState, error) {
 	var state instanceState
@@ -1752,7 +1768,7 @@ func supervise(ctx launchContext, ready io.Writer) (result error) {
 	if err := ensureFixedPortsAvailable(ctx.Manifest); err != nil {
 		return err
 	}
-	if children["temporal"], err = startComponent(ctx, state.Components, "temporal"); err != nil {
+	if children["temporal"], err = startComponent(ctx, &state, "temporal"); err != nil {
 		return err
 	}
 	go waitComponent("temporal", children["temporal"], exits)
@@ -1766,14 +1782,14 @@ func supervise(ctx launchContext, ready io.Writer) (result error) {
 		markStartupComponentExit(&state, err)
 		return err
 	}
-	if children["worker"], err = startComponent(ctx, state.Components, "worker"); err != nil {
+	if children["worker"], err = startComponent(ctx, &state, "worker"); err != nil {
 		return err
 	}
 	go waitComponent("worker", children["worker"], exits)
 	if err := writeState(ctx.Instance.StatePath, state); err != nil {
 		return err
 	}
-	if children["api"], err = startComponent(ctx, state.Components, "api"); err != nil {
+	if children["api"], err = startComponent(ctx, &state, "api"); err != nil {
 		return err
 	}
 	go waitComponent("api", children["api"], exits)
@@ -1852,7 +1868,16 @@ func markStartupComponentExit(state *instanceState, cause error) {
 func waitComponent(name string, command *exec.Cmd, exits chan<- componentExit) {
 	exits <- componentExit{name, command.Wait()}
 }
-func startComponent(ctx launchContext, records map[string]componentRecord, name string) (*exec.Cmd, error) {
+
+// A gated child cannot execute its component until the supervisor has durably
+// published its identity. EOF on the gate (including supervisor death) causes
+// the shell to exit without executing the component.
+const gatedComponentScript = `IFS= builtin read -r gate <&3 || exit 75
+[ "$gate" = "start" ] || exit 75
+builtin exec 3<&-
+builtin exec "$@"`
+
+func startComponent(ctx launchContext, state *instanceState, name string) (*exec.Cmd, error) {
 	spec, err := componentByName(ctx.Manifest, name)
 	if err != nil {
 		return nil, err
@@ -1876,20 +1901,48 @@ func startComponent(ctx launchContext, records map[string]componentRecord, name 
 	if err != nil {
 		return nil, err
 	}
-	command := exec.Command(executable, arguments...)
-	command.Env, command.Dir, command.Stdout, command.Stderr = ctx.Environment, ctx.Instance.StateDir, logFile, logFile
+	gateRead, gateWrite, err := os.Pipe()
+	if err != nil {
+		_ = logFile.Close()
+		return nil, err
+	}
+	argv := append([]string{"-p", "-c", gatedComponentScript, "jobctrl-component", executable}, arguments...)
+	command := exec.Command("/bin/bash", argv...)
+	command.Env, command.Dir, command.Stdout, command.Stderr = temporalGateEnvironment(ctx.Environment), ctx.Instance.StateDir, logFile, logFile
+	command.ExtraFiles = []*os.File{gateRead}
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := command.Start(); err != nil {
+		_ = gateRead.Close()
+		_ = gateWrite.Close()
 		logFile.Close()
 		return nil, fmt.Errorf("start %s: %w", name, err)
 	}
+	_ = gateRead.Close()
 	_ = logFile.Close()
 	record, err := recordForProcess(command.Process.Pid, logPath, executable)
 	if err != nil {
-		_ = signalProcessGroup(command.Process.Pid, syscall.SIGTERM)
+		_ = gateWrite.Close()
+		_ = command.Wait()
 		return nil, err
 	}
-	records[name] = record
+	state.Components[name] = record
+	if err := writeState(ctx.Instance.StatePath, *state); err != nil {
+		_ = gateWrite.Close()
+		_ = command.Wait()
+		return nil, fmt.Errorf("publish %s before launch: %w", name, err)
+	}
+	written, writeErr := io.WriteString(gateWrite, "start\n")
+	_ = gateWrite.Close()
+	// A complete gate message authorizes execution even if a writer reports
+	// a simultaneous error. Only wait on failure when execution was not
+	// authorized; otherwise waiting here could hang on the live component.
+	if written != len("start\n") {
+		_ = command.Wait()
+		if writeErr == nil {
+			writeErr = io.ErrShortWrite
+		}
+		return nil, fmt.Errorf("release %s launch gate: wrote %d bytes: %w", name, written, writeErr)
+	}
 	return command, nil
 }
 func waitForTemporal(ctx launchContext, temporal *exec.Cmd, exits <-chan componentExit, signals <-chan os.Signal) error {
