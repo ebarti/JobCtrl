@@ -438,15 +438,25 @@ func executionShutdownGrace(args []string) time.Duration {
 	return cooperativeShutdownTimeout
 }
 
+var executionCommandGrace = executionShutdownGrace
+
 func cleanupExecutionMembers(ids [2]uint64, rootPID int, rootIdentity string, args []string) error {
 	// The command root owns ordered shutdown. Its descendants receive no
 	// external signal until that owner exits or its existing grace expires.
 	if err := signalExecutionRoot(ids, rootPID, rootIdentity, syscall.SIGTERM); err != nil {
 		return err
 	}
-	if _, err := waitExecutionRoot(rootPID, rootIdentity, executionShutdownGrace(args)); err != nil {
+	return cleanupExecutionAfterRootSignal(ids, rootPID, rootIdentity, executionCommandGrace(args))
+}
+
+func cleanupExecutionAfterRootSignal(ids [2]uint64, rootPID int, rootIdentity string, grace time.Duration) error {
+	if _, err := waitExecutionRoot(rootPID, rootIdentity, grace); err != nil {
 		return err
 	}
+	return cleanupExecutionLeftovers(ids)
+}
+
+func cleanupExecutionLeftovers(ids [2]uint64) error {
 	if err := signalExecutionMembers(ids, syscall.SIGTERM); err != nil {
 		return err
 	}
@@ -592,26 +602,67 @@ func ownedExecutionHelper(args []string) (bool, error) {
 		}
 	}()
 	var waitErr error
+	var cancellation *time.Timer
+	var cancellationDeadline <-chan time.Time
+	var cancelAt time.Time
+	defer func() {
+		if cancellation != nil {
+			cancellation.Stop()
+		}
+	}()
+	cleanup := func() error {
+		if cancellation == nil {
+			return cleanupExecutionMembers(ids, child.Process.Pid, rootIdentity, command.Arguments)
+		}
+		// EOF or another control must not signal the root again or restart
+		// the clean-shutdown grace already admitted by the first cancellation.
+		remaining := time.Until(cancelAt)
+		if remaining < 0 {
+			remaining = 0
+		}
+		return cleanupExecutionAfterRootSignal(ids, child.Process.Pid, rootIdentity, remaining)
+	}
 waiting:
 	for {
 		select {
 		case waitErr = <-waited:
+			if cancellation != nil {
+				if err := cleanupExecutionLeftovers(ids); err != nil {
+					return true, errors.Join(errors.New("could not clean cancelled execution"), err)
+				}
+			}
 			break waiting
 		case control := <-controls:
 			if control.Signal != int(syscall.SIGINT) && control.Signal != int(syscall.SIGTERM) {
-				cleanupErr := cleanupExecutionMembers(ids, child.Process.Pid, rootIdentity, command.Arguments)
+				cleanupErr := cleanup()
 				return true, errors.Join(errors.New("invalid execution control"), cleanupErr)
+			}
+			if cancellation != nil {
+				continue
 			}
 			// Only the verified command root receives interactive cancellation.
 			// A native supervisor retains ownership of its ordered child drain.
 			if err := signalExecutionRoot(ids, child.Process.Pid, rootIdentity, syscall.Signal(control.Signal)); err != nil {
-				cleanupErr := cleanupExecutionMembers(ids, child.Process.Pid, rootIdentity, command.Arguments)
+				cleanupErr := cleanup()
 				return true, errors.Join(errors.New("could not forward execution signal"), err, cleanupErr)
 			}
+			grace := executionCommandGrace(command.Arguments)
+			cancelAt = time.Now().Add(grace)
+			cancellation = time.NewTimer(grace)
+			cancellationDeadline = cancellation.C
+		case <-cancellationDeadline:
+			cancellationDeadline = nil
+			if err := cleanupExecutionAfterRootSignal(ids, child.Process.Pid, rootIdentity, 0); err != nil {
+				return true, errors.Join(errors.New("cancelled execution exceeded its clean-shutdown deadline"), err)
+			}
+			// Cleanup established that the original command exited. Join its
+			// actual Wait result so a clean or forced exit retains its real code.
+			waitErr = <-waited
+			break waiting
 		case <-controlErrors:
 			// Losing the authenticated controller is never success. Receipts
 			// remain durable even if inspection or bounded cleanup fails.
-			cleanupErr := cleanupExecutionMembers(ids, child.Process.Pid, rootIdentity, command.Arguments)
+			cleanupErr := cleanup()
 			return true, errors.Join(errors.New("execution controller disconnected"), cleanupErr)
 		}
 	}
@@ -629,7 +680,7 @@ waiting:
 		}
 	}
 	if err = json.NewEncoder(connection).Encode(result); err != nil {
-		cleanupErr := cleanupExecutionMembers(ids, child.Process.Pid, rootIdentity, command.Arguments)
+		cleanupErr := cleanup()
 		return true, errors.Join(err, cleanupErr)
 	}
 	if result.Code != 0 {
