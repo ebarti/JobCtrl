@@ -178,6 +178,18 @@ evidence and completes an interrupted handoff forward; it does not restore the
 old active receipt. Unknown journals, changed selections or selectors, and
 invalid evidence refuse the operation.
 
+The candidate installer also supports an explicit network bridge handoff with
+`--bridge-descriptor-url` and `--bridge-role-url`. Both must be canonical HTTPS
+URLs for immutable files in the same bridge build; the installer obtains their
+detached signatures by appending `.sig`. It verifies the signed descriptor,
+role, and current predecessor before downloading the archive, then repeats the
+full handoff verification under the release locks. An interrupted handoff uses
+retained evidence without network access. A descriptor-bound partial archive is retained
+in managed staging for retry; the transition lock serializes acquisition with
+uninstall, and successful cleanup leaves unfamiliar cache files untouched. This
+explicit mode does not discover bridges, select a final target, or provide
+automatic curl or Homebrew upgrades.
+
 The handoff uses the transition and selection locks shared by supported
 release mutators. The [threat model](security.md#threat-model-trust-boundaries-and-assumptions)
 excludes a compromised OS account and hostile local-disk control; the handoff

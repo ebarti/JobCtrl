@@ -20,6 +20,9 @@ import (
 type CachedBridgeInput struct {
 	DescriptorURL, DescriptorPath, DescriptorSignaturePath, ArchivePath string
 	AttestationPath, AttestationSignaturePath                           string
+	// RecoveryDescriptorURL binds an evidence-only retry without providing
+	// acquisition inputs. It does not authorize re-staging an archive.
+	RecoveryDescriptorURL string
 }
 
 func bridgeEvidencePath(home, digest string) string {
@@ -99,6 +102,11 @@ type bridgeEvidenceBundle struct {
 }
 
 func prepareSignedCachedBridge(options Options, input CachedBridgeInput) (*release.Store, bridgeHandoffEvidence, error) {
+	return prepareSignedCachedBridgeWithTransition(options, input, nil)
+}
+
+// A non-nil locked store requires the caller to hold its transition lock.
+func prepareSignedCachedBridgeWithTransition(options Options, input CachedBridgeInput, locked *release.Store) (*release.Store, bridgeHandoffEvidence, error) {
 	var empty bridgeHandoffEvidence
 	if !options.Policy.AllowNetwork || options.AllowUnsignedLocal || len(options.Trust) == 0 || (options.Policy.ExpectedChannel != "stable" && options.Policy.ExpectedChannel != "prerelease") {
 		return nil, empty, errors.New("bridge requires signed channel and trusted keys")
@@ -165,7 +173,7 @@ func prepareSignedCachedBridge(options Options, input CachedBridgeInput) (*relea
 	if bundle.SchemaVersion != 1 || len(bundle.Descriptor) > maxDescriptorBytes || len(bundle.DescriptorSignature) > maxSignatureBytes || len(bundle.Attestation) > maxDescriptorBytes || len(bundle.AttestationSignature) > maxSignatureBytes {
 		return nil, empty, errors.New("invalid bridge signed evidence")
 	}
-	if recovering && input.DescriptorURL != "" && input.DescriptorURL != bundle.DescriptorURL {
+	if recovering && ((input.DescriptorURL != "" && input.DescriptorURL != bundle.DescriptorURL) || (input.RecoveryDescriptorURL != "" && input.RecoveryDescriptorURL != bundle.DescriptorURL)) {
 		return nil, empty, errors.New("requested bridge differs from retained recovery evidence")
 	}
 	bundleRaw, err := encodeJSON(bundle)
@@ -229,7 +237,7 @@ func prepareSignedCachedBridge(options Options, input CachedBridgeInput) (*relea
 	} else {
 		stagedOptions := options
 		stagedOptions.StageOnly = true
-		staged, err = InstallFromCachedFiles(stagedOptions, input.DescriptorURL, input.DescriptorPath, input.DescriptorSignaturePath, input.ArchivePath)
+		staged, err = installFromCachedFiles(stagedOptions, input.DescriptorURL, input.DescriptorPath, input.DescriptorSignaturePath, input.ArchivePath, locked)
 		if err != nil {
 			return nil, empty, err
 		}
@@ -374,16 +382,53 @@ func prepareSignedCachedBridge(options Options, input CachedBridgeInput) (*relea
 	return store, evidence, nil
 }
 
+// lockExistingBridgeStore takes the lifecycle lock without creating runtime
+// directories. Recheck active state only after locking so an uninstall which
+// completed while waiting cannot be followed by renewed staging.
+func lockExistingBridgeStore(requestedHome string) (*release.Store, *release.Lock, error) {
+	home, err := RuntimeHome(requestedHome)
+	if err != nil {
+		return nil, nil, err
+	}
+	info, err := os.Lstat(home)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, nil, errors.New("bridge runtime home is not a regular directory")
+	}
+	store := &release.Store{Home: home}
+	transition, err := store.TransitionLock()
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, err := store.ReadActive(); err != nil {
+		transition.Close()
+		return nil, nil, fmt.Errorf("read bridge active release under transition lock: %w", err)
+	}
+	return store, transition, nil
+}
+
 // InstallSignedCachedBridge authenticates an exact schema-14 bridge, then
 // performs an active-first controller handoff. Recovery may pass empty input:
 // its signed evidence is durably bound by the retained intent. This operation
 // does not stop, start, migrate, back up, or restore application databases.
 func InstallSignedCachedBridge(options Options, input CachedBridgeInput) (Receipt, error) {
-	store, evidence, err := prepareSignedCachedBridge(options, input)
+	store, transition, err := lockExistingBridgeStore(options.Home)
 	if err != nil {
 		return Receipt{}, err
 	}
-	if err := bridgeSelection(store, evidence, nil); err != nil {
+	defer transition.Close()
+	return installSignedCachedBridgeWithTransition(options, input, store)
+}
+
+// Caller holds locked's transition lock for preparation, staging and handoff.
+func installSignedCachedBridgeWithTransition(options Options, input CachedBridgeInput, locked *release.Store) (Receipt, error) {
+	store, evidence, err := prepareSignedCachedBridgeWithTransition(options, input, locked)
+	if err != nil {
+		return Receipt{}, err
+	}
+	if locked == nil || store.Home != locked.Home {
+		return Receipt{}, errors.New("bridge handoff lock does not match runtime home")
+	}
+	if err := bridgeSelectionWithTransition(store, evidence, nil); err != nil {
 		return Receipt{}, err
 	}
 	lock, err := store.SelectionLock(false)

@@ -42,6 +42,16 @@ type bridgeHandoffEvidence struct {
 }
 
 func bridgeSelection(store *release.Store, evidence bridgeHandoffEvidence, checkpoint func(string) error) error {
+	transition, err := store.TransitionLock()
+	if err != nil {
+		return err
+	}
+	defer transition.Close()
+	return bridgeSelectionWithTransition(store, evidence, checkpoint)
+}
+
+// bridgeSelectionWithTransition requires the caller to hold the transition lock.
+func bridgeSelectionWithTransition(store *release.Store, evidence bridgeHandoffEvidence, checkpoint func(string) error) error {
 	if evidence.Verify == nil {
 		return errors.New("bridge verification is required")
 	}
@@ -63,11 +73,6 @@ func bridgeSelection(store *release.Store, evidence bridgeHandoffEvidence, check
 	if intent.Metadata.Channel != intent.Target.Channel || intent.Metadata.BuildID != intent.Target.BuildID || intent.Metadata.Sequence != intent.Target.Sequence || intent.Metadata.DescriptorDigest != intent.Target.DescriptorSHA256 {
 		return errors.New("bridge policy does not match target")
 	}
-	transition, err := store.TransitionLock()
-	if err != nil {
-		return err
-	}
-	defer transition.Close()
 	selection, err := store.SelectionLock(true)
 	if err != nil {
 		return err

@@ -205,6 +205,11 @@ func InstallFromLocalFiles(options Options, descriptorPath, signaturePath, archi
 // canonical HTTPS origin and its exact file bytes are authenticated before the
 // cache is examined.
 func InstallFromCachedFiles(options Options, descriptorURL, descriptorPath, signaturePath, archivePath string) (Receipt, error) {
+	return installFromCachedFiles(options, descriptorURL, descriptorPath, signaturePath, archivePath, nil)
+}
+
+// A non-nil locked store requires its transition lock to be held by the caller.
+func installFromCachedFiles(options Options, descriptorURL, descriptorPath, signaturePath, archivePath string, locked *release.Store) (Receipt, error) {
 	if !options.Policy.AllowNetwork {
 		return Receipt{}, errors.New("signed cached acquisition is unavailable in this compiled installer build")
 	}
@@ -235,6 +240,13 @@ func InstallFromCachedFiles(options Options, descriptorURL, descriptorPath, sign
 	}
 	if descriptor.Channel != options.Policy.ExpectedChannel {
 		return Receipt{}, fmt.Errorf("release channel %q does not match compiled installer channel %q", descriptor.Channel, options.Policy.ExpectedChannel)
+	}
+	if locked != nil {
+		home, err := RuntimeHome(options.Home)
+		if err != nil || home != locked.Home {
+			return Receipt{}, errors.New("cached acquisition lock does not match runtime home")
+		}
+		return installArchiveWithTransition(options, descriptor, descriptorBytes, sourceURL.String(), archivePath, locked)
 	}
 	return installArchive(options, descriptor, descriptorBytes, sourceURL.String(), archivePath)
 }
@@ -1026,10 +1038,15 @@ func installArchive(options Options, descriptor Descriptor, descriptorBytes []by
 		return Receipt{}, err
 	}
 	defer transition.Close()
+	return installArchiveWithTransition(options, descriptor, descriptorBytes, descriptorURL, archivePath, shared)
+}
+
+// installArchiveWithTransition requires the caller to hold the store transition lock.
+func installArchiveWithTransition(options Options, descriptor Descriptor, descriptorBytes []byte, descriptorURL, archivePath string, shared *release.Store) (Receipt, error) {
 	if err := refusePendingBridgeHandoff(shared.Home); err != nil {
 		return Receipt{}, err
 	}
-	store, err := openStore(home)
+	store, err := openStore(shared.Home)
 	if err != nil {
 		return Receipt{}, err
 	}
