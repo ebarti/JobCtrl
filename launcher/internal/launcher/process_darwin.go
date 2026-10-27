@@ -7,24 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"syscall"
 	"unsafe"
 )
-
-func bootSessionIdentity() (string, error) {
-	// XNU exposes kern.bootsessionuuid as a read-only kernel-owned sysctl.
-	// A wall-clock boot time can change when the system clock is adjusted.
-	value, err := syscall.Sysctl("kern.bootsessionuuid")
-	if err != nil {
-		return "", err
-	}
-	value = strings.TrimSpace(value)
-	if !validBootSession(value) {
-		return "", errors.New("kernel boot session identity is invalid")
-	}
-	return value, nil
-}
 
 // CurrentProcessExecutable returns the kernel-recorded executable path for the
 // running launcher. Unlike argv[0], PATH, and os.Executable on some Darwin

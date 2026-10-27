@@ -129,17 +129,7 @@ exited. Group occupancy alone does not establish ownership or authorize a
 signal: group signals require the recorded leader's identity to match. Status
 can report an unresolved group as orphaned. The registry does not identify a
 descendant that has left its recorded group; group emptiness alone is not proof
-that such a process has exited. Before releasing a component's pre-exec gate,
-or dispatching Python, the launcher fsyncs an owner-private `execution-boot.json`
-bound to the instance and canonical workspace. Quiescence requires a different
-read-only `kern.bootsessionuuid`; a timeout, cooperative drain or empty group
-cannot clear the fence. Stop requests verified service shutdown, then reports
-`reboot-required` until the operator reboots. An older registry gets its initial
-fence on stop, without rewriting its registry or database bytes on refusal.
-After the reboot, stop reserves the instance lock and rechecks the fence and
-generation before recording a verified stopped state. Unknown, malformed or
-unreadable fences fail closed. There is no environment or automatic-reboot
-bypass. The P6 workflow now makes Developer ID signing,
+that such a process has exited. The P6 workflow now makes Developer ID signing,
 notarization, and authenticated publication mandatory for promotion. Public
 artifacts pass those gates before the stable release pointer or Homebrew formula
 can reference them.
@@ -165,14 +155,11 @@ blocking executor work before closing provider resources. Startup and browser
 preflight precede that handler. This thread drain does not prove that detached
 provider or browser processes have exited.
 
-For installed-selector and direct-payload CLI commands, the shared release-selection lock remains
+For installed-selector CLI commands, the shared release-selection lock remains
 open across the Python exec until that command exits. Backup, update, rollback
 and uninstall take the exclusive selection lock, so they wait for such a
-command to finish. The execution boot fence remains after that command exits,
-because its lock does not certify detached descendants. Older binaries do not
-implement this admission protocol; installed schema transitions must fence them
-before execution. Native status/version remain read-only, while pipeline status
-dispatches Python and records execution.
+command to finish. Direct payload invocations and older launchers do not gain
+this fence; the lock also does not certify detached descendants.
 
 Homebrew caches only prefix-owned release resources. Its build sandbox verifies
 strict Developer ID certificate-chain requirements for the launcher, installer
@@ -192,9 +179,8 @@ transition journal records selector handoff, database-pair backup, pending and
 finalized channel policy, and promotion. Acquisition, update, rollback,
 backup, retention, and uninstall serialize through transition then selection
 locking; selector resolution holds a shared selection lock through supervisor
-readiness. Before backup or activation, previously admitted services and Python
-commands require the later-boot quiescence proof. PID/PGID checks authorize
-individual shutdown signals but cannot certify that detached children exited. Both
+readiness. Before a candidate is promoted, recorded component processes and
+groups must pass the registry's PID/PGID quiescence checks, and both
 `JOBCTRL_DIR/jobctrl.db` and `JOBCTRL_DIR/temporal.db` receive online,
 hash-verified paired backups.
 While a journal is unfinished, ordinary commands remain blocked. Internal

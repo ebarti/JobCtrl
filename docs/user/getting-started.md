@@ -112,20 +112,13 @@ Use `jobctrl start --no-open` when you do not want a browser window, or
 Your workspace is stored under `~/.jobctrl/` by default and survives stops,
 updates, and rollbacks.
 
-After JobCtrl has run a service or Python command, `jobctrl stop` can stop its
-verified services but cannot prove that every detached browser or provider child
-has exited. It reports that a reboot is required instead of claiming a verified
-stop. Run `jobctrl stop` first, reboot the Mac yourself, then retry backup,
-update, rollback, or restart before running another JobCtrl command that starts
-Python or services. `status` and `version` remain available without starting
-Python; `status --pipeline` starts Python and therefore requires another reboot
-before a protected lifecycle operation.
-
-For an older installation, the first `stop` records the recovery boundary before
-asking for the reboot. Keep the runtime registry, `execution-boot.json` and
-workspace data intact. Deleting these files or restoring an older database is
-not recovery. JobCtrl never reboots the machine automatically, and never signals
-an unrelated or reused process just to make the status appear stopped.
+If `jobctrl stop` cannot verify that a recorded service has exited, it reports
+the unresolved state instead of claiming the runtime is stopped. `start`,
+backup, update, and rollback can also refuse while that state remains. Check
+`jobctrl status` and investigate the reported process before retrying after it
+has exited. A process group can contain unrelated processes, so do not assume
+that an occupied group is safe to terminate. Keep the runtime registry and
+workspace data intact while resolving the problem.
 
 ## 3. Complete First-Run Setup
 

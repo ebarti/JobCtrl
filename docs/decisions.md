@@ -2095,18 +2095,6 @@ The first release target is Apple-silicon macOS. Other platforms follow the same
 manifest, lifecycle, capability, and clean-machine QA contract without blocking
 that initial artifact.
 
-Amended (2026-10-27): native lifecycle quiescence uses an explicit reboot
-recovery boundary. Before a component or general Python command executes, an
-owner-private, fsynced fence records the kernel boot-session identity for its
-canonical workspace. A successful drain, absent leader or empty process group
-cannot prove a detached child exited. Stop may terminate verified services but
-reports a reboot requirement; protected backup, update, rollback and restart
-must observe a later kernel boot before proceeding. Older registries receive
-their initial fence before the reboot request. Runtime/selection admission is
-serialized, unknown metadata remains blocked, and no environment override,
-automatic reboot or stale-backup restoration can bypass the proof. This keeps
-the native distribution and avoids introducing a separate execution environment.
-
 Cites: implemented plan
 `docs/plans/implemented/2026-07-10-bundled-jobctrl-distribution-plan.md`; the superseded
 pending-decision record immediately above; `docs/developer/first-run-ttfv.md`.

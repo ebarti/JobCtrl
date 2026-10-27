@@ -151,8 +151,8 @@ func TestCooperativeStopDrainsOwnedChild(t *testing.T) {
 	if err := writeState(ctx.Instance.StatePath, state); err != nil {
 		t.Fatal(err)
 	}
-	if err := stop(ctx); !errors.Is(err, errRebootRequired) {
-		t.Fatalf("cooperative exit falsely proved descendant quiescence: %v", err)
+	if err := stop(ctx); err != nil {
+		t.Fatalf("owned component did not stop: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "child-signaled")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("child received external group signal: %v", err)
@@ -396,7 +396,7 @@ func TestStopDoesNotDuplicateSupervisorDrainSignal(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitMarker("worker-draining")
-	if err := stop(ctx); err != nil && !errors.Is(err, errRebootRequired) {
+	if err := stop(ctx); err != nil {
 		if _, markerErr := os.Stat(filepath.Join(dir, "duplicate")); markerErr == nil {
 			t.Fatalf("stop delivered a duplicate worker signal while supervisor drained: %v", err)
 		}
@@ -406,7 +406,7 @@ func TestStopDoesNotDuplicateSupervisorDrainSignal(t *testing.T) {
 		t.Fatalf("worker received a duplicate signal: %v", err)
 	}
 	final, err := readState(ctx.Instance.StatePath)
-	if err != nil || final.Components["worker"].ExitedAt == nil || final.StoppedAt != nil {
+	if err != nil || final.Components["worker"].ExitedAt == nil || final.StoppedAt == nil {
 		t.Fatalf("stop did not retain supervisor shutdown state: %#v, %v", final, err)
 	}
 }
