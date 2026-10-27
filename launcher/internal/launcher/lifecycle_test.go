@@ -1074,3 +1074,52 @@ func sameDatabaseDigests(left, right map[string]string) bool {
 	}
 	return true
 }
+
+func TestUninstallRefusesPendingBridgeWithoutChangingRuntimeOrUserData(t *testing.T) {
+	for _, name := range []string{"regular", "directory", "symlink"} {
+		t.Run(name, func(t *testing.T) {
+			runtime, state := t.TempDir(), t.TempDir()
+			for _, rel := range []string{"releases", "bin", "staging", "instances"} {
+				if err := os.Mkdir(filepath.Join(runtime, rel), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(runtime, rel, "sentinel"), []byte(rel), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(state, "profile"), []byte("synthetic profile"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			intent := filepath.Join(runtime, "bridge-handoff.json")
+			switch name {
+			case "regular":
+				if err := os.WriteFile(intent, []byte("pending"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			case "directory":
+				if err := os.Mkdir(intent, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			case "symlink":
+				if err := os.Symlink(filepath.Join(state, "profile"), intent); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx := launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(runtime, "missing-state.json"), ControlPath: filepath.Join(runtime, "control.lock")}}
+			if err := uninstall(ctx, nil, io.Discard); err == nil || !strings.Contains(err.Error(), "bridge handoff") {
+				t.Fatalf("uninstall did not refuse: %v", err)
+			}
+			for _, rel := range []string{"releases", "bin", "staging", "instances"} {
+				if raw, err := os.ReadFile(filepath.Join(runtime, rel, "sentinel")); err != nil || string(raw) != rel {
+					t.Fatalf("changed %s: %q %v", rel, raw, err)
+				}
+			}
+			if raw, err := os.ReadFile(filepath.Join(state, "profile")); err != nil || string(raw) != "synthetic profile" {
+				t.Fatalf("changed profile: %q %v", raw, err)
+			}
+			if _, err := os.Lstat(intent); err != nil {
+				t.Fatalf("removed handoff: %v", err)
+			}
+		})
+	}
+}

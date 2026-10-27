@@ -68,10 +68,14 @@ func main() {
 			fail("bridge handoff requires signed cached inputs and cannot use stage-only or release-url")
 		}
 		if bridgeNetwork {
-			if source != "curl" || bridgeRecover || descriptorURL != "" || descriptorFile != "" || signatureFile != "" || archiveFile != "" || bridgeRoleFile != "" || bridgeRoleSignatureFile != "" || bridgeDescriptorURL == "" || bridgeRoleURL == "" || bridgeTargetURL != "" || bridgeTargetFile != "" || bridgeTargetSignatureFile != "" {
+			if source != "curl" || bridgeRecover || descriptorURL != "" || descriptorFile != "" || signatureFile != "" || archiveFile != "" || bridgeRoleFile != "" || bridgeRoleSignatureFile != "" || bridgeDescriptorURL == "" || bridgeRoleURL == "" || bridgeTargetFile != "" || bridgeTargetSignatureFile != "" {
 				fail("network bridge requires both bridge URLs and cannot mix cached inputs, target files or recovery flags")
 			}
-			receipt, err = installer.InstallSignedNetworkBridge(options, bridgeDescriptorURL, bridgeRoleURL)
+			if bridgeTargetURL != "" {
+				receipt, err = installer.InstallSignedNetworkBridgeForTarget(options, bridgeDescriptorURL, bridgeRoleURL, bridgeTargetURL)
+			} else {
+				receipt, err = installer.InstallSignedNetworkBridge(options, bridgeDescriptorURL, bridgeRoleURL)
+			}
 		} else if bridgeRecover {
 			if descriptorURL != "" || descriptorFile != "" || signatureFile != "" || archiveFile != "" || bridgeRoleFile != "" || bridgeRoleSignatureFile != "" || bridgeTargetURL != "" || bridgeTargetFile != "" || bridgeTargetSignatureFile != "" {
 				fail("bridge recovery uses only retained signed evidence; do not pass acquisition files")

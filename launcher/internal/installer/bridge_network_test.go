@@ -598,3 +598,153 @@ func TestInterruptedNetworkBridgeCacheIsInsideLegacyUninstallStaging(t *testing.
 		t.Fatalf("partial survived staging removal: %v", err)
 	}
 }
+
+func TestPlannedNetworkBridgeBindsTargetAndRecoversOffline(t *testing.T) {
+	f, roleURL, responses := bridgeNetworkFixture(t)
+	input := plannedTarget(t, f, nil)
+	for url, path := range map[string]string{input.TargetDescriptorURL: input.TargetDescriptorPath, input.TargetDescriptorURL + ".sig": input.TargetSignaturePath} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		responses[url] = raw
+	}
+	f.options.HTTPClient, _ = channelPointerClient(responses)
+	receipt, err := InstallSignedNetworkBridgeForTarget(f.options, f.input.DescriptorURL, roleURL, input.TargetDescriptorURL)
+	if err != nil {
+		t.Fatalf("planned network handoff: %v", err)
+	}
+	completed, err := findCompletedBridge(f.options.Home, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := readBridgeRegular(bridgeEvidencePath(f.options.Home, completed.EvidenceSHA256), maxBridgeEvidenceBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bundle bridgeEvidenceBundle
+	if err := decodeStrict(evidence, "bridge evidence", &bundle); err != nil {
+		t.Fatal(err)
+	}
+	if bundle.TargetDescriptorURL != input.TargetDescriptorURL || !bytes.Equal(bundle.TargetDescriptor, responses[input.TargetDescriptorURL]) || !bytes.Equal(bundle.TargetSignature, responses[input.TargetDescriptorURL+".sig"]) {
+		t.Fatal("retained target evidence differs")
+	}
+	var requests map[string]int
+	f.options.HTTPClient, requests = channelPointerClient(nil)
+	if _, err := InstallSignedNetworkBridgeForTarget(f.options, f.input.DescriptorURL, roleURL, "https://releases.jobctrl.dev/v1/artifacts/other-build-0004/release-descriptor.json"); err == nil {
+		t.Fatal("accepted a different target on retry")
+	}
+	again, err := InstallSignedNetworkBridgeForTarget(f.options, f.input.DescriptorURL, roleURL, input.TargetDescriptorURL)
+	if err != nil || again != receipt {
+		t.Fatalf("offline retry: %+v %v", again, err)
+	}
+	if len(requests) != 0 {
+		t.Fatalf("offline retry made network requests: %v", requests)
+	}
+}
+
+func TestPlannedNetworkBridgeRejectsUntrustedTargetBeforeArchive(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(map[string][]byte, string)
+	}{
+		{"forged", func(m map[string][]byte, target string) { m[target+".sig"] = []byte("{}") }},
+		{"unavailable", func(m map[string][]byte, target string) { delete(m, target) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f, roleURL, responses := bridgeNetworkFixture(t)
+			input := plannedTarget(t, f, nil)
+			for url, path := range map[string]string{input.TargetDescriptorURL: input.TargetDescriptorPath, input.TargetDescriptorURL + ".sig": input.TargetSignaturePath} {
+				raw, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				responses[url] = raw
+			}
+			test.mutate(responses, input.TargetDescriptorURL)
+			var descriptor Descriptor
+			if err := json.Unmarshal(responses[f.input.DescriptorURL], &descriptor); err != nil {
+				t.Fatal(err)
+			}
+			var requests map[string]int
+			f.options.HTTPClient, requests = channelPointerClient(responses)
+			if _, err := InstallSignedNetworkBridgeForTarget(f.options, f.input.DescriptorURL, roleURL, input.TargetDescriptorURL); err == nil {
+				t.Fatal("untrusted final target accepted")
+			}
+			if requests[descriptor.Artifact.URL] != 0 {
+				t.Fatal("archive fetched before target authentication")
+			}
+			active, err := f.store.ReadActive()
+			if err != nil || active != f.source {
+				t.Fatalf("source changed: %+v %v", active, err)
+			}
+		})
+	}
+}
+
+func TestPlannedNetworkBridgeRecoversInterruptedHandoffOffline(t *testing.T) {
+	for _, interruptedStage := range []string{"intent", "active", "policy", "selector"} {
+		t.Run(interruptedStage, func(t *testing.T) {
+			f, roleURL, _ := bridgeNetworkFixture(t)
+			input := plannedTarget(t, f, nil)
+			store, evidence, err := prepareSignedCachedBridge(f.options, input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			interrupted := errors.New("interrupted")
+			if err := bridgeSelection(store, evidence, func(stage string) error {
+				if stage == interruptedStage {
+					return interrupted
+				}
+				return nil
+			}); !errors.Is(err, interrupted) {
+				t.Fatalf("interruption: %v", err)
+			}
+			var requests map[string]int
+			f.options.HTTPClient, requests = channelPointerClient(nil)
+			otherTarget := "https://releases.jobctrl.dev/v1/artifacts/other-build-0004/release-descriptor.json"
+			if _, err := InstallSignedNetworkBridgeForTarget(f.options, f.input.DescriptorURL, roleURL, otherTarget); err == nil {
+				t.Fatal("different target accepted")
+			}
+			for _, path := range []string{input.DescriptorPath, input.DescriptorSignaturePath, input.AttestationPath, input.AttestationSignaturePath, input.TargetDescriptorPath, input.TargetSignaturePath} {
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := InstallSignedNetworkBridgeForTarget(f.options, f.input.DescriptorURL, roleURL, input.TargetDescriptorURL); err != nil {
+				t.Fatalf("offline recovery: %v", err)
+			}
+			if len(requests) != 0 {
+				t.Fatalf("recovery made network requests: %v", requests)
+			}
+		})
+	}
+}
+
+func TestPlannedNetworkBridgeRejectsTargetRevokingBridgeBeforeArchive(t *testing.T) {
+	f, roleURL, responses := bridgeNetworkFixture(t)
+	input := plannedTarget(t, f, func(d *Descriptor) { d.RevokedBuildIDs = []string{"bridge-build-0002"} })
+	for url, path := range map[string]string{input.TargetDescriptorURL: input.TargetDescriptorPath, input.TargetDescriptorURL + ".sig": input.TargetSignaturePath} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		responses[url] = raw
+	}
+	var descriptor Descriptor
+	if err := json.Unmarshal(responses[f.input.DescriptorURL], &descriptor); err != nil {
+		t.Fatal(err)
+	}
+	var requests map[string]int
+	f.options.HTTPClient, requests = channelPointerClient(responses)
+	if _, err := InstallSignedNetworkBridgeForTarget(f.options, f.input.DescriptorURL, roleURL, input.TargetDescriptorURL); err == nil {
+		t.Fatal("accepted target revoking bridge")
+	}
+	if requests[descriptor.Artifact.URL] != 0 {
+		t.Fatal("archive fetched before policy validation")
+	}
+	active, err := f.store.ReadActive()
+	if err != nil || active != f.source {
+		t.Fatalf("source changed: %+v %v", active, err)
+	}
+}

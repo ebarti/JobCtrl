@@ -17,12 +17,31 @@ import (
 // and descriptors establish authority and the cached handoff rechecks them
 // under the release locks before changing selection.
 func InstallSignedNetworkBridge(options Options, descriptorURL, roleURL string) (Receipt, error) {
+	return installSignedNetworkBridge(options, descriptorURL, roleURL, "")
+}
+
+// InstallSignedNetworkBridgeForTarget binds an explicit network handoff to a
+// signed final target. Recovery uses retained evidence and needs no network.
+// The target payload is not downloaded or promoted by this operation.
+func InstallSignedNetworkBridgeForTarget(options Options, descriptorURL, roleURL, targetURL string) (Receipt, error) {
+	if targetURL == "" {
+		return Receipt{}, errors.New("planned network bridge requires a final target descriptor URL")
+	}
+	return installSignedNetworkBridge(options, descriptorURL, roleURL, targetURL)
+}
+
+func installSignedNetworkBridge(options Options, descriptorURL, roleURL, targetURL string) (Receipt, error) {
 	if !options.Policy.AllowNetwork || options.AllowUnsignedLocal || len(options.Trust) == 0 || options.StageOnly || options.ReleaseURL != "" {
 		return Receipt{}, errors.New("network bridge requires signed acquisition without stage-only or a channel pointer")
 	}
 	parsed, build, err := validateImmutableDescriptorURL(descriptorURL)
 	if err != nil {
 		return Receipt{}, fmt.Errorf("bridge descriptor URL: %w", err)
+	}
+	if targetURL != "" {
+		if _, _, err := validateImmutableDescriptorURL(targetURL); err != nil {
+			return Receipt{}, fmt.Errorf("final target descriptor URL: %w", err)
+		}
 	}
 	role, err := parseCanonicalReleaseURL(roleURL)
 	if err != nil {
@@ -44,7 +63,7 @@ func InstallSignedNetworkBridge(options Options, descriptorURL, roleURL string) 
 	// An existing intent is authoritative. Recovery must use retained signed
 	// evidence, not require the publisher or the original temporary inputs.
 	if _, err := os.Lstat(filepath.Join(home, bridgeIntentName)); err == nil {
-		result, err := installSignedCachedBridgeWithTransition(options, CachedBridgeInput{RecoveryDescriptorURL: descriptorURL}, store)
+		result, err := installSignedCachedBridgeWithTransition(options, CachedBridgeInput{RecoveryDescriptorURL: descriptorURL, TargetDescriptorURL: targetURL}, store)
 		return finishRecoveredNetworkBridge(home, result, err)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return Receipt{}, err
@@ -54,7 +73,7 @@ func InstallSignedNetworkBridge(options Options, descriptorURL, roleURL string) 
 	// URL is only a transport location and is not itself signing authority.
 	completed, err := findCompletedBridge(home, "")
 	if err == nil && completed.Target.DescriptorURL == descriptorURL {
-		result, err := installSignedCachedBridgeWithTransition(options, CachedBridgeInput{RecoveryDescriptorURL: descriptorURL}, store)
+		result, err := installSignedCachedBridgeWithTransition(options, CachedBridgeInput{RecoveryDescriptorURL: descriptorURL, TargetDescriptorURL: targetURL}, store)
 		return finishRecoveredNetworkBridge(home, result, err)
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return Receipt{}, err
@@ -107,6 +126,34 @@ func InstallSignedNetworkBridge(options Options, descriptorURL, roleURL string) 
 	if _, err := store.ValidateMetadata(metadata); err != nil {
 		return Receipt{}, err
 	}
+	var targetRaw, targetSig []byte
+	if targetURL != "" {
+		parsedTarget, targetBuild, err := validateImmutableDescriptorURL(targetURL)
+		if err != nil {
+			return Receipt{}, err
+		}
+		targetRaw, err = fetchBounded(client, targetURL, maxDescriptorBytes)
+		if err != nil {
+			return Receipt{}, fmt.Errorf("download final target descriptor: %w", err)
+		}
+		targetSig, err = fetchBounded(client, targetURL+".sig", maxSignatureBytes)
+		if err != nil {
+			return Receipt{}, fmt.Errorf("download final target signature: %w", err)
+		}
+		target, err := verifyDescriptor(targetRaw, targetSig, options.Trust, false, parsedTarget, false)
+		if err != nil {
+			return Receipt{}, err
+		}
+		if target.BuildID != targetBuild || target.Channel != descriptor.Channel {
+			return Receipt{}, errors.New("bridge final target identity or channel mismatch")
+		}
+		if err := validateCanonicalArtifactURL(target, parsedTarget); err != nil {
+			return Receipt{}, err
+		}
+		if err := validatePlannedBridgePolicy(store, active.Receipt, metadata, target, digestBytes(targetRaw)); err != nil {
+			return Receipt{}, err
+		}
+	}
 
 	temp, unlock, err := bridgeDownloadCache(home, digestBytes(descriptorRaw))
 	if err != nil {
@@ -133,11 +180,22 @@ func InstallSignedNetworkBridge(options Options, descriptorURL, roleURL string) 
 	if err != nil {
 		return Receipt{}, err
 	}
+	var targetPath, targetSigPath string
+	if targetURL != "" {
+		targetPath, err = write("target.json", targetRaw)
+		if err != nil {
+			return Receipt{}, err
+		}
+		targetSigPath, err = write("target.sig", targetSig)
+		if err != nil {
+			return Receipt{}, err
+		}
+	}
 	archive, err := downloadArchiveToStage(archiveHTTPClient(client), descriptor.Artifact.URL, descriptor.Artifact.SizeBytes, descriptor.Artifact.SHA256, temp)
 	if err != nil {
 		return Receipt{}, fmt.Errorf("download bridge archive: %w", err)
 	}
-	result, err := installSignedCachedBridgeWithTransition(options, CachedBridgeInput{DescriptorURL: descriptorURL, DescriptorPath: descriptorPath, DescriptorSignaturePath: signaturePath, ArchivePath: archive, AttestationPath: rolePath, AttestationSignaturePath: roleSignaturePath}, store)
+	result, err := installSignedCachedBridgeWithTransition(options, CachedBridgeInput{DescriptorURL: descriptorURL, DescriptorPath: descriptorPath, DescriptorSignaturePath: signaturePath, ArchivePath: archive, AttestationPath: rolePath, AttestationSignaturePath: roleSignaturePath, TargetDescriptorURL: targetURL, TargetDescriptorPath: targetPath, TargetSignaturePath: targetSigPath}, store)
 	if err == nil {
 		if cleanupErr := cleanBridgeDownloadCache(temp); cleanupErr != nil {
 			return result, fmt.Errorf("bridge handoff completed but download cache cleanup failed: %w", cleanupErr)
@@ -173,7 +231,7 @@ func finishRecoveredNetworkBridge(home string, result Receipt, err error) (Recei
 // Remove only names owned by this cache. Any unfamiliar contents and the
 // ownership marker survive for inspection and future safe cleanup.
 func cleanBridgeDownloadCache(cache string) error {
-	for _, name := range []string{"descriptor.json", "descriptor.sig", "role.json", "role.sig", stagedArchiveName, partialArchiveName} {
+	for _, name := range []string{"descriptor.json", "descriptor.sig", "role.json", "role.sig", "target.json", "target.sig", stagedArchiveName, partialArchiveName} {
 		if err := os.Remove(filepath.Join(cache, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}

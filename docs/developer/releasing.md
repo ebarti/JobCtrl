@@ -188,13 +188,15 @@ retained evidence without network access. A descriptor-bound partial archive is 
 in managed staging for retry; the transition lock serializes acquisition with
 uninstall, and successful cleanup leaves unfamiliar cache files untouched. This
 explicit mode does not discover bridges, select a final target, or provide
-automatic curl or Homebrew upgrades.
-An optional planned handoff accepts a separately signed final target descriptor
-and its canonical URL. The installer retains these signed bytes with the bridge
-evidence and rechecks channel, sequence, safety floor and cross-revocation
-before selection and on offline recovery. This step does not promote or verify
-the target payload. Normal acquisition and publication of per-predecessor
-bridge artifacts are not yet connected to this opt-in plan.
+automatic curl or Homebrew upgrades. A network handoff can optionally take a
+canonical signed final-target descriptor URL. Its policy and identity are checked
+before fetching the bridge archive, retained in the handoff evidence and
+rechecked under the release locks and during offline recovery. This still does
+not acquire or promote the final target. Cached handoffs can also accept a
+signed final-target descriptor and signature. Both routes retain the signed
+target evidence and recheck channel, sequence, safety floor and cross-revocation.
+Neither route verifies the target payload; normal acquisition and publication
+of per-predecessor bridge artifacts are not yet connected.
 
 The handoff uses the transition and selection locks shared by supported
 release mutators. The [threat model](security.md#threat-model-trust-boundaries-and-assumptions)
@@ -204,6 +206,10 @@ paths outside the release locks. Before a bridge is published, run the bridge
 and migration proof in [Reliability & QA](../local-reliability-qa.md#protocol-2-bridge-handoff),
 including actual historical controllers and independent writer readback. The
 later schema migration, runtime quiescence, and rollback are separate gates.
+The updated controller refuses uninstall while a handoff intent is present,
+preserving the active release and signed evidence for recovery. An older
+controller cannot enforce that guard; an interrupted handoff followed by legacy
+uninstall still requires a separately verified recovery path.
 
 ## Verify what users receive
 
