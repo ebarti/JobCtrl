@@ -53,6 +53,14 @@ func init() {
 		os.Exit(0)
 	}
 	if len(os.Args) > 1 && os.Args[1] == executionHelperArgument {
+		// Only this compiled test helper shortens the ignoring-root fixture's
+		// grace. Production commands retain their configured shutdown budgets.
+		executionCommandGrace = func(args []string) time.Duration {
+			if len(args) > 3 && args[0] == "__scope-test-command" && args[3] == "ignore-root" {
+				return time.Second
+			}
+			return executionShutdownGrace(args)
+		}
 		_, err := ownedExecutionHelper(os.Args[1:])
 		if err != nil {
 			os.Exit(1)
@@ -99,19 +107,21 @@ func init() {
 			fmt.Fprintln(os.Stdout, "loopback allowed; nonloopback denied")
 			os.Exit(0)
 		}
-		if os.Args[4] == "signal" || os.Args[4] == "disconnect" {
+		if os.Args[4] == "signal" || os.Args[4] == "disconnect" || os.Args[4] == "ignore-root" {
 			paths := strings.Split(os.Args[5], "|")
 			script := `import os,signal,sys,time
 os.setsid()
 def received(value,frame):
- open(sys.argv[2],"w").write(str(value))
- if sys.argv[3] != "disconnect": sys.exit(23)
+ if sys.argv[3] == "ignore-root":
+  with open(sys.argv[2],"a") as f: f.write(str(value)+'\n')
+ else: open(sys.argv[2],"w").write(str(value))
+ if sys.argv[3] not in ("disconnect","ignore-root"): sys.exit(23)
 signal.signal(signal.SIGINT,received)
 signal.signal(signal.SIGTERM,received)
 open(sys.argv[1],"w").write(str(os.getpid()))
 while True: time.sleep(.05)`
 			arguments := []string{"/usr/bin/python3", "-c", script, paths[0], paths[1], os.Args[4]}
-			if os.Args[4] == "signal" {
+			if os.Args[4] == "signal" || os.Args[4] == "ignore-root" {
 				// Match production's direct-Python exec: PID/start identity stays
 				// bound to the command root across the native-to-Python exec.
 				_ = syscall.Exec(arguments[0], arguments, os.Environ())
@@ -518,6 +528,89 @@ func TestOwnedExecutionForwardsSignalsAndControllerEOF(t *testing.T) {
 				t.Fatal("durable receipt lost during cancellation")
 			}
 		})
+	}
+}
+
+func TestOwnedExecutionCancellationEscalatesIgnoringRoot(t *testing.T) {
+	ctx := executionTestContext(t)
+	root := filepath.Dir(ctx.Instance.StatePath)
+	pidfile, marker := filepath.Join(root, "ignoring-root.pid"), filepath.Join(root, "signals")
+	outer := exec.Command(ctx.Executable, "__scope-test-outer", root, ctx.Instance.ID, "ignore-root", pidfile, marker)
+	outer.Env = []string{"PATH=/usr/bin:/bin"}
+	var output bytes.Buffer
+	outer.Stdout, outer.Stderr = &output, &output
+	if err := outer.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- outer.Wait() }()
+	defer outer.Process.Kill()
+	var pid int
+	for deadline := time.Now().Add(10 * time.Second); ; {
+		if raw, err := os.ReadFile(pidfile); err == nil {
+			pid, _ = strconv.Atoi(string(raw))
+			if pid > 0 {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("ignoring command root did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	identity, err := processStartIdentity(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scopes, err := readOwnedExecutionScopes(ctx)
+	if err != nil || len(scopes) != 1 {
+		t.Fatalf("missing durable scope: %v", err)
+	}
+	defer cleanupExecutionTestArtifacts(scopes[0])
+	defer func() {
+		if current, err := processStartIdentity(pid); err == nil && current == identity {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	}()
+	started := time.Now()
+	if err := outer.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		if raw, err := os.ReadFile(marker); err == nil && string(raw) == "15\n" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("root did not receive the first cancellation")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// Repeated cancellation must neither interrupt the admitted drain nor
+	// restart its deadline. The actual root deliberately ignores both signals.
+	if err := outer.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	if raw, err := os.ReadFile(marker); err != nil || string(raw) != "15\n" {
+		t.Fatalf("duplicate root signal during its clean-shutdown grace: %q %v", raw, err)
+	}
+	select {
+	case err := <-waited:
+		var exited *exec.ExitError
+		if !errors.As(err, &exited) || exited.ExitCode() != 128+int(syscall.SIGKILL) {
+			t.Fatalf("forced root exit did not preserve its actual result: %v; output=%s", err, output.String())
+		}
+	case <-time.After(12 * time.Second):
+		t.Fatal("cancellation never escalated the ignoring root")
+	}
+	if time.Since(started) < time.Second {
+		t.Fatal("root was killed before its admitted grace elapsed")
+	}
+	if members, err := executionMembers(scopes[0].CoalitionIDs); err != nil || len(members) != 0 {
+		t.Fatalf("command result preceded verified cleanup: %v remaining=%d", err, len(members))
+	}
+	if receipts, err := readOwnedExecutionScopes(ctx); err != nil || len(receipts) != 1 {
+		t.Fatal("cancellation discarded its durable ownership receipt")
 	}
 }
 
