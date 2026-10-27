@@ -122,6 +122,12 @@ of the original session; cleanup must retain the owner, preserve the child and
 unrelated control, and still clean another selected owner. Also terminate a live
 root while its child survives in another group. After the child exits itself,
 a read-only empty-session retry may settle the retained record without a signal.
+Use a real fork/session-handoff relay to create a successor after enumeration
+while the inspected ancestor leaves the original session. Repeat the race
+across both otherwise-empty observations: changing PID/generation inventories
+must retain the owner while the successor remains in the original session.
+Only enumeration/timing seams may be controlled; PID, session and generation
+metadata must come from the actual owned processes.
 Inject an agent cleanup timeout through the real registry entry point and prove
 retention, selected-peer cleanup, unselected-owner preservation and exact retry.
 Model Windows kernel-handle termination followed by explicit unverified

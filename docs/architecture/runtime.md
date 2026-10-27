@@ -52,9 +52,13 @@ separate Windows credential adapter.
 
 Root exit alone does not prove POSIX session exit. After waiting for the root,
 cleanup uses a read-only kernel process census (`libproc` on macOS and `/proc`
-on Linux) to observe the old session, including members in other groups. Two
-complete observations without live members permit retirement. A live member,
-changed identity or unavailable/incomplete census keeps cleanup unresolved;
+on Linux) to observe the old session, including members in other groups. Each
+scan fences PID enumeration before and after inspection. macOS kernel unique
+IDs/PID versions and Linux kernel start ticks bind process generations; macOS
+also verifies identity around its separate session/status reads. Retirement
+requires two complete observations with identical PID/generation/membership
+inventories and no live session members. A fork followed by a session handoff,
+PID reuse, changed membership or unavailable/incomplete census keeps cleanup unresolved;
 an exited leader never authorizes another signal. Zombies count as exited.
 The observation does not recover authority over descendants that escape the
 launch session.

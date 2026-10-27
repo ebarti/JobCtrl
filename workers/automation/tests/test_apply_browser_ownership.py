@@ -472,10 +472,10 @@ def test_incomplete_session_census_retains_reaped_browser_owner(browser_seam, mo
     process.kill()
     process.wait(timeout=5)
 
-    def unreadable(_session_id):
+    def unreadable():
         raise process_ownership.ProcessOwnershipError("synthetic census denied")
 
-    monkeypatch.setattr(process_ownership, "_active_session_members", unreadable)
+    monkeypatch.setattr(process_ownership, "_read_process_inventory", unreadable)
     monkeypatch.setattr(os, "killpg", lambda *_: pytest.fail("reaped owner cannot signal a group"))
     with pytest.raises(chrome.BrowserCapabilityError, match="census denied"):
         chrome.cleanup_worker(211, process)
@@ -525,3 +525,133 @@ def test_actual_provider_cleanup_failure_retains_owner_cleans_peer_and_retries(b
             if process.poll() is None:
                 process.kill()
             process.wait(timeout=5)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX fork/session-handoff completion")
+def test_actual_fork_session_handoff_cannot_retire_unseen_successor(browser_seam, tmp_path, monkeypatch):
+    import time
+    from pathlib import Path
+
+    from jobctrl.infrastructure import process_ownership
+
+    if chrome.platform.system() not in {"Darwin", "Linux"}:
+        pytest.skip("kernel census is supported on macOS and Linux")
+    state = tmp_path / "relay"
+    state.mkdir()
+    leaf_code = """
+import json,os,time
+from pathlib import Path
+state=Path(STATE)
+while True:
+    pid=os.getpid()
+    (state/f'{pid}.json').write_text(json.dumps({'pid':pid,'sid':os.getsid(0)}))
+    command=state/f'{pid}.cmd'
+    while not command.exists(): time.sleep(0.002)
+    action=command.read_text()
+    command.unlink()
+    if action=='exit':
+        (state/f'{pid}.done').write_text('exiting')
+        break
+    assert action=='relay'
+    successor=os.fork()
+    if successor==0:
+        continue
+    os.setsid()
+    while not (state/f'{successor}.json').exists(): time.sleep(0.002)
+    (state/f'{pid}.ack').write_text(str(successor))
+""".replace("STATE", repr(str(state)))
+    root_code = (
+        "import subprocess,sys,time; from pathlib import Path; "
+        f"subprocess.Popen([sys.executable,'-c',{leaf_code!r}]); "
+        f"state=Path({str(state)!r}); "
+        "\nwhile not list(state.glob('*.json')): time.sleep(0.002)\n"
+    )
+    root = browser_seam.popen([sys.executable, "-c", root_code], start_new_session=True)
+    browser_seam.append(root)
+    assert root.wait(timeout=5) == 0
+    control = browser_seam.popen([sys.executable, "-c", "import time; time.sleep(120)"], start_new_session=True)
+    browser_seam.append(control)
+    chrome._chrome_procs[401] = root
+    chrome._chrome_identities[401] = (root, root.pid)
+    current = [int(next(state.glob("*.json")).stem)]
+    relays = []
+
+    def handoff(pid):
+        if pid != current[0] or len(relays) >= 2:
+            return
+        (state / f"{pid}.cmd").write_text("relay")
+        ack = state / f"{pid}.ack"
+        deadline = time.monotonic() + 5
+        while not ack.exists() and time.monotonic() < deadline:
+            time.sleep(0.002)
+        assert ack.exists(), "owned relay did not acknowledge session handoff"
+        current[0] = int(ack.read_text())
+        relays.append(pid)
+
+    def owned_pids():
+        return {control.pid, *(int(path.stem) for path in state.glob("*.json"))}
+
+    actual_getsid = os.getsid
+    if chrome.platform.system() == "Darwin":
+        import ctypes
+
+        real_cdll = ctypes.CDLL
+        library = real_cdll("/usr/lib/libproc.dylib", use_errno=True)
+        library.proc_listpids.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_int]
+        library.proc_listpids.restype = ctypes.c_int
+
+        def scoped_listpids(kind, info, buffer, size):
+            needed = library.proc_listpids(kind, info, None, 0)
+            actual = (ctypes.c_int * (needed // 4 + 256))()
+            used = library.proc_listpids(kind, info, actual, ctypes.sizeof(actual))
+            pids = sorted(set(actual[:used // 4]) & owned_pids())
+            if buffer is not None:
+                for index, pid in enumerate(pids[:size // 4]):
+                    buffer[index] = pid
+            return len(pids) * 4
+
+        class ScopedLibrary:
+            proc_listpids = staticmethod(scoped_listpids)
+            proc_pidinfo = library.proc_pidinfo
+
+        monkeypatch.setattr(ctypes, "CDLL", lambda *_args, **_kwargs: ScopedLibrary())
+
+        def getsid(pid):
+            handoff(pid)
+            return actual_getsid(pid)
+
+        monkeypatch.setattr(os, "getsid", getsid)
+    else:
+        actual_iterdir = Path.iterdir
+        actual_read_bytes = Path.read_bytes
+
+        def scoped_iterdir(path):
+            entries = list(actual_iterdir(path))
+            if str(path) == "/proc":
+                entries = [entry for entry in entries if entry.name.isdecimal() and int(entry.name) in owned_pids()]
+            return iter(entries)
+
+        def read_bytes(path):
+            if path.name == "stat" and path.parent.name.isdecimal():
+                handoff(int(path.parent.name))
+            return actual_read_bytes(path)
+
+        monkeypatch.setattr(Path, "iterdir", scoped_iterdir)
+        monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    monkeypatch.setattr(process_ownership, "_SESSION_EXIT_TIMEOUT_SECONDS", 0.2)
+    monkeypatch.setattr(os, "killpg", lambda *_: pytest.fail("reaped relay root cannot signal"))
+    try:
+        with pytest.raises(chrome.BrowserCapabilityError, match="still occupied|cannot be verified"):
+            chrome.cleanup_worker(401, root)
+        assert len(relays) == 2
+        assert actual_getsid(current[0]) == root.pid
+        assert chrome._chrome_procs[401] is root
+        assert chrome._chrome_identities[401] == (root, root.pid)
+        assert control.poll() is None
+    finally:
+        for path in state.glob("*.json"):
+            (state / f"{path.stem}.cmd").write_text("exit")
+        deadline = time.monotonic() + 5
+        while len(list(state.glob("*.done"))) != len(list(state.glob("*.json"))) and time.monotonic() < deadline:
+            time.sleep(0.002)
+        assert len(list(state.glob("*.done"))) == len(list(state.glob("*.json")))

@@ -57,21 +57,29 @@ def terminate_owned_process(process: subprocess.Popen, *, launched_pid: int) -> 
     _wait_for_session_exit(launched_pid)
 
 
-def _wait_for_session_exit(session_id: int) -> None:
-    """Read-only completion proof, including other groups in the old session.
+# PID -> (kernel birth/generation, session, active, process group).
+_ProcessInventory = dict[int, tuple[tuple[int, ...], int | None, bool, int]]
 
-    After the leader is reaped, a numeric session/group is no longer signal
-    authority. Occupancy (including a reused ID) or an incomplete census keeps
-    cleanup unresolved. Two complete empty observations permit retirement;
-    disappeared PIDs force another census, and zombies have already exited.
+
+def _wait_for_session_exit(session_id: int) -> None:
+    """Require matching complete process-generation inventories with no members.
+
+    An empty sampled session is insufficient: a row can fork a successor then
+    leave the session before inspection. Fencing enumeration and requiring a
+    stable full birth-generation inventory prevents retiring that handoff.
+    These read-only observations never recover signal authority.
     """
     deadline = time.monotonic() + _SESSION_EXIT_TIMEOUT_SECONDS
-    empty_observations = 0
+    previous_empty_inventory = None
     while True:
-        members, complete = _active_session_members(session_id)
-        empty_observations = empty_observations + 1 if complete and not members else 0
-        if empty_observations >= 2:
-            return
+        inventory, complete = _read_process_inventory()
+        members = {pid for pid, (_, sid, active, _) in inventory.items() if active and sid == session_id}
+        if complete and not members:
+            if previous_empty_inventory is not None and inventory == previous_empty_inventory:
+                return
+            previous_empty_inventory = inventory
+        else:
+            previous_empty_inventory = None
         if time.monotonic() >= deadline:
             raise ProcessOwnershipError(
                 "Apply process root exited but its launch session is still occupied "
@@ -81,51 +89,43 @@ def _wait_for_session_exit(session_id: int) -> None:
 
 
 def _active_session_members(session_id: int) -> tuple[set[int], bool]:
+    inventory, complete = _read_process_inventory()
+    return {pid for pid, (_, sid, active, _) in inventory.items() if active and sid == session_id}, complete
+
+
+def _linux_process_ids() -> set[int]:
+    return {int(entry.name) for entry in Path("/proc").iterdir() if entry.name.isdecimal()}
+
+
+def _read_process_inventory() -> tuple[_ProcessInventory, bool]:
     system = platform.system()
     try:
         if system == "Darwin":
-            return _darwin_active_session_members(session_id)
+            return _darwin_process_inventory()
         if system == "Linux":
-            members = set()
+            inventory = {}
             complete = True
-            for entry in Path("/proc").iterdir():
-                if not entry.name.isdecimal():
-                    continue
+            pids = _linux_process_ids()
+            for pid in pids:
                 try:
-                    # Linux proc(5): fields after the final ')' are state,
-                    # parent PID, group and session. Command text is ignored.
-                    fields = (entry / "stat").read_bytes().rsplit(b")", 1)[1].split()
+                    # proc(5): after the final ')' are state (3), parent,
+                    # group (5), session (6), ... kernel start ticks (22).
+                    fields = (Path("/proc") / str(pid) / "stat").read_bytes().rsplit(b")", 1)[1].split()
                 except FileNotFoundError:
                     complete = False
                     continue
-                if len(fields) < 4:
+                if len(fields) < 20:
                     raise ProcessOwnershipError("Incomplete Apply process session census")
-                if int(fields[3]) == session_id and fields[0] not in {b"Z", b"X"}:
-                    members.add(int(entry.name))
-            return members, complete
+                inventory[pid] = ((int(fields[19]),), int(fields[3]), fields[0] not in {b"Z", b"X"}, int(fields[2]))
+            return inventory, complete and pids == _linux_process_ids()
     except (OSError, ValueError, IndexError) as exc:
         raise ProcessOwnershipError("Cannot verify Apply process session exit") from exc
     raise ProcessOwnershipError(f"Apply process session exit verification is unavailable on {system}")
 
 
-def _darwin_active_session_members(session_id: int) -> tuple[set[int], bool]:
-    """Read numeric kernel process metadata, without invoking a shell or ps."""
+def _darwin_process_ids(library) -> set[int]:
     import ctypes
-    import errno
 
-    class BsdShortInfo(ctypes.Structure):
-        # sys/proc_info.h: proc_bsdshortinfo, PROC_PIDT_SHORTBSDINFO=13.
-        _fields_ = [
-            ("pid", ctypes.c_uint32), ("ppid", ctypes.c_uint32),
-            ("pgid", ctypes.c_uint32), ("state", ctypes.c_uint32),
-            ("remaining", ctypes.c_byte * 48),
-        ]
-
-    library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
-    library.proc_listpids.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_int]
-    library.proc_listpids.restype = ctypes.c_int
-    library.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
-    library.proc_pidinfo.restype = ctypes.c_int
     needed = library.proc_listpids(1, 0, None, 0)  # PROC_ALL_PIDS
     if needed <= 0:
         raise ProcessOwnershipError("Cannot enumerate Apply process session")
@@ -133,31 +133,75 @@ def _darwin_active_session_members(session_id: int) -> tuple[set[int], bool]:
     used = library.proc_listpids(1, 0, pids, ctypes.sizeof(pids))
     if used <= 0 or used >= ctypes.sizeof(pids) or used % ctypes.sizeof(ctypes.c_int):
         raise ProcessOwnershipError("Incomplete Apply process session census")
-    members = set()
-    complete = True
-    for pid in pids[:used // ctypes.sizeof(ctypes.c_int)]:
-        if pid <= 0:
-            continue
-        try:
-            matches = os.getsid(pid) == session_id
-        except ProcessLookupError:
-            matches = None
-        if matches is False:
-            continue
-        info = BsdShortInfo()
-        # arg=1 also inspects zombies; getsid alone does not find them on macOS.
-        size = library.proc_pidinfo(pid, 13, 1, ctypes.byref(info), ctypes.sizeof(info))
+    return {pid for pid in pids[:used // ctypes.sizeof(ctypes.c_int)] if pid > 0}
+
+
+def _darwin_process_inventory() -> tuple[_ProcessInventory, bool]:
+    """Read stable kernel identity and membership without a shell or ps.
+
+    Short BSD metadata and unique identifiers are unprivileged libproc flavors.
+    XNU proc_info.h defines PROC_PIDUNIQIDENTIFIERINFO (17), whose uniqueid and
+    PID version bind each row across the separate getsid/status observations.
+    See https://github.com/apple/darwin-xnu/blob/main/bsd/sys/proc_info.h.
+    An unavailable ABI is an uncertain census, never proof of process death.
+    """
+    import ctypes
+    import errno
+
+    class BsdShortInfo(ctypes.Structure):
+        _fields_ = [
+            ("pid", ctypes.c_uint32), ("ppid", ctypes.c_uint32),
+            ("pgid", ctypes.c_uint32), ("state", ctypes.c_uint32),
+            ("remaining", ctypes.c_byte * 48),
+        ]
+
+    class UniqueInfo(ctypes.Structure):
+        _fields_ = [
+            ("uuid", ctypes.c_byte * 16), ("unique_id", ctypes.c_uint64),
+            ("parent_unique_id", ctypes.c_uint64), ("pid_version", ctypes.c_int32),
+            ("reserved2", ctypes.c_uint32), ("reserved3", ctypes.c_uint64),
+            ("reserved4", ctypes.c_uint64),
+        ]
+
+    library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+    library.proc_listpids.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_int]
+    library.proc_listpids.restype = ctypes.c_int
+    library.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+    library.proc_pidinfo.restype = ctypes.c_int
+
+    def read(pid, flavor, info_type):
+        info = info_type()
+        # arg=1 permits zombie inspection; an already exited process cannot run.
+        size = library.proc_pidinfo(pid, flavor, 1, ctypes.byref(info), ctypes.sizeof(info))
         if size != ctypes.sizeof(info):
             if size == 0 and ctypes.get_errno() == errno.ESRCH:
-                complete = False
-                continue
-            raise ProcessOwnershipError("Cannot inspect Apply process session member")
-        if info.pid != pid:
-            raise ProcessOwnershipError("Apply process session census identity changed")
-        if info.state == 5:  # SZOMB: exited, waiting for its parent to reap.
-            continue
-        if matches is None:
+                raise ProcessLookupError(pid)
+            raise ProcessOwnershipError("Cannot inspect Apply process session generation")
+        return info
+
+    inventory = {}
+    complete = True
+    pids = _darwin_process_ids(library)
+    for pid in pids:
+        try:
+            first_identity = read(pid, 17, UniqueInfo)
+            first = read(pid, 13, BsdShortInfo)
+            sid = None if first.state == 5 else os.getsid(pid)
+            second = read(pid, 13, BsdShortInfo)
+            second_sid = None if second.state == 5 else os.getsid(pid)
+            second_identity = read(pid, 17, UniqueInfo)
+        except ProcessLookupError:
             complete = False
-        else:
-            members.add(pid)
-    return members, complete
+            continue
+        birth = (first_identity.unique_id, first_identity.pid_version)
+        if first_identity.unique_id == 0 or second_identity.unique_id == 0:
+            raise ProcessOwnershipError("Apply process kernel generation is unavailable")
+        if (
+            first.pid != pid or second.pid != pid
+            or birth != (second_identity.unique_id, second_identity.pid_version)
+            or first.pgid != second.pgid or (first.state == 5) != (second.state == 5)
+            or sid != second_sid
+        ):
+            complete = False
+        inventory[pid] = (birth, second_sid, second.state != 5, second.pgid)
+    return inventory, complete and pids == _darwin_process_ids(library)
