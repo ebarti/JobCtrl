@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -47,6 +48,10 @@ type executionCommand struct {
 	Arguments, Environment []string
 	Directory              string
 }
+type executionControl struct {
+	Signal int `json:"signal"`
+}
+
 type executionResult struct {
 	Code   int  `json:"code"`
 	Failed bool `json:"failed"`
@@ -187,17 +192,13 @@ func readOwnedExecutionScopes(ctx launchContext) ([]executionScope, error) {
 			file.Close()
 			return nil, errors.New("unsafe execution receipt")
 		}
-		decoder := json.NewDecoder(io.LimitReader(file, 16385))
-		decoder.DisallowUnknownFields()
-		var scope executionScope
-		err = decoder.Decode(&scope)
-		if err == nil {
-			var extra any
-			if decoder.Decode(&extra) != io.EOF {
-				err = errors.New("trailing execution receipt")
-			}
-		}
+		raw, readErr := io.ReadAll(io.LimitReader(file, 16385))
 		file.Close()
+		var scope executionScope
+		err = readErr
+		if err == nil {
+			err = decodeExecutionReceipt(raw, &scope)
+		}
 		if err != nil {
 			return nil, errors.New("malformed execution receipt")
 		}
@@ -211,6 +212,103 @@ func readOwnedExecutionScopes(ctx launchContext) ([]executionScope, error) {
 	}
 	return scopes, nil
 }
+
+// Receipt keys have one exact spelling. encoding/json alone accepts duplicate
+// fields and case-insensitive aliases, so check the object before struct decode.
+func decodeExecutionReceipt(raw []byte, scope *executionScope) error {
+	allowed := map[string]bool{"schemaVersion": true, "id": true, "instanceId": true, "stateDir": true, "runtimeHome": true, "bootSession": true, "jobLabel": true, "domain": true, "rootPid": true, "rootIdentity": true, "coalitionIds": true}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return errors.New("invalid execution receipt object")
+	}
+	seen := map[string]bool{}
+	for decoder.More() {
+		token, err = decoder.Token()
+		key, ok := token.(string)
+		if err != nil || !ok || !allowed[key] || seen[key] {
+			return errors.New("unfamiliar or repeated execution receipt key")
+		}
+		seen[key] = true
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return err
+		}
+	}
+	if token, err = decoder.Token(); err != nil || token != json.Delim('}') {
+		return errors.New("invalid execution receipt end")
+	}
+	if len(seen) != len(allowed) {
+		return errors.New("incomplete execution receipt")
+	}
+	var extra any
+	if decoder.Decode(&extra) != io.EOF {
+		return errors.New("trailing execution receipt")
+	}
+	return json.Unmarshal(raw, scope)
+}
+
+func signalExecutionMembers(ids [2]uint64, rootPID int, rootIdentity string, requested syscall.Signal) error {
+	pids, err := userProcessIDs()
+	if err != nil {
+		return err
+	}
+	for _, pid := range pids {
+		if pid == os.Getpid() {
+			continue
+		}
+		info, err := procInfo(pid, procPIDTBSDInfo, procBSDInfoSize)
+		if errors.Is(err, syscall.ESRCH) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if binary.LittleEndian.Uint32(info[4:]) == 5 {
+			continue
+		}
+		before, err := processStartIdentity(pid)
+		if errors.Is(err, syscall.ESRCH) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		memberIDs, err := processCoalitionIDs(pid)
+		if errors.Is(err, syscall.ESRCH) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if memberIDs != ids {
+			continue
+		}
+		after, err := processStartIdentity(pid)
+		if errors.Is(err, syscall.ESRCH) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if before != after || (pid == rootPID && rootIdentity != "" && after != rootIdentity) {
+			continue
+		}
+		if err := syscall.Kill(pid, requested); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return err
+		}
+	}
+	return nil
+}
+
+func cleanupExecutionMembers(ids [2]uint64) error {
+	if err := signalExecutionMembers(ids, 0, "", syscall.SIGTERM); err != nil {
+		return err
+	}
+	time.Sleep(250 * time.Millisecond)
+	return signalExecutionMembers(ids, 0, "", syscall.SIGKILL)
+}
+
 func authenticatedOwnedExecution(ctx launchContext) (bool, error) {
 	id := environmentMap(ctx.Environment)[executionScopeVariable]
 	if id == "" {
@@ -303,10 +401,68 @@ func ownedExecutionHelper(args []string) (bool, error) {
 	child.Stdin = files[0]
 	child.Stdout = files[1]
 	child.Stderr = files[2]
+	ids, err := processCoalitionIDs(os.Getpid())
+	if err != nil {
+		return true, err
+	}
+	if err = child.Start(); err != nil {
+		_ = json.NewEncoder(connection).Encode(executionResult{Code: 1, Failed: true})
+		return true, errors.New("authorized command could not start")
+	}
+	rootIdentity, identityErr := processStartIdentity(child.Process.Pid)
+	if identityErr != nil && !errors.Is(identityErr, syscall.ESRCH) {
+		_ = cleanupExecutionMembers(ids)
+		go child.Wait()
+		return true, errors.New("could not inspect authorized command identity")
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- child.Wait() }()
+	controls := make(chan executionControl)
+	controlErrors := make(chan error, 1)
+	finished := make(chan struct{})
+	defer close(finished)
+	go func() {
+		for {
+			var control executionControl
+			if err := decoder.Decode(&control); err != nil {
+				controlErrors <- err
+				return
+			}
+			select {
+			case controls <- control:
+			case <-finished:
+				return
+			}
+		}
+	}()
+	var waitErr error
+waiting:
+	for {
+		select {
+		case waitErr = <-waited:
+			break waiting
+		case control := <-controls:
+			if control.Signal != int(syscall.SIGINT) && control.Signal != int(syscall.SIGTERM) {
+				_ = cleanupExecutionMembers(ids)
+				return true, errors.New("invalid execution control")
+			}
+			// Each recipient is checked against its start identity and this
+			// private launchd coalition. No process group or name grants authority.
+			if err := signalExecutionMembers(ids, child.Process.Pid, rootIdentity, syscall.Signal(control.Signal)); err != nil {
+				_ = cleanupExecutionMembers(ids)
+				return true, errors.New("could not forward execution signal")
+			}
+		case <-controlErrors:
+			// Losing the authenticated controller is never success. Receipts
+			// remain durable even if inspection or bounded cleanup fails.
+			_ = cleanupExecutionMembers(ids)
+			return true, errors.New("execution controller disconnected")
+		}
+	}
 	result := executionResult{}
-	if err = child.Run(); err != nil {
+	if waitErr != nil {
 		var exited *exec.ExitError
-		if errors.As(err, &exited) {
+		if errors.As(waitErr, &exited) {
 			result.Code = exited.ExitCode()
 			if result.Code < 0 {
 				result.Code = 128 + int(exited.Sys().(syscall.WaitStatus).Signal())
@@ -317,6 +473,7 @@ func ownedExecutionHelper(args []string) (bool, error) {
 		}
 	}
 	if err = json.NewEncoder(connection).Encode(result); err != nil {
+		_ = cleanupExecutionMembers(ids)
 		return true, err
 	}
 	if result.Code != 0 {
@@ -469,6 +626,11 @@ func runInOwnedExecution(ctx launchContext, args []string, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
+	signals := make(chan os.Signal, 8)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+	forwardingDone := make(chan struct{})
+	defer close(forwardingDone)
 	if _, _, err = connection.WriteMsgUnix([]byte{1}, syscall.UnixRights(int(os.Stdin.Fd()), int(out.Fd()), int(errout.Fd())), nil); err != nil {
 		return err
 	}
@@ -476,6 +638,20 @@ func runInOwnedExecution(ctx launchContext, args []string, stdout, stderr io.Wri
 		return errors.New("could not authorize execution")
 	}
 	_ = connection.SetDeadline(time.Time{})
+	go func() {
+		encoder := json.NewEncoder(connection)
+		for {
+			select {
+			case received := <-signals:
+				if err := encoder.Encode(executionControl{Signal: int(received.(syscall.Signal))}); err != nil {
+					connection.Close()
+					return
+				}
+			case <-forwardingDone:
+				return
+			}
+		}
+	}()
 	var result executionResult
 	if err = decoder.Decode(&result); err != nil {
 		return errors.New("execution helper exited without a command result")
