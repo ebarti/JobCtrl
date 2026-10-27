@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,19 +16,25 @@ import (
 // The child executes the real native-to-Python dispatch. Its synthetic Python
 // executable waits for the parent so the real backup can race the command.
 func TestInstalledCLILockSurvivesExecAndFencesBackup(t *testing.T) {
+	syntheticBoot(t, syntheticBootOne)
 	if os.Getenv("JOBCTRL_TEST_CLI_LOCK_HELPER") == "1" {
 		store, err := release.Open(os.Getenv("JOBCTRL_TEST_CLI_LOCK_RUNTIME"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		lock, err := store.SelectionLock(false)
-		if err != nil {
-			t.Fatal(err)
+		var lock *release.Lock
+		if os.Getenv("JOBCTRL_TEST_CLI_DIRECT") != "1" {
+			lock, err = store.SelectionLock(false)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 		defer lock.Close()
 		ctx := launchContext{
 			PayloadRoot: os.Getenv("JOBCTRL_TEST_CLI_LOCK_PAYLOAD"),
-			selection:   lock,
+			Instance: instance{ID: "synthetic-instance", RuntimeHome: store.Home,
+				StateDir: os.Getenv("JOBCTRL_TEST_CLI_STATE"), StatePath: filepath.Join(os.Getenv("JOBCTRL_TEST_CLI_STATE"), "state.json")},
+			selection: lock,
 			Environment: []string{
 				"JOBCTRL_TEST_CLI_READY=" + os.Getenv("JOBCTRL_TEST_CLI_READY"),
 				"JOBCTRL_TEST_CLI_RELEASE=" + os.Getenv("JOBCTRL_TEST_CLI_RELEASE"),
@@ -38,7 +45,17 @@ func TestInstalledCLILockSurvivesExecAndFencesBackup(t *testing.T) {
 		}
 		return
 	}
+	runCLILockAndRebootScenario(t, false)
+}
+
+func TestDirectPayloadCLILockAndRebootFence(t *testing.T) {
+	syntheticBoot(t, syntheticBootOne)
+	runCLILockAndRebootScenario(t, true)
+}
+
+func runCLILockAndRebootScenario(t *testing.T, direct bool) {
 	fixture := newV6ActivationFixture(t)
+	fixture.ctx.Instance.ID = "synthetic-instance"
 	payload := t.TempDir()
 	venv := filepath.Join(payload, "python")
 	createVenv := exec.Command(fixture.python, "-I", "-B", "-m", "venv", "--without-pip", venv)
@@ -75,8 +92,12 @@ func TestInstalledCLILockSurvivesExecAndFencesBackup(t *testing.T) {
 	child := exec.Command(binary, "-test.run=^TestInstalledCLILockSurvivesExecAndFencesBackup$")
 	child.Env = []string{
 		"JOBCTRL_TEST_CLI_LOCK_HELPER=1", "JOBCTRL_TEST_CLI_LOCK_RUNTIME=" + fixture.runtime,
+		"JOBCTRL_TEST_CLI_STATE=" + fixture.state,
 		"JOBCTRL_TEST_CLI_LOCK_PAYLOAD=" + payload,
 		"JOBCTRL_TEST_CLI_READY=" + ready, "JOBCTRL_TEST_CLI_RELEASE=" + releasePath,
+	}
+	if direct {
+		child.Env = append(child.Env, "JOBCTRL_TEST_CLI_DIRECT=1")
 	}
 	var childOutput bytes.Buffer
 	child.Stdout, child.Stderr = &childOutput, &childOutput
@@ -115,6 +136,9 @@ func TestInstalledCLILockSurvivesExecAndFencesBackup(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	output := t.TempDir()
+	if err := stopStandalone(fixture.ctx); !errors.Is(err, errRebootRequired) {
+		t.Fatalf("stop passed live CLI admission: %v", err)
+	}
 	backupDone := make(chan error, 1)
 	go func() { backupDone <- backup(fixture.ctx, []string{"--output", output}, &bytes.Buffer{}) }()
 	select {
@@ -131,15 +155,32 @@ func TestInstalledCLILockSurvivesExecAndFencesBackup(t *testing.T) {
 	}
 	select {
 	case err := <-backupDone:
-		if err != nil {
-			t.Fatalf("backup failed after command exit: %v", err)
+		if !errors.Is(err, errRebootRequired) {
+			t.Fatalf("command exit falsely certified descendant quiescence: %v", err)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("backup did not resume after command exit")
 	}
 	entries, err = os.ReadDir(output)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("backup wrote a pair before reboot recovery: %v, %v", entries, err)
+	}
+	select {
+	case err := <-childDone:
+		childExited = true
+		if err != nil {
+			t.Fatalf("synthetic command failed: %v %s", err, childOutput.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("owned command did not exit")
+	}
+	syntheticBoot(t, syntheticBootTwo)
+	if err := backup(fixture.ctx, []string{"--output", output}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("backup after reboot recovery failed: %v", err)
+	}
+	entries, err = os.ReadDir(output)
 	if err != nil || len(entries) != 1 {
-		t.Fatalf("expected a paired backup after command exit: %v, %v", entries, err)
+		t.Fatalf("expected one paired backup after reboot recovery: %v, %v", entries, err)
 	}
 }
 

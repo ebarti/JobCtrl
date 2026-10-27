@@ -1422,14 +1422,18 @@ func backup(ctx launchContext, args []string, output io.Writer) error {
 	defer func() { _ = ctx.selection.Close() }()
 	wasRunning := false
 	if state, stateErr := readState(ctx.Instance.StatePath); stateErr == nil {
-		wasRunning = stateHasLiveProcesses(state)
+		quiescent, err := runtimeQuiescent(ctx, state)
+		if err != nil {
+			return err
+		}
+		wasRunning = !quiescent && stateHasLiveProcesses(state)
 	} else if !errors.Is(stateErr, os.ErrNotExist) {
 		return stateErr
 	}
-	if wasRunning {
-		if err := stop(ctx); err != nil {
-			return fmt.Errorf("quiesce runtime for coherent paired backup: %w", err)
-		}
+	// A missing leader/registry does not exclude detached CLI descendants.
+	// Always check the boot fence while holding exclusive selection ownership.
+	if err := stop(ctx); err != nil {
+		return fmt.Errorf("quiesce runtime for coherent paired backup: %w", err)
 	}
 	pair, err := snapshotPairTo(ctx, active.Receipt, directory)
 	if errors.Is(err, errUnresolvedDatabasePublication) {
@@ -1871,7 +1875,7 @@ func retainReleases(store *release.Store, runtimeHome string) error {
 			}
 		}
 		var state instanceState
-		if decodeStrictRegular(filepath.Join(runtimeHome, "instances", instance.Name(), "state.json"), &state) == nil && stateHasLiveProcesses(state) {
+		if decodeStrictRegular(filepath.Join(runtimeHome, "instances", instance.Name(), "state.json"), &state) == nil && (stateHasLiveProcesses(state) || len(state.Components) > 0) {
 			keep[state.BuildID] = true
 		}
 	}

@@ -345,6 +345,12 @@ func (s *Store) SelectionLock(exclusive bool) (*Lock, error) {
 	return s.lock("selection.lock", flags)
 }
 
+// TryExclusiveSelectionLock lets a stop refuse an active command without
+// waiting indefinitely or racing its admission into a verified stopped state.
+func (s *Store) TryExclusiveSelectionLock() (*Lock, error) {
+	return s.lock("selection.lock", syscall.LOCK_EX|syscall.LOCK_NB)
+}
+
 // TransitionLock serializes durable lifecycle transitions independently from
 // process ownership. Callers take it before the exclusive selection lock.
 func (s *Store) TransitionLock() (*Lock, error) { return s.lock("transition.lock", syscall.LOCK_EX) }

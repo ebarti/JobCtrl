@@ -20,6 +20,18 @@ results. Contract-only high-risk changes require safety
 checks, with product verification before first use. Major UI regressions require
 a regression test or an explicit reproducible scenario.
 
+For native shutdown, exercise an owned writer that calls `setsid()` and survives
+its recorded leader and process group. Actual stop/status, backup, update and
+rollback must not certify quiescence or touch database pairs while that writer
+survives. Cover Python CLI execution through both selected and direct payload
+paths, durable fence failure before component execution, repeated refusal,
+unfamiliar ownership and unavailable boot identity. Verify registry/database
+bytes on refusal. End the owned processes before simulating a subsequent boot,
+then prove stop/restart admission and paired backup recover. The synthetic boot
+seam is test-only; production accepts only the read-only kernel boot-session
+identity and exposes no environment bypass. A real machine reboot is not an
+automated QA action.
+
 For the job-data purge gate, the disposable workspace must contain a Candidate
 Profile, Discovery settings, source registry, resume template/default, at least
 one Job with registered Materials, an unregistered generated candidate, a
