@@ -26,6 +26,7 @@ from jobctrl.browser_capabilities import (
 )
 from jobctrl.apply.origins import canonical_http_origin, canonical_http_url
 from jobctrl.infrastructure.network import validate_public_http_url
+from jobctrl.infrastructure.process_ownership import ProcessOwnershipError, terminate_owned_process
 
 logger = logging.getLogger(__name__)
 
@@ -64,9 +65,6 @@ def _kill_process_tree(pid: int, *, process: subprocess.Popen | None = None) -> 
     group ownership; an exited leader cannot authorize cleanup of leftovers.
     Windows uses the original kernel process handle, never taskkill's PID tree.
     """
-    import os
-    import signal as _signal
-
     with _chrome_lock:
         if process is None:
             return
@@ -77,28 +75,10 @@ def _kill_process_tree(pid: int, *, process: subprocess.Popen | None = None) -> 
         ]
         if len(owners) != 1:
             raise BrowserCapabilityError("Cannot verify Apply browser process ownership")
-        process = owners[0]
-        if platform.system() == "Windows":
-            # TerminateProcess receives Popen's launch-time kernel handle. Even
-            # if the PID is recycled, it cannot select the replacement process.
-            if process.poll() is None:
-                process.kill()
-        else:
-            # CPython's Popen uses this lock for every waitpid/reap. Refuse
-            # unfamiliar handles instead of falling back to a numeric PID kill.
-            reap_lock = getattr(process, "_waitpid_lock", None)
-            if reap_lock is None:
-                raise BrowserCapabilityError("Cannot verify Apply browser process ownership")
-            with reap_lock:
-                if process.returncode is not None:
-                    return
-                try:
-                    if os.getpgid(pid) != pid or os.getsid(pid) != pid:
-                        raise BrowserCapabilityError("Apply browser no longer owns its launch session")
-                    os.killpg(pid, _signal.SIGKILL)
-                except ProcessLookupError:
-                    return
-        process.wait(timeout=10)
+        try:
+            terminate_owned_process(owners[0], launched_pid=pid)
+        except ProcessOwnershipError as exc:
+            raise BrowserCapabilityError(str(exc)) from exc
 
 
 def _require_available_cdp_port(port: int) -> None:
