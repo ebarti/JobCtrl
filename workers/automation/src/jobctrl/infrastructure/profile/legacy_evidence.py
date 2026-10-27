@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import sqlite3
+import struct
 from datetime import datetime, timezone
 from typing import Any
 
@@ -24,7 +26,7 @@ def _json(value: Any) -> str:
             return [normalize(child) for child in item]
         return int(item) if isinstance(item, float) and item.is_integer() else item
 
-    return json.dumps(normalize(value), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return json.dumps(normalize(value), ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
 def fingerprint(value: Any) -> str:
@@ -32,7 +34,13 @@ def fingerprint(value: Any) -> str:
 
 
 def row_content(row: dict) -> dict:
-    return {key: value for key, value in row.items() if key != "evidence_index"}
+    confidence = row.get("claim_confidence")
+    if type(confidence) not in (int, float) or not math.isfinite(confidence) or not 0 <= confidence <= 1:
+        raise LegacyEvidenceReviewError("legacy_evidence_review_invalid_confidence")
+    # Hash the field's exact binary64 value, not runtime-specific JSON decimals
+    # (Python 1e-07 versus ECMAScript 1e-7/0.000001). Never change source cells.
+    return {key: "binary64:" + struct.pack(">d", float(confidence)).hex() if key == "claim_confidence" else value
+            for key, value in row.items() if key != "evidence_index"}
 
 
 def evidence_entity(profile_id: str, entry_id: str, evidence_id: str) -> str:
@@ -110,15 +118,17 @@ def requires_review(conn, tenant_id, profile_id, entry_id, evidence_id) -> bool:
     receipt = review_receipt(conn, tenant_id, profile_id, entry_id, evidence_id)
     if not receipt:
         return False
-    if receipt["result"]["status"] == "unconfirmed":
-        return False
     if receipt["result"]["status"] == "pending_review":
         return True
     cursor = conn.execute("SELECT * FROM candidate_profile_achievement_evidence WHERE tenant_id=? AND profile_id=? AND entry_id=? AND evidence_id=?",
                           (tenant_id, profile_id, entry_id, evidence_id))
     columns = [item[0] for item in cursor.description]
     rows = [dict(zip(columns, row, strict=True)) for row in cursor]
-    return len(rows) != 1 or fingerprint(row_content(rows[0])) != receipt["result"]["resulting_row_fingerprint"]
+    if len(rows) != 1:
+        return True
+    if receipt["result"]["status"] == "unconfirmed":
+        return type(rows[0]["user_confirmed"]) is not int or rows[0]["user_confirmed"] != 0
+    return fingerprint(row_content(rows[0])) != receipt["result"]["resulting_row_fingerprint"]
 
 
 def record_legacy_inventory(conn: sqlite3.Connection, originals: list[dict], *, include_unconfirmed: bool = False) -> None:
@@ -153,6 +163,7 @@ def prepare_review(conn: sqlite3.Connection, *, tenant_id: str, profile_id: str)
                           and not key.startswith("_"))
         result.append({"current": row, "original": receipt["result"]["original"],
                        "status": "pending_review", "conflict": duplicates != 1 or conflicting,
+                       **({"reason": "confirmation_authority_changed"} if receipt["result"]["status"] == "unconfirmed" else {}),
                        "token": fingerprint({"rows": rows, "version": list(version) if version else None,
                                              "event_id": receipt["event_id"]})})
     history = conn.execute("SELECT entity_ref,payload_json FROM job_events WHERE tenant_id=? AND event_type='LegacyEvidenceReviewRecorded' AND entity_kind=? ORDER BY event_id DESC", (tenant_id, ENTITY_KIND))

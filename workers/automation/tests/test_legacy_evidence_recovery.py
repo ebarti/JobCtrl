@@ -15,7 +15,7 @@ from typer.testing import CliRunner
 from jobctrl.infrastructure.migrations.legacy_to_v15_execute import execute_legacy_to_v15_candidate
 from jobctrl.infrastructure.migrations.schema_v12 import create_exact_v12_schema
 from jobctrl.infrastructure.profile.legacy_evidence import (
-    LegacyEvidenceReviewError, decide_review, evidence_rows, prepare_review,
+    LegacyEvidenceReviewError, decide_review, evidence_rows, prepare_review, requires_review,
 )
 from jobctrl.infrastructure.profile.legacy_evidence_recovery import inventory_recovery
 from tests.test_legacy_evidence_preservation import seed_evidence
@@ -72,6 +72,34 @@ def test_recovery_retains_original_confirmation_history_and_never_auto_confirms(
         assert changed == {**current[0], "user_confirmed": 1}
         assert len(conn.execute("SELECT * FROM job_events").fetchall()) == len(events) + 1
     assert pair_bytes(pair) == before
+
+
+def test_backup_zero_does_not_authorize_current_confirmation_without_bound_human_review(tmp_path):
+    pair, live = paired_workspace(tmp_path)
+    before_pair = pair_bytes(pair)
+    with sqlite3.connect(live) as conn:
+        conn.execute("UPDATE candidate_profile_achievement_evidence SET user_confirmed=1 WHERE evidence_id='unconfirmed-control'")
+        conn.commit()
+        current = evidence_rows(conn)
+        inventory_recovery(conn, pair)
+        assert evidence_rows(conn) == current
+        assert requires_review(conn, "local", "default", "role", "unconfirmed-control") is True
+        item = next(item for item in prepare_review(conn, tenant_id="local", profile_id="default") if item["current"]["evidence_id"] == "unconfirmed-control")
+        assert item["original"]["user_confirmed"] == 0
+        assert item["current"]["user_confirmed"] == 1
+        assert item["reason"] == "confirmation_authority_changed"
+        stale_token = item["token"]
+        conn.execute("UPDATE candidate_profiles SET version=version+1")
+        conn.commit()
+        with pytest.raises(LegacyEvidenceReviewError):
+            decide_review(conn, tenant_id="local", profile_id="default", entry_id="role", evidence_id="unconfirmed-control", token=stale_token, decision="confirm")
+        item = next(item for item in prepare_review(conn, tenant_id="local", profile_id="default") if item["current"]["evidence_id"] == "unconfirmed-control")
+        decide_review(conn, tenant_id="local", profile_id="default", entry_id="role", evidence_id="unconfirmed-control", token=item["token"], decision="confirm")
+        assert requires_review(conn, "local", "default", "role", "unconfirmed-control") is False
+        assert evidence_rows(conn) == current
+        inventory_recovery(conn, pair)
+        assert requires_review(conn, "local", "default", "role", "unconfirmed-control") is False
+    assert pair_bytes(pair) == before_pair
 
 
 @pytest.mark.parametrize("mutation", ["edit", "delete", "duplicate"])

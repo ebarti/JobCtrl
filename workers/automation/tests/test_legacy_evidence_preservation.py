@@ -17,6 +17,7 @@ from jobctrl.infrastructure.migrations.schema_v12 import create_exact_v12_schema
 from jobctrl.infrastructure.migrations.schema_v13 import upgrade_exact_v12_schema_to_v13
 from jobctrl.infrastructure.profile.legacy_evidence import (
     LegacyEvidenceReviewError, decide_review, evidence_rows, prepare_review, record_legacy_inventory,
+    requires_review,
 )
 from jobctrl.infrastructure.profile.sqlite_repository import SqliteProfileRepository
 from tests.v6_migration_fixture import create_shipped_v6_database
@@ -169,3 +170,89 @@ def test_malformed_legacy_confirmation_is_unknown_and_damaged_inventory_cannot_g
     conn.execute("UPDATE job_events SET payload_json=json_set(payload_json,'$.result.status','unconfirmed') WHERE entity_ref=?", ('["default","role","role_bullet_1"]',))
     with pytest.raises(LegacyEvidenceReviewError, match="invalid_history"):
         prepare_review(conn, tenant_id="local", profile_id="default")
+
+
+@pytest.mark.parametrize("confidence", [0.0, 1e-7, 1e-6, 1 / 3, 1.0, 5e-324])
+def test_review_preserves_exact_confidence_value_and_binds_changed_values(confidence):
+    conn = sqlite3.connect(":memory:")
+    create_exact_v12_schema(conn)
+    seed_evidence(conn)
+    conn.execute("UPDATE candidate_profile_achievement_evidence SET claim_confidence=? WHERE evidence_index=0", (confidence,))
+    conn.commit()
+    upgrade_exact_v12_schema_to_v13(conn)
+    before = evidence_rows(conn)[0]
+    item = prepare_review(conn, tenant_id="local", profile_id="default")[0]
+    decide_review(conn, tenant_id="local", profile_id="default", entry_id="role", evidence_id="role_bullet_1", token=item["token"], decision="confirm")
+    assert evidence_rows(conn)[0] == before
+    assert requires_review(conn, "local", "default", "role", "role_bullet_1") is False
+    conn.execute("UPDATE candidate_profile_achievement_evidence SET claim_confidence=0.75 WHERE evidence_index=0")
+    assert requires_review(conn, "local", "default", "role", "role_bullet_1") is True
+
+
+@pytest.mark.parametrize("confidence", [float("inf"), float("-inf")])
+def test_nonfinite_legacy_confidence_refuses_cutover_and_preserves_originals(confidence):
+    conn = sqlite3.connect(":memory:")
+    create_exact_v12_schema(conn)
+    seed_evidence(conn)
+    conn.execute("UPDATE candidate_profile_achievement_evidence SET claim_confidence=? WHERE evidence_index=2", (confidence,))
+    conn.commit()
+    before = evidence_rows(conn)
+    with pytest.raises(ValueError):
+        upgrade_exact_v12_schema_to_v13(conn)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 12
+    assert evidence_rows(conn) == before
+    assert conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type='LegacyEvidenceReviewRecorded'").fetchone()[0] == 0
+
+
+def test_nan_cannot_replace_a_current_sqlite_confidence_or_its_review_authority():
+    conn = sqlite3.connect(":memory:")
+    create_exact_v12_schema(conn)
+    seed_evidence(conn)
+    upgrade_exact_v12_schema_to_v13(conn)
+    item = prepare_review(conn, tenant_id="local", profile_id="default")[0]
+    decide_review(conn, tenant_id="local", profile_id="default", entry_id="role", evidence_id="role_bullet_1", token=item["token"], decision="confirm")
+    before = evidence_rows(conn)
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE candidate_profile_achievement_evidence SET claim_confidence=? WHERE evidence_index=0", (float("nan"),))
+    conn.rollback()
+    assert evidence_rows(conn) == before
+    assert requires_review(conn, "local", "default", "role", "role_bullet_1") is False
+
+
+@pytest.mark.parametrize("confirmation", [1, 2])
+def test_original_unconfirmed_inventory_never_authorizes_current_confirmation_without_human_review(confirmation):
+    conn = sqlite3.connect(":memory:")
+    create_exact_v12_schema(conn)
+    seed_evidence(conn)
+    upgrade_exact_v12_schema_to_v13(conn)
+    # Resolve every old pending record, leaving the known original-zero control.
+    while items := prepare_review(conn, tenant_id="local", profile_id="default"):
+        item = items[0]
+        decide_review(conn, tenant_id="local", profile_id="default", entry_id="role", evidence_id=item["current"]["evidence_id"], token=item["token"], decision="reject")
+    conn.execute("UPDATE candidate_profile_achievement_evidence SET user_confirmed=? WHERE evidence_id='unconfirmed-control'", (confirmation,))
+    conn.commit()
+    assert requires_review(conn, "local", "default", "role", "unconfirmed-control") is True
+    item = prepare_review(conn, tenant_id="local", profile_id="default")[0]
+    assert item["original"]["user_confirmed"] == 0
+    assert item["reason"] == "confirmation_authority_changed"
+    with pytest.raises(DeterminationFailure, match="legacy_evidence_review_required"):
+        profile_sources(_snapshot(conn))
+    decide_review(conn, tenant_id="local", profile_id="default", entry_id="role", evidence_id="unconfirmed-control", token=item["token"], decision="confirm")
+    assert requires_review(conn, "local", "default", "role", "unconfirmed-control") is False
+    assert "unconfirmed-control" in {source.source_id for source in profile_sources(_snapshot(conn))}
+
+
+def test_duplicate_current_zero_rows_cannot_bypass_original_unconfirmed_inventory():
+    conn = sqlite3.connect(":memory:")
+    create_exact_v12_schema(conn)
+    seed_evidence(conn)
+    upgrade_exact_v12_schema_to_v13(conn)
+    columns = [row[1] for row in conn.execute("PRAGMA table_info(candidate_profile_achievement_evidence)")]
+    selected = ["99" if column == "evidence_index" else column for column in columns]
+    conn.execute(f"INSERT INTO candidate_profile_achievement_evidence SELECT {','.join(selected)} FROM candidate_profile_achievement_evidence WHERE evidence_id='unconfirmed-control'")
+    conn.commit()
+    assert requires_review(conn, "local", "default", "role", "unconfirmed-control") is True
+    item = next(item for item in prepare_review(conn, tenant_id="local", profile_id="default") if item["current"]["evidence_id"] == "unconfirmed-control")
+    assert item["conflict"] is True
+    with pytest.raises(LegacyEvidenceReviewError):
+        decide_review(conn, tenant_id="local", profile_id="default", entry_id="role", evidence_id="unconfirmed-control", token=item["token"], decision="confirm")

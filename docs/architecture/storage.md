@@ -621,6 +621,15 @@ boolean, advances the profile version and appends history. Its resulting row
 fingerprint prevents later changed cells from reusing that authority. Review
 never restores strength/confidence or text from an old backup.
 
+The row fingerprint encodes only `claim_confidence` as a big-endian IEEE 754
+binary64 hex string. Original/current cells and review history retain their
+numeric values; Python and TypeScript decimal/exponent formatting cannot change
+authority for an unchanged value. Nonfinite confidence cannot publish a human
+review. An original-zero inventory clears review only while the current row is
+unique and still has exact integer-zero confirmation. Later confirmed, malformed
+or duplicate rows stay visibly pending; current confirmation drift needs a new
+fingerprint-bound human decision, including during paired-backup recovery.
+
 Already-migrated recovery validates a native `pair.json` and both immutable,
 private database files before recording originals. It rechecks backup bytes
 before commit, preserves newer edits/deletions, exposes duplicate/missing/source

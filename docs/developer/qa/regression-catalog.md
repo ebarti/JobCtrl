@@ -563,7 +563,14 @@ paired-backup/file bytes. Use only owned synthetic workspaces. The recovery path
 must not treat independently captured app/Temporal/files as a native pair or
 infer authorship from values. Verify the Python-written private journal through
 real Profile HTTP, the Profile/Evidence Map warning, excluded interview choices
-and the SSE private-source canary. No semantic eval corpus or real user backup
+and the SSE private-source canary. Include confidence `0`, `1e-7`, `1e-6`, a
+fraction, `1` and a subnormal value through actual Python review publication and
+TypeScript reads; unchanged binary64 values must agree and changed values must
+invalidate that binding. Nonfinite values refuse without replacing cells or
+history. An original-zero inventory must not authorize a later current one,
+malformed flag or duplicate; prove canonical-source refusal, visible pending
+state, stale-token refusal and a new explicit human decision, including
+backup-zero/current-one recovery. No semantic eval corpus or real user backup
 belongs in these checks.
 
 For availability model/network budgets, run locked

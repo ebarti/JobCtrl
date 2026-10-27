@@ -41,14 +41,22 @@ export function requiresLegacyEvidenceReview(
       throw new Error("legacy_evidence_review_invalid_history");
     }
   }
-  if (result.status === "unconfirmed") return false;
   if (result.status === "pending_review") return true;
   const rows = db.prepare(`SELECT * FROM candidate_profile_achievement_evidence
     WHERE tenant_id=? AND profile_id=? AND entry_id=? AND evidence_id=?`)
     .all(tenantId, profileId, entryId, evidenceId) as Array<Record<string, unknown>>;
   if (rows.length !== 1) return true;
   const current = rows[0]!;
+  if (result.status === "unconfirmed") return typeof current.user_confirmed !== "number" || current.user_confirmed !== 0;
+  const confidence = current.claim_confidence;
+  if (typeof confidence !== "number" || !Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
+    throw new Error("legacy_evidence_review_invalid_confidence");
+  }
+  // Match Python's typed big-endian binary64 field encoding without changing
+  // SQLite values or depending on either runtime's JSON exponent formatting.
+  const confidenceBytes = Buffer.alloc(8);
+  confidenceBytes.writeDoubleBE(confidence);
   const content = Object.fromEntries(Object.keys(current).sort().filter((key) => key !== "evidence_index")
-    .map((key) => [key, current[key]]));
+    .map((key) => [key, key === "claim_confidence" ? `binary64:${confidenceBytes.toString("hex")}` : current[key]]));
   return createHash("sha256").update(JSON.stringify(content)).digest("hex") !== result.resulting_row_fingerprint;
 }
