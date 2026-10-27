@@ -1463,10 +1463,8 @@ func backup(ctx launchContext, args []string, output io.Writer) error {
 	} else if !errors.Is(stateErr, os.ErrNotExist) {
 		return stateErr
 	}
-	if wasRunning {
-		if err := stop(ctx); err != nil {
-			return fmt.Errorf("quiesce runtime for coherent paired backup: %w", err)
-		}
+	if err := stop(ctx); err != nil {
+		return fmt.Errorf("quiesce runtime for coherent paired backup: %w", err)
 	}
 	pair, err := snapshotPairTo(ctx, active.Receipt, directory)
 	if errors.Is(err, errUnresolvedDatabasePublication) {

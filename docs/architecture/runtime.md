@@ -138,9 +138,14 @@ group or unverifiable component record blocks restart and prevents the
 launcher from reporting a verified stop, even if the recorded leader has
 exited. Group occupancy alone does not establish ownership or authorize a
 signal: group signals require the recorded leader's identity to match. Status
-can report an unresolved group as orphaned. The registry does not identify a
-descendant that has left its recorded group; group emptiness alone is not proof
-that such a process has exited. The P6 workflow now makes Developer ID signing,
+can report an unresolved group as orphaned. Native launches also stamp an instance-specific ownership identity into their
+inherited environment. Shutdown enumerates same-account processes, binds matches
+to kernel PID/start identities, and retains verified live descendants before
+requesting supervisor shutdown. This finds detached/reparented provider and
+browser children after their original leader or process group has exited.
+Older native payloads can be identified by their exact bundled workspace/payload
+bindings. Names and substring matches never authorize a signal.
+The P6 workflow now makes Developer ID signing,
 notarization, and authenticated publication mandatory for promotion. Public
 artifacts pass those gates before the stable release pointer or Homebrew formula
 can reference them.
@@ -157,9 +162,11 @@ ownership proof.
 When the verified supervisor is still alive, the stop command asks it to perform
 component shutdown first, then acquires the instance lock and reloads its
 registry after exit. A changed generation, unverifiable live supervisor or a
-supervisor that does not finish within the bounded wait blocks stop rather than
-allowing a second concurrent component shutdown or stopping a newly started
-runtime.
+changed supervisor blocks unsafe signals. After the clean-shutdown deadline,
+verified leftovers receive KILL and the launcher waits for exit, then verifies
+the instance-wide census before recording a successful stop. A successful cleanup
+allows normal restart. An actual inspection or termination failure reports the
+problem and preserves the registry for retry.
 When the worker receives SIGTERM during its run loop, it requests Temporal
 shutdown, fences new blocking activity submissions and waits for retained
 blocking executor work before closing provider resources. Startup and browser

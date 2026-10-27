@@ -850,3 +850,10 @@ See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determ
 ### Optional company briefing commands
 
 `jobctrl company-briefing configure JOB_ID --company-url URL --source URL --confirm-identity` confirms a company link and selected public sources. `company-briefing refresh JOB_ID --allow-public-fetch` refreshes explicitly; `--force` re-fetches within the freshness window. `company-briefing show JOB_ID` reads the saved result. All support `--json`. Job Detail, Interviews and the existing digest share the result; see [Company Briefings](company-briefings.md) for bounds, stale state and retention.
+
+Native `jobctrl stop` first requests clean shutdown, then kills verified
+instance-owned leftovers that exceed the timeout and waits for exit. Successful
+cleanup permits normal restart. If cleanup fails, inspect the reported process
+or permission problem, stop the remaining JobCtrl processes and retry. Rebooting
+is a last-resort troubleshooting option when those processes cannot be stopped;
+it is not part of normal stop, backup, update or restart.
