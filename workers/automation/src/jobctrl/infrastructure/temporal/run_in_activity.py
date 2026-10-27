@@ -25,7 +25,7 @@ server-dispatched retry cannot queue behind the provider call being cancelled.
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 import logging
 import threading
 from typing import Callable, TypeVar
@@ -37,12 +37,12 @@ from jobctrl.infrastructure.workflow_run_context import carry_workflow_run_conte
 _T = TypeVar("_T")
 log = logging.getLogger(__name__)
 _ACTIVITY_EXECUTOR: ThreadPoolExecutor | None = None
-# One (executor, abandoned task) pair per rotation. The task is the future of
-# the blocking call that ignored cancellation; once it finishes, the retired
-# generation has served its purpose and the entry is pruned on the next
-# rotation instead of accumulating until worker shutdown.
+# One (executor, abandoned task) pair per rotation. A retired executor remains
+# owned while any of its underlying submitted calls is still running.
 _RETIRED_ACTIVITY_EXECUTORS: list[tuple[ThreadPoolExecutor, asyncio.Future]] = []
 _ACTIVITY_EXECUTOR_LOCK = threading.Lock()
+_ACTIVITY_EXECUTOR_FUTURES: dict[ThreadPoolExecutor, set[Future]] = {}
+_ACTIVITY_DRAINING = False
 
 
 class ActivityThreadPoolExecutor(ThreadPoolExecutor):
@@ -68,9 +68,10 @@ def _run_activity_with_connection_cleanup(fn, args, kwargs):
 
 def set_activity_executor(executor: ThreadPoolExecutor | None) -> None:
     """Set the bounded executor owned by the Temporal worker."""
-    global _ACTIVITY_EXECUTOR
+    global _ACTIVITY_EXECUTOR, _ACTIVITY_DRAINING
     with _ACTIVITY_EXECUTOR_LOCK:
         _ACTIVITY_EXECUTOR = executor
+        _ACTIVITY_DRAINING = False
 
 
 def shutdown_activity_executors() -> None:
@@ -92,6 +93,43 @@ def shutdown_activity_executors() -> None:
         executor.shutdown(wait=False, cancel_futures=True)
 
 
+async def drain_activity_executors() -> None:
+    """Fence new helper work and join every retained blocking executor.
+
+    This drains Python threads only; it is not evidence that detached child
+    processes have exited. The native launcher must not use it as such.
+    """
+    global _ACTIVITY_EXECUTOR, _ACTIVITY_DRAINING
+    with _ACTIVITY_EXECUTOR_LOCK:
+        _ACTIVITY_DRAINING = True
+        executors = list(dict.fromkeys(
+            [executor for executor in [_ACTIVITY_EXECUTOR, *(
+                retired for retired, _task in _RETIRED_ACTIVITY_EXECUTORS
+            )] if executor is not None]
+        ))
+        _ACTIVITY_EXECUTOR = None
+    # Joining can take as long as a blocking provider call. Keep the event loop
+    # alive, and finish joining before propagating cancellation to cleanup.
+    async def join() -> None:
+        for executor in executors:
+            await asyncio.to_thread(executor.shutdown, wait=True, cancel_futures=True)
+
+    join_task = asyncio.create_task(join())
+    canceled = False
+    while not join_task.done():
+        try:
+            await asyncio.shield(join_task)
+        except asyncio.CancelledError:
+            canceled = True
+    join_task.result()
+    with _ACTIVITY_EXECUTOR_LOCK:
+        _RETIRED_ACTIVITY_EXECUTORS.clear()
+        for executor in executors:
+            _ACTIVITY_EXECUTOR_FUTURES.pop(executor, None)
+    if canceled:
+        raise asyncio.CancelledError
+
+
 def _activity_executor() -> ThreadPoolExecutor | None:
     with _ACTIVITY_EXECUTOR_LOCK:
         return _ACTIVITY_EXECUTOR
@@ -100,16 +138,17 @@ def _activity_executor() -> ThreadPoolExecutor | None:
 def _prune_retired_activity_executors_locked() -> None:
     """Drop retired generations whose abandoned task has since finished.
 
-    Callers must hold ``_ACTIVITY_EXECUTOR_LOCK``. A finished task means the
-    stuck blocking call returned, so the shut-down executor only has winding
-    threads left; releasing our reference lets it be collected instead of
-    growing one entry per cancellation until worker shutdown.
+    Callers must hold ``_ACTIVITY_EXECUTOR_LOCK``. One rotation-triggering task
+    may finish before other calls in the same executor, so check all tracked
+    underlying futures before releasing its reference.
     """
 
     _RETIRED_ACTIVITY_EXECUTORS[:] = [
         (executor, task)
         for executor, task in _RETIRED_ACTIVITY_EXECUTORS
-        if not task.done()
+        if not task.done() or any(
+            not future.done() for future in _ACTIVITY_EXECUTOR_FUTURES.get(executor, ())
+        )
     ]
 
 
@@ -177,17 +216,35 @@ async def run_blocking_with_heartbeat(
     if heartbeat_supported:
         activity.heartbeat(starting_message)
     loop = asyncio.get_running_loop()
-    blocking_executor = _activity_executor()
+    # Submit under the same lock as the drain fence. Keep the actual concurrent
+    # futures: cancelling an asyncio wrapper is not proof its thread returned.
     # ``run_in_executor`` does not carry this coroutine's context into the
     # worker thread. Carry canonical workflow ownership and OTel context so
     # durable events and child model/stage spans retain the submitting run.
     # Direct activity runners may use asyncio's default pool rather than the
     # production ActivityThreadPoolExecutor. Enforce the same connection
     # boundary there, before an idle thread can retain a failed writer.
-    task = loop.run_in_executor(
-        blocking_executor,
-        carry_workflow_run_context(lambda: _run_activity_with_connection_cleanup(fn, (), {})),
-    )
+    call = carry_workflow_run_context(lambda: _run_activity_with_connection_cleanup(fn, (), {}))
+    with _ACTIVITY_EXECUTOR_LOCK:
+        if _ACTIVITY_DRAINING:
+            raise RuntimeError("activity executor is draining")
+        blocking_executor = _ACTIVITY_EXECUTOR
+        if blocking_executor is not None:
+            future = blocking_executor.submit(call)
+            _ACTIVITY_EXECUTOR_FUTURES.setdefault(blocking_executor, set()).add(future)
+    if blocking_executor is None:
+        task = loop.run_in_executor(None, call)
+    else:
+        def forget(done: Future) -> None:
+            with _ACTIVITY_EXECUTOR_LOCK:
+                pending = _ACTIVITY_EXECUTOR_FUTURES.get(blocking_executor)
+                if pending is not None:
+                    pending.discard(done)
+                    if not pending:
+                        _ACTIVITY_EXECUTOR_FUTURES.pop(blocking_executor, None)
+
+        future.add_done_callback(forget)
+        task = asyncio.wrap_future(future, loop=loop)
     activity_label = activity_name or activity.info().activity_type
     try:
         while True:
@@ -278,4 +335,5 @@ __all__ = [
     "run_blocking_with_heartbeat",
     "set_activity_executor",
     "shutdown_activity_executors",
+    "drain_activity_executors",
 ]

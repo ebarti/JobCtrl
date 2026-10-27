@@ -139,6 +139,11 @@ waiting for HTTP requests and process-owned JSON-RPC children to drain. A close
 or drain timeout is reported as a failed shutdown. This direct API shutdown
 does not certify native runtime quiescence: the launcher may signal the whole
 component group, and detached descendants need independent ownership proof.
+When the worker receives SIGTERM during its run loop, it requests Temporal
+shutdown, fences new blocking activity submissions and waits for retained
+blocking executor work before closing provider resources. Startup and browser
+preflight precede that handler. This thread drain does not prove that detached
+provider or browser processes have exited.
 
 Homebrew caches only prefix-owned release resources. Its build sandbox verifies
 strict Developer ID certificate-chain requirements for the launcher, installer
