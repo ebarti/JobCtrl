@@ -73,6 +73,13 @@ def _isolate_apply_tests_from_host_keychain(monkeypatch: pytest.MonkeyPatch) -> 
 
     from jobctrl import config
 
+    # These command/stream fakes have no OS process handle or launch session.
+    # Their default cleanup port is successful; ownership failures are injected
+    # explicitly below and real children are exercised in browser-owner QA.
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.process_ownership.terminate_owned_process",
+        lambda _process, *, launched_pid: None,
+    )
     monkeypatch.setattr(config, "_KEYCHAIN_FALLBACK_DIAGNOSTICS", ())
     monkeypatch.setattr(
         claude_code_cli,
@@ -735,9 +742,10 @@ def test_timeout_kills_only_registered_claude_process_tree(monkeypatch, tmp_path
         return next(times, 1.0)
 
     def fake_kill(_proc, *, launched_pid: int) -> None:
-        killed.append(launched_pid)
         assert _HangingPopen.last is not None
-        _HangingPopen.last.returncode = -9
+        if _HangingPopen.last.returncode is None:
+            killed.append(launched_pid)
+            _HangingPopen.last.returncode = -9
 
     monkeypatch.setattr(claude_code_cli.time, "monotonic", fake_monotonic)
     monkeypatch.setattr("jobctrl.infrastructure.process_ownership.terminate_owned_process", fake_kill)
@@ -906,3 +914,23 @@ def test_failed_scoped_cleanup_retains_exact_agent_owner(monkeypatch) -> None:
     finally:
         claude_code_cli._unregister_active_claude_process(41, first)
         claude_code_cli._unregister_active_claude_process(42, peer)
+
+
+def test_exited_agent_does_not_discard_unverified_child_ownership(monkeypatch) -> None:
+    proc = _HangingPopen(["claude"])
+    proc.returncode = 0
+    captured = []
+
+    def unresolved(process, *, launched_pid):
+        captured.append((process, launched_pid))
+        raise RuntimeError("launch-session descendant exit remains unverified")
+
+    monkeypatch.setattr("jobctrl.infrastructure.process_ownership.terminate_owned_process", unresolved)
+    claude_code_cli._register_active_claude_process(43, proc)
+    try:
+        with pytest.raises(RuntimeError, match="could not verify exit"):
+            kill_active_claude_processes(worker_ids=(43,))
+        assert captured == [(proc, proc.pid)]
+        assert claude_code_cli._ACTIVE_CLAUDE_PROCS[43] is proc
+    finally:
+        claude_code_cli._unregister_active_claude_process(43, proc)

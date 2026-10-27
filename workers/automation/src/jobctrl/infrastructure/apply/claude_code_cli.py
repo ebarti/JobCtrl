@@ -159,8 +159,7 @@ def kill_active_claude_processes(*, worker_ids: tuple[int, ...] | None = None) -
         if worker_ids is not None and worker_id not in worker_ids:
             continue
         try:
-            if proc.poll() is None:
-                _kill_process_tree_if_alive(proc)
+            _kill_process_tree_if_alive(proc)
             _unregister_active_claude_process(worker_id, proc)
         except Exception:
             log.exception("Apply agent cleanup incomplete for worker %s", worker_id)
@@ -444,6 +443,7 @@ class ClaudeCodeCliAdapter:
 
             proc.wait(timeout=5)
             returncode = proc.returncode
+            _kill_process_tree_if_alive(proc)
             _unregister_active_claude_process(worker_id, proc)
             proc = None
 
@@ -530,8 +530,7 @@ class ClaudeCodeCliAdapter:
             raise
         finally:
             if proc is not None:
-                if proc.poll() is None:
-                    _kill_process_tree_if_alive(proc)
+                _kill_process_tree_if_alive(proc)
                 _unregister_active_claude_process(worker_id, proc)
             try:
                 mcp_config_path.unlink(missing_ok=True)
