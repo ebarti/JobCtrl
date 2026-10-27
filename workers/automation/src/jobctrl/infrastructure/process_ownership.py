@@ -54,7 +54,20 @@ def terminate_owned_process(process: subprocess.Popen, *, launched_pid: int) -> 
             "Windows Apply descendant exit verification is unavailable; "
             "the original root handle exited but ownership is retained"
         )
-    _wait_for_session_exit(launched_pid)
+    verify_session_exit(launched_pid)
+
+
+def verify_session_exit(session_id: int) -> None:
+    """Verify an old session has no live members; never signal or adopt it.
+
+    Recovery callers must independently validate their recorded session ID.
+    Any occupied, changing or unavailable observation keeps recovery unresolved.
+    """
+    if type(session_id) is not int or session_id <= 0:
+        raise ProcessOwnershipError("Apply process session identity must be a positive integer")
+    if platform.system() not in {"Darwin", "Linux"}:
+        raise ProcessOwnershipError("Apply process session exit verification is unavailable on this platform")
+    _wait_for_session_exit(session_id)
 
 
 # PID -> (kernel birth/generation, session, active, process group).

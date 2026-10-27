@@ -47,7 +47,7 @@ def browser_seam(tmp_path, monkeypatch):
     for process in children:
         if process.poll() is None:
             process.kill()
-        process.wait(timeout=5)
+        popen.wait(process, timeout=5)
     with chrome._chrome_lock:
         for worker_id, process in tuple(chrome._chrome_procs.items()):
             if process in children:
@@ -392,9 +392,6 @@ def test_live_session_child_blocks_cleanup_after_root_exit_then_retry_settles(
     browser_seam, tmp_path, monkeypatch, root_reaped, separate_group,
 ):
     import time
-    from jobctrl.infrastructure import process_ownership
-
-    monkeypatch.setattr(process_ownership, "_SESSION_EXIT_TIMEOUT_SECONDS", 0.15)
     control = launch(201)
     selected_peer = launch(203)
     port_file = tmp_path / "surviving-child-port"
@@ -655,3 +652,28 @@ while True:
         while len(list(state.glob("*.done"))) != len(list(state.glob("*.json"))) and time.monotonic() < deadline:
             time.sleep(0.002)
         assert len(list(state.glob("*.done"))) == len(list(state.glob("*.json")))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX public read-only session proof")
+def test_public_session_exit_verification_never_signals_or_mutates_owner(browser_seam, monkeypatch):
+    from jobctrl.infrastructure import process_ownership
+
+    process = launch(501)
+    monkeypatch.setattr(os, "killpg", lambda *_: pytest.fail("read-only session proof cannot signal"))
+    with pytest.raises(process_ownership.ProcessOwnershipError, match="still occupied"):
+        process_ownership.verify_session_exit(process.pid)
+    assert process.poll() is None
+    assert chrome._chrome_procs[501] is process
+    process.kill()
+    process.wait(timeout=5)
+    process_ownership.verify_session_exit(process.pid)
+    assert chrome._chrome_procs[501] is process
+    assert chrome._chrome_identities[501] == (process, process.pid)
+
+
+@pytest.mark.parametrize("session_id", [0, -1, True, "123"])
+def test_public_session_exit_verification_rejects_invalid_identity(session_id):
+    from jobctrl.infrastructure import process_ownership
+
+    with pytest.raises(process_ownership.ProcessOwnershipError, match="positive integer"):
+        process_ownership.verify_session_exit(session_id)
