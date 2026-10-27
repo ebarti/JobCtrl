@@ -609,6 +609,8 @@ class SqliteJobRepository:
         the existing owner before any candidate row becomes visible.
         """
 
+        if self._result_budget is not None and observation.source_id != self._result_budget_source_id:
+            raise ValueError("canonical observation source does not match discovery result budget")
         owns_transaction = not self._conn.in_transaction
         savepoint = "claim_new_job"
         if owns_transaction:

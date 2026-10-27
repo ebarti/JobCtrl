@@ -731,10 +731,11 @@ def test_source_planning_does_not_run_hygiene_before_sources(
         "_plan_discovery_schedule",
         lambda *_args, **_kwargs: runner.DiscoverySchedule(()),
     )
-    monkeypatch.setattr(runner, "_pipeline_job_count", lambda: 0)
-    pass
 
-    plan = runner.plan_discovery_source_families(limit=500)
+    from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
+    plan = runner.plan_discovery_source_families(
+        limit=500, discovery_execution=DiscoveryExecutionRef("local", "owned-plan", "owned-run"),
+    )
 
     assert plan["families"] == ["jobspy", "workday", "smartextract"]
 

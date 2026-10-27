@@ -97,6 +97,21 @@ Key facts about the four activities:
   placeholder like `failed: failed`. With `limit > 0` the cap is a **new-job
   budget** — rediscoveries record observations but do not consume the budget, so
   exact-query duplicates never starve later recall queries or sources.
+  Bounded runs share tenant/workflow/run-scoped `DiscoveryNewJobAdmitted`
+  receipts across broad boards, ATS APIs, Workday, Smart Extract and archived
+  captures. Every canonical claim checks the complete frozen source plan and
+  writes its receipt under the same SQLite writer transaction as the new job,
+  source observation and execution membership. Independent connections therefore
+  arbitrate the final slot atomically. Global Jobs row-count changes carry no
+  admission authority. Family progress counts only that family's receipts;
+  reaching its source cap leaves the other sources' allowance available.
+  Zero remaining capacity refuses a new canonical insert, while an explicitly
+  unbounded user request has no bounded admission authority. Recovery may still
+  finish an already-admitted capture at the cap before fresh acquisition stops.
+  Older pending bounded activity inputs without a frozen execution plan fail
+  closed with a restart-after-upgrade configuration error before acquisition or
+  canonical persistence. Completed activity history replays unchanged; no plan
+  or admission receipts are reconstructed from historical job counts.
 
   Cancellation prevents further ingestion. The broad-board family persists source events before processing, so retries drain unfinished capture under the same execution/lease and exact identity fences without a new intake model call.
 

@@ -154,6 +154,22 @@ def test_foreign_tenant_cannot_use_local_budget(owned):
     assert totals(owned) == (0, 0, 0)
 
 
+def test_unrelated_insert_does_not_consume_execution_allowance(owned):
+    allowance = budget(owned)
+    SqliteJobRepository(owned).save(_job("https://example.test/jobs/unrelated"))
+    assert not allowance.run_exhausted()
+    assert claim(prepared(owned, allowance)) is None
+    assert allowance.counts() == {SOURCE: 1}
+
+
+def test_literal_zero_budget_refuses_new_canonical_job(owned):
+    allowance = budget(owned, limit=0)
+    assert allowance.run_exhausted()
+    with pytest.raises(DiscoveryResultLimitReached):
+        claim(prepared(owned, allowance))
+    assert totals(owned) == (0, 0, 0)
+
+
 def test_malformed_owned_receipt_fails_closed_and_foreign_run_does_not_consume(owned):
     allowance = budget(owned)
     assert claim(prepared(owned, allowance)) is None

@@ -1089,6 +1089,23 @@ sentence punctuation or separated by commas.
 
 For Discovery, save literal target settings and plan a run without an interpretation receipt or second approval. Inspect the actual JobStreaming query/location/remote parameters and each provider’s supported filters; capability warnings are not currently displayed in JobCtrl. Structurally valid fetched results must ingest without an extra model gate, even when they do not lexically resemble the query. Exact user-authored title exclusions retain durable filtered receipts. Exercise capture/ack interruption, lease fencing, retry idempotency and limits. Full-posting interpretation/scoring retain model authority and source provenance. Historical native cutovers preserve authored cells, canonical jobs, accepted files and raw captures.
 
+For execution result limits, run locked
+`pytest tests/test_discovery_result_budget.py tests/test_discovery_family_result_budget.py tests/test_jobstreaming_source_result_budget.py`
+and `discovery-transactions`. Exercise actual family orchestration and real
+Temporal plan/source activities plus replay with controlled provider seams in
+owned file-backed SQLite workspaces. Race ATS and Workday through independent
+connections for the final slot; repeat attempts and verify exactly one canonical
+insert, receipt and execution membership. Cover each family's exact/under limit,
+archived recovery using the last slot before fresh fetch, per-source cap handoff,
+foreign tenant/run and unrelated-job controls, literal exhausted zero, deliberate
+unbounded requests, canonical deduplication, receipt/lineage rollback and
+search-unit checkpoint interruption. Counts must come from the exact execution's
+durable admission receipts; a global Jobs delta is never evidence of exhaustion.
+Old bounded payloads missing the frozen plan/execution or explicitly disabling
+its authority must refuse before source planning, writes or acknowledgement,
+while current direct bounded calls default to the safe authority and completed
+workflow histories still replay.
+
 For actual offers, drive the per-job offer HTTP/client entry and rendered
 Application outcomes panel without interview prep. Verify null equity,
 benefits/deadlines and explicit unknown currency/time base, source confirmation,

@@ -35,8 +35,10 @@ class DiscoveryResultBudget:
         start_count: int,
         source_limits: dict[str, int],
     ):
-        if type(limit) is not int or limit <= 0 or type(start_count) is not int or start_count < 0:
-            raise ValueError("explicit result budget requires a positive limit and recorded starting count")
+        # An explicit zero is exhausted. Unbounded user requests do not create
+        # a budget object; never reinterpret an exhausted allowance as unbounded.
+        if type(limit) is not int or limit < 0 or type(start_count) is not int or start_count < 0:
+            raise ValueError("explicit result budget requires a nonnegative limit and recorded starting count")
         if any(not key or type(cap) is not int or cap < 0 for key, cap in source_limits.items()):
             raise ValueError("source result budgets must be nonnegative integers")
         self.conn, self.execution, self.limit, self.start_count = conn, execution, limit, start_count
@@ -74,11 +76,9 @@ class DiscoveryResultBudget:
         return self.counts()[source_id] >= self.source_limits[source_id]
 
     def run_exhausted(self) -> bool:
-        total = self.conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
         counts = self.counts()
         return (
-            total - self.start_count >= self.limit
-            or sum(counts.values()) >= self.limit
+            sum(counts.values()) >= self.limit
             or all(counts[key] >= cap for key, cap in self.source_limits.items())
         )
 
@@ -86,13 +86,11 @@ class DiscoveryResultBudget:
         """Called after INSERT, under its writer transaction, before publication."""
         if not self.conn.in_transaction:
             raise RuntimeError("discovery budget requires the canonical insert transaction")
-        total = self.conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
         counts = self.counts()
         if source_id not in self.source_limits:
             raise ValueError("source is outside the frozen result budget")
         if (
-            total - self.start_count > self.limit
-            or sum(counts.values()) >= self.limit
+            sum(counts.values()) >= self.limit
             or counts[source_id] >= self.source_limits[source_id]
         ):
             raise DiscoveryResultLimitReached("Discovery result budget reached")
