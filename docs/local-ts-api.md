@@ -412,6 +412,11 @@ smallest safe query-key set. See
 [Operations & Events](api/operations-and-events.md#server-sent-events) and the
 [frontend realtime architecture](architecture/frontend/realtime.md).
 
+Internal `ArchivedSmartPostingPrepared` receipts retain private captured posting
+bytes for recovery and are excluded entirely from SSE. Capture completion and
+source-owner notifications contain references only; they do not expose that
+private journal body.
+
 ### Request
 
 The browser opens one long-lived `GET` request. A reconnect may include

@@ -296,6 +296,11 @@ uses typed product routes rather than calling arbitrary worker methods.
 
 ## Server-Sent Events
 
+Archived Smart Extract recovery uses private `ArchivedSmartPostingPrepared`
+receipts to retain an interrupted capture. These receipts are not streamed;
+completion/source-owner events contain only references, with no captured source
+body or model envelopes.
+
 `GET /v1/events/stream` tails durable tenant-scoped events and frames them as
 typed Server-Sent Events. The client:
 

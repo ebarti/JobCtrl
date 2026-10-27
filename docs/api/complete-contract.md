@@ -2248,6 +2248,11 @@ point the proxy at a non-default API port.
 
 ## Server-Sent Events — `GET /v1/events/stream`
 
+`ArchivedSmartPostingPrepared` is an internal private receipt and is omitted from
+SSE, including replay. Its captured posting and model envelopes are never part
+of the public stream. Completion and source-owner events contain references
+only. Generic Activity event summaries expose no receipt payload.
+
 The API exposes a Server-Sent Events endpoint that the frontend's
 `SseEventStreamAdapter` (`apps/web/src/shared/adapters/local/`) consumes via
 the browser's native `EventSource`. Per

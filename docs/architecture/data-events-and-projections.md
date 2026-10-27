@@ -353,6 +353,47 @@ feedback and ignores workspace/host reservation churn. Internal lease,
 request and sweep facts do not become user application outcomes. Source closure
 never calls Discovery's policy-deletion routine and cannot emit `JobDeleted`.
 
+## Archived Smart Extract publication
+
+Archived capture recovery persists its qualified posting, determination
+envelopes, capture/source identity and original canonical owner in the private
+`ArchivedSmartPostingPrepared` event receipt, including the original
+`JobDiscovered`, `CanonicalJobIdentityResolved` and `JobSourceObserved` event
+facts and a typed original identity/observation/source context. The receipt
+joins the canonical insert transaction. Recovered events must match that context
+exactly, including native IDs, source/run identity, confidence and observation
+clocks. When the original observation still owns the source generation, recovery
+also joins the canonical identity, observation and owner source records before
+publishing. Damaged event facts never substitute for those sources. Model authority remains the
+three canonical tenant-bound determination envelopes. Retry checks the
+receipt contents and field bindings before using the saved capture, and never
+replaces it with a newly fetched page.
+
+The snapshot/enrichment writes, their existing domain events, accepted progress
+and `ArchivedSmartPostingCompleted` share one publication transaction. An
+existing owner alone cannot authorize acknowledgement. A deleted or changed
+owner, a later source observation or accepted enrichment/snapshot makes
+pending publication obsolete without modifying those accepted records. An
+unfinished Enrich attempt or stage owner retains the capture for retry; its
+existence is not proof of a durable replacement. Source activity ownership receipts and cancellation fence both
+publication and acknowledgement. Retry restores any missing original discovery events idempotently in the
+publication transaction, without changing the recorded observation or creating
+another admission. Each content-duplicate candidate has its own stable event
+key, so multiple candidates retain their complete audit trail. The prepared body is not published to the in-process bus or logs and is
+excluded from generic Activity payloads and SSE. Completion and owner receipts
+contain references only. A known pre-upgrade partial insert without its original
+qualified capture is recognized from its exact capture-bound initial owner
+observation, even when the first discovery event was never written. It refuses
+before browser/provider setup with nonretryable
+`archived_posting_original_capture_unavailable`. The operator can explicitly
+Enrich the existing Job, then retry Discovery; recovery never reconstructs
+unknown original bytes from a fresh page.
+
+At an exhausted run or source allowance, the prepared publication may still
+complete without another admission. After checking that receipt and the
+missing-original condition, recovery leaves other unprepared captures pending
+before initializing a browser or qualifying another posting.
+
 ## Company briefing reads
 
 The optional briefing ledger is read directly by Operations through exact tenant/company/job identities and its persisted determination ID. It adds no projection family. Accepted snapshots and failed attempts remain separate immutable records. Source bodies stay out of SSE; reference-only `JobUpdated` notifications invalidate each linked Job Detail and the existing digest. The [storage owner](storage.md#company-briefing-ledger) defines physical retention.

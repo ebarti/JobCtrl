@@ -220,7 +220,7 @@ class SmartPostingIntake:
             determinations=tuple(receipts),
         )
 
-    def record(self, url, disposition, reason, *, card=None, receipts=(), job_id=None):
+    def record(self, url, disposition, reason, *, card=None, receipts=(), job_id=None, commit=True):
         from jobctrl.infrastructure.discovery.production_wiring import _enqueue_manual_capture
         from jobctrl.state import record_job_event
 
@@ -269,4 +269,5 @@ class SmartPostingIntake:
             idempotency_key=f"smart-posting:{key}",
             tenant_id=self.tenant_id,
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
