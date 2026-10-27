@@ -407,7 +407,12 @@ The production Wrangler configs bind the EU-scoped
 intentionally ignored—the checked-in environment contract contains only the
 four bindings used by this package.
 
-`.github/workflows/demo-site.yml` always builds and verifies the demo. Same-repo
+On pull requests, `.github/workflows/demo-site.yml` builds the browser-local
+demo for shared web and dependency changes. The separate
+`.github/workflows/demo-edge.yml` checks and dry-runs both Workers only for
+edge-package, shared TypeScript configuration, dependency or edge-workflow
+changes. The site workflow also verifies the Workers on `main` pushes and manual
+runs before any production deployment. Same-repo
 pull requests publish a static Pages preview only when
 `DEMO_PREVIEW_DEPLOY_ENABLED=true`. Production runs only from `main` when
 `DEMO_DEPLOY_ENABLED=true`, applies D1 migrations, deploys both Workers, and
@@ -459,8 +464,9 @@ fork contributors. Review the proposed changes before approving a run. Issue
 labels and Project status do not approve code execution.
 
 CI is plain path-filtered GitHub Actions with no routing layer: each workflow
-under `.github/workflows/` declares the paths it owns and runs whole when a
-pull request or a `main` push touches them. `typescript.yml` runs the API, web,
+under `.github/workflows/` declares the paths it owns. Demo edge verification
+has its own PR workflow; the site workflow retains it as a pre-deployment step
+on `main` pushes and manual runs. `typescript.yml` runs the API, web,
 Storybook, web E2E, and extension suites, including `web:lint` frontend boundary
 checks; `python.yml` lints and
 runs the full pytest suite on each supported Python version; `launcher.yml`
@@ -470,6 +476,10 @@ then the TypeScript API reopens it); `distribution.yml` audits the fail-closed
 release contracts when dependency locks or packaging inputs change — the
 surface Dependabot PRs touch; `docs-site.yml` builds and verifies its rendered
 site in Chromium, and `demo-site.yml` builds its site. Both deploy on `main`.
+`native-credentials.yml` runs its three-OS native-store matrix for the credential
+adapters and host bridge, their shared configuration/contracts, and Node
+manifest, lockfile or toolchain changes. Unrelated API routes and tests do not
+trigger that matrix.
 Two workflows deliberately take no paths
 filter: `release-check.yml` (any file can leak PII) and `repo-scripts.yml`,
 whose `scripts:test` suite asserts contracts across inputs that sprawl the
