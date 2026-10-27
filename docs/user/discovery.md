@@ -391,13 +391,30 @@ before acknowledgement. Accepted new/existing counts, filtered counts, and the
 run-wide new-job limit are therefore read from durable receipts, so a retry
 cannot lose progress or start the limit over. New bounded workflows freeze each
 source's result allowance in their plan and compare cumulative admissions with
-the absolute run limit. Canonical insertion, its admission receipt, search-unit
-acceptance and execution membership commit atomically. Archived captures use the
-same allowance; existing jobs consume none. Reaching one board's allowance closes
+the absolute run limit. Broad boards, canonical ATS APIs, Workday, Smart Extract
+and archived capture recovery share this allowance for the exact tenant and
+Discover execution, including when families run concurrently. Jobs inserted by
+other executions or outside Discovery do not consume it. Canonical insertion,
+its admission receipt, search-unit acceptance when applicable, and execution
+membership commit atomically. Archived captures use the same allowance; existing
+jobs consume none. An exhausted allowance stops new admission; it never becomes
+an unbounded request. An explicitly unbounded run retains its normal behavior.
+Reaching one board's allowance closes
 only that board's remaining units, allowing other selected boards to continue.
 Disabling a board before a retry closes its frozen units without another provider
 request. This intake admission remains separate from the later score and
 relevance decision.
+
+Current runs record their result cap and source allowances locally before
+sources start, then retain that authority across retries. Cancellation after a
+source fetch stops the next admission while keeping jobs already accepted.
+
+After an upgrade, an unfinished older bounded run may lack the current frozen
+execution authority, including runs whose old plan budgeted only broad boards.
+Its next activity refuses with a
+restart message before acquiring or acknowledging more postings. Start a new
+Discover run to continue; existing jobs, retained captures and checkpoints stay
+preserved. Completed workflow history remains replayable.
 
 Temporal retries reclaim only unfinished units with a newer activity-attempt
 fence. Retryable board errors resume from their checkpoint; an expired board

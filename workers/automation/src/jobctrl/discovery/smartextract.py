@@ -54,6 +54,7 @@ from jobctrl.infrastructure.discovery.live_browser import (
 )
 from jobctrl.infrastructure.discovery.production_wiring import DurableJobEventPublisher
 from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
+from jobctrl.infrastructure.discovery.result_budget import DiscoveryResultLimitReached
 from jobctrl.infrastructure.discovery.smart_postings import LivePostingFetcher, SmartPostingIntake
 from jobctrl.discovery.target_queries import (
     query_specs_for_source,
@@ -138,16 +139,20 @@ def _store_jobs(
     observation_id_factory=None,
     idempotency_prefix=None,
     source_native_id=None,
+    result_budget=None,
 ):
     from jobctrl.domain.enrichment.snapshot_use_case import CapturePostingSnapshotUseCase
     from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository, SqlitePostingSnapshotSetRepository
     from jobctrl.infrastructure.enrichment.playwright_fetcher import PlaywrightDetailPageFetcher
     from jobctrl.state import ensure_job_stage_rows, set_stage_state, utc_now
 
+    source_id = source_id or f"smartextract:{site}"
     repository = SqliteJobRepository(
         conn,
         discovery_execution=discovery_execution,
         source_family="smartextract" if discovery_execution is not None else None,
+        result_budget=result_budget,
+        result_budget_source_id=source_id if result_budget is not None else None,
     )
     use_case = DiscoverJobsUseCase(
         exact_title_exclusions=tuple(search_cfg.get("exact_title_exclusions") or ()),
@@ -179,6 +184,10 @@ def _store_jobs(
         url = _normalize_job_url(job.get("url"), source_url)
         if not url:
             continue
+        if refresh_existing_job and result_budget is not None and (
+            result_budget.run_exhausted() or result_budget.source_exhausted(source_id)
+        ):
+            break
         qualified = intake.prepare(url, job)
         if qualified is None:
             continue
@@ -199,7 +208,13 @@ def _store_jobs(
             canonical_url=qualified.url,
         )
         _raise_if_canceled(cancel_event)
-        summary = use_case.execute(tenant_id=tenant_id, postings=(posting,), run_id=run_id)
+        try:
+            summary = use_case.execute(tenant_id=tenant_id, postings=(posting,), run_id=run_id)
+        except DiscoveryResultLimitReached:
+            if not refresh_existing_job:
+                # Recovery must leave this capture unconsumed on refusal.
+                raise
+            break
         new += summary.new_jobs
         existing += int(summary.new_jobs == 0 and (summary.observed > 0 or summary.duplicates_linked > 0))
         if not summary.total:
@@ -1415,6 +1430,7 @@ def build_scrape_targets(
                 targets.append(
                     {
                         "name": site_name,
+                        **({"source_id": site["source_id"]} if site.get("source_id") else {}),
                         "url": expanded_url,
                         "query": query,
                         "query_spec": query_spec,
@@ -1427,6 +1443,7 @@ def build_scrape_targets(
             targets.append(
                 {
                     "name": site_name,
+                        **({"source_id": site["source_id"]} if site.get("source_id") else {}),
                     "url": expanded_url,
                     "query": None,
                     "queries": query_specs,
@@ -1448,6 +1465,9 @@ def _run_all(
     cancel_event: threading.Event | None = None,
     run_id: str = "smartextract",
     discovery_execution: DiscoveryExecutionRef | None = None,
+    result_budget=None,
+    activity_attempt=None,
+    activity_owner_token=None,
 ) -> dict:
     """Run smart extract on all targets.
 
@@ -1501,6 +1521,8 @@ def _run_all(
                 discovery_execution=discovery_execution,
                 cancel_event=cancel_event,
                 browser_client=selected_clients.get(id(target)),
+                source_id=target.get("source_id") or (f"smart_extract:{re.sub('[^a-z0-9]+', '-', str(target.get('name') or 'site').casefold()).strip('-') or 'site'}"),
+                result_budget=result_budget,
             )
             total_new += new
             total_existing += existing
@@ -1598,6 +1620,9 @@ def run_smart_extract(
     run_id: str | None = None,
     discovery_execution: DiscoveryExecutionRef | None = None,
     search_cfg: dict | None = None,
+    result_budget=None,
+    activity_attempt=None,
+    activity_owner_token=None,
 ) -> dict:
     """Main entry point for AI-powered smart extraction.
 
@@ -1633,4 +1658,7 @@ def run_smart_extract(
         cancel_event=cancel_event,
         run_id=run_id or "smartextract",
         discovery_execution=discovery_execution,
+        result_budget=result_budget,
+        activity_attempt=activity_attempt,
+        activity_owner_token=activity_owner_token,
     )

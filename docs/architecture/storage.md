@@ -369,6 +369,17 @@ those projection columns only; it does not parse raw salary text on read.
 
 ### Discovery lineage and operations state
 
+`DiscoveryResultPlanFrozen` and `DiscoveryNewJobAdmitted` are operational
+authorities in `job_events`. Their Job foreign key is null: the plan binds exact
+tenant/workflow/run, bounded or unbounded mode, cap, source-ID allowances and an
+integrity digest; each admission binds the canonical JobId through `entity_ref`
+and its structured payload, plus exact source-observation/run IDs. Neither
+contains posting text, queries or private search configuration. Ordinary Job
+deletion preserves these rows, so it cannot replenish a consumed execution
+allowance. The explicit full job/Discovery-data purge backs up and clears them
+with the execution ledger. Source-control events keep their separate retention
+authority.
+
 `discovery_execution_jobs` is the durable execution-membership authority. Its
 primary identity is tenant + Discover workflow ID + Temporal run ID + stable
 JobId. It stores `observed_this_run` or `existing_backlog`, the first safe
@@ -388,9 +399,8 @@ the cursor before that revision is durable.
 
 `discovery_search_unit_jobs` is the idempotent acceptance-receipt set keyed by
 execution, unit, and stable JobId. The job/source/event writes and receipt
-commit before provider acknowledgement. Durable new/existing counts and the
-run-wide result limit are derived from these receipts, so replay cannot count a
-posting twice. A newer activity attempt reclaims only `running`/`pending` units
+commit before provider acknowledgement. Durable unit-level new/existing counts
+are derived from these receipts, so replay cannot count a posting twice. A newer activity attempt reclaims only `running`/`pending` units
 and increments the lease epoch; every checkpoint or accepted-job write fences
 on that epoch. `completed`, `failed`, `skipped`, and `canceled` units are
 terminal.

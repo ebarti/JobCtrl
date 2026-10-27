@@ -139,7 +139,6 @@ def test_real_family_dispatch_records_both_boards_or_configuration_failure(
         "queries": [{"query": "Engineering Director", "tier": 1}],
         "locations": [{"location": "Spain", "label": "Spain"}],
     }
-    before = list(conn.execute("SELECT * FROM source_registry_entries"))
     monkeypatch.setattr(config, "load_search_config", lambda: cfg)
     dispatches = []
 
@@ -154,15 +153,22 @@ def test_real_family_dispatch_records_both_boards_or_configuration_failure(
     # Only acquisition is substituted. Real registry, scheduler, family lifecycle,
     # empty capture recovery and exact-schema persistence remain active.
     monkeypatch.setattr(jobspy, "run_discovery", provider_boundary)
+    from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
+    execution = DiscoveryExecutionRef("local", "owned-selected-boards", "owned-selected-run")
+    frozen = runner.plan_discovery_source_families(
+        limit=100, source_ids=("jobspy:linkedin", retained_id), discovery_execution=execution,
+    )
+    ownership = {"discovery_execution": execution, "source_result_limits": frozen["source_result_limits"]}
+    before = list(conn.execute("SELECT * FROM source_registry_entries"))
     if unknown:
         with pytest.raises(ConfigurationError, match="no provider board identity"):
             runner.run_discovery_source_family(
-                "jobspy", limit=100, source_ids=("jobspy:linkedin", retained_id),
+                "jobspy", limit=100, source_ids=("jobspy:linkedin", retained_id), **ownership,
             )
         assert dispatches == []
     else:
         result = runner.run_discovery_source_family(
-            "jobspy", limit=100, source_ids=("jobspy:linkedin", retained_id),
+            "jobspy", limit=100, source_ids=("jobspy:linkedin", retained_id), **ownership,
         )
         assert result["status"] == "ok"
         assert result["source_ids"] == ["jobspy:linkedin", retained_id]
@@ -195,12 +201,19 @@ async def test_actual_activity_keeps_missing_board_configuration_non_retryable(
     dispatches = []
     monkeypatch.setattr(jobspy, "run_discovery", lambda **kwargs: dispatches.append(kwargs))
     env = ActivityEnvironment()
+    from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
+    execution = DiscoveryExecutionRef("local", "owned-missing-board", "owned-missing-board-run")
+    recorded = runner.plan_discovery_source_families(
+        limit=100, source_ids=("jobspy:linkedin", "jobspy:unknown"), discovery_execution=execution,
+    )
     with pytest.raises(ApplicationError) as excinfo:
         await env.run(
             discovery_source_family_activity,
             DiscoverySourceActivityInput(
                 tenant_id="local", family="jobspy", limit=100,
                 source_ids=("jobspy:linkedin", "jobspy:unknown"),
+                discovery_execution=execution, use_source_result_budget=True,
+                source_result_limits=recorded["source_result_limits"],
             ),
         )
     assert excinfo.value.type == "configuration"

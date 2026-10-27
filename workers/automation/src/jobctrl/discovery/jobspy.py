@@ -1773,7 +1773,7 @@ def _durable_full_crawl(
             return
         counts = repository.execution_counts(discovery_execution)
         if result_budget is not None:
-            counts["new"] = sum(result_budget.counts().values())
+            counts["new"] = sum(count for source, count in result_budget.counts().items() if source.startswith("jobspy:"))
         progress_callback(
             _durable_progress_snapshot(
                 repository.list_units(discovery_execution),
@@ -2077,7 +2077,7 @@ def _durable_full_crawl(
         raise RuntimeError(f"JobStreaming failed for all {len(failed_units)} search unit(s)")
 
     db_total = int(conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0])
-    admitted_new = sum(result_budget.counts().values()) if result_budget is not None else counts["new"]
+    admitted_new = sum(count for source, count in result_budget.counts().items() if source.startswith("jobspy:")) if result_budget is not None else counts["new"]
     result = {
         "total": counts["accepted"] + max(admitted_new - counts["new"], 0),
         "raw_total": repository.execution_provider_job_count(discovery_execution),

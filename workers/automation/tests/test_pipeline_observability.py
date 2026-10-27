@@ -161,6 +161,7 @@ def test_smart_extract_sites_infer_search_type_from_query_placeholder() -> None:
         {
             "name": "WelcomeToTheJungle",
             "url": "https://www.welcometothejungle.com/en/jobs?query={query_encoded}",
+            "source_id": "smart_extract:welcometothejungle",
             "type": "search",
             "query_mode": "search_only",
         }

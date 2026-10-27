@@ -108,6 +108,19 @@ identify a dirty job or family, then read canonical aggregate tables to build
 the current read shape. Apply-run and workflow-run projections fold their
 lifecycle events more directly.
 
+Discovery's `DiscoveryResultPlanFrozen` operational marker binds an exact
+tenant/workflow/run to its bounded or unbounded mode, result cap and source-ID
+allowances using a versioned integrity digest. It contains no queries or private
+search settings. The planner retains the first marker across retries and refuses
+to create one over prior source effects. Canonical writers validate that marker
+under their SQLite writer transaction before recording `DiscoveryNewJobAdmitted`.
+These admission receipts, rather than global job-count changes, authorize the
+new-job limit across source families. Existing jobs consume no additional slot.
+Admission receipts carry no Job foreign key; their explicit canonical JobId,
+source-observation ID and run ID survive permanent Job deletion. Deletion cannot
+replenish the execution allowance. Exact capture acknowledgements may finish
+from that receipt without admitting again or recreating the deleted owner.
+
 Safety-sensitive event and projection families keep private content at their
 canonical owner and expose allow-listed identifiers, kinds, counts, state,
 timestamps, and provenance metadata. This is not yet a universal guarantee for
