@@ -24,15 +24,13 @@ import time
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Mapping, Protocol
+from contextlib import contextmanager
 
 from jobctrl.config import RESUME_PATH
 from jobctrl.database import effective_tailoring_min_score, get_connection, get_jobs_by_stage
 from jobctrl.domain.determinations import DeterminationFailure, serialized_determination_failure
 from jobctrl.domain.discovery.value_objects import PostingUrl
 from jobctrl.domain.identifiers import JobId, canonical_job_id
-from jobctrl.domain.job_content_identity import (
-    job_content_fingerprint,
-)
 from jobctrl.domain.materials.analysis import (
     EmployerAnalysis,
     EnsembleError,
@@ -137,6 +135,11 @@ def _build_use_case(
     every argument, so production code avoids any module-level singletons
     until first use.
     """
+    # Default product wiring uses persisted canonical interpretation; injected
+    # reader/dependency ports are explicit seams and need their own validation.
+    canonical_source_reader = determination_dependencies is None and job_interpretation_reader is None
+    if canonical_source_reader and isinstance(repository, _OwnedScoreRepository):
+        repository.require_canonical_inputs = True
     if repository is None:
         conn = get_connection()
         repository = SqliteScoreRepository(conn)
@@ -260,6 +263,17 @@ def score_job(
             job=job,
             require=require_employer_analysis,
         )
+    # Freeze the canonical inputs on the owning connection before provider I/O.
+    # The publication fence compares them under the same writer lock used for
+    # the replacement score; changes do not retroactively alter the admitted
+    # immutable profile snapshot.
+    publication_repository = getattr(use_case, "_repository", None)
+    capture_inputs = getattr(publication_repository, "capture_scoring_inputs", None)
+    if callable(capture_inputs):
+        current_policy_repository = policy_repository or getattr(use_case, "_policy_repository", None)
+        if current_policy_repository is not None:
+            current_policy_repository.get_current(tenant_id)
+        job = {**job, "_score_publication_inputs": capture_inputs(job)}
     return use_case.score(
         job=job,
         profile_snapshot=profile_snapshot,
@@ -318,7 +332,6 @@ def run_scoring(
         policy_repository = SqliteScoringPolicyRepository(conn)
     if requirement_fit_repository is None and isinstance(repository, SqliteScoreRepository):
         requirement_fit_repository = SqliteRequirementFitReportRepository(repository.connection)
-    score_repository = repository
     # Global sweeps must use the same publication fence as selected scoring.
     repository = _OwnedScoreRepository(repository, conn, workflow_id, cancel_event)
     if employer_analysis_repository is None:
@@ -483,58 +496,14 @@ def run_scoring(
         claimed_jobs.append(job)
     jobs = claimed_jobs
 
-    reusable_scores = (
-        {}
-        if rescore
-        else _reusable_scores_by_content_key(
-            conn=conn,
-            jobs=jobs,
-            repository=repository,
-            tenant_id=tenant_id,
-            criteria=criteria,
-            profile_snapshot=profile_snapshot,
-        )
-    )
-    pending_by_key: dict[str, dict[str, Any]] = {}
-    duplicate_jobs_by_representative: dict[str, list[dict[str, Any]]] = {}
-    jobs_to_compute: list[dict[str, Any]] = []
-    reused_results: list[tuple[dict[str, Any], ScoreJobOutcome]] = []
-    for job in jobs:
-        content_key = None if rescore else _score_content_key(job)
-        if content_key is None:
-            jobs_to_compute.append(job)
-            continue
-        reusable_score = reusable_scores.get(content_key)
-        if reusable_score is not None:
-            try:
-                outcome = _persist_reused_score(
-                    repository=repository,
-                    tenant_id=tenant_id,
-                    job=job,
-                    source_score=reusable_score,
-                )
-            except PreparationReservationLost:
-                ownership_skipped.add(str(job["job_id"]))
-                continue
-            except Exception as exc:  # noqa: BLE001 — surface as a stage failure
-                log.error("Score reuse failed for %r: %s", job.get("title", "?"), exc)
-                outcome = ScoreJobOutcome(
-                    ok=False,
-                    score=None,
-                    error=f"Score reuse failed: {exc}",
-                )
-            reused_results.append((job, outcome))
-            continue
-        representative = pending_by_key.get(content_key)
-        if representative is None:
-            pending_by_key[content_key] = job
-            jobs_to_compute.append(job)
-            continue
-        duplicate_jobs_by_representative.setdefault(representative["url"], []).append(job)
+    # A score determination and requirement report are bound to one canonical
+    # job. Similar posting text does not authorize copying another job's
+    # accepted decision or allow its report to be reused. Score each claimed
+    # target through its own source-bound determination.
+    jobs_to_compute = jobs
 
     t0 = time.time()
-    results: list[tuple[dict[str, Any], ScoreJobOutcome]] = list(reused_results)
-    independently_recorded: list[tuple[dict[str, Any], ScoreJobOutcome]] = []
+    results: list[tuple[dict[str, Any], ScoreJobOutcome]] = []
     errors = 0
     conn.commit()
     analyses_by_job: dict[str, EmployerAnalysis] = {}
@@ -561,8 +530,6 @@ def run_scoring(
                 error=_employer_analysis_failure_message(exc),
             )
             results.append((job, outcome))
-            for duplicate_job in duplicate_jobs_by_representative.get(job_url, ()):
-                results.append((duplicate_job, outcome))
             continue
         if analysis is not None:
             analyses_by_job[job_url] = analysis
@@ -582,6 +549,10 @@ def run_scoring(
         for job in jobs_to_compute
     } if rescore else {}
     current_policy = policy_repository.get_current(tenant_id)
+    jobs_to_compute = [
+        {**job, "_score_publication_inputs": repository.capture_scoring_inputs(job)}
+        for job in jobs_to_compute
+    ]
     previous_scores = {key: score for key, score in previous_scores.items() if score is not None
         and score.trace.scoring_policy_version == current_policy.version}
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
@@ -626,60 +597,6 @@ def run_scoring(
 
             if outcome is not None:
                 results.append((job, outcome))
-            for duplicate_job in duplicate_jobs_by_representative.get(job["url"], ()):
-                if outcome is None:
-                    # The shared donor lost ownership. Independently admitted
-                    # duplicates still own their work; compute them through the
-                    # normal per-job entry instead of dropping them or reusing an
-                    # unpublished donor. That entry also owns terminal writes.
-                    try:
-                        independent = score_job_by_id(
-                            canonical_job_id(str(duplicate_job["job_id"])),
-                            tenant_id=tenant_id, rescore=rescore, llm_model=llm_model,
-                            profile_snapshot=profile_snapshot, resume_text=resume_text,
-                            criteria=criteria, repository=score_repository,
-                            policy_repository=policy_repository,
-                            requirement_fit_repository=requirement_fit_repository,
-                            llm_port=llm_port, publisher=publisher, use_case=use_case,
-                            employer_analysis_repository=employer_analysis_repository,
-                            analyze_use_case=analyze_use_case,
-                            require_employer_analysis=require_employer_analysis,
-                            workflow_id=workflow_id, cancel_event=cancel_event,
-                        )
-                    except PreparationReservationLost:
-                        ownership_skipped.add(str(duplicate_job["job_id"]))
-                    else:
-                        independently_recorded.append((duplicate_job, independent))
-                    continue
-                if outcome.ok and outcome.score is not None:
-                    try:
-                        duplicate_outcome = _persist_reused_score(
-                            repository=repository,
-                            tenant_id=tenant_id,
-                            job=duplicate_job,
-                            source_score=outcome.score,
-                        )
-                    except PreparationReservationLost:
-                        ownership_skipped.add(str(duplicate_job["job_id"]))
-                        continue
-                    except Exception as exc:  # noqa: BLE001 — surface as a stage failure
-                        log.error(
-                            "Score reuse failed for duplicate %r: %s",
-                            duplicate_job.get("title", "?"),
-                            exc,
-                        )
-                        duplicate_outcome = ScoreJobOutcome(
-                            ok=False,
-                            score=None,
-                            error=f"Score reuse failed: {exc}",
-                        )
-                else:
-                    duplicate_outcome = ScoreJobOutcome(
-                        ok=False,
-                        score=None,
-                        error=outcome.error or "Scoring failed",
-                    )
-                results.append((duplicate_job, duplicate_outcome))
             score_value = outcome.score.fit_score.value if outcome and outcome.ok and outcome.score else 0
             log.info(
                 "[%d/%d] score=%d  %s",
@@ -690,7 +607,7 @@ def run_scoring(
             )
 
     finished_at = utc_now()
-    committed_results = list(independently_recorded)
+    committed_results: list[tuple[dict[str, Any], ScoreJobOutcome]] = []
     for job, outcome in results:
         metadata = activity_metadata.get(str(job["job_id"]))
         if outcome.ok and outcome.score is not None:
@@ -726,8 +643,8 @@ def run_scoring(
     )
 
     distribution = _score_distribution(repository, tenant_id)
-    # Canonical ids this run persisted a score for (computed, reused, and
-    # duplicate-propagated outcomes). A resolved global material run unions
+    # Canonical IDs this run persisted a target-bound score for. A resolved
+    # global material run unions
     # them into its frozen Tailor cohort so newly qualified jobs are tailored
     # in the same command instead of stranding until the next pickup.
     scored_job_ids = list(
@@ -1059,27 +976,38 @@ def score_job_by_id(
 
     if workflow_id and not _score_activity_may_write(conn, tenant_id, stable_job_id, workflow_id, cancel_event):
         raise PreparationReservationLost("Score activity no longer owns its stage")
-    outcome = score_job(
-        profile_snapshot,
-        job,
-        use_case=use_case
-        or _build_use_case(
+    try:
+        outcome = score_job(
+            profile_snapshot,
+            job,
+            use_case=use_case
+            or _build_use_case(
+                tenant_id=tenant_id,
+                repository=repository,
+                policy_repository=policy_repository,
+                requirement_fit_repository=requirement_fit_repository,
+                llm_port=llm_port,
+                llm_model=llm_model,
+                publisher=publisher,
+            ),
             tenant_id=tenant_id,
-            repository=repository,
-            policy_repository=policy_repository,
-            requirement_fit_repository=requirement_fit_repository,
-            llm_port=llm_port,
-            llm_model=llm_model,
-            publisher=publisher,
-        ),
-        tenant_id=tenant_id,
-        resume_text=resume_text,
-        criteria=criteria,
-        employer_analysis=employer_analysis,
-        require_employer_analysis=require_employer_analysis,
-        **({"previous_score": existing} if rescore and existing is not None
-            and existing.trace.scoring_policy_version == policy_repository.get_current(tenant_id).version else {}),
-    )
+            resume_text=resume_text,
+            criteria=criteria,
+            employer_analysis=employer_analysis,
+            require_employer_analysis=require_employer_analysis,
+            **({"previous_score": existing} if rescore and existing is not None
+                and existing.trace.scoring_policy_version == policy_repository.get_current(tenant_id).version else {}),
+        )
+    except ScoreSourcesChanged as exc:
+        error = str(exc)
+        recorded = _record_score_stage_failed(
+            conn, job=job, tenant_id=tenant_id, started_at=started_at,
+            metadata=metadata, error=error, cancel_event=cancel_event,
+            require_ownership=True,
+        )
+        if not recorded:
+            raise PreparationReservationLost("Score activity no longer owns its stage") from exc
+        return ScoreJobOutcome(ok=False, score=None, error=error)
     if outcome.ok and outcome.score is not None:
         recorded = _record_score_stage_succeeded(
             conn,
@@ -1107,6 +1035,10 @@ def score_job_by_id(
     return outcome
 
 
+class ScoreSourcesChanged(RuntimeError):
+    """The still-owned score used canonical sources that are no longer current."""
+
+
 class _OwnedScoreRepository:
     """Fence the actual score commit after provider I/O, under a write lock."""
 
@@ -1115,6 +1047,125 @@ class _OwnedScoreRepository:
         self._conn = conn
         self._owner = owner
         self._cancel_event = cancel_event
+        self._publishing = False
+        self.require_canonical_inputs = False
+
+    @contextmanager
+    def publication(self, tenant_id, job_id):
+        """Keep ownership valid until the entire score publication commits."""
+        from jobctrl.infrastructure.preparation_recovery import PreparationReservationLost
+
+        connection = getattr(self._repository, "connection", self._conn)
+        if connection is not self._conn:
+            raise RuntimeError("Score publication repositories must share one SQLite connection")
+        base_scope = getattr(self._repository, "publication", None)
+        if callable(base_scope):
+            with base_scope(tenant_id, job_id):
+                if not _score_activity_may_write(self._conn, tenant_id, job_id,
+                                                self._owner, self._cancel_event):
+                    raise PreparationReservationLost("Score activity no longer owns score persistence")
+                self._publishing = True
+                try:
+                    yield
+                    if not _score_activity_may_write(self._conn, tenant_id, job_id,
+                                                    self._owner, self._cancel_event):
+                        raise PreparationReservationLost("Score activity lost its owner before publication")
+                finally:
+                    self._publishing = False
+            return
+
+        # Non-SQLite injected test adapters still receive the ownership fence.
+        owns_writer = not self._conn.in_transaction
+        if owns_writer:
+            self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._conn.execute("SAVEPOINT owned_score_publication")
+        except BaseException:
+            if owns_writer:
+                self._conn.rollback()
+            raise
+        released = False
+        try:
+            if not _score_activity_may_write(self._conn, tenant_id, job_id,
+                                            self._owner, self._cancel_event):
+                raise PreparationReservationLost("Score activity no longer owns score persistence")
+            self._publishing = True
+            try:
+                yield
+                if not _score_activity_may_write(self._conn, tenant_id, job_id,
+                                                self._owner, self._cancel_event):
+                    raise PreparationReservationLost("Score activity lost its owner before publication")
+            finally:
+                self._publishing = False
+            self._conn.execute("RELEASE SAVEPOINT owned_score_publication")
+            released = True
+            if owns_writer:
+                self._conn.commit()
+        except BaseException:
+            if owns_writer:
+                self._conn.rollback()
+            elif not released:
+                self._conn.execute("ROLLBACK TO SAVEPOINT owned_score_publication")
+                self._conn.execute("RELEASE SAVEPOINT owned_score_publication")
+            raise
+
+    def capture_scoring_inputs(self, job):
+        """Snapshot current canonical non-profile sources before provider I/O."""
+        from jobctrl.domain.materials.analysis import PROMPT_VERSION
+
+        tenant_id = str(job["tenant_id"])
+        job_id = str(canonical_job_id(str(job["job_id"])))
+        posting_hash = compute_snapshot_hash(build_jd_snapshot(job))
+        analysis = self._conn.execute(
+            "SELECT generation, snapshot_hash, requirements_json FROM job_employer_analysis "
+            "WHERE tenant_id=? AND job_id=? AND prompt_version=? ORDER BY generation DESC LIMIT 1",
+            (tenant_id, job_id, PROMPT_VERSION),
+        ).fetchone()
+        interpretation = self._conn.execute(
+            "SELECT binding.determination_id, determination.envelope_json "
+            "FROM semantic_entity_bindings binding "
+            "LEFT JOIN semantic_determinations determination ON determination.tenant_id=binding.tenant_id "
+            "AND determination.determination_id=binding.determination_id "
+            "WHERE binding.tenant_id=? AND binding.entity_kind='job' AND binding.entity_id=? "
+            "AND binding.entity_version=? AND binding.determination_kind='job_interpretation'",
+            (tenant_id, job_id, posting_hash),
+        ).fetchone()
+        policy = self._conn.execute(
+            "SELECT version, rubric_json, anchors_json FROM scoring_policies "
+            "WHERE tenant_id=? ORDER BY version DESC LIMIT 1", (tenant_id,),
+        ).fetchone()
+        return tuple(tuple(row) if row is not None else None for row in (analysis, interpretation, policy))
+
+    def validate_scoring_inputs(self, job, parse):
+        """Reject obsolete posting and source inputs under the score writer lock."""
+        tenant_id = TenantId(str(job["tenant_id"]))
+        job_id = canonical_job_id(str(job["job_id"]))
+        current = SqlitePreparationTargetReader(self._conn).load(tenant_id, job_id)
+        expected_hash = parse.trace.profile_inputs.get("posting_hash")
+        expected_sources = job.get("_score_publication_inputs")
+        if (current is None or current.get("url") != job.get("url")
+                or (self.require_canonical_inputs and not expected_hash)
+                or (expected_hash and compute_snapshot_hash(build_jd_snapshot(current)) != expected_hash)):
+            raise ScoreSourcesChanged("Score posting changed before publication")
+        if expected_sources is None or self.capture_scoring_inputs(current) != expected_sources:
+            raise ScoreSourcesChanged("Score sources changed before publication")
+        policy = expected_sources[2]
+        if policy is not None and parse.trace.scoring_policy_version != int(policy[0]):
+            raise ScoreSourcesChanged("Score policy changed before publication")
+        if self.require_canonical_inputs:
+            from jobctrl.domain.scoring.use_cases import _scoring_source_fingerprint
+            from jobctrl.infrastructure.enrichment.interpretation import read_job_interpretation
+
+            interpretation = read_job_interpretation(self._conn, current, tenant_id=str(tenant_id))
+            analysis = _load_employer_analysis_for_job(
+                repository=SqliteEmployerAnalysisRepository(self._conn), tenant_id=tenant_id, job=current,
+            )
+            if (interpretation is None
+                    or (parse.employer_analysis_generation > 0 and analysis is None)
+                    or not parse.trace.scoring_source_fingerprint
+                    or _scoring_source_fingerprint(analysis, interpretation[0])
+                    != parse.trace.scoring_source_fingerprint):
+                raise ScoreSourcesChanged("Score canonical sources no longer match the decision")
 
     def __getattr__(self, name):
         return getattr(self._repository, name)
@@ -1122,6 +1173,9 @@ class _OwnedScoreRepository:
     def record_profile_review(self, score, *, entity_version, determination_id):
         from jobctrl.infrastructure.preparation_recovery import PreparationReservationLost
 
+        if self._publishing:
+            self._repository.record_profile_review(score, entity_version=entity_version, determination_id=determination_id)
+            return
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             if not _score_activity_may_write(self._conn, score.tenant_id, score.job_id,
@@ -1136,6 +1190,9 @@ class _OwnedScoreRepository:
     def save(self, score):
         from jobctrl.infrastructure.preparation_recovery import PreparationReservationLost
 
+        if self._publishing:
+            self._repository.save(score)
+            return
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             if not _score_activity_may_write(
@@ -1574,118 +1631,6 @@ def _score_distribution(
 
 def _retrieval_source_limit(limit: int) -> int:
     return max(0, limit)
-
-
-def _score_content_key(job: dict[str, Any]) -> str | None:
-    return job_content_fingerprint(
-        title=job.get("title"),
-        company=job.get("company"),
-        description=job.get("full_description"),
-    )
-
-
-def _reusable_scores_by_content_key(
-    *,
-    conn: sqlite3.Connection,
-    jobs: list[dict[str, Any]],
-    repository: ScoreRepository,
-    tenant_id: TenantId,
-    criteria: ScoringCriteria,
-    profile_snapshot: ProfileSnapshot,
-) -> dict[str, JobScore]:
-    wanted_keys = {key for job in jobs if (key := _score_content_key(job)) is not None}
-    if not wanted_keys:
-        return {}
-    rows = conn.execute(
-        """
-        SELECT j.job_id, j.url, j.title, j.company, je.full_description
-        FROM jobs j
-        INNER JOIN job_enrichments je
-          ON je.tenant_id = j.tenant_id
-         AND je.job_id = j.job_id
-        INNER JOIN (
-            SELECT s.tenant_id, s.job_id, MAX(s.version) AS max_version
-            FROM job_scores s
-            WHERE s.tenant_id = ?
-            GROUP BY s.tenant_id, s.job_id
-        ) latest
-          ON latest.tenant_id = j.tenant_id
-         AND latest.job_id = j.job_id
-        INNER JOIN job_scores s
-            ON s.tenant_id = latest.tenant_id
-           AND s.job_id = latest.job_id
-           AND s.version = latest.max_version
-        WHERE j.tenant_id = ?
-        ORDER BY s.scored_at DESC
-        """,
-        (str(tenant_id), str(tenant_id)),
-    ).fetchall()
-
-    reusable: dict[str, JobScore] = {}
-    for row in rows:
-        job = dict(row)
-        key = _score_content_key(job)
-        if key is None or key not in wanted_keys or key in reusable:
-            continue
-        score = repository.load(
-            tenant_id,
-            canonical_job_id(str(job["job_id"])),
-        )
-        if score is None or not _score_matches_context(
-            score=score,
-            criteria=criteria,
-            profile_snapshot=profile_snapshot,
-        ):
-            continue
-        reusable[key] = score
-    return reusable
-
-
-def _score_matches_context(
-    *,
-    score: JobScore,
-    criteria: ScoringCriteria,
-    profile_snapshot: ProfileSnapshot,
-) -> bool:
-    if score.trace.criteria_version != criteria.criteria_version:
-        return False
-    if score.trace.profile_snapshot_version != profile_snapshot.version:
-        return False
-    return True
-
-
-def _persist_reused_score(
-    *,
-    repository: ScoreRepository,
-    tenant_id: TenantId,
-    job: dict[str, Any],
-    source_score: JobScore,
-) -> ScoreJobOutcome:
-    job_id = canonical_job_id(str(job["job_id"]))
-    previous = repository.load(tenant_id, job_id)
-    scored_at = utc_now()
-    if previous is None:
-        copied = JobScore.initial(
-            tenant_id=tenant_id,
-            job_id=job_id,
-            fit_score=source_score.fit_score,
-            breakdown=source_score.breakdown,
-            matched_keywords=source_score.matched_keywords,
-            scored_at=scored_at,
-            criteria=source_score.criteria,
-            trace=source_score.trace,
-        )
-    else:
-        copied = previous.next_version(
-            fit_score=source_score.fit_score,
-            breakdown=source_score.breakdown,
-            matched_keywords=source_score.matched_keywords,
-            scored_at=scored_at,
-            criteria=source_score.criteria,
-            trace=source_score.trace,
-        )
-    repository.save(copied)
-    return ScoreJobOutcome(ok=True, score=copied)
 
 
 def _score_activity_metadata(

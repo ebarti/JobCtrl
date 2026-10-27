@@ -668,7 +668,10 @@ def test_save_rolls_back_score_and_keyword_rows_after_downstream_failure(
     )
     repo = SqliteScoreRepository(conn)
 
-    def fail_after_score_write(_: JobScore, *, commit: bool) -> int:
+    def fail_after_score_write(_: JobScore, *, commit: bool, publisher=None) -> int:
+        assert not commit
+        assert conn.execute("SELECT COUNT(*) FROM job_scores").fetchone()[0] == 1
+        assert len(_score_keyword_rows(conn)) == 2
         raise RuntimeError("forced score downstream failure")
 
     monkeypatch.setattr(repo._staleness, "resolve_for_score", fail_after_score_write)

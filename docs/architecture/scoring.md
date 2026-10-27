@@ -55,8 +55,10 @@ and queued automatic reservations before acquisition, then recheck under the
 writer lock before claiming work. Score publication and terminal stage writes
 also check the current owner. A revoked job records a skipped result without
 replacing its successor, accepted score or attempt count; independent jobs keep
-running. If a duplicate's shared donor is revoked, the independently owned
-posting uses normal per-job scoring instead of publishing an uncommitted donor.
+running. Distinct canonical Job IDs each use a source-bound scoring decision;
+similar posting content does not authorize copying another job's score,
+determination, or requirement report. A repeated unchanged request for the
+same job may reuse its existing determination receipt.
 
 Selected batches handle only the typed reservation-loss signal as a skip and
 report its job IDs and count. Other exceptions and failed determinations remain

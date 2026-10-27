@@ -26,6 +26,11 @@ JobCtrl does not ask a model for one opaque number and save it. The model
 classifies the evidence for each posting requirement; versioned, deterministic
 code turns those classifications into the persisted 1–10 score.
 
+Each distinct saved job has its own assessment and recorded evidence, even if
+another job has similar posting text. Repeating an unchanged assessment for the
+same job can reuse its recorded decision; scoring a different job can require
+another model call.
+
 When Discovery supplies explicit requirements, the calculation works like
 this:
 

@@ -805,8 +805,10 @@ function reviewQueueItemFromRow(
     IDEAL_CANDIDATE_TEXT_LIMIT,
   );
   const sourceRequirements = requirementIdentities(row.employer_requirements_json);
+  const projectedFitReport = parseRequirementFitReport(row.requirement_fit_report_json);
   const requirementFitReport = bindRequirementFitReport(
-    parseRequirementFitReport(row.requirement_fit_report_json), row.employer_analysis_generation, sourceRequirements,
+    projectedFitReport?.scoreVersion === nullableNumber(row.score_version) ? projectedFitReport : null,
+    row.employer_analysis_generation, sourceRequirements,
   );
   const rawIdealRequirements = parseIdealRequirementsJson(row.employer_requirements_json);
   const idealRequirements = requirementsWithTailoredResumeCoverage(
