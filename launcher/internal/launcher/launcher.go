@@ -59,6 +59,7 @@ const (
 )
 
 var (
+	errUntrackedOwnership = errors.New("this legacy runtime has no durable child-ownership record; recorded processes were checked, but cleanup cannot certify already-detached children. Keep the runtime registry and workspace intact, inspect remaining JobCtrl processes, and use the documented manual recovery procedure")
 	ErrAlreadyRunning     = errors.New("an active JobCtrl instance already owns this state directory")
 	ErrPortInUse          = errors.New("a required fixed loopback port is already in use")
 	ErrLockHeld           = errors.New("the JobCtrl instance lock is held")
@@ -238,6 +239,8 @@ type instanceState struct {
 	Ports             runtimePorts               `json:"ports"`
 	StartedAt         time.Time                  `json:"startedAt"`
 	StoppedAt         *time.Time                 `json:"stoppedAt,omitempty"`
+	ExecutionScopeID  string                     `json:"executionScopeId,omitempty"`
+	OwnershipVerified bool                       `json:"ownershipVerified,omitempty"`
 	Supervisor        componentRecord            `json:"supervisor"`
 	Components        map[string]componentRecord `json:"components"`
 }
@@ -283,6 +286,9 @@ var startCommand = executeStart
 // Run is the only public CLI entrypoint. __supervise is reachable only through
 // the re-exec made by `jobctrl start`.
 func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Writer) error {
+	if handled, err := ownedExecutionHelper(args); handled {
+		return err
+	}
 	if len(args) > 0 && args[0] == "rollback" {
 		_, controllerErr := homebrewBootstrap(executable, args, inheritedEnv, stdout, stderr, true)
 		if handled, recoveryErr := recoverRevokedTransitionBeforePrepare(inheritedEnv, stdout); handled {
@@ -319,10 +325,37 @@ func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Write
 			return fmt.Errorf("read release transition journal: %w", journalErr)
 		}
 	}
+	if commandRequiresOwnedExecution(args) {
+		owned, err := authenticatedOwnedExecution(ctx)
+		if err != nil {
+			return err
+		}
+		if !owned {
+			return runInOwnedExecution(ctx, args, stdout, stderr)
+		}
+	}
 	if len(args) > 0 && args[0] == "__supervise" {
 		return supervise(ctx, readyWriterFromEnv(inheritedEnv))
 	}
 	return dispatchCommand(ctx, args, stdout, stderr)
+}
+
+// Control/read-only commands run outside the runtime's execution boundary.
+// Every public entry that can leave runtime children gets a durable OS scope.
+func commandRequiresOwnedExecution(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "start", "dev", "__supervise":
+		return true
+	case "status":
+		return len(args) == 2 && args[1] == "--pipeline"
+	case "help", "--help", "stop", "logs", "open", "version", "update", "rollback", "backup", "uninstall":
+		return false
+	default:
+		return true
+	}
 }
 
 func transitionRecoveryCommand(args []string) bool {
@@ -438,6 +471,10 @@ func executeStart(ctx launchContext, args []string, stdout io.Writer) error {
 func ExitCode(err error) int {
 	if err == nil {
 		return 0
+	}
+	var status interface{ ExitCode() int }
+	if errors.As(err, &status) {
+		return status.ExitCode()
 	}
 	if errors.Is(err, ErrAlreadyRunning) || errors.Is(err, ErrLockHeld) {
 		return 75
@@ -1547,8 +1584,14 @@ func validateStartState(ctx launchContext, state instanceState) error {
 	if err := validateStateBinding(ctx, state); err != nil && stateHasLiveProcesses(state) {
 		return fmt.Errorf("different JobCtrl release is still running for this state directory; run jobctrl status then jobctrl stop before starting this release")
 	}
+	if state.OwnershipVerified && state.StoppedAt != nil {
+		return nil
+	}
 	if supervisorMayBeLive(state.Supervisor) {
 		return ErrAlreadyRunning
+	}
+	if state.ExecutionScopeID == "" && !state.OwnershipVerified && len(state.Components) > 0 {
+		return errUntrackedOwnership
 	}
 	for name, record := range state.Components {
 		if componentMayBeLive(record) {
@@ -1755,7 +1798,7 @@ func supervise(ctx launchContext, ready io.Writer) (result error) {
 		sendReady(ready, err)
 		return err
 	}
-	state := instanceState{SchemaVersion: stateSchemaVersion, InstanceID: ctx.Instance.ID, CanonicalStateDir: ctx.Instance.StateDir, PayloadRoot: ctx.PayloadRoot, BuildID: ctx.Distribution.BuildID, ManifestSHA256: digest, Ports: runtimePorts{TemporalGRPC: ctx.Manifest.Ports.TemporalGRPC, TemporalUI: ctx.Manifest.Ports.TemporalUI, API: ctx.Manifest.Ports.API}, StartedAt: time.Now().UTC(), Supervisor: supervisor, Components: map[string]componentRecord{}}
+	state := instanceState{SchemaVersion: stateSchemaVersion, InstanceID: ctx.Instance.ID, CanonicalStateDir: ctx.Instance.StateDir, PayloadRoot: ctx.PayloadRoot, BuildID: ctx.Distribution.BuildID, ManifestSHA256: digest, Ports: runtimePorts{TemporalGRPC: ctx.Manifest.Ports.TemporalGRPC, TemporalUI: ctx.Manifest.Ports.TemporalUI, API: ctx.Manifest.Ports.API}, StartedAt: time.Now().UTC(), Supervisor: supervisor, Components: map[string]componentRecord{}, ExecutionScopeID: environmentMap(ctx.Environment)[executionScopeVariable]}
 	if err := writeState(ctx.Instance.StatePath, state); err != nil {
 		sendReady(ready, err)
 		return err
@@ -1771,7 +1814,8 @@ func supervise(ctx launchContext, ready io.Writer) (result error) {
 		if cleanupErr != nil && result == nil {
 			result = fmt.Errorf("clean up remaining instance processes: %w", cleanupErr)
 		}
-		if cleanupErr == nil && allRecordedComponentsStopped(state) {
+		if cleanupErr == nil && state.ExecutionScopeID != "" && allRecordedComponentsStopped(state) {
+			state.OwnershipVerified = true
 			now := time.Now().UTC()
 			state.StoppedAt = &now
 		} else {
@@ -2218,7 +2262,10 @@ func stop(ctx launchContext) error {
 	defer releaseLock(control)
 	state, err := readState(ctx.Instance.StatePath)
 	if errors.Is(err, os.ErrNotExist) {
-		return terminateOwnedProcesses(ctx, instanceState{})
+		if err := terminateOwnedProcesses(ctx, instanceState{}); err != nil {
+			return err
+		}
+		return retireOwnedExecutionScopes(ctx)
 	}
 	if err != nil {
 		return err
@@ -2227,6 +2274,22 @@ func stop(ctx launchContext) error {
 		return err
 	}
 	initialState := state
+	if state.ExecutionScopeID != "" {
+		scopes, err := readOwnedExecutionScopes(ctx)
+		if err != nil {
+			return err
+		}
+		found := false
+		for _, scope := range scopes {
+			if scope.ID == state.ExecutionScopeID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return errors.New("the runtime execution receipt is missing; preserve the registry and workspace for recovery")
+		}
+	}
 	ownedBeforeShutdown, err := inspectOwnedProcesses(ctx, state)
 	if err != nil {
 		return err
@@ -2286,8 +2349,16 @@ func stop(ctx launchContext) error {
 		}
 		return errors.New("JobCtrl may still have live recorded processes or unverifiable component ownership after stop")
 	}
+	if state.ExecutionScopeID == "" && !state.OwnershipVerified && (len(state.Components) > 0 || state.Supervisor != (componentRecord{})) {
+		return errUntrackedOwnership
+	}
+	if err := retireOwnedExecutionScopes(ctx); err != nil {
+		return fmt.Errorf("retire cleaned execution records: %w", err)
+	}
 	now := time.Now().UTC()
 	state.StoppedAt = &now
+	state.OwnershipVerified = true
+	state.ExecutionScopeID = ""
 	return writeState(ctx.Instance.StatePath, state)
 }
 func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
@@ -2379,6 +2450,13 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 	if overall == "stopped" && len(processes) > 0 {
 		overall = "orphaned"
 	}
+	if state.OwnershipVerified && state.StoppedAt != nil && len(processes) == 0 {
+		overall = "stopped"
+	}
+	if state.ExecutionScopeID == "" && !state.OwnershipVerified && (len(state.Components) > 0 || state.Supervisor != (componentRecord{})) && overall == "stopped" {
+		overall = "ownership-unverified"
+	}
+
 	if jsonOutput {
 		return json.NewEncoder(output).Encode(struct {
 			Status        string                     `json:"status"`

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -143,5 +144,111 @@ func TestStopReportsActualInspectionFailureWithoutChangingRegistry(t *testing.T)
 	after, err := os.ReadFile(ctx.Instance.StatePath)
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("failed cleanup changed registry")
+	}
+}
+
+func TestOwnershipRetryCannotAdoptReusedProcessIdentity(t *testing.T) {
+	ctx, _ := issue1275State(t, componentRecord{})
+	child := exec.Command(migrationIntegrationPython(t), "-I", "-B", "-c", "import time;time.sleep(60)")
+	child.Env = ownedProcessEnvironment(ctx)
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = child.Process.Kill(); _ = child.Wait() }()
+	prior := readProcessOwnership
+	t.Cleanup(func() { readProcessOwnership = prior })
+	calls := 0
+	readProcessOwnership = func(pid int) (ownedProcess, error) {
+		if pid != child.Process.Pid {
+			return prior(pid)
+		}
+		p, err := prior(pid)
+		if err != nil {
+			return p, err
+		}
+		calls++
+		if calls == 1 {
+			return p, syscall.EIO
+		}
+		p.Identity = "replacement-identity"
+		p.owner = "another-instance"
+		return p, nil
+	}
+	owned, err := discoverOwnedProcesses(ctx, instanceState{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(owned) != 0 {
+		t.Fatal("inspection retry transferred authority to a different process identity")
+	}
+	if !processPIDAlive(child.Process.Pid) {
+		t.Fatal("ownership retry signaled a replacement process")
+	}
+}
+
+func TestActualStopFindsDetachedPlatformExecutionAndPreservesOtherInstance(t *testing.T) {
+	contexts := []launchContext{executionTestContext(t), executionTestContext(t)}
+	pids := make([]int, 0, 2)
+	defer func() {
+		for _, pid := range pids {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	}()
+	for i := range contexts {
+		ctx := &contexts[i]
+		root := filepath.Dir(ctx.Instance.StatePath)
+		ctx.Instance.ControlPath = filepath.Join(root, "control.lock")
+		ctx.Instance.LockPath = filepath.Join(root, "instance.lock")
+		pidfile := filepath.Join(root, "child.pid")
+		if err := runInOwnedExecution(*ctx, []string{"__scope-test-command", ctx.Instance.StatePath, ctx.Instance.ID, "detach", pidfile}, io.Discard, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := os.ReadFile(pidfile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pid, err := strconv.Atoi(string(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		pids = append(pids, pid)
+		for deadline := time.Now().Add(3 * time.Second); ; {
+			p, err := readProcessScope(pid)
+			if err == nil && p.ParentPID == 1 && p.owner == "" {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("fixture did not become an untagged platform orphan: %v", err)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	var statusOut bytes.Buffer
+	if err := status(contexts[0], &statusOut, true); err != nil || !strings.Contains(statusOut.String(), "orphaned") {
+		t.Fatalf("status hid platform child: %v %s", err, statusOut.String())
+	}
+	if err := stop(contexts[0]); err != nil {
+		t.Fatal(err)
+	}
+	if owned, err := inspectOwnedProcesses(contexts[0], instanceState{}); err != nil || len(owned) != 0 {
+		t.Fatalf("cleanup incomplete: %v count=%d", err, len(owned))
+	}
+	if !processPIDAlive(pids[1]) {
+		t.Fatal("cleanup killed the other instance")
+	}
+	if err := stop(contexts[0]); err != nil {
+		t.Fatalf("repeated cleanup failed: %v", err)
+	}
+	// A new tracked command is admitted normally after successful cleanup.
+	var restarted bytes.Buffer
+	err := runInOwnedExecution(contexts[0], []string{"__scope-test-command", contexts[0].Instance.StatePath, contexts[0].Instance.ID, "stdin", "unused"}, &restarted, io.Discard)
+	if err != nil {
+		t.Fatalf("normal restart required manual recovery: %v", err)
+	}
+	if err := stop(contexts[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err := stop(contexts[1]); err != nil {
+		t.Fatal(err)
 	}
 }
