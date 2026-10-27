@@ -525,3 +525,144 @@ func TestOwnedExecutionRestoresOuterSignalHandler(t *testing.T) {
 		t.Fatalf("outer signal handler remained installed: %v", status)
 	}
 }
+
+func TestOwnedExecutionAdmissionSerializesWithStop(t *testing.T) {
+	ctx := executionTestContext(t)
+	root := filepath.Dir(ctx.Instance.StatePath)
+	ctx.Instance.ControlPath = filepath.Join(root, "control.lock")
+	ctx.Instance.LockPath = filepath.Join(root, "instance.lock")
+	control, err := acquireLock(ctx.Instance.ControlPath, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { releaseLock(control) }()
+	pidfile, marker := filepath.Join(root, "admitted.pid"), filepath.Join(root, "signal")
+	outer := exec.Command(ctx.Executable, "__scope-test-outer", root, ctx.Instance.ID, "signal", pidfile, marker)
+	outer.Env = []string{"PATH=/usr/bin:/bin"}
+	if err = outer.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer outer.Process.Kill()
+	time.Sleep(75 * time.Millisecond)
+	if _, err := os.Stat(filepath.Join(root, "executions")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("admission published while stop held exclusive control lock")
+	}
+	releaseLock(control)
+	control = nil
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if raw, err := os.ReadFile(pidfile); err == nil && len(raw) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("admission did not proceed after control lock release")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	scopes, err := readOwnedExecutionScopes(ctx)
+	if err != nil || len(scopes) != 1 {
+		t.Fatalf("admitted receipt: %v", err)
+	}
+	defer cleanupExecutionTestArtifacts(scopes[0])
+	control, err = acquireLock(ctx.Instance.ControlPath, true)
+	if err != nil {
+		t.Fatalf("hung command retained admission lock: %v", err)
+	}
+	releaseLock(control)
+	control = nil
+	// Exercise the actual product stop entry after admission, rather than
+	// holding the lock until the long-running CLI's result arrives.
+	if err = stop(ctx); err != nil {
+		t.Fatalf("actual stop could not drain admitted command: %v", err)
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- outer.Wait() }()
+	select {
+	case <-waited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("stopped command did not return")
+	}
+}
+
+func TestOwnedExecutionTemporaryReceiptsAndRetirement(t *testing.T) {
+	ctx := executionTestContext(t)
+	dir, err := executionScopeDirectory(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := strings.Repeat("a", 32)
+	boot, err := executionBootSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := executionScope{1, id, ctx.Instance.ID, ctx.Instance.StateDir, ctx.Instance.RuntimeHome, boot, "dev.jobctrl.exec." + ctx.Instance.ID + "." + id, "gui/" + strconv.Itoa(os.Getuid()), 123, "123:1234:123", [2]uint64{123, 124}}
+	if err = writeJSONAtomic(filepath.Join(dir, id+".json"), scope); err != nil {
+		t.Fatal(err)
+	}
+	temporary := filepath.Join(dir, "."+id+".json."+strings.Repeat("b", 32))
+	temporaryBytes := []byte(`{"schemaVersion":1,"unfinished":`)
+	if err = os.WriteFile(temporary, temporaryBytes, 0600); err != nil {
+		t.Fatal(err)
+	}
+	scopes, err := readOwnedExecutionScopes(ctx)
+	if err != nil || len(scopes) != 1 {
+		t.Fatalf("private atomic temporary blocked valid final receipt: %v", err)
+	}
+	final := filepath.Join(dir, id+".json")
+	original, err := os.ReadFile(final)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalBootout := bootoutOwnedExecution
+	defer func() { bootoutOwnedExecution = originalBootout }()
+	called := false
+	bootoutOwnedExecution = func(domain, label string) error {
+		called = true
+		if domain != scope.Domain || label != scope.JobLabel {
+			t.Fatal("foreign job submitted for retirement")
+		}
+		return errors.New("synthetic launchd denial")
+	}
+	if err = retireOwnedExecutionScopes(ctx); err == nil || !called {
+		t.Fatal("real retirement failure was suppressed")
+	}
+	after, err := os.ReadFile(final)
+	if err != nil || !bytes.Equal(after, original) {
+		t.Fatal("failed retirement changed final receipt bytes")
+	}
+	after, err = os.ReadFile(temporary)
+	if err != nil || !bytes.Equal(after, temporaryBytes) {
+		t.Fatal("failed retirement changed private atomic temporary")
+	}
+	changed := append(append([]byte{}, original...), '\n')
+	bootoutOwnedExecution = func(domain, label string) error { return os.WriteFile(final, changed, 0600) }
+	if err = retireOwnedExecutionScopes(ctx); err == nil {
+		t.Fatal("changed receipt was retired")
+	}
+	after, err = os.ReadFile(final)
+	if err != nil || !bytes.Equal(after, changed) {
+		t.Fatal("retirement overwrote concurrently changed metadata")
+	}
+	if err = os.WriteFile(final, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	bootoutOwnedExecution = originalBootout
+	control, err := acquireLock(filepath.Join(filepath.Dir(ctx.Instance.StatePath), "control.lock"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseLock(control)
+	if err = retireOwnedExecutionScopes(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = os.Stat(final); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("validated inactive receipt was not retired")
+	}
+	after, err = os.ReadFile(temporary)
+	if err != nil || !bytes.Equal(after, temporaryBytes) {
+		t.Fatal("successful retirement deleted or changed unadmitted temporary")
+	}
+	if err = retireOwnedExecutionScopes(ctx); err != nil {
+		t.Fatalf("retirement not idempotent: %v", err)
+	}
+}

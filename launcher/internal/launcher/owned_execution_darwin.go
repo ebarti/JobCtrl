@@ -4,6 +4,7 @@ package launcher
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"encoding/xml"
@@ -157,6 +158,11 @@ func validateExecutionScope(ctx launchContext, s executionScope) error {
 	}
 	return nil
 }
+func executionReceiptTemporaryName(name string) bool {
+	// writeJSONAtomic uses .<final basename>.<random 32hex nonce>.
+	return len(name) == 71 && name[0] == '.' && name[33:39] == ".json." && executionIDValid(name[1:33]) && executionIDValid(name[39:])
+}
+
 func readOwnedExecutionScopes(ctx launchContext) ([]executionScope, error) {
 	dir, err := executionScopeDirectory(ctx, false)
 	if errors.Is(err, os.ErrNotExist) {
@@ -174,6 +180,24 @@ func readOwnedExecutionScopes(ctx launchContext) ([]executionScope, error) {
 	}
 	scopes := make([]executionScope, 0, len(entries))
 	for _, entry := range entries {
+		if executionReceiptTemporaryName(entry.Name()) {
+			// A producer can crash before atomic publication. These private
+			// files never authorize work and are preserved for investigation.
+			file, err := os.OpenFile(filepath.Join(dir, entry.Name()), os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+			if err != nil {
+				return nil, err
+			}
+			info, err := file.Stat()
+			file.Close()
+			if err != nil {
+				return nil, err
+			}
+			stat, ok := info.Sys().(*syscall.Stat_t)
+			if !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || info.Size() > 16384 || !ok || int(stat.Uid) != os.Getuid() {
+				return nil, errors.New("unsafe temporary execution receipt")
+			}
+			continue
+		}
 		id := strings.TrimSuffix(entry.Name(), ".json")
 		if entry.Name() != id+".json" || !executionIDValid(id) {
 			return nil, errors.New("unfamiliar execution receipt")
@@ -510,6 +534,15 @@ func executionOutput(writer io.Writer) (*os.File, func(), error) {
 }
 
 func runInOwnedExecution(ctx launchContext, args []string, stdout, stderr io.Writer) error {
+	controlPath := ctx.Instance.ControlPath
+	if controlPath == "" {
+		controlPath = filepath.Join(filepath.Dir(ctx.Instance.StatePath), "control.lock")
+	}
+	admission, err := acquireLock(controlPath, false)
+	if err != nil {
+		return fmt.Errorf("acquire execution admission lock: %w", err)
+	}
+	defer func() { releaseLock(admission) }()
 	executable, err := CurrentProcessExecutable()
 	if err != nil {
 		return err
@@ -637,6 +670,10 @@ func runInOwnedExecution(ctx launchContext, args []string, stdout, stderr io.Wri
 	if err = json.NewEncoder(connection).Encode(executionCommand{executable, args, environment, cwd}); err != nil {
 		return errors.New("could not authorize execution")
 	}
+	// Stop can now see the durable receipt before it obtains its exclusive
+	// control lock. Waiting for the command result must never hold admission.
+	releaseLock(admission)
+	admission = nil
 	_ = connection.SetDeadline(time.Time{})
 	go func() {
 		encoder := json.NewEncoder(connection)
@@ -666,4 +703,121 @@ func runInOwnedExecution(ctx launchContext, args []string, stdout, stderr io.Wri
 		return ownedExecutionExitError{result.Code}
 	}
 	return nil
+}
+
+// Called only after an all-instance zero census, with the stop control lock
+// held. A receipt is retained on a genuine bootout failure; no names outside
+// the strict ledger are submitted to launchctl or removed from disk.
+func retireOwnedExecutionScopes(ctx launchContext) error {
+	scopes, err := readOwnedExecutionScopes(ctx)
+	if err != nil || len(scopes) == 0 {
+		return err
+	}
+	dir, err := executionScopeDirectory(ctx, false)
+	if err != nil {
+		return err
+	}
+	type snapshot struct {
+		scope executionScope
+		raw   []byte
+		info  os.FileInfo
+	}
+	snapshots := make([]snapshot, 0, len(scopes))
+	for _, scope := range scopes {
+		path := filepath.Join(dir, scope.ID+".json")
+		file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+		if err != nil {
+			return err
+		}
+		info, err := file.Stat()
+		if err != nil {
+			file.Close()
+			return err
+		}
+		raw, err := io.ReadAll(io.LimitReader(file, 16385))
+		file.Close()
+		if err != nil {
+			return err
+		}
+		var current executionScope
+		if decodeExecutionReceipt(raw, &current) != nil || current != scope {
+			return errors.New("execution receipt changed before retirement")
+		}
+		snapshots = append(snapshots, snapshot{scope, raw, info})
+	}
+	// Complete every fallible launchd operation before deleting any receipt.
+	for _, snapshot := range snapshots {
+		if err := bootoutOwnedExecution(snapshot.scope.Domain, snapshot.scope.JobLabel); err != nil {
+			return errors.New("could not retire owned execution job; receipts preserved")
+		}
+	}
+	current, err := readOwnedExecutionScopes(ctx)
+	if err != nil {
+		return err
+	}
+	if len(current) != len(snapshots) {
+		return errors.New("execution receipt set changed during retirement")
+	}
+	for _, snapshot := range snapshots {
+		file, err := os.OpenFile(filepath.Join(dir, snapshot.scope.ID+".json"), os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+		if err != nil {
+			return err
+		}
+		info, err := file.Stat()
+		if err != nil {
+			file.Close()
+			return err
+		}
+		raw, err := io.ReadAll(io.LimitReader(file, 16385))
+		file.Close()
+		if err != nil {
+			return err
+		}
+		if !os.SameFile(info, snapshot.info) || !bytes.Equal(raw, snapshot.raw) {
+			return errors.New("execution receipt changed during retirement")
+		}
+	}
+	// If a filesystem failure interrupts the removal set, restore only
+	// absent paths with their original private bytes. Never overwrite a file
+	// that appeared or changed while retirement was in progress.
+	restore := func() error {
+		var failures []error
+		for _, snapshot := range snapshots {
+			path := filepath.Join(dir, snapshot.scope.ID+".json")
+			file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0600)
+			if errors.Is(err, os.ErrExist) {
+				continue
+			}
+			if err != nil {
+				failures = append(failures, err)
+				continue
+			}
+			_, writeErr := file.Write(snapshot.raw)
+			syncErr := file.Sync()
+			closeErr := file.Close()
+			failures = append(failures, writeErr, syncErr, closeErr)
+		}
+		failures = append(failures, syncDirectory(dir))
+		return errors.Join(failures...)
+	}
+	for _, snapshot := range snapshots {
+		if err := os.Remove(filepath.Join(dir, snapshot.scope.ID+".json")); err != nil {
+			return errors.Join(err, restore())
+		}
+	}
+	if err := syncDirectory(dir); err != nil {
+		return errors.Join(err, restore())
+	}
+	return nil
+}
+
+var bootoutOwnedExecution = func(domain, label string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := exec.CommandContext(ctx, "/bin/launchctl", "bootout", domain+"/"+label).Run()
+	var exited *exec.ExitError
+	if errors.As(err, &exited) && (exited.ExitCode() == int(syscall.ENOENT) || exited.ExitCode() == int(syscall.ESRCH)) {
+		return nil
+	}
+	return err
 }
