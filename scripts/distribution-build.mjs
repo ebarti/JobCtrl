@@ -1975,6 +1975,33 @@ const LOOPBACK_ONLY_SANDBOX_PROFILE = `(version 1)
 (deny network-outbound (remote ip))
 (allow network-outbound (remote ip "localhost:*"))`;
 
+const NATIVE_EXECUTION_QA_SANDBOX = "loopback-only-v1";
+
+// launchd must be controlled outside Seatbelt. The native helper applies this
+// fixed additional restriction before any payload command can execute.
+export function createNativeLauncherSmokePlan({ payloadRoot, extractedRoot, stockEnvironment = {} }) {
+  invariant(path.isAbsolute(payloadRoot) && path.isAbsolute(extractedRoot), "native launcher smoke requires absolute owned extraction paths");
+  const requested = stockEnvironment.JOBCTRL_EXECUTION_QA_SANDBOX;
+  invariant(requested === undefined || requested === NATIVE_EXECUTION_QA_SANDBOX, "native launcher smoke requires the fixed loopback-only sandbox selector");
+  return {
+    command: path.join(payloadRoot, "launcher", "jobctrl"),
+    options: {
+      cwd: extractedRoot,
+      env: {
+        ...stockEnvironment,
+        JOBCTRL_RUNTIME_HOME: path.join(extractedRoot, "runtime"),
+        JOBCTRL_EXECUTION_QA_SANDBOX: NATIVE_EXECUTION_QA_SANDBOX,
+      },
+    },
+    executionSandbox: {
+      controller: "outside-seatbelt",
+      runtimeHelper: "macos-sandbox-exec",
+      selector: NATIVE_EXECUTION_QA_SANDBOX,
+      profileSha256: createHash("sha256").update(LOOPBACK_ONLY_SANDBOX_PROFILE).digest("hex"),
+    },
+  };
+}
+
 async function runLoopbackSandboxed(command, args, options) {
   return run("/usr/bin/sandbox-exec", ["-p", LOOPBACK_ONLY_SANDBOX_PROFILE, command, ...args], options);
 }
@@ -2076,13 +2103,10 @@ async function terminateExtractedRuntimeStack(stack) {
 }
 
 async function smokeNativeLauncherLifecycle({ payloadRoot, extractedRoot, stockEnvironment }) {
-  const launcher = path.join(payloadRoot, "launcher", "jobctrl");
-  await requireFile(launcher, "native JobCtrl launcher");
-  const environment = {
-    ...stockEnvironment,
-    JOBCTRL_RUNTIME_HOME: path.join(extractedRoot, "runtime"),
-  };
-  const statusJson = async () => JSON.parse((await runLoopbackSandboxed(launcher, ["status", "--json"], { cwd: extractedRoot, env: environment })).stdout);
+  const plan = createNativeLauncherSmokePlan({ payloadRoot, extractedRoot, stockEnvironment });
+  await requireFile(plan.command, "native JobCtrl launcher");
+  const invoke = (args) => run(plan.command, args, plan.options);
+  const statusJson = async () => JSON.parse((await invoke(["status", "--json"])).stdout);
   const waitForStatus = async (expected, label) => {
     let observed = null;
     for (let attempt = 0; attempt < 60; attempt += 1) {
@@ -2092,8 +2116,8 @@ async function smokeNativeLauncherLifecycle({ payloadRoot, extractedRoot, stockE
     }
     throw new Error(`${label}: lifecycle status remained ${observed?.status}`);
   };
-  const start = async () => runLoopbackSandboxed(launcher, ["start", "--no-open"], { cwd: extractedRoot, env: environment });
-  const stop = async () => runLoopbackSandboxed(launcher, ["stop"], { cwd: extractedRoot, env: environment });
+  const start = async () => invoke(["start", "--no-open"]);
+  const stop = async () => invoke(["stop"]);
   let lifecycleStarted = false;
   try {
     const firstStart = await start();
@@ -2114,15 +2138,15 @@ async function smokeNativeLauncherLifecycle({ payloadRoot, extractedRoot, stockE
     let status = await statusJson();
     invariant(status.status === "running", `native launcher status is ${status.status}`);
     for (const component of ["temporal", "worker", "api"]) invariant(status.components?.[component]?.state === "running", `native launcher ${component} status is not running`);
-    const logs = await runLoopbackSandboxed(launcher, ["logs"], { cwd: extractedRoot, env: environment });
+    const logs = await invoke(["logs"]);
     invariant(logs.stdout.includes("== temporal ==") && logs.stdout.includes("== worker ==") && logs.stdout.includes("== api =="), "native launcher logs did not route all bounded component logs");
-    const version = JSON.parse((await runLoopbackSandboxed(launcher, ["version", "--json"], { cwd: extractedRoot, env: environment })).stdout);
+    const version = JSON.parse((await invoke(["version", "--json"])).stdout);
     invariant(typeof version.buildId === "string" && /^[a-f0-9]{64}$/.test(version.manifestSha256), "native launcher version JSON is incomplete");
-    await runLoopbackSandboxed(launcher, ["doctor"], { cwd: extractedRoot, env: environment });
-    const digest = await runLoopbackSandboxed(launcher, ["digest", "--json"], { cwd: extractedRoot, env: environment });
+    await invoke(["doctor"]);
+    const digest = await invoke(["digest", "--json"]);
     invariant(digest.stdout.trim().startsWith("{"), "native launcher did not transparently dispatch JSON Python CLI command");
-    await runLoopbackSandboxed(launcher, ["pipeline-status"], { cwd: extractedRoot, env: environment });
-    await runLoopbackSandboxed(launcher, ["status", "--pipeline"], { cwd: extractedRoot, env: environment });
+    await invoke(["pipeline-status"]);
+    await invoke(["status", "--pipeline"]);
     // A killed owned worker leaves a degraded registry rather than a misleading
     // healthy status. stop then obtains a clean restart from that evidence.
     process.kill(status.components.worker.pid, "SIGKILL");
@@ -2145,7 +2169,7 @@ async function smokeNativeLauncherLifecycle({ payloadRoot, extractedRoot, stockE
     status = await waitForStatus(["running"], "supervisor-kill restart");
     await stop();
     const stopped = await waitForStatus(["stopped"], "final stop");
-    return { startUrl: "http://127.0.0.1:8766", components: Object.keys(status.components).sort(bytewiseCompare), manifestSha256: version.manifestSha256, pipelineStatusCompatibility: "passed", pythonDispatch: ["doctor", "digest --json"], recovery: { workerKill: "degraded-stop-restart", supervisorKill: "orphaned-stop-restart" } };
+    return { executionSandbox: plan.executionSandbox, startUrl: "http://127.0.0.1:8766", components: Object.keys(status.components).sort(bytewiseCompare), manifestSha256: version.manifestSha256, pipelineStatusCompatibility: "passed", pythonDispatch: ["doctor", "digest --json"], recovery: { workerKill: "degraded-stop-restart", supervisorKill: "orphaned-stop-restart" } };
   } finally {
     if (lifecycleStarted) await stop().catch(() => null);
   }
@@ -2162,8 +2186,9 @@ async function cleanupNativeLauncherRuntime(extractedRoot) {
     JOBCTRL_RUNTIME_HOME: path.join(canonicalRoot, "runtime"),
     PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
   };
+  const plan = createNativeLauncherSmokePlan({ payloadRoot: path.join(canonicalRoot, "payload"), extractedRoot: canonicalRoot, stockEnvironment: environment });
   try {
-    await runLoopbackSandboxed(launcher, ["stop"], { cwd: canonicalRoot, env: environment });
+    await run(plan.command, ["stop"], plan.options);
     return { status: "stopped" };
   } catch (error) {
     return { status: "stop-failed", error: error.message };

@@ -24,6 +24,7 @@ type ownedProcess struct {
 	PID                                       int
 	ParentPID                                 int
 	Identity                                  string
+	CoalitionIDs                              [2]uint64
 	owner, stateDir, payloadRoot, runtimeMode string
 }
 
@@ -188,8 +189,16 @@ func decodeProcessScope(raw []byte, p *ownedProcess) error {
 }
 
 var inspectOwnedProcesses = discoverOwnedProcesses
+var readProcessOwnership = readProcessScope
 
 func discoverOwnedProcesses(ctx launchContext, state instanceState) ([]ownedProcess, error) {
+	scopes, err := readOwnedExecutionScopes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(scopes) > 0 {
+		return discoverScopedProcesses(ctx, state, scopes)
+	}
 	pids, err := userProcessIDs()
 	if err != nil {
 		return nil, fmt.Errorf("enumerate process ownership: %w", err)
@@ -201,7 +210,7 @@ func discoverOwnedProcesses(ctx launchContext, state instanceState) ([]ownedProc
 		if pid == os.Getpid() {
 			continue
 		}
-		p, err := readProcessScope(pid)
+		p, err := readProcessOwnership(pid)
 		if errors.Is(err, syscall.ESRCH) || errors.Is(err, syscall.ENOENT) {
 			continue
 		}
@@ -246,7 +255,7 @@ func discoverOwnedProcesses(ctx launchContext, state instanceState) ([]ownedProc
 			// permission/VM failure from that exit window.
 			for attempt := 0; attempt < 3; attempt++ {
 				time.Sleep(20 * time.Millisecond)
-				p, retryErr := readProcessScope(pid)
+				p, retryErr := readProcessOwnership(pid)
 				if errors.Is(retryErr, syscall.ESRCH) {
 					delete(owned, pid)
 					break
@@ -290,7 +299,29 @@ func signalDiscoveredProcess(p ownedProcess, signal syscall.Signal) error {
 		return err
 	}
 	if identity != p.Identity {
-		return errors.New("process identity changed; signal refused")
+		return nil
+	} // original process exited; never adopt its replacement
+	if p.CoalitionIDs != ([2]uint64{}) {
+		ids, err := processCoalitionIDs(p.PID)
+		if errors.Is(err, syscall.ESRCH) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if ids != p.CoalitionIDs {
+			return errors.New("process changed execution ownership; signal refused")
+		}
+		after, err := processStartIdentity(p.PID)
+		if errors.Is(err, syscall.ESRCH) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if after != p.Identity {
+			return nil
+		}
 	}
 	if err := syscall.Kill(p.PID, signal); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return err
@@ -306,6 +337,9 @@ func terminateOwnedProcesses(ctx launchContext, state instanceState) error {
 }
 
 func drainOwnedProcesses(ctx launchContext, state instanceState, known []ownedProcess) error {
+	if err := drainScopedCommandRoots(ctx, state); err != nil {
+		return err
+	}
 	deadline := time.Now().Add(shutdownTimeout)
 	finalDeadline := deadline.Add(shutdownTimeout)
 	tracked := make(map[int]ownedProcess, len(known))
@@ -372,4 +406,196 @@ func drainOwnedProcesses(ctx launchContext, state instanceState, known []ownedPr
 		pids = append(pids, strconv.Itoa(pid))
 	}
 	return fmt.Errorf("JobCtrl processes remain after termination (PIDs %s); stop those processes and retry", strings.Join(pids, ", "))
+}
+
+// Kernel membership is the durable authority, even after all original parents
+// exit, an exec clears the environment, or a child starts a new session.
+func discoverScopedProcesses(ctx launchContext, state instanceState, scopes []executionScope) ([]ownedProcess, error) {
+	boot, err := executionBootSession()
+	if err != nil {
+		return nil, err
+	}
+	wanted := map[[2]uint64]executionScope{}
+	for _, scope := range scopes {
+		if scope.BootSession == boot {
+			wanted[scope.CoalitionIDs] = scope
+		}
+	}
+	if len(wanted) == 0 {
+		return nil, nil
+	}
+	currentScope, err := currentExecutionScope(ctx, scopes, boot)
+	if err != nil {
+		return nil, err
+	}
+	// A PID disappearing before its coalition can be read could have forked
+	// after the census. Retry such a zero-result pass instead of losing a child.
+	for attempt := 0; attempt < 32; attempt++ {
+		pids, err := userProcessIDs()
+		if err != nil {
+			return nil, err
+		}
+		result := make([]ownedProcess, 0)
+		lost := false
+		for _, pid := range pids {
+			if pid == os.Getpid() {
+				continue
+			}
+			before, err := processBSDInfoIncludingZombies(pid)
+			if errors.Is(err, syscall.ESRCH) {
+				lost = true
+				continue
+			}
+			if err != nil {
+				return nil, fmt.Errorf("inspect process identity for PID %d: %w", pid, err)
+			}
+			if int(binary.LittleEndian.Uint32(before[20:])) != os.Getuid() {
+				continue
+			}
+			if binary.LittleEndian.Uint32(before[4:]) == 5 {
+				continue
+			}
+			identity := processIdentityFromBSD(before)
+			ids, coalitionErr := processCoalitionIDs(pid)
+			after, err := processBSDInfoIncludingZombies(pid)
+			if errors.Is(err, syscall.ESRCH) {
+				lost = true
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			if binary.LittleEndian.Uint32(after[4:]) == 5 || processIdentityFromBSD(after) != identity {
+				lost = true
+				continue
+			}
+			if coalitionErr != nil {
+				return nil, fmt.Errorf("inspect execution ownership for PID %d: %w", pid, coalitionErr)
+			}
+			scope, owned := wanted[ids]
+			if !owned {
+				continue
+			}
+			// The helper is the current public start/CLI command's parent,
+			// not a leftover of an earlier runtime generation.
+			if scope.ID == currentScope && scope.RootPID == pid && scope.RootIdentity == identity {
+				continue
+			}
+			result = append(result, ownedProcess{PID: pid, ParentPID: int(binary.LittleEndian.Uint32(after[16:])), Identity: identity, CoalitionIDs: ids})
+		}
+		if len(result) > 0 || !lost {
+			return result, nil
+		}
+	}
+	return nil, errors.New("process census changed repeatedly during cleanup; retry jobctrl stop")
+}
+
+// arg=1 asks Darwin's BSD-info flavor to include zombies. They can remain
+// in the UID census while no longer having a live task or coalition query.
+func processBSDInfoIncludingZombies(pid int) ([]byte, error) {
+	buffer := make([]byte, procBSDInfoSize)
+	n, _, errno := syscall.Syscall6(syscall.SYS_PROC_INFO, procInfoCallPIDInfo, uintptr(pid), procPIDTBSDInfo, 1, uintptr(unsafe.Pointer(&buffer[0])), uintptr(len(buffer)))
+	if errno != 0 {
+		return nil, errno
+	}
+	if int(n) != procBSDInfoSize || int(binary.LittleEndian.Uint32(buffer[procBSDPIDOffset:])) != pid {
+		return nil, errors.New("invalid kernel process identity")
+	}
+	return buffer, nil
+}
+
+// A standalone Python command has no supervisor registry. Its private launchd
+// helper is only a transport; give the actual command root first chance to
+// drain SDK children, just as a native supervisor does for API and worker.
+func drainScopedCommandRoots(ctx launchContext, state instanceState) error {
+	scopes, err := readOwnedExecutionScopes(ctx)
+	if err != nil {
+		return err
+	}
+	if len(scopes) == 0 {
+		return nil
+	}
+	boot, err := executionBootSession()
+	if err != nil {
+		return err
+	}
+	members, err := inspectOwnedProcesses(ctx, state)
+	if err != nil {
+		return err
+	}
+	current, err := currentExecutionScope(ctx, scopes, boot)
+	if err != nil {
+		return err
+	}
+	for _, scope := range scopes {
+		if scope.BootSession != boot || scope.ID == current {
+			continue
+		}
+		helper, err := processStartIdentity(scope.RootPID)
+		if errors.Is(err, syscall.ESRCH) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if helper != scope.RootIdentity {
+			continue
+		}
+		ids, err := processCoalitionIDs(scope.RootPID)
+		if err != nil {
+			return err
+		}
+		if ids != scope.CoalitionIDs {
+			return errors.New("execution helper ownership changed")
+		}
+		for _, member := range members {
+			if member.ParentPID != scope.RootPID || member.CoalitionIDs != scope.CoalitionIDs {
+				continue
+			}
+			if err := signalDiscoveredProcess(member, syscall.SIGTERM); err != nil {
+				return err
+			}
+			deadline := time.Now().Add(cooperativeShutdownTimeout)
+			for time.Now().Before(deadline) {
+				identity, err := processStartIdentity(member.PID)
+				if errors.Is(err, syscall.ESRCH) || (err == nil && identity != member.Identity) {
+					break
+				}
+				if err != nil {
+					return err
+				}
+				info, err := processBSDInfoIncludingZombies(member.PID)
+				if errors.Is(err, syscall.ESRCH) || (err == nil && binary.LittleEndian.Uint32(info[4:]) == 5) {
+					break
+				}
+				if err != nil {
+					return err
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+		}
+		// A completed command's helper needs only to relay its exit status.
+		// Let that short-lived transport finish before signaling leftovers.
+		_ = waitForPIDExit(scope.RootPID, shutdownTimeout)
+	}
+	return nil
+}
+
+// The environment only names a receipt; current kernel membership supplies
+// authority to exclude the caller's own transport from a cleanup census.
+func currentExecutionScope(ctx launchContext, scopes []executionScope, boot string) (string, error) {
+	requested := environmentMap(ctx.Environment)[executionScopeVariable]
+	if requested == "" {
+		return "", nil
+	}
+	ids, err := processCoalitionIDs(os.Getpid())
+	if err != nil {
+		return "", err
+	}
+	for _, scope := range scopes {
+		if scope.ID == requested && scope.BootSession == boot && scope.CoalitionIDs == ids {
+			return requested, nil
+		}
+	}
+	return "", nil
 }

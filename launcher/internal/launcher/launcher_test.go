@@ -1090,8 +1090,12 @@ func TestStopTerminatesLiveRecordEvenWhenAnOldStateMarkedItExited(t *testing.T) 
 	if err := writeState(ctx.Instance.StatePath, state); err != nil {
 		t.Fatal(err)
 	}
-	if err := stop(ctx); err != nil {
-		t.Fatalf("stop must repair stale live process record: %v", err)
+	before, err := os.ReadFile(ctx.Instance.StatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stop(ctx); !errors.Is(err, errUntrackedOwnership) {
+		t.Fatalf("legacy cleanup must retain uncertainty after terminating a stale live record: %v", err)
 	}
 	if err := <-reaped; err == nil {
 		t.Fatal("sleep unexpectedly exited cleanly after stop")
@@ -1099,9 +1103,12 @@ func TestStopTerminatesLiveRecordEvenWhenAnOldStateMarkedItExited(t *testing.T) 
 	if processPIDAlive(record.PID) || processGroupAlive(record.PGID) {
 		t.Fatal("stop left the falsely marked-live owned process group running")
 	}
+	if after, err := os.ReadFile(ctx.Instance.StatePath); err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("legacy cleanup changed the stale registry without durable ownership: %v", err)
+	}
 	updated, err := readState(ctx.Instance.StatePath)
-	if err != nil || updated.StoppedAt == nil {
-		t.Fatalf("stop did not persist a proven stopped state: %#v, %v", updated, err)
+	if err != nil || updated.StoppedAt != nil || updated.OwnershipVerified {
+		t.Fatalf("legacy cleanup recorded a false stopped proof: %#v, %v", updated, err)
 	}
 }
 

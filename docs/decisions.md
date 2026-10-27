@@ -3048,3 +3048,25 @@ in the ordinary attempt audit. This uses existing generation and review calls;
 it adds no model stage. Optional role selection, immutable metadata, explicit
 pins, selected model/effort and accepted-artifact preservation remain in force.
 The owning contract is [Tailoring](architecture/tailoring.md).
+
+## 2026-10-27: Native Execution Ownership Uses Per-User Jobs
+
+Decision: start native runtime and Python CLI content in ephemeral per-user
+launchd jobs and durably record their kernel coalition identities before
+execution. Descendant ownership must survive detached sessions, platform exec,
+environment replacement and parent exit. Environment tags and PID/group probes
+alone cannot establish that contract. No root service, VM or automatic startup
+is introduced.
+
+The command root gets the first clean-shutdown signal. Verified timed-out
+leftovers are terminated and observed exited before restart or paired database
+work. Admission and stop share a control lock; durable stopped proof precedes
+receipt retirement. Unknown or legacy-untracked ownership is an explicit failure
+that preserves the registry and live data. Reboot remains last-resort manual
+troubleshooting, never the normal lifecycle contract.
+
+QA must exercise actual same-user scopes, detached platform and writer cases,
+other-instance preservation, interruption recovery and native Python network
+isolation. Release and genuine signed/notarized first-use qualification remain
+separate gates. See [runtime ownership](architecture/runtime.md) and
+[Reliability & QA](local-reliability-qa.md).
