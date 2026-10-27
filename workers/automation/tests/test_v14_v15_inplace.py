@@ -432,6 +432,142 @@ def test_receipt_to_lock_race_rejects_new_protected_commit(tmp_path: Path, monke
         _assert_protected(backup)
 
 
+@pytest.mark.parametrize("stage", ["before_first_table", "before_trigger", "before_stamp", "before_commit", "after_commit"])
+def test_bound_activation_process_death_preserves_protected_data(tmp_path: Path, stage: str) -> None:
+    """Exercise actual receipt-bound DELETE/EXCLUSIVE activation, not the helper alone."""
+    from jobctrl.infrastructure.migrations.v15_activation import SourceChangedError, activate
+
+    path = tmp_path / "owned.db"
+    marker = tmp_path / "ready"
+    resume = tmp_path / "resume.txt"
+    resume.write_bytes(b"owned-synthetic-resume")
+    _make(path)
+    candidate, receipt = _build_bound_candidate(path, tmp_path)
+    inode = path.stat().st_ino
+    source = '''
+import pathlib, sys, time
+from jobctrl.infrastructure.migrations import v14_to_v15_inplace as migration
+from jobctrl.infrastructure.migrations import v15_activation
+live, candidate, receipt, marker = map(pathlib.Path, sys.argv[1:5])
+stage = sys.argv[5]
+def pause():
+    marker.write_text('ready')
+    while True: time.sleep(0.1)
+if stage in ('before_first_table', 'before_trigger', 'before_stamp'):
+    original_connect = migration.sqlite3.connect
+    def traced_connect(*args, **kwargs):
+        conn = original_connect(*args, **kwargs)
+        def trace(sql):
+            normalized = sql.strip().upper()
+            if (stage == 'before_first_table' and 'CREATE TABLE JOB_LIFECYCLE_CLOCK' in normalized) or (stage == 'before_trigger' and normalized.startswith('CREATE TRIGGER JOB_LIFECYCLE_CLOCK_NO_DELETE')) or (stage == 'before_stamp' and normalized == 'PRAGMA USER_VERSION = 15'):
+                pause()
+        conn.set_trace_callback(trace)
+        return conn
+    migration.sqlite3.connect = traced_connect
+elif stage == 'before_commit':
+    original = migration._extend
+    def extend(conn):
+        original(conn)
+        pause()
+    migration._extend = extend
+else:
+    migration._fsync_directory = lambda _path: pause()
+v15_activation.activate(live, candidate, receipt)
+'''
+    proc = subprocess.Popen(
+        [sys.executable, "-I", "-B", "-c", source, str(path), str(candidate), str(receipt), str(marker), stage],
+        env=os.environ.copy(),
+    )
+    try:
+        deadline = time.monotonic() + 30
+        while not marker.exists() and proc.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert marker.exists(), f"bound synthetic child did not reach {stage}: {proc.poll()}"
+        proc.kill()
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+    assert path.stat().st_ino == inode
+    assert candidate.exists() and receipt.exists()
+    assert resume.read_bytes() == b"owned-synthetic-resume"
+    with closing(sqlite3.connect(path)) as check:
+        assert_exact_manifest(check, EXACT_V15_MANIFEST if stage == "after_commit" else EXACT_V14_MANIFEST)
+        _assert_protected(check)
+    with closing(sqlite3.connect(tmp_path / "backup.db")) as backup:
+        assert_exact_manifest(backup, EXACT_V14_MANIFEST)
+        _assert_protected(backup)
+    if stage == "after_commit":
+        with sqlite3.connect(path) as writer:
+            writer.execute("UPDATE candidate_profiles SET personal_full_name='acknowledged-after-crash'")
+        with pytest.raises(SourceChangedError):
+            activate(path, candidate, receipt)
+        with closing(sqlite3.connect(path)) as check:
+            assert_exact_manifest(check, EXACT_V15_MANIFEST)
+            _assert_protected(check, "acknowledged-after-crash")
+        assert candidate.exists() and receipt.exists()
+
+
+@pytest.mark.parametrize("failure", ["ddl", "before_commit", "after_commit"])
+def test_bound_activation_failure_preserves_protected_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    from jobctrl.infrastructure.migrations.v15_activation import SourceChangedError, activate
+
+    path = tmp_path / "owned.db"
+    _make(path)
+    candidate, receipt = _build_bound_candidate(path, tmp_path)
+    inode = path.stat().st_ino
+    original_extend = inplace._extend
+    original_connect = sqlite3.connect
+
+    class FailCommit:
+        def __init__(self, conn: sqlite3.Connection) -> None:
+            self.conn = conn
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self.conn, name)
+
+        def execute(self, sql: str, *args: object) -> sqlite3.Cursor:
+            if sql == "COMMIT":
+                if failure == "after_commit":
+                    self.conn.execute(sql)
+                raise sqlite3.OperationalError("synthetic commit failure")
+            return self.conn.execute(sql, *args)
+
+    if failure == "ddl":
+        def fail_after_ddl(conn: sqlite3.Connection) -> None:
+            original_extend(conn)
+            raise RuntimeError("synthetic DDL failure")
+        monkeypatch.setattr(inplace, "_extend", fail_after_ddl)
+        expected_error = RuntimeError
+    else:
+        def connect(*args: object, **kwargs: object) -> object:
+            conn = original_connect(*args, **kwargs)
+            return FailCommit(conn) if args[0] == f"{path.as_uri()}?mode=rw" else conn
+        monkeypatch.setattr(inplace.sqlite3, "connect", connect)
+        expected_error = inplace.InPlaceDurabilityUncertainError if failure == "after_commit" else sqlite3.OperationalError
+    with pytest.raises(expected_error):
+        activate(path, candidate, receipt)
+    monkeypatch.undo()
+    assert path.stat().st_ino == inode
+    assert candidate.exists() and receipt.exists()
+    with closing(sqlite3.connect(path)) as check:
+        assert_exact_manifest(check, EXACT_V15_MANIFEST if failure == "after_commit" else EXACT_V14_MANIFEST)
+        _assert_protected(check)
+    with closing(sqlite3.connect(tmp_path / "backup.db")) as backup:
+        assert_exact_manifest(backup, EXACT_V14_MANIFEST)
+        _assert_protected(backup)
+    if failure == "after_commit":
+        with sqlite3.connect(path) as writer:
+            writer.execute("UPDATE candidate_profiles SET personal_full_name='acknowledged-after-error'")
+        with pytest.raises(SourceChangedError):
+            activate(path, candidate, receipt)
+        with closing(sqlite3.connect(path)) as check:
+            _assert_protected(check, "acknowledged-after-error")
+
+
 @pytest.mark.parametrize("cleanup_stage", ["receipt", "directory"])
 def test_post_commit_cleanup_failures_preserve_live_data(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cleanup_stage: str
