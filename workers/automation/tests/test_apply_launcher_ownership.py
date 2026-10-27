@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -20,7 +21,8 @@ import uuid
 from .apply_execution_fixture import in_process_apply_execution as in_process_apply_execution
 
 import pytest
-from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
+from temporalio import activity
+from temporalio.worker import ActivityInboundInterceptor, Interceptor, Replayer, UnsandboxedWorkflowRunner, Worker
 
 from jobctrl import browser_capabilities, config, database
 from jobctrl.apply import chrome, launcher, ownership
@@ -242,6 +244,153 @@ async def test_real_temporal_overlapping_peer_and_replay(owned_runtime, monkeypa
         ports.close()
         run_in_activity.shutdown_activity_executors()
         executor.shutdown(wait=True, cancel_futures=True)
+
+
+@pytest.mark.asyncio
+async def test_real_temporal_dry_run_retry_preserves_successor_and_peer(owned_runtime, monkeypatch, tmp_path):
+    """An injected post-result activity exception models acknowledgment loss on retry."""
+    monkeypatch.setenv("JOBCTRL_RUNTIME_MODE", "source")
+    app, first, second = owned_runtime
+    ports = _ControlledPorts()
+    releases, entered, runs, trace, calls = {}, {}, [], [], []
+    owner_wf = 'retry-owner-' + uuid.uuid4().hex
+    peer_wf = 'retry-peer-' + uuid.uuid4().hex
+    trace_file = tmp_path / 'activity-attempts.jsonl'
+    def record(row):
+        trace.append(row)
+        with trace_file.open('a') as handle:
+            handle.write(json.dumps(row) + '\n')
+    class CaptureActivity(ActivityInboundInterceptor):
+        async def execute_activity(self, input):
+            info = activity.info()
+            fields = dict(workflow_id=info.workflow_id, activity_type=info.activity_type, attempt=info.attempt)
+            record(dict(fields, phase='begin'))
+            try:
+                result = await self.next.execute_activity(input)
+            except BaseException as error:
+                record(dict(fields, phase='exception', exception=type(error).__name__, message=str(error)))
+                raise
+            record(dict(fields, phase='success'))
+            return result
+    class Capture(Interceptor):
+        def intercept_activity(self, next):
+            return CaptureActivity(next)
+    run_type = ownership.ApplyLauncherRun
+    def new_run():
+        run = run_type()
+        runs.append(run)
+        return run
+    original_main = launcher.main
+    def transient_main(**kwargs):
+        result = original_main(**kwargs)
+        calls.append((kwargs['workflow_id'], kwargs['launcher_run'].identity, result))
+        if kwargs['workflow_id'] == owner_wf and sum(row[0] == owner_wf for row in calls) == 1:
+            # Inject strictly after the real launcher has accepted its result
+            # and joined tracked cleanup, before Temporal receives the output.
+            assert any(kind == 'DryRunCompleted' for kind, _ in _events(database.get_connection(), first))
+            raise RuntimeError('controlled lost acknowledgment after accepted dry-run')
+        return result
+    def submit(*, browser, **kwargs):
+        releases.setdefault(browser.worker_id, threading.Event())
+        entered[browser.worker_id] = browser
+        assert releases[browser.worker_id].wait(20), 'synthetic listener release timed out'
+        return AgentResult(submission_result=DryRunComplete(navigated_to='https://example.com/apply'), duration_ms=1)
+    def forbid_email(*args, **kwargs):
+        raise AssertionError('No email/submission allowed in dry-run retry probe')
+    monkeypatch.setattr(ownership, 'ApplyLauncherRun', new_run)
+    monkeypatch.setattr(launcher, 'main', transient_main)
+    monkeypatch.setattr(apply_adapters, 'LocalChromeAdapter', lambda: ports)
+    monkeypatch.setattr(apply_adapters, 'ClaudeCodeCliAdapter', lambda: ports)
+    monkeypatch.setattr(apply_adapters.GmailEmailApplicationSender, 'send_email_application', forbid_email)
+    monkeypatch.setattr(chrome, 'cleanup_workers', ports.cleanup_workers)
+    ports.submit_application = submit
+    original_heartbeat = run_in_activity.run_blocking_with_heartbeat
+    async def responsive(fn, **kwargs):
+        return await original_heartbeat(fn, **{**kwargs, 'poll_interval': .05, 'cancel_wait_seconds': 2})
+    monkeypatch.setattr(run_in_activity, 'run_blocking_with_heartbeat', responsive)
+    executor = ThreadPoolExecutor(max_workers=4)
+    run_in_activity.set_activity_executor(executor)
+    async def wait_count(count):
+        async with asyncio.timeout(15):
+            while len(entered) < count:
+                await asyncio.sleep(.01)
+    queue = 'retry-investigation-' + uuid.uuid4().hex
+    histories = []
+    try:
+        async with local_env() as env:
+            async with Worker(env.client, task_queue=queue, workflows=[ApplyWorkflow],
+                activities=[apply_activity, check_spend_budget, record_workflow_started, record_workflow_outcome],
+                workflow_runner=UnsandboxedWorkflowRunner(), max_concurrent_activities=2,
+                max_heartbeat_throttle_interval=timedelta(milliseconds=20), interceptors=[Capture()]):
+                def payload(job):
+                    return ApplyWorkflowInput(tenant_id='local', job_id=job, dry_run=True,
+                        expected_app_dir=str(app), expected_db_path=str(config.DB_PATH), approval_required=False)
+                owner = await env.client.start_workflow(ApplyWorkflow.run, payload(first), id=owner_wf, task_queue=queue)
+                await wait_count(1)
+                peer = await env.client.start_workflow(ApplyWorkflow.run, payload(second), id=peer_wf, task_queue=queue)
+                await wait_count(2)
+                old, peer_session = ports.sessions
+                conn = database.get_connection()
+                peer_events = _events(conn, second)
+                peer_stage = tuple(conn.execute("SELECT * FROM job_stage_states WHERE job_id=? AND stage='apply'", (second,)).fetchone())
+                old_file, peer_file = ports.files
+                old_bytes, peer_bytes = old_file.read_bytes(), peer_file.read_bytes()
+                releases[old.worker_id].set()
+                await wait_count(3)
+                successor = ports.sessions[2]
+                assert old.handle.poll() is not None
+                assert len({old.worker_id, successor.worker_id, peer_session.worker_id}) == 3
+                assert len({old.cdp_port, successor.cdp_port, peer_session.cdp_port}) == 3
+                assert len({old.worker_dir, successor.worker_dir, peer_session.worker_dir}) == 3
+                assert len({run.identity for run in runs}) == 3
+                owner_starts = [json.loads(payload) for kind, payload in _events(conn, first) if kind == 'ApplyRunStarted']
+                assert len(owner_starts) == 2
+                assert owner_starts[0]['run_id'] != owner_starts[1]['run_id']
+                successor_stage = tuple(conn.execute("SELECT * FROM job_stage_states WHERE job_id=? AND stage='apply'", (first,)).fetchone())
+                assert conn.execute("SELECT state FROM job_stage_states WHERE job_id=? AND stage='apply'", (first,)).fetchone()[0] == 'running'
+                before_stale = _events(conn, first)
+                before_artifacts = [tuple(row) for row in conn.execute('SELECT * FROM job_artifacts ORDER BY rowid')]
+                # Match the old accepted outcome: a stale dry-run callback must
+                # not reconcile its successor's running row to skipped.
+                launcher.mark_result(first, 'dry_run', run_ctx=owner_starts[0], tenant_id='local')
+                launcher.release_lock(first, run_ctx=owner_starts[0], tenant_id='local')
+                assert tuple(conn.execute("SELECT * FROM job_stage_states WHERE job_id=? AND stage='apply'", (first,)).fetchone()) == successor_stage
+                assert _events(conn, first) == before_stale
+                assert old_file.read_bytes() == old_bytes
+                assert [tuple(row) for row in conn.execute('SELECT * FROM job_artifacts ORDER BY rowid')] == before_artifacts
+                assert peer_session.handle.poll() is None
+                assert _events(conn, second) == peer_events
+                assert tuple(conn.execute("SELECT * FROM job_stage_states WHERE job_id=? AND stage='apply'", (second,)).fetchone()) == peer_stage
+                assert peer_file.read_bytes() == peer_bytes
+                releases[successor.worker_id].set()
+                assert (await asyncio.wait_for(owner.result(), 20)).ok
+                assert old_file.read_bytes() == old_bytes
+                assert peer_session.handle.poll() is None
+                releases[peer_session.worker_id].set()
+                assert (await asyncio.wait_for(peer.result(), 20)).ok
+                assert conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type IN ('ApplySubmitIntended','ApplicationSubmitted')").fetchone()[0] == 0
+                assert sum(kind == 'DryRunCompleted' for kind, _ in _events(conn, first)) == 2
+                assert sum(kind == 'DryRunCompleted' for kind, _ in _events(conn, second)) == 1
+                histories = [await owner.fetch_history(), await peer.fetch_history()]
+            await Replayer(workflows=[ApplyWorkflow], workflow_runner=UnsandboxedWorkflowRunner()).replay_workflows(
+                _history_iterator(histories), raise_on_replay_failure=True)
+        apply_trace = [row for row in trace if row['activity_type'] == 'apply']
+        assert [(row['attempt'], row['phase']) for row in apply_trace if row['workflow_id'] == owner_wf] == [(1,'begin'),(1,'exception'),(2,'begin'),(2,'success')]
+        assert [(row['attempt'], row['phase']) for row in apply_trace if row['workflow_id'] == peer_wf] == [(1,'begin'),(1,'success')]
+        assert next(row for row in apply_trace if row['phase'] == 'exception')['message'] == 'controlled lost acknowledgment after accepted dry-run'
+        assert [call[0] for call in calls].count(owner_wf) == 2
+        assert [call[0] for call in calls].count(peer_wf) == 1
+        for history in histories:
+            (tmp_path / (history.workflow_id + '.json')).write_text(history.to_json())
+    finally:
+        for release in releases.values():
+            release.set()
+        ports.close()
+        run_in_activity.shutdown_activity_executors()
+        executor.shutdown(wait=True, cancel_futures=True)
+        cleanup = [{'worker_id': worker, 'pid': proc.pid, 'returncode': proc.poll()} for worker, proc in ports.processes.items()]
+        (tmp_path / 'owned-cleanup.json').write_text(json.dumps(cleanup))
+        assert all(row['returncode'] is not None for row in cleanup)
 
 
 async def _history_iterator(histories):
