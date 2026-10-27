@@ -70,6 +70,9 @@ export class SubprocessJsonRpcAdapter implements JsonRpcDispatcher {
   private readonly pending = new Map<number | string, PendingRequest>();
   private buffer = "";
   private closed = false;
+  private draining = false;
+  private drainFailure: Error | null = null;
+  private drainPromise: Promise<void> | null = null;
   private readonly options: {
     appDir: string;
     configPath?: string;
@@ -140,6 +143,29 @@ export class SubprocessJsonRpcAdapter implements JsonRpcDispatcher {
     this.pending.clear();
   }
 
+  /** Stop admission, request EOF and wait for the RPC server's in-flight work.
+   * A timeout is a failure, not proof that the child or its work stopped.
+   */
+  drain(timeoutMs = 30_000): Promise<void> {
+    if (this.drainPromise) return this.drainPromise;
+    this.closed = true;
+    this.draining = true;
+    const child = this.child;
+    if (!child) return Promise.resolve();
+    this.drainPromise = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error("JSON-RPC subprocess did not drain before the shutdown deadline."));
+      }, timeoutMs);
+      child.once("close", () => {
+        clearTimeout(timer);
+        if (this.drainFailure) reject(this.drainFailure);
+        else resolve();
+      });
+      child.stdin.end();
+    });
+    return this.drainPromise;
+  }
+
   private ensureChild(): ChildProcessWithoutNullStreams {
     if (this.child) return this.child;
 
@@ -164,10 +190,14 @@ export class SubprocessJsonRpcAdapter implements JsonRpcDispatcher {
       // the source of truth.
     });
     child.on("error", (err) => {
+      if (this.draining) this.drainFailure = err;
       this.failAllPending(err);
       this.child = null;
     });
-    child.on("close", () => {
+    child.on("close", (code, signal) => {
+      if (this.draining && (this.pending.size > 0 || code !== 0 || signal !== null)) {
+        this.drainFailure ??= new Error("JSON-RPC subprocess exited before completing its drain.");
+      }
       this.failAllPending(new Error("Worker subprocess closed unexpectedly."));
       this.child = null;
     });
@@ -233,6 +263,7 @@ export class SubprocessJsonRpcAdapter implements JsonRpcDispatcher {
  * ``buildApp`` and never touch the singleton.
  */
 const defaultDispatchers = new Map<string, SubprocessJsonRpcAdapter>();
+let defaultDispatchersDraining = false;
 
 function dispatcherKey(options: JsonRpcCallOptions = {}): string {
   const pythonRuntime =
@@ -249,6 +280,7 @@ function dispatcherKey(options: JsonRpcCallOptions = {}): string {
 }
 
 export function getDefaultJsonRpcDispatcher(options: JsonRpcCallOptions = {}): SubprocessJsonRpcAdapter {
+  if (defaultDispatchersDraining) throw new Error("JSON-RPC dispatch is shutting down.");
   const key = dispatcherKey(options);
   let dispatcher = defaultDispatchers.get(key);
   if (!dispatcher) {
@@ -262,6 +294,15 @@ export function getDefaultJsonRpcDispatcher(options: JsonRpcCallOptions = {}): S
 export function resetDefaultJsonRpcDispatcher(): void {
   for (const dispatcher of defaultDispatchers.values()) void dispatcher.close();
   defaultDispatchers.clear();
+  defaultDispatchersDraining = false;
+}
+
+/** Process-entrypoint shutdown only: fence the process-owned pool and await EOF. */
+export async function drainDefaultJsonRpcDispatchers(): Promise<void> {
+  defaultDispatchersDraining = true;
+  const results = await Promise.allSettled([...defaultDispatchers.values()].map((dispatcher) => dispatcher.drain()));
+  const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (failure) throw failure.reason;
 }
 
 /** Enforce the same boundary for production callers and injected dispatchers. */

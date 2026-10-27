@@ -292,7 +292,7 @@ func curlHasArgument(args []string, name, value string) bool {
 
 func TestUninstallRequiresRemoveDataFlagAndExactTypedPhrase(t *testing.T) {
 	runtime, state := t.TempDir(), t.TempDir()
-	ctx := launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(runtime, "missing-state.json"), ControlPath: filepath.Join(runtime, "control.lock")}}
+	ctx := launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(runtime, "missing-state.json"), LockPath: filepath.Join(runtime, "instance.lock"), ControlPath: filepath.Join(runtime, "control.lock")}}
 	old := uninstallInput
 	t.Cleanup(func() { uninstallInput = old })
 	var out bytes.Buffer
@@ -321,7 +321,7 @@ func TestDefaultUninstallPreservesUserDataAndRejectsForeignLinks(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(state, "profile.json"), []byte("private"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ctx := launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(runtime, "missing-state.json"), ControlPath: filepath.Join(runtime, "control.lock")}}
+	ctx := launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(runtime, "missing-state.json"), LockPath: filepath.Join(runtime, "instance.lock"), ControlPath: filepath.Join(runtime, "control.lock")}}
 	var out bytes.Buffer
 	if err := uninstall(ctx, nil, &out); err != nil {
 		t.Fatal(err)
@@ -399,7 +399,7 @@ func TestUninstallRejectsOverlappingStateBeforeMutatingRuntime(t *testing.T) {
 	if err := os.WriteFile(marker, []byte("keep"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ctx := launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(runtime, "missing-state.json"), ControlPath: filepath.Join(runtime, "control.lock")}}
+	ctx := launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(runtime, "missing-state.json"), LockPath: filepath.Join(runtime, "instance.lock"), ControlPath: filepath.Join(runtime, "control.lock")}}
 	if err := uninstall(ctx, nil, io.Discard); err == nil || !strings.Contains(err.Error(), "overlaps") {
 		t.Fatalf("overlapping uninstall = %v", err)
 	}
@@ -762,7 +762,7 @@ func TestRealTwoReleasePromotionRollbackRestoresPairedSQLiteState(t *testing.T) 
 	}
 	seedLifecycleSQLitePair(t, python, state, "old")
 	before := lifecycleDatabaseValues(t, python, state)
-	ctx := launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(state, "missing-state.json"), ControlPath: filepath.Join(state, "control.lock")}, Environment: []string{"HOME=" + t.TempDir(), "JOBCTRL_RUNTIME_HOME=" + runtime, "JOBCTRL_DIR=" + state}}
+	ctx := launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(state, "missing-state.json"), LockPath: filepath.Join(state, "instance.lock"), ControlPath: filepath.Join(state, "control.lock")}, Environment: []string{"HOME=" + t.TempDir(), "JOBCTRL_RUNTIME_HOME=" + runtime, "JOBCTRL_DIR=" + state}}
 	oldStart := startReleaseCommand
 	t.Cleanup(func() { startReleaseCommand = oldStart })
 	startReleaseCommand = func(_ launchContext, receipt release.Receipt, _ string) error {
@@ -833,7 +833,7 @@ func TestRealInterruptedPreBackupAndSelectorHandoffRecovery(t *testing.T) {
 	if err := handoffPublicSelector(runtime, oldVerified); err != nil {
 		t.Fatal(err)
 	}
-	ctx := launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(state, "missing-state.json"), ControlPath: filepath.Join(state, "control.lock")}, Environment: []string{"HOME=" + t.TempDir(), "JOBCTRL_RUNTIME_HOME=" + runtime, "JOBCTRL_DIR=" + state}}
+	ctx := launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(state, "missing-state.json"), LockPath: filepath.Join(state, "instance.lock"), ControlPath: filepath.Join(state, "control.lock")}, Environment: []string{"HOME=" + t.TempDir(), "JOBCTRL_RUNTIME_HOME=" + runtime, "JOBCTRL_DIR=" + state}}
 	oldStart := startReleaseCommand
 	t.Cleanup(func() { startReleaseCommand = oldStart })
 	startReleaseCommand = func(_ launchContext, got release.Receipt, journalID string) error {

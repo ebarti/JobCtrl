@@ -782,6 +782,15 @@ it does not send messages or replace the review surfaces.
 
 </WorkflowSurfacePanel>
 
+## Stopping And Restarting
+
+`jobctrl stop` asks the instance to shut down cleanly, then kills verified
+leftovers that exceed the timeout and waits for exit. Detached children remain
+part of that instance. A successful stop permits normal restart. Actual cleanup
+failures report the process or ownership problem; investigate it and retry,
+keeping the registry and data intact. Reboot is a last-resort troubleshooting
+option, not part of the normal workflow. See [startup and cleanup](getting-started.md#_2-start-jobctrl).
+
 ## Command Reference
 
 ```bash
@@ -800,7 +809,7 @@ exist only in the installed launcher.
 | Lifecycle command | What it does |
 | --- | --- |
 | `start` | Start the local services and open the app (`--no-open`, `--foreground`). |
-| `stop` / `status` / `open` | Stop the runtime, report its state (`--json`, or `--pipeline` for pipeline stats), or open the app. |
+| `stop` / `status` / `open` | Stop the runtime, report its state (`--json`, or `--pipeline` for pipeline stats), or open the app. Stop refuses to report success when recorded service ownership or exit is unresolved; see [Start JobCtrl](getting-started.md#_2-start-jobctrl). |
 | `logs [component]` | Show the last 200 lines of the `temporal`, `worker`, or `api` log, or of all three when no component is given. |
 | `version` | Print the installed version (`--json`). |
 | `update` / `rollback` / `uninstall` | Install a newer release, restore an earlier application and its saved database pair (`--to <build-id>`), or remove JobCtrl. Rollback keeps a compatible recovery launcher; Homebrew preserves the selection until an explicit update. `uninstall --remove-data` also deletes your local data after you type a confirmation phrase. |

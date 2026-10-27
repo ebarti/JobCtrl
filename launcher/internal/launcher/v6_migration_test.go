@@ -66,6 +66,7 @@ func newV6ActivationFixtureWithPython(t *testing.T, python string) v6ActivationF
 				RuntimeHome: runtime,
 				StateDir:    state,
 				StatePath:   filepath.Join(state, "state.json"),
+				LockPath:    filepath.Join(state, "instance.lock"),
 				ControlPath: filepath.Join(state, "control.lock"),
 			},
 			Environment: []string{"HOME=" + t.TempDir(), "JOBCTRL_RUNTIME_HOME=" + runtime, "JOBCTRL_DIR=" + state},

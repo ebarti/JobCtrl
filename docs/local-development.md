@@ -1051,3 +1051,13 @@ No asset regenerates from a real workspace.
 ## Screening CLI
 
 The installed CLI supports `jobctrl screening read JOB_ID` and `jobctrl screening write JOB_ID command.json`. From source use the prepared locked interpreter with `PYTHONPATH=workers/automation/src workers/automation/.venv/bin/python -m jobctrl.cli screening read JOB_ID`. The [user reference](user/screening-answers.md#cli-and-local-api) defines command fields and source/privacy boundaries.
+
+Native launcher tests use temporary same-user launchd jobs and private ownership
+receipts. They need access to the per-user launchd domain and native process
+inspection; an outer tool sandbox can deny those probes without proving a
+service is absent. Keep HOME, JOBCTRL_DIR and runtime paths synthetic. The
+bundled smoke applies its fixed loopback restriction inside the job helper via
+`JOBCTRL_EXECUTION_QA_SANDBOX=loopback-only-v1`; unknown selector values fail.
+The actual native CPython network test and independent direct-runtime sandbox
+checks must both execute. No arbitrary sandbox profile or ownership bypass is
+accepted from the environment.

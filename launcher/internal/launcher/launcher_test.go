@@ -790,7 +790,7 @@ func main() {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if output, err := runLauncherCommand(t, "jobctrl", otherCWD, environment, "start", "--no-open"); err == nil || !strings.Contains(output, "recorded") {
+	if output, err := runLauncherCommand(t, "jobctrl", otherCWD, environment, "start", "--no-open"); err == nil || (!strings.Contains(output, "recorded") && !strings.Contains(output, "remaining instance processes")) {
 		t.Fatalf("immediate restart after SIGKILL supervisor was accepted: %v\n%s", err, output)
 	}
 	after, err := os.ReadFile(stateFiles[0])
@@ -1083,15 +1083,19 @@ func TestStopTerminatesLiveRecordEvenWhenAnOldStateMarkedItExited(t *testing.T) 
 	}
 	manifest := runtimeManifest{}
 	manifest.Ports.TemporalGRPC, manifest.Ports.TemporalUI, manifest.Ports.API = 7233, 8233, 8766
-	ctx := launchContext{PayloadRoot: payload, Manifest: manifest, Distribution: distributionManifest{BuildID: "build"}, Instance: instance{ID: "instance", StateDir: stateRoot, StatePath: filepath.Join(stateRoot, "state.json"), ControlPath: filepath.Join(stateRoot, "control.lock")}}
+	ctx := launchContext{PayloadRoot: payload, Manifest: manifest, Distribution: distributionManifest{BuildID: "build"}, Instance: instance{ID: "instance", StateDir: stateRoot, StatePath: filepath.Join(stateRoot, "state.json"), LockPath: filepath.Join(stateRoot, "instance.lock"), ControlPath: filepath.Join(stateRoot, "control.lock")}}
 	oldExit := time.Now().UTC().Add(-time.Minute)
 	record.ExitedAt = &oldExit
 	state := instanceState{SchemaVersion: stateSchemaVersion, InstanceID: "instance", CanonicalStateDir: stateRoot, PayloadRoot: payload, BuildID: "build", ManifestSHA256: digest, Ports: runtimePorts{TemporalGRPC: 7233, TemporalUI: 8233, API: 8766}, Components: map[string]componentRecord{"worker": record}}
 	if err := writeState(ctx.Instance.StatePath, state); err != nil {
 		t.Fatal(err)
 	}
-	if err := stop(ctx); err != nil {
-		t.Fatalf("stop must repair stale live process record: %v", err)
+	before, err := os.ReadFile(ctx.Instance.StatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stop(ctx); !errors.Is(err, errUntrackedOwnership) {
+		t.Fatalf("legacy cleanup must retain uncertainty after terminating a stale live record: %v", err)
 	}
 	if err := <-reaped; err == nil {
 		t.Fatal("sleep unexpectedly exited cleanly after stop")
@@ -1099,9 +1103,12 @@ func TestStopTerminatesLiveRecordEvenWhenAnOldStateMarkedItExited(t *testing.T) 
 	if processPIDAlive(record.PID) || processGroupAlive(record.PGID) {
 		t.Fatal("stop left the falsely marked-live owned process group running")
 	}
+	if after, err := os.ReadFile(ctx.Instance.StatePath); err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("legacy cleanup changed the stale registry without durable ownership: %v", err)
+	}
 	updated, err := readState(ctx.Instance.StatePath)
-	if err != nil || updated.StoppedAt == nil {
-		t.Fatalf("stop did not persist a proven stopped state: %#v, %v", updated, err)
+	if err != nil || updated.StoppedAt != nil || updated.OwnershipVerified {
+		t.Fatalf("legacy cleanup recorded a false stopped proof: %#v, %v", updated, err)
 	}
 }
 

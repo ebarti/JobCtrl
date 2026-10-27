@@ -20,6 +20,32 @@ results. Contract-only high-risk changes require safety
 checks, with product verification before first use. Major UI regressions require
 a regression test or an explicit reproducible scenario.
 
+For native shutdown, exercise actual per-user launchd scopes with owned synthetic
+writers and an environment-empty child that forks, calls `setsid()` and execs a
+platform binary. Reap all original parents and prove status/stop still find and
+terminate it. Preserve another instance as a control. Cover root-first clean
+shutdown and foreground cancellation, TERM-ignoring leftovers, actual KILL and
+exit verification, ordinary restart, direct paired-backup readback and CLI
+execution. Never use names or environment tags as complete kill authority.
+
+Interrupt the stop process after durable stopped proof and after receipt
+retirement, then repeat cleanup through fresh processes. Cover PID reuse across
+inspection retries, admission versus stop, controller EOF, metadata/retirement
+failures, linked/malformed receipts and exact-byte preservation on refusal.
+Legacy untracked registries must remain ownership-unverified, even after a known
+group exits; modern scoped cleanup supplies the positive restart/backup proof.
+No required case may pass by fabricating an ownership flag or a real user's
+coalition ID. Kernel boot identity binds receipt lifetime and is not a reboot
+admission requirement. Use no real user workspace or process.
+
+The bundled native smoke must preserve network isolation across launchd: run its
+native control process outside Seatbelt and select the fixed internal
+`JOBCTRL_EXECUTION_QA_SANDBOX=loopback-only-v1` restriction at the authenticated
+job helper. Verify the actual compiled native-to-CPython dispatch can connect to
+loopback and receives `EPERM` on a reserved non-loopback TCP permission probe,
+with no application bytes sent. Keep direct extracted-runtime sandbox probes
+and signed/notarized first-use qualification distinct.
+
 For the job-data purge gate, the disposable workspace must contain a Candidate
 Profile, Discovery settings, source registry, resume template/default, at least
 one Job with registered Materials, an unregistered generated candidate, a

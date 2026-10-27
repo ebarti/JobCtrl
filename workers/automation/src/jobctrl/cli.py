@@ -2419,16 +2419,18 @@ def worker(
                 f"[yellow]Auto-apply loop {startup_auto_apply.action}: {startup_auto_apply.workflow_id}.[/yellow]"
             )
         try:
-            await worker.run()
+            from jobctrl.infrastructure.temporal.worker import run_worker_until_sigterm
+
+            await run_worker_until_sigterm(worker)
         finally:
             from jobctrl.infrastructure.temporal.run_in_activity import (
-                shutdown_activity_executors,
+                drain_activity_executors,
             )
 
             heartbeat_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await heartbeat_task
-            shutdown_activity_executors()
+            await drain_activity_executors()
 
     from jobctrl.infrastructure.observability import shutdown_otel
 

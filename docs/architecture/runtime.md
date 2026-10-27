@@ -114,17 +114,62 @@ instead of requiring system `npx`. Nested Python setup/doctor and MCP processes
 run with isolated mode plus bytecode suppression (`-I -B`) so they cannot write
 `__pycache__` into the launcher-verified payload.
 
-The installed payload uses a native `jobctrl` supervisor.
-It verifies the manifest envelope/tree before dispatch, starts fixed loopback
-Temporal (gRPC `7233`, Web UI `8233`) → worker → API (`8766`) in that order,
-and waits for Temporal plus API worker-heartbeat health. Each canonical
-`JOBCTRL_DIR` gets one `flock`-protected registry at
-`~/Library/Application Support/JobCtrl/instances/<sha256>` (or
-`JOBCTRL_RUNTIME_HOME`); records bind PID, PGID, start identity, executable,
-build ID, manifest digest, and ports so lifecycle cleanup cannot target a
-reused PID. The P6 workflow now makes Developer ID signing, notarization, and
-authenticated publication mandatory for promotion. Public artifacts pass those
-gates before the stable release pointer or Homebrew formula can reference them.
+The installed payload uses a native `jobctrl` supervisor. It verifies the
+manifest envelope/tree before dispatch, then starts fixed loopback Temporal
+(gRPC `7233`, Web UI `8233`) → worker → API (`8766`) and waits for Temporal and
+API worker-heartbeat health. Each canonical `JOBCTRL_DIR` has one locked runtime
+registry. Records bind its instance, payload, manifest, PID/start identities,
+process groups and execution scope.
+
+Runtime starts and Python CLI commands execute inside uniquely labeled,
+ephemeral per-user launchd jobs. The launcher records the kernel resource and
+jetsam coalition IDs in a private instance receipt **before authorizing work**.
+These IDs remain attached to descendants through fork, new sessions, changed
+environments, platform executables and parent exit. Shutdown enumerates those
+kernel memberships and rechecks each PID/start identity before signaling. Names,
+command substrings, environment tags and numeric process groups do not replace
+that durable ownership proof. Receipts contain ownership metadata, never the
+full environment or credentials; command configuration and standard descriptors
+travel over a private Unix connection. Jobs do not install automatic startup.
+The boot-session identity only prevents stale coalition-ID reuse after a natural
+OS boot; it imposes no reboot prerequisite.
+
+`stop` requests the verified supervisor's ordered clean shutdown first. API and
+worker handlers close HTTP/RPC/provider work and drain admitted blocking activity
+threads. Foreground cancellation reaches the command root first; it does not
+signal its cooperative children concurrently. After the configured grace,
+verified leftovers receive TERM, then KILL after their timeout, followed by an
+actual zero-member census. Detached descendants remain identifiable even when
+all original parents and groups are gone. Other instances stay outside that
+ownership boundary. Successful cleanup permits normal restart.
+
+Stop's control lock also serializes new execution admission. After cleanup,
+the launcher durably publishes the stopped proof before retiring exact owned
+launchd labels and receipts. Interrupted finalization can be repeated without
+losing ownership evidence or blocking restart behind a deleted receipt. Missing,
+changed or unfamiliar active ownership metadata produces an explicit cleanup
+failure and preserves the registry and database pair. Legacy registries that
+never recorded complete ownership remain `ownership-unverified`; an empty old
+process group cannot certify their historical descendants. Do not delete that
+registry or restore old databases to bypass the refusal. Manual recovery must
+establish the missing boundary; reboot is last-resort troubleshooting for an
+unrecoverable cleanup failure, not normal stop, backup, update or restart.
+
+Python CLI execution retains the shared release-selection lock across exec.
+Backup, update, rollback and uninstall take exclusive selection, and direct
+backup always invokes the same complete stop gate even without a live recorded
+leader. The API/worker drain and SQLite locks alone do not establish process
+ownership. The [QA matrix](../local-reliability-qa.md) requires detached platform
+and writer cases, other-instance preservation, ordered cancellation, actual
+process interruption, paired readback and restart.
+
+The distribution smoke runs native controllers outside Seatbelt so launchd can
+establish the jobs, while the exact internal QA selector applies the compiled
+loopback-only sandbox to the authenticated helper and all payload descendants.
+Actual native Python dispatch proves loopback access and non-loopback `EPERM`.
+Direct extracted Python/Node/Temporal/MCP smoke subprocesses keep their existing
+sandbox. Signed/notarized artifact and clean-machine qualification remain
+release/first-use gates, separately from synthetic source proof.
 
 Homebrew caches only prefix-owned release resources. Its build sandbox verifies
 strict Developer ID certificate-chain requirements for the launcher, installer
@@ -144,9 +189,10 @@ transition journal records selector handoff, database-pair backup, pending and
 finalized channel policy, and promotion. Acquisition, update, rollback,
 backup, retention, and uninstall serialize through transition then selection
 locking; selector resolution holds a shared selection lock through supervisor
-readiness. Before a candidate is promoted, the old process tree is quiesced
-with the registry's PID/PGID identity checks and both `JOBCTRL_DIR/jobctrl.db`
-and `JOBCTRL_DIR/temporal.db` receive online, hash-verified paired backups.
+readiness. Before a candidate is promoted, recorded component processes and
+groups must pass the registry's PID/PGID quiescence checks, and both
+`JOBCTRL_DIR/jobctrl.db` and `JOBCTRL_DIR/temporal.db` receive online,
+hash-verified paired backups.
 While a journal is unfinished, ordinary commands remain blocked. Internal
 `start --no-open` and its detached supervisor may proceed only from the exact
 payload authorized by the matching durable journal, executable transition state

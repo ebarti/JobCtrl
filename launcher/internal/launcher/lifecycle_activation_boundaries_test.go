@@ -102,7 +102,7 @@ func TestP5PolicyTamperingFailsBeforePromotion(t *testing.T) {
 				return nil
 			}
 			ctx := launchContext{Instance: instance{
-				RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(state, "state.json"), ControlPath: filepath.Join(state, "control.lock"),
+				RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(state, "state.json"), LockPath: filepath.Join(state, "instance.lock"), ControlPath: filepath.Join(state, "control.lock"),
 			}, Environment: []string{"HOME=" + t.TempDir(), "JOBCTRL_RUNTIME_HOME=" + runtime, "JOBCTRL_DIR=" + state}}
 			err = promoteExisting(ctx, store, release.Active{SchemaVersion: 1, Generation: 1, Receipt: old, SelectorBuildID: old.BuildID, Acquisition: "local-fixture"}, candidate.BuildID, "update", io.Discard)
 			if err == nil || !strings.Contains(err.Error(), "candidate is not safe to promote") {
@@ -162,7 +162,7 @@ func newPromotionBoundaryFixture(t *testing.T, python string) promotionBoundaryF
 	env := []string{"HOME=" + t.TempDir(), "JOBCTRL_RUNTIME_HOME=" + runtime, "JOBCTRL_DIR=" + state}
 	return promotionBoundaryFixture{
 		runtime: runtime, state: state, store: store, old: old, candidate: candidate, env: env,
-		ctx: launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(state, "missing-state.json"), ControlPath: filepath.Join(state, "control.lock")}, Environment: env},
+		ctx: launchContext{Instance: instance{RuntimeHome: runtime, StateDir: state, StatePath: filepath.Join(state, "missing-state.json"), LockPath: filepath.Join(state, "instance.lock"), ControlPath: filepath.Join(state, "control.lock")}, Environment: env},
 	}
 }
 

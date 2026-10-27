@@ -112,6 +112,16 @@ Use `jobctrl start --no-open` when you do not want a browser window, or
 Your workspace is stored under `~/.jobctrl/` by default and survives stops,
 updates, and rollbacks.
 
+`jobctrl stop` requests a clean shutdown, terminates verified leftovers that
+exceed the timeout, and waits for exit. It tracks the instance's children even
+if they detach or their parent crashes. Successful cleanup permits normal
+restart. If a process, permission check or ownership record prevents cleanup,
+JobCtrl reports that failure and blocks backup or restart until it is resolved.
+Check `jobctrl status`, keep the registry and workspace intact, and investigate
+the reported problem. Older untracked registries remain ownership-unverified;
+do not delete them to force a successful status. Reboot is last-resort manual
+troubleshooting for an unrecoverable cleanup problem, not a normal requirement.
+
 ## 3. Complete First-Run Setup
 
 ### Create your profile
