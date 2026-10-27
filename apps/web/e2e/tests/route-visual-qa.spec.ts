@@ -1073,11 +1073,11 @@ test("compact, regular, and comfortable modes preserve typography metrics", asyn
 test("stale score status keeps the shared transparent status treatment", async ({
   page,
 }) => {
-  await page.route(/\/v1\/jobs(?:\?.*)?$/, async (route) => {
+  await page.route(/\/v1\/jobs\/reviewable-list(?:\?.*)?$/, async (route) => {
     await route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify(
-        makeJobsPage([
+      body: JSON.stringify({
+        ...makeJobsPage([
           {
             ...sampleJob,
             scoreStaleness: {
@@ -1090,7 +1090,8 @@ test("stale score status keeps the shared transparent status treatment", async (
             },
           },
         ]),
-      ),
+        observationId: null,
+      }),
     });
   });
 

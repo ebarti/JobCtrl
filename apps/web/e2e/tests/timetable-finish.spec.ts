@@ -54,22 +54,25 @@ for (const theme of ["light", "dark"] as const) {
     page,
   }) => {
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.route(/\/v1\/jobs(?:\?.*)?$/, async (route) => {
+    await page.route(/\/v1\/jobs\/reviewable-list(?:\?.*)?$/, async (route) => {
       await route.fulfill({
-        json: makeJobsPage([
-          {
-            ...sampleJob,
-            scoreStaleness: {
-              isStale: true,
-              staleReason: "scoring_policy_changed",
-              currentPolicyVersion: 8,
-              targetPolicyVersion: 9,
-              markedAt: "2026-04-29T10:07:00+00:00",
-              pendingExplicitRescore: true,
+        json: {
+          ...makeJobsPage([
+            {
+              ...sampleJob,
+              scoreStaleness: {
+                isStale: true,
+                staleReason: "scoring_policy_changed",
+                currentPolicyVersion: 8,
+                targetPolicyVersion: 9,
+                markedAt: "2026-04-29T10:07:00+00:00",
+                pendingExplicitRescore: true,
+              },
             },
-          },
-          sampleSecondaryJob,
-        ]),
+            sampleSecondaryJob,
+          ]),
+          observationId: null,
+        },
       });
     });
     await page.goto("/jobs");

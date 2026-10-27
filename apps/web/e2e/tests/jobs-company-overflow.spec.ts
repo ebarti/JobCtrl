@@ -61,13 +61,16 @@ test("Jobs company stays in its column and remains readable at desktop and card 
   page,
 }, testInfo) => {
   test.setTimeout(90_000);
-  await page.route(/\/v1\/jobs(?:\?.*)?$/, async (route) => {
+  await page.route(/\/v1\/jobs\/reviewable-list(?:\?.*)?$/, async (route) => {
     await route.fulfill({
-      json: makeJobsPage([
-        { ...sampleJob, company: longCompany },
-        { ...sampleSecondaryJob, company: "Acme" },
-        { ...sampleSecondaryJob, jobKey: "qa-no-company", company: "" },
-      ]),
+      json: {
+        ...makeJobsPage([
+          { ...sampleJob, company: longCompany },
+          { ...sampleSecondaryJob, company: "Acme" },
+          { ...sampleSecondaryJob, jobKey: "qa-no-company", company: "" },
+        ]),
+        observationId: null,
+      },
     });
   });
 
