@@ -113,16 +113,20 @@ def recover_captured_postings(
                             _smart_extract_session(source_id=source_id, run_id=run_id, browser=client), client,
                         )
                 smart_clients[source_id] = selected
-            new, existing = _store_jobs(
-                conn, [{"url": posting.posting_url.value, "title": posting.metadata.title,
-                        "company": posting.employer.name, "description": posting.metadata.description,
-                        "location": posting.metadata.location}], posting.source.board, posting.strategy.value,
-                search_cfg=search_cfg, limit=max(limit - result["new"], 0) if limit > 0 else 0, run_id=run_id,
-                discovery_execution=discovery_execution, cancel_event=cancel_event, source_id=source_id,
-                source_native_id=posting.source_native_id, tenant_id=TenantId(str(tenant_id)),
-                refresh_existing_job=False, observation_id_factory=lambda key=capture_key: f"capture:{key}",
-                idempotency_prefix=f"capture:{capture_key}", browser_client=smart_clients[source_id],
-            )
+            try:
+                new, existing = _store_jobs(
+                    conn, [{"url": posting.posting_url.value, "title": posting.metadata.title,
+                            "company": posting.employer.name, "description": posting.metadata.description,
+                            "location": posting.metadata.location}], posting.source.board, posting.strategy.value,
+                    search_cfg=search_cfg, limit=max(limit - result["new"], 0) if limit > 0 else 0, run_id=run_id,
+                    discovery_execution=discovery_execution, cancel_event=cancel_event, source_id=source_id,
+                    source_native_id=posting.source_native_id, tenant_id=TenantId(str(tenant_id)),
+                    refresh_existing_job=False, observation_id_factory=lambda key=capture_key: f"capture:{key}",
+                    idempotency_prefix=f"capture:{capture_key}", browser_client=smart_clients[source_id],
+                    result_budget=result_budget,
+                )
+            except DiscoveryResultLimitReached:
+                continue
             excluded = not (new or existing)
         else:
             if result_budget is not None:

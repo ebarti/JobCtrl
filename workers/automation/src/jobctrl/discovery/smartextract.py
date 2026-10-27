@@ -138,16 +138,20 @@ def _store_jobs(
     observation_id_factory=None,
     idempotency_prefix=None,
     source_native_id=None,
+    result_budget=None,
 ):
     from jobctrl.domain.enrichment.snapshot_use_case import CapturePostingSnapshotUseCase
     from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository, SqlitePostingSnapshotSetRepository
     from jobctrl.infrastructure.enrichment.playwright_fetcher import PlaywrightDetailPageFetcher
     from jobctrl.state import ensure_job_stage_rows, set_stage_state, utc_now
 
+    source_id = source_id or f"smartextract:{site}"
     repository = SqliteJobRepository(
         conn,
         discovery_execution=discovery_execution,
         source_family="smartextract" if discovery_execution is not None else None,
+        result_budget=result_budget,
+        result_budget_source_id=source_id if result_budget is not None else None,
     )
     use_case = DiscoverJobsUseCase(
         exact_title_exclusions=tuple(search_cfg.get("exact_title_exclusions") or ()),
@@ -1448,6 +1452,7 @@ def _run_all(
     cancel_event: threading.Event | None = None,
     run_id: str = "smartextract",
     discovery_execution: DiscoveryExecutionRef | None = None,
+    result_budget=None,
 ) -> dict:
     """Run smart extract on all targets.
 
@@ -1501,6 +1506,8 @@ def _run_all(
                 discovery_execution=discovery_execution,
                 cancel_event=cancel_event,
                 browser_client=selected_clients.get(id(target)),
+                source_id=(f"smart_extract:{re.sub('[^a-z0-9]+', '-', str(target.get('name') or 'site').casefold()).strip('-') or 'site'}"),
+                result_budget=result_budget,
             )
             total_new += new
             total_existing += existing
@@ -1598,6 +1605,7 @@ def run_smart_extract(
     run_id: str | None = None,
     discovery_execution: DiscoveryExecutionRef | None = None,
     search_cfg: dict | None = None,
+    result_budget=None,
 ) -> dict:
     """Main entry point for AI-powered smart extraction.
 
@@ -1633,4 +1641,5 @@ def run_smart_extract(
         cancel_event=cancel_event,
         run_id=run_id or "smartextract",
         discovery_execution=discovery_execution,
+        result_budget=result_budget,
     )
