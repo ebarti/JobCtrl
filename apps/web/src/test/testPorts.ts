@@ -345,6 +345,12 @@ export function buildTestPorts(overrides: BuildTestPortsOptions = {}): Ports {
         baseApi,
         templateApiDefaults,
       );
+  if (overrides.api?.jobs && !overrides.api.reviewableJobs) {
+    api.reviewableJobs = async (query: Parameters<Ports["api"]["jobs"]>[0]) => ({
+      ...await overrides.api!.jobs!(query),
+      observationId: "00000000-0000-4000-8000-000000000001",
+    });
+  }
   return {
     api,
     eventStream: overrides.eventStream ?? new FakeEventStreamPort(),

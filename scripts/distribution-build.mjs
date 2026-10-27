@@ -491,7 +491,7 @@ function componentRoot(payloadRoot, contracts, componentId) {
   return path.join(payloadRoot, relativePath);
 }
 
-async function writeFixtureComponents(payloadRoot, contracts) {
+async function writeFixtureComponents(payloadRoot, contracts, sourceRoot) {
   for (const [componentId, relativeRoot] of contracts.componentPaths) {
     const root = path.join(payloadRoot, relativeRoot);
     await mkdir(root, { recursive: true, mode: 0o755 });
@@ -500,6 +500,7 @@ async function writeFixtureComponents(payloadRoot, contracts) {
         await writeFile(path.join(root, name), `#!/bin/sh\necho fixture:${name}:${contracts.versions[componentId]}\n`, { mode: 0o755 });
         await chmod(path.join(root, name), 0o755);
       }
+      await copySchemaTransitionContract(sourceRoot, root);
       continue;
     }
     const executable = ["jobctrl-launcher", "node-runtime", "python-runtime", "temporal-runtime", "playwright-mcp"].includes(componentId);
@@ -507,6 +508,19 @@ async function writeFixtureComponents(payloadRoot, contracts) {
     await writeFile(path.join(root, filename), `fixture:${componentId}:${contracts.versions[componentId]}\n`, { mode: executable ? 0o755 : 0o644 });
     await chmod(path.join(root, filename), executable ? 0o755 : 0o644);
   }
+}
+
+// This declaration is inventoried and signed alongside the launcher. The
+// transition controller refuses a payload without this exact schema contract.
+export async function copySchemaTransitionContract(sourceRoot, launcherRoot) {
+  const source = path.join(sourceRoot, "launcher", "schema-transition.json");
+  const sourceInfo = await lstat(source);
+  invariant(sourceInfo.isFile() && !sourceInfo.isSymbolicLink(), "schema transition declaration must be a regular file");
+  const contents = await readFile(source);
+  invariant(contents.equals(Buffer.from('{"schemaVersion":1,"sourceUserVersion":14,"targetUserVersion":15}\n')), "schema transition declaration does not match v14-to-v15 contract");
+  const target = path.join(launcherRoot, "schema-transition.json");
+  await writeFile(target, contents, { mode: 0o644, flag: "wx" });
+  await chmod(target, 0o644);
 }
 
 function shouldExcludeSourcePath(relativePath) {
@@ -1191,6 +1205,7 @@ async function writeGeneratedComponents(payloadRoot, root, contracts, sourceDate
   await chmod(path.join(launcherRoot, "runtime-manifest.json"), 0o644);
   await copyFile(path.join(root, "launcher", "update-protocol.json"), path.join(launcherRoot, "update-protocol.json"));
   await chmod(path.join(launcherRoot, "update-protocol.json"), 0o644);
+  await copySchemaTransitionContract(root, launcherRoot);
 
   const pdfjsRoot = componentRoot(payloadRoot, contracts, "pdfjs-renderer");
   await mkdir(pdfjsRoot, { recursive: true, mode: 0o755 });
@@ -3786,7 +3801,7 @@ export async function buildFixturePayload({
   const payloadRoot = path.join(outputRoot, "payload");
   await rm(outputRoot, { recursive: true, force: true });
   await mkdir(payloadRoot, { recursive: true, mode: 0o755 });
-  await writeFixtureComponents(payloadRoot, contracts);
+  await writeFixtureComponents(payloadRoot, contracts, root);
   await generateReleaseMetadata(payloadRoot, contracts, { root, mode: "fixture", sourceDateEpoch });
   const manifest = await createLocalManifest(payloadRoot, contracts, { buildId, sourceDateEpoch });
   await verifyExactPayloadTree(payloadRoot, manifest);

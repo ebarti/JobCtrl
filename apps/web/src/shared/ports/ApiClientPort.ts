@@ -18,6 +18,10 @@ import type {
   ArtifactOpenResponse,
   ArtifactSummary,
   BulkJobMutationRequest,
+  BulkPermanentDeleteRequest,
+  PreparePermanentDeleteSelectionRequest,
+  PreparePermanentDeleteSelectionResponse,
+  ReviewableJobsResponse,
   BulkRunPendingPreparationRequest,
   BulkRunPendingPreparationResponse,
   BulkRetryFailedRequest,
@@ -340,12 +344,14 @@ export interface ApiClientPort extends EndpointClientMethods {
   ): Promise<OutcomeSuggestionDecisionResponse>;
 
   jobs(query?: Partial<JobListQuery>): Promise<PaginatedResponse<JobSummary>>;
+  reviewableJobs(query?: Partial<JobListQuery>): Promise<ReviewableJobsResponse>;
   job(jobKey: string): Promise<JobDetail>;
   evidenceMap(): Promise<EvidenceMapResponse>;
   deleteJob(jobKey: string, body?: DeleteJobRequest): Promise<JobMutationResponse>;
   deleteJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse>;
   permanentlyDeleteJob(jobKey: string): Promise<JobMutationResponse>;
-  permanentlyDeleteJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse>;
+  permanentlyDeleteJobs(body: BulkPermanentDeleteRequest): Promise<JobMutationResponse>;
+  preparePermanentDeleteSelection(body: PreparePermanentDeleteSelectionRequest): Promise<PreparePermanentDeleteSelectionResponse>;
   restoreJob(jobKey: string): Promise<JobMutationResponse>;
   restoreJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse>;
   hideJob(jobKey: string, body?: DeleteJobRequest): Promise<JobMutationResponse>;

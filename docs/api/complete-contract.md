@@ -454,6 +454,30 @@ available at `POST /v1/jobs/bulk-delete-permanent` and
 `DELETE /v1/jobs/:key/permanent`; it removes the job row plus job-scoped state,
 projection rows, and delete/hide tombstones. It does not write a new suppression
 record, so rediscovery can add the same posting again later.
+
+The Jobs UI's removed-selection operation has an additional review fence.
+`GET /v1/jobs/reviewable-list` accepts the normal list query and returns the
+page with an `observationId`, or `null` when review capacity is unavailable.
+The observation freezes the matching removed cohort and expires after one
+minute. `POST /v1/jobs/permanent-delete-selection` accepts `observationId`,
+`selections` (normal bulk selectors), and, for explicit keys, `expected`
+entries containing `jobKey`, `deletedAt`, and `hiddenAt`. It returns an exact
+canonical `jobKeys` list and a single-use `selectionId`. More than 5,000
+matching removed jobs cannot be selected all at once; explicit visible-page
+selections remain available.
+Explicit reviewed selections use canonical Job IDs from the observed list;
+external URL aliases are refused for this operation so a later identity
+rebinding cannot redirect a confirmation to a different job. Unguarded
+compatibility endpoints retain their existing locator behavior.
+
+The confirmed bulk permanent-delete request supplies `allMatching: false`,
+those exact `jobKeys`, and `selectionId`. If the selection is missing, expired,
+changed, or its recorded lifecycle revision has changed, the API returns
+`409 permanent_delete_selection_conflict` without deleting any member. A client
+must refresh and select again. Unrelated workspace writes do not invalidate the
+selection. A receipt is process-local and single-use, including
+when refused. Existing direct permanent-delete requests without `selectionId`
+and the explicitly authorized job-data purge retain their existing behavior.
 `POST /v1/jobs/bulk-retry-failed` accepts the same selected-job or
 all-matching bulk mutation body and resets each active failed job's failed stage
 to `pending`; non-failed selected jobs are ignored. A persisted legacy

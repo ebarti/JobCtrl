@@ -16,7 +16,7 @@ app = typer.Typer(help="Propose sources from saved posting history for explicit 
 @contextmanager
 def connection(*, readonly: bool = False):
     from jobctrl import config
-    from jobctrl.database import SCHEMA_VERSION, EXACT_V14_MANIFEST, _refuse_unresolved_initialization, assert_exact_manifest
+    from jobctrl.database import SCHEMA_VERSION, EXACT_V15_MANIFEST, _refuse_unresolved_initialization, assert_exact_manifest
 
     config.load_env()
     _refuse_unresolved_initialization(config.DB_PATH)
@@ -26,7 +26,7 @@ def connection(*, readonly: bool = False):
     try:
         if conn.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
             raise ValueError("Source proposals require the current migrated database.")
-        assert_exact_manifest(conn, EXACT_V14_MANIFEST)
+        assert_exact_manifest(conn, EXACT_V15_MANIFEST)
         with conn:
             yield conn
     finally:

@@ -178,7 +178,8 @@ point with a resumable transition journal, including the detached supervisor.
 A fresh installation and tests that replace the readiness-start function do not
 prove that an authenticated candidate can start before the journal is finalized.
 The protected release workflow runs `scripts/released-upgrade-smoke.mjs` against
-actual released executables before immutable publication. One case upgrades from
+actual released executables before immutable publication. Its ordinary compatible
+protocol case upgrades from
 **the latest published stable version before the candidate**, rolls back to that
 version with its paired data backup, then explicitly upgrades again. It checks
 real service readiness, retained job data and Temporal history throughout.
@@ -213,3 +214,48 @@ registry verification, upgrade consequences, and any unresolved limitation.
 Signing success or one published channel is not completion. This repository
 runbook is the canonical procedure; an optional agent skill should route here
 rather than duplicate workflow commands and security policy.
+
+## Schema-15 installed upgrade qualification
+
+The authenticated new installer owns the protocol-1/schema-14 to
+protocol-2/schema-15 transition. Historical controllers, including v0.3.1,
+must reject the protocol-2-only target before backup or journaling. Run the
+new release's verified installer against the original runtime home; retain the
+predecessor receipt and immutable payload as historical authentication evidence.
+The predecessor is never executed during this forward path. No bridge catalog,
+bridge release, or reboot is a migration prerequisite.
+
+Before taking a paired, SQLite-online backup, the new controller requests clean
+exit for instance-owned processes and descendants, kills verified leftovers only
+after the shutdown timeout, and waits for exit. A real inspection or cleanup
+failure blocks migration and preserves the databases and journal. A restart
+normally follows successful cleanup; reboot is last-resort troubleshooting for
+an actual cleanup failure.
+
+The signed payload inventory must bind `launcher/schema-transition.json` to
+source schema 14 and target schema 15. Exact-v14 activation applies the additive
+migration in place, preserving the database inode. A failed or interrupted
+attempt preserves the live pair. Before selector replacement, retry the
+trusted new installer: the immutable protocol-1 public binary cannot decode
+the protocol-2 journal. After replacement, ordinary `jobctrl update` resumes
+through the new controller. Each attempt backs up the current live pair, including acknowledged WAL writes;
+it never restores an earlier snapshot over newer data or restarts retired code.
+A cross-protocol rollback is refused. A first install cannot adopt a schema-14
+workspace without its original authenticated predecessor selection; an exact-v15
+reinstall preserves data after normal cleanup.
+
+Source merge and synthetic fixtures do not establish an available or qualified
+installed upgrade. Before first publication/use, exercise the actual signed,
+notarized installer and target through both curl and unmodified Homebrew,
+including archived-controller rejection, normal start/stop/restart, interruption
+and readiness failure, repeated forward recovery, revoked predecessor evidence,
+revoked-target startup/update refusal, pure cleanup of a revoked target's owned
+writers, and protected app/Temporal WAL and external-file bytes. Run the archived
+public binary at each pre-selector interruption and the new installer retry
+through its actual entry; calling the new `Run` implementation with an old
+executable pathname proves neither of those process boundaries.
+Use owned synthetic workspaces and the matrix in
+[Reliability & QA](../local-reliability-qa.md#schema-15-forward-upgrade).
+The historical release-smoke upgrade/rollback cycle must not be claimed as
+cross-protocol upgrade evidence: qualify the new installer path and explicit
+cross-protocol rollback refusal separately.

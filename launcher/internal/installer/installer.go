@@ -39,6 +39,7 @@ const (
 	canonicalReleaseHost   = "releases.jobctrl.dev"
 	maxDescriptorBytes     = 1 << 20
 	maxSignatureBytes      = 16 << 10
+	maxSigningDomainBytes  = 64
 	maxArchiveBytes        = int64(4 << 30)
 	maxExtractedBytes      = uint64(8 << 30)
 	maxZipEntries          = 100000
@@ -134,6 +135,7 @@ type Receipt struct {
 }
 
 type Options struct {
+	Environment        []string
 	Home               string
 	ReleaseURL         string
 	Trust              map[string]ed25519.PublicKey
@@ -205,6 +207,11 @@ func InstallFromLocalFiles(options Options, descriptorPath, signaturePath, archi
 // canonical HTTPS origin and its exact file bytes are authenticated before the
 // cache is examined.
 func InstallFromCachedFiles(options Options, descriptorURL, descriptorPath, signaturePath, archivePath string) (Receipt, error) {
+	return installFromCachedFiles(options, descriptorURL, descriptorPath, signaturePath, archivePath, nil)
+}
+
+// A non-nil locked store requires its transition lock to be held by the caller.
+func installFromCachedFiles(options Options, descriptorURL, descriptorPath, signaturePath, archivePath string, locked *release.Store) (Receipt, error) {
 	if !options.Policy.AllowNetwork {
 		return Receipt{}, errors.New("signed cached acquisition is unavailable in this compiled installer build")
 	}
@@ -235,6 +242,13 @@ func InstallFromCachedFiles(options Options, descriptorURL, descriptorPath, sign
 	}
 	if descriptor.Channel != options.Policy.ExpectedChannel {
 		return Receipt{}, fmt.Errorf("release channel %q does not match compiled installer channel %q", descriptor.Channel, options.Policy.ExpectedChannel)
+	}
+	if locked != nil {
+		home, err := RuntimeHome(options.Home)
+		if err != nil || home != locked.Home {
+			return Receipt{}, errors.New("cached acquisition lock does not match runtime home")
+		}
+		return installArchiveWithTransition(options, descriptor, descriptorBytes, sourceURL.String(), archivePath, locked)
 	}
 	return installArchive(options, descriptor, descriptorBytes, sourceURL.String(), archivePath)
 }
@@ -672,7 +686,8 @@ func verifyDescriptor(raw, signatureRaw []byte, trust map[string]ed25519.PublicK
 		return descriptor, fmt.Errorf("no trusted Ed25519 release key for key id %q", signature.KeyID)
 	}
 	encoded, err := base64.StdEncoding.DecodeString(*signature.Signature)
-	if err != nil || len(encoded) != ed25519.SignatureSize || !ed25519.Verify(key, signingMessage("jobctrl:release-descriptor:v1\x00", raw), encoded) {
+	message := signingMessage("jobctrl:release-descriptor:v1\x00", raw)
+	if err != nil || len(encoded) != ed25519.SignatureSize || message == nil || !ed25519.Verify(key, message, encoded) {
 		return descriptor, errors.New("release descriptor Ed25519 signature verification failed")
 	}
 	return descriptor, nil
@@ -684,6 +699,9 @@ func downloadAndInstall(options Options, descriptor Descriptor, descriptorBytes 
 	if err != nil {
 		return Receipt{}, fmt.Errorf("download release archive: %w", err)
 	}
+	if err := refusePendingBridgeHandoff(home); err != nil {
+		return Receipt{}, err
+	}
 	shared, err := release.Open(home)
 	if err != nil {
 		return Receipt{}, err
@@ -693,6 +711,9 @@ func downloadAndInstall(options Options, descriptor Descriptor, descriptorBytes 
 		return Receipt{}, err
 	}
 	defer transition.Close()
+	if err := refusePendingBridgeHandoff(shared.Home); err != nil {
+		return Receipt{}, err
+	}
 	store, err := openStore(home)
 	if err != nil {
 		return Receipt{}, err
@@ -1005,6 +1026,9 @@ func installArchive(options Options, descriptor Descriptor, descriptorBytes []by
 	if err != nil {
 		return Receipt{}, err
 	}
+	if err := refusePendingBridgeHandoff(home); err != nil {
+		return Receipt{}, err
+	}
 	// Acquisition participates in the same transition -> selection hierarchy as
 	// promotion, rollback, backup, retention, and uninstall. There is no
 	// independent installer flock that can deadlock or race an active record.
@@ -1017,7 +1041,15 @@ func installArchive(options Options, descriptor Descriptor, descriptorBytes []by
 		return Receipt{}, err
 	}
 	defer transition.Close()
-	store, err := openStore(home)
+	return installArchiveWithTransition(options, descriptor, descriptorBytes, descriptorURL, archivePath, shared)
+}
+
+// installArchiveWithTransition requires the caller to hold the store transition lock.
+func installArchiveWithTransition(options Options, descriptor Descriptor, descriptorBytes []byte, descriptorURL, archivePath string, shared *release.Store) (Receipt, error) {
+	if err := refusePendingBridgeHandoff(shared.Home); err != nil {
+		return Receipt{}, err
+	}
+	store, err := openStore(shared.Home)
 	if err != nil {
 		return Receipt{}, err
 	}
@@ -1164,10 +1196,17 @@ func installArchiveLocked(options Options, descriptor Descriptor, descriptorByte
 	}
 	defer selection.Close()
 	prior := uint64(0)
+	selectionEnv := options.Environment
+	if selectionEnv == nil {
+		selectionEnv = os.Environ()
+	}
 	if active, activeErr := shared.ReadActive(); activeErr == nil {
 		if active.Receipt.BuildID == receipt.BuildID {
 			if active.Receipt != (release.Receipt{SchemaVersion: receipt.SchemaVersion, BuildID: receipt.BuildID, Channel: receipt.Channel, Sequence: receipt.Sequence, ArtifactSHA256: receipt.ArtifactSHA256, ManifestSHA256: receipt.ManifestSHA256, DescriptorSHA256: receipt.DescriptorSHA256, PolicySHA256: receipt.PolicySHA256, DescriptorURL: receipt.DescriptorURL, InstalledAt: receipt.InstalledAt}) {
 				return Receipt{}, errors.New("active build identity conflicts with authenticated immutable receipt")
+			}
+			if err := launcher.CheckWorkspaceSelection(shared.Home, filepath.Join(releasePath, "payload"), selectionEnv, false); err != nil {
+				return Receipt{}, err
 			}
 			if active.Acquisition != source {
 				if _, err := shared.WriteSelectedActive(active.Receipt, active.Generation, active.SelectorBuildID, source); err != nil {
@@ -1178,6 +1217,9 @@ func installArchiveLocked(options Options, descriptor Descriptor, descriptorByte
 		return receipt, nil
 	} else if !errors.Is(activeErr, os.ErrNotExist) {
 		return Receipt{}, activeErr
+	}
+	if err := launcher.CheckWorkspaceSelection(shared.Home, filepath.Join(releasePath, "payload"), selectionEnv, true); err != nil {
+		return Receipt{}, err
 	}
 	journal, err := shared.Begin("install", nil, &release.Receipt{SchemaVersion: receipt.SchemaVersion, BuildID: receipt.BuildID, Channel: receipt.Channel, Sequence: receipt.Sequence, ArtifactSHA256: receipt.ArtifactSHA256, ManifestSHA256: receipt.ManifestSHA256, DescriptorSHA256: receipt.DescriptorSHA256, PolicySHA256: receipt.PolicySHA256, DescriptorURL: receipt.DescriptorURL, InstalledAt: receipt.InstalledAt}, receipt.DescriptorSHA256)
 	if err != nil {
@@ -1637,10 +1679,13 @@ func syncDirectory(path string) error {
 }
 
 func signingMessage(domain string, raw []byte) []byte {
-	message := make([]byte, len(domain)+len(raw))
-	copy(message, domain)
-	copy(message[len(domain):], raw)
-	return message
+	// The message is authenticated metadata, not an arbitrary payload. Bound
+	// both operands here so their combined allocation cannot overflow, even if
+	// a future caller omits the normal metadata size checks.
+	if len(domain) > maxSigningDomainBytes || len(raw) > maxDescriptorBytes {
+		return nil
+	}
+	return append([]byte(domain), raw...)
 }
 
 func verifyMacOSPayloadTrust(payloadRoot string, runner func(string, ...string) (string, error)) error {

@@ -41,7 +41,7 @@ var (
 )
 
 const (
-	launcherProtocol   = 1
+	launcherProtocol   = 2
 	stateSchemaVersion = 1
 	logLineLimit       = 200
 	startupTimeout     = 30 * time.Second
@@ -292,7 +292,30 @@ func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Write
 	if handled, err := ownedExecutionHelper(args); handled {
 		return err
 	}
+	runtimeHome, err := runtimeHomeFromEnv(inheritedEnv)
+	if err != nil {
+		return err
+	}
+	if err := refusePendingBridgeHandoff(runtimeHome); err != nil {
+		return err
+	}
+	if len(args) == 1 && args[0] == "update" && environmentMap(inheritedEnv)["JOBCTRL_TRANSITION_TARGET"] == "" {
+		if handled, err := resumeForwardUpdate(inheritedEnv, stdout); handled {
+			return err
+		}
+	}
+	if len(args) == 1 && args[0] == "stop" {
+		if handled, err := stopForwardUpdate(inheritedEnv, stdout); handled {
+			return err
+		}
+	}
+	if err := refuseUnfinishedForwardUpdate(runtimeHome, args, inheritedEnv); err != nil {
+		return err
+	}
 	if len(args) > 0 && args[0] == "rollback" {
+		if handled, err := recoverBridgeBeforeBootstrap(inheritedEnv, args, stdout); handled {
+			return err
+		}
 		_, controllerErr := homebrewBootstrap(executable, args, inheritedEnv, stdout, stderr, true)
 		if handled, recoveryErr := recoverRevokedTransitionBeforePrepare(inheritedEnv, stdout); handled {
 			if recoveryErr != nil && controllerErr != nil {
@@ -321,8 +344,14 @@ func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Write
 		return err
 	}
 	defer func() { _ = ctx.selection.Close() }()
+	if err := refusePendingBridgeHandoff(ctx.Instance.RuntimeHome); err != nil {
+		return err
+	}
 	if store, storeErr := release.Open(ctx.Instance.RuntimeHome); storeErr == nil {
 		if journal, journalErr := store.ReadJournal(); journalErr == nil && journal.Resumable() && !transitionRecoveryCommand(args) && !authenticatedTransitionStartup(ctx, args) {
+			if transitionRecoveryUnavailable(journal) {
+				return fmt.Errorf("unfinished %s transition at %s; automatic recovery is unavailable and commands remain blocked; preserve the live databases and transition journal", journal.Operation, journal.State)
+			}
 			return fmt.Errorf("unfinished %s transition at %s; run `jobctrl rollback` to recover before starting or dispatching commands", journal.Operation, journal.State)
 		} else if journalErr != nil && !errors.Is(journalErr, os.ErrNotExist) {
 			return fmt.Errorf("read release transition journal: %w", journalErr)
@@ -341,6 +370,23 @@ func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Write
 		return supervise(ctx, readyWriterFromEnv(inheritedEnv))
 	}
 	return dispatchCommand(ctx, args, stdout, stderr)
+}
+
+// Later protected milestones cannot use the early bridge cancellation path.
+// Legacy journals have the same ambiguity once a paired backup or activation
+// may have occurred, even though they lack the preservation flag.
+func transitionRecoveryUnavailable(journal release.Journal) bool {
+	switch journal.State {
+	case release.MetadataVerified, release.ReleaseCommitted, release.SelectorHandoffPending, release.SelectorReplaced:
+		return false
+	case release.PairBackedUp, release.PolicyPending, release.MigrationCandidateReady,
+		release.MigrationActivated, release.CandidateStarting, release.CandidateHealthy, release.PolicyFinalized:
+		return true
+	case release.RollbackRestoring:
+		return journal.PreserveLiveOnFailure || journal.BackupID != "" || journal.TargetBackupID != ""
+	default:
+		return journal.PreserveLiveOnFailure
+	}
 }
 
 // Control/read-only commands run outside the runtime's execution boundary.
@@ -663,6 +709,9 @@ func locatePayloadRootLocked(executable string, inheritedEnv []string) (string, 
 	fail := func(cause error) (string, *selectorReceipt, *release.Lock, error) {
 		_ = lock.Close()
 		return "", nil, nil, cause
+	}
+	if err := refusePendingBridgeHandoff(home); err != nil {
+		return fail(err)
 	}
 	selector := filepath.Join(home, "bin", "jobctrl")
 	if path != selector {

@@ -232,7 +232,7 @@ c.commit(); c.close()`
 			if err != nil {
 				t.Fatalf("historical candidate migration: %v", err)
 			}
-			if version, err := jobCtrlSchemaVersion(ctx); err != nil || version != 14 {
+			if version, err := jobCtrlSchemaVersion(ctx); err != nil || version != currentJobCtrlSchemaVersion {
 				t.Fatalf("migrated version = %d, %v", version, err)
 			}
 			if err := migrateHistoricalTransition(ctx); err != nil {

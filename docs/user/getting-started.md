@@ -250,20 +250,37 @@ use the updated formula, while bundled-installer installations use their signed
 release channel. Pulling source changes does not publish an update to installed
 users.
 
-When a release requires a database migration, the updater stops the runtime,
-backs up the application database and Temporal history together, verifies a
-separate migrated database, and activates it before checking startup health.
-If activation or readiness fails, recovery restores the saved pair. An explicit
-rollback also restores the database snapshot associated with the previous
-release: data added since that snapshot is not carried backward.
+A release that moves to schema 15 uses its new authenticated installer to
+upgrade the original installation. Keep the original installation metadata and
+databases: the installer verifies them, stops instance-owned processes, backs up
+the current application and Temporal databases together, and applies the additive
+migration before checking startup health. Normal cleanup and restart do not
+require rebooting. If cleanup actually fails, preserve the reported evidence;
+reboot is a last-resort troubleshooting step.
+
+If startup fails or the upgrade is interrupted, JobCtrl preserves the live
+databases and recovery journal. Rerun the trusted new installer that began the
+upgrade if the old `jobctrl` command remains selected or reports an unreadable
+transition journal. The old binary cannot recover the new journal. After the
+new command has replaced it, run `jobctrl stop`, then `jobctrl update` to continue
+forward. Each attempt backs up the current pair, including later saved changes.
+A revoked candidate can still be stopped through the new command; revocation
+continues to block its startup or update. An untracked legacy runtime still
+requires the documented ownership recovery before migration can proceed. Do not remove the journal, reinstall over a schema-14 workspace without
+its original metadata, or restore an older snapshot over newer data. Rollback
+across this protocol change is refused. A same-protocol explicit rollback still
+restores the snapshot associated with its previous release, so data added since
+that snapshot is not carried backward. A source merge or synthetic test does
+not publish an upgrade; the signed installer must pass release qualification
+before installed users receive it.
 
 Rollback keeps a compatible launcher for recovery while restoring the older
 application. Homebrew commands preserve that selection until you explicitly run
 `jobctrl update` again. If an older updater reports a failed candidate and cannot
-restart its previous release, run `jobctrl rollback` through the corrected
-launcher to restore the saved database pair and restart the previous application.
-The corrected installer and formula also handle an installation you have never
-started. If an existing database/history pair is incomplete, updating refuses
+restart its previous release, recovery depends on the transition state and the
+available compatible controller. The installer and formula also handle an
+installation you have never started. If an existing database/history pair is
+incomplete, updating refuses
 to replace it; preserve those files and recover the pair before retrying.
 
 

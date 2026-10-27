@@ -10,6 +10,14 @@ update, audit entry, or telemetry span and need to identify the source of truth.
 
 ## Current Data Flow
 
+The removed-job confirmation boundary binds each selected canonical job to its
+persisted lifecycle revision. Database triggers advance that revision in the
+same transaction as a delete or hide tombstone change, including writes from
+other processes. The permanent-delete writer checks the frozen cohort and all
+of its revisions under its write lock; job-list projections and SSE are not
+the authority for that decision. An unrelated event or heartbeat does not
+invalidate the selection.
+
 The event log marks what changed; projection builders read events plus canonical
 rows to materialize client-friendly views. Solid arrows form the correctness
 path. Dashed arrows carry invalidation signals; they never transfer canonical

@@ -1,3 +1,4 @@
+import { PermanentDeleteSelectionConflict, PermanentDeleteSelectionRegistry } from "./permanent-delete-selection.js";
 import { readJobCtrlSettings } from "./settings-config.js";
 import { OutreachGenerationError } from "./outreach-generation-errors.js";
 import { registerOfferRoutes } from "./offer-routes.js";
@@ -31,6 +32,8 @@ import {
   RepeatApplicationOverrideRequestSchema,
   ArtifactListQuerySchema,
   BulkJobMutationRequestSchema,
+  BulkPermanentDeleteRequestSchema,
+  PreparePermanentDeleteSelectionRequestSchema,
   type BulkRunPendingPreparationRequest,
   BulkRunPendingPreparationRequestSchema,
   type BulkRunPendingPreparationResponse,
@@ -483,7 +486,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   normalizeExistingDatabase(options.dbPath);
   const app = Fastify({ logger: options.logger ?? false, routerOptions: { maxParamLength: 4096 } });
   const jobListDatabase = createRetainedDatabase(options.dbPath);
-  app.addHook("onClose", async () => { jobListDatabase.close(); });
+  const permanentDeleteSelections = new PermanentDeleteSelectionRegistry(options.dbPath);
+  app.addHook("onClose", async () => { jobListDatabase.close(); permanentDeleteSelections.close(); });
   installVitestInjectMutationDefaults(app);
   const appDir = options.appDir ?? path.dirname(options.dbPath);
   const readInterviewCatalog = createInterviewCatalogReader(options.interviewCatalogAssetLoader
@@ -1501,6 +1505,17 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     withDb(reply, options.dbPath, (db) => listJobs(db, JobListQuerySchema.parse(request.query)), jobListDatabase),
   );
 
+  app.get("/v1/jobs/reviewable-list", async (request, reply) => {
+    const query = JobListQuerySchema.parse(request.query);
+    const activeOnly = query.jobStates
+      ? !query.jobStates.some((state) => state !== "active")
+      : query.deleted === "active";
+    if (activeOnly) {
+      return withDb(reply, options.dbPath, (db) => ({ ...listJobs(db, query), observationId: null }), jobListDatabase);
+    }
+    return withDb(reply, options.dbPath, (db) => permanentDeleteSelections.observe(db, query, jobListDatabase.identity()), jobListDatabase);
+  });
+
   app.post("/v1/jobs/import-url", async (request, reply) => {
     const body = parseBody(reply, JobUrlImportRequestSchema, request.body ?? {});
     if (!body) {
@@ -1855,12 +1870,18 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     return withWritableDb(reply, options.dbPath, (db) => softDeleteJobs(db, body));
   });
 
+  app.post("/v1/jobs/permanent-delete-selection", async (request, reply) => {
+    const body = parseBody(reply, PreparePermanentDeleteSelectionRequestSchema, request.body ?? {});
+    if (!body) return undefined;
+    return withWritableDb(reply, options.dbPath, () => permanentDeleteSelections.prepare(body));
+  });
+
   app.post("/v1/jobs/bulk-delete-permanent", async (request, reply) => {
-    const body = parseBody(reply, BulkJobMutationRequestSchema, request.body ?? {});
-    if (!body) {
-      return undefined;
-    }
-    return withWritableDb(reply, options.dbPath, (db) => permanentlyDeleteJobs(db, body));
+    const body = parseBody(reply, BulkPermanentDeleteRequestSchema, request.body ?? {});
+    if (!body) return undefined;
+    return withWritableDb(reply, options.dbPath, (db) => body.selectionId
+      ? permanentDeleteSelections.delete(body)
+      : permanentlyDeleteJobs(db, body));
   });
 
   app.post("/v1/jobs/bulk-restore", async (request, reply) => {
@@ -5105,6 +5126,10 @@ function withDb<T>(
     db = retained ? retained.open() : openDatabase(dbPath);
     return read(db);
   } catch (error) {
+    if (error instanceof PermanentDeleteSelectionConflict) {
+      void reply.code(409);
+      return { ok: false, error: "permanent_delete_selection_conflict", message: error.message };
+    }
     if (error instanceof ProfileInputError) {
       void reply.code(400);
       return {
@@ -5188,6 +5213,15 @@ async function withWritableDb<T>(
     db = openDatabase(dbPath);
     return await write(db);
   } catch (error) {
+    if (error instanceof PermanentDeleteSelectionConflict) {
+      void reply.code(409);
+      return { ok: false, error: "permanent_delete_selection_conflict", message: error.message,
+        ...(error.conflictingJobKeys ? {
+          deletedJobKeys: [], conflictingJobKeys: error.conflictingJobKeys,
+          unprocessedJobKeys: error.unprocessedJobKeys ?? [],
+        } : {}),
+      };
+    }
     if (error instanceof OutreachGenerationError) {
       void reply.code(error.code === "budget_denied" ? 429 : error.code === "provider_unavailable" ? 503 : error.code.startsWith("offer_") ? 409 : 502);
       return { ok: false, error: error.code, message: error.message };

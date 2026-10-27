@@ -30,6 +30,11 @@ Gmail feedback scan summaries and `ApplicationEmailFeedbackIngested` payloads
 use canonical `jobId` across Python, REST contracts, domain events, and web
 invalidation. Posting and application URLs are search hints, never identity.
 
+Reviewed permanent deletion uses a process-local observation and a single-use
+selection receipt. The API retains the observed lifecycle revisions with the
+canonical job IDs and checks the cohort before removing any job. The
+ordinary explicit permanent-delete and guarded purge contracts remain separate.
+
 ## Enrichment Retry Ownership
 
 `pipeline/retry.py::reset_retry_stages` owns explicit enrichment resets. The

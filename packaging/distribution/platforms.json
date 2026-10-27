@@ -8,8 +8,8 @@
       "minimumOsVersion": "15.0",
       "status": "initial-release-target",
       "launcherCompatibility": {
-        "minimum": 1,
-        "maximum": 1
+        "minimum": 2,
+        "maximum": 2
       },
       "signing": {
         "identity": "Developer ID Application",

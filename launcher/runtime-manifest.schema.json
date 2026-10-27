@@ -7,7 +7,7 @@
   "required": ["schemaVersion", "launcherProtocol", "ports", "components", "health"],
   "properties": {
     "schemaVersion": { "const": 1 },
-    "launcherProtocol": { "const": 1 },
+    "launcherProtocol": { "const": 2 },
     "ports": {
       "type": "object",
       "additionalProperties": false,

@@ -97,7 +97,7 @@ delete the original provider history as an automatic repair.
 | Surface | Starting command / selected recipe |
 | --- | --- |
 | API | `corepack pnpm api:check`, focused `api:test` / `api` |
-| Destructive job-data purge | `corepack pnpm api:check`; `corepack pnpm --filter @jobctrl/api exec vitest run test/job-data-purge.test.ts test/permanent-delete-v7.test.ts`; then inventory, confirmed purge, and a second inventory against a disposable exact-v14 workspace only |
+| Destructive job-data purge | `corepack pnpm api:check`; `corepack pnpm --filter @jobctrl/api exec vitest run test/job-data-purge.test.ts test/permanent-delete-v7.test.ts`; then inventory, confirmed purge, and a second inventory against a disposable exact-v15 workspace only |
 | Web | `corepack pnpm web:lint`, `corepack pnpm web:check`, focused `web:test`, `web:build`; types/stories/browser when affected |
 | Extension | `extension:check`, `extension:test`, `extension:build`, `extension:e2e` through Corepack |
 | Worker | Locked focused Ruff/pytest; full worker suite for worker-wide changes |
@@ -108,6 +108,49 @@ delete the original provider history as an automatic repair.
 | Bundled capture smoke | Script suite; locked pytest for `workers/automation/tests/test_distribution_smoke_model.py`; then the real bundled-payload build through [Local Development](local-development.md#build-the-bundled-payload). Keep actual API/RPC/Temporal/worker/persistence and restart checks; only the model port uses explicit synthetic choices, recorded in smoke evidence. This does not prove semantic accuracy or provider authentication |
 | Docs | `corepack pnpm docs:build`, diff check |
 | Cross-stack | `corepack pnpm check`, `corepack pnpm test`, affected separate web suites |
+
+## Schema-15 Forward Upgrade
+
+Use owned synthetic workspaces and the locked migration Python/Node runtimes.
+Verify the new installer's signed descriptor, complete payload inventory,
+protocol-2-only range, schema-14-to-15 declaration, channel sequence/revocation
+policy and original source selection under both lifecycle locks. The actual
+archived protocol-1 controller must refuse the target before backup or journal
+creation. Authenticate the predecessor only as historical evidence, including
+a revoked predecessor; never execute it. Refuse a revoked target, altered
+receipt/declaration, changed selection generation, unknown source schema,
+regressed live schema and unknown legacy handoff without destructive repair.
+
+Exercise all nine durable boundaries from metadata verification through policy
+finalization. Before selector replacement, recovery uses the authenticated new
+installer entry; the archived protocol-1 public binary must refuse the new
+journal without changing it. After replacement, use public `jobctrl update`.
+Do not substitute the new in-process `Run` implementation with an old executable
+pathname as proof of the archived binary or installer process boundary. Commit independent
+profile, resume, search and Temporal WAL changes after interruption and candidate
+start, fail readiness, and retry repeatedly. Check current paired snapshots,
+original/recovery backup IDs, exact selection and policy, preserved app inode,
+protected rows and external config/resume bytes. Finalization after the active
+selection write must complete without restarting a healthy candidate. Cover
+same-schema updates and rollback target-start failure separately. Revoke a
+candidate with live owned writers: pure cleanup must stop them without executing
+the payload or changing the journal/selection, while update and startup still
+refuse the revoked target. Initial
+installation/adoption must refuse schema 14 without original predecessor
+metadata and permit preserving an exact-v15 reinstall after cleanup.
+
+Use an actual owned detached writer to prove normal cleanup, timeout-only
+termination, waited exit and restart before migration. Preserve another instance
+as a control; inspection/cleanup failure blocks backup and database mutation.
+Reboot is last-resort troubleshooting for actual failure, not upgrade admission.
+
+Before first publication/use, qualify the actual signed/notarized installer and
+payload through curl and unmodified Homebrew, using the archived installed
+selector, real startup and failed-readiness recovery, the same preservation
+matrix, and explicit cross-protocol rollback refusal. Source merge and synthetic
+fixtures alone do not qualify an installed upgrade. These interruption tests do
+not claim physical power-loss durability or protection against hostile disk
+control.
 
 Focused commands live in `scripts/checks.toml`. Run the selected `argv` directly,
 substituting an owned artifact path for `{report_path}`. Required tests must
@@ -198,7 +241,7 @@ that its connection-object mutex is independent of `busy_timeout`. Run these pro
 behind subprocess deadlines so a failed concurrency assertion cannot retain a test
 runner thread. Confirm the real activity worker pool reuses a connection only on its
 own thread, and record the production connection budgets (10 seconds for a new WAL
-connection and 30 seconds for a freshly admitted exact-v14 connection). The short
+connection and 30 seconds for a freshly admitted exact-v15 connection). The short
 fixture timeout proves mechanism and recovery; it is not a production latency bound.
 
 Also repeat an already-claimed robots retry with a real enrichment lease, inject
@@ -397,7 +440,7 @@ worker persistence. Opposing-verdict and failure tests exercise the production
 determination services through fake `LlmPort` implementations; these tests prove
 model authority and binding, without grading model decisions.
 
-Use the exact native schema-14 boundary to test migration from every supported
+Use the exact native schema-15 boundary to test migration from every supported
 source schema, stopped-runtime paired backups, source preservation, fenced
 activation, recovery and concurrent-writer refusal. Preserve authored facts and
 accepted artifact bytes while purging heuristic-derived determinations. Temporal
@@ -415,7 +458,7 @@ and TypeScript reopen checks; an unavailable global Python must not silently
 skip that migration evidence. Check every supported source through native
 activation, API reopen, readiness failure and rollback.
 
-Exercise native exact-v14 creation and the stopped-runtime v13-to-v14 cutover,
+Exercise native exact-v15 creation and the stopped-runtime v13-to-v14-to-v15 cutover,
 including source drift and candidate corruption. Preserve authored profile cells,
 canonical jobs, historical envelopes, accepted files and raw pending captures.
 Then use the actual Discovery path with saved targets and no interpretation
@@ -424,8 +467,38 @@ Load the profile editor's actual serialized location rows and comma-separated
 work-model codes, including a location-less Remote row. Inspect their paired
 board parameters. Invalid work-model controls must produce a typed planning
 failure while fetching, scoring and raw source reads remain available. Native
-interruption checks capture stage names from the actual composite executors and
-prove recovery removes every staged candidate and SQLite sidecar.
+interruption checks capture stage names from the actual composite executors.
+Verify cleanup of owned intermediate candidates and sidecars after successful
+execution or a failed prepublication build; after an ambiguous activation or
+preservation refusal, retain the live pair, recovery journal and evidence needed
+to inspect the interrupted transition.
+
+## Reviewed Permanent Deletion
+
+Use an owned exact-v15 synthetic workspace and independent SQLite writers. Read
+the actual Jobs list, select removed items, then restore, unhide or restore and
+re-delete with identical timestamps before preparation and after confirmation.
+The complete selected graph and accepted material references must survive each
+refusal. Unrelated heartbeat commits must not invalidate an unchanged selection.
+Prove all-matching selection freezes the originally observed cohort, including
+newly matching jobs, more than 5,000 matches and overlapping filters; no
+truncation or widening is permitted. Exercise mixed cohorts, aliases, foreign
+tenants, expired/replayed receipts, cancellation, lost acknowledgement, and a
+writer held across the locked final comparison. Existing explicitly authorized
+active-job deletion and purge must retain their behavior. Verify the rendered
+Jobs flow and browser-local demo separately. Run the full worker and native
+migration suites with every supported source version, independent source-drift
+and old-controller compatibility checks before claiming an installed upgrade.
+For exact-v14, exercise the authenticated bound activation with a live WAL
+reader, a write between receipt validation and the SQLite lock, DDL and commit
+faults, and process interruption at the schema/commit boundaries. Verify the
+live inode and protected profile, resume, settings, search and external file
+bytes remain intact; reader/source drift must refuse safely.
+Commit synthetic writes to both databases after the paired backup and after
+activation, then inject candidate failure and interruption. Verify repeated
+ordinary and revoked recovery attempts retain the live files and resumable
+journal, and do not restart a predecessor or replace newer commits. Include
+same-schema updates and explicit rollback's target-start failure separately.
 
 ## Smart Extract Posting Qualification
 

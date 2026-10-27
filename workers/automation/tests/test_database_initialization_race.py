@@ -30,7 +30,7 @@ def _insert_job(conn: sqlite3.Connection) -> None:
 def _assert_job(path: Path) -> None:
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT title FROM jobs WHERE job_id = ?", (JOB_ID,)).fetchone() == ("Synthetic job",)
-        assert conn.execute("PRAGMA user_version").fetchone() == (14,)
+        assert conn.execute("PRAGMA user_version").fetchone() == (15,)
         assert conn.execute("PRAGMA integrity_check").fetchone() == ("ok",)
 
 
@@ -184,7 +184,10 @@ def test_substituted_target_at_publication_is_not_followed_or_removed(
     assert target.read_bytes() == b"unrelated"
 
 
-def test_failure_after_publication_never_removes_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("version", [14, 15])
+def test_failure_after_publication_never_removes_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: int,
+) -> None:
     path = tmp_path / "jobctrl.db"
 
     def fail_open(*args: object, **kwargs: object) -> None:
@@ -192,10 +195,10 @@ def test_failure_after_publication_never_removes_database(tmp_path: Path, monkey
 
     monkeypatch.setattr(database, "get_connection", fail_open)
     with pytest.raises(RuntimeError, match="synthetic open failure"):
-        database.create_exact_v14_database(path)
+        getattr(database, f"create_exact_v{version}_database")(path)
     assert path.is_file()
     with sqlite3.connect(path) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone() == (14,)
+        assert conn.execute("PRAGMA user_version").fetchone() == (version,)
         assert conn.execute("PRAGMA integrity_check").fetchone() == ("ok",)
 
 
@@ -263,7 +266,7 @@ def test_cleanup_failure_does_not_remove_published_database(tmp_path: Path, monk
             database.init_db(path)
     database.close_connection(path)
     with sqlite3.connect(path) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone() == (14,)
+        assert conn.execute("PRAGMA user_version").fetchone() == (15,)
         assert conn.execute("PRAGMA integrity_check").fetchone() == ("ok",)
 
 
@@ -300,8 +303,9 @@ def test_recovery_after_published_wal_open_allows_repeated_admission(tmp_path: P
     database.close_connection(path)
 
 
+@pytest.mark.parametrize("version", [14, 15])
 def test_substituted_symlink_before_admission_does_not_change_referent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: int,
 ) -> None:
     path = tmp_path / "jobctrl.db"
     unrelated = tmp_path / "unrelated.db"
@@ -317,7 +321,7 @@ def test_substituted_symlink_before_admission_does_not_change_referent(
 
     monkeypatch.setattr(database, "get_connection", substitute)
     with pytest.raises(RuntimeError, match="changed during admission"):
-        database.create_exact_v14_database(path)
+        getattr(database, f"create_exact_v{version}_database")(path)
     assert path.is_symlink()
     with sqlite3.connect(unrelated) as conn:
         assert conn.execute("PRAGMA journal_mode").fetchone() == ("delete",)
@@ -372,13 +376,13 @@ def test_sidecar_appearing_before_open_is_not_adopted_or_removed(
 def test_parent_replacement_refuses_publication_and_preserves_unfamiliar_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from jobctrl.infrastructure.migrations import schema_v14
+    from jobctrl.infrastructure.migrations import schema_v15
 
     parent = tmp_path / "workspace"
     parent.mkdir()
     old_parent = tmp_path / "original-workspace"
     path = parent / "jobctrl.db"
-    create_schema = schema_v14.create_exact_v14_schema
+    create_schema = schema_v15.create_exact_v15_schema
     replacement_candidate: list[Path] = []
 
     def replace_parent(conn: sqlite3.Connection) -> None:
@@ -393,7 +397,7 @@ def test_parent_replacement_refuses_publication_and_preserves_unfamiliar_directo
         replacement_candidate.append(replacement)
         create_schema(conn)
 
-    monkeypatch.setattr(schema_v14, "create_exact_v14_schema", replace_parent)
+    monkeypatch.setattr(schema_v15, "create_exact_v15_schema", replace_parent)
     with pytest.raises(RuntimeError, match="directory changed"):
         database.init_db(path)
     assert not path.exists()
@@ -407,13 +411,13 @@ def test_process_death_before_publication_preserves_staging_and_allows_fresh_cre
     source = '''\
 import sys
 from jobctrl import database
-from jobctrl.infrastructure.migrations import schema_v14
-real_create = schema_v14.create_exact_v14_schema
+from jobctrl.infrastructure.migrations import schema_v15
+real_create = schema_v15.create_exact_v15_schema
 def pause(conn):
     real_create(conn)
     print("ready", flush=True)
     sys.stdin.readline()
-schema_v14.create_exact_v14_schema = pause
+schema_v15.create_exact_v15_schema = pause
 database.init_db(sys.argv[1])
 '''
     child = subprocess.Popen(

@@ -30,6 +30,13 @@ Existing accepted materials remain available.
 | `POST /v1/jobs/:key/score-correction` | A new score version plus explicit correction rationale. |
 | Job hide/restore/delete routes | Reversible lifecycle commands, plus a separate permanent-delete boundary. |
 
+The Jobs removed-selection flow reads a reviewable list and prepares an exact,
+short-lived cohort before confirmation. It submits that receipt with the same
+canonical IDs; a stale receipt refuses the entire deletion. See the
+[complete lifecycle contract](complete-contract.md#jobs-read-model-and-lifecycle)
+for the request and conflict details. Direct permanent deletion and the guarded
+job-data purge keep their separate existing contracts.
+
 List and detail endpoints read projection rows. Job detail also reads the latest
 accepted interview prep directly from its canonical owner, independently of
 projection lag. These reads do not recompute scores, parse salary text, or replay

@@ -427,13 +427,21 @@ consent read, and exact denied/granted cookie boundary.
 
 ## Verify
 
-Schema v14 migrations must run with JobCtrl stopped and must write a separate
-candidate. For a synthetic exact-v13 source, exercise the private boundary with
-`python -m jobctrl.infrastructure.migrations.v13_to_v14_execute --source
+Schema v15 migrations require verified instance cleanup and a separate sealed
+candidate. For a synthetic exact-v14 source, exercise the private boundary with
+`python -m jobctrl.infrastructure.migrations.v14_to_v15_execute --source
 <source.db> --candidate <candidate.db>`. The command never installs the
-candidate. Normal installations use `jobctrl update`, whose native lifecycle
-owns quiescence, paired backup, candidate activation, readiness, and rollback.
-Never run a migration executor against the live path as its candidate.
+candidate. The authenticated new installer owns stopped-runtime paired backup,
+exact-v14 in-place activation, readiness and forward recovery. Historical
+protocol-1 controllers refuse the protocol-2 target before backup; run the new
+installer against the original authenticated installation instead. Before
+selector replacement, retry that trusted installer; the old public binary
+cannot decode the new journal. After replacement, ordinary `jobctrl update`
+resumes through the new controller. Each retry preserves newer live app/Temporal writes and takes a current WAL-aware backup.
+A cross-protocol rollback is refused. Never run a migration executor against
+the live path as its candidate. See
+[the distribution contract](../packaging/distribution/README.md) and
+[release qualification](developer/releasing.md#schema-15-installed-upgrade-qualification).
 
 Choose the touched-surface recipe and required gates through
 [Reliability & QA](local-reliability-qa.md). The root aggregates do not include
@@ -584,8 +592,11 @@ and records each canonical `JOBCTRL_DIR` under
 `~/Library/Application Support/JobCtrl/instances/<sha256>` (override with
 `JOBCTRL_RUNTIME_HOME`). This is an artifact smoke/development surface only;
 `scripts/dev` remains the source-contributor launcher until the installer and
-signing phases land. Use the much smaller contract fixture while changing the
-builder itself:
+signing phases land. Signed protocol-2 upgrades use the authenticated installer
+and signed schema declaration, with normal cleanup and forward recovery. Synthetic local
+artifacts do not qualify the actual signed/notarized installed upgrade; follow
+[the release contract](developer/releasing.md#schema-15-installed-upgrade-qualification).
+Use the much smaller contract fixture while changing the builder itself:
 
 ```bash
 corepack pnpm distribution:build:fixture

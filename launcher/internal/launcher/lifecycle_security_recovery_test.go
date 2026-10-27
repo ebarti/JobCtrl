@@ -7,13 +7,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/ebarti/jobctrl/launcher/internal/release"
 )
 
-func TestPolicyFinalizationInterruptionRecoversCandidateBeforeHomebrewBootstrap(t *testing.T) {
+func TestPolicyFinalizationInterruptionPreservesLivePairBeforeHomebrewBootstrap(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("python3 unavailable")
@@ -108,16 +109,12 @@ func TestPolicyFinalizationInterruptionRecoversCandidateBeforeHomebrewBootstrap(
 	originalStart, originalFailure := startReleaseCommand, transitionFailure
 	t.Cleanup(func() { startReleaseCommand, transitionFailure = originalStart, originalFailure })
 	candidateStarts, oldStartChecks := 0, 0
-	restoredBeforeRetry := false
 	startReleaseCommand = func(_ launchContext, receipt release.Receipt, journalID string) error {
 		switch receipt.BuildID {
 		case candidate.BuildID:
 			candidateStarts++
 			if journalID == "" {
 				t.Fatal("security recovery started the candidate outside its durable journal")
-			}
-			if candidateStarts == 2 {
-				restoredBeforeRetry = sameDatabaseDigests(lifecycleDatabaseValues(t, python, state), before)
 			}
 			setLifecycleSQLitePair(t, python, state, "candidate")
 			return nil
@@ -158,7 +155,7 @@ func TestPolicyFinalizationInterruptionRecoversCandidateBeforeHomebrewBootstrap(
 		t.Fatal("revoked predecessor remained permitted after candidate policy finalization")
 	}
 	journal, err := store.ReadJournal()
-	if err != nil || journal.State != release.PolicyFinalized || !journal.Resumable() {
+	if err != nil || journal.State != release.PolicyFinalized || !journal.Resumable() || !journal.PreserveLiveOnFailure {
 		t.Fatalf("policy-finalization interruption was not durably resumable: %#v, %v", journal, err)
 	}
 	if got := lifecycleDatabaseValues(t, python, state); got["jobctrl.db"] != "candidatejobctrl.db" || got["temporal.db"] != "candidatetemporal.db" {
@@ -176,37 +173,43 @@ func TestPolicyFinalizationInterruptionRecoversCandidateBeforeHomebrewBootstrap(
 		t.Fatal(err)
 	}
 
-	// A safe retry is explicit: the public rollback command sees the resumable
-	// revoked-predecessor journal, restores the durable pair, and resumes only
-	// the still-permitted candidate.
-	var output bytes.Buffer
-	if err := Run(formulaExecutable, []string{"rollback"}, environment, &output, io.Discard); err != nil {
-		t.Fatalf("explicit security recovery through jobctrl rollback: %v", err)
+	// Independent writers commit after the paired backup and policy boundary.
+	// No automatic recovery may overwrite either live value or restart old code.
+	setLifecycleSQLitePair(t, python, state, "later")
+	if got := lifecycleDatabaseValues(t, python, state); got["jobctrl.db"] != "laterjobctrl.db" || got["temporal.db"] != "latertemporal.db" {
+		t.Fatalf("independent commits missing: %v", got)
 	}
-	if !strings.Contains(output.String(), "Recovered the verified security-update candidate") {
-		t.Fatalf("security recovery output = %q", output.String())
+	pairDir := filepath.Join(state, "backups", journal.BackupID)
+	if got := lifecycleDatabaseValues(t, python, pairDir); !sameDatabaseDigests(got, before) {
+		t.Fatalf("original paired backup changed: before=%v after=%v", before, got)
 	}
-	if candidateStarts != 2 {
-		t.Fatalf("candidate starts = %d, want healthy attempt plus explicit safe recovery", candidateStarts)
+	fixture := promotionBoundaryFixture{runtime: runtime, state: state}
+	preserved := snapshotPromotionBoundaryFiles(t, fixture)
+	for attempt := 0; attempt < 2; attempt++ {
+		var output bytes.Buffer
+		err := Run(formulaExecutable, []string{"rollback"}, environment, &output, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "retain the live databases") || !strings.Contains(err.Error(), "automatic recovery is unavailable") {
+			t.Fatalf("security recovery attempt %d did not explicitly refuse: %v", attempt, err)
+		}
+		if strings.Contains(output.String(), "Recovered the verified security-update candidate") {
+			t.Fatalf("security recovery falsely reported success: %q", output.String())
+		}
+		if got := snapshotPromotionBoundaryFiles(t, fixture); !reflect.DeepEqual(preserved, got) {
+			t.Fatalf("security recovery attempt %d changed the live pair, sidecars, backup, journal, selector or active receipt", attempt)
+		}
 	}
-	if oldStartChecks != 0 {
-		t.Fatalf("security recovery retried the revoked predecessor: checks=%d", oldStartChecks)
-	}
-	if !restoredBeforeRetry {
-		t.Fatal("security recovery did not restore the exact paired database backup before restarting the candidate")
+	if candidateStarts != 1 || oldStartChecks != 0 {
+		t.Fatalf("refused recovery started releases: candidate=%d revoked predecessor=%d", candidateStarts, oldStartChecks)
 	}
 	if _, err := os.Lstat(oldExecutionMarker); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("revoked predecessor payload executed during explicit recovery: %v", err)
+		t.Fatalf("revoked predecessor payload executed during refusal: %v", err)
 	}
 	active, err := store.ReadActive()
-	if err != nil || active.Receipt != candidate {
-		t.Fatalf("explicit security recovery active receipt = %#v, %v", active, err)
+	if err != nil || active.Receipt != old {
+		t.Fatalf("refused security recovery changed active receipt: %#v, %v", active, err)
 	}
 	journal, err = store.ReadJournal()
-	if err != nil || journal.State != release.Promoted {
-		t.Fatalf("explicit security recovery did not close the promotion audit: %#v, %v", journal, err)
-	}
-	if got := lifecycleDatabaseValues(t, python, state); got["jobctrl.db"] != "candidatejobctrl.db" || got["temporal.db"] != "candidatetemporal.db" {
-		t.Fatalf("explicit security recovery did not rerun the candidate against both restored databases: %v", got)
+	if err != nil || journal.State != release.PolicyFinalized || !journal.Resumable() || !journal.PreserveLiveOnFailure {
+		t.Fatalf("refused security recovery changed its durable journal: %#v, %v", journal, err)
 	}
 }
