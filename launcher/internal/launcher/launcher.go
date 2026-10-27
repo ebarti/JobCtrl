@@ -49,6 +49,10 @@ const (
 	// within those valid phase deadlines.
 	detachedStartupTimeout = 2*startupTimeout + 5*time.Second
 	shutdownTimeout        = 5 * time.Second
+	// API shutdown may spend up to 30 seconds closing requests and another 30
+	// seconds draining RPC children. Allow that sequence to complete before
+	// falling back to the recorded-group termination policy.
+	cooperativeShutdownTimeout = 65 * time.Second
 )
 
 var (
@@ -2122,13 +2126,45 @@ func terminateRecord(record componentRecord) error {
 	}
 	return errors.New("component process tree remained live after SIGTERM and SIGKILL")
 }
+
+// terminateCooperativeRecord gives the verified component leader the first
+// opportunity to drain its own children. A surviving group after its leader
+// exits is unresolved: its numeric PGID alone is never authority to signal it.
+func terminateCooperativeRecord(record componentRecord, grace time.Duration) error {
+	if record.PID <= 0 || record.PGID != record.PID {
+		return errors.New("record does not identify a dedicated owned process group")
+	}
+	if !recordMatchesLiveProcess(record) {
+		return errors.New("record does not match a live owned process")
+	}
+	if err := syscall.Kill(record.PID, syscall.SIGTERM); err != nil {
+		return fmt.Errorf("signal owned component leader: %w", err)
+	}
+	if waitForPIDExit(record.PID, grace) {
+		if waitForProcessGroupExit(record.PGID, shutdownTimeout) {
+			return nil
+		}
+		return errors.New("component leader exited but its process group remains live; group ownership is unresolved")
+	}
+	// A still-live leader must be revalidated by terminateRecord before it may
+	// authorize the existing bounded process-group escalation.
+	return terminateRecord(record)
+}
+
+func terminateComponentRecord(name string, record componentRecord) error {
+	if name == "api" || name == "worker" {
+		return terminateCooperativeRecord(record, cooperativeShutdownTimeout)
+	}
+	return terminateRecord(record)
+}
+
 func shutdownComponents(state *instanceState, children map[string]*exec.Cmd, statePath string) {
 	for _, name := range []string{"api", "worker", "temporal"} {
 		record, exists := state.Components[name]
 		if !exists || !componentMayBeLive(record) {
 			continue
 		}
-		if err := terminateRecord(record); err == nil {
+		if err := terminateComponentRecord(name, record); err == nil {
 			now := time.Now().UTC()
 			record.ExitedAt = &now
 		} else {
@@ -2168,7 +2204,7 @@ func stop(ctx launchContext) error {
 	failed := make([]string, 0)
 	for _, name := range []string{"api", "worker", "temporal"} {
 		if record, exists := state.Components[name]; exists && componentMayBeLive(record) {
-			if err := terminateRecord(record); err != nil && componentMayBeLive(record) {
+			if err := terminateComponentRecord(name, record); err != nil && componentMayBeLive(record) {
 				failed = append(failed, name+": "+err.Error())
 			}
 		}

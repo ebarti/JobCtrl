@@ -136,9 +136,13 @@ can reference them.
 
 The API entry points handle direct termination by closing event streams and
 waiting for HTTP requests and process-owned JSON-RPC children to drain. A close
-or drain timeout is reported as a failed shutdown. This direct API shutdown
-does not certify native runtime quiescence: the launcher may signal the whole
-component group, and detached descendants need independent ownership proof.
+or drain timeout is reported as a failed shutdown. For API and worker stop,
+the launcher first signals the verified component leader and allows a bounded
+drain period before its identity-checked group escalation. If a leader exits
+while its original group remains, the launcher refuses to signal that
+unanchored group and leaves shutdown unresolved. This direct API shutdown does
+not certify native runtime quiescence: detached descendants need independent
+ownership proof.
 When the worker receives SIGTERM during its run loop, it requests Temporal
 shutdown, fences new blocking activity submissions and waits for retained
 blocking executor work before closing provider resources. Startup and browser
