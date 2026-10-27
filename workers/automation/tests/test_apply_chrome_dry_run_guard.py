@@ -23,6 +23,9 @@ _SYSTEM_BROWSER_SMOKE_ENV = "JOBCTRL_RUN_SYSTEM_BROWSER_TESTS"
 def permit_browser_for_existing_guard_tests(monkeypatch: pytest.MonkeyPatch) -> None:
     """These tests exercise CDP guards after capability enforcement has passed."""
 
+    monkeypatch.setattr(chrome, "_chrome_procs", {})
+    monkeypatch.setattr(chrome, "_chrome_identities", {})
+
     monkeypatch.setattr(
         chrome,
         "require_system_browser_capability",
@@ -508,7 +511,7 @@ def test_launch_chrome_installs_public_destination_guard_for_live_runs(tmp_path,
         return profile
 
     monkeypatch.setattr(chrome, "setup_worker_profile", setup_profile)
-    monkeypatch.setattr(chrome, "_kill_on_port", lambda _port: None)
+    monkeypatch.setattr(chrome, "_require_available_cdp_port", lambda _port: None)
     monkeypatch.setattr(chrome, "_suppress_restore_nag", lambda _profile: None)
     monkeypatch.setattr(chrome.config, "get_chrome_path", lambda: "/bin/echo")
     monkeypatch.setattr(chrome.subprocess, "Popen", lambda *_args, **_kwargs: _FakeProcess())
@@ -571,7 +574,7 @@ def test_launch_chrome_waits_for_browser_cdp_endpoint(tmp_path, monkeypatch):
         return next(versions)
 
     monkeypatch.setattr(chrome, "setup_worker_profile", setup_profile)
-    monkeypatch.setattr(chrome, "_kill_on_port", lambda _port: None)
+    monkeypatch.setattr(chrome, "_require_available_cdp_port", lambda _port: None)
     monkeypatch.setattr(chrome, "_suppress_restore_nag", lambda _profile: None)
     monkeypatch.setattr(chrome.config, "get_chrome_path", lambda: "/bin/echo")
     monkeypatch.setattr(chrome.subprocess, "Popen", lambda *_args, **_kwargs: _FakeProcess())
@@ -620,7 +623,7 @@ def test_launch_chrome_cleans_up_when_cdp_process_exits(tmp_path, monkeypatch):
         return profile
 
     monkeypatch.setattr(chrome, "setup_worker_profile", setup_profile)
-    monkeypatch.setattr(chrome, "_kill_on_port", lambda _port: None)
+    monkeypatch.setattr(chrome, "_require_available_cdp_port", lambda _port: None)
     monkeypatch.setattr(chrome, "_suppress_restore_nag", lambda _profile: None)
     monkeypatch.setattr(chrome.config, "get_chrome_path", lambda: "/bin/echo")
     monkeypatch.setattr(chrome.subprocess, "Popen", lambda *_args, **_kwargs: process)
@@ -667,7 +670,7 @@ def test_launch_chrome_uses_combined_dry_run_guard_for_dry_runs(tmp_path, monkey
         return profile
 
     monkeypatch.setattr(chrome, "setup_worker_profile", setup_profile)
-    monkeypatch.setattr(chrome, "_kill_on_port", lambda _port: None)
+    monkeypatch.setattr(chrome, "_require_available_cdp_port", lambda _port: None)
     monkeypatch.setattr(chrome, "_suppress_restore_nag", lambda _profile: None)
     monkeypatch.setattr(chrome.config, "get_chrome_path", lambda: "/bin/echo")
     monkeypatch.setattr(chrome.subprocess, "Popen", lambda *_args, **_kwargs: _FakeProcess())
@@ -861,7 +864,7 @@ def test_cleanup_worker_terminates_the_tracked_chrome_process(monkeypatch):
     worker_id = 918
     process = _RunningProcess()
     killed: list[int] = []
-    monkeypatch.setattr(chrome, "_kill_process_tree", lambda pid: killed.append(pid))
+    monkeypatch.setattr(chrome, "_kill_process_tree", lambda pid, **_: killed.append(pid))
     with chrome._chrome_lock:
         chrome._chrome_procs[worker_id] = process
 
@@ -1019,10 +1022,10 @@ def test_public_destination_guard_fails_live_http_submit_after_capability_revoca
             return None
 
     monkeypatch.setattr(websocket, "create_connection", lambda *_args, **_kwargs: _FakeWebSocket())
-    monkeypatch.setattr(chrome, "_kill_process_tree", lambda pid: killed_processes.append(pid))
+    monkeypatch.setattr(chrome, "_kill_process_tree", lambda pid, **_: killed_processes.append(pid))
     monkeypatch.setattr(
         chrome,
-        "_kill_on_port",
+        "_require_available_cdp_port",
         lambda _port: (_ for _ in ()).throw(AssertionError("revocation must not kill a port owner")),
     )
 
@@ -1069,10 +1072,10 @@ def test_guard_revocation_preserves_foreign_listener_when_process_is_not_tracked
     owned_process = _RunningProcess()
     replaced_process = _RunningProcess()
     killed_processes: list[int] = []
-    monkeypatch.setattr(chrome, "_kill_process_tree", lambda pid: killed_processes.append(pid))
+    monkeypatch.setattr(chrome, "_kill_process_tree", lambda pid, **_: killed_processes.append(pid))
     monkeypatch.setattr(
         chrome,
-        "_kill_on_port",
+        "_require_available_cdp_port",
         lambda _port: (_ for _ in ()).throw(AssertionError("revocation must not scan listeners")),
     )
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:

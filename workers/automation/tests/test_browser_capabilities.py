@@ -828,6 +828,8 @@ def test_enabled_auto_apply_launch_uses_a_clean_owned_profile_without_host_copy(
         def poll(self) -> None:
             return None
 
+    monkeypatch.setattr(chrome, "_chrome_procs", {})
+    monkeypatch.setattr(chrome, "_chrome_identities", {})
     enable_system_browser_capability("auto-apply-browser", browser_executable, app_dir=tmp_path)
     worker_root = tmp_path / "apply-workers"
     monkeypatch.setattr(chrome.config, "CHROME_WORKER_DIR", worker_root)
@@ -841,7 +843,7 @@ def test_enabled_auto_apply_launch_uses_a_clean_owned_profile_without_host_copy(
         "get_chrome_user_data",
         lambda: (_ for _ in ()).throw(AssertionError("host profile must not be read")),
     )
-    monkeypatch.setattr(chrome, "_kill_on_port", lambda _port: None)
+    monkeypatch.setattr(chrome, "_require_available_cdp_port", lambda _port: None)
     monkeypatch.setattr(chrome, "_suppress_restore_nag", lambda _profile: None)
     monkeypatch.setattr(chrome.subprocess, "Popen", lambda *_args, **_kwargs: _FakeProcess())
     monkeypatch.setattr(
