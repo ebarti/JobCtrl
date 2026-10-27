@@ -509,6 +509,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     options.providerDispatcher ??
     createRuntimeJsonRpcDispatcherFactory(pythonRuntime)(actionContext);
   let discoveryBrowserContinuation: Promise<void> | null = null;
+  app.addHook("onClose", async () => {
+    // The reconnect route can start this work without awaiting it. It may use
+    // the RPC child after the HTTP response, so retain it during shutdown.
+    if (discoveryBrowserContinuation) await discoveryBrowserContinuation;
+  });
   const continueDiscoveryBrowserPreparation = (): Promise<void> => {
     if (discoveryBrowserContinuation) return discoveryBrowserContinuation;
     const continuation = dispatchDiscoveryBrowserContinuation(actionDispatcher, actionContext)

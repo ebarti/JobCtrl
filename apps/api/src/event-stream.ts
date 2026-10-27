@@ -168,7 +168,9 @@ export function registerEventStreamRoute(app: FastifyInstance, options: EventStr
     }
   }
 
-  app.addHook("onClose", async () => {
+  // SSE replies are hijacked and otherwise keep the HTTP server open. End
+  // them before Fastify waits for outstanding connections during shutdown.
+  app.addHook("preClose", async () => {
     stopPolling();
     for (const sub of subscribers.values()) {
       clearInterval(sub.keepaliveTimer);
@@ -180,8 +182,8 @@ export function registerEventStreamRoute(app: FastifyInstance, options: EventStr
       }
     }
     subscribers.clear();
-    closeDb();
   });
+  app.addHook("onClose", async () => { closeDb(); });
 
   app.get("/v1/events/stream", async (request, reply) => {
     const tenantId = resolveTenantId(request);

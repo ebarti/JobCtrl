@@ -134,6 +134,12 @@ notarization, and authenticated publication mandatory for promotion. Public
 artifacts pass those gates before the stable release pointer or Homebrew formula
 can reference them.
 
+The API entry points handle direct termination by closing event streams and
+waiting for HTTP requests and process-owned JSON-RPC children to drain. A close
+or drain timeout is reported as a failed shutdown. This direct API shutdown
+does not certify native runtime quiescence: the launcher may signal the whole
+component group, and detached descendants need independent ownership proof.
+
 Homebrew caches only prefix-owned release resources. Its build sandbox verifies
 strict Developer ID certificate-chain requirements for the launcher, installer
 and managed headless shell without contacting Apple's live syspolicy service.
