@@ -51,6 +51,11 @@ historical source keys. Names do not change source-health or quarantine facts.
 
 ## Profile And Preferences
 
+Profile reads expose a bounded legacy-confirmation review notice and computed
+evidence authority flags. The private original/review history stays out of SSE;
+review decisions use the stopped-runtime local command. See the
+[Profile & Settings contract](api/profile-and-settings.md#candidate-profile).
+
 Profile data, preferences, discovery controls, settings, and credentials have
 different owners even though the UI presents them together. See
 [Profile & Settings](api/profile-and-settings.md) for that ownership map and the

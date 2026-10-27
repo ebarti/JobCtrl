@@ -1,8 +1,9 @@
+import { requiresLegacyEvidenceReview } from "./legacy-evidence-review.js";
 import type { GenerateInterviewPrepRequest } from "./contracts.js";
 import type { SqliteDatabase } from "./db.js";
 
 export class InterviewEvidenceSelectionError extends Error {
-  constructor(readonly code: "evidence_profile_changed" | "invalid_evidence_selection") {
+  constructor(readonly code: "evidence_profile_changed" | "invalid_evidence_selection" | "legacy_evidence_review_required") {
     super(code === "evidence_profile_changed"
       ? "The profile evidence has changed. Review your selection before generating."
       : "The evidence selection must use unique accepted facts from the current profile.");
@@ -18,14 +19,15 @@ export function validateInterviewEvidenceSelection(
     const profile = db.prepare("SELECT version FROM candidate_profiles WHERE tenant_id = ? AND profile_id = ?")
       .get(tenantId, profileId) as { version: number } | undefined;
     if (!profile || profile.version !== request.evidenceProfileVersion) throw new InterviewEvidenceSelectionError("evidence_profile_changed");
-    const rows = db.prepare(`SELECT evidence_id, user_confirmed, evidence_strength, source_text, scope, action, outcome
+    const rows = db.prepare(`SELECT entry_id, evidence_id, user_confirmed, evidence_strength, source_text, scope, action, outcome
       FROM candidate_profile_achievement_evidence WHERE tenant_id = ? AND profile_id = ? LIMIT 401`)
-      .all(tenantId, profileId) as Array<{ evidence_id: string; user_confirmed: number; evidence_strength: string;
+      .all(tenantId, profileId) as Array<{ entry_id: string; evidence_id: string; user_confirmed: number; evidence_strength: string;
         source_text: string; scope: string; action: string; outcome: string }>;
     if (rows.length > 400) throw new InterviewEvidenceSelectionError("invalid_evidence_selection");
     const seen = new Set<string>();
     const accepted = new Set<string>();
     for (const row of rows) {
+      if (requiresLegacyEvidenceReview(db, tenantId, profileId, row.entry_id, row.evidence_id)) throw new InterviewEvidenceSelectionError("legacy_evidence_review_required");
       if (!row.evidence_id.trim()) continue;
       if (seen.has(row.evidence_id)) throw new InterviewEvidenceSelectionError("invalid_evidence_selection");
       seen.add(row.evidence_id);

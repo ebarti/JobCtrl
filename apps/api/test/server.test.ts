@@ -872,6 +872,10 @@ describe("local TypeScript API", () => {
     );
     insertEvent.run("local", null, null, "CareerLearningRecorded", occurredAt,
       JSON.stringify({ tenantId: "local", completionEvidence: "career-learning-private-source-canary" }));
+    insertEvent.run("local", null, null, "ArchivedSmartPostingPrepared", occurredAt,
+      JSON.stringify({ tenantId: "local", qualified: { description: "archived-posting-private-source-canary" } }));
+    insertEvent.run("local", null, null, "LegacyEvidenceReviewRecorded", occurredAt,
+      JSON.stringify({ original: { value: "legacy-evidence-private-source-canary" } }));
     const outcomeOccurredAt = "2026-04-01T09:00:00+00:00";
     insertEvent.run(
       "local",
@@ -955,6 +959,10 @@ describe("local TypeScript API", () => {
     expect(streamed).not.toContain("company-briefing-source-canary");
     expect(streamed).not.toContain("CareerLearningRecorded");
     expect(streamed).not.toContain("career-learning-private-source-canary");
+    expect(streamed).not.toContain("ArchivedSmartPostingPrepared");
+    expect(streamed).not.toContain("archived-posting-private-source-canary");
+    expect(streamed).not.toContain("LegacyEvidenceReviewRecorded");
+    expect(streamed).not.toContain("legacy-evidence-private-source-canary");
     await reader.cancel();
     db.close();
     await app.close();

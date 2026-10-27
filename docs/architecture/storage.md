@@ -590,3 +590,51 @@ a dead leader alone cannot certify the pair. Stop publishes its verified state
 before retiring those receipts, so an interrupted metadata cleanup can resume
 without losing the process boundary. Missing or legacy-untracked ownership
 blocks automatic backup/restore and preserves the live databases and registry.
+
+
+## Legacy achievement confirmation history
+
+The v12-to-v13 transform preserves every retained achievement cell and records
+original rows before dropping the obsolete inferred seniority column. Legacy
+booleans have no author receipt, so all legacy confirmed records enter explicit
+review. No prose, identifier pattern or partial/exact value shape proves
+provenance. The same transform is used by every supported v6–v12 composite
+cutover to the current exact schema; no additional schema version is introduced.
+
+Private `LegacyEvidenceReviewRecorded` rows use the existing `job_events` ledger,
+null `job_id`, `entity_kind=legacy_achievement_evidence` and a JSON-array entity
+reference `[profile_id, entry_id, evidence_id]`. Version-1 payloads retain the
+complete original row, tenant/profile/evidence identities, unknown-authority
+reason and migration-inventory or explicit-human authorship. Stable
+idempotency keys keep repeated inventories unchanged; event IDs link human
+decisions to the prior inventory. A deterministic inventory uses the recorded
+profile source time (or explicit unknown), and separately states that its own
+creation time is unknown. These are structural provenance records, never model
+or semantic-determination envelopes. Generic SSE excludes their private payloads.
+
+Readers preserve the saved confirmation and add computed
+`confirmation_review_required` from that journal. Unresolved authority fails
+canonical source generation explicitly, preserving accepted artifacts. A human
+review token binds the current complete evidence inventory, profile version and
+latest event ID under a SQLite writer lock. Confirmation changes only the
+boolean, advances the profile version and appends history. Its resulting row
+fingerprint prevents later changed cells from reusing that authority. Review
+never restores strength/confidence or text from an old backup.
+
+The row fingerprint encodes only `claim_confidence` as a big-endian IEEE 754
+binary64 hex string. Original/current cells and review history retain their
+numeric values; Python and TypeScript decimal/exponent formatting cannot change
+authority for an unchanged value. Nonfinite confidence cannot publish a human
+review. An original-zero inventory clears review only while the current row is
+unique and still has exact integer-zero confirmation. Later confirmed, malformed
+or duplicate rows stay visibly pending; current confirmation drift needs a new
+fingerprint-bound human decision, including during paired-backup recovery.
+
+Already-migrated recovery validates a native `pair.json` and both immutable,
+private database files before recording originals. It rechecks backup bytes
+before commit, preserves newer edits/deletions, exposes duplicate/missing/source
+conflicts, and refuses their mutation. Explicit missing-authority inventory
+retains current cells as uncertain. Run these local commands only after stopping
+all workspace processes; SQLite locks additionally refuse active writers.
+See [Candidate Profile](../user/candidate-profile.md#review-legacy-confirmations)
+and [Auditability Checks](../developer/qa/regression-catalog.md#auditability-checks).

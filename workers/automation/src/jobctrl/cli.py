@@ -22,6 +22,7 @@ from rich.text import Text
 
 from jobctrl import __version__
 from jobctrl.company_briefing_cli import app as company_briefing_app
+from jobctrl.legacy_evidence_cli import app as legacy_evidence_app
 from jobctrl.pipeline import SUPPORTED_STAGE_ORDER, run_single_job
 from jobctrl.source_proposals_cli import app as source_proposals_app
 from jobctrl.workflow_specs import (
@@ -49,6 +50,7 @@ credentials_app = typer.Typer(help="Manage provider credentials in the operating
 app.add_typer(credentials_app, name="credentials")
 app.add_typer(company_briefing_app, name="company-briefing")
 app.add_typer(source_proposals_app, name="source-proposals")
+app.add_typer(legacy_evidence_app, name="legacy-evidence")
 console = Console()
 log = logging.getLogger(__name__)
 

@@ -399,6 +399,14 @@ eligibility, and an explicit foreground request retains its existing contract.
 
 ## Semantic Determinations
 
+For legacy evidence confirmation preservation/recovery, follow the dedicated
+[Auditability Checks](developer/qa/regression-catalog.md#auditability-checks).
+Use exact-schema owned originals and native paired backup metadata, preserve
+saved confirmation history and accepted files, and require visible structural
+review before canonical source admission. Verify stale/conflicting recovery and
+private-event filtering through the real local CLI/API/UI; never use private
+user safety copies or infer author authority from a row shape.
+
 Use an owned synthetic workspace for these risk-tier 2/3 paths. Do not grade model
 judgments or build eval sets, labeled corpora, baseline comparisons or recorded
 output replay fixtures. Fake `LlmPort` tests provide opposing valid verdicts for

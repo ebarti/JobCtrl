@@ -198,13 +198,17 @@ def _load_canonical_evidence(
         if current is None or current["version"] != profile.version:
             raise InterviewSelectionError("evidence_profile_changed")
         rows = conn.execute(
-            """SELECT evidence_id,source_text,scope,action,outcome,metrics_json,tools_json,tags_json,
+            """SELECT entry_id,evidence_id,source_text,scope,action,outcome,metrics_json,tools_json,tags_json,
                       user_confirmed,evidence_strength
                FROM candidate_profile_achievement_evidence
                WHERE tenant_id=? AND profile_id='default'
                ORDER BY entry_id,evidence_index""",
             (str(tenant_id),),
         ).fetchall()
+        from jobctrl.infrastructure.profile.legacy_evidence import requires_review
+
+        if any(requires_review(conn, str(tenant_id), "default", row["entry_id"], row["evidence_id"]) for row in rows):
+            raise InterviewSelectionError("legacy_evidence_review_required")
         result = InterviewEvidenceSnapshot.from_canonical_rows(
             tenant_id=tenant_id,
             profile_id="default",

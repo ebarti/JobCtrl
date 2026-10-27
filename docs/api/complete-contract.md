@@ -61,6 +61,18 @@ Profile tables in `jobctrl.db` as the source of truth. When the profile
 tables are empty, `GET /v1/profile` returns an empty profile with default
 rendering settings. Explicit profile saves and resume-PDF imports create or
 update the SQLite rows.
+Profile reads optionally include `legacyEvidenceReview: { status:
+"review_required", count: number }`. Each affected achievement retains all saved
+fields, including `user_confirmed`, and adds read-computed
+`confirmation_review_required: true`; client writes cannot resolve this flag.
+Evidence Map freshness adds optional `confirmationReviewRequired: boolean`.
+Unresolved legacy confirmations produce `legacy_evidence_review_required` before
+canonical evidence-based generation. Explicit interview selection returns `400
+legacy_evidence_review_required` and retains the draft. Review/recovery use the
+[local bounded commands](../user/candidate-profile.md#review-legacy-confirmations),
+not a new HTTP write route. `LegacyEvidenceReviewRecorded` private event payloads
+are excluded from generic SSE.
+
 Profile reads include `profileVersion: number | null`. `PATCH /v1/profile`
 accepts optional `expectedProfileVersion`; when supplied, a mismatch returns
 `409 stale_profile_version` and the same transaction writes neither canonical
@@ -1183,7 +1195,7 @@ canonical identity: the schema does not trim, normalize, or change case, and
 rejects blank-only IDs. The same 1–200 raw-character bound applies to returned
 evidence links, outline evidence IDs, and retained selected evidence IDs.
 Eligible IDs identify current-profile
-achievement evidence with explicit `user_confirmed = 1`. The system does not
+achievement evidence with explicit `user_confirmed = 1` and no unresolved legacy confirmation review. The system does not
 manufacture evidence strength or seniority flags. Stale or invalid choices return
 `409 evidence_profile_changed` or `400 invalid_evidence_selection`; the client keeps
 the draft for reselection. Notes and new recollections are not accepted facts.

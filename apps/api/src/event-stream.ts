@@ -314,7 +314,12 @@ function canonicalSseEnvelope(row: EventRow): Record<string, unknown> | null {
     payload = offerEventReferences(payload);
     if (!isRecord(payload)) return null;
   }
-  if (row.event_type === "CompanyBriefingRecorded" || row.event_type === "CareerLearningRecorded") return null;
+  if (
+    row.event_type === "CompanyBriefingRecorded" ||
+    row.event_type === "CareerLearningRecorded" ||
+    row.event_type === "ArchivedSmartPostingPrepared" ||
+    row.event_type === "LegacyEvidenceReviewRecorded"
+  ) return null;
   if (row.event_type === "ScreeningAnswerRecorded") {
     payload = screeningEventReferences(payload);
     if (!isRecord(payload)) return null;

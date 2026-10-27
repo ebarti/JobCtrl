@@ -1,7 +1,7 @@
 """Minimized authored profile facts supplied by ID to semantic determinations."""
 
 import json
-from jobctrl.domain.determinations import Source
+from jobctrl.domain.determinations import Source, DeterminationFailure
 from jobctrl.resume_profile import (
     get_achievement_evidence,
     get_experience_entries,
@@ -11,6 +11,7 @@ from jobctrl.resume_profile import (
 
 
 def profile_sources(profile):
+    assert_evidence_reviewed(profile)
     result = []
     for key in (
         "full_name",
@@ -32,7 +33,7 @@ def profile_sources(profile):
     if baseline:
         result.append(Source(source_id="executive_profile:baseline", text=baseline))
     for item in get_achievement_evidence(profile):
-        if not item.get("user_confirmed"):
+        if not item.get("user_confirmed") or item.get("confirmation_review_required"):
             continue
         fields = {key: item.get(key) for key in ("source_text", "scope", "action", "tools", "metrics", "outcome")}
         result.append(Source(source_id=str(item["id"]), text=json.dumps(fields, ensure_ascii=False)))
@@ -69,12 +70,18 @@ def experience_bullet_evidence_ids_by_role(profile):
     Fixed metadata and unconfirmed ledger entries never become bullet evidence.
     This inventory supplies structural permissions only; models judge support.
     """
+    assert_evidence_reviewed(profile)
     entries = get_experience_entries(profile)
     result = {str(entry["id"]): [] for entry in entries}
     for item in get_achievement_evidence(profile):
-        if item.get("user_confirmed"):
+        if item.get("user_confirmed") and not item.get("confirmation_review_required"):
             result[item["experience_entry_id"]].append(str(item["id"]))
     for entry in entries:
         ident = str(entry["id"])
         result[ident].extend(f"experience:{ident}:source:{index}" for index, _ in enumerate(entry.get("bullets") or []))
     return {ident: list(dict.fromkeys(identifiers)) for ident, identifiers in result.items()}
+
+
+def assert_evidence_reviewed(profile):
+    if any(item.get("confirmation_review_required") for item in get_achievement_evidence(profile)):
+        raise DeterminationFailure("legacy_evidence_review_required")

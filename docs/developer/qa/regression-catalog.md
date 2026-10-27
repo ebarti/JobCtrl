@@ -547,6 +547,32 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For legacy evidence preservation (#1281), run locked
+`pytest tests/test_legacy_evidence_preservation.py tests/test_legacy_evidence_recovery.py tests/test_semantic_storage.py tests/test_v12_activation.py`
+and the full worker and native launcher suites with this checkout's locked
+migration Python and Node explicitly bound. Exercise every applicable exact-v6
+through v12 source to current schema, an independently authored collision, a
+known historical system-writer record, nonmatching and unconfirmed controls.
+Keep every original text/scope/metric/ID/confirmation cell, deterministic private
+inventory history, canonical review-required failure, explicit human source
+visibility and unchanged accepted material IDs/bytes/anchors. Repeat inventory
+and decisions; stale tokens, current edits/deletions, duplicates, independent
+writers and malformed/unpaired/changed/symlink backups must refuse safely.
+Inject inventory interruption and cutover failure, preserving current/source/
+paired-backup/file bytes. Use only owned synthetic workspaces. The recovery path
+must not treat independently captured app/Temporal/files as a native pair or
+infer authorship from values. Verify the Python-written private journal through
+real Profile HTTP, the Profile/Evidence Map warning, excluded interview choices
+and the SSE private-source canary. Include confidence `0`, `1e-7`, `1e-6`, a
+fraction, `1` and a subnormal value through actual Python review publication and
+TypeScript reads; unchanged binary64 values must agree and changed values must
+invalidate that binding. Nonfinite values refuse without replacing cells or
+history. An original-zero inventory must not authorize a later current one,
+malformed flag or duplicate; prove canonical-source refusal, visible pending
+state, stale-token refusal and a new explicit human decision, including
+backup-zero/current-one recovery. No semantic eval corpus or real user backup
+belongs in these checks.
+
 For availability model/network budgets, run locked
 `pytest tests/test_availability_model_budget.py tests/test_saved_posting_availability.py tests/test_saved_posting_availability_runtime.py tests/test_posting_availability_rereview.py`
 and the full worker suite. Use a virtual monotonic/UTC clock and explicit,
