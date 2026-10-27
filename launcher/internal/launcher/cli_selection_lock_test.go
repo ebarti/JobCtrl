@@ -54,8 +54,8 @@ func TestInstalledCLILockSurvivesExecAndFencesBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	site := strings.TrimSpace(string(siteOutput))
-	rel, err := filepath.Rel(venv, site)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+	inside, err := isOwnedPythonSite(venv, site)
+	if err != nil || !inside {
 		t.Fatalf("synthetic Python site escaped the owned environment: %q %v", site, err)
 	}
 	packageDir := filepath.Join(site, "jobctrl")
@@ -140,5 +140,52 @@ func TestInstalledCLILockSurvivesExecAndFencesBackup(t *testing.T) {
 	entries, err = os.ReadDir(output)
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("expected a paired backup after command exit: %v, %v", entries, err)
+	}
+}
+
+// Compare resolved paths: on macOS Python may report /private/var while Go's
+// temporary directory is spelled /var, which is a symlink to the same tree.
+func isOwnedPythonSite(venv, site string) (bool, error) {
+	resolvedVenv, err := filepath.EvalSymlinks(venv)
+	if err != nil {
+		return false, err
+	}
+	resolvedSite, err := filepath.EvalSymlinks(site)
+	if err != nil {
+		return false, err
+	}
+	rel, err := filepath.Rel(resolvedVenv, resolvedSite)
+	if err != nil {
+		return false, err
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)), nil
+}
+
+func TestOwnedPythonSiteResolvesAliasesAndRejectsEscapes(t *testing.T) {
+	root := t.TempDir()
+	venv := filepath.Join(root, "venv")
+	site := filepath.Join(venv, "lib", "site-packages")
+	if err := os.MkdirAll(site, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(venv, alias); err != nil {
+		t.Fatal(err)
+	}
+	inside, err := isOwnedPythonSite(alias, site)
+	if err != nil || !inside {
+		t.Fatalf("alias to owned environment refused: inside=%v err=%v", inside, err)
+	}
+	outside := filepath.Join(root, "outside")
+	if err := os.Mkdir(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	escape := filepath.Join(venv, "escape")
+	if err := os.Symlink(outside, escape); err != nil {
+		t.Fatal(err)
+	}
+	inside, err = isOwnedPythonSite(venv, escape)
+	if err != nil || inside {
+		t.Fatalf("site symlink to outside accepted: inside=%v err=%v", inside, err)
 	}
 }
