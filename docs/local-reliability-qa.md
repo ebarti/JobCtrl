@@ -602,11 +602,12 @@ events to exact resource IDs, including the empty selection; event floods and
 startup cannot evict a peer's history. Cleanup failure must fence the next claim,
 preserve the real listener/registry/files and settle other selected workers.
 
-Kill a real owner before spawn, between spawn and local handle publication,
-after publication and after root exit. The selected old custody remains unknown
-without actual native authority; a different-job successor is admitted and
-preserves the old files/process. Administrative stage reset must not transfer the
-same job. Inject stale result, aggregate/artifact, lock-release and bus publications
+For installed native mode, kill a real owner before spawn, between spawn and
+local handle publication, after publication and after root exit. The selected
+old custody remains unknown without actual native authority; a different-job
+successor is admitted and preserves the old files/process. Administrative stage
+reset must not transfer the same job. Inject stale result, aggregate/artifact,
+lock-release and bus publications
 and prove none mutate a successor. A synchronous no-created-child spawn failure
 must abort its intent without permanently gating future unrelated work. Retained
 on-disk custody must not retain closed routing entries or reaped-root pipe FDs.
@@ -632,9 +633,9 @@ again after actual per-run cleanup, preserving fresh IDs and directories. Spawn
 a TERM-ignoring setsid writer from the adopted executable’s readiness preflight
 to prove the scope begins before that probe. Cover success, command error,
 cancellation, controller death, interrupted completion publication/retirement and
-final cleanup of every owned scope. Source-mode compatibility requires equivalent
-observed authority; missing helpers or optional build instructions do not qualify
-that path or justify a new mandatory compiler dependency.
+final cleanup of every owned scope. These observed native-authority requirements
+apply to installed mode. Qualify source-checkout Apply against the best-effort
+requirements below, without adding a mandatory native helper or compiler dependency.
 
 Filesystem and network isolation alone do not isolate macOS Keychain. Real
 Chromium QA must run on an isolated hosted runner/container unless Keychain
