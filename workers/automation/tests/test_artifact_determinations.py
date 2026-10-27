@@ -22,7 +22,7 @@ from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
 from jobctrl.infrastructure.materials.sqlite_repository import SqliteMaterialsRepository
-from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
+from jobctrl.infrastructure.migrations.schema_v15 import create_exact_v15_schema
 from jobctrl.llm_lanes import current_llm_lane
 from tests.determination_fakes import claim_verification_input, claim_verification_response
 
@@ -134,7 +134,7 @@ class Model:
 def connection():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    create_exact_v14_schema(conn)
+    create_exact_v15_schema(conn)
     conn.execute(
         "INSERT INTO jobs (tenant_id,job_id,url,title,company,discovered_at) VALUES ('local',?,'https://example.test/owned','Synthetic title','Synthetic employer','2026-10-06')",
         (str(JOB_ID),),
