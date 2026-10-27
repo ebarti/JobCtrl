@@ -469,6 +469,13 @@ func discoverScopedProcesses(ctx launchContext, state instanceState, scopes []ex
 				lost = true
 				continue
 			}
+			if errors.Is(coalitionErr, syscall.ESRCH) {
+				// A live task can briefly have no inspectable coalition while
+				// exec is completing. This is uncertainty, never proof of death:
+				// demand another complete census before certifying zero.
+				lost = true
+				continue
+			}
 			if coalitionErr != nil {
 				return nil, fmt.Errorf("inspect execution ownership for PID %d: %w", pid, coalitionErr)
 			}

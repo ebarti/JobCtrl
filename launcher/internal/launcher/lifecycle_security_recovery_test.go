@@ -99,8 +99,8 @@ func TestPolicyFinalizationInterruptionRecoversCandidateBeforeHomebrewBootstrap(
 	ctx := launchContext{
 		Instance: instance{
 			RuntimeHome: runtime, StateDir: state,
-			StatePath:   filepath.Join(state, "missing-state.json"),
-			ControlPath: filepath.Join(state, "control.lock"),
+			StatePath: filepath.Join(state, "missing-state.json"),
+			LockPath:  filepath.Join(state, "instance.lock"), ControlPath: filepath.Join(state, "control.lock"),
 		},
 		Environment: environment,
 	}
