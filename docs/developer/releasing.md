@@ -166,6 +166,15 @@ fencing and recovery. A real bridge payload and installer have to be built,
 reviewed, and verified before publication; the presence of source code or a
 synthetic test does not make the bridge available to installed users.
 
+The source tree includes `launcher/cmd/jobctrl-bridge-attest` for generating
+the separately signed role declaration from two already signed archives. It
+authenticates each immutable descriptor and archive, verifies each extracted
+signed manifest, compares the complete predecessor and bridge inventories,
+and checks the resulting declaration with the native bridge verifier. The
+signing key must come from the protected release environment. This command
+does not build, code-sign, notarize, publish, acquire, or activate a bridge;
+none of those release and migration gates is established by its output.
+
 The signed cached installer mode requires the descriptor URL, descriptor and
 signature, archive, and the bridge declaration and signature. It authenticates
 the declaration and its target descriptor before staging the archive, then

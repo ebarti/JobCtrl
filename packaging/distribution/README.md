@@ -197,6 +197,15 @@ and installer must be built and reviewed as release artifacts before use; the
 subsequent database migration and its writer-quiescence and recovery gates
 require their own proof.
 
+The source tree includes `launcher/cmd/jobctrl-bridge-attest` for generating
+the separately signed role declaration from two already signed archives. It
+authenticates each immutable descriptor and archive, verifies each extracted
+signed manifest, compares the complete predecessor and bridge inventories,
+and checks the resulting declaration with the native bridge verifier. The
+signing key must come from the protected release environment. This command
+does not build, code-sign, notarize, publish, acquire, or activate a bridge;
+none of those release and migration gates is established by its output.
+
 The signed cached handoff requires the canonical descriptor URL, descriptor,
 descriptor signature, archive, and a separately signed bridge-role declaration
 and signature. The declaration binds the predecessor and candidate descriptor
