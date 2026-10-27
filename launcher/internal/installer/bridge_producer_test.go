@@ -222,3 +222,74 @@ func TestBridgeAttestCLIWithSignedSyntheticArchives(t *testing.T) {
 		t.Fatalf("CLI overwrote existing result: %s", out)
 	}
 }
+
+// Exercise the real producer CLI and its generated declaration through the
+// production planned-network entry, retaining synthetic app/Temporal bytes.
+func TestBridgeAttestCLIToPlannedNetworkHandoff(t *testing.T) {
+	f, roleURL, responses := bridgeNetworkFixture(t)
+	input := plannedTarget(t, f, nil)
+	dir := t.TempDir()
+	trustJSON, err := json.Marshal(map[string]string{"jobctrl-release-v1": base64.StdEncoding.EncodeToString(f.options.Trust["jobctrl-release-v1"])})
+	if err != nil {
+		t.Fatal(err)
+	}
+	trustFile := writeBridgeInputFile(t, dir, "trust.json", trustJSON)
+	keyDER, err := x509.MarshalPKCS8PrivateKey(f.private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	goExe, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(dir, "jobctrl-bridge-attest")
+	cache := os.Getenv("GOCACHE")
+	if cache == "" {
+		cache = filepath.Join(dir, "gocache")
+	}
+	baseEnv := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "TMPDIR=" + dir, "GOCACHE=" + cache, "GOTOOLCHAIN=local", "GOPROXY=off"}
+	build := exec.Command(goExe, "build", "-o", binary, "./cmd/jobctrl-bridge-attest")
+	build.Dir = filepath.Join("..", "..")
+	build.Env = baseEnv
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build producer: %v: %s", err, out)
+	}
+	output := filepath.Join(dir, "role")
+	args := []string{"-predecessor-descriptor-url", f.sourceInput.DescriptorURL, "-predecessor-descriptor-file", f.sourceInput.DescriptorPath, "-predecessor-signature-file", f.sourceInput.DescriptorSignaturePath, "-predecessor-archive-file", f.sourceInput.ArchivePath, "-candidate-descriptor-url", f.input.DescriptorURL, "-candidate-descriptor-file", f.input.DescriptorPath, "-candidate-signature-file", f.input.DescriptorSignaturePath, "-candidate-archive-file", f.input.ArchivePath, "-trust-keys-file", trustFile, "-key-id", "jobctrl-release-v1", "-output-dir", output}
+	cmd := exec.Command(binary, args...)
+	cmd.Env = append(baseEnv, "JOBCTRL_BRIDGE_SIGNING_KEY_BASE64="+base64.StdEncoding.EncodeToString(keyDER))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("producer CLI: %v: %s", err, out)
+	}
+	responses[roleURL] = mustReadNetworkTest(t, filepath.Join(output, "bridge-attestation.json"))
+	responses[roleURL+".sig"] = mustReadNetworkTest(t, filepath.Join(output, "bridge-attestation.json.sig"))
+	responses[input.TargetDescriptorURL] = mustReadNetworkTest(t, input.TargetDescriptorPath)
+	responses[input.TargetDescriptorURL+".sig"] = mustReadNetworkTest(t, input.TargetSignaturePath)
+	for _, name := range []string{"jobctrl.db", "jobctrl.db-wal", "jobctrl.db-shm", "temporal.db", "temporal.db-wal"} {
+		if err := os.WriteFile(filepath.Join(f.options.Home, name), []byte("synthetic "+name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.options.HTTPClient, _ = channelPointerClient(responses)
+	receipt, err := InstallSignedNetworkBridgeForTarget(f.options, f.input.DescriptorURL, roleURL, input.TargetDescriptorURL)
+	if err != nil {
+		t.Fatalf("planned handoff: %v", err)
+	}
+	if receipt.BuildID != "bridge-build-0002" {
+		t.Fatalf("unexpected bridge %s", receipt.BuildID)
+	}
+	for _, name := range []string{"jobctrl.db", "jobctrl.db-wal", "jobctrl.db-shm", "temporal.db", "temporal.db-wal"} {
+		raw, err := os.ReadFile(filepath.Join(f.options.Home, name))
+		if err != nil || string(raw) != "synthetic "+name {
+			t.Fatalf("changed %s: %q %v", name, raw, err)
+		}
+	}
+	var requests map[string]int
+	f.options.HTTPClient, requests = channelPointerClient(nil)
+	if _, err := InstallSignedNetworkBridgeForTarget(f.options, f.input.DescriptorURL, roleURL, input.TargetDescriptorURL); err != nil {
+		t.Fatalf("offline retry: %v", err)
+	}
+	if len(requests) != 0 {
+		t.Fatalf("offline retry accessed network: %v", requests)
+	}
+}
