@@ -78,6 +78,27 @@ func init() {
 			_, _ = io.Copy(os.Stdout, os.Stdin)
 			os.Exit(0)
 		}
+		if os.Args[4] == "network" {
+			connection, err := net.DialTimeout("tcp", os.Args[5], 2*time.Second)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "loopback connect failed")
+				os.Exit(102)
+			}
+			connection.Close()
+			fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
+			if err != nil {
+				os.Exit(103)
+			}
+			_ = syscall.SetNonblock(fd, true)
+			err = syscall.Connect(fd, &syscall.SockaddrInet4{Port: 9, Addr: [4]byte{192, 0, 2, 1}})
+			syscall.Close(fd)
+			if !errors.Is(err, syscall.EPERM) {
+				fmt.Fprintf(os.Stderr, "nonloopback connect was not EPERM: %v\n", err)
+				os.Exit(104)
+			}
+			fmt.Fprintln(os.Stdout, "loopback allowed; nonloopback denied")
+			os.Exit(0)
+		}
 		if os.Args[4] == "signal" || os.Args[4] == "disconnect" {
 			paths := strings.Split(os.Args[5], "|")
 			script := `import os,signal,sys,time
@@ -776,5 +797,69 @@ func TestOwnedExecutionSupervisorOwnsOrderedDrain(t *testing.T) {
 				time.Sleep(10 * time.Millisecond)
 			}
 		})
+	}
+}
+
+func TestOwnedExecutionFixedLoopbackSandbox(t *testing.T) {
+	if executionQASandboxProfile != loopbackOnlySandboxProfile {
+		t.Fatal("execution sandbox differs from established loopback profile")
+	}
+	ctx := executionTestContext(t)
+	ctx.Environment = append(ctx.Environment, executionQASandboxVariable+"="+executionQASandboxSelector)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	accepted := make(chan error, 1)
+	go func() {
+		connection, err := listener.Accept()
+		if err == nil {
+			connection.Close()
+		}
+		accepted <- err
+	}()
+	var out, stderr bytes.Buffer
+	if err = runInOwnedExecution(ctx, []string{"__scope-test-command", ctx.Instance.StatePath, ctx.Instance.ID, "network", listener.Addr().String()}, &out, &stderr); err != nil {
+		t.Fatalf("sandboxed native helper network check: %v; stderr=%s", err, stderr.String())
+	}
+	select {
+	case err := <-accepted:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("loopback connection was not observed")
+	}
+	if !strings.Contains(out.String(), "loopback allowed; nonloopback denied") {
+		t.Fatalf("missing network proof: %s", out.String())
+	}
+	scopes, err := readOwnedExecutionScopes(ctx)
+	if err != nil || len(scopes) != 1 {
+		t.Fatalf("sandboxed helper did not authenticate durable scope: %v", err)
+	}
+}
+
+func TestOwnedExecutionUnknownSandboxRefusesBeforeAdmission(t *testing.T) {
+	ctx := executionTestContext(t)
+	ctx.Environment = append(ctx.Environment, executionQASandboxVariable+"=untrusted-profile")
+	if err := runInOwnedExecution(ctx, []string{"unused"}, io.Discard, io.Discard); err == nil {
+		t.Fatal("unknown sandbox selector accepted")
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(ctx.Instance.StatePath), "executions")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("unknown sandbox selector created receipt directory")
+	}
+}
+
+func TestOwnedExecutionPlistPreservesCompiledProfileText(t *testing.T) {
+	plist := executionPlist("owned-label", "/tmp/native&<helper>", "/tmp/socket", "challenge", true)
+	if !bytes.Contains(plist, []byte(executionQASandboxProfile)) {
+		t.Fatal("launchd plist did not preserve literal compiled sandbox profile")
+	}
+	if bytes.Contains(plist, []byte("&#")) {
+		t.Fatal("launchd plist uses truncating numeric character references")
+	}
+	if !bytes.Contains(plist, []byte("/tmp/native&amp;&lt;helper&gt;")) {
+		t.Fatal("plist element text is not safely escaped")
 	}
 }

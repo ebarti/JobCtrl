@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +24,15 @@ import (
 
 const executionScopeVariable = "JOBCTRL_EXECUTION_SCOPE"
 const executionHelperArgument = "__scope-executor"
+const executionQASandboxVariable = "JOBCTRL_EXECUTION_QA_SANDBOX"
+const executionQASandboxSelector = "loopback-only-v1"
+
+// This internal selector can only add this fixed restriction at the helper
+// boundary. It never supplies a profile, executable, or authorization bypass.
+const executionQASandboxProfile = `(version 1)
+(allow default)
+(deny network-outbound (remote ip))
+(allow network-outbound (remote ip "localhost:*"))`
 
 type executionScope struct {
 	SchemaVersion int       `json:"schemaVersion"`
@@ -628,9 +636,21 @@ waiting:
 	return true, nil
 }
 
-func executionPlist(label, executable, socket, challenge string) []byte {
-	escape := func(s string) string { var b bytes.Buffer; _ = xml.EscapeText(&b, []byte(s)); return b.String() }
-	return []byte(`<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>` + escape(label) + `</string><key>ProgramArguments</key><array><string>` + escape(executable) + `</string><string>` + executionHelperArgument + `</string><string>` + escape(socket) + `</string><string>` + escape(challenge) + `</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><false/></dict></plist>`)
+func executionPlist(label, executable, socket, challenge string, sandboxed bool) []byte {
+	// launchd's CFPropertyList parser truncates this multiline string at
+	// numeric character references emitted by encoding/xml.EscapeText.
+	// Element text needs only these three escapes; preserve literal profile
+	// whitespace and quotes so sandbox-exec receives the exact compiled bytes.
+	escape := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace
+	arguments := []string{executable, executionHelperArgument, socket, challenge}
+	if sandboxed {
+		arguments = append([]string{"/usr/bin/sandbox-exec", "-p", executionQASandboxProfile}, arguments...)
+	}
+	var program bytes.Buffer
+	for _, argument := range arguments {
+		program.WriteString("<string>" + escape(argument) + "</string>")
+	}
+	return []byte(`<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>` + escape(label) + `</string><key>ProgramArguments</key><array>` + program.String() + `</array><key>RunAtLoad</key><true/><key>KeepAlive</key><false/></dict></plist>`)
 }
 
 func executionOutput(writer io.Writer) (*os.File, func(), error) {
@@ -656,6 +676,10 @@ func executionOutput(writer io.Writer) (*os.File, func(), error) {
 }
 
 func runInOwnedExecution(ctx launchContext, args []string, stdout, stderr io.Writer) error {
+	sandboxSelector := environmentMap(ctx.Environment)[executionQASandboxVariable]
+	if sandboxSelector != "" && sandboxSelector != executionQASandboxSelector {
+		return errors.New("unknown execution QA sandbox restriction")
+	}
 	controlPath := ctx.Instance.ControlPath
 	if controlPath == "" {
 		controlPath = filepath.Join(filepath.Dir(ctx.Instance.StatePath), "control.lock")
@@ -702,7 +726,7 @@ func runInOwnedExecution(ctx launchContext, args []string, stdout, stderr io.Wri
 	_ = listener.SetDeadline(time.Now().Add(20 * time.Second))
 	label := "dev.jobctrl.exec." + ctx.Instance.ID + "." + id
 	plist := filepath.Join(temporary, "job.plist")
-	if err = os.WriteFile(plist, executionPlist(label, executable, socket, challenge), 0600); err != nil {
+	if err = os.WriteFile(plist, executionPlist(label, executable, socket, challenge, sandboxSelector == executionQASandboxSelector), 0600); err != nil {
 		return err
 	}
 	domain := ""
