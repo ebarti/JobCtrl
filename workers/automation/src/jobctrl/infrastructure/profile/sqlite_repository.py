@@ -75,10 +75,14 @@ class SqliteProfileRepository:
     # ------------------------------------------------------------------
 
     def load(self, tenant_id: TenantId) -> Profile | None:
-        row = self._profile_row(tenant_id)
-        if row is None:
-            return None
-        return Profile.from_dict(tenant_id, self._row_to_profile_dict(tenant_id, row), profile_id=self._profile_id)
+        self._conn.execute("SAVEPOINT profile_authority_read")
+        try:
+            row = self._profile_row(tenant_id)
+            if row is None:
+                return None
+            return Profile.from_dict(tenant_id, self._row_to_profile_dict(tenant_id, row), profile_id=self._profile_id)
+        finally:
+            self._conn.execute("RELEASE SAVEPOINT profile_authority_read")
 
     def save(self, tenant_id: TenantId, profile: Profile) -> ProfileSnapshot:
         previous = self.load(tenant_id)
@@ -96,7 +100,8 @@ class SqliteProfileRepository:
         rendering = self.load_rendering_settings(tenant_id)
         self._replace_profile(tenant_id, validated, version=version, rendering=rendering)
 
-        snapshot = ProfileSnapshot.from_profile(validated, version=version)
+        # Read computed authority from persisted review receipts, never client flags.
+        snapshot = ProfileSnapshot.from_profile(self.load(tenant_id), version=version)
         changed_sections = _diff_top_level_sections(previous_dict, validated.to_dict())
 
         try:
@@ -141,12 +146,16 @@ class SqliteProfileRepository:
         return snapshot
 
     def load_snapshot(self, tenant_id: TenantId) -> ProfileSnapshot:
-        profile = self.load(tenant_id)
-        if profile is None:
-            raise FileNotFoundError("Profile not found in candidate_profiles. Run `jobctrl init` first.")
-        row = self._profile_row(tenant_id)
-        version = int(row["version"]) if row is not None else 1
-        return ProfileSnapshot.from_profile(profile, version=version)
+        self._conn.execute("SAVEPOINT profile_snapshot_authority_read")
+        try:
+            profile = self.load(tenant_id)
+            if profile is None:
+                raise FileNotFoundError("Profile not found in candidate_profiles. Run `jobctrl init` first.")
+            row = self._profile_row(tenant_id)
+            version = int(row["version"]) if row is not None else 1
+            return ProfileSnapshot.from_profile(profile, version=version)
+        finally:
+            self._conn.execute("RELEASE SAVEPOINT profile_snapshot_authority_read")
 
     def load_saved_resume(self, tenant_id: TenantId) -> tuple[int, dict[str, Any]]:
         """Read exact saved coaching sources without aggregate string cleanup.
@@ -795,6 +804,8 @@ class SqliteProfileRepository:
             """,
             (tenant_id, profile_id, entry_id),
         ).fetchall()
+        from jobctrl.infrastructure.profile.legacy_evidence import requires_review
+
         return [
             {
                 "id": row["evidence_id"],
@@ -807,6 +818,9 @@ class SqliteProfileRepository:
                 "evidence_strength": row["evidence_strength"],
                 "claim_confidence": float(row["claim_confidence"] or 0.0),
                 "user_confirmed": _as_bool(row["user_confirmed"]),
+                **({"confirmation_review_required": True} if requires_review(
+                    self._conn, tenant_id, profile_id, entry_id, row["evidence_id"]
+                ) else {}),
                 "tags": _json_str_list(row["tags_json"]),
             }
             for row in rows

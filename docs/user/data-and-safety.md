@@ -163,6 +163,16 @@ directory; treat those logs as sensitive too.
 
 ### Back Up And Restore
 
+Legacy achievement recovery uses only a trustworthy pre-cutover native paired
+backup with `pair.json` and both database files. Independently captured app,
+Temporal and file copies do not establish a stopped pair. The local
+[legacy confirmation review](candidate-profile.md#review-legacy-confirmations)
+command validates backup bytes, inventories original/current evidence for
+explicit review and never restores databases or overwrites newer edits. If a
+trustworthy pair is unavailable, record that uncertainty explicitly and review
+current cells; no record is automatically reconfirmed.
+
+
 ```bash
 jobctrl backup
 ```

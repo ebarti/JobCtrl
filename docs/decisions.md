@@ -2722,6 +2722,18 @@ Candidate interpretations are pending suggestions until the owner confirms selec
 
 Exact schema 13 removed inferred seniority fields and withdrew unconfirmed old classification, provenance, pay and benchmark outputs for recomputation. Authored profile text, reviewed outcomes, comments and accepted artifact content remain; the paired backup is recoverable. No startup lexical reparse or silent admission repairs old records. Exact schema 14 follows the same stopped-runtime native backup/candidate/activation boundary. The v13-to-v14 cutover removes the redundant preference-approval foreign key, supersedes earlier intake decisions and retains their raw posting captures and historical determination envelopes. Canonical jobs, authored profile cells and accepted files are preserved.
 
+Owner correction (2026-10-27, #1281): legacy confirmation booleans have no
+recorded author authority. Cutover preserves all original evidence fields and
+confirmation history, and records explicit pending review in the private
+`job_events` ledger. Neither matching prose nor an exact or partial value shape
+can classify a record as system-derived. These non-model inventory/human review
+records are disjoint from semantic determinations. Canonical source generation
+fails explicitly while review is unresolved and preserves accepted artifacts.
+Current-state-bound human decisions and paired-backup recovery preserve newer
+edits and refuse conflicts; missing authority stays visible and never triggers
+automatic reconfirmation. See [Storage](architecture/storage.md#legacy-achievement-confirmation-history).
+
+
 Validation uses fake-model authority tests, strict failure/binding tests, one-off deletion searches and owned synthetic product-path QA. No eval sets, labeled sentence corpora, baseline comparisons or recorded-output replay fixtures are permitted. Temporal replay consumes persisted results; it does not call a provider. Merge and release remain owner decisions.
 
 ## Screening Answer Revisions on the Existing Ledger

@@ -23,6 +23,17 @@ Profile writes are explicit saves/autosaves of canonical candidate data. A job
 tailoring run consumes a versioned snapshot; it does not silently mutate the
 profile to fit a posting.
 
+`GET /v1/profile` may include `legacyEvidenceReview: { status:
+"review_required", count }`. Affected achievement entries retain their original
+`user_confirmed` value and expose computed `confirmation_review_required: true`.
+Clients cannot clear that authority marker by saving a false flag. The bounded
+local [legacy review commands](../user/candidate-profile.md#review-legacy-confirmations)
+record explicit human decisions; this adds no browser mutation endpoint. Evidence
+Map freshness exposes `confirmationReviewRequired` and interview choices exclude
+pending rows. Private inventory and review payloads never enter generic SSE.
+Unresolved canonical authority reports `legacy_evidence_review_required` before
+new evidence-based generation, preserving accepted artifacts.
+
 `GET /v1/profile` includes `profileVersion` (`null` before initialization, then
 a positive monotonic integer). The API remains backward-compatible with
 callers that omit `expectedProfileVersion`, but the web form includes its saved

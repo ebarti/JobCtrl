@@ -398,3 +398,11 @@ Outreach calls claim verification through a port, using confirmed contact facts 
 - `domain/materials/artifact_quality.py`, `generation.py`, `provenance_builder.py` and `claim_grounding.py`.
 - `domain/enrichment/interpretation.py`, `domain/profile/canonical_sources.py`.
 - `infrastructure/determinations.py`, Materials repositories and `apps/api/src/semantic-determinations.ts`.
+
+
+Legacy confirmed achievement rows retain saved cells and confirmation history,
+but an unresolved `confirmation_review_required` marker fails canonical source
+construction with `legacy_evidence_review_required`. A refresh cannot silently
+substitute an empty evidence inventory or replace accepted material IDs, bytes
+or anchors. Only a current-state-bound explicit human review resolves this
+structural authority; see [Storage](storage.md#legacy-achievement-confirmation-history).

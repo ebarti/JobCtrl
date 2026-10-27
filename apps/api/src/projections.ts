@@ -20,6 +20,7 @@
  * materialises it.
  */
 import { isDeepStrictEqual } from "node:util";
+import { requiresLegacyEvidenceReview } from "./legacy-evidence-review.js";
 import { APPLY_URL_OUTCOME_CODES, EMPLOYER_ANALYSIS_PROMPT_VERSION, PROJECTION_WATERMARK_NAME, STAGES } from "./contracts.js";
 import type {
   ApplyUrlOutcomeCode,
@@ -1265,6 +1266,7 @@ interface EvidenceMapEntryPayload {
     evidenceDateRange: string | null;
     evidenceStrength: string | null;
     userConfirmed: boolean;
+    confirmationReviewRequired?: boolean;
     claimConfidence: number | null;
     lastUsedAt: string | null;
   };
@@ -1822,6 +1824,7 @@ function loadProfileEvidenceEntries(
         evidenceDateRange: nullableString(row.date_range),
         evidenceStrength: nullableString(row.evidence_strength),
         userConfirmed: Number(row.user_confirmed ?? 0) === 1,
+        confirmationReviewRequired: requiresLegacyEvidenceReview(db, tenantId, "default", row.entry_id, evidenceId),
         claimConfidence: nullableNumber(row.claim_confidence),
         lastUsedAt: null,
       },

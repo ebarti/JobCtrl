@@ -88,6 +88,17 @@ async function renderSkillProjection(items: string[]) {
 }
 
 describe("<ProfileForm>", () => {
+  it("shows legacy confirmation uncertainty without editing saved evidence", async () => {
+    const initial = { ...structuredClone(sampleProfileResponse), legacyEvidenceReview: { status: "review_required" as const, count: 3 } };
+    const updateProfile = vi.fn();
+    renderWithProviders(<ProfileForm initial={initial} />, {
+      ports: buildTestPorts({ api: { updateProfile } }), withRouter: true,
+    });
+    expect(await screen.findByText(/3 saved achievement records need confirmation review/)).toBeInTheDocument();
+    expect(screen.getByText(/original text and saved confirmations are retained/)).toBeInTheDocument();
+    expect(screen.getByText("jobctrl legacy-evidence")).toBeInTheDocument();
+    expect(updateProfile).not.toHaveBeenCalled();
+  });
   it("saves newly added skill categories with stable IDs and unchanged unrelated profile fields", async () => {
     const user = userEvent.setup();
     const initial = structuredClone(sampleProfileResponse);

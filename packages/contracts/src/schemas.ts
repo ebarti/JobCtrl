@@ -1743,6 +1743,7 @@ const ProfileAchievementEvidenceSchema = z.object({
   evidence_strength: z.enum(EVIDENCE_STRENGTHS).default("draft"),
   claim_confidence: z.number().min(0).max(1).default(0),
   user_confirmed: z.boolean().default(false),
+  confirmation_review_required: z.boolean().optional(),
   tags: z.array(z.string()).default([]),
 });
 
@@ -3024,6 +3025,7 @@ export interface EvidenceUsageRef {
 }
 
 export interface EvidenceFreshness {
+  confirmationReviewRequired?: boolean;
   evidenceDateRange: string | null;
   evidenceStrength: "verified" | "supported" | "inferred" | "draft" | string | null;
   userConfirmed: boolean;
@@ -4559,6 +4561,7 @@ export interface ArtifactOpenResponse {
 
 export interface ProfileConfigResponse {
   ok: true;
+  legacyEvidenceReview?: { status: "review_required"; count: number };
   candidateInterpretation?: {status:"missing"|"pending_confirmation"|"confirmed"|"unavailable";failureCode:string|null;determination:import("./semantic-determinations.js").DeterminationEnvelope|null};
   /** Monotonic version of the canonical saved profile, or null before setup. */
   profileVersion: number | null;

@@ -39,7 +39,7 @@ export function InterviewContextForm({ jobId, catalog, questionId, context }: {
   const staleEvidence = explicitChoices.length > 0 && draft.evidenceProfileVersion !== evidence.profileVersion;
   const invalidEvidence = explicitChoices.flatMap((selectedId) => (draft.evidenceSelections[selectedId] ?? []).filter((evidenceId) => !evidence.choices.some((choice) => choice.evidenceId === evidenceId)));
   const parsedFailure = mutation.error instanceof JobCtrlApiError ? z.object({ error: z.string() }).safeParse(mutation.error.responseBody) : null;
-  const rejectedEvidence = parsedFailure?.success && ["evidence_profile_changed", "invalid_evidence_selection"].includes(parsedFailure.data.error);
+  const rejectedEvidence = parsedFailure?.success && ["evidence_profile_changed", "legacy_evidence_review_required", "invalid_evidence_selection"].includes(parsedFailure.data.error);
   const { featureFlags } = usePorts();
   const availability = getApiCapabilityAvailability(featureFlags, "generateInterviewPrep");
   const invalidSelected = draft.selectedQuestionIds.filter((id) => !catalog.questions.some((question) => question.id === id));
