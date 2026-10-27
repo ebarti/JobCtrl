@@ -154,83 +154,6 @@ Confirm the account action, recheck the candidate and current channel, then
 resume the existing run when its source is unchanged. Do not rotate credentials
 or bypass notarization to work around an agreement requirement.
 
-## Protocol-2 bridge candidate
-
-The source installer has a candidate handoff for a separately reviewed
-schema-14 bridge whose signed distribution permits launcher protocol 2 only.
-The bridge is not established by the protocol number alone: the signed bridge
-declaration must bind the exact predecessor and target descriptors and
-manifests, complete payload inventories, schema, channel, platform, and
-reviewed controller digest. The controller must support protocol-2 journal
-fencing and recovery. A real bridge payload and installer have to be built,
-reviewed, and verified before publication; the presence of source code or a
-synthetic test does not make the bridge available to installed users.
-
-The source tree includes `launcher/cmd/jobctrl-bridge-attest` for generating
-the separately signed role declaration from two already signed archives. It
-authenticates each immutable descriptor and archive, verifies each extracted
-signed manifest, compares the complete predecessor and bridge inventories,
-and checks the resulting declaration with the native bridge verifier. The
-signing key must come from the protected release environment. This command
-does not build, code-sign, notarize, publish, acquire, or activate a bridge;
-none of those release and migration gates is established by its output.
-
-The signed cached installer mode requires the descriptor URL, descriptor and
-signature, archive, and the bridge declaration and signature. It authenticates
-the declaration and its target descriptor before staging the archive, then
-checks the predecessor and both inventories under the transition locks. It retains the
-signed evidence before writing a handoff intent, selects the protocol-2 active
-receipt before replacing the selector, and finalizes channel policy without
-starting or stopping services or touching either database. `--bridge-recover`
-uses retained evidence and accepts no acquisition files. It re-verifies the
-evidence and completes an interrupted handoff forward; it does not restore the
-old active receipt. Unknown journals, changed selections or selectors, and
-invalid evidence refuse the operation.
-
-The candidate installer also supports an explicit network bridge handoff with
-`--bridge-descriptor-url` and `--bridge-role-url`. Both must be canonical HTTPS
-URLs for immutable files in the same bridge build; the installer obtains their
-detached signatures by appending `.sig`. It verifies the signed descriptor,
-role, and current predecessor before downloading the archive, then repeats the
-full handoff verification under the release locks. An interrupted handoff uses
-retained evidence without network access. A descriptor-bound partial archive is retained
-in managed staging for retry; the transition lock serializes acquisition with
-uninstall, and successful cleanup leaves unfamiliar cache files untouched. This
-explicit mode does not discover bridges, select a final target, or provide
-automatic curl or Homebrew upgrades. A network handoff can optionally take a
-canonical signed final-target descriptor URL. Its policy and identity are checked
-before fetching the bridge archive, retained in the handoff evidence and
-rechecked under the release locks and during offline recovery. This still does
-not acquire or promote the final target. Cached handoffs can also accept a
-signed final-target descriptor and signature. Both routes retain the signed
-target evidence and recheck channel, sequence, safety floor and cross-revocation.
-Neither route verifies the target payload; normal acquisition and publication
-of per-predecessor bridge artifacts are not yet connected.
-
-An explicit bootstrap can instead receive a signed route catalog, its detached
-signature, and the separately signed final-target descriptor and signature.
-The catalog is a locator keyed by exact predecessor and final-target descriptor
-digests; the installer rejects missing or ambiguous routes and rechecks the
-source, bridge and target identities and policies under the handoff locks. The
-route invokes only the bridge handoff; it neither stages nor promotes the final
-target, and `--stage-only` cannot change the selection. Curl and Homebrew can
-supply the same catalog inputs, but existing installed launchers do not know
-this option. There is no published catalog or automatic discovery endpoint yet.
-Interrupted handoffs recover from retained signed evidence without the catalog.
-
-The handoff uses the transition and selection locks shared by supported
-release mutators. The [threat model](security.md#threat-model-trust-boundaries-and-assumptions)
-excludes a compromised OS account and hostile local-disk control; the handoff
-does not establish a guarantee against a same-user process racing filesystem
-paths outside the release locks. Before a bridge is published, run the bridge
-and migration proof in [Reliability & QA](../local-reliability-qa.md#protocol-2-bridge-handoff),
-including actual historical controllers and independent writer readback. The
-later schema migration, runtime quiescence, and rollback are separate gates.
-The updated controller refuses uninstall while a handoff intent is present,
-preserving the active release and signed evidence for recovery. An older
-controller cannot enforce that guard; an interrupted handoff followed by legacy
-uninstall still requires a separately verified recovery path.
-
 ## Verify what users receive
 
 Wait for the complete workflow, including PyPI, to succeed. Independently read back:
@@ -255,7 +178,8 @@ point with a resumable transition journal, including the detached supervisor.
 A fresh installation and tests that replace the readiness-start function do not
 prove that an authenticated candidate can start before the journal is finalized.
 The protected release workflow runs `scripts/released-upgrade-smoke.mjs` against
-actual released executables before immutable publication. One case upgrades from
+actual released executables before immutable publication. Its ordinary compatible
+protocol case upgrades from
 **the latest published stable version before the candidate**, rolls back to that
 version with its paired data backup, then explicitly upgrades again. It checks
 real service readiness, retained job data and Temporal history throughout.
@@ -290,3 +214,42 @@ registry verification, upgrade consequences, and any unresolved limitation.
 Signing success or one published channel is not completion. This repository
 runbook is the canonical procedure; an optional agent skill should route here
 rather than duplicate workflow commands and security policy.
+
+## Schema-15 installed upgrade qualification
+
+The authenticated new installer owns the protocol-1/schema-14 to
+protocol-2/schema-15 transition. Historical controllers, including v0.3.1,
+must reject the protocol-2-only target before backup or journaling. Run the
+new release's verified installer against the original runtime home; retain the
+predecessor receipt and immutable payload as historical authentication evidence.
+The predecessor is never executed during this forward path. No bridge catalog,
+bridge release, or reboot is a migration prerequisite.
+
+Before taking a paired, SQLite-online backup, the new controller requests clean
+exit for instance-owned processes and descendants, kills verified leftovers only
+after the shutdown timeout, and waits for exit. A real inspection or cleanup
+failure blocks migration and preserves the databases and journal. A restart
+normally follows successful cleanup; reboot is last-resort troubleshooting for
+an actual cleanup failure.
+
+The signed payload inventory must bind `launcher/schema-transition.json` to
+source schema 14 and target schema 15. Exact-v14 activation applies the additive
+migration in place, preserving the database inode. A failed or interrupted
+attempt preserves the live pair and resumes through ordinary `jobctrl update`.
+Each attempt backs up the current live pair, including acknowledged WAL writes;
+it never restores an earlier snapshot over newer data or restarts retired code.
+A cross-protocol rollback is refused. A first install cannot adopt a schema-14
+workspace without its original authenticated predecessor selection; an exact-v15
+reinstall preserves data after normal cleanup.
+
+Source merge and synthetic fixtures do not establish an available or qualified
+installed upgrade. Before first publication/use, exercise the actual signed,
+notarized installer and target through both curl and unmodified Homebrew,
+including archived-controller rejection, normal start/stop/restart, interruption
+and readiness failure, repeated forward recovery, revoked predecessor evidence,
+revoked-target refusal, and protected app/Temporal WAL and external-file bytes.
+Use owned synthetic workspaces and the matrix in
+[Reliability & QA](../local-reliability-qa.md#schema-15-forward-upgrade).
+The historical release-smoke upgrade/rollback cycle must not be claimed as
+cross-protocol upgrade evidence: qualify the new installer path and explicit
+cross-protocol rollback refusal separately.

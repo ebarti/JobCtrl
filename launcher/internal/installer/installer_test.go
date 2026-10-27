@@ -1478,3 +1478,67 @@ func localFixture(t *testing.T, root string) (archivePath, descriptorPath, signa
 	}
 	return archivePath, descriptorPath, signaturePath
 }
+
+func TestInitialInstallerPreservesExistingWorkspaceBeforeSelection(t *testing.T) {
+	for _, file := range []string{"jobctrl.db", "temporal.db"} {
+		t.Run(file, func(t *testing.T) {
+			root := t.TempDir()
+			archive, descriptor, signature := localFixture(t, root)
+			home, data := filepath.Join(root, "runtime"), filepath.Join(root, "data")
+			if err := os.MkdirAll(data, 0700); err != nil {
+				t.Fatal(err)
+			}
+			sentinel := []byte("owned-existing-" + file)
+			if err := os.WriteFile(filepath.Join(data, file), sentinel, 0600); err != nil {
+				t.Fatal(err)
+			}
+			options := Options{Home: home, Environment: []string{"HOME=" + root, "JOBCTRL_DIR=" + data}, Policy: localAcquisitionPolicy(), AllowUnsignedLocal: true}
+			for attempt := 0; attempt < 2; attempt++ {
+				if _, err := InstallFromLocalFiles(options, descriptor, signature, archive); err == nil {
+					t.Fatal("initial installer selected over existing workspace")
+				}
+			}
+			if after, err := os.ReadFile(filepath.Join(data, file)); err != nil || !bytes.Equal(after, sentinel) {
+				t.Fatalf("existing data changed: %v", err)
+			}
+			for _, name := range []string{release.ActiveFile, release.JournalFile, "current.json", "bin/jobctrl"} {
+				if _, err := os.Lstat(filepath.Join(home, name)); !os.IsNotExist(err) {
+					t.Fatalf("refused installer wrote %s: %v", name, err)
+				}
+			}
+		})
+	}
+}
+
+func TestSameActiveInstallerChecksWorkspaceBeforeAdapterAdoption(t *testing.T) {
+	root := t.TempDir()
+	archive, descriptor, signature := localFixture(t, root)
+	home, data := filepath.Join(root, "runtime"), filepath.Join(root, "data")
+	options := Options{Home: home, Environment: []string{"HOME=" + root, "JOBCTRL_DIR=" + data}, Policy: localAcquisitionPolicy(), AllowUnsignedLocal: true}
+	if _, err := InstallFromLocalFiles(options, descriptor, signature, archive); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(home, release.ActiveFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(data, 0700); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := []byte("owned-unfamiliar-database")
+	if err := os.WriteFile(filepath.Join(data, "jobctrl.db"), sentinel, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, adapter := range []string{"local-fixture", "homebrew"} {
+		options.AcquisitionSource = adapter
+		if _, err := InstallFromLocalFiles(options, descriptor, signature, archive); err == nil {
+			t.Fatal("same-active adoption bypassed workspace check")
+		}
+	}
+	if after, err := os.ReadFile(filepath.Join(home, release.ActiveFile)); err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("adapter changed on refusal: %v", err)
+	}
+	if after, err := os.ReadFile(filepath.Join(data, "jobctrl.db")); err != nil || !bytes.Equal(sentinel, after) {
+		t.Fatalf("workspace changed on refusal: %v", err)
+	}
+}

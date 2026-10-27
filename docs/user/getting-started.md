@@ -248,21 +248,24 @@ use the updated formula, while bundled-installer installations use their signed
 release channel. Pulling source changes does not publish an update to installed
 users.
 
-The source code contains a candidate bridge for a future launcher protocol
-change. It needs a separately reviewed and published bridge release before an
-installed version can use that path. A source checkout or local test does not
-make the bridge available to installed users.
+A release that moves to schema 15 uses its new authenticated installer to
+upgrade the original installation. Keep the original installation metadata and
+databases: the installer verifies them, stops instance-owned processes, backs up
+the current application and Temporal databases together, and applies the additive
+migration before checking startup health. Normal cleanup and restart do not
+require rebooting. If cleanup actually fails, preserve the reported evidence;
+reboot is a last-resort troubleshooting step.
 
-When a release requires a database migration, the updater requests runtime
-shutdown, backs up the application database and Temporal history together,
-verifies a separate migrated database, and activates it before checking startup
-health.
-An interrupted transition may retain the live databases and block commands
-when the saved pair could omit later writes. If JobCtrl reports that automatic
-recovery is unavailable, keep the live databases and transition journal intact;
-retrying rollback cannot resolve that state automatically. An explicit rollback
-restores the database snapshot associated with the previous release: data added
-since that snapshot is not carried backward.
+If startup fails or the upgrade is interrupted, JobCtrl preserves the live
+databases and recovery journal. Run `jobctrl stop`, then `jobctrl update` to
+continue forward. Each attempt backs up the current pair, including later saved
+changes. Do not remove the journal, reinstall over a schema-14 workspace without
+its original metadata, or restore an older snapshot over newer data. Rollback
+across this protocol change is refused. A same-protocol explicit rollback still
+restores the snapshot associated with its previous release, so data added since
+that snapshot is not carried backward. A source merge or synthetic test does
+not publish an upgrade; the signed installer must pass release qualification
+before installed users receive it.
 
 Rollback keeps a compatible launcher for recovery while restoring the older
 application. Homebrew commands preserve that selection until you explicitly run

@@ -803,9 +803,11 @@ In a source checkout, run the Python commands with
 `uv --project workers/automation run jobctrl <command>`; the lifecycle commands
 exist only in the installed launcher.
 
-The source installer's protocol-2 bridge and recovery flags belong to the
-separate installer, not to the `jobctrl` commands below. They require a reviewed
-bridge release; see [Getting Started](getting-started.md#update-roll-back-or-remove-jobctrl).
+For the schema-15 protocol change, the new authenticated installer upgrades the
+original installation after normal cleanup. Interrupted upgrades preserve live
+data and resume with `jobctrl stop` followed by `jobctrl update`; cross-protocol
+rollback is refused. See
+[Getting Started](getting-started.md#update-roll-back-or-remove-jobctrl).
 
 | Lifecycle command | What it does |
 | --- | --- |

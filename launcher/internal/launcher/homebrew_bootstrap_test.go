@@ -29,18 +29,17 @@ import (
 // boundary authenticates its descriptor and payload; everything after that
 // point is the real first-install, selector, and common promotion code.
 func TestHomebrewBootstrapSignedFirstRunFastPathAndCompatibleUpgrade(t *testing.T) {
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skip("python3 is required for the common promotion fixture")
-	}
+	python := migrationIntegrationPython(t)
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	setSignedHomebrewTrust(t, public)
 
-	initial := newSignedHomebrewBootstrapFixture(t, private, "stable-homebrew-build-0001", 1, 1, python)
-	upgrade := newSignedHomebrewBootstrapFixture(t, private, "stable-homebrew-build-0002", 2, 2, python)
+	initial := newSignedHomebrewBootstrapFixtureWithCompatibility(t, private, "stable-homebrew-build-0001", 1, 2, python, 2, 2)
+	initial = signBridgeTransitionFixture(t, initial, private, "")
+	upgrade := newSignedHomebrewBootstrapFixtureWithCompatibility(t, private, "stable-homebrew-build-0002", 2, 2, python, 2, 2)
+	upgrade = signBridgeTransitionFixture(t, upgrade, private, "")
 	formulaRoot := t.TempDir()
 	formulaExecutable := writeHomebrewBootstrapFormula(t, formulaRoot, initial)
 	runtimeHome, stateHome := t.TempDir(), t.TempDir()
@@ -115,7 +114,7 @@ func TestHomebrewBootstrapSignedFirstRunFastPathAndCompatibleUpgrade(t *testing.
 	writeHomebrewBootstrapFormula(t, formulaRoot, upgrade)
 	bootstrapped, err = maybeHomebrewBootstrap(formulaExecutable, []string{"status"}, environment, &stdout, &stderr)
 	if !bootstrapped || err != nil {
-		t.Fatalf("compatible protocol-changing Homebrew upgrade = bootstrapped:%v err:%v stdout=%q stderr=%q", bootstrapped, err, stdout.String(), stderr.String())
+		t.Fatalf("signed protocol-2 Homebrew upgrade = bootstrapped:%v err:%v stdout=%q stderr=%q", bootstrapped, err, stdout.String(), stderr.String())
 	}
 	if installerCalls != 2 {
 		t.Fatalf("upgrade installer calls = %d, want 2", installerCalls)
@@ -432,7 +431,22 @@ func authenticatedHomebrewFixtureInstaller(t *testing.T, public ed25519.PublicKe
 		if _, err := VerifyDistributionPayload(fixture.payloadRoot, DistributionTrust{PublicKeys: map[string]ed25519.PublicKey{"jobctrl-release-v1": public}, ExpectedChannel: "stable"}); err != nil {
 			return "", fmt.Errorf("authenticate signed Homebrew payload: %w", err)
 		}
-		if err := stageHomebrewFixture(home, fixture, public); err != nil {
+		// A retry may reacquire the same immutable release. Reuse it only after
+		// authenticating its retained receipt and complete payload inventory.
+		if retained, err := readInstalledReceipt(home, fixture.buildID); err == nil {
+			if retained != fixture.receipt {
+				return "", errors.New("staged fixture receipt changed")
+			}
+			store, err := release.Open(home)
+			if err != nil {
+				return "", err
+			}
+			if _, err := verifyInstalledReleaseForExecution(store, retained); err != nil {
+				return "", err
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		} else if err := stageHomebrewFixture(home, fixture, public); err != nil {
 			return "", err
 		}
 		return "staged " + fixture.buildID, nil
@@ -555,11 +569,12 @@ func preseedUnsignedHomebrewRelease(t *testing.T, home string, fixture homebrewB
 
 func seedHomebrewSQLitePair(t *testing.T, python, state string) {
 	t.Helper()
-	for _, name := range []string{"jobctrl.db", "temporal.db"} {
-		code := "import pathlib,sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('create table t(v)'); c.execute('insert into t values (1)'); c.execute('PRAGMA user_version=15') if pathlib.Path(sys.argv[1]).name == 'jobctrl.db' else None; c.commit()"
-		if output, err := exec.Command(python, "-c", code, filepath.Join(state, name)).CombinedOutput(); err != nil {
-			t.Fatalf("seed %s: %v %s", name, err, output)
-		}
+	code := `import sqlite3,sys
+from jobctrl.infrastructure.migrations.schema_v15 import create_exact_v15_schema
+c=sqlite3.connect(sys.argv[1]);create_exact_v15_schema(c);c.commit();c.close()
+c=sqlite3.connect(sys.argv[2]);c.execute('CREATE TABLE t(v)');c.execute('INSERT INTO t VALUES (1)');c.commit();c.close()`
+	if output, err := exec.Command(python, "-I", "-B", "-c", code, filepath.Join(state, "jobctrl.db"), filepath.Join(state, "temporal.db")).CombinedOutput(); err != nil {
+		t.Fatalf("seed exact schema-15 pair: %v %s", err, output)
 	}
 }
 

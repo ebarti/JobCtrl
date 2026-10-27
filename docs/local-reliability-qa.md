@@ -94,39 +94,41 @@ delete the original provider history as an automatic repair.
 | Docs | `corepack pnpm docs:build`, diff check |
 | Cross-stack | `corepack pnpm check`, `corepack pnpm test`, affected separate web suites |
 
-## Protocol-2 Bridge Handoff
+## Schema-15 Forward Upgrade
 
-Use owned synthetic workspaces. Verify signed descriptor and bridge-role
-identity, both complete payload inventories, the protocol-2-only compatibility
-range, channel sequence and revocation policy, and source selection under the
-transition and selection locks. Reject unsigned, altered, stale, mismatched,
-or unsafe inputs before selection. Exercise cooperating update, rollback,
-uninstall, and cleanup contenders that use the release locks; confirm an old
-controller queued before the handoff refuses after the protocol-2 bridge is
-selected. A protocol-2 transition journal must also make the actual old
-controller refuse recovery before a stale backup can overwrite independent
-commits to either database. For explicit signed-catalog selection, verify exact
-source, bridge and final-target descriptor digests, signatures, canonical URLs,
-missing/duplicate routes and descriptor substitution before archive download.
-Exercise both curl and Homebrew catalog entry modes, refusal of mixed options
-and `--stage-only`, changed source selection under the transition lock, and
-recovery from retained evidence without the catalog or network.
+Use owned synthetic workspaces and the locked migration Python/Node runtimes.
+Verify the new installer's signed descriptor, complete payload inventory,
+protocol-2-only range, schema-14-to-15 declaration, channel sequence/revocation
+policy and original source selection under both lifecycle locks. The actual
+archived protocol-1 controller must refuse the target before backup or journal
+creation. Authenticate the predecessor only as historical evidence, including
+a revoked predecessor; never execute it. Refuse a revoked target, altered
+receipt/declaration, changed selection generation, unknown source schema,
+regressed live schema and unknown legacy handoff without destructive repair.
 
-Terminate the installer process at each durable evidence, intent, active,
-policy, selector, completion, and cleanup boundary. Retry using retained signed
-evidence after removing the original acquisition files. Verify forward-only
-selection, exact selector and policy readback, idempotent completed retry, and
-unchanged application database, Temporal database, and sidecars. Missing or
-tampered evidence, unexpected selectors, and unfinished or unrecognized legacy
-journals must refuse without destructive repair. These checks demonstrate
-process-interruption behavior, not physical power-loss durability or protection
-against hostile local-disk control.
+Exercise all nine durable boundaries from metadata verification through policy
+finalization via the public `jobctrl update` recovery entry. Commit independent
+profile, resume, search and Temporal WAL changes after interruption and candidate
+start, fail readiness, and retry repeatedly. Check current paired snapshots,
+original/recovery backup IDs, exact selection and policy, preserved app inode,
+protected rows and external config/resume bytes. Finalization after the active
+selection write must complete without restarting a healthy candidate. Cover
+same-schema updates and rollback target-start failure separately. Initial
+installation/adoption must refuse schema 14 without original predecessor
+metadata and permit preserving an exact-v15 reinstall after cleanup.
 
-Before any release, verify the actual signed bridge artifact and installer,
-including their macOS trust checks, through the released old selector and then
-the bridge-controlled upgrade, failure recovery, and rollback. Prove writer
-quiescence and preserve independent commits in both databases through the later
-schema transition. Synthetic handoff tests alone do not qualify that upgrade.
+Use an actual owned detached writer to prove normal cleanup, timeout-only
+termination, waited exit and restart before migration. Preserve another instance
+as a control; inspection/cleanup failure blocks backup and database mutation.
+Reboot is last-resort troubleshooting for actual failure, not upgrade admission.
+
+Before first publication/use, qualify the actual signed/notarized installer and
+payload through curl and unmodified Homebrew, using the archived installed
+selector, real startup and failed-readiness recovery, the same preservation
+matrix, and explicit cross-protocol rollback refusal. Source merge and synthetic
+fixtures alone do not qualify an installed upgrade. These interruption tests do
+not claim physical power-loss durability or protection against hostile disk
+control.
 
 Focused commands live in `scripts/checks.toml`. Run the selected `argv` directly,
 substituting an owned artifact path for `{report_path}`. Required tests must

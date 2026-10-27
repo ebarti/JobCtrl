@@ -67,16 +67,24 @@ the same write transaction as deletion. The reviewed-selection receipt itself
 is short-lived process memory, not a substitute for the durable revision.
 
 V15 migration constructs and verifies a separate candidate from a stopped source
-and binds activation to the preserved database/Temporal backup pair. Exact-v14
-activation applies the additive schema to the live database in a single SQLite
-transaction without replacing its inode; earlier source versions retain the
-sealed-candidate replacement path. Once a paired backup
-is recorded, update and rollback journals require the controller to preserve
-the live pair on an automatic failure or interruption. The journal remains for
-recovery; a user-requested rollback may still restore its selected backup as an
-explicit operation. Runtime admission rejects older schema versions. Installed
-upgrades also require controller and rollback compatibility; a candidate
-migration alone does not prove that an old controller can safely promote it.
+and binds activation to a WAL-aware application/Temporal backup pair. The new
+authenticated installer upgrades an original protocol-1/schema-14 selection
+without executing the predecessor. Exact-v14 activation applies the additive
+schema to the live database in a single SQLite transaction without replacing
+its inode; earlier supported source versions retain the sealed-candidate path
+under a compatible controller. Runtime admission requires exact schema v15.
+
+The forward-update journal records the authenticated source receipt and
+selection generation, source schema, target, original backup and latest recovery
+backup. Each retry first cleans up instance-owned processes and snapshots the
+current live pair, including acknowledged WAL commits. Failed readiness and
+interruption retain the live pair and resumable journal; ordinary `jobctrl
+update` continues forward. Neither automatic recovery nor a cross-protocol
+rollback may restore the original backup over newer protected data. Configuration,
+resume files, provider authentication and other external workspace authorities
+remain outside the pair and are preserved separately. Initial install refuses
+schema 14 without the original predecessor selection; exact-v15 reinstall may
+preserve the pair after verified cleanup.
 
 The database is easier to understand as a set of ownership families. The
 diagram shows the main relationships; the table below names the exact tables.
