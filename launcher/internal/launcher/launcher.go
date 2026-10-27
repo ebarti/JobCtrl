@@ -290,6 +290,19 @@ func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Write
 	if err := refusePendingBridgeHandoff(runtimeHome); err != nil {
 		return err
 	}
+	if len(args) == 1 && args[0] == "update" && environmentMap(inheritedEnv)["JOBCTRL_TRANSITION_TARGET"] == "" {
+		if handled, err := resumeForwardUpdate(inheritedEnv, stdout); handled {
+			return err
+		}
+	}
+	if len(args) == 1 && args[0] == "stop" {
+		if handled, err := stopForwardUpdate(inheritedEnv, stdout); handled {
+			return err
+		}
+	}
+	if err := refuseUnfinishedForwardUpdate(runtimeHome, args, inheritedEnv); err != nil {
+		return err
+	}
 	if len(args) > 0 && args[0] == "rollback" {
 		if handled, err := recoverBridgeBeforeBootstrap(inheritedEnv, args, stdout); handled {
 			return err
@@ -2301,9 +2314,6 @@ func stop(ctx launchContext) error {
 	if !sameRuntimeGeneration(initialState, state) {
 		return errors.New("runtime generation changed during stop; refusing to signal or overwrite its registry")
 	}
-	if err := drainOwnedProcesses(ctx, state, ownedBeforeShutdown); err != nil {
-		return fmt.Errorf("verify instance-wide shutdown: %w", err)
-	}
 	failed := make([]string, 0)
 	for _, name := range []string{"api", "worker", "temporal"} {
 		if record, exists := state.Components[name]; exists && componentMayBeLive(record) {
@@ -2311,6 +2321,13 @@ func stop(ctx launchContext) error {
 				failed = append(failed, name+": "+err.Error())
 			}
 		}
+	}
+	if err := drainOwnedProcesses(ctx, state, ownedBeforeShutdown); err != nil {
+		return fmt.Errorf("verify instance-wide shutdown: %w", err)
+	}
+	// A verified child cleanup can resolve an earlier group-drain failure.
+	if allRecordedComponentsStopped(state) && !supervisorMayBeLive(state.Supervisor) {
+		failed = nil
 	}
 	if len(failed) > 0 || !allRecordedComponentsStopped(state) || supervisorMayBeLive(state.Supervisor) {
 		if len(failed) > 0 {

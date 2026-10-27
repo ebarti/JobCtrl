@@ -97,6 +97,7 @@ func readProcessScope(pid int) (ownedProcess, error) {
 	if binary.LittleEndian.Uint32(before[4:]) == 5 {
 		return p, syscall.ESRCH
 	} // zombie cannot write or fork
+	p.PID, p.ParentPID, p.Identity = pid, int(binary.LittleEndian.Uint32(before[16:])), processIdentityFromBSD(before)
 	mib := [3]int32{1, 49, int32(pid)} // CTL_KERN, KERN_PROCARGS2
 	argmax, err := syscall.SysctlUint32("kern.argmax")
 	if err != nil {
@@ -122,14 +123,14 @@ func readProcessScope(pid int) (ownedProcess, error) {
 	}
 	p.PID, p.ParentPID, p.Identity = pid, int(binary.LittleEndian.Uint32(before[16:])), processIdentityFromBSD(before)
 	if err := decodeProcessScope(buffer[:size], &p); err != nil {
-		return ownedProcess{}, err
+		return p, err
 	}
 	after, err := procInfo(pid, procPIDTBSDInfo, procBSDInfoSize)
 	if err != nil {
-		return ownedProcess{}, err
+		return p, err
 	}
 	if processIdentityFromBSD(after) != p.Identity {
-		return ownedProcess{}, syscall.ESRCH
+		return p, syscall.ESRCH
 	}
 	return p, nil
 }
@@ -195,6 +196,7 @@ func discoverOwnedProcesses(ctx launchContext, state instanceState) ([]ownedProc
 	}
 	all := make(map[int]ownedProcess, len(pids))
 	owned := map[int]bool{}
+	inspectionErrors := map[int]error{}
 	for _, pid := range pids {
 		if pid == os.Getpid() {
 			continue
@@ -204,7 +206,13 @@ func discoverOwnedProcesses(ctx launchContext, state instanceState) ([]ownedProc
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("inspect process ownership for PID %d: %w", pid, err)
+			// Other applications can exit or restrict argv while the census
+			// runs. Keep their kernel ancestry; only an owned match below
+			// can block this instance's cleanup.
+			if p.PID == 0 {
+				continue
+			}
+			inspectionErrors[pid] = err
 		}
 		all[pid] = p
 		// Older native releases already exported these exact workspace and
@@ -232,6 +240,34 @@ func discoverOwnedProcesses(ctx launchContext, state instanceState) ([]ownedProc
 	}
 	result := make([]ownedProcess, 0, len(owned))
 	for pid := range owned {
+		if err := inspectionErrors[pid]; err != nil {
+			// A dying owned task can lose its address space immediately
+			// before becoming a zombie. Recheck rather than report a false
+			// permission/VM failure from that exit window.
+			for attempt := 0; attempt < 3; attempt++ {
+				time.Sleep(20 * time.Millisecond)
+				p, retryErr := readProcessScope(pid)
+				if errors.Is(retryErr, syscall.ESRCH) {
+					delete(owned, pid)
+					break
+				}
+				if retryErr == nil && p.Identity != all[pid].Identity {
+					delete(owned, pid)
+					break
+				}
+				if retryErr == nil {
+					all[pid] = p
+					delete(inspectionErrors, pid)
+					break
+				}
+			}
+			if !owned[pid] {
+				continue
+			}
+			if err := inspectionErrors[pid]; err != nil {
+				return nil, fmt.Errorf("inspect owned PID %d: %w", pid, err)
+			}
+		}
 		result = append(result, all[pid])
 	}
 	return result, nil
