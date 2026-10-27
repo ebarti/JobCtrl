@@ -258,6 +258,19 @@ A private intent receipt binds preactivation source preservation to the exact
 journal, backup and source version, and survives interrupted old-runtime restart.
 An old schema header during partial paired restore cannot bypass Temporal recovery.
 
+The signed installed v14-to-v15 route requires a subsequent boot before the new
+installer owns the pair; SQLite locks alone cannot establish descendant exit.
+It authenticates the retained predecessor as evidence and executes only the new
+payload. Each resumed attempt takes a fresh WAL-aware snapshot of the current
+live pair, preserving the original backup separately. Failed candidate readiness
+leaves later profile, resume, configuration, search and Temporal writes in place.
+The typed forward-recovery journal binds the source generation, source schema
+and target receipt. Changed selection, regressed schema, revoked target and
+unfamiliar journals refuse mutation. A revoked predecessor may remain historical
+evidence but cannot execute. Cross-schema rollback is refused. Older frozen
+migration helpers remain available for separately qualified source paths; the
+current installed route admits only exact v14 and v15 pairs.
+
 The v12-era TypeScript API and Python worker accepted exact v12 and rejected
 direct v6/v7/v8/v9/v10/v11 operation; runtime constructors did not migrate
 schema or commit caller work.

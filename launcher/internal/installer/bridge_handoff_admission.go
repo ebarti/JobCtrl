@@ -18,5 +18,5 @@ func refusePendingBridgeHandoff(home string) error {
 	if err != nil {
 		return fmt.Errorf("inspect bridge handoff: %w", err)
 	}
-	return errors.New("unfinished bridge handoff requires jobctrl-installer --bridge-recover")
+	return errors.New("unfinished bridge handoff requires inspection; preserve the installation metadata and live workspace")
 }

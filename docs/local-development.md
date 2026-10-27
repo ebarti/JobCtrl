@@ -432,10 +432,11 @@ candidate. For a synthetic exact-v14 source, exercise the private boundary with
 `python -m jobctrl.infrastructure.migrations.v14_to_v15_execute --source
 <source.db> --candidate <candidate.db>`. The command never installs the
 candidate. The native lifecycle owns quiescence, paired backup, candidate
-activation, readiness, and rollback. Direct updates and rollbacks between a
-protocol-1 installation and this protocol-2 release are refused; a separately
-released and verified bridge is required. See the compatibility notes in
-[`packaging/distribution/README.md`](../packaging/distribution/README.md).
+activation, readiness, and rollback. The old protocol-1 updater refuses the protocol-2 target. Use the authenticated
+new installer to record the reboot boundary and perform the schema-14 upgrade
+after reboot; see [Getting Started](user/getting-started.md#update-roll-back-or-remove-jobctrl).
+The current installed path admits exact schema 14 and 15. Frozen older-format
+executors retain their independent migration checks.
 Never run a migration executor against the live path as its candidate.
 
 Choose the touched-surface recipe and required gates through
@@ -585,20 +586,10 @@ unique revocation tombstones. The launcher's private runtime manifest starts the
 loopback Temporal (`7233`/`8233`), worker, and API (`8766`) fleet without Vite,
 and records each canonical `JOBCTRL_DIR` under
 `~/Library/Application Support/JobCtrl/instances/<sha256>` (override with
-`JOBCTRL_RUNTIME_HOME`). This is an artifact smoke/development surface only;
-`scripts/dev` remains the source-contributor launcher until the installer and
-signing phases land. The local bridge candidate requires a signed cached
-descriptor, its signature and archive, plus a signed bridge declaration and
-signature; the installer selects it with `--bridge-role-file` and
-`--bridge-role-signature-file`. An explicit signed route-catalog bootstrap can
-instead use `--bridge-route-file`, `--bridge-route-signature-file`, and the
-three `--bridge-target-*` descriptor options to select a source-bound bridge
-for either acquisition adapter. It does not discover published routes or
-promote the final target. An interrupted handoff uses `--bridge-recover`
-with retained evidence and no acquisition-file arguments. These flags do not
-create or publish the separately reviewed schema-14 bridge artifact. See the
-[bridge release contract](developer/releasing.md#protocol-2-bridge-candidate).
-Use the much smaller contract fixture while changing the builder itself:
+`JOBCTRL_RUNTIME_HOME`). Use an owned workspace for artifact smoke/development; `scripts/dev` remains
+the source-contributor launcher. Protocol-2 migration is installer-owned and
+uses the explicit reboot/forward-recovery contract, without a separate bridge
+release. Use the much smaller contract fixture while changing the builder:
 
 ```bash
 corepack pnpm distribution:build:fixture

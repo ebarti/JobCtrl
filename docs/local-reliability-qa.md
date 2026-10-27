@@ -95,39 +95,32 @@ delete the original provider history as an automatic repair.
 | Docs | `corepack pnpm docs:build`, diff check |
 | Cross-stack | `corepack pnpm check`, `corepack pnpm test`, affected separate web suites |
 
-## Protocol-2 Bridge Handoff
+## Installed Schema Upgrade After Reboot
 
-Use owned synthetic workspaces. Verify signed descriptor and bridge-role
-identity, both complete payload inventories, the protocol-2-only compatibility
-range, channel sequence and revocation policy, and source selection under the
-transition and selection locks. Reject unsigned, altered, stale, mismatched,
-or unsafe inputs before selection. Exercise cooperating update, rollback,
-uninstall, and cleanup contenders that use the release locks; confirm an old
-controller queued before the handoff refuses after the protocol-2 bridge is
-selected. A protocol-2 transition journal must also make the actual old
-controller refuse recovery before a stale backup can overwrite independent
-commits to either database. For explicit signed-catalog selection, verify exact
-source, bridge and final-target descriptor digests, signatures, canonical URLs,
-missing/duplicate routes and descriptor substitution before archive download.
-Exercise both curl and Homebrew catalog entry modes, refusal of mixed options
-and `--stage-only`, changed source selection under the transition lock, and
-recovery from retained evidence without the catalog or network.
+Use owned synthetic workspaces and test-owned signing keys. Qualify the current
+released protocol-1/schema-14 predecessor and protocol-2/schema-15 target.
+The older controller must reject the target before its backup/restore boundary.
+The new authenticated installer records a reboot fence without changing the
+source selection or database bytes, then owns migration after the later boot.
+Cover both acquisition adapters, first installation, an already-selected target,
+missing predecessor metadata and preserving an exact-v15 reinstall. A restarted
+legacy service must re-arm the fence before its leader can exit.
 
-Terminate the installer process at each durable evidence, intent, active,
-policy, selector, completion, and cleanup boundary. Retry using retained signed
-evidence after removing the original acquisition files. Verify forward-only
-selection, exact selector and policy readback, idempotent completed retry, and
-unchanged application database, Temporal database, and sidecars. Missing or
-tampered evidence, unexpected selectors, and unfinished or unrecognized legacy
-journals must refuse without destructive repair. These checks demonstrate
-process-interruption behavior, not physical power-loss durability or protection
-against hostile local-disk control.
+Interrupt every durable journal milestone and repeat the public `update` entry.
+Inject later profile, resume-template, search-setting and Temporal commits after
+the paired backup and candidate start. Leave acknowledged writes in real WAL
+files with an abrupt owned Python-process exit. After the owned processes end,
+model the next boot and prove forward recovery preserves those values, external
+configuration/resume files and the live application's inode. Retain the original
+and refreshed backup; never restore the old pair. Test policy finalization,
+revoked predecessors, candidate revocation, changed selection, malformed metadata,
+regressed schema and partial pairs. Unknown legacy journals stay preserved.
 
-Before any release, verify the actual signed bridge artifact and installer,
-including their macOS trust checks, through the released old selector and then
-the bridge-controlled upgrade, failure recovery, and rollback. Prove writer
-quiescence and preserve independent commits in both databases through the later
-schema transition. Synthetic handoff tests alone do not qualify that upgrade.
+Synthetic boot seams and release keys are test-only. Product code exposes no
+boot override, automatic reboot, stale-pair restoration or bridge-catalog mode.
+These checks demonstrate process and transaction interruption, not physical
+power loss or a genuinely signed/notarized installed release. The latter remain
+required before release publication or first installed use.
 
 Focused commands live in `scripts/checks.toml`. Run the selected `argv` directly,
 substituting an owned artifact path for `{report_path}`. Required tests must

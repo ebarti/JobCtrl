@@ -229,7 +229,11 @@ type Journal struct {
 	TargetBackupID   string           `json:"targetBackupId,omitempty"`
 	// Bridge controllers set this before their first resumable milestone when
 	// the live pair must never be automatically replaced during recovery.
-	PreserveLiveOnFailure bool `json:"preserveLiveOnFailure,omitempty"`
+	PreserveLiveOnFailure bool   `json:"preserveLiveOnFailure,omitempty"`
+	RebootUpgrade         bool   `json:"rebootUpgrade,omitempty"`
+	SourceGeneration      uint64 `json:"sourceGeneration,omitempty"`
+	SourceSchemaVersion   int64  `json:"sourceSchemaVersion,omitempty"`
+	RecoveryBackupID      string `json:"recoveryBackupId,omitempty"`
 	// BridgeSourceGeneration binds a bridge handoff to its source selection.
 	BridgeSourceGeneration uint64    `json:"bridgeSourceGeneration,omitempty"`
 	Error                  string    `json:"error,omitempty"`

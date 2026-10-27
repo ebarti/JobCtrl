@@ -255,30 +255,36 @@ use the updated formula, while bundled-installer installations use their signed
 release channel. Pulling source changes does not publish an update to installed
 users.
 
-The source code contains a candidate bridge for a future launcher protocol
-change. It needs a separately reviewed and published bridge release before an
-installed version can use that path. A source checkout or local test does not
-make the bridge available to installed users.
+The schema-15 release uses launcher protocol 2. The older protocol-1 updater
+refuses this target before backup or migration, and may mention an incompatible
+bridge. Use the current authenticated installer through Homebrew or the normal
+bundled installer instead; a separate bridge release is not required.
 
-When a release requires a database migration, the updater requests runtime
-shutdown, backs up the application database and Temporal history together,
-verifies a separate migrated database, and activates it before checking startup
-health.
-An interrupted transition may retain the live databases and block commands
-when the saved pair could omit later writes. If JobCtrl reports that automatic
-recovery is unavailable, keep the live databases and transition journal intact;
-retrying rollback cannot resolve that state automatically. An explicit rollback
-restores the database snapshot associated with the previous release: data added
-since that snapshot is not carried backward.
+The first installer attempt records a reboot requirement while preserving the
+selected release and existing databases. Disable any automatic JobCtrl startup,
+stop JobCtrl, reboot the Mac yourself, and rerun that installer before running
+other JobCtrl commands. The new controller verifies the predecessor and target,
+backs up the application database and Temporal history together, and upgrades
+exact schema 14 in place. Profile, resume, settings and search data remain in
+the live workspace. Exact schema 15 can be reinstalled without replacing it.
+An existing schema-14 workspace with missing installation metadata is refused;
+keep both the workspace and its original authenticated installation metadata.
+If the predecessor has never initialized its database pair, initialize that
+installed version once, then stop, reboot and retry the upgrade.
 
-Rollback keeps a compatible launcher for recovery while restoring the older
-application. Homebrew commands preserve that selection until you explicitly run
-`jobctrl update` again. If an older updater reports a failed candidate and cannot
-restart its previous release, recovery depends on the transition state and the
-available compatible controller. The installer and formula also handle an
-installation you have never started. If an existing database/history pair is
-incomplete, updating refuses
-to replace it; preserve those files and recover the pair before retrying.
+If a migrated candidate fails to become ready, preserve the live databases and
+transition journal. Reboot again, then run `jobctrl update`. Recovery continues
+forward from the current live pair, including later committed writes; it never
+restores the pre-upgrade backup. Unexpected files, a partial pair, a changed
+selection or an older ambiguous journal stay blocked for inspection.
+
+Rollback from schema 15 to a schema-14/protocol-1 release is refused. A compatible
+same-schema explicit rollback retains its saved-pair contract: data added since
+that selected snapshot is not carried backward. It does not recover a pending
+forward update. Homebrew preserves an explicitly selected compatible rollback
+until you request another update. Keep the live files and seek recovery guidance
+if an older updater has left an unsupported transition; do not delete its journal
+or restore only one database.
 
 
 ## Semantic Determination Authority

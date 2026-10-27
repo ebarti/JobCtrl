@@ -122,20 +122,46 @@ func runtimeQuiescent(ctx launchContext, state instanceState) (bool, error) {
 	if err != nil || !validBootSession(boot) {
 		return false, errors.New("cannot verify the kernel boot identity; quiescence remains unverified")
 	}
+	if verifiedRuntimeRecordLive(state) {
+		return false, nil
+	}
 	return !strings.EqualFold(fence.BootSession, boot), nil
+}
+
+func verifiedRuntimeRecordLive(state instanceState) bool {
+	if recordMatchesLiveProcess(state.Supervisor) {
+		return true
+	}
+	for _, record := range state.Components {
+		if recordMatchesLiveProcess(record) {
+			return true
+		}
+	}
+	return false
 }
 
 // stop creates the initial fence for legacy runtimes before asking the user to
 // reboot. It never rewrites an existing fence or changes user/registry bytes.
 func ensureLegacyExecutionFence(ctx launchContext, state instanceState) error {
-	if _, err := readExecutionFence(ctx); errors.Is(err, os.ErrNotExist) {
+	if fence, err := readExecutionFence(ctx); errors.Is(err, os.ErrNotExist) {
 		if len(state.Components) > 0 || supervisorMayBeLive(state.Supervisor) {
 			if err := recordExecutionBoot(ctx); err != nil {
 				return fmt.Errorf("record legacy reboot recovery boundary: %w", err)
 			}
 		}
 		return nil
-	} else {
+	} else if err != nil {
 		return err
+	} else if verifiedRuntimeRecordLive(state) {
+		boot, err := readBootSession()
+		if err != nil || !validBootSession(boot) {
+			return errors.New("cannot verify the boot of a live runtime")
+		}
+		if !strings.EqualFold(fence.BootSession, boot) {
+			// An older launcher can restart after the requested reboot without
+			// updating this fence. Re-arm it before terminating that generation.
+			return recordExecutionBoot(ctx)
+		}
 	}
+	return nil
 }

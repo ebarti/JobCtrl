@@ -49,16 +49,12 @@ checkout or asking the user for a language/runtime toolchain:
 - PDF page previews are rendered by PDF.js in the web client. The installed
   runtime has no Poppler component or `pdftoppm` route.
 
-The source installer also contains a protocol-2 bridge handoff for an
-authenticated, separately reviewed schema-14 payload. It retains signed
-evidence, selects the bridge receipt before replacing the public selector, and
-recovers an interrupted selection forward under the release locks. It does not
-change or open the application and Temporal databases. An explicitly supplied
-signed route catalog can select a bridge by exact predecessor and final-target
-digests, but it does not discover or promote the final release. This candidate
-is not a published bridge or proof that the later database migration is safe; those
-artifacts and the stopped-writer transition require separate verification. See
-the [bridge release contract](../developer/releasing.md#protocol-2-bridge-candidate).
+Protocol 2 separates the schema-15 payload from released protocol-1 controllers.
+The authenticated new installer owns the schema-14 upgrade after an explicit
+reboot; it never delegates migration or recovery to the old executable. Both
+acquisition adapters use the same source receipt, signed target schema declaration,
+release locks and forward recovery journal. See [Getting Started](../user/getting-started.md#update-roll-back-or-remove-jobctrl)
+for the operator sequence.
 
 `JOBCTRL_RUNTIME_MODE=bundled` makes this boundary fail closed. The launcher
 must supply an absolute `JOBCTRL_PAYLOAD_DIR`; the API realpaths its Python,
@@ -209,53 +205,41 @@ individual shutdown signals but cannot certify that detached children exited. Bo
 `JOBCTRL_DIR/jobctrl.db` and `JOBCTRL_DIR/temporal.db` receive online,
 hash-verified paired backups.
 While a journal is unfinished, ordinary commands remain blocked. Internal
-`start --no-open` and its detached supervisor may proceed only from the exact
-payload authorized by the matching durable journal, executable transition state
-and immutable manifest. A compatible authenticated public selector may supervise
-that payload; arbitrary public commands and environment flags alone cannot grant
-this exception. Once a paired backup may be stale, the preservation flag keeps
-the live databases and journal rather than automatically restoring the backup.
-Automatic recovery of post-backup protected states is unavailable until the
-writer quiescence and forward recovery checks can be established. Rollback retains
-this compatible controller while restoring the older payload and its exact
-database pair when a rollback is safely admitted. The Homebrew frontend respects the
-completed rollback until an explicit update is requested. When a historical
-controller skipped migration using its own compiled schema target, the new
-candidate performs its target-owned sealed migration from that controller's
-verified paired backup before starting services.
-The signed `launcher/update-protocol.json` declaration distinguishes controllers
-that support journal-bound selector startup from historical selectors that would
-wait on their parent's selection lock. A new installer owns staged activation;
-it does not delegate migration control back to the older installed executable.
-For an already interrupted update, a new formula can stage its verified recovery
-controller without replacing the old/candidate journal or activating new data.
-If a selected installation has never created either database, the controller
-initializes and stops its verified predecessor before taking the normal paired
-backup. A partial pair, unsafe file or orphaned SQLite sidecar is refused before
-the update changes release selection.
-The current runtime admits only exact schema v14. A stopped v6 database retains
-the Temporal quiescence proof and private v7/v8/v9 intermediates; exact v7 and v8
-start at their next intermediate. Exact v9 transfers application URL authority
-to enrichment and retains historical lookup aliases before removing the legacy
-job column. Exact v10 then moves historical global `llm_spend` rows into the
-explicit `legacy` lane before v11 activation. The legacy lane contributes to
-global USD totals but is never a runtime write target. Exact v11 adds generation
-bindings through private v12, then v13 withdraws heuristic classifications and
-adds persisted determinations. Exact v14 removes the redundant search-preference
-approval binding and retains historical raw intake captures. New source results ingest without a separate intake model gate.
-Historical employer-analysis generations remain
-stored, while current readers select only the v4 determination contract.
-Neither Python nor the
-TypeScript API runs against an intermediate schema. Recovery removes all staged
-candidates and their sidecars before restoring the retained database pair.
-Policy finalization happens only after the candidate has passed readiness and
-the paired backup is durable, so a failed health gate cannot revoke the only
-runnable release. A pre-finalization failure restores the full pair and
-restarts the still-permitted prior release. An interruption after a healthy
-candidate finalizes a revocation fails closed to that authenticated candidate
-instead of executing revoked code. Published builds have passed signing,
-notarization, authenticated publication, and clean-machine acquisition gates
-before this lifecycle boundary can promote them.
+`start --no-open` and its supervisor must match the durable journal, executable
+phase, immutable receipt and signed payload. Environment flags alone cannot
+grant this exception.
+
+The signed protocol-2 update path authenticates the retained predecessor as
+historical evidence and executes only the new permitted payload. Its reboot
+fence must be recorded before the operator reboots; disable automatic JobCtrl
+startup and run the installer again before starting another JobCtrl runtime.
+A verified older runtime that restarts after that reboot re-arms the fence.
+Exact schema 14 is upgraded in place to schema 15, retaining its inode and
+protected rows. Exact schema 15 updates keep the live pair. The native installed
+path currently admits these two source formats; frozen earlier-format executors
+remain independently qualified in [Storage](storage.md).
+
+The version-2 preservation journal binds both receipts, source selection
+generation and schema, target descriptor, backup and policy. An interruption
+never restores an older pair over live data. After another reboot, `jobctrl
+update` authenticates the same target again, snapshots the current live pair
+including committed WAL data, finishes any uncommitted migration, starts that
+target, and finalizes policy and selection. The original backup is retained
+alongside the forward recovery snapshot. A recorded post-activation milestone
+with a regressed schema, changed selection, revoked target, unfamiliar metadata,
+or a partial database pair refuses safely. A legacy ambiguous journal remains
+blocked for inspection.
+
+First selection cannot replace an existing schema-14 installation whose
+predecessor metadata is missing. Reinstallation of an existing exact-v15
+workspace preserves it after reboot admission. An unused predecessor must be
+initialized once before this paired upgrade. Rollback across the schema-14 /
+schema-15 protocol boundary is refused. Explicit compatible rollback retains
+its separately documented saved-pair contract; it cannot resolve a pending
+forward update. Policy finalization follows candidate readiness, and the old
+controller's version-1 journal reader cannot interpret this recovery journal.
+Published artifacts must pass signing, notarization, authenticated acquisition
+and release verification before users receive them.
 
 ## Frontend
 
