@@ -282,55 +282,61 @@ func decodeExecutionReceipt(raw []byte, scope *executionScope) error {
 	return json.Unmarshal(raw, scope)
 }
 
+var executionProcessIDs = userProcessIDs
+var executionProcessCoalitions = processCoalitionIDs
+
 func executionMembers(ids [2]uint64) ([]ownedProcess, error) {
-	pids, err := userProcessIDs()
-	if err != nil {
-		return nil, err
+	// An enumerated parent can fork and disappear before inspection, and a
+	// live exec can temporarily have no inspectable coalition. Neither case
+	// certifies zero: require another complete pass before reporting cleanup.
+	for attempt := 0; attempt < 32; attempt++ {
+		pids, err := executionProcessIDs()
+		if err != nil {
+			return nil, err
+		}
+		var members []ownedProcess
+		uncertain := false
+		for _, pid := range pids {
+			if pid == os.Getpid() {
+				continue
+			}
+			before, err := processBSDInfoIncludingZombies(pid)
+			if errors.Is(err, syscall.ESRCH) {
+				uncertain = true
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			if int(binary.LittleEndian.Uint32(before[20:])) != os.Getuid() || binary.LittleEndian.Uint32(before[4:]) == 5 {
+				continue
+			}
+			identity := processIdentityFromBSD(before)
+			memberIDs, coalitionErr := executionProcessCoalitions(pid)
+			after, err := processBSDInfoIncludingZombies(pid)
+			if errors.Is(err, syscall.ESRCH) {
+				uncertain = true
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			if binary.LittleEndian.Uint32(after[4:]) == 5 || processIdentityFromBSD(after) != identity || errors.Is(coalitionErr, syscall.ESRCH) {
+				uncertain = true
+				continue
+			}
+			if coalitionErr != nil {
+				return nil, coalitionErr
+			}
+			if memberIDs == ids {
+				members = append(members, ownedProcess{PID: pid, Identity: identity, CoalitionIDs: memberIDs})
+			}
+		}
+		if len(members) > 0 || !uncertain {
+			return members, nil
+		}
 	}
-	var members []ownedProcess
-	for _, pid := range pids {
-		if pid == os.Getpid() {
-			continue
-		}
-		info, err := procInfo(pid, procPIDTBSDInfo, procBSDInfoSize)
-		if errors.Is(err, syscall.ESRCH) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		if binary.LittleEndian.Uint32(info[4:]) == 5 {
-			continue
-		}
-		before, err := processStartIdentity(pid)
-		if errors.Is(err, syscall.ESRCH) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		memberIDs, err := processCoalitionIDs(pid)
-		if errors.Is(err, syscall.ESRCH) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		if memberIDs != ids {
-			continue
-		}
-		after, err := processStartIdentity(pid)
-		if errors.Is(err, syscall.ESRCH) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		if before == after {
-			members = append(members, ownedProcess{PID: pid, Identity: after})
-		}
-	}
-	return members, nil
+	return nil, errors.New("execution member census remained uncertain; cleanup could not verify zero")
 }
 
 func signalExecutionRoot(ids [2]uint64, pid int, identity string, requested syscall.Signal) error {

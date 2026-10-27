@@ -531,6 +531,79 @@ func TestOwnedExecutionForwardsSignalsAndControllerEOF(t *testing.T) {
 	}
 }
 
+func TestExecutionMembersRetriesUncertainZero(t *testing.T) {
+	child := exec.Command("/bin/sleep", "60")
+	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = child.Process.Kill(); _ = child.Wait() }()
+	pid := child.Process.Pid
+	identity, err := processStartIdentity(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, err := processCoalitionIDs(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, scenario := range []string{"transient-coalition", "departed-parent", "persistent-uncertainty", "permission-failure"} {
+		t.Run(scenario, func(t *testing.T) {
+			originalPIDs, originalCoalitions := executionProcessIDs, executionProcessCoalitions
+			t.Cleanup(func() {
+				executionProcessIDs, executionProcessCoalitions = originalPIDs, originalCoalitions
+			})
+			departedPID := 0
+			if scenario == "departed-parent" {
+				departed := exec.Command("/usr/bin/true")
+				if err := departed.Run(); err != nil {
+					t.Fatal(err)
+				}
+				departedPID = departed.Process.Pid
+			}
+			passes, reads := 0, 0
+			executionProcessIDs = func() ([]int, error) {
+				passes++
+				if departedPID > 0 && passes == 1 {
+					// Model the enumerated parent disappearing after a fork.
+					// The next complete census exposes its surviving child.
+					return []int{departedPID}, nil
+				}
+				return []int{pid}, nil
+			}
+			executionProcessCoalitions = func(target int) ([2]uint64, error) {
+				if target != pid {
+					t.Fatalf("inspected a process outside the synthetic census: %d", target)
+				}
+				reads++
+				if scenario == "persistent-uncertainty" || (scenario == "transient-coalition" && reads == 1) {
+					return [2]uint64{}, syscall.ESRCH
+				}
+				if scenario == "permission-failure" {
+					return [2]uint64{}, syscall.EPERM
+				}
+				return processCoalitionIDs(target)
+			}
+			members, err := executionMembers(ids)
+			if scenario == "permission-failure" {
+				if !errors.Is(err, syscall.EPERM) || passes != 1 {
+					t.Fatalf("permission failure became cleanup success: %v passes=%d", err, passes)
+				}
+				return
+			}
+			if scenario == "persistent-uncertainty" {
+				if err == nil || passes != 32 {
+					t.Fatalf("persistent uncertainty certified zero: %v passes=%d", err, passes)
+				}
+				return
+			}
+			if err != nil || passes < 2 || len(members) != 1 || members[0].PID != pid || members[0].Identity != identity {
+				t.Fatalf("uncertain pass lost the live owned child: %v passes=%d members=%v", err, passes, members)
+			}
+		})
+	}
+}
+
 func TestOwnedExecutionCancellationEscalatesIgnoringRoot(t *testing.T) {
 	ctx := executionTestContext(t)
 	root := filepath.Dir(ctx.Instance.StatePath)
