@@ -120,7 +120,9 @@ Key facts about the four activities:
   old `true` flags only budgeted broad boards and cannot establish all-family
   authority. Source activities validate the marker before lifecycle/provider
   effects; canonical writers validate it again under their writer transaction,
-  including cancellation, before publishing a new admission. An existing marker
+  including cancellation, before publishing a new admission. Execution-scoped
+  canonical writers cannot bypass a bounded marker by omitting their budget.
+  An existing marker
   cannot be rebound to a different cap or execution mode.
   Older pending bounded activity inputs without a frozen execution plan fail
   closed with a restart-after-upgrade configuration error before acquisition or

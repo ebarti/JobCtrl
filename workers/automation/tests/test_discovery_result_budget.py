@@ -349,3 +349,37 @@ def test_exact_admitted_capture_ack_finishes_at_cap_without_recreating_owner(own
     assert owned.execute("SELECT COUNT(*) FROM job_events").fetchone()[0] == before_events
     assert allowance.counts() == {SOURCE: 1}
     assert recover()["recovered_captures"] == 0
+
+
+@pytest.mark.parametrize("caller_transaction", [False, True])
+def test_bounded_canonical_writer_cannot_omit_authority(owned, caller_transaction):
+    from jobctrl.domain.errors import ConfigurationError
+
+    allowance = budget(owned)
+    assert claim(prepared(owned, allowance, "first-with-authority")) is None
+    owned.execute("CREATE TABLE owned_omission_pending(value TEXT)")
+    owned.commit()
+    if caller_transaction:
+        owned.execute("INSERT INTO owned_omission_pending VALUES ('keep caller write')")
+    parts = list(prepared(owned, allowance, "omitted-authority"))
+    parts[0] = SqliteJobRepository(owned, discovery_execution=EXECUTION, source_family="jobspy")
+    with pytest.raises(ConfigurationError, match="Restart Discovery after upgrading"):
+        claim(parts)
+    assert owned.in_transaction is caller_transaction
+    assert owned.execute("SELECT COUNT(*) FROM owned_omission_pending").fetchone()[0] == int(caller_transaction)
+    assert owned.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+    assert owned.execute("SELECT COUNT(*) FROM discovery_execution_jobs").fetchone()[0] == 1
+    assert allowance.counts() == {SOURCE: 1}
+    owned.rollback()
+
+
+@pytest.mark.parametrize("frozen", [False, True])
+def test_unbudgeted_canonical_writer_keeps_deliberate_unbounded_semantics(owned, frozen):
+    if frozen:
+        freeze_result_plan(owned, EXECUTION, limit=0, source_limits={}, bounded=False)
+    allowance = DiscoveryResultBudget(owned, EXECUTION, limit=1, start_count=0, source_limits={SOURCE: 1})
+    parts = list(prepared(owned, allowance, "deliberate-unbounded"))
+    parts[0] = SqliteJobRepository(owned, discovery_execution=EXECUTION, source_family="jobspy")
+    assert claim(parts) is None
+    assert owned.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+    assert allowance.counts() == {SOURCE: 0}

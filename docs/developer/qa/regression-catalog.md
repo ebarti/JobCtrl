@@ -1118,6 +1118,10 @@ before acknowledgement, then retry at zero allowance with both retained and
 deleted owners: acknowledgement finishes with no new admission, observation or
 Job recreation. The separate explicit full job/Discovery purge backs up and
 clears these null-Job execution records while preserving source-control state.
+An execution-scoped canonical writer that omits its optional budget must refuse
+under the transaction when a bounded marker exists, including at an exhausted
+cap. Preserve caller savepoints and pending writes, and retain unbounded controls
+with no marker or an explicitly unbounded marker.
 
 For actual offers, drive the per-job offer HTTP/client entry and rendered
 Application outcomes panel without interview prep. Verify null equity,

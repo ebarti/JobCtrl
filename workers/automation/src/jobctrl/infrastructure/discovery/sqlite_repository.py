@@ -238,6 +238,15 @@ class SqliteJobRepository:
     def _fence_search_unit_write(self) -> None:
         if self._result_budget is not None:
             self._result_budget.fence_write()
+        elif self._discovery_execution is not None:
+            from jobctrl.infrastructure.discovery.execution_result_plan import check_result_plan
+
+            # Omitting the optional object must never turn an already bounded
+            # execution into an unbounded canonical writer. Claims call this
+            # fence under BEGIN IMMEDIATE/their caller's writer transaction.
+            check_result_plan(
+                self._conn, self._discovery_execution, limit=0, source_limits={}, bounded=False, required=False,
+            )
         if self._search_unit_repository is None:
             return
         assert self._search_unit_lease is not None
