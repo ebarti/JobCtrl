@@ -42,6 +42,11 @@ it("reads Python migration and human review authority through real Profile HTTP 
     expect(db.prepare("SELECT * FROM candidate_profile_achievement_evidence").all()).toEqual(before);
     expect(db.prepare("SELECT * FROM job_events").all()).toEqual(history);
     expect(requiresLegacyEvidenceReview(db, "foreign", "default", "role", "role_bullet_1")).toBe(false);
+    const reference = JSON.stringify(["default", "role", "role_bullet_1"]);
+    const inventory = db.prepare("SELECT event_id,payload_json FROM job_events WHERE entity_ref=?").get(reference) as { event_id: number; payload_json: string };
+    db.prepare("UPDATE job_events SET payload_json=json_set(payload_json,'$.result.status','unconfirmed') WHERE event_id=?").run(inventory.event_id);
+    expect(() => readProfileConfig(db)).toThrow("legacy_evidence_review_invalid_history");
+    db.prepare("UPDATE job_events SET payload_json=? WHERE event_id=?").run(inventory.payload_json, inventory.event_id);
     python(dbPath, "review");
     const reviewed = readProfileConfig(db);
     expect(reviewed.legacyEvidenceReview).toBeUndefined();

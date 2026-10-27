@@ -92,6 +92,10 @@ def review_receipt(conn, tenant_id, profile_id, entry_id, evidence_id) -> dict |
         ("tenant_id", tenant_id), ("profile_id", profile_id), ("entry_id", entry_id), ("evidence_id", evidence_id)
     )):
         raise LegacyEvidenceReviewError("legacy_evidence_review_invalid_history")
+    if payload["result"]["status"] == "unconfirmed" and (
+        type(original.get("user_confirmed")) is not int or original["user_confirmed"] != 0
+    ):
+        raise LegacyEvidenceReviewError("legacy_evidence_review_invalid_history")
     if payload["author"] == "human_review":
         previous = conn.execute(
             "SELECT payload_json FROM job_events WHERE tenant_id=? AND event_id=? AND event_id<? AND event_type='LegacyEvidenceReviewRecorded' AND entity_kind=? AND entity_ref=?",
@@ -122,7 +126,7 @@ def record_legacy_inventory(conn: sqlite3.Connection, originals: list[dict], *, 
         previous = review_receipt(conn, row["tenant_id"], row["profile_id"], row["entry_id"], row["evidence_id"])
         if previous and (previous["author"] == "human_review" or previous["result"]["original"] == row):
             continue
-        status = "pending_review" if row["user_confirmed"] == 1 or include_unconfirmed else "unconfirmed"
+        status = "unconfirmed" if type(row["user_confirmed"]) is int and row["user_confirmed"] == 0 and not include_unconfirmed else "pending_review"
         _record(conn, row, {"status": status, "reason": "legacy_confirmation_authority_unknown",
                            "original": row}, author="migration_inventory")
 

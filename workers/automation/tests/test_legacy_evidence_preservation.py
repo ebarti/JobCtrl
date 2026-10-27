@@ -156,3 +156,16 @@ def test_real_material_refresh_preserves_accepted_id_bytes_and_anchors_when_revi
     assert Path(current.tailored_resume.path).read_bytes() == before
     assert [tuple(row) for row in conn.execute("SELECT * FROM artifact_line_anchors")] == [tuple(row) for row in anchors]
     assert model.generations == 0
+
+
+def test_malformed_legacy_confirmation_is_unknown_and_damaged_inventory_cannot_grant_authority():
+    conn = sqlite3.connect(":memory:")
+    create_exact_v12_schema(conn)
+    seed_evidence(conn)
+    conn.execute("UPDATE candidate_profile_achievement_evidence SET user_confirmed=2 WHERE evidence_index=0")
+    conn.commit()
+    upgrade_exact_v12_schema_to_v13(conn)
+    assert len(prepare_review(conn, tenant_id="local", profile_id="default")) == 3
+    conn.execute("UPDATE job_events SET payload_json=json_set(payload_json,'$.result.status','unconfirmed') WHERE entity_ref=?", ('["default","role","role_bullet_1"]',))
+    with pytest.raises(LegacyEvidenceReviewError, match="invalid_history"):
+        prepare_review(conn, tenant_id="local", profile_id="default")

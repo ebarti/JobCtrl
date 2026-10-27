@@ -30,6 +30,9 @@ export function requiresLegacyEvidenceReview(
     || original.entry_id !== entryId || original.evidence_id !== evidenceId) {
     throw new Error("legacy_evidence_review_invalid_history");
   }
+  if (result.status === "unconfirmed" && original.user_confirmed !== 0) {
+    throw new Error("legacy_evidence_review_invalid_history");
+  }
   if (payload.author === "human_review") {
     const previous = db.prepare(`SELECT payload_json FROM job_events WHERE tenant_id=? AND event_id=? AND event_id<?
       AND event_type='LegacyEvidenceReviewRecorded' AND entity_kind='legacy_achievement_evidence' AND entity_ref=?`)
