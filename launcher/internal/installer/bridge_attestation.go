@@ -64,7 +64,8 @@ func decodeVerifiedBridgeAttestation(raw, signatureRaw []byte, trust map[string]
 	}
 	key := trust[signature.KeyID]
 	decoded, err := base64.StdEncoding.DecodeString(signature.Signature)
-	if signature.SchemaVersion != 1 || signature.Algorithm != "ed25519" || signature.KeyID == "" || len(key) != ed25519.PublicKeySize || err != nil || len(decoded) != ed25519.SignatureSize || !ed25519.Verify(key, signingMessage("jobctrl:bridge-attestation:v1\x00", raw), decoded) {
+	message := signingMessage("jobctrl:bridge-attestation:v1\x00", raw)
+	if signature.SchemaVersion != 1 || signature.Algorithm != "ed25519" || signature.KeyID == "" || len(key) != ed25519.PublicKeySize || err != nil || len(decoded) != ed25519.SignatureSize || message == nil || !ed25519.Verify(key, message, decoded) {
 		return claim, errors.New("bridge attestation signature invalid")
 	}
 	if err := decodeStrict(raw, "bridge attestation", &claim); err != nil {

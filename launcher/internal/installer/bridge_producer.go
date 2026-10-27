@@ -93,7 +93,11 @@ func GenerateSignedBridgeAttestation(oldInput, nextInput BridgeArchiveInput, tru
 	if err != nil {
 		return nil, nil, err
 	}
-	signature := bridgeAttestationSignature{SchemaVersion: 1, Algorithm: "ed25519", KeyID: keyID, Signature: base64.StdEncoding.EncodeToString(ed25519.Sign(private, signingMessage("jobctrl:bridge-attestation:v1\x00", claimRaw)))}
+	message := signingMessage("jobctrl:bridge-attestation:v1\x00", claimRaw)
+	if message == nil {
+		return nil, nil, errors.New("bridge attestation signing message exceeds size limit")
+	}
+	signature := bridgeAttestationSignature{SchemaVersion: 1, Algorithm: "ed25519", KeyID: keyID, Signature: base64.StdEncoding.EncodeToString(ed25519.Sign(private, message))}
 	signatureRaw, err := json.Marshal(signature)
 	if err != nil {
 		return nil, nil, err

@@ -63,6 +63,50 @@ func TestReleaseDescriptorAuthenticatesExactBytesAndOrigin(t *testing.T) {
 	}
 }
 
+func TestSigningMessageBoundsAndRejectsOversizedDescriptor(t *testing.T) {
+	const domain = "jobctrl:release-descriptor:v1\x00"
+	raw := []byte("payload")
+	message := signingMessage(domain, raw)
+	if !bytes.Equal(message, append([]byte(domain), raw...)) {
+		t.Fatal("signing message did not retain the exact domain and payload")
+	}
+	message[len(domain)] = 'X'
+	if string(raw) != "payload" {
+		t.Fatal("signing message aliases its input")
+	}
+	if got := signingMessage(strings.Repeat("d", maxSigningDomainBytes), make([]byte, maxDescriptorBytes)); len(got) != maxSigningDomainBytes+maxDescriptorBytes {
+		t.Fatal("message at the size limits was rejected")
+	}
+	if signingMessage(strings.Repeat("d", maxSigningDomainBytes+1), nil) != nil || signingMessage(domain, make([]byte, maxDescriptorBytes+1)) != nil {
+		t.Fatal("oversized signing message accepted")
+	}
+
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor, err := json.Marshal(stableDescriptor("https://example.test/releases/jobctrl.zip"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, _ := validateTransportURL("https://example.test/releases/darwin-arm64.json", false)
+	trust := map[string]ed25519.PublicKey{"jobctrl-release-v1": public}
+	// Whitespace is valid trailing JSON but still counts toward the authenticated
+	// byte limit. Prove the boundary works and an empty-message signature cannot
+	// be used when an oversized message is refused by signingMessage.
+	bounded := append(descriptor, bytes.Repeat([]byte(" "), maxDescriptorBytes-len(descriptor))...)
+	boundedSignature, _ := json.Marshal(signedDescriptorSignature(private, bounded))
+	if _, err := verifyDescriptor(bounded, boundedSignature, trust, false, source, false); err != nil {
+		t.Fatalf("descriptor at size limit rejected: %v", err)
+	}
+	oversized := append(bounded, ' ')
+	emptySignature := base64.StdEncoding.EncodeToString(ed25519.Sign(private, nil))
+	oversizedSignature, _ := json.Marshal(descriptorSignature{SchemaVersion: 1, Status: "signed", Algorithm: "ed25519", KeyID: "jobctrl-release-v1", Signature: &emptySignature})
+	if _, err := verifyDescriptor(oversized, oversizedSignature, trust, false, source, false); err == nil {
+		t.Fatal("oversized descriptor accepted using an empty-message signature")
+	}
+}
+
 func TestMacOSPayloadTrustUsesGatekeeperOnlyForOutermostApps(t *testing.T) {
 	payload, launcherPath, nodePath, headlessShellPath, outerApp, nestedApp := macOSPayloadTrustFixture(t)
 	type command struct {

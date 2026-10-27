@@ -39,6 +39,7 @@ const (
 	canonicalReleaseHost   = "releases.jobctrl.dev"
 	maxDescriptorBytes     = 1 << 20
 	maxSignatureBytes      = 16 << 10
+	maxSigningDomainBytes  = 64
 	maxArchiveBytes        = int64(4 << 30)
 	maxExtractedBytes      = uint64(8 << 30)
 	maxZipEntries          = 100000
@@ -684,7 +685,8 @@ func verifyDescriptor(raw, signatureRaw []byte, trust map[string]ed25519.PublicK
 		return descriptor, fmt.Errorf("no trusted Ed25519 release key for key id %q", signature.KeyID)
 	}
 	encoded, err := base64.StdEncoding.DecodeString(*signature.Signature)
-	if err != nil || len(encoded) != ed25519.SignatureSize || !ed25519.Verify(key, signingMessage("jobctrl:release-descriptor:v1\x00", raw), encoded) {
+	message := signingMessage("jobctrl:release-descriptor:v1\x00", raw)
+	if err != nil || len(encoded) != ed25519.SignatureSize || message == nil || !ed25519.Verify(key, message, encoded) {
 		return descriptor, errors.New("release descriptor Ed25519 signature verification failed")
 	}
 	return descriptor, nil
@@ -1666,10 +1668,13 @@ func syncDirectory(path string) error {
 }
 
 func signingMessage(domain string, raw []byte) []byte {
-	message := make([]byte, len(domain)+len(raw))
-	copy(message, domain)
-	copy(message[len(domain):], raw)
-	return message
+	// The message is authenticated metadata, not an arbitrary payload. Bound
+	// both operands here so their combined allocation cannot overflow, even if
+	// a future caller omits the normal metadata size checks.
+	if len(domain) > maxSigningDomainBytes || len(raw) > maxDescriptorBytes {
+		return nil
+	}
+	return append([]byte(domain), raw...)
 }
 
 func verifyMacOSPayloadTrust(payloadRoot string, runner func(string, ...string) (string, error)) error {
