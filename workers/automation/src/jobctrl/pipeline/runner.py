@@ -1341,6 +1341,10 @@ def plan_discovery_source_families(
         use_source_result_budget=use_source_result_budget, planning=True,
     )
     conn = init_db()
+    if discovery_execution is not None:
+        from jobctrl.infrastructure.discovery.execution_result_plan import check_result_plan_start
+
+        check_result_plan_start(conn, discovery_execution, limit=limit, bounded=limit > 0)
     search_cfg = config.load_search_config()
     try:
         seed_discovery_control_queues(conn, config.load_source_registry(search_cfg=search_cfg))
@@ -1377,7 +1381,7 @@ def plan_discovery_source_families(
 
     active_activity_slots = latest_active_max_concurrent_activities() or resolve_max_concurrent_activities().value
 
-    return {
+    plan = {
         "families": families,
         "progress_total": len(families) + 2,
         "start_count": 0,
@@ -1391,6 +1395,14 @@ def plan_discovery_source_families(
             source.source_id: source.crawl_budget for source in schedule.sources if source.should_run
         } if use_source_result_budget and limit > 0 else {},
     }
+    if discovery_execution is not None:
+        from jobctrl.infrastructure.discovery.execution_result_plan import freeze_result_plan
+
+        recorded = freeze_result_plan(
+            conn, discovery_execution, limit=limit, source_limits=plan["source_result_limits"], bounded=limit > 0,
+        )
+        plan["source_result_limits"] = recorded["source_result_limits"]
+    return plan
 
 
 def run_discovery_source_family(
@@ -1415,6 +1427,14 @@ def run_discovery_source_family(
         limit=limit, discovery_execution=discovery_execution,
         use_source_result_budget=use_source_result_budget, source_result_limits=source_result_limits,
     )
+    conn = get_connection()
+    if discovery_execution is not None:
+        from jobctrl.infrastructure.discovery.execution_result_plan import check_result_plan
+
+        check_result_plan(
+            conn, discovery_execution, limit=limit, source_limits=source_result_limits or {},
+            bounded=limit > 0, required=limit > 0,
+        )
     selected_source_ids = tuple(dict.fromkeys(source_id.strip() for source_id in source_ids if source_id.strip()))
     source_filter_active = bool(selected_source_ids)
     search_cfg = _apply_discovery_next_run_settings(
@@ -1424,7 +1444,6 @@ def run_discovery_source_family(
     bounded_workers = max(1, workers)
     provided_cancel_event = cancel_event
     cancel_event = cancel_event or threading.Event()
-    conn = get_connection()
     schedule = _plan_discovery_schedule(
         limit,
         source_ids=selected_source_ids,
@@ -1456,6 +1475,7 @@ def run_discovery_source_family(
         }
         result_budget = DiscoveryResultBudget(
             conn, discovery_execution, limit=limit, start_count=start_count, source_limits=effective_limits,
+            frozen_source_limits=frozen_limits, cancel_event=cancel_event,
         )
 
     def available_sources(sources: tuple[ScheduledSource, ...]) -> tuple[ScheduledSource, ...]:

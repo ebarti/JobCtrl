@@ -720,9 +720,12 @@ async def test_discovery_next_run_settings_stay_frozen_after_planning(
 
 
 def test_source_planning_does_not_run_hygiene_before_sources(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path, request,
 ) -> None:
-    monkeypatch.setattr(runner, "init_db", lambda: object())
+    path = tmp_path / "owned-source-plan.db"
+    conn = init_db(path)
+    request.addfinalizer(lambda: close_connection(path))
+    monkeypatch.setattr(runner, "init_db", lambda: conn)
     monkeypatch.setattr(runner.config, "load_search_config", lambda: {})
     monkeypatch.setattr(runner.config, "load_source_registry", lambda **_kwargs: [])
     monkeypatch.setattr(runner, "seed_discovery_control_queues", lambda *_args, **_kwargs: None)

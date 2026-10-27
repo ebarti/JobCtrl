@@ -1090,7 +1090,7 @@ sentence punctuation or separated by commas.
 For Discovery, save literal target settings and plan a run without an interpretation receipt or second approval. Inspect the actual JobStreaming query/location/remote parameters and each provider’s supported filters; capability warnings are not currently displayed in JobCtrl. Structurally valid fetched results must ingest without an extra model gate, even when they do not lexically resemble the query. Exact user-authored title exclusions retain durable filtered receipts. Exercise capture/ack interruption, lease fencing, retry idempotency and limits. Full-posting interpretation/scoring retain model authority and source provenance. Historical native cutovers preserve authored cells, canonical jobs, accepted files and raw captures.
 
 For execution result limits, run locked
-`pytest tests/test_discovery_result_budget.py tests/test_discovery_family_result_budget.py tests/test_jobstreaming_source_result_budget.py`
+`pytest tests/test_discovery_execution_result_plan.py tests/test_discovery_result_budget.py tests/test_discovery_family_result_budget.py tests/test_jobstreaming_source_result_budget.py`
 and `discovery-transactions`. Exercise actual family orchestration and real
 Temporal plan/source activities plus replay with controlled provider seams in
 owned file-backed SQLite workspaces. Race ATS and Workday through independent
@@ -1105,6 +1105,19 @@ Old bounded payloads missing the frozen plan/execution or explicitly disabling
 its authority must refuse before source planning, writes or acknowledgement,
 while current direct bounded calls default to the safe authority and completed
 workflow histories still replay.
+Also reproduce an old `true` plan with a same-execution unreceipted ATS admission:
+neither source execution nor reinvoking the planner may create fresh authority.
+Verify immutable plan fingerprints, cap/source/mode mismatches from independent
+canonical writers, plan disappearance/damage, transaction rollback and the absence
+of queries/private settings from the operational marker. Cancel Workday immediately
+after acquisition, after its first accepted commit and inside the next canonical
+claim: no later job/receipt/membership may commit, and the accepted prefix remains.
+Permanently delete an admitted Job and prove its operational receipt still
+exhausts the run. Interrupt generic capture recovery after canonical commit but
+before acknowledgement, then retry at zero allowance with both retained and
+deleted owners: acknowledgement finishes with no new admission, observation or
+Job recreation. The separate explicit full job/Discovery purge backs up and
+clears these null-Job execution records while preserving source-control state.
 
 For actual offers, drive the per-job offer HTTP/client entry and rendered
 Application outcomes panel without interview prep. Verify null equity,

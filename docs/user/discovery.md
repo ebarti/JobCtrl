@@ -405,8 +405,13 @@ Disabling a board before a retry closes its frozen units without another provide
 request. This intake admission remains separate from the later score and
 relevance decision.
 
-After an upgrade, an unfinished older bounded run may lack the frozen execution
-plan required by this admission authority. Its next activity refuses with a
+Current runs record their result cap and source allowances locally before
+sources start, then retain that authority across retries. Cancellation after a
+source fetch stops the next admission while keeping jobs already accepted.
+
+After an upgrade, an unfinished older bounded run may lack the current frozen
+execution authority, including runs whose old plan budgeted only broad boards.
+Its next activity refuses with a
 restart message before acquiring or acknowledging more postings. Start a new
 Discover run to continue; existing jobs, retained captures and checkpoints stay
 preserved. Completed workflow history remains replayable.

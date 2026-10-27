@@ -17,6 +17,7 @@ from jobctrl.domain.ports.discovery import CanonicalOwnerMatch
 from jobctrl.domain.tenant import TenantId
 from jobctrl.infrastructure.discovery.capture_recovery import recover_captured_postings
 from jobctrl.infrastructure.discovery.result_budget import DiscoveryResultBudget, DiscoveryResultLimitReached
+from jobctrl.infrastructure.discovery.execution_result_plan import freeze_result_plan
 from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
 from tests.test_captured_posting_recovery import capture
 from tests.test_discovery_identity import _job
@@ -34,6 +35,7 @@ def owned(tmp_path):
 
 
 def budget(conn, *, limit=1, start_count=0):
+    freeze_result_plan(conn, EXECUTION, limit=limit, source_limits={SOURCE: limit})
     return DiscoveryResultBudget(conn, EXECUTION, limit=limit, start_count=start_count, source_limits={SOURCE: limit})
 
 
@@ -60,7 +62,9 @@ def claim(parts):
 
 def totals(conn):
     return tuple(
-        conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in ("jobs", "job_locators", "job_events")
+        conn.execute(f"SELECT COUNT(*) FROM {table}" + (
+            " WHERE event_type <> 'DiscoveryResultPlanFrozen'" if table == "job_events" else ""
+        )).fetchone()[0] for table in ("jobs", "job_locators", "job_events")
     )
 
 
@@ -173,10 +177,10 @@ def test_literal_zero_budget_refuses_new_canonical_job(owned):
 def test_malformed_owned_receipt_fails_closed_and_foreign_run_does_not_consume(owned):
     allowance = budget(owned)
     assert claim(prepared(owned, allowance)) is None
-    row = owned.execute("SELECT payload_json FROM job_events").fetchone()
+    row = owned.execute("SELECT payload_json FROM job_events WHERE event_type='DiscoveryNewJobAdmitted'").fetchone()
     payload = json.loads(row[0])
     payload["decoder_version"] = True
-    owned.execute("UPDATE job_events SET payload_json=?", (json.dumps(payload),))
+    owned.execute("UPDATE job_events SET payload_json=? WHERE event_type='DiscoveryNewJobAdmitted'", (json.dumps(payload),))
     owned.commit()
     with pytest.raises(ValueError, match="invalid recorded"):
         allowance.counts()
@@ -238,10 +242,10 @@ def test_lineage_failure_cannot_commit_any_admission(owned, monkeypatch, phase, 
     from jobctrl.infrastructure.discovery.sqlite_search_unit_repository import SqliteDiscoverySearchUnitRepository
     from tests.test_discovery_search_unit_identity import _spec
 
+    allowance = budget(owned)
     search = SqliteDiscoverySearchUnitRepository(owned)
     search.plan_units(EXECUTION, [_spec()])
     lease = search.claim_next(EXECUTION, "owned-current-attempt", 1)
-    allowance = budget(owned)
     parts = list(prepared(owned, allowance))
     parts[0] = SqliteJobRepository(
         owned,
@@ -283,3 +287,65 @@ def test_lineage_failure_cannot_commit_any_admission(owned, monkeypatch, phase, 
     assert owned.in_transaction is caller_transaction
     assert owned.execute("SELECT COUNT(*) FROM owned_pending").fetchone()[0] == int(caller_transaction)
     owned.rollback()
+
+
+def test_permanent_job_delete_cannot_replenish_consumed_allowance(owned):
+    allowance = budget(owned)
+    parts = prepared(owned, allowance, "first-admitted")
+    assert claim(parts) is None
+    first_id = str(parts[1].job_id)
+    owned.execute("DELETE FROM jobs WHERE tenant_id='local' AND job_id=?", (first_id,))
+    owned.commit()
+    assert allowance.counts() == {SOURCE: 1} and allowance.run_exhausted()
+    receipt = owned.execute(
+        "SELECT job_id,entity_kind,entity_ref,payload_json FROM job_events WHERE event_type='DiscoveryNewJobAdmitted'"
+    ).fetchone()
+    assert tuple(receipt[:3]) == (None, "discovery_admission", first_id)
+    assert json.loads(receipt[3])["canonical_job_id"] == first_id
+    with pytest.raises(DiscoveryResultLimitReached):
+        claim(prepared(owned, allowance, "after-delete"))
+    assert owned.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+    assert allowance.counts() == {SOURCE: 1}
+    assert owned.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+@pytest.mark.parametrize("deleted", [False, True])
+def test_exact_admitted_capture_ack_finishes_at_cap_without_recreating_owner(owned, monkeypatch, deleted):
+    from jobctrl.infrastructure.discovery import capture_recovery
+
+    capture(owned, "interrupted-last-slot", source=SOURCE)
+    allowance = budget(owned)
+    original = capture_recovery.DiscoverJobsUseCase
+
+    class Interrupted(original):
+        def execute(self, **kwargs):
+            super().execute(**kwargs)
+            raise RuntimeError("owned interruption before acknowledgement")
+
+    def recover():
+        return recover_captured_postings(
+            owned, tenant_id="local", source_ids=(SOURCE,), source_family="jobspy", search_cfg={},
+            run_id="owned-capture-retry", discovery_execution=EXECUTION, limit=1, result_budget=allowance,
+        )
+
+    monkeypatch.setattr(capture_recovery, "DiscoverJobsUseCase", Interrupted)
+    with pytest.raises(RuntimeError, match="owned interruption"):
+        recover()
+    assert allowance.counts() == {SOURCE: 1} and allowance.run_exhausted()
+    assert owned.execute("SELECT consumed_at FROM posting_triage").fetchone()[0] is None
+    if deleted:
+        owned.execute("DELETE FROM jobs WHERE tenant_id='local'")
+        owned.commit()
+
+    def no_reingestion(*args, **kwargs):
+        pytest.fail("exact prior admission must acknowledge without ingestion or a new observation")
+
+    monkeypatch.setattr(capture_recovery, "DiscoverJobsUseCase", no_reingestion)
+    before_events = owned.execute("SELECT COUNT(*) FROM job_events").fetchone()[0]
+    assert recover()["recovered_captures"] == 1
+    assert owned.execute("SELECT consumed_at FROM posting_triage").fetchone()[0] is not None
+    assert owned.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == int(not deleted)
+    assert owned.execute("SELECT COUNT(*) FROM job_source_observations").fetchone()[0] == int(not deleted)
+    assert owned.execute("SELECT COUNT(*) FROM job_events").fetchone()[0] == before_events
+    assert allowance.counts() == {SOURCE: 1}
+    assert recover()["recovered_captures"] == 0

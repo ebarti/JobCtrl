@@ -236,6 +236,8 @@ class SqliteJobRepository:
     # ------------------------------------------------------------------
 
     def _fence_search_unit_write(self) -> None:
+        if self._result_budget is not None:
+            self._result_budget.fence_write()
         if self._search_unit_repository is None:
             return
         assert self._search_unit_lease is not None
@@ -530,8 +532,6 @@ class SqliteJobRepository:
         identity = self.resolve_by_job_id(job.tenant_id, candidate_job_id)
         if identity is None:
             raise RuntimeError("Inserted Job is missing its stable identity alias")
-        if self._result_budget is not None:
-            self._result_budget.record_insert(str(candidate_job_id), self._result_budget_source_id)
         return identity, True
 
     def soft_delete(
@@ -648,6 +648,11 @@ class SqliteJobRepository:
                     basis="canonical_url_match",
                 )
 
+            if self._result_budget is not None:
+                self._result_budget.record_insert(
+                    str(persisted_identity.job_id), self._result_budget_source_id,
+                    observation_id=observation.source_observation_id, source_run_id=observation.run_id,
+                )
             self._sync_tombstone(job, persisted_identity)
             self._set_canonical_identity(persisted_identity, identity)
             owner_match = self._attach_source_observation(

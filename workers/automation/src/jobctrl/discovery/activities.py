@@ -189,6 +189,16 @@ def plan_discovery_sources(payload: PlanDiscoverySourcesInput) -> PlanDiscoveryS
         )
     except JobCtrlError as exc:
         raise to_application_error(exc) from exc
+    if payload.discovery_execution is not None:
+        from jobctrl.database import get_connection
+        from jobctrl.infrastructure.discovery.execution_result_plan import check_result_plan_start
+
+        try:
+            check_result_plan_start(
+                get_connection(), payload.discovery_execution, limit=payload.limit, bounded=payload.limit > 0,
+            )
+        except JobCtrlError as exc:
+            raise to_application_error(exc) from exc
     lifecycle = begin_pipeline_step_attempt(
         _pipeline_step_scope(
             payload.discovery_execution,
@@ -252,6 +262,17 @@ async def discovery_source_family_activity(
         expected_app_dir=payload.expected_app_dir,
         expected_db_path=payload.expected_db_path,
     )
+    if payload.discovery_execution is not None:
+        from jobctrl.database import get_connection
+        from jobctrl.infrastructure.discovery.execution_result_plan import check_result_plan
+
+        try:
+            check_result_plan(
+                get_connection(), payload.discovery_execution, limit=payload.limit,
+                source_limits=payload.source_result_limits, bounded=payload.limit > 0, required=payload.limit > 0,
+            )
+        except JobCtrlError as exc:
+            raise to_application_error(exc) from exc
     lifecycle = begin_pipeline_step_attempt(
         _pipeline_step_scope(
             payload.discovery_execution,

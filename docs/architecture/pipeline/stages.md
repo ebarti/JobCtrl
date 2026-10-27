@@ -112,12 +112,25 @@ Key facts about the four activities:
   Zero remaining capacity refuses a new canonical insert, while an explicitly
   unbounded user request has no bounded admission authority. Recovery may still
   finish an already-admitted capture at the cap before fresh acquisition stops.
+  The current planner first records `DiscoveryResultPlanFrozen` in `job_events`,
+  binding the tenant/workflow/run, bounded or unbounded mode, cap, source-ID
+  allowances and an integrity digest. It stores no queries or private search
+  configuration. Retries retain the original cap and source allowances. A
+  marker cannot be created for an execution that already has source effects;
+  old `true` flags only budgeted broad boards and cannot establish all-family
+  authority. Source activities validate the marker before lifecycle/provider
+  effects; canonical writers validate it again under their writer transaction,
+  including cancellation, before publishing a new admission. An existing marker
+  cannot be rebound to a different cap or execution mode.
   Older pending bounded activity inputs without a frozen execution plan fail
   closed with a restart-after-upgrade configuration error before acquisition or
   canonical persistence. Completed activity history replays unchanged; no plan
   or admission receipts are reconstructed from historical job counts.
 
-  Cancellation prevents further ingestion. The broad-board family persists source events before processing, so retries drain unfinished capture under the same execution/lease and exact identity fences without a new intake model call.
+  Cancellation prevents further ingestion. Workday checks again after acquisition
+  and before each card, retaining earlier accepted commits. Budgeted canonical
+  writers recheck the same cancellation signal inside the claim transaction.
+  The broad-board family persists source events before processing, so retries drain unfinished capture under the same execution/lease and exact identity fences without a new intake model call.
 
   The broad-board family further decomposes the immutable search plan into one
   query/location/board unit per JobStreaming stream. Each admitted lead is

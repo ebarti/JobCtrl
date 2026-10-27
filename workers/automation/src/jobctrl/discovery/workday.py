@@ -498,8 +498,11 @@ def store_results(
     discovery_execution: DiscoveryExecutionRef | None = None,
     search_cfg: dict | None = None,
     result_budget: DiscoveryResultBudget | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> tuple[int, int]:
     """Store corporate jobs through the Discovery write boundary."""
+    if cancel_event is not None and cancel_event.is_set():
+        raise TransientNetworkError("Workday discovery canceled")
     now = datetime.now(timezone.utc).isoformat()
     active_cfg = search_cfg if search_cfg is not None else config.load_saved_search_settings()
     use_case = DiscoverJobsUseCase(
@@ -511,10 +514,12 @@ def store_results(
         ),
         publisher=_DiscoveryEventPublisher(conn),
     )
-    if limit > 0 or result_budget is not None:
+    if limit > 0 or result_budget is not None or cancel_event is not None:
         new_jobs = 0
         observed_jobs = 0
         for job in jobs:
+            if cancel_event is not None and cancel_event.is_set():
+                raise TransientNetworkError("Workday discovery canceled")
             if limit > 0 and new_jobs >= limit:
                 break
             posting = _posting_from_job(job, employers)
@@ -533,6 +538,8 @@ def store_results(
                     ),
                     publisher=_DiscoveryEventPublisher(conn),
                 )
+            if cancel_event is not None and cancel_event.is_set():
+                raise TransientNetworkError("Workday discovery canceled")
             try:
                 summary = use_case.execute(
                     tenant_id=LOCAL_TENANT,
@@ -597,6 +604,8 @@ def _process_one(
         cancel_event=cancel_event,
         search_cfg=search_cfg,
     )
+    if cancel_event is not None and cancel_event.is_set():
+        raise TransientNetworkError("Workday discovery canceled")
     jobs = result.pop("jobs", [])
     if not jobs:
         return result
@@ -605,6 +614,7 @@ def _process_one(
         conn, jobs, employers, limit=limit, run_id=run_id, discovery_execution=discovery_execution,
         search_cfg=search_cfg,
         **({"result_budget": result_budget} if result_budget is not None else {}),
+        **({"cancel_event": cancel_event} if cancel_event is not None else {}),
     )
     log.info("%s: %d new, %d already in DB", result["employer"], new, existing)
     return {**result, "new": new, "existing": existing}
@@ -733,6 +743,7 @@ def scrape_employers(
                             discovery_execution=discovery_execution,
                             search_cfg=search_cfg,
                             **({"result_budget": result_budget} if result_budget is not None else {}),
+                            **({"cancel_event": cancel_event} if cancel_event is not None else {}),
                         )
                         result = {**result, "found": len(jobs), "new": new, "existing": existing}
                 total_new += result["new"]

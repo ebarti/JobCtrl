@@ -19,6 +19,34 @@ from jobctrl.infrastructure.discovery.result_budget import DiscoveryResultLimitR
 _CAPTURE_FAILURE_CODES = ("captured_posting_invalid", "captured_posting_source_mismatch")
 
 
+def acknowledge_admitted_capture(
+    conn, result_budget, *, tenant_id, listing_id, snapshot, target, source_id, capture_key, write_fence=None,
+):
+    """Finish an exact prior admission, even at zero capacity or after Job deletion."""
+    owns = not conn.in_transaction
+    conn.execute("BEGIN IMMEDIATE" if owns else "SAVEPOINT acknowledge_admitted_capture")
+    try:
+        result_budget.fence_write()
+        if write_fence is not None:
+            write_fence()
+        admitted = result_budget.admitted_job_for_observation(source_id, f"capture:{capture_key}")
+        if admitted is not None:
+            conn.execute(
+                "UPDATE posting_triage SET consumed_at=? WHERE tenant_id=? AND listing_id=? "
+                "AND snapshot_fingerprint=? AND target_fingerprint=? AND source_id=? AND consumed_at IS NULL",
+                (datetime.now(timezone.utc).isoformat(), str(tenant_id), listing_id, snapshot, target, source_id),
+            )
+        conn.commit() if owns else conn.execute("RELEASE SAVEPOINT acknowledge_admitted_capture")
+        return admitted is not None
+    except BaseException:
+        if owns:
+            conn.rollback()
+        else:
+            conn.execute("ROLLBACK TO SAVEPOINT acknowledge_admitted_capture")
+            conn.execute("RELEASE SAVEPOINT acknowledge_admitted_capture")
+        raise
+
+
 def recover_captured_postings(
     conn,
     *,
@@ -60,13 +88,21 @@ def recover_captured_postings(
             break
         if limit > 0 and result["new"] >= limit:
             break
+        capture_key = hashlib.sha256(
+            json.dumps([str(tenant_id), listing_id, snapshot, target]).encode()
+        ).hexdigest()
+        if source_family != "smartextract" and result_budget is not None:
+            if acknowledge_admitted_capture(
+                conn, result_budget, tenant_id=tenant_id, listing_id=listing_id, snapshot=snapshot,
+                target=target, source_id=source_id, capture_key=capture_key,
+            ):
+                result["existing"] += 1
+                result["recovered_captures"] += 1
+                continue
         if result_budget is not None and (
             result_budget.run_exhausted() or result_budget.source_exhausted(source_id)
         ):
             continue
-        capture_key = hashlib.sha256(
-            json.dumps([str(tenant_id), listing_id, snapshot, target]).encode()
-        ).hexdigest()
         failure = None
         try:
             posting = TypeAdapter(ScrapedJobPosting).validate_json(payload)

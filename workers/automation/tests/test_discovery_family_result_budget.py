@@ -27,6 +27,7 @@ from jobctrl.domain.discovery.source_registry import (
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.discovery import production_wiring
 from jobctrl.infrastructure.discovery.result_budget import DiscoveryResultBudget
+from jobctrl.infrastructure.discovery.execution_result_plan import freeze_result_plan
 from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
 from jobctrl.infrastructure.temporal import run_in_activity
 from jobctrl.pipeline import runner
@@ -73,6 +74,7 @@ def owned(tmp_path, monkeypatch):
         entry(SMART, SourceKind.EMPLOYER_CAREERS_PAGE, {"name": "Owned Careers", "url": "https://example.test/careers"}),
         entry(BOARD, SourceKind.BROAD_BOARD, {"board": "indeed"}),
     ]
+    state.registry = registry
     monkeypatch.setattr(config, "load_source_registry", lambda **k: list(registry))
     monkeypatch.setattr(config, "load_search_config", lambda: cfg)
     monkeypatch.setattr(config, "load_sites_config", lambda: {})
@@ -149,6 +151,12 @@ def plan(state, *, limit=1, sources=SOURCES, execution=EXECUTION):
     )
 
 
+def set_source_cap(state, source_id, cap):
+    for index, source in enumerate(state.registry):
+        if source.source_id == source_id:
+            state.registry[index] = replace(source, policy=replace(source.policy, max_pages_per_run=cap))
+
+
 def receipts(conn, execution=EXECUTION):
     rows = conn.execute(
         "SELECT payload_json FROM job_events WHERE tenant_id=? AND event_type='DiscoveryNewJobAdmitted' "
@@ -172,6 +180,7 @@ def test_actual_family_intake_uses_only_execution_receipts(owned, family, source
                 _job(f"https://example.test/unrelated/{tenant}"), tenant_id=TenantId(tenant),
             ))
     other = DiscoveryExecutionRef("local", EXECUTION.workflow_id, "unrelated-run")
+    freeze_result_plan(owned.conn, other, limit=1, source_limits={source: 1})
     other_budget = DiscoveryResultBudget(owned.conn, other, limit=1, start_count=0, source_limits={source: 1})
     repo = SqliteJobRepository(owned.conn, discovery_execution=other, source_family=family,
                              result_budget=other_budget, result_budget_source_id=source)
@@ -242,8 +251,8 @@ def test_exhausted_zero_never_becomes_positive_source_allowance(owned, family, s
 
 
 def test_per_source_cap_leaves_other_family_capacity(owned):
+    set_source_cap(owned, ATS, 1)
     kwargs = plan(owned, limit=3, sources=(ATS, WORKDAY))
-    kwargs["source_result_limits"][ATS] = 1
     first = runner.run_discovery_source_family("ats_api", **kwargs)
     second = runner.run_discovery_source_family("workday", **kwargs)
     assert first["result"]["new"] == 1
@@ -253,8 +262,8 @@ def test_per_source_cap_leaves_other_family_capacity(owned):
 
 @pytest.mark.parametrize("family,source", [("workday", WORKDAY), ("smartextract", SMART), ("jobspy", BOARD)])
 def test_exhausted_source_does_not_refetch_while_other_family_has_capacity(owned, family, source):
+    set_source_cap(owned, source, 1)
     kwargs = plan(owned, limit=3, sources=(ATS, source))
-    kwargs["source_result_limits"][source] = 1
     first = runner.run_discovery_source_family(family, **kwargs)
     requests = list(owned.requests), list(ManyIndeed.requests)
     second = runner.run_discovery_source_family(family, **kwargs)
@@ -311,6 +320,75 @@ def test_old_pending_bounded_payload_refuses_before_any_effect(owned, monkeypatc
     assert [tuple(row) for row in owned.conn.execute("SELECT * FROM posting_triage")] == before
     assert not receipts(owned.conn) and not owned.requests
     assert owned.conn.execute("SELECT COUNT(*) FROM discovery_runs").fetchone()[0] == 0
+
+
+def test_old_true_plan_without_all_family_authority_cannot_reset_admissions(owned):
+    from jobctrl.domain.discovery import CanonicalJobIdentity, JobSourceObservation
+    # Before this repair, the TRUE flag only budgeted broad boards. Model a
+    # prior completed ATS activity under that same execution without a receipt.
+    job = _job("https://example.test/old-true/unreceipted-ats")
+    SqliteJobRepository(owned.conn, discovery_execution=EXECUTION, source_family="ats_api").claim_new_job(
+        job, CanonicalJobIdentity(job.posting_url.value, AtsKind.OTHER, "old-true", 1.0),
+        JobSourceObservation("old-true-observation", ATS, "old-true", job.posting_url.value,
+                             "old-true-source-run", "2026-01-01T00:00:00Z"),
+    )
+    assert owned.conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+    assert not receipts(owned.conn)
+    from jobctrl.domain.errors import ConfigurationError
+    with pytest.raises(ConfigurationError, match="Restart Discovery after upgrading"):
+        runner.run_discovery_source_family(
+            "workday", limit=1, source_ids=(ATS, WORKDAY), discovery_execution=EXECUTION,
+            use_source_result_budget=True, source_result_limits={ATS: 1, WORKDAY: 1},
+        )
+    assert owned.conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+    assert owned.requests == []
+
+
+def test_current_planner_cannot_bless_old_unreceipted_source_effects(owned):
+    from jobctrl.domain.discovery import CanonicalJobIdentity, JobSourceObservation
+    job = _job("https://example.test/old-replan/unreceipted")
+    SqliteJobRepository(owned.conn, discovery_execution=EXECUTION, source_family="ats_api").claim_new_job(
+        job, CanonicalJobIdentity(job.posting_url.value, AtsKind.OTHER, "old-replan", 1.0),
+        JobSourceObservation("old-replan-observation", ATS, "old-replan", job.posting_url.value,
+                             "old-replan-source", "2026-01-01T00:00:00Z"),
+    )
+    from jobctrl.domain.errors import ConfigurationError
+    with pytest.raises(ConfigurationError, match="Restart Discovery after upgrading"):
+        plan(owned, sources=(ATS, WORKDAY))
+    assert owned.conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+    assert owned.conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type='DiscoveryResultPlanFrozen'").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("boundary,expected", [("after_fetch", 0), ("after_first_commit", 1), ("inside_claim", 0)])
+def test_workday_cancellation_fences_acquisition_and_each_admission(owned, monkeypatch, boundary, expected):
+    kwargs = plan(owned, limit=3, sources=(WORKDAY,))
+    cancel = threading.Event()
+    search = workday._search_and_fetch_one
+    canonical_claim = SqliteJobRepository.claim_new_job
+
+    def fetched(*args, **kw):
+        result = search(*args, **kw)
+        if boundary == "after_fetch":
+            cancel.set()
+        return result
+
+    def claimed(repo, *args):
+        if boundary == "inside_claim":
+            cancel.set()
+        result = canonical_claim(repo, *args)
+        if boundary == "after_first_commit":
+            cancel.set()
+        return result
+
+    monkeypatch.setattr(workday, "_search_and_fetch_one", fetched)
+    monkeypatch.setattr(SqliteJobRepository, "claim_new_job", claimed)
+    from jobctrl.domain.errors import SourceUnavailableError
+    with pytest.raises(SourceUnavailableError, match="canceled"):
+        runner.run_discovery_source_family("workday", **kwargs, cancel_event=cancel)
+    assert owned.conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == expected
+    assert len(receipts(owned.conn)) == expected
+    assert owned.conn.execute("SELECT COUNT(*) FROM discovery_execution_jobs").fetchone()[0] == expected
+    assert not owned.conn.in_transaction
 
 
 def test_current_direct_bounded_path_defaults_to_safe_authority(owned):
