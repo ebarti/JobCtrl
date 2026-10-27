@@ -734,13 +734,13 @@ def test_timeout_kills_only_registered_claude_process_tree(monkeypatch, tmp_path
     def fake_monotonic() -> float:
         return next(times, 1.0)
 
-    def fake_kill(pid: int) -> None:
-        killed.append(pid)
+    def fake_kill(_proc, *, launched_pid: int) -> None:
+        killed.append(launched_pid)
         assert _HangingPopen.last is not None
         _HangingPopen.last.returncode = -9
 
     monkeypatch.setattr(claude_code_cli.time, "monotonic", fake_monotonic)
-    monkeypatch.setattr("jobctrl.apply.chrome._kill_process_tree", fake_kill)
+    monkeypatch.setattr("jobctrl.infrastructure.process_ownership.terminate_owned_process", fake_kill)
 
     adapter = ClaudeCodeCliAdapter(
         log_dir=tmp_path,
@@ -766,8 +766,8 @@ def test_timeout_keeps_usage_received_before_process_hangs(monkeypatch, tmp_path
     times = iter([0.0, 0.0, 1.0])
     monkeypatch.setattr(claude_code_cli.time, "monotonic", lambda: next(times, 1.0))
     monkeypatch.setattr(
-        "jobctrl.apply.chrome._kill_process_tree",
-        lambda _pid: setattr(_UsageThenHangPopen.last, "returncode", -9),
+        "jobctrl.infrastructure.process_ownership.terminate_owned_process",
+        lambda _proc, *, launched_pid: setattr(_UsageThenHangPopen.last, "returncode", -9),
     )
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr("jobctrl.llm.record_llm_spend", lambda **kwargs: calls.append(kwargs))
@@ -788,11 +788,11 @@ def test_adapter_active_process_registry_kills_registered_process(monkeypatch) -
     proc = _HangingPopen(["claude"])
     killed: list[int] = []
 
-    def fake_kill(pid: int) -> None:
-        killed.append(pid)
+    def fake_kill(_proc, *, launched_pid: int) -> None:
+        killed.append(launched_pid)
         proc.returncode = -9
 
-    monkeypatch.setattr("jobctrl.apply.chrome._kill_process_tree", fake_kill)
+    monkeypatch.setattr("jobctrl.infrastructure.process_ownership.terminate_owned_process", fake_kill)
 
     claude_code_cli._register_active_claude_process(0, proc)
     kill_active_claude_processes()
