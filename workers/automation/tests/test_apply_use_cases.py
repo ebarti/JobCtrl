@@ -453,12 +453,15 @@ def test_execute_keeps_reviewed_materials_outside_agent_worker(
         approved_application_url="": FakeChromeProc(),
     )
 
+    monkeypatch.setattr(chrome_mod, "get_worker_endpoint", lambda _worker, _process: (46817, "ws://127.0.0.1:46817/devtools/browser/synthetic"), raising=False)
+
     class PathCheckingAgent:
         def submit_application(self, *, prompt, **_kwargs):
             upload_path = Path(worker_dir) / "Test_Applicant_Resume.pdf"
             assert not upload_path.exists()
             assert str(upload_path) not in prompt.text
             assert "upload_artifact" not in prompt.text
+            assert prompt.mcp_config["port"] == 46817
             return AgentResult(
                 submission_result=DryRunComplete(
                     navigated_to="https://example.com/apply",

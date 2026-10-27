@@ -1410,6 +1410,9 @@ func signedDescriptorSignatureWithDomain(private ed25519.PrivateKey, raw []byte,
 
 func localFixture(t *testing.T, root string) (archivePath, descriptorPath, signaturePath string) {
 	t.Helper()
+	// Options.Environment may be nil in acquisition tests. Its fallback must
+	// resolve an owned workspace rather than inspect the test runner's home.
+	t.Setenv("JOBCTRL_DIR", filepath.Join(root, "owned-default-workspace"))
 	const runtimeManifest = `{"schemaVersion":1,"launcherProtocol":2,"ports":{"temporalGrpc":7233,"temporalUi":8233,"api":8766},"components":[{"name":"temporal","executable":"temporal/temporal","arguments":["server"]},{"name":"worker","executable":"python/bin/python3","arguments":["-I","-B","-m","jobctrl","worker"]},{"name":"api","executable":"node/bin/node","arguments":["${PAYLOAD_ROOT}/api/server.mjs"]}],"health":{"temporal":{"component":"temporal","arguments":["operator"]},"api":{"path":"/v1/health","requireWorkerHealthy":true,"requireWorkerPid":true}}}`
 	files := []struct {
 		path, text, component, componentPath, mode string

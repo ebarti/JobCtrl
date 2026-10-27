@@ -592,7 +592,7 @@ func TestExecutionMembersRetriesUncertainZero(t *testing.T) {
 				return
 			}
 			if scenario == "persistent-uncertainty" {
-				if err == nil || passes != 32 {
+				if err == nil || reads != 32 {
 					t.Fatalf("persistent uncertainty certified zero: %v passes=%d", err, passes)
 				}
 				return
@@ -698,7 +698,7 @@ func TestOwnedExecutionMalformedReceiptPreserved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope := executionScope{1, id, ctx.Instance.ID, ctx.Instance.StateDir, ctx.Instance.RuntimeHome, boot, "dev.jobctrl.exec." + ctx.Instance.ID + "." + id, "gui/" + strconv.Itoa(os.Getuid()), 123, "123:1234:123", [2]uint64{123, 124}}
+	scope := executionScope{1, id, ctx.Instance.ID, ctx.Instance.StateDir, ctx.Instance.RuntimeHome, boot, "dev.jobctrl.exec." + ctx.Instance.ID + "." + id, "gui/" + strconv.Itoa(os.Getuid()), 123, "123:1234:123", [2]uint64{123, 124}, ""}
 	valid, err := json.Marshal(scope)
 	if err != nil {
 		t.Fatal(err)
@@ -823,7 +823,7 @@ func TestOwnedExecutionTemporaryReceiptsAndRetirement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope := executionScope{1, id, ctx.Instance.ID, ctx.Instance.StateDir, ctx.Instance.RuntimeHome, boot, "dev.jobctrl.exec." + ctx.Instance.ID + "." + id, "gui/" + strconv.Itoa(os.Getuid()), 123, "123:1234:123", [2]uint64{123, 124}}
+	scope := executionScope{1, id, ctx.Instance.ID, ctx.Instance.StateDir, ctx.Instance.RuntimeHome, boot, "dev.jobctrl.exec." + ctx.Instance.ID + "." + id, "gui/" + strconv.Itoa(os.Getuid()), 123, "123:1234:123", [2]uint64{123, 124}, ""}
 	if err = writeJSONAtomic(filepath.Join(dir, id+".json"), scope); err != nil {
 		t.Fatal(err)
 	}

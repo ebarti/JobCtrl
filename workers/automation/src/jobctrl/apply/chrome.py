@@ -6,12 +6,16 @@ worker profile setup/cloning, and cross-platform process cleanup.
 
 import json
 import logging
+import os
 import platform
 import shutil
 import socket
+import stat
 import subprocess
 import threading
+import tempfile
 import time
+from dataclasses import dataclass
 from hashlib import sha256
 from collections.abc import Iterable
 from pathlib import Path
@@ -30,7 +34,7 @@ from jobctrl.infrastructure.process_ownership import ProcessOwnershipError, term
 
 logger = logging.getLogger(__name__)
 
-# CDP port base — each worker uses BASE_CDP_PORT + worker_id
+# Legacy caller hint only; Chrome assigns every launched browser its own port.
 BASE_CDP_PORT = 9222
 _CDP_READY_TIMEOUT_SECONDS = 10.0
 _CDP_READY_POLL_SECONDS = 0.1
@@ -42,6 +46,20 @@ _chrome_identities: dict[int, tuple[subprocess.Popen, int]] = {}
 _launching_workers: set[int] = set()
 _launching_ports: set[int] = set()
 _chrome_lock = threading.RLock()
+
+
+@dataclass(frozen=True)
+class _BrowserEndpoint:
+    process: subprocess.Popen
+    pid: int
+    profile_dir: Path
+    file_identity: tuple[int, int]
+    file_bytes: bytes
+    port: int
+    browser_ws: str
+
+
+_chrome_endpoints: dict[int, _BrowserEndpoint] = {}
 _dry_run_guards: dict[int, "_DryRunCdpGuard"] = {}
 _dry_run_guards_lock = threading.Lock()
 _public_destination_guards: dict[int, "_PublicDestinationCdpGuard"] = {}
@@ -102,7 +120,7 @@ def _require_available_cdp_port(port: int) -> None:
 # ---------------------------------------------------------------------------
 
 def setup_worker_profile(worker_id: int) -> Path:
-    """Create or reuse an isolated, JobCtrl-owned Chrome profile for a worker.
+    """Create a fresh private Chrome profile for exactly one browser launch.
 
     This function intentionally never discovers, reads, or copies a host
     browser profile. Authentication for a system browser is an explicit
@@ -114,12 +132,10 @@ def setup_worker_profile(worker_id: int) -> Path:
     Returns:
         Path to the worker's Chrome user-data directory.
     """
-    profile_dir = config.CHROME_WORKER_DIR / f"worker-{worker_id}"
-    if (profile_dir / "Default").exists():
-        return profile_dir  # Already initialized
-    profile_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    config.CHROME_WORKER_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    profile_dir = Path(tempfile.mkdtemp(prefix=f"worker-{worker_id}-", dir=config.CHROME_WORKER_DIR))
     profile_dir.chmod(0o700)
-    (profile_dir / "Default").mkdir(mode=0o700, exist_ok=True)
+    (profile_dir / "Default").mkdir(mode=0o700)
     return profile_dir
 
 
@@ -162,7 +178,7 @@ def launch_chrome(
 
     Args:
         worker_id: Numeric worker identifier.
-        port: CDP port. Defaults to BASE_CDP_PORT + worker_id.
+        port: Legacy validated caller hint; Chrome always binds an assigned port.
         headless: Run Chrome in headless mode (no visible window).
 
     Returns:
@@ -176,16 +192,13 @@ def launch_chrome(
     # request boundary.
     canonical_http_origin(approved_application_url)
 
-    if port is None:
-        port = BASE_CDP_PORT + worker_id
+    if port is not None and (type(port) is not int or not 0 <= port <= 65535):
+        raise BrowserCapabilityError("Apply browser CDP port hint must be between 0 and 65535")
 
     with _chrome_lock:
         if worker_id in _chrome_procs or worker_id in _launching_workers:
             raise BrowserCapabilityError(f"Apply browser worker {worker_id} already has an owner")
-        if port in _launching_ports:
-            raise BrowserCapabilityError(f"Apply browser port {port} is already being acquired")
         _launching_workers.add(worker_id)
-        _launching_ports.add(port)
 
     try:
         return _launch_chrome_owned(
@@ -195,22 +208,27 @@ def launch_chrome(
     finally:
         with _chrome_lock:
             _launching_workers.discard(worker_id)
-            _launching_ports.discard(port)
 
 
 def _launch_chrome_owned(
-    worker_id: int, port: int, headless: bool, dry_run: bool, *,
+    worker_id: int, port: int | None, headless: bool, dry_run: bool, *,
     chrome_exe: str, approved_application_url: str,
 ) -> subprocess.Popen:
-    _require_available_cdp_port(port)
+    # Preserve explicit occupied-hint refusal for callers. This probe conveys
+    # no endpoint ownership: Chrome still binds port 0 and publishes its own.
+    if port:
+        _require_available_cdp_port(port)
     profile_dir = setup_worker_profile(worker_id)
+    if (profile_dir / "DevToolsActivePort").exists() or (profile_dir / "DevToolsActivePort").is_symlink():
+        raise BrowserCapabilityError("Apply browser profile already contains a CDP endpoint")
 
     # Patch preferences to suppress restore nag
     _suppress_restore_nag(profile_dir)
 
     cmd = [
         chrome_exe,
-        f"--remote-debugging-port={port}",
+        "--remote-debugging-port=0",
+        "--remote-debugging-address=127.0.0.1",
         f"--user-data-dir={profile_dir}",
         "--profile-directory=Default",
         "--no-first-run",
@@ -235,7 +253,9 @@ def _launch_chrome_owned(
     if platform.system() != "Windows":
         kwargs["start_new_session"] = True
 
-    proc = subprocess.Popen(cmd, **kwargs)
+    from jobctrl.apply.ownership import spawn_owned_apply_process
+
+    proc = spawn_owned_apply_process(worker_id, "browser", cmd, **kwargs)
     with _chrome_lock:
         _chrome_procs[worker_id] = proc
         _chrome_identities[worker_id] = (proc, proc.pid)
@@ -245,7 +265,13 @@ def _launch_chrome_owned(
         # than a fixed delay. The synchronous guard startup below does not
         # return until every initial page acknowledges Fetch.enable and
         # browser-level paused auto-attach protects future pages.
-        _wait_for_browser_cdp_endpoint(port, proc)
+        endpoint = _wait_for_owned_endpoint_file(worker_id, proc, profile_dir)
+        port = endpoint.port
+        _wait_for_browser_cdp_endpoint(port, proc, expected_browser_ws=endpoint.browser_ws)
+        with _chrome_lock:
+            _require_live_browser(worker_id, proc)
+            _chrome_endpoints[worker_id] = endpoint
+        get_worker_endpoint(worker_id, proc)
         if dry_run:
             install_dry_run_cdp_guard(
                 port,
@@ -268,6 +294,90 @@ def _launch_chrome_owned(
     return proc
 
 
+def _require_live_browser(worker_id: int, process: subprocess.Popen) -> None:
+    identity = _chrome_identities.get(worker_id)
+    if (
+        _chrome_procs.get(worker_id) is not process
+        or identity is None or identity[0] is not process
+        or identity[1] != process.pid or process.poll() is not None
+    ):
+        raise BrowserCapabilityError("Cannot verify live Apply browser launch ownership")
+
+
+def _read_private_endpoint(profile_dir: Path) -> tuple[int, str, tuple[int, int], bytes]:
+    """Read only the launch's fresh private Chrome-generated endpoint file."""
+    directory = profile_dir.lstat()
+    if (
+        not stat.S_ISDIR(directory.st_mode) or directory.st_mode & 0o077
+        or (hasattr(os, "getuid") and directory.st_uid != os.getuid())
+    ):
+        raise BrowserCapabilityError("Apply browser profile must be a private directory")
+    fd = os.open(profile_dir / "DevToolsActivePort", os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    try:
+        identity = os.fstat(fd)
+        if not stat.S_ISREG(identity.st_mode) or identity.st_nlink != 1 or identity.st_mode & 0o022:
+            raise BrowserCapabilityError("Apply browser endpoint file is not privately owned")
+        if hasattr(os, "getuid") and identity.st_uid != os.getuid():
+            raise BrowserCapabilityError("Apply browser endpoint file has another owner")
+        raw = os.read(fd, 4097)
+    finally:
+        os.close(fd)
+    try:
+        lines = raw.decode("ascii").splitlines()
+        if len(raw) > 4096 or len(lines) != 2 or not lines[0].isdigit():
+            raise ValueError("invalid endpoint format")
+        port = int(lines[0])
+        path = lines[1]
+        token = path.removeprefix("/devtools/browser/")
+        if (
+            not 1 <= port <= 65535 or not path.startswith("/devtools/browser/")
+            or not token or any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for char in token)
+        ):
+            raise ValueError("invalid browser endpoint")
+    except (UnicodeError, ValueError) as exc:
+        raise BrowserCapabilityError("Apply browser endpoint file is malformed") from exc
+    return port, f"ws://127.0.0.1:{port}{path}", (identity.st_dev, identity.st_ino), raw
+
+
+def _wait_for_owned_endpoint_file(
+    worker_id: int, process: subprocess.Popen, profile_dir: Path,
+) -> _BrowserEndpoint:
+    deadline = time.monotonic() + _CDP_READY_TIMEOUT_SECONDS
+    while True:
+        with _chrome_lock:
+            _require_live_browser(worker_id, process)
+        try:
+            port, browser_ws, identity, raw = _read_private_endpoint(profile_dir)
+            return _BrowserEndpoint(process, process.pid, profile_dir, identity, raw, port, browser_ws)
+        except FileNotFoundError:
+            pass  # Chrome publishes the file after its own successful bind.
+        if time.monotonic() >= deadline:
+            raise BrowserCapabilityError("Chrome did not publish its private CDP endpoint")
+        time.sleep(_CDP_READY_POLL_SECONDS)
+
+
+def get_worker_endpoint(worker_id: int, process: subprocess.Popen) -> tuple[int, str]:
+    """Return the endpoint bound to this exact live worker launch, or refuse."""
+    with _chrome_lock:
+        _require_live_browser(worker_id, process)
+        endpoint = _chrome_endpoints.get(worker_id)
+        if endpoint is None or endpoint.process is not process or endpoint.pid != process.pid:
+            raise BrowserCapabilityError("Apply browser has no owned CDP endpoint")
+        try:
+            port, browser_ws, identity, raw = _read_private_endpoint(endpoint.profile_dir)
+        except OSError as exc:
+            raise BrowserCapabilityError("Apply browser private CDP endpoint is unavailable") from exc
+        if (port, browser_ws, identity, raw) != (
+            endpoint.port, endpoint.browser_ws, endpoint.file_identity, endpoint.file_bytes,
+        ):
+            raise BrowserCapabilityError("Apply browser private CDP endpoint changed")
+        version = _cdp_json(port, "/json/version")
+        if not isinstance(version, dict) or version.get("webSocketDebuggerUrl") != browser_ws:
+            raise BrowserCapabilityError("Apply browser CDP endpoint identity changed")
+        _require_live_browser(worker_id, process)
+        return port, browser_ws
+
+
 def _wait_for_browser_cdp_endpoint(
     port: int,
     process: subprocess.Popen,
@@ -275,6 +385,7 @@ def _wait_for_browser_cdp_endpoint(
     timeout_seconds: float = _CDP_READY_TIMEOUT_SECONDS,
     poll_seconds: float = _CDP_READY_POLL_SECONDS,
     stable_probes: int = _CDP_READY_STABLE_PROBES,
+    expected_browser_ws: str | None = None,
 ) -> None:
     deadline = time.monotonic() + timeout_seconds
     ready_url = ""
@@ -290,6 +401,8 @@ def _wait_for_browser_cdp_endpoint(
             if isinstance(version, dict)
             else ""
         )
+        if candidate_url and expected_browser_ws is not None and candidate_url != expected_browser_ws:
+            raise BrowserCapabilityError("Chrome browser-level CDP endpoint identity does not match its private profile")
         if candidate_url and candidate_url == ready_url:
             ready_count += 1
         elif candidate_url:
@@ -721,12 +834,17 @@ class _BrowserApplyGuardSession:
             raise BrowserCapabilityError(
                 "websocket-client is required for apply CDP enforcement"
             ) from exc
-        version = _cdp_json(port, "/json/version")
-        ws_url = (
-            str(version.get("webSocketDebuggerUrl") or "")
-            if isinstance(version, dict)
-            else ""
-        )
+        if guard._worker_id is not None and guard._process is not None:
+            owned_port, ws_url = get_worker_endpoint(guard._worker_id, guard._process)
+            if owned_port != port:
+                raise BrowserCapabilityError("Apply guard port does not match its owned browser")
+        else:
+            version = _cdp_json(port, "/json/version")
+            ws_url = (
+                str(version.get("webSocketDebuggerUrl") or "")
+                if isinstance(version, dict)
+                else ""
+            )
         if not ws_url:
             raise BrowserCapabilityError("Chrome browser-level CDP endpoint is unavailable")
         try:
@@ -1348,6 +1466,7 @@ def cleanup_worker(worker_id: int, process: subprocess.Popen | None) -> None:
         _kill_process_tree(process.pid, process=process)
         _chrome_procs.pop(worker_id, None)
         _chrome_identities.pop(worker_id, None)
+        _chrome_endpoints.pop(worker_id, None)
     logger.info("[worker-%d] Chrome cleaned up", worker_id)
 
 

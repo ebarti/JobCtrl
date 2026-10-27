@@ -27,10 +27,7 @@ from contextlib import contextmanager
 import html
 import json
 import logging
-import platform
 import signal
-import subprocess
-import sys
 import threading
 import time
 import uuid
@@ -48,19 +45,18 @@ from jobctrl.domain.apply.value_objects import Applied, DryRunComplete, Failed, 
 from jobctrl.apply import prompt as prompt_mod  # noqa: F401  -- kept for back-compat imports
 from jobctrl.apply.chrome import (
     BASE_CDP_PORT,
-    _kill_process_tree,
     cleanup_on_exit,
-    kill_all_chrome,
-    reset_worker_dir,
 )
 from jobctrl.apply.dashboard import (
     add_event,
     get_totals,
     init_worker,
     render_full,
+    reset_dashboard,
     update_state,
 )
 from jobctrl.apply.origins import canonical_http_url
+from jobctrl.apply.ownership import ApplyLauncherCleanupIncomplete, ApplyLauncherRun
 from jobctrl.database import (
     _ACTIVE_STATE_JOIN,
     _EFFECTIVE_APPLICATION_URL,
@@ -108,30 +104,14 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Process-wide bookkeeping (kept for parity with the legacy launcher
-# so signal handlers / Ctrl+C can interrupt mid-run).
+# The standalone worker_loop compatibility entry uses this event. Launcher
+# invocations and Temporal activities always receive their own cancellation.
 # ---------------------------------------------------------------------------
 
 POLL_INTERVAL = config.DEFAULTS["poll_interval"]
 _stop_event = threading.Event()
-_claude_procs: dict[int, subprocess.Popen] = {}
-_claude_lock = threading.Lock()
 
 atexit.register(cleanup_on_exit)
-if platform.system() != "Windows" and threading.current_thread() is threading.main_thread():
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-
-
-def _kill_claude_processes_for_interrupt() -> None:
-    from jobctrl.infrastructure.apply.claude_code_cli import (
-        kill_active_claude_processes,
-    )
-
-    kill_active_claude_processes()
-    with _claude_lock:
-        for _wid, cproc in list(_claude_procs.items()):
-            if cproc.poll() is None:
-                _kill_process_tree(cproc.pid)
 
 
 def _utc_now() -> str:
@@ -691,7 +671,7 @@ def _apply_candidate_select_parts() -> tuple[str, str]:
     return columns, joins
 
 
-def _select_apply_candidates(conn, tenant_id, target_job_id, min_score):
+def _select_apply_candidates(conn, tenant_id, target_job_id, min_score, *, include_running=False):
     common_columns, common_joins = _apply_candidate_select_parts()
 
     if target_job_id is not None:
@@ -726,6 +706,7 @@ def _select_apply_candidates(conn, tenant_id, target_job_id, min_score):
         if blocked_patterns:
             url_clauses = " ".join("AND jobs.url NOT LIKE ?" for _ in blocked_patterns)
             params.extend(blocked_patterns)
+        excluded_states = "'succeeded', 'needs_verification'" if include_running else "'running', 'succeeded', 'needs_verification'"
         rows = conn.execute(
             f"""
             SELECT {common_columns}
@@ -739,7 +720,7 @@ def _select_apply_candidates(conn, tenant_id, target_job_id, min_score):
                   WHERE jss_active.tenant_id = jobs.tenant_id
                     AND jss_active.job_id = jobs.job_id
                     AND jss_active.stage = 'apply'
-                    AND jss_active.state IN ('running', 'succeeded', 'needs_verification')
+                    AND jss_active.state IN ({excluded_states})
               )
               AND COALESCE(
                   (SELECT jss_a.attempt_count FROM job_stage_states jss_a
@@ -847,10 +828,24 @@ def _acquire_job_candidate(
     from jobctrl.domain.apply.repeat_application import prepare_repeat_application
     from jobctrl.domain.determinations import DeterminationFailure
 
+    from jobctrl.runtime import is_bundled_runtime
     repeat_blocked_ids: set[str] = set()
+    # Expose running source rows only to the cheap exact-owner gate. Stop at
+    # the first eligible candidate; active peers are never reset or swept.
+    for candidate in _select_apply_candidates(conn, tenant_id, target_job_id, min_score,
+                                               include_running=not is_bundled_runtime()):
+        if str(candidate["job_id"]) in (excluded or set()):
+            continue
+        if _has_unsettled_apply_owner(conn, tenant_id=tenant_id, job_id=str(candidate["job_id"])):
+            repeat_blocked_ids.add(str(candidate["job_id"]))
+        else:
+            break
     if not (run_ctx or {}).get("dry_run"):
         for candidate in _select_apply_candidates(conn, tenant_id, target_job_id, min_score):
             if str(candidate["job_id"]) not in (excluded or set()):
+                if _has_unsettled_apply_owner(conn, tenant_id=tenant_id, job_id=str(candidate["job_id"])):
+                    repeat_blocked_ids.add(str(candidate["job_id"]))
+                    continue
                 try:
                     prepare_repeat_application(conn, target_job_id=candidate["job_id"], tenant_id=TenantId(tenant_id))
                 except DeterminationFailure as exc:
@@ -865,6 +860,7 @@ def _acquire_job_candidate(
             row
             for row in _select_apply_candidates(conn, tenant_id, target_job_id, min_score)
             if str(row["job_id"]) not in (excluded or set()) | repeat_blocked_ids
+            and not _has_unsettled_apply_owner(conn, tenant_id=tenant_id, job_id=str(row["job_id"]))
         ]
         if not candidate_rows:
             conn.rollback()
@@ -895,7 +891,7 @@ def _acquire_job_candidate(
                     f"[W{worker_id}] Repeat application protection "
                     f"({candidate_assessment['status']}) for "
                     f"{(candidate['title'] or candidate['url'])[:40]}"
-                )
+                , worker_id=worker_id)
                 logger.warning(
                     "Repeat application protection refused %s; status=%s fingerprint=%s",
                     candidate["url"],
@@ -977,7 +973,7 @@ def _acquire_job_candidate(
                 # Keep those audit facts even though this candidate cannot be
                 # claimed yet.
                 conn.commit()
-                add_event(f"[W{worker_id}] Awaiting apply approval ({refusal_reason}) for {(row['title'] or url)[:40]}")
+                add_event(f"[W{worker_id}] Awaiting apply approval ({refusal_reason}) for {(row['title'] or url)[:40]}", worker_id=worker_id)
                 logger.info(
                     "Apply approval required for %s; refusal_reason=%s",
                     url,
@@ -1026,6 +1022,7 @@ def _acquire_job_candidate(
             or current["url"] != url
             or current["materials_generation"] != row["materials_generation"]
             or (current["application_url"] or current["url"]) != apply_url
+            or _has_unsettled_apply_owner(conn, tenant_id=tenant_id, job_id=job_id)
             or _has_active_apply(conn, tenant_id=tenant_id, job_id=job_id)
             or _has_succeeded_apply(conn, tenant_id=tenant_id, job_id=job_id)
             or _has_needs_verification_apply(conn, tenant_id=tenant_id, job_id=job_id)
@@ -1062,6 +1059,11 @@ def _acquire_job_candidate(
 
         now = _utc_now()
         run_id = ApplyRunId((run_ctx.get("run_id") if run_ctx else None) or new_apply_run_id())
+        launcher_owner = (run_ctx or {}).get("launcher_run")
+        if launcher_owner is not None:
+            launcher_owner.claim(tenant_id, job_id, str(run_id), worker_id)
+        record_job_event(conn, job_id, "apply", "ApplyClaimAcquired", tenant_id=tenant_id,
+                         payload={"run_id": str(run_id), "launcher_id": launcher_owner.identity if launcher_owner else None})
         repeat_override_id = None
         if repeat_assessment and repeat_assessment["status"] == "override_ready":
             repeat_override_id = consume_repeat_application_override(
@@ -1289,7 +1291,215 @@ def _record_apply_terminal_event_once(
     )
 
 
-def mark_result(
+class ApplyOwnershipLost(RuntimeError):
+    """This attempt no longer owns canonical Apply publication."""
+
+
+def _begin_apply_write(conn, tenant_id, job_id) -> None:
+    if conn.in_transaction:
+        conn.execute("UPDATE job_stage_states SET state = state WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+                     (str(tenant_id), str(job_id)))
+    else:
+        conn.execute("BEGIN IMMEDIATE")
+
+
+def _owns_apply(conn, tenant_id, job_id, run_id) -> bool:
+    owner = _latest_apply_run_started_run_id(conn, tenant_id=tenant_id, job_id=job_id)
+    state = conn.execute("SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+                         (str(tenant_id), str(job_id))).fetchone()
+    return owner == str(run_id) and state is not None and state[0] == "running"
+
+
+def _canonical_apply_claim(conn, tenant_id, job_id) -> dict | None:
+    row = conn.execute("SELECT payload_json FROM job_events WHERE tenant_id = ? AND job_id = ? "
+        "AND stage = 'apply' AND event_type = 'ApplyClaimAcquired' ORDER BY event_id DESC LIMIT 1",
+        (str(tenant_id), str(job_id))).fetchone()
+    return json.loads(row[0]) if row else None
+
+
+def settle_finished_apply_claims(launcher_run: ApplyLauncherRun) -> None:
+    """Settle accepted logical claims after joined-worker tracked cleanup.
+
+    Source execution is deliberately best effort for escaped descendants. Its
+    marker explicitly declines full-tree verification; installed born custody
+    requires the actual dedicated native completion. Ambiguity stays parked.
+    """
+    from jobctrl.apply.process_birth import _write
+    journal = launcher_run._journal
+    if journal is None or journal.value is None:
+        return
+    from jobctrl.runtime import is_bundled_runtime
+    source_best_effort = not is_bundled_runtime()
+    born_workers = {birth["worker_id"] for birth in journal.value["births"]}
+    conn = get_connection()
+    settled = []
+    try:
+        for claim in journal.value["jobs"]:
+            if claim["worker_id"] in born_workers and not source_best_effort:
+                continue
+            tenant, job, owner = claim["tenant_id"], claim["job_id"], claim["run_id"]
+            _begin_apply_write(conn, tenant, job)
+            current = _canonical_apply_claim(conn, tenant, job)
+            if not current or current.get("run_id") != owner or current.get("launcher_id") != launcher_run.identity:
+                continue
+            state = conn.execute("SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+                                 (tenant, job)).fetchone()
+            terminal_events = {
+                "succeeded": {"ApplicationSubmitted"},
+                "failed": {"ApplicationFailed"},
+                "exhausted": {"ApplicationFailed"},
+                "needs_verification": {"ApplicationFailed"},
+                "skipped": {"DryRunCompleted", "ApplyManualSkip"},
+            }.get(str(state[0]) if state else "", set())
+            if not terminal_events or not _has_apply_event(conn, tenant_id=TenantId(tenant), job_id=canonical_job_id(job),
+                    run_id=owner, event_types=terminal_events):
+                continue
+            if not _has_apply_event(conn, tenant_id=TenantId(tenant), job_id=canonical_job_id(job), run_id=owner,
+                    event_types={"ApplyClaimSettled"}):
+                record_job_event(conn, job, "apply", "ApplyClaimSettled", tenant_id=tenant,
+                    payload={"run_id": owner, "launcher_id": launcher_run.identity,
+                             "no_process_birth": claim["worker_id"] not in born_workers,
+                             "tracked_cleanup_completed": True, "full_tree_verified": False,
+                             "source_best_effort": source_best_effort})
+            settled.append(claim)
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    if settled:
+        # Canonical proof is durable first; a crash leaves redundant retained
+        # metadata, never an unrecorded transfer to a new logical owner.
+        journal.value["jobs"] = [row for row in journal.value["jobs"] if row not in settled]
+        _write(journal.path, journal.value)
+
+
+def recover_apply_custody(launcher_id: str) -> None:
+    """Recover only a specific launcher after its actual native scope stopped.
+
+    Native proof covers escaped descendants. Workflow status, root exit and
+    missing birth publications never replace that authority.
+    """
+    from jobctrl.apply.process_birth import ApplyCustodyJournal
+    from jobctrl.apply.native_custody import verify_native_completion
+    journal = ApplyCustodyJournal(config.APP_DIR, launcher_id)
+    value = journal.load()
+    if value is None:
+        return
+    verify_native_completion(value["native_custody"], journal.app_dir)
+    conn = get_connection()
+    try:
+        for claim in value["jobs"]:
+            tenant, job, owner = claim["tenant_id"], claim["job_id"], claim["run_id"]
+            _begin_apply_write(conn, tenant, job)
+            current = _canonical_apply_claim(conn, tenant, job)
+            if not current or current.get("run_id") != owner or current.get("launcher_id") != launcher_id:
+                continue
+            if _owns_apply(conn, tenant, job, owner):
+                ambiguous = _has_apply_submit_intent(conn, tenant_id=TenantId(tenant),
+                    job_id=canonical_job_id(job), run_id=owner)
+                set_stage_state(conn, job, "apply", "needs_verification" if ambiguous else "pending",
+                    tenant_id=tenant, validate_transition=False)
+            if not _has_apply_event(conn, tenant_id=TenantId(tenant), job_id=canonical_job_id(job), run_id=owner,
+                                     event_types={"ApplyCustodyRetired"}):
+                record_job_event(conn, job, "apply", "ApplyCustodyRetired", tenant_id=tenant,
+                    payload={"run_id": owner, "launcher_id": launcher_id, "native_completion": True})
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    journal.retire(verify_native_completion=lambda binding: verify_native_completion(binding, journal.app_dir))
+
+
+def recover_ended_source_apply_claim(conn, *, tenant_id: str, job_id: str, launcher_id: str, run_id: str) -> None:
+    """Release an ended source logical owner, explicitly without tree proof."""
+    from jobctrl.apply.process_birth import ApplyCustodyJournal
+    journal = ApplyCustodyJournal(config.APP_DIR, launcher_id)
+    if journal.load() is None:
+        raise ApplyOwnershipLost("The source owner has no retained lifetime record")
+    with journal.ended_source_owner():
+        started = not conn.in_transaction
+        _begin_apply_write(conn, tenant_id, job_id)
+        try:
+            current = _canonical_apply_claim(conn, tenant_id, job_id)
+            if not current or current.get("launcher_id") != launcher_id or current.get("run_id") != run_id:
+                raise ApplyOwnershipLost("The source claim changed before best-effort recovery")
+            ambiguous = _has_apply_submit_intent(conn, tenant_id=TenantId(tenant_id), job_id=canonical_job_id(job_id), run_id=run_id)
+            state = conn.execute("SELECT state FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage='apply'",
+                                 (tenant_id, job_id)).fetchone()
+            if state and state[0] == "running":
+                set_stage_state(conn, job_id, "apply", "needs_verification" if ambiguous else "pending",
+                                tenant_id=tenant_id, validate_transition=False)
+            if not _has_apply_event(conn, tenant_id=TenantId(tenant_id), job_id=canonical_job_id(job_id), run_id=run_id,
+                                     event_types={"ApplyClaimSettled"}):
+                record_job_event(conn, job_id, "apply", "ApplyClaimSettled", tenant_id=tenant_id,
+                    payload={"run_id": run_id, "launcher_id": launcher_id, "source_best_effort": True,
+                             "owner_lifetime_released": True, "tracked_cleanup_completed": False,
+                             "full_tree_verified": False})
+            if started:
+                conn.commit()
+        except BaseException:
+            if started:
+                conn.rollback()
+            raise
+
+
+def _has_unsettled_apply_owner(conn, *, tenant_id, job_id) -> bool:
+    from jobctrl.apply.process_birth import ApplyCustodyJournal, CustodyUnverified
+    from jobctrl.runtime import is_bundled_runtime
+    claim = _canonical_apply_claim(conn, tenant_id, job_id)
+    if claim:
+        submit_intended = _has_apply_submit_intent(conn, tenant_id=TenantId(str(tenant_id)),
+            job_id=canonical_job_id(str(job_id)), run_id=claim["run_id"])
+    else:
+        submit_intended = False
+    if claim and claim.get("launcher_id"):
+        if _has_apply_event(conn, tenant_id=TenantId(str(tenant_id)), job_id=canonical_job_id(str(job_id)),
+                run_id=claim["run_id"], event_types={"ApplyCustodyRetired", "ApplyClaimSettled"}):
+            # Generic stage reset is never an acknowledgement that an old
+            # submit intent did not reach the employer.
+            return submit_intended
+        try:
+            journal = ApplyCustodyJournal(config.APP_DIR, claim["launcher_id"])
+            value = journal.load()
+            if not is_bundled_runtime() and value is not None and value.get("source_best_effort") is True:
+                recover_ended_source_apply_claim(conn, tenant_id=str(tenant_id), job_id=str(job_id),
+                    launcher_id=claim["launcher_id"], run_id=claim["run_id"])
+            elif not conn.in_transaction:
+                recover_apply_custody(claim["launcher_id"])
+            else:
+                return True
+        except (CustodyUnverified, OSError, ValueError, ApplyOwnershipLost):
+            return True
+        return submit_intended or not _has_apply_event(conn, tenant_id=TenantId(str(tenant_id)), job_id=canonical_job_id(str(job_id)),
+                run_id=claim["run_id"], event_types={"ApplyCustodyRetired", "ApplyClaimSettled"})
+    if submit_intended:
+        return True
+    owner = _latest_apply_run_started_run_id(conn, tenant_id=TenantId(str(tenant_id)), job_id=canonical_job_id(str(job_id)))
+    if not owner:
+        return _has_active_apply(conn, tenant_id=tenant_id, job_id=job_id)
+    return not _has_apply_event(conn, tenant_id=TenantId(str(tenant_id)), job_id=canonical_job_id(str(job_id)),
+        run_id=owner, event_types={"ApplicationSubmitted", "ApplicationFailed", "DryRunCompleted", "ApplyManualSkip", "ApplyCustodyRetired"})
+
+
+def mark_result(job_id, status, error=None, permanent=False, duration_ms=None, task_id=None, run_ctx=None, tenant_id=None):
+    conn = get_connection()
+    stable_tenant_id = TenantId(str(tenant_id or (run_ctx or {}).get("tenant_id") or LOCAL_TENANT))
+    stable_job_id = canonical_job_id(str(job_id))
+    _begin_apply_write(conn, stable_tenant_id, stable_job_id)
+    try:
+        owner = task_id or (run_ctx or {}).get("run_id")
+        if owner is not None and not _owns_apply(conn, stable_tenant_id, stable_job_id, owner):
+            conn.rollback()
+            return
+        # Missing context is the explicit administrative mark_job entry only.
+        _mark_result(job_id, status, error, permanent, duration_ms, task_id, run_ctx, tenant_id)
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+
+
+def _mark_result(
     job_id: JobId,
     status: str,
     error: str | None = None,
@@ -1564,8 +1774,8 @@ def _latest_apply_run_started_run_id(
     row = conn.execute(
         "SELECT payload_json FROM job_events "
         "WHERE tenant_id = ? AND job_id = ? "
-        "AND stage = 'apply' AND event_type = 'ApplyRunStarted' "
-        "ORDER BY event_id DESC LIMIT 1",
+        "AND stage = 'apply' AND event_type IN ('ApplyClaimAcquired', 'ApplyRunStarted') "
+        "ORDER BY (event_type = 'ApplyClaimAcquired') DESC, event_id DESC LIMIT 1",
         (str(tenant_id), str(canonical_job_id(str(job_id)))),
     ).fetchone()
     if row is None:
@@ -1594,15 +1804,13 @@ def release_lock(
     stable_job_id = canonical_job_id(str(job_id))
     stable_tenant_id = TenantId(str(tenant_id or (run_ctx.get("tenant_id") if run_ctx else None) or LOCAL_TENANT))
     ctx_run_id = run_ctx.get("run_id") if run_ctx else None
-    run_id = (
-        ctx_run_id
-        or _latest_apply_run_started_run_id(
-            conn,
-            tenant_id=stable_tenant_id,
-            job_id=stable_job_id,
-        )
-        or new_apply_run_id()
-    )
+    if not ctx_run_id:
+        return
+    _begin_apply_write(conn, stable_tenant_id, stable_job_id)
+    run_id = str(ctx_run_id)
+    if _latest_apply_run_started_run_id(conn, tenant_id=stable_tenant_id, job_id=stable_job_id) != run_id:
+        conn.rollback()
+        return
     record_job_event(
         conn,
         stable_job_id,
@@ -1706,8 +1914,8 @@ def _latest_apply_run_started_identity(
     row = conn.execute(
         "SELECT payload_json FROM job_events "
         "WHERE tenant_id = ? AND job_id = ? "
-        "AND stage = 'apply' AND event_type = 'ApplyRunStarted' "
-        "ORDER BY event_id DESC LIMIT 1",
+        "AND stage = 'apply' AND event_type IN ('ApplyClaimAcquired', 'ApplyRunStarted') "
+        "ORDER BY (event_type = 'ApplyClaimAcquired') DESC, event_id DESC LIMIT 1",
         (str(tenant_id), str(canonical_job_id(str(job_id)))),
     ).fetchone()
     if row is None:
@@ -2103,22 +2311,48 @@ def _authorize_posting_before_submit(tenant_id: str, job_id: str, posting_url: s
             max_age=timedelta(minutes=15),
             allow_unknown=_has_current_apply_review(conn, tenant_id, job_id),
         )
-        owner = conn.execute(
-            "SELECT json_extract(payload_json, '$.run_id') FROM job_events WHERE tenant_id = ? "
-            "AND job_id = ? AND event_type = 'ApplyRunStarted' ORDER BY event_id DESC LIMIT 1",
-            (tenant_id, job_id),
-        ).fetchone()
+        owner = _latest_apply_run_started_run_id(conn, tenant_id=TenantId(tenant_id), job_id=canonical_job_id(job_id))
         running = conn.execute(
             "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
             (tenant_id, job_id),
         ).fetchone()
-        if not owner or owner[0] != run_id or not running or running[0] != "running":
+        if owner != run_id or not running or running[0] != "running":
             raise MissingInputError("Apply intent no longer owns the original posting attempt")
         yield
         conn.commit()
     except BaseException:
         conn.rollback()
         raise
+
+
+class _OwnedApplyPublisher:
+    def __init__(self, publisher):
+        self.publisher = publisher
+
+    def publish(self, event) -> None:
+        run_id = str(event.payload.get("run_id") or "")
+        tenant = str(event.tenant_id)
+        conn = get_connection()
+        if not run_id:
+            raise ApplyOwnershipLost("Apply publication lacks its attempt identity")
+        # The source is the canonical claim, never the caller's prose/event.
+        row = conn.execute("SELECT job_id FROM job_events WHERE tenant_id = ? AND stage = 'apply' "
+            "AND event_type = 'ApplyClaimAcquired' "
+            "AND json_extract(payload_json, '$.run_id') = ? ORDER BY event_id DESC LIMIT 1", (tenant, run_id)).fetchone()
+        if row is None:
+            raise ApplyOwnershipLost("Apply publication has no canonical owner")
+        job = str(row[0])
+        if event.payload.get("job_id") not in {None, job}:
+            raise ApplyOwnershipLost("Apply publication changed its canonical job identity")
+        _begin_apply_write(conn, tenant, job)
+        try:
+            if not _owns_apply(conn, tenant, job, run_id):
+                raise ApplyOwnershipLost("Apply publication no longer owns its original claim")
+            self.publisher.publish(event)
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
 
 
 def _build_use_case():
@@ -2160,7 +2394,7 @@ def _build_use_case():
         agent_port=agent_port,
         eligibility_checker=ApplyEligibilityChecker(max_attempts=int(config.DEFAULTS["max_apply_attempts"])),
         prompt_builder=ApplyPromptBuilder(),
-        publisher=get_default_publisher(),
+        publisher=_OwnedApplyPublisher(get_default_publisher()),
         saga=saga,
         timeout_seconds=config.get_apply_timeout_seconds(),
     )
@@ -2179,6 +2413,12 @@ class SqliteApplyRunRepository:
 
         conn = get_connection()
         try:
+            _begin_apply_write(conn, tenant_id, job_id)
+            owner = _latest_apply_run_started_run_id(conn, tenant_id=tenant_id, job_id=job_id)
+            if owner is not None and not _owns_apply(conn, tenant_id, job_id, run_id):
+                raise ApplyOwnershipLost("Apply aggregate no longer owns its original canonical claim")
+            if owner is None and _has_active_apply(conn, tenant_id=str(tenant_id), job_id=str(job_id)):
+                raise ApplyOwnershipLost("Apply aggregate cannot adopt an unknown running owner")
             seen = _existing_apply_event_ids(
                 conn,
                 tenant_id=tenant_id,
@@ -2412,7 +2652,11 @@ def run_job(
     )
     snapshot = snapshot or _load_profile_snapshot()
     use_case = _build_use_case()
-    worker_dir = str(reset_worker_dir(worker_id))
+    resource_worker_id = int(run_ctx.get("resource_worker_id", worker_id))
+    worker_path = config.APPLY_WORKER_DIR / f"worker-{resource_worker_id}"
+    # This namespace belongs exclusively to this attempt; never reset it.
+    worker_path.mkdir(parents=True, exist_ok=True)
+    worker_dir = str(worker_path)
     run_ctx["worker_dir"] = worker_dir
 
     start = time.time()
@@ -2427,13 +2671,13 @@ def run_job(
         actions=0,
         last_action="starting",
     )
-    add_event(f"[W{worker_id} {run_id[:8]}] Starting: {(job.get('title') or '')[:40]} @ {job.get('site', '')}")
+    add_event(f"[W{worker_id} {run_id[:8]}] Starting: {(job.get('title') or '')[:40]} @ {job.get('site', '')}", worker_id=worker_id)
 
     outcome = use_case.execute(
         tenant_id=tenant_id,
         job=job,
         snapshot=snapshot,
-        worker_id=worker_id,
+        worker_id=resource_worker_id,
         cdp_port=port,
         model=model,
         dry_run=dry_run,
@@ -2470,6 +2714,8 @@ def worker_loop(
     approval_required: bool = True,
     workflow_id: str | None = None,
     tenant_id: str | None = None,
+    launcher_run: ApplyLauncherRun | None = None,
+    poll_interval: float | None = None,
 ) -> tuple[int, int]:
     """Run jobs sequentially until ``limit`` is reached or the queue is empty."""
     applied = 0
@@ -2477,12 +2723,25 @@ def worker_loop(
     continuous = limit == 0
     jobs_done = 0
     empty_polls = 0
-    port = BASE_CDP_PORT + worker_id
+    needs_fresh_resource = False
+    stop_event = launcher_run.stop_event if launcher_run else _stop_event
+    interval = POLL_INTERVAL if poll_interval is None else poll_interval
+    port = launcher_run.ports[worker_id] if launcher_run else BASE_CDP_PORT + worker_id
+    resource_worker_id = launcher_run.worker_ids[worker_id] if launcher_run else worker_id
+    display_worker_id = worker_id
+    worker_id = resource_worker_id
     stable_tenant_id = TenantId(str(tenant_id or LOCAL_TENANT))
 
-    while not _stop_event.is_set():
+    while not stop_event.is_set():
+        if launcher_run is not None:
+            launcher_run.verify_worker_cleanup(resource_worker_id)
         if not continuous and jobs_done >= limit:
             break
+        if launcher_run is not None and needs_fresh_resource:
+            resource_worker_id, port = launcher_run.new_attempt()
+            worker_id = resource_worker_id
+            needs_fresh_resource = False
+            init_worker(worker_id, display_id=display_worker_id)
 
         # A standing loop may live for hours. Check again before every claim so
         # disabling the capability stops subsequent candidates without waiting
@@ -2492,7 +2751,7 @@ def worker_loop(
         try:
             require_system_browser_capability("auto-apply-browser")
         except BrowserCapabilityError as exc:
-            add_event(f"[W{worker_id}] Auto-apply browser capability unavailable: {exc}")
+            add_event(f"[W{worker_id}] Auto-apply browser capability unavailable: {exc}", worker_id=worker_id)
             update_state(worker_id, status="done", last_action="browser capability disabled")
             break
 
@@ -2511,7 +2770,9 @@ def worker_loop(
             # needs its own run identity; workflow_id remains the Temporal
             # correlation key in the adjacent field.
             "run_id": uuid.uuid4().hex,
-            "worker_id": worker_id,
+            "launcher_run": launcher_run,
+            "worker_id": resource_worker_id,
+            "resource_worker_id": resource_worker_id,
             "model": model,
             "dry_run": dry_run,
             "workflow_id": workflow_id,
@@ -2530,14 +2791,14 @@ def worker_loop(
         )
         if not job:
             if not continuous:
-                add_event(f"[W{worker_id}] Queue empty")
+                add_event(f"[W{worker_id}] Queue empty", worker_id=worker_id)
                 update_state(worker_id, status="done", last_action="queue empty")
                 break
             empty_polls += 1
             update_state(worker_id, status="idle", last_action=f"polling ({empty_polls})")
             if empty_polls == 1:
-                add_event(f"[W{worker_id}] Queue empty, polling every {POLL_INTERVAL}s...")
-            if _stop_event.wait(timeout=POLL_INTERVAL):
+                add_event(f"[W{worker_id}] Queue empty, polling every {interval}s...", worker_id=worker_id)
+            if stop_event.wait(timeout=interval):
                 break
             continue
 
@@ -2546,6 +2807,7 @@ def worker_loop(
         # skips or the operator interrupts. Otherwise releasing a skipped job
         # can let the same worker claim beyond its allocation indefinitely.
         jobs_done += 1
+        needs_fresh_resource = True
         job_id = canonical_job_id(str(job["job_id"]))
         job_tenant_id = TenantId(str(job["tenant_id"]))
         try:
@@ -2566,7 +2828,7 @@ def worker_loop(
                     run_ctx=run_ctx,
                     tenant_id=job_tenant_id,
                 )
-                add_event(f"[W{worker_id} {run_ctx['run_id'][:8]}] Skipped: {(job.get('title') or '')[:30]}")
+                add_event(f"[W{worker_id} {run_ctx['run_id'][:8]}] Skipped: {(job.get('title') or '')[:30]}", worker_id=worker_id)
                 if target_job_id is not None:
                     break
                 continue
@@ -2582,8 +2844,8 @@ def worker_loop(
                 applied += 1
                 update_state(
                     worker_id,
-                    jobs_applied=applied,
-                    jobs_done=applied + failed,
+                    jobs_applied=1,
+                    jobs_done=1,
                 )
             elif isinstance(result, DryRunComplete):
                 mark_result(
@@ -2594,7 +2856,7 @@ def worker_loop(
                     run_ctx=run_ctx,
                     tenant_id=job_tenant_id,
                 )
-                update_state(worker_id, jobs_done=applied + failed)
+                update_state(worker_id, jobs_done=1)
             else:
                 reason = result.error if isinstance(result, Failed) else result.kind
                 mark_result(
@@ -2608,27 +2870,27 @@ def worker_loop(
                     tenant_id=job_tenant_id,
                 )
                 failed += 1
-                update_state(worker_id, jobs_failed=failed, jobs_done=applied + failed)
+                update_state(worker_id, jobs_failed=1, jobs_done=1)
         except KeyboardInterrupt:
             release_lock(
                 job_id,
                 run_ctx=run_ctx,
                 tenant_id=job_tenant_id,
             )
-            add_event(f"[W{worker_id} {run_ctx['run_id'][:8]}] Job skipped (Ctrl+C)")
-            if _stop_event.is_set() or target_job_id is not None:
+            add_event(f"[W{worker_id} {run_ctx['run_id'][:8]}] Job skipped (Ctrl+C)", worker_id=worker_id)
+            if stop_event.is_set() or target_job_id is not None:
                 break
             continue
         except Exception as exc:  # noqa: BLE001
             logger.exception("Worker %d launcher error", worker_id)
-            add_event(f"[W{worker_id} {run_ctx['run_id'][:8]}] Launcher error: {str(exc)[:40]}")
+            add_event(f"[W{worker_id} {run_ctx['run_id'][:8]}] Launcher error: {str(exc)[:40]}", worker_id=worker_id)
             release_lock(
                 job_id,
                 run_ctx=run_ctx,
                 tenant_id=job_tenant_id,
             )
             failed += 1
-            update_state(worker_id, jobs_failed=failed)
+            update_state(worker_id, jobs_failed=1)
 
         if target_job_id is not None:
             break
@@ -2657,13 +2919,47 @@ def main(
     install_signal_handlers: bool = True,
     approval_required: bool = True,
     workflow_id: str | None = None,
+    launcher_run: ApplyLauncherRun | None = None,
 ) -> tuple[int, int]:
-    global POLL_INTERVAL
-    POLL_INTERVAL = poll_interval
-    _stop_event.clear()
+    """Run an independently owned Apply cohort with bounded internal fan-out."""
+    run = launcher_run or ApplyLauncherRun()
+    with run.lease():
+        try:
+            if run.stop_event.is_set():
+                return 0, 0
+            return _main(
+                limit=limit, target_job_id=target_job_id, tenant_id=tenant_id,
+                min_score=min_score, headless=headless, model=model, dry_run=dry_run,
+                continuous=continuous, poll_interval=poll_interval, workers=workers,
+                snapshot=snapshot, install_signal_handlers=install_signal_handlers,
+                approval_required=approval_required, workflow_id=workflow_id,
+                launcher_run=run,
+            )
+        finally:
+            run.finish()
+
+
+def _main(
+    limit: int = 1,
+    target_job_id: JobId | None = None,
+    tenant_id: str | None = None,
+    min_score: int = 7,
+    headless: bool = False,
+    model: str = "default",
+    dry_run: bool = False,
+    continuous: bool = False,
+    poll_interval: int = 60,
+    workers: int = 1,
+    snapshot: ProfileSnapshot | None = None,
+    install_signal_handlers: bool = True,
+    approval_required: bool = True,
+    workflow_id: str | None = None,
+    *,
+    launcher_run: ApplyLauncherRun,
+) -> tuple[int, int]:
     config.ensure_dirs()
     console = Console()
-    batch_run_id = f"apply:{uuid.uuid4().hex}"
+    batch_run_id = f"apply:{launcher_run.identity}"
     batch_started = time.time()
     metric_error_class: str | None = None
     metric_error_message: str | None = None
@@ -2700,16 +2996,17 @@ def main(
         except FileNotFoundError:
             snapshot = None
 
-    recovered = recover_ambiguous_running_apply(console)
 
     total_applied = 0
     total_failed = 0
 
-    for i in range(workers):
-        init_worker(i)
+    launcher_run.allocate_workers(workers)
+    reset_dashboard(launcher_run.worker_ids)
+    for i, resource_worker_id in enumerate(launcher_run.worker_ids):
+        init_worker(resource_worker_id, display_id=i)
 
     worker_label = f"{workers} worker{'s' if workers > 1 else ''}"
-    console.print(f"Launching apply pipeline ({mode_label}, {worker_label}, poll every {POLL_INTERVAL}s)...")
+    console.print(f"Launching apply pipeline ({mode_label}, {worker_label}, poll every {poll_interval}s)...")
     console.print("[dim]Ctrl+C = skip current job(s) | Ctrl+C x2 = stop[/dim]")
 
     _ctrl_c_count = 0
@@ -2719,24 +3016,23 @@ def main(
         _ctrl_c_count += 1
         if _ctrl_c_count == 1:
             console.print("\n[yellow]Skipping current job(s)... (Ctrl+C again to STOP)[/yellow]")
-            _kill_claude_processes_for_interrupt()
+            launcher_run.interrupt()
         else:
             console.print("\n[red bold]STOPPING[/red bold]")
-            _stop_event.set()
-            _kill_claude_processes_for_interrupt()
-            kill_all_chrome()
+            launcher_run.request_stop()
             raise KeyboardInterrupt
 
+    previous_sigint_handler = signal.getsignal(signal.SIGINT)
     if install_signal_handlers:
         signal.signal(signal.SIGINT, _sigint_handler)
 
     try:
-        with Live(render_full(), console=console, refresh_per_second=2) as live:
+        with Live(render_full(launcher_run.worker_ids), console=console, refresh_per_second=2) as live:
             _dashboard_running = True
 
             def _refresh():
                 while _dashboard_running:
-                    live.update(render_full())
+                    live.update(render_full(launcher_run.worker_ids))
                     time.sleep(0.5)
 
             refresh_thread = threading.Thread(target=_refresh, daemon=True)
@@ -2755,6 +3051,8 @@ def main(
                     approval_required=approval_required,
                     workflow_id=workflow_id,
                     tenant_id=stable_tenant_id,
+                    launcher_run=launcher_run,
+                    poll_interval=poll_interval,
                 )
             else:
                 if effective_limit:
@@ -2779,6 +3077,8 @@ def main(
                             approval_required=approval_required,
                             workflow_id=workflow_id,
                             tenant_id=stable_tenant_id,
+                            launcher_run=launcher_run,
+                            poll_interval=poll_interval,
                         ): i
                         # Zero is the continuous sentinel in worker_loop, not
                         # an empty finite allocation. Do not start such workers
@@ -2788,22 +3088,27 @@ def main(
                     }
 
                     results: list[tuple[int, int]] = []
+                    cleanup_failure: ApplyLauncherCleanupIncomplete | None = None
                     for future in as_completed(futures):
                         wid = futures[future]
                         try:
                             results.append(future.result())
-                        except Exception:  # noqa: BLE001
+                        except Exception as exc:  # noqa: BLE001
                             logger.exception("Worker %d crashed", wid)
                             results.append((0, 0))
+                            if isinstance(exc, ApplyLauncherCleanupIncomplete):
+                                cleanup_failure = cleanup_failure or exc
+                    if cleanup_failure is not None:
+                        raise cleanup_failure
 
                 total_applied = sum(r[0] for r in results)
                 total_failed = sum(r[1] for r in results)
 
             _dashboard_running = False
             refresh_thread.join(timeout=2)
-            live.update(render_full())
+            live.update(render_full(launcher_run.worker_ids))
 
-        totals = get_totals()
+        totals = get_totals(launcher_run.worker_ids)
         console.print(f"\n[bold]Done: {total_applied} applied, {total_failed} failed (${totals['cost']:.3f})[/bold]")
         console.print(f"Logs: {config.LOG_DIR}")
     except KeyboardInterrupt:
@@ -2815,8 +3120,9 @@ def main(
         metric_error_message = str(exc)
         raise
     finally:
-        _stop_event.set()
-        kill_all_chrome()
+        _dashboard_running = False
+        if install_signal_handlers:
+            signal.signal(signal.SIGINT, previous_sigint_handler)
         if metric_error_class:
             metric_outcome = "failed"
         elif dry_run:
@@ -2837,7 +3143,6 @@ def main(
             error_class=metric_error_class,
             error_message=metric_error_message,
         )
-    _ = recovered
     return total_applied, total_failed
 
 

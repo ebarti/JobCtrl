@@ -89,6 +89,25 @@ jobs skipped after claim; increasing the worker count does not increase that
 limit. A URL-targeted batch remains scoped to that one job. Use `--continuous`
 when you deliberately want to keep polling for eligible jobs.
 
+Distinct-job Apply runs can overlap. Each run owns its cancellation, browser,
+port, dashboard and work files. Finishing or cancelling one run leaves the other
+running. Every attempt receives fresh work directories, so a restart or another
+worker cannot reset an earlier attempt's files. A worker whose process cleanup
+cannot verify exit stops claiming further jobs and retains the prior files.
+
+Installed macOS Apply runs verify cleanup of their own execution before
+returning, so a normal rehearsal or retry does not require stopping the app.
+Recovery of an interrupted native attempt uses that execution's actual verified
+completion, including detached descendants.
+
+Source-checkout Apply waits for known children and uses best-effort cleanup for
+detached descendants. Normally finished source runs and ended-owner crash
+recovery can retry with fresh files and RunIds; their records explicitly say
+full descendant cleanup was not verified. Actually active owners, known cleanup
+failures and ambiguous submit outcomes remain protected, even after a generic
+stage reset. Other jobs can proceed independently. Approval and any submit
+intent stay bound to the original attempt.
+
 Apply checks only the locally eligible candidate after repeat-application,
 attempt and approval gates. When availability stays unknown, dry-run rehearsals
 and the existing human-reviewed/manual Apply path remain available; approval must
@@ -248,11 +267,6 @@ application URL. Unexpected public redirects, popups, or ATS handoffs to a
 different origin are blocked rather than silently inheriting the approval.
 Review the new application destination and start a fresh run when a legitimate
 provider transition requires another origin.
-
-Apply closes only browsers it launched and still owns. If its browser port is
-already occupied, the run stops with guidance to retry on another port or stop
-the owning application yourself. Starting, canceling or exiting Apply does not
-close an unrelated browser or local service to reclaim that port.
 
 Origin confinement limits rehearsal navigation; it does not authorize final
 browser submission. The final browser action remains manual as described above.

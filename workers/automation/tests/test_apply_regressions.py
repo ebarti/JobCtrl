@@ -22,7 +22,6 @@ import pytest
 from jobctrl.apply import launcher as launcher_module
 from jobctrl import browser_capabilities
 from jobctrl.apply.launcher import (
-    _kill_claude_processes_for_interrupt,
     acquire_job,
     mark_result,
     recover_ambiguous_running_apply,
@@ -449,18 +448,11 @@ def test_apply_approval_gate_can_be_disabled_or_bypassed_for_dry_run(tmp_path, m
             approval_required=False,
         )
         assert job is not None
-        set_stage_state(
-            conn,
-            job["job_id"],
-            "apply",
-            "pending",
-            tenant_id=LOCAL_TENANT,
-            validate_transition=False,
-        )
-        conn.commit()
-
+        # A distinct candidate exercises approval bypass without stealing the
+        # accepted first run's still-unsettled canonical owner.
+        second_job = _insert_ready_job(conn, url="https://example.com/dry-approval")
         dry_job = acquire_job(
-            target_job_id=_target_job_id(conn),
+            target_job_id=second_job,
             worker_id=1,
             run_ctx={"dry_run": True},
             approval_required=True,
@@ -933,23 +925,22 @@ def test_worker_loop_delegates_browser_lifecycle_to_apply_saga(monkeypatch):
     }
 
 
-def test_interrupt_cleanup_calls_adapter_claude_registry(monkeypatch):
-    called: list[str] = []
+def test_interrupt_cleanup_calls_only_owned_adapter_workers(monkeypatch):
+    from jobctrl.apply.ownership import ApplyLauncherRun
+
+    called = []
     monkeypatch.setattr(
         "jobctrl.infrastructure.apply.claude_code_cli.kill_active_claude_processes",
-        lambda: called.append("adapter"),
+        lambda *, worker_ids: called.append(("agent", worker_ids)),
     )
-    with launcher_module._claude_lock:
-        old_procs = dict(launcher_module._claude_procs)
-        launcher_module._claude_procs.clear()
-    try:
-        _kill_claude_processes_for_interrupt()
-    finally:
-        with launcher_module._claude_lock:
-            launcher_module._claude_procs.clear()
-            launcher_module._claude_procs.update(old_procs)
-
-    assert called == ["adapter"]
+    monkeypatch.setattr(
+        "jobctrl.apply.chrome.cleanup_workers",
+        lambda worker_ids: called.append(("browser", worker_ids)), raising=False,
+    )
+    run = ApplyLauncherRun(worker_ids=(31, 32))
+    run.request_stop()
+    assert run.stop_event.is_set()
+    assert called == [("agent", (31,)), ("browser", (31,)), ("agent", (32,)), ("browser", (32,))]
 
 
 def test_acquire_job_excludes_high_score_blocked_candidates(tmp_path, monkeypatch):
@@ -1160,6 +1151,8 @@ def test_dry_run_result_does_not_mark_job_applied(tmp_path, monkeypatch):
 
     try:
         monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
+        assert acquire_job(target_job_id=job_id, run_ctx={"run_id": "run-test", "dry_run": True},
+                           approval_required=False) is not None
         mark_result(
             job_id,
             "dry_run",

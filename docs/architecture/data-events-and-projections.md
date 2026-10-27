@@ -66,6 +66,16 @@ mail retrieval, that transaction rechecks the tenant-scoped job and provider
 message so concurrent deletion or scanning cannot leave orphaned or duplicate
 evidence. Raw message bodies stay out of event payloads and scan summaries.
 
+Apply ownership is established by `ApplyClaimAcquired` for the exact tenant,
+job and RunId in the claim writer transaction. Replayed `ApplyRunStarted` saga
+records do not change that authority. Result, saga, determination, artifact and
+integration publication compare the current claim under the SQLite writer.
+`ApplyClaimSettled` records a joined source launcher's canonical terminal outcome
+after tracked cleanup, explicitly marking full-tree verification false; `ApplyCustodyRetired` records the selected native execution’s
+verified completion. Both retain the original RunId, and neither a projection’s
+workflow status nor a stage reset transfers an unknown old owner. Submit-intent
+ambiguity remains `needs_verification` even when process custody settles.
+
 ## Name The Layer Before Changing It
 
 | Layer | Meaning | Authority and recovery |

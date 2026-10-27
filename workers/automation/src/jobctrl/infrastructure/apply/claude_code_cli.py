@@ -289,8 +289,10 @@ class ClaudeCodeCliAdapter:
             from jobctrl.llm import enforce_spend_budget
 
             enforce_spend_budget("apply")
-            proc = subprocess.Popen(
-                cmd,
+            from jobctrl.apply.ownership import spawn_owned_apply_process
+
+            proc = spawn_owned_apply_process(
+                worker_id, "agent", cmd,
                 **_popen_kwargs(env=env, cwd=str(worker_dir)),
             )
             _register_active_claude_process(worker_id, proc)

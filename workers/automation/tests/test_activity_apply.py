@@ -8,6 +8,8 @@ from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+from .apply_execution_fixture import in_process_apply_execution as in_process_apply_execution
+
 import pytest
 from temporalio import workflow
 from .temporal_env import time_skipping_env

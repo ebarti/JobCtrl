@@ -157,6 +157,7 @@ class ApplyPromptBuilder:
         tailored_resume: str = "",
         snapshot: ProfileSnapshot,
         cdp_port: int,
+        browser_ws_url: str = "",
         dry_run: bool = False,
         cover_letter: str | None = None,
         search_config: Mapping[str, Any] | None = None,
@@ -182,6 +183,7 @@ class ApplyPromptBuilder:
         )
         mcp_config = self._build_mcp_config(
             cdp_port,
+            browser_ws_url=browser_ws_url,
             job=job,
             snapshot=snapshot,
             upload_dir=upload_dir,
@@ -195,10 +197,12 @@ class ApplyPromptBuilder:
         job: Mapping[str, Any],
         snapshot: ProfileSnapshot,
         upload_dir: str | None,
+        browser_ws_url: str = "",
     ) -> Mapping[str, Any]:
         try:
             return self._mcp_config_factory(
                 cdp_port,
+                browser_ws_url=browser_ws_url,
                 job=job,
                 snapshot=snapshot,
                 upload_dir=upload_dir,
@@ -213,6 +217,7 @@ PLAYWRIGHT_MCP_PACKAGE = "@playwright/mcp@0.0.77"
 def _default_mcp_config(
     cdp_port: int,
     *,
+    browser_ws_url: str = "",
     job: Mapping[str, Any] | None = None,
     snapshot: ProfileSnapshot | None = None,
     upload_dir: str | None = None,
@@ -228,8 +233,9 @@ def _default_mcp_config(
 
     application_url = str((job or {}).get("application_url") or (job or {}).get("url") or "")
     upload_root = str(upload_dir or (_config.APPLY_WORKER_DIR / "current"))
+    endpoint = browser_ws_url or f"http://127.0.0.1:{cdp_port}"
     apply_tools_env = {
-        "JOBCTRL_APPLY_CDP_ENDPOINT": f"http://localhost:{cdp_port}",
+        "JOBCTRL_APPLY_CDP_ENDPOINT": endpoint,
         "JOBCTRL_APPLY_APPROVED_APPLICATION_URL": application_url,
         "JOBCTRL_APPLY_UPLOAD_DIR": upload_root,
     }
@@ -259,7 +265,7 @@ def _default_mcp_config(
             payload_path("playwright-mcp/bin/playwright-mcp", require_exists=True)
         )
         playwright_args = [
-            f"--cdp-endpoint=http://localhost:{cdp_port}",
+            f"--cdp-endpoint={endpoint}",
             f"--viewport-size={_config.DEFAULTS['viewport']}",
         ]
         # Isolate imports and suppress bytecode writes so MCP children cannot
@@ -269,7 +275,7 @@ def _default_mcp_config(
         playwright_command = "npx"
         playwright_args = [
             PLAYWRIGHT_MCP_PACKAGE,
-            f"--cdp-endpoint=http://localhost:{cdp_port}",
+            f"--cdp-endpoint={endpoint}",
             f"--viewport-size={_config.DEFAULTS['viewport']}",
         ]
     apply_tools_env = {**bundled_env, **apply_tools_env}

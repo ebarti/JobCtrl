@@ -32,6 +32,9 @@ Unless overridden by `JOBCTRL_DIR`, the local authority root is
 | `codex_home/` | Stable JobCtrl-owned Codex authentication; auth is outside the prompt-readable `workspace/` subtree, whose private empty Git metadata bounds SDK project configuration discovery. Overlapping app-server clients share a temporary SQLite store per process and credential home; the last closed client removes it. Each client has separate temporary text logs, and generation chats are ephemeral. Private ownership records and OS leases allow reclamation of abandoned stores while preserving active or unfamiliar paths. Existing provider state is preserved. |
 | `claude_home/`, `provider-packs/`, `provider-runtime/` | Isolated and separately acquired provider runtime state. |
 | `tailored_resumes/`, `cover_letters/`, `logs/` | Generated material and logs registered by SQLite metadata where applicable. |
+| `apply-invocations/<requestId>/` | Private native Apply result and launcher diagnostic log; the fixed child writes the result and the parent verifies exact native completion before reading outcome counts. |
+| `apply-runs/<launcherId>/owner.lock` | Stable per-run logical lifetime lease. It does not serialize other jobs or prove descendant exit; source recovery requires the exact existing recorded inode and preserves known failures. |
+| `apply-runs/<launcherId>/custody.json` | Private durable Apply job and birth custody, bound to the physical workspace and native execution. Records contain only resource/run identifiers, never applicant materials. Exact lifetime state fences the logical source owner; its best-effort settlement never certifies escaped-tree retirement. Native retirement uses actual completion proof. |
 | `browser-profiles/`, `extension-capability-token`, `chrome-workers/`, `apply-workers/` | Consented copied profiles for separate compatibility capabilities, extension pairing, and browser/apply execution state. Integrated Discovery uses the current Chrome profile through the extension and never stores a copy; its bridge task bodies/results are API-process-memory-only. Browser-adoption metadata is in `config.json`. |
 | `backups/` and legacy `resume.*` / style files | User-created database snapshots, guarded job-data-purge recovery bundles, and pre-migration resume inputs. |
 
@@ -601,6 +604,16 @@ before retiring those receipts, so an interrupted metadata cleanup can resume
 without losing the process boundary. Missing or legacy-untracked ownership
 blocks automatic backup/restore and preserves the live databases and registry.
 
+
+Native Apply crash recovery consumes the original execution's exact completion
+attestation from the runtime home's
+`instances/<instanceId>/completed-executions/<scopeId>.json`. Native cleanup
+writes it only after verified scope exit and before retiring the matching
+execution receipt. It contains the complete original receipt and its exact-byte
+SHA-256, verification boot and completion time; it survives later starts and
+binds no user application/profile facts. A missing, changed, linked or foreign
+proof preserves the Apply journal and refuses recovery. Source-only custody has
+no implicit equivalent of that native proof.
 
 ## Legacy achievement confirmation history
 

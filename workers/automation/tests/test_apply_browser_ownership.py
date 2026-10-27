@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import socket
 import subprocess
 import sys
@@ -16,8 +17,15 @@ from jobctrl.apply import chrome
 def isolate_browser_registry(monkeypatch):
     monkeypatch.setattr(chrome, "_chrome_procs", {})
     monkeypatch.setattr(chrome, "_chrome_identities", {})
+    monkeypatch.setattr(chrome, "_chrome_endpoints", {})
     monkeypatch.setattr(chrome, "_launching_workers", set())
     monkeypatch.setattr(chrome, "_launching_ports", set())
+
+
+def _publish_synthetic_endpoint(command):
+    profile = Path(next(arg.split("=", 1)[1] for arg in command if arg.startswith("--user-data-dir=")))
+    port = free_port()
+    (profile / "DevToolsActivePort").write_text(f"{port}\n/devtools/browser/{port}")
 
 
 class _OwnedChildren(list):
@@ -32,16 +40,18 @@ def browser_seam(tmp_path, monkeypatch):
     children.popen = popen
     monkeypatch.setattr(chrome.config, "CHROME_WORKER_DIR", tmp_path / "profiles")
     monkeypatch.setattr(chrome, "require_system_browser_capability", lambda _: sys.executable)
-    monkeypatch.setattr(chrome, "_wait_for_browser_cdp_endpoint", lambda *_: None)
+    monkeypatch.setattr(chrome, "_wait_for_browser_cdp_endpoint", lambda *_, **__: None)
     monkeypatch.setattr(chrome, "install_public_destination_cdp_guard", lambda *_, **__: None)
     monkeypatch.setattr(chrome, "install_dry_run_cdp_guard", lambda *_, **__: None)
 
     def spawn(_command, **kwargs):
         process = popen([sys.executable, "-c", "import time; time.sleep(120)"], **kwargs)
         children.append(process)
+        _publish_synthetic_endpoint(_command)
         return process
 
     monkeypatch.setattr(chrome.subprocess, "Popen", spawn)
+    monkeypatch.setattr(chrome, "_cdp_json", lambda port, _: {"webSocketDebuggerUrl": f"ws://127.0.0.1:{port}/devtools/browser/{port}"})
     yield children
     # Own every cleanup target independently of the production registry.
     for process in children:
@@ -152,7 +162,7 @@ def test_verified_browser_cleanup_preserves_other_browser_and_control(browser_se
 def test_launch_failure_and_cancellation_clean_exact_browser(browser_seam, monkeypatch, failure):
     control = launch(21)
 
-    def fail(*_):
+    def fail(*_, **__):
         raise failure
 
     monkeypatch.setattr(chrome, "_wait_for_browser_cdp_endpoint", fail)
@@ -290,9 +300,11 @@ def test_owned_session_descendants_exit_while_unrelated_group_survives(browser_s
     def spawn(_command, **kwargs):
         process = real_popen([sys.executable, "-c", parent_code], **kwargs)
         browser_seam.append(process)
+        _publish_synthetic_endpoint(_command)
         return process
 
     monkeypatch.setattr(chrome.subprocess, "Popen", spawn)
+    monkeypatch.setattr(chrome, "_cdp_json", lambda port, _: {"webSocketDebuggerUrl": f"ws://127.0.0.1:{port}/devtools/browser/{port}"})
     process = launch(91)
     deadline = time.monotonic() + 5
     while not port_file.exists() and time.monotonic() < deadline:
@@ -395,6 +407,7 @@ def test_live_session_child_blocks_cleanup_after_root_exit_then_retry_settles(
     control = launch(201)
     selected_peer = launch(203)
     port_file = tmp_path / "surviving-child-port"
+    release_root = tmp_path / "release-root"
     child_code = (
         "import os,socket; from pathlib import Path; "
         + ("os.setpgid(0,0); " if separate_group else "")
@@ -407,21 +420,25 @@ def test_live_session_child_blocks_cleanup_after_root_exit_then_retry_settles(
         f"subprocess.Popen([sys.executable,'-c',{child_code!r}]); "
         f"p=Path({str(port_file)!r}); "
         "\nwhile not p.exists(): time.sleep(0.01)\n"
-        + ("time.sleep(120)\n" if not root_reaped else "")
+        + ("time.sleep(120)\n" if not root_reaped else
+           f"p=Path({str(release_root)!r})\nwhile not p.exists(): time.sleep(0.01)\n")
     )
 
     def spawn(_command, **kwargs):
         process = browser_seam.popen([sys.executable, "-c", parent_code], **kwargs)
         browser_seam.append(process)
+        _publish_synthetic_endpoint(_command)
         return process
 
     monkeypatch.setattr(chrome.subprocess, "Popen", spawn)
+    monkeypatch.setattr(chrome, "_cdp_json", lambda port, _: {"webSocketDebuggerUrl": f"ws://127.0.0.1:{port}/devtools/browser/{port}"})
     root = launch(202)
     deadline = time.monotonic() + 5
     while not port_file.exists() and time.monotonic() < deadline:
         time.sleep(0.01)
     assert port_file.exists(), "owned surviving child did not start"
     if root_reaped:
+        release_root.touch()
         assert root.wait(timeout=5) == 0
     else:
         assert root.poll() is None

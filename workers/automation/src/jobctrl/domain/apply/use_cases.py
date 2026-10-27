@@ -294,14 +294,18 @@ class SubmitApplicationUseCase:
         # may still discover an approval-bound email candidate, but the model
         # never receives browser submit authority.
         agent_transport_locked = True
-        prompt = self._prompt_builder.build(
-            job=job,
-            snapshot=snapshot,
-            cdp_port=cdp_port,
-            dry_run=agent_transport_locked,
-            search_config=search_config,
-            upload_dir=worker_dir,
-        )
+        def prompt_for_browser(session):
+            # Chrome chooses its own endpoint. Bind model transport only after
+            # the BrowserPort has returned that exact verified session.
+            return self._prompt_builder.build(
+                job=job,
+                snapshot=snapshot,
+                cdp_port=session.cdp_port,
+                browser_ws_url=session.browser_ws_url,
+                dry_run=agent_transport_locked,
+                search_config=search_config,
+                upload_dir=worker_dir,
+            )
         browser_config = BrowserWorkerConfig(
             worker_id=worker_id,
             cdp_port=cdp_port,
@@ -317,7 +321,7 @@ class SubmitApplicationUseCase:
         outcome: SagaOutcome = self._saga.run(
             apply_run=apply_run,
             browser_config=browser_config,
-            prompt=prompt,
+            prompt=prompt_for_browser,
             model=model,
             material_version=str(job.get("materials_generation") or ""),
             materials_generation=job.get("materials_generation"),
