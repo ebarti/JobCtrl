@@ -145,6 +145,12 @@ blocking executor work before closing provider resources. Startup and browser
 preflight precede that handler. This thread drain does not prove that detached
 provider or browser processes have exited.
 
+For installed-selector CLI commands, the shared release-selection lock remains
+open across the Python exec until that command exits. Backup, update, rollback
+and uninstall take the exclusive selection lock, so they wait for such a
+command to finish. Direct payload invocations and older launchers do not gain
+this fence; the lock also does not certify detached descendants.
+
 Homebrew caches only prefix-owned release resources. Its build sandbox verifies
 strict Developer ID certificate-chain requirements for the launcher, installer
 and managed headless shell without contacting Apple's live syspolicy service.

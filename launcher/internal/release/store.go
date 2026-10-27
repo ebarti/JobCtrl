@@ -282,6 +282,28 @@ func ensureDirectory(path string) error {
 
 type Lock struct{ file *os.File }
 
+// InheritOnExec keeps an already-held selection lock across a successful
+// syscall.Exec. The returned function restores the descriptor flags if exec
+// fails and the calling process continues. A nil lock represents an execution
+// path without an installed selector lock and needs no handoff.
+func (l *Lock) InheritOnExec() (func(), error) {
+	if l == nil {
+		return func() {}, nil
+	}
+	if l.file == nil {
+		return nil, errors.New("cannot inherit a closed release lock")
+	}
+	fd := l.file.Fd()
+	flags, _, errno := syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_GETFD, 0)
+	if errno != 0 {
+		return nil, errno
+	}
+	if _, _, errno = syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_SETFD, flags&^syscall.FD_CLOEXEC); errno != 0 {
+		return nil, errno
+	}
+	return func() { _, _, _ = syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_SETFD, flags) }, nil
+}
+
 func (l *Lock) Close() error {
 	if l == nil || l.file == nil {
 		return nil

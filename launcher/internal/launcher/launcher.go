@@ -2372,5 +2372,13 @@ func dispatchPython(ctx launchContext, args []string) error {
 	}
 	python := filepath.Join(ctx.PayloadRoot, "python", "bin", "python3")
 	argv := append([]string{python, "-I", "-B", "-m", "jobctrl"}, args...)
+	// An installed selector must retain its shared selection lock for the
+	// lifetime of the Python command. Without this handoff, Go closes the lock
+	// on exec and lifecycle operations can snapshot while that command writes.
+	restore, err := ctx.selection.InheritOnExec()
+	if err != nil {
+		return fmt.Errorf("retain release selection lock for command: %w", err)
+	}
+	defer restore()
 	return syscall.Exec(python, argv, ctx.Environment)
 }
