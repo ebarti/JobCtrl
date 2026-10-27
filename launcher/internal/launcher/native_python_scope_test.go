@@ -20,8 +20,25 @@ import (
 // dispatchPython/CPython mechanism. It does not qualify a signed distribution.
 func TestNativePythonDispatchOwnedScopeLoopbackSandbox(t *testing.T) {
 	python := migrationIntegrationPython(t)
+	for _, name := range []string{"canonical", "symlink-alias"} {
+		t.Run(name, func(t *testing.T) {
+			runNativePythonScopeNetworkFixture(t, python, name == "symlink-alias")
+		})
+	}
+}
+
+func runNativePythonScopeNetworkFixture(t *testing.T, python string, aliased bool) {
+	t.Helper()
 	payload, manifest := verifiedPayloadFixture(t)
-	home, venv := t.TempDir(), filepath.Join(t.TempDir(), "venv")
+	home, root := t.TempDir(), t.TempDir()
+	if aliased {
+		alias := filepath.Join(t.TempDir(), "owned-venv-root")
+		if err := os.Symlink(root, alias); err != nil {
+			t.Fatal(err)
+		}
+		root = alias
+	}
+	venv := filepath.Join(root, "venv")
 	environment := []string{"HOME=" + home, "JOBCTRL_DIR=" + filepath.Join(home, "data"), "JOBCTRL_RUNTIME_HOME=" + filepath.Join(home, "runtime"), "PATH=/usr/bin:/bin", executionQASandboxVariable + "=" + executionQASandboxSelector}
 	create := exec.Command(python, "-I", "-B", "-m", "venv", "--without-pip", venv)
 	create.Env = environment
@@ -36,9 +53,18 @@ func TestNativePythonDispatchOwnedScopeLoopbackSandbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	site := strings.TrimSpace(string(output))
-	relative, err := filepath.Rel(venv, site)
-	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
-		t.Fatal("venv site-packages escaped owned root")
+	if aliased {
+		// CPython versions may report canonical purelib while the venv was
+		// created through an alias (including macOS /var -> /private/var).
+		// Exercise that representation mismatch independently of version.
+		site, err = filepath.EvalSymlinks(site)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	site, err = canonicalOwnedVenvSitePackages(venv, site)
+	if err != nil {
+		t.Fatal(err)
 	}
 	module := filepath.Join(site, "jobctrl")
 	if err = os.MkdirAll(module, 0700); err != nil {
@@ -145,5 +171,56 @@ print(json.dumps({"loopback":True,"nonloopbackErrno":denied,"interpreter":sys.im
 	}
 	if scopes, err = readOwnedExecutionScopes(ctx); err != nil || len(scopes) != 0 {
 		t.Fatalf("actual native stop did not retire Python scope: %v (%d receipts)", err, len(scopes))
+	}
+}
+
+// Resolve both existing paths before checking ownership; a lexical comparison
+// can mistake macOS temporary-directory aliases for an escape. A symlink out
+// of the real venv remains an escape and is rejected before any module writes.
+func canonicalOwnedVenvSitePackages(venv, site string) (string, error) {
+	root, err := filepath.EvalSymlinks(venv)
+	if err != nil {
+		return "", err
+	}
+	realSite, err := filepath.EvalSymlinks(site)
+	if err != nil {
+		return "", err
+	}
+	relative, err := filepath.Rel(root, realSite)
+	if err != nil || relative == ".." || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("venv site-packages escaped owned root")
+	}
+	return realSite, nil
+}
+
+func TestNativePythonVenvSitePackagesOwnership(t *testing.T) {
+	root := t.TempDir()
+	venv := filepath.Join(root, "venv")
+	site := filepath.Join(venv, "lib", "site-packages")
+	if err := os.MkdirAll(site, 0700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "owned-alias")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Fatal(err)
+	}
+	canonicalSite, err := filepath.EvalSymlinks(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual, err := canonicalOwnedVenvSitePackages(filepath.Join(alias, "venv"), canonicalSite); err != nil || actual != canonicalSite {
+		t.Fatalf("owned path alias rejected: %q %v", actual, err)
+	}
+	external := t.TempDir()
+	escaped := filepath.Join(venv, "external-site")
+	if err := os.Symlink(external, escaped); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := canonicalOwnedVenvSitePackages(venv, escaped); err == nil {
+		t.Fatal("real site-packages escape accepted")
+	}
+	entries, err := os.ReadDir(external)
+	if err != nil || len(entries) != 0 {
+		t.Fatal("external site was changed")
 	}
 }
