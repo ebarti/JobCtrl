@@ -68,8 +68,11 @@ A verified new installer performs the forward upgrade from the original
 installation. It authenticates the predecessor as retained evidence, requests
 normal instance cleanup and waits for verified leftovers to exit, then snapshots
 the current app/Temporal pair with SQLite online backup. Exact-v14 migration is
-additive and preserves the app database inode. Each retry snapshots the current
-live pair and continues forward; readiness failure never authorizes restoring
+additive and preserves the app database inode. A pre-selector interruption is
+recovered by rerunning the trusted new installer; the immutable old binary
+cannot read the new journal. After selector replacement, ordinary `jobctrl
+update` can resume. Each retry snapshots the current live pair and continues
+forward; readiness failure never authorizes restoring
 an old pair over newer writes or executing the predecessor. A cross-protocol
 rollback, unknown legacy handoff intent, or unproven cleanup refuses safely.
 There is no bridge-catalog or reboot precondition. The actual signed/notarized

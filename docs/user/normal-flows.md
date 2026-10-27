@@ -814,8 +814,10 @@ exist only in the installed launcher.
 
 For the schema-15 protocol change, the new authenticated installer upgrades the
 original installation after normal cleanup. Interrupted upgrades preserve live
-data and resume with `jobctrl stop` followed by `jobctrl update`; cross-protocol
-rollback is refused. See
+data. Before the new command replaces the old one, rerun the trusted new
+installer; the old binary cannot read the new recovery journal. After command
+replacement, resume with `jobctrl stop` followed by `jobctrl update`.
+Cross-protocol rollback is refused. See
 [Getting Started](getting-started.md#update-roll-back-or-remove-jobctrl).
 
 | Lifecycle command | What it does |

@@ -78,8 +78,9 @@ The forward-update journal records the authenticated source receipt and
 selection generation, source schema, target, original backup and latest recovery
 backup. Each retry first cleans up instance-owned processes and snapshots the
 current live pair, including acknowledged WAL commits. Failed readiness and
-interruption retain the live pair and resumable journal; ordinary `jobctrl
-update` continues forward. Neither automatic recovery nor a cross-protocol
+interruption retain the live pair and resumable journal. Recovery reruns the
+trusted new installer before selector replacement; after replacement, ordinary
+`jobctrl update` continues forward. Neither automatic recovery nor a cross-protocol
 rollback may restore the original backup over newer protected data. Configuration,
 resume files, provider authentication and other external workspace authorities
 remain outside the pair and are preserved separately. Initial install refuses

@@ -47,8 +47,9 @@ func loadVerifiedBridgeSchemaContract(store *release.Store, receipt release.Rece
 	return verified, contract, nil
 }
 
-// readBridgeSchemaContract accepts only a release already verified by
-// verifyInstalledReleaseForExecution. It consumes bytes from one no-follow
+// readBridgeSchemaContract accepts only authenticated immutable release
+// evidence. Execution callers additionally require current channel permission.
+// It consumes bytes from one no-follow
 // descriptor, rather than hashing a pathname and reopening it for parsing.
 func readBridgeSchemaContract(verified verifiedRelease, sourceVersion int64) (bridgeSchemaContract, error) {
 	var contract bridgeSchemaContract

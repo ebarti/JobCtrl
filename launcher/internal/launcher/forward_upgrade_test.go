@@ -228,7 +228,7 @@ assert c.execute("SELECT personal_full_name FROM candidate_profiles WHERE tenant
 	}
 }
 
-func TestForwardUpdateRecoversEveryDurableBoundaryForward(t *testing.T) {
+func TestForwardUpdateRecoversEveryDurableBoundaryThroughCorrectController(t *testing.T) {
 	for _, boundary := range []release.State{release.MetadataVerified, release.PairBackedUp, release.SelectorHandoffPending, release.SelectorReplaced, release.MigrationCandidateReady, release.MigrationActivated, release.CandidateStarting, release.CandidateHealthy, release.PolicyFinalized} {
 		t.Run(string(boundary), func(t *testing.T) {
 
@@ -272,8 +272,17 @@ t=sqlite3.connect(sys.argv[2]);t.execute('PRAGMA journal_mode=WAL');t.execute("U
 			}
 			transitionFailure = nil
 
-			if err := Run(filepath.Join(f.home, "bin", "jobctrl"), []string{"update"}, f.env, io.Discard, io.Discard); err != nil {
-				t.Fatalf("forward recovery failed: %v", err)
+			var recoveryErr error
+			if boundary == release.MetadataVerified || boundary == release.PairBackedUp || boundary == release.SelectorHandoffPending {
+				// The immutable protocol-1 public binary cannot read journal v2.
+				// Retrying the authenticated new installer reaches this entry;
+				// calling the new Run with an old filepath would not prove that.
+				recoveryErr = PromoteStagedRelease(f.home, f.candidate.buildID, "homebrew", f.env, io.Discard)
+			} else {
+				recoveryErr = Run(filepath.Join(f.home, "bin", "jobctrl"), []string{"update"}, f.env, io.Discard, io.Discard)
+			}
+			if recoveryErr != nil {
+				t.Fatalf("forward recovery through the required controller failed: %v", recoveryErr)
 			}
 			read := `import sqlite3,sys
 c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True);assert c.execute('PRAGMA user_version').fetchone() == (15,)
@@ -685,5 +694,96 @@ c=sqlite3.connect(sys.argv[1]);upgrade_exact_v14_schema_to_v15(c);c.close()`
 				}
 			}
 		})
+	}
+}
+
+func TestForwardCleanupStopsRevokedCandidateWithoutExecutingIt(t *testing.T) {
+	f := interruptForwardUpdate(t, release.CandidateHealthy)
+	policy, err := f.store.ReadChannelState(f.candidate.receipt.Channel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy.RevokedBuildIDs[f.candidate.buildID] = true
+	if err := f.store.CommitMetadata(policy); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifyInstalledReleaseForExecution(f.store, f.candidate.receipt); err == nil {
+		t.Fatal("revoked candidate remained executable")
+	}
+	ready := filepath.Join(t.TempDir(), "writer-ready")
+	code := `import pathlib,sqlite3,sys,time
+c=sqlite3.connect(sys.argv[1]);c.execute('PRAGMA journal_mode=WAL')
+c.execute("UPDATE candidate_profiles SET personal_full_name='revoked-candidate-live-write' WHERE tenant_id='synthetic'");c.commit()
+t=sqlite3.connect(sys.argv[2]);t.execute('PRAGMA journal_mode=WAL');t.execute("UPDATE t SET v='revoked-candidate-temporal'");t.commit()
+pathlib.Path(sys.argv[3]).write_text('ready')
+while True: time.sleep(.05)`
+	writer := exec.Command(f.python, "-I", "-B", "-c", code, filepath.Join(f.data, "jobctrl.db"), filepath.Join(f.data, "temporal.db"), ready)
+	writer.Env = ownedProcessEnvironment(f.ctx)
+	if err := writer.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- writer.Wait() }()
+	t.Cleanup(func() {
+		if processPIDAlive(writer.Process.Pid) {
+			_ = writer.Process.Kill()
+		}
+	})
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("owned candidate writer did not commit")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	journalBefore, err := os.ReadFile(filepath.Join(f.home, release.JournalFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeBefore, err := f.store.ReadActive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	backupsBefore, err := os.ReadDir(filepath.Join(f.data, "backups"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	startReleaseCommand = func(launchContext, release.Receipt, string) error {
+		t.Fatal("pure cleanup executed a payload")
+		return nil
+	}
+	if err := Run(filepath.Join(f.home, "bin", "jobctrl"), []string{"stop"}, f.env, io.Discard, io.Discard); err != nil {
+		t.Fatalf("revocation blocked pure native cleanup: %v", err)
+	}
+	select {
+	case <-waited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("candidate writer survived cleanup")
+	}
+	if processPIDAlive(writer.Process.Pid) {
+		t.Fatal("cleanup returned with candidate writer still live")
+	}
+	if err := Run(filepath.Join(f.home, "bin", "jobctrl"), []string{"update"}, f.env, io.Discard, io.Discard); err == nil {
+		t.Fatal("cleanup granted a revoked candidate permission to resume")
+	}
+	if after, err := os.ReadFile(filepath.Join(f.home, release.JournalFile)); err != nil || !bytes.Equal(journalBefore, after) {
+		t.Fatalf("pure cleanup changed the forward journal: %v", err)
+	}
+	if after, err := f.store.ReadActive(); err != nil || after != activeBefore {
+		t.Fatalf("pure cleanup changed release selection: %v", err)
+	}
+	if after, err := os.ReadDir(filepath.Join(f.data, "backups")); err != nil || len(after) != len(backupsBefore) {
+		t.Fatalf("pure cleanup created a backup: %v", err)
+	}
+	read := `import sqlite3,sys
+c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True)
+assert c.execute('PRAGMA user_version').fetchone() == (15,)
+assert c.execute("SELECT personal_full_name FROM candidate_profiles WHERE tenant_id='synthetic'").fetchone() == ('revoked-candidate-live-write',)
+c.close();t=sqlite3.connect('file:'+sys.argv[2]+'?mode=ro',uri=True)
+assert t.execute('SELECT v FROM t').fetchone() == ('revoked-candidate-temporal',)`
+	if output, err := exec.Command(f.python, "-I", "-B", "-c", read, filepath.Join(f.data, "jobctrl.db"), filepath.Join(f.data, "temporal.db")).CombinedOutput(); err != nil {
+		t.Fatalf("cleanup lost acknowledged candidate writes: %v %s", err, output)
 	}
 }

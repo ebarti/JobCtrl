@@ -235,8 +235,10 @@ an actual cleanup failure.
 The signed payload inventory must bind `launcher/schema-transition.json` to
 source schema 14 and target schema 15. Exact-v14 activation applies the additive
 migration in place, preserving the database inode. A failed or interrupted
-attempt preserves the live pair and resumes through ordinary `jobctrl update`.
-Each attempt backs up the current live pair, including acknowledged WAL writes;
+attempt preserves the live pair. Before selector replacement, retry the
+trusted new installer: the immutable protocol-1 public binary cannot decode
+the protocol-2 journal. After replacement, ordinary `jobctrl update` resumes
+through the new controller. Each attempt backs up the current live pair, including acknowledged WAL writes;
 it never restores an earlier snapshot over newer data or restarts retired code.
 A cross-protocol rollback is refused. A first install cannot adopt a schema-14
 workspace without its original authenticated predecessor selection; an exact-v15
@@ -247,7 +249,11 @@ installed upgrade. Before first publication/use, exercise the actual signed,
 notarized installer and target through both curl and unmodified Homebrew,
 including archived-controller rejection, normal start/stop/restart, interruption
 and readiness failure, repeated forward recovery, revoked predecessor evidence,
-revoked-target refusal, and protected app/Temporal WAL and external-file bytes.
+revoked-target startup/update refusal, pure cleanup of a revoked target's owned
+writers, and protected app/Temporal WAL and external-file bytes. Run the archived
+public binary at each pre-selector interruption and the new installer retry
+through its actual entry; calling the new `Run` implementation with an old
+executable pathname proves neither of those process boundaries.
 Use owned synthetic workspaces and the matrix in
 [Reliability & QA](../local-reliability-qa.md#schema-15-forward-upgrade).
 The historical release-smoke upgrade/rollback cycle must not be claimed as

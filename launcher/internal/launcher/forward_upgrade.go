@@ -303,7 +303,9 @@ func stopForwardUpdate(env []string, output io.Writer) (bool, error) {
 	if err != nil || !journal.Resumable() || !journal.ForwardOnlyUpgrade || !journal.PreserveLiveOnFailure || journal.SchemaVersion != 2 || journal.Operation != "update" || journal.Old == nil || journal.Candidate == nil || journal.SourceGeneration == 0 || (journal.SourceSchemaVersion != 14 && journal.SourceSchemaVersion != 15) || journal.DescriptorSHA256 != journal.Candidate.DescriptorSHA256 {
 		return true, errors.New("cannot authenticate the interrupted forward update for cleanup; preserve the journal and live workspace")
 	}
-	candidate, err := verifyInstalledReleaseForExecution(store, *journal.Candidate)
+	// Cleanup uses authenticated metadata only. Current revocation policy
+	// still fences update/start, but cannot prevent stopping owned writers.
+	candidate, err := verifyInstalledReleaseEvidence(store, *journal.Candidate, false)
 	if err != nil {
 		return true, err
 	}
@@ -326,10 +328,12 @@ func stopForwardUpdate(env []string, output io.Writer) (bool, error) {
 	if (!sourceSelected && !targetSelected) || (!selectorMatchesEvidence(home, old) && !selectorMatchesEvidence(home, candidate)) {
 		return true, errors.New("forward cleanup selection changed; preserve the journal and live workspace")
 	}
-	ctx, err := transitionContextForReceipt(env, store, *journal.Candidate)
+	cleanupEnv := append(append([]string{}, env...), "JOBCTRL_RUNTIME_HOME="+store.Home)
+	instance, err := resolveInstance(cleanupEnv)
 	if err != nil {
 		return true, err
 	}
+	ctx := verifiedReleaseContext(launchContext{Instance: instance, Environment: cleanupEnv}, candidate)
 	if err := stop(ctx); err != nil {
 		return true, err
 	}

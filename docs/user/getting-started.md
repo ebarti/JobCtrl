@@ -259,9 +259,14 @@ require rebooting. If cleanup actually fails, preserve the reported evidence;
 reboot is a last-resort troubleshooting step.
 
 If startup fails or the upgrade is interrupted, JobCtrl preserves the live
-databases and recovery journal. Run `jobctrl stop`, then `jobctrl update` to
-continue forward. Each attempt backs up the current pair, including later saved
-changes. Do not remove the journal, reinstall over a schema-14 workspace without
+databases and recovery journal. Rerun the trusted new installer that began the
+upgrade if the old `jobctrl` command remains selected or reports an unreadable
+transition journal. The old binary cannot recover the new journal. After the
+new command has replaced it, run `jobctrl stop`, then `jobctrl update` to continue
+forward. Each attempt backs up the current pair, including later saved changes.
+A revoked candidate can still be stopped through the new command; revocation
+continues to block its startup or update. An untracked legacy runtime still
+requires the documented ownership recovery before migration can proceed. Do not remove the journal, reinstall over a schema-14 workspace without
 its original metadata, or restore an older snapshot over newer data. Rollback
 across this protocol change is refused. A same-protocol explicit rollback still
 restores the snapshot associated with its previous release, so data added since

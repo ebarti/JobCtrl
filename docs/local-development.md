@@ -434,8 +434,10 @@ candidate. For a synthetic exact-v14 source, exercise the private boundary with
 candidate. The authenticated new installer owns stopped-runtime paired backup,
 exact-v14 in-place activation, readiness and forward recovery. Historical
 protocol-1 controllers refuse the protocol-2 target before backup; run the new
-installer against the original authenticated installation instead. Each retry
-preserves newer live app/Temporal writes and takes a current WAL-aware backup.
+installer against the original authenticated installation instead. Before
+selector replacement, retry that trusted installer; the old public binary
+cannot decode the new journal. After replacement, ordinary `jobctrl update`
+resumes through the new controller. Each retry preserves newer live app/Temporal writes and takes a current WAL-aware backup.
 A cross-protocol rollback is refused. Never run a migration executor against
 the live path as its candidate. See
 [the distribution contract](../packaging/distribution/README.md) and

@@ -53,8 +53,10 @@ The authenticated protocol-2 installer owns the forward upgrade from an
 original protocol-1/schema-14 installation. It verifies the retained predecessor
 as historical evidence and the target for execution under the transition and
 selection locks. It uses normal instance cleanup before the paired backup,
-never executes the predecessor, and continues an interrupted upgrade forward
-through ordinary `jobctrl update`. There is no separate bridge catalog or reboot
+never executes the predecessor, and continues an interrupted upgrade forward.
+Before selector replacement, recovery requires rerunning the trusted new
+installer because the immutable old binary cannot decode the new journal.
+After replacement, ordinary `jobctrl update` uses the new controller. There is no separate bridge catalog or reboot
 precondition. Actual signed/notarized release qualification remains separate
 from source merge; see the
 [release contract](../developer/releasing.md#schema-15-installed-upgrade-qualification).
@@ -213,9 +215,12 @@ For signed protocol-2 targets, the journal binds source generation/schema and
 candidate identity and records original and recovery backup IDs. Each retry
 backs up the current live pair. Exact-v14 activation is additive and preserves
 the application database inode. Readiness failure or interruption keeps live
-data and the journal; `jobctrl stop` followed by `jobctrl update` continues
-forward. Revoked predecessors may remain authenticated historical evidence but
-cannot execute. A revoked candidate, changed source selection, regressed schema
+data and the journal. Before selector replacement, rerun the trusted new
+installer; after replacement, `jobctrl stop` followed by `jobctrl update`
+continues forward. Pure native cleanup authenticates immutable evidence without
+requiring execution permission, so a revoked candidate's writers can still be
+stopped. Update and startup retain current policy checks. Revoked predecessors
+may remain authenticated historical evidence but cannot execute. A revoked candidate, changed source selection, regressed schema
 or unknown legacy handoff refuses without restoring stale data. Cross-protocol
 rollback is refused. Same-protocol explicit rollback retains its separate paired
 restore contract and must preserve the live pair on a target-start failure.

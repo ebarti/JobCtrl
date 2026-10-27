@@ -122,13 +122,20 @@ receipt/declaration, changed selection generation, unknown source schema,
 regressed live schema and unknown legacy handoff without destructive repair.
 
 Exercise all nine durable boundaries from metadata verification through policy
-finalization via the public `jobctrl update` recovery entry. Commit independent
+finalization. Before selector replacement, recovery uses the authenticated new
+installer entry; the archived protocol-1 public binary must refuse the new
+journal without changing it. After replacement, use public `jobctrl update`.
+Do not substitute the new in-process `Run` implementation with an old executable
+pathname as proof of the archived binary or installer process boundary. Commit independent
 profile, resume, search and Temporal WAL changes after interruption and candidate
 start, fail readiness, and retry repeatedly. Check current paired snapshots,
 original/recovery backup IDs, exact selection and policy, preserved app inode,
 protected rows and external config/resume bytes. Finalization after the active
 selection write must complete without restarting a healthy candidate. Cover
-same-schema updates and rollback target-start failure separately. Initial
+same-schema updates and rollback target-start failure separately. Revoke a
+candidate with live owned writers: pure cleanup must stop them without executing
+the payload or changing the journal/selection, while update and startup still
+refuse the revoked target. Initial
 installation/adoption must refuse schema 14 without original predecessor
 metadata and permit preserving an exact-v15 reinstall after cleanup.
 
