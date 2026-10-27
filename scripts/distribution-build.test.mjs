@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { chmod, copyFile, lstat, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
@@ -17,6 +18,7 @@ import {
   compareMacOsVersions,
   compareSizeReports,
   createNativeLauncherBuildPlan,
+  createNativeLauncherSmokePlan,
   createExtractedRuntimeStackPlan,
   createDeterministicZip,
   createDeterministicTarGz,
@@ -163,6 +165,50 @@ test("pre-sign network candidates defer only the unavailable native lifecycle sm
     releaseChannel: "prerelease",
   });
   assert.throws(() => nativeLauncherLifecycleSmokeRequirement("preview"), /release channel is invalid/);
+});
+
+test("native smoke controller runs directly and requires the fixed helper sandbox", () => {
+  const stockEnvironment = {
+    HOME: "/tmp/owned-native-smoke/home",
+    JOBCTRL_DIR: "/tmp/owned-native-smoke/home/.jobctrl",
+    PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+  };
+  const plan = createNativeLauncherSmokePlan({
+    payloadRoot: "/tmp/owned-native-smoke/payload",
+    extractedRoot: "/tmp/owned-native-smoke",
+    stockEnvironment,
+  });
+  assert.equal(plan.command, "/tmp/owned-native-smoke/payload/launcher/jobctrl");
+  assert.equal(plan.options.cwd, "/tmp/owned-native-smoke");
+  assert.deepEqual(plan.options.env, {
+    ...stockEnvironment,
+    JOBCTRL_RUNTIME_HOME: "/tmp/owned-native-smoke/runtime",
+    JOBCTRL_EXECUTION_QA_SANDBOX: "loopback-only-v1",
+  });
+  assert.equal(stockEnvironment.JOBCTRL_EXECUTION_QA_SANDBOX, undefined);
+  assert.equal(plan.executionSandbox.controller, "outside-seatbelt");
+  assert.equal(plan.executionSandbox.runtimeHelper, "macos-sandbox-exec");
+  assert.equal(plan.executionSandbox.selector, plan.options.env.JOBCTRL_EXECUTION_QA_SANDBOX);
+  for (const requested of ["", "off", "allow-all", "/tmp/profile.sb", null]) {
+    assert.throws(() => createNativeLauncherSmokePlan({
+      payloadRoot: "/tmp/owned-native-smoke/payload",
+      extractedRoot: "/tmp/owned-native-smoke",
+      stockEnvironment: { ...stockEnvironment, JOBCTRL_EXECUTION_QA_SANDBOX: requested },
+    }), /fixed loopback-only sandbox selector/);
+  }
+});
+
+test("native smoke sandbox selector and profile bytes match the builtin Go contract", async () => {
+  const source = await readFile(new URL("../launcher/internal/launcher/owned_execution_darwin.go", import.meta.url), "utf8");
+  const profile = source.match(/const executionQASandboxProfile = `([^`]+)`/);
+  const selector = source.match(/const executionQASandboxSelector = "([^"]+)"/);
+  const variable = source.match(/const executionQASandboxVariable = "([^"]+)"/);
+  assert.ok(profile, "native builtin QA sandbox profile literal is missing");
+  assert.ok(selector, "native builtin QA sandbox selector literal is missing");
+  assert.ok(variable, "native builtin QA sandbox variable literal is missing");
+  const plan = createNativeLauncherSmokePlan({ payloadRoot: "/tmp/owned-smoke/payload", extractedRoot: "/tmp/owned-smoke" });
+  assert.equal(plan.options.env[variable[1]], selector[1]);
+  assert.equal(plan.executionSandbox.profileSha256, createHash("sha256").update(profile[1]).digest("hex"));
 });
 
 function tarField(value, width) {
