@@ -600,3 +600,109 @@ def test_post_commit_cleanup_failures_preserve_live_data(
     with sqlite3.connect(tmp_path / "backup.db") as backup:
         assert_exact_manifest(backup, EXACT_V14_MANIFEST)
         _assert_protected(backup)
+
+
+@pytest.mark.parametrize(
+    "stage",
+    ["before_lock", "before_candidate_unlink", "before_receipt_unlink", "before_cleanup_dirsync"],
+)
+def test_bound_activation_process_death_preserves_protected_data_and_backup(tmp_path: Path, stage: str) -> None:
+    from jobctrl.infrastructure.migrations.v15_activation import SourceChangedError, activate
+
+    path = tmp_path / "owned.db"
+    marker = tmp_path / "ready"
+    resume = tmp_path / "owned-resume.txt"
+    settings = tmp_path / "owned-settings.json"
+    resume.write_bytes(b"owned-resume\x00synthetic")
+    settings.write_bytes(b'{"owned_settings":true}')
+    _make(path)
+    candidate, receipt = _build_bound_candidate(path, tmp_path)
+    inode = path.stat().st_ino
+    # Keep the child source explicit: no production user data, no Keychain, and
+    # no unowned process or network access. The parent terminates only this PID.
+    source = '''
+import pathlib, sys, time
+from jobctrl.infrastructure.migrations import v14_to_v15_inplace as inplace
+from jobctrl.infrastructure.migrations import v15_activation as activation
+path, candidate, receipt, marker = map(pathlib.Path, sys.argv[1:5])
+stage = sys.argv[5]
+def pause():
+    marker.write_text('ready')
+    while True: time.sleep(0.1)
+if stage == 'before_lock':
+    original = activation.upgrade_v14_in_place
+    def upgrade(*args, **kwargs):
+        pause()
+        return original(*args, **kwargs)
+    activation.upgrade_v14_in_place = upgrade
+elif stage in ('before_candidate_unlink', 'before_receipt_unlink'):
+    original_unlink = pathlib.Path.unlink
+    def unlink(self, *args, **kwargs):
+        if self == (candidate if stage == 'before_candidate_unlink' else receipt): pause()
+        return original_unlink(self, *args, **kwargs)
+    pathlib.Path.unlink = unlink
+else:
+    def sync(_path): pause()
+    activation._fsync_directory = sync
+activation.activate(path, candidate, receipt)
+'''
+    proc = subprocess.Popen(
+        [sys.executable, "-c", source, str(path), str(candidate), str(receipt), str(marker), stage],
+        env=os.environ.copy(),
+    )
+    try:
+        deadline = time.monotonic() + 30
+        while not marker.exists() and proc.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert marker.exists(), f"owned child did not reach {stage}: {proc.poll()}"
+        proc.kill()
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+    activated = stage != "before_lock"
+    assert path.stat().st_ino == inode
+    with sqlite3.connect(path) as check:
+        assert_exact_manifest(check, EXACT_V15_MANIFEST if activated else EXACT_V14_MANIFEST)
+        _assert_protected(check)
+    with sqlite3.connect(tmp_path / "backup.db") as backup:
+        assert_exact_manifest(backup, EXACT_V14_MANIFEST)
+        _assert_protected(backup)
+    assert resume.read_bytes() == b"owned-resume\x00synthetic"
+    assert settings.read_bytes() == b'{"owned_settings":true}'
+    expected_candidate = stage in {"before_lock", "before_candidate_unlink"}
+    expected_receipt = stage != "before_cleanup_dirsync"
+    assert candidate.exists() is expected_candidate
+    assert receipt.exists() is expected_receipt
+    if activated:
+        refusal = SourceChangedError if stage == "before_candidate_unlink" else FileNotFoundError
+        with pytest.raises(refusal):
+            activate(path, candidate, receipt)
+        with sqlite3.connect(path) as check:
+            assert_exact_manifest(check, EXACT_V15_MANIFEST)
+            _assert_protected(check)
+
+
+def test_bound_helper_postcommit_sync_failure_preserves_both_databases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jobctrl.infrastructure.migrations.v15_activation import activate
+
+    path = tmp_path / "owned.db"
+    _make(path)
+    candidate, receipt = _build_bound_candidate(path, tmp_path)
+
+    def fail_sync(_path: Path) -> None:
+        raise OSError("synthetic post-commit directory sync failure")
+
+    monkeypatch.setattr(inplace, "_fsync_directory", fail_sync)
+    with pytest.raises(inplace.InPlaceDurabilityUncertainError):
+        activate(path, candidate, receipt)
+    assert candidate.exists() and receipt.exists()
+    with sqlite3.connect(path) as check:
+        assert_exact_manifest(check, EXACT_V15_MANIFEST)
+        _assert_protected(check)
+    with sqlite3.connect(tmp_path / "backup.db") as backup:
+        assert_exact_manifest(backup, EXACT_V14_MANIFEST)
+        _assert_protected(backup)
