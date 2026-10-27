@@ -284,6 +284,11 @@ retries and layered containment. The use case
 (`infrastructure/apply/claude_code_cli.py`) enforce it; the full stage walkthrough
 is in the [stage walkthrough](../architecture/pipeline/stages.md#apply).
 
+- **Launch-bound browser cleanup.** Browser startup refuses an occupied CDP
+  resource. Cancellation and shutdown select only the exact recorded launch
+  identity, preserving unrelated listeners and processes. The platform
+  authority and incomplete-cleanup rules are owned by
+  [Apply browser ownership](../architecture/runtime.md#apply-browser-ownership).
 - **No model-owned final browser commit.** Every model-driven browser session
   is transport-locked. A live browser-form run returns
   `trusted_final_submit_required` before prompt rendering or browser launch.

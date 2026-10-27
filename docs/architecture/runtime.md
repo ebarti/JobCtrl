@@ -29,6 +29,46 @@ fresh request conversations and cancellation/shutdown rules are defined in
 [Agent Runtime Ownership](agent-runtime.md). Pipeline admission and Temporal
 activity capacity remain owned by their existing layers.
 
+### Apply browser ownership
+
+The Apply browser lifecycle records the exact `Popen` handle and original PID
+when it launches an isolated browser. Worker cleanup, launch failure,
+cancellation, capability revocation and Python exit use those records. They
+never discover termination targets from a CDP port or process name. An occupied
+CDP port fails before profile setup with guidance to choose another port or
+stop its owner explicitly. Worker IDs already being acquired or owned cannot
+replace a live record.
+
+On POSIX, `start_new_session` creates the browser's own session and group.
+Cleanup verifies that the original child still leads that session and group,
+and holds CPython's `Popen` reaping lock across verification and signaling.
+The unreaped child prevents PID/group reuse during that operation; a reaped
+leader or changed identity cannot authorize a group signal. On Windows,
+cleanup terminates the original browser kernel handle; it never invokes a
+PID-based tree-kill tool. That root exit cannot certify descendant exit, so
+Windows Apply cleanup reports unavailable descendant verification and retains
+ownership. Native Windows Apply remains unqualified; this does not change the
+separate Windows credential adapter.
+
+Root exit alone does not prove POSIX session exit. After waiting for the root,
+cleanup uses a read-only kernel process census (`libproc` on macOS and `/proc`
+on Linux) to observe the old session, including members in other groups. Each
+scan fences PID enumeration before and after inspection. macOS kernel unique
+IDs/PID versions and Linux kernel start ticks bind process generations; macOS
+also verifies identity around its separate session/status reads. Retirement
+requires two complete observations with identical PID/generation/membership
+inventories and no live session members. A fork followed by a session handoff,
+PID reuse, changed membership or unavailable/incomplete census keeps cleanup unresolved;
+an exited leader never authorizes another signal. Zombies count as exited.
+The observation does not recover authority over descendants that escape the
+launch session.
+
+Scoped browser and agent cleanup attempt each selected worker and preserve
+failed ownership records while reporting incomplete cleanup. The agent adapter
+also verifies cleanup after a naturally exited root, before removing its record.
+The exit handler logs failures and does not sweep ports or adopt leftovers.
+These rules complement the native instance shutdown boundary described below.
+
 ## Source and bundled runtime boundaries
 
 The table above describes the source-development topology. The bundled

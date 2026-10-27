@@ -249,6 +249,11 @@ different origin are blocked rather than silently inheriting the approval.
 Review the new application destination and start a fresh run when a legitimate
 provider transition requires another origin.
 
+Apply closes only browsers it launched and still owns. If its browser port is
+already occupied, the run stops with guidance to retry on another port or stop
+the owning application yourself. Starting, canceling or exiting Apply does not
+close an unrelated browser or local service to reclaim that port.
+
 Origin confinement limits rehearsal navigation; it does not authorize final
 browser submission. The final browser action remains manual as described above.
 
