@@ -463,3 +463,10 @@ the source registry and locator queue. `source-proposals list` reads that histor
 without network access or mutations. See
 [Discovery](discovery.md#propose-sources-from-saved-posting-history) for review and
 explicit suppression reset.
+
+Native `jobctrl stop` first requests clean shutdown, then kills verified
+instance-owned leftovers that exceed the timeout and waits for exit. Successful
+cleanup permits normal restart. If cleanup fails, inspect the reported process
+or permission problem, stop the remaining JobCtrl processes and retry. Rebooting
+is a last-resort troubleshooting option when those processes cannot be stopped;
+it is not part of normal stop, backup, update or restart.

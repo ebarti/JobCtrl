@@ -270,3 +270,10 @@ to replace it; preserve those files and recover the pair before retrying.
 Capabilities that interpret text require a ready provider and spend allowance. Saved settings drive provider search directly, and fetched jobs proceed to full-posting analysis/scoring without a separate model intake gate. Generation preserves accepted artifacts on failed refreshes. The extension proposes model-mapped, saved-profile-backed answers for review before filling. Affected offline-demo capabilities report unavailable.
 
 See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+
+Native `jobctrl stop` first requests clean shutdown, then kills verified
+instance-owned leftovers that exceed the timeout and waits for exit. Successful
+cleanup permits normal restart. If cleanup fails, inspect the reported process
+or permission problem, stop the remaining JobCtrl processes and retry. Rebooting
+is a last-resort troubleshooting option when those processes cannot be stopped;
+it is not part of normal stop, backup, update or restart.

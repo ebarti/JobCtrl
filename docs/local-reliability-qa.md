@@ -20,6 +20,17 @@ results. Contract-only high-risk changes require safety
 checks, with product verification before first use. Major UI regressions require
 a regression test or an explicit reproducible scenario.
 
+For native shutdown, start an owned writer that calls `setsid()` and survives
+its recorded parent and original process group. Actual status must show it;
+actual stop must request clean shutdown, kill a TERM-ignoring leftover only
+after the timeout, wait for exit and allow normal restart. Keep another
+instance alive as a preservation control. Inspect real kernel process identities;
+never use a name/substring match as kill authority. Cover legacy workspace tags,
+CLI descendants, repeated cleanup, PID reuse and unavailable process inspection.
+An actual cleanup failure must preserve registry/database bytes and block backup,
+update and rollback; a successful cleanup must reopen the coherent pair. Use
+synthetic workspaces and processes only.
+
 For the job-data purge gate, the disposable workspace must contain a Candidate
 Profile, Discovery settings, source registry, resume template/default, at least
 one Job with registered Materials, an unregistered generated candidate, a

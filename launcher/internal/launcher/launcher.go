@@ -1638,6 +1638,15 @@ func supervisorMayBeLive(record componentRecord) bool {
 }
 
 func startDetached(ctx launchContext) error {
+	existing, err := readState(ctx.Instance.StatePath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if processes, err := inspectOwnedProcesses(ctx, existing); err != nil {
+		return err
+	} else if len(processes) > 0 {
+		return fmt.Errorf("%w; run jobctrl stop to clean up the remaining instance processes", ErrAlreadyRunning)
+	}
 	if state, err := readState(ctx.Instance.StatePath); err == nil {
 		if err := validateStartState(ctx, state); err != nil {
 			return err
@@ -1651,7 +1660,7 @@ func startDetached(ctx launchContext) error {
 	}
 	defer read.Close()
 	command := exec.Command(ctx.Executable, "__supervise")
-	command.Env = append(ctx.Environment, "JOBCTRL_READY_FD=3")
+	command.Env = append(ownedProcessEnvironment(ctx), "JOBCTRL_READY_FD=3")
 	command.ExtraFiles = []*os.File{write}
 	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err != nil {
@@ -1758,7 +1767,11 @@ func supervise(ctx launchContext, ready io.Writer) (result error) {
 	children := map[string]*exec.Cmd{}
 	defer func() {
 		shutdownComponents(&state, children, ctx.Instance.StatePath)
-		if allRecordedComponentsStopped(state) {
+		cleanupErr := terminateOwnedProcesses(ctx, state)
+		if cleanupErr != nil && result == nil {
+			result = fmt.Errorf("clean up remaining instance processes: %w", cleanupErr)
+		}
+		if cleanupErr == nil && allRecordedComponentsStopped(state) {
 			now := time.Now().UTC()
 			state.StoppedAt = &now
 		} else {
@@ -1915,7 +1928,7 @@ func startComponent(ctx launchContext, state *instanceState, name string) (*exec
 	}
 	argv := append([]string{"-p", "-c", gatedComponentScript, "jobctrl-component", executable}, arguments...)
 	command := exec.Command("/bin/bash", argv...)
-	command.Env, command.Dir, command.Stdout, command.Stderr = temporalGateEnvironment(ctx.Environment), ctx.Instance.StateDir, logFile, logFile
+	command.Env, command.Dir, command.Stdout, command.Stderr = temporalGateEnvironment(ownedProcessEnvironment(ctx)), ctx.Instance.StateDir, logFile, logFile
 	command.ExtraFiles = []*os.File{gateRead}
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := command.Start(); err != nil {
@@ -2205,7 +2218,7 @@ func stop(ctx launchContext) error {
 	defer releaseLock(control)
 	state, err := readState(ctx.Instance.StatePath)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return terminateOwnedProcesses(ctx, instanceState{})
 	}
 	if err != nil {
 		return err
@@ -2214,6 +2227,10 @@ func stop(ctx launchContext) error {
 		return err
 	}
 	initialState := state
+	ownedBeforeShutdown, err := inspectOwnedProcesses(ctx, state)
+	if err != nil {
+		return err
+	}
 	// The supervisor is the owner of component shutdown. Ask it to drain first
 	// while holding the stop control lock, then reload its final state before
 	// handling any remaining groups. Signaling components concurrently with its
@@ -2223,7 +2240,9 @@ func stop(ctx launchContext) error {
 			return fmt.Errorf("signal verified supervisor: %w", err)
 		}
 		if !waitForPIDExit(state.Supervisor.PID, supervisorShutdownTimeout) {
-			return errors.New("supervisor did not finish component shutdown before the deadline; ownership remains unresolved")
+			if err := drainOwnedProcesses(ctx, state, ownedBeforeShutdown); err != nil {
+				return fmt.Errorf("supervisor cleanup exceeded its deadline: %w", err)
+			}
 		}
 	} else if supervisorMayBeLive(state.Supervisor) {
 		return errors.New("supervisor ownership is unresolved; refusing concurrent component termination")
@@ -2246,6 +2265,9 @@ func stop(ctx launchContext) error {
 	if !sameRuntimeGeneration(initialState, state) {
 		return errors.New("runtime generation changed during stop; refusing to signal or overwrite its registry")
 	}
+	if err := drainOwnedProcesses(ctx, state, ownedBeforeShutdown); err != nil {
+		return fmt.Errorf("verify instance-wide shutdown: %w", err)
+	}
 	failed := make([]string, 0)
 	for _, name := range []string{"api", "worker", "temporal"} {
 		if record, exists := state.Components[name]; exists && componentMayBeLive(record) {
@@ -2255,10 +2277,6 @@ func stop(ctx launchContext) error {
 		}
 	}
 	if len(failed) > 0 || !allRecordedComponentsStopped(state) || supervisorMayBeLive(state.Supervisor) {
-		state.StoppedAt = nil
-		if err := writeState(ctx.Instance.StatePath, state); err != nil {
-			return err
-		}
 		if len(failed) > 0 {
 			return fmt.Errorf("could not safely stop live component groups: %s", strings.Join(failed, ", "))
 		}
@@ -2270,6 +2288,17 @@ func stop(ctx launchContext) error {
 }
 func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 	state, err := readState(ctx.Instance.StatePath)
+	processes, ownershipErr := inspectOwnedProcesses(ctx, state)
+	if ownershipErr != nil {
+		return ownershipErr
+	}
+	if errors.Is(err, os.ErrNotExist) && len(processes) > 0 {
+		if jsonOutput {
+			return json.NewEncoder(output).Encode(map[string]any{"status": "orphaned", "components": map[string]any{}})
+		}
+		_, err := io.WriteString(output, "JobCtrl has remaining owned processes; run jobctrl stop to clean them up.\n")
+		return err
+	}
 	if errors.Is(err, os.ErrNotExist) {
 		if jsonOutput {
 			_, _ = io.WriteString(output, "{\"status\":\"stopped\",\"components\":{}}\n")
@@ -2342,6 +2371,9 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 	}
 	if state.StoppedAt != nil && !stateHasLiveProcesses(state) {
 		overall = "stopped"
+	}
+	if overall == "stopped" && len(processes) > 0 {
+		overall = "orphaned"
 	}
 	if jsonOutput {
 		return json.NewEncoder(output).Encode(struct {
@@ -2451,5 +2483,5 @@ func dispatchPython(ctx launchContext, args []string) error {
 		return fmt.Errorf("retain release selection lock for command: %w", err)
 	}
 	defer restore()
-	return syscall.Exec(python, argv, ctx.Environment)
+	return syscall.Exec(python, argv, ownedProcessEnvironment(ctx))
 }
