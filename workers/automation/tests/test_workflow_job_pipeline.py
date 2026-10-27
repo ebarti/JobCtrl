@@ -774,6 +774,7 @@ async def test_pipeline_workflow_runs_apply_as_child_workflow():
         "headless": True,
         "model": "sonnet",
         "dry_run": True,
+        "continuous": False,
         "workers": 3,
         "approval_required": True,
         "workflow_id": f"{workflow_id}-apply",
