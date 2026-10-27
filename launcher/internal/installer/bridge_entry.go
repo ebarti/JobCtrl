@@ -26,6 +26,8 @@ type CachedBridgeInput struct {
 	// Optional final target binds a planned handoff to an authenticated next
 	// release. Recovery uses the retained signed evidence instead of these paths.
 	TargetDescriptorURL, TargetDescriptorPath, TargetSignaturePath string
+	// A signed route can require exact identities on fresh and recovered handoffs.
+	ExpectedSourceDescriptorSHA256, ExpectedBridgeDescriptorSHA256, ExpectedTargetDescriptorSHA256 string
 }
 
 func bridgeEvidencePath(home, digest string) string {
@@ -199,6 +201,12 @@ func prepareSignedCachedBridgeWithTransition(options Options, input CachedBridge
 	if recovering && input.TargetDescriptorURL != "" && input.TargetDescriptorURL != bundle.TargetDescriptorURL {
 		return nil, empty, errors.New("requested final target differs from retained bridge evidence")
 	}
+	if input.ExpectedTargetDescriptorSHA256 != "" && (!sha256Pattern.MatchString(input.ExpectedTargetDescriptorSHA256) || digestBytes(bundle.TargetDescriptor) != input.ExpectedTargetDescriptorSHA256) {
+		return nil, empty, errors.New("final target differs from authenticated bridge route")
+	}
+	if input.ExpectedSourceDescriptorSHA256 != "" && !sha256Pattern.MatchString(input.ExpectedSourceDescriptorSHA256) {
+		return nil, empty, errors.New("invalid bridge route source identity")
+	}
 	bundleRaw, err := encodeJSON(bundle)
 	if err != nil || len(bundleRaw) > maxBridgeEvidenceBytes {
 		return nil, empty, errors.New("bridge signed evidence exceeds bound")
@@ -216,6 +224,9 @@ func prepareSignedCachedBridgeWithTransition(options Options, input CachedBridge
 	sourceURL, build, err := validateImmutableDescriptorURL(bundle.DescriptorURL)
 	if err != nil {
 		return nil, empty, err
+	}
+	if input.ExpectedBridgeDescriptorSHA256 != "" && (!sha256Pattern.MatchString(input.ExpectedBridgeDescriptorSHA256) || digestBytes(bundle.Descriptor) != input.ExpectedBridgeDescriptorSHA256) {
+		return nil, empty, errors.New("bridge differs from authenticated route")
 	}
 	descriptorRaw, signature := bundle.Descriptor, bundle.DescriptorSignature
 	claimRaw, claimSig := bundle.Attestation, bundle.AttestationSignature
@@ -305,6 +316,9 @@ func prepareSignedCachedBridgeWithTransition(options Options, input CachedBridge
 	}
 	if recovering {
 		active = prior.Source
+	}
+	if input.ExpectedSourceDescriptorSHA256 != "" && active.Receipt.DescriptorSHA256 != input.ExpectedSourceDescriptorSHA256 {
+		return nil, empty, errors.New("predecessor differs from authenticated bridge route")
 	}
 	if active.SelectorBuildID != active.Receipt.BuildID || active.Receipt.Channel != descriptor.Channel || !buildIDPattern.MatchString(active.Receipt.BuildID) {
 		return nil, empty, errors.New("bridge requires predecessor's own selector")

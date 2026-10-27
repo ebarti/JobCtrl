@@ -207,6 +207,17 @@ target evidence and recheck channel, sequence, safety floor and cross-revocation
 Neither route verifies the target payload; normal acquisition and publication
 of per-predecessor bridge artifacts are not yet connected.
 
+An explicit bootstrap can instead receive a signed route catalog, its detached
+signature, and the separately signed final-target descriptor and signature.
+The catalog is a locator keyed by exact predecessor and final-target descriptor
+digests; the installer rejects missing or ambiguous routes and rechecks the
+source, bridge and target identities and policies under the handoff locks. The
+route invokes only the bridge handoff; it neither stages nor promotes the final
+target, and `--stage-only` cannot change the selection. Curl and Homebrew can
+supply the same catalog inputs, but existing installed launchers do not know
+this option. There is no published catalog or automatic discovery endpoint yet.
+Interrupted handoffs recover from retained signed evidence without the catalog.
+
 The handoff uses the transition and selection locks shared by supported
 release mutators. The [threat model](security.md#threat-model-trust-boundaries-and-assumptions)
 excludes a compromised OS account and hostile local-disk control; the handoff

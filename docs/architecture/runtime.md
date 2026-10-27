@@ -53,8 +53,10 @@ The source installer also contains a protocol-2 bridge handoff for an
 authenticated, separately reviewed schema-14 payload. It retains signed
 evidence, selects the bridge receipt before replacing the public selector, and
 recovers an interrupted selection forward under the release locks. It does not
-change or open the application and Temporal databases. This candidate is not a
-published bridge or proof that the later database migration is safe; those
+change or open the application and Temporal databases. An explicitly supplied
+signed route catalog can select a bridge by exact predecessor and final-target
+digests, but it does not discover or promote the final release. This candidate
+is not a published bridge or proof that the later database migration is safe; those
 artifacts and the stopped-writer transition require separate verification. See
 the [bridge release contract](../developer/releasing.md#protocol-2-bridge-candidate).
 

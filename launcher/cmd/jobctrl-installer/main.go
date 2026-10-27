@@ -21,6 +21,7 @@ func main() {
 	var bridgeRoleFile, bridgeRoleSignatureFile string
 	var bridgeDescriptorURL, bridgeRoleURL string
 	var bridgeTargetURL, bridgeTargetFile, bridgeTargetSignatureFile string
+	var bridgeRouteFile, bridgeRouteSignatureFile string
 	var allowUnsignedLocal, stageOnly, jsonOutput, bridgeRecover bool
 	flag.StringVar(&releaseURL, "release-url", "", "signed release channel-pointer URL (default: compiled channel)")
 	flag.StringVar(&home, "home", "", "JobCtrl runtime home (default: ~/Library/Application Support/JobCtrl)")
@@ -37,6 +38,8 @@ func main() {
 	flag.StringVar(&bridgeTargetURL, "bridge-target-descriptor-url", "", "immutable URL for the signed final target descriptor")
 	flag.StringVar(&bridgeTargetFile, "bridge-target-descriptor-file", "", "signed final target descriptor")
 	flag.StringVar(&bridgeTargetSignatureFile, "bridge-target-signature-file", "", "final target descriptor signature")
+	flag.StringVar(&bridgeRouteFile, "bridge-route-file", "", "signed explicit bridge route catalog")
+	flag.StringVar(&bridgeRouteSignatureFile, "bridge-route-signature-file", "", "bridge route catalog signature")
 	flag.BoolVar(&bridgeRecover, "bridge-recover", false, "complete a previously interrupted authenticated bridge handoff")
 	flag.StringVar(&bridgeDescriptorURL, "bridge-descriptor-url", "", "canonical immutable signed bridge descriptor URL")
 	flag.StringVar(&bridgeRoleURL, "bridge-role-url", "", "canonical signed bridge role URL in the same immutable build")
@@ -53,8 +56,9 @@ func main() {
 		fail("--source must be curl or homebrew")
 	}
 	bridgeNetwork := bridgeDescriptorURL != "" || bridgeRoleURL != ""
-	bridge := bridgeRecover || bridgeRoleFile != "" || bridgeRoleSignatureFile != "" || bridgeNetwork || bridgeTargetURL != "" || bridgeTargetFile != "" || bridgeTargetSignatureFile != ""
-	if source == "homebrew" && !bridgeRecover && (allowUnsignedLocal || descriptorURL == "" || descriptorFile == "" || signatureFile == "" || archiveFile == "") {
+	bridgeCatalog := bridgeRouteFile != "" || bridgeRouteSignatureFile != ""
+	bridge := bridgeRecover || bridgeRoleFile != "" || bridgeRoleSignatureFile != "" || bridgeNetwork || bridgeCatalog || bridgeTargetURL != "" || bridgeTargetFile != "" || bridgeTargetSignatureFile != ""
+	if source == "homebrew" && !bridgeRecover && !bridgeCatalog && (allowUnsignedLocal || descriptorURL == "" || descriptorFile == "" || signatureFile == "" || archiveFile == "") {
 		fail("--source homebrew requires the complete signed cached formula descriptor, signature, and archive mode")
 	}
 	if source == "curl" && descriptorURL != "" && !bridge {
@@ -67,7 +71,12 @@ func main() {
 		if allowUnsignedLocal || stageOnly || releaseURL != "" {
 			fail("bridge handoff requires signed cached inputs and cannot use stage-only or release-url")
 		}
-		if bridgeNetwork {
+		if bridgeCatalog {
+			if bridgeRecover || bridgeNetwork || descriptorURL != "" || descriptorFile != "" || signatureFile != "" || archiveFile != "" || bridgeRoleFile != "" || bridgeRoleSignatureFile != "" || bridgeRouteFile == "" || bridgeRouteSignatureFile == "" || bridgeTargetURL == "" || bridgeTargetFile == "" || bridgeTargetSignatureFile == "" {
+				fail("catalog bridge requires the signed route catalog and complete signed target inputs, without other acquisition or recovery flags")
+			}
+			receipt, err = installer.InstallSignedCatalogBridge(options, bridgeRouteFile, bridgeRouteSignatureFile, bridgeTargetURL, bridgeTargetFile, bridgeTargetSignatureFile)
+		} else if bridgeNetwork {
 			if source != "curl" || bridgeRecover || descriptorURL != "" || descriptorFile != "" || signatureFile != "" || archiveFile != "" || bridgeRoleFile != "" || bridgeRoleSignatureFile != "" || bridgeDescriptorURL == "" || bridgeRoleURL == "" || bridgeTargetFile != "" || bridgeTargetSignatureFile != "" {
 				fail("network bridge requires both bridge URLs and cannot mix cached inputs, target files or recovery flags")
 			}

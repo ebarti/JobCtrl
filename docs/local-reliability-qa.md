@@ -94,7 +94,12 @@ uninstall, and cleanup contenders that use the release locks; confirm an old
 controller queued before the handoff refuses after the protocol-2 bridge is
 selected. A protocol-2 transition journal must also make the actual old
 controller refuse recovery before a stale backup can overwrite independent
-commits to either database.
+commits to either database. For explicit signed-catalog selection, verify exact
+source, bridge and final-target descriptor digests, signatures, canonical URLs,
+missing/duplicate routes and descriptor substitution before archive download.
+Exercise both curl and Homebrew catalog entry modes, refusal of mixed options
+and `--stage-only`, changed source selection under the transition lock, and
+recovery from retained evidence without the catalog or network.
 
 Terminate the installer process at each durable evidence, intent, active,
 policy, selector, completion, and cleanup boundary. Retry using retained signed
