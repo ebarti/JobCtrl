@@ -109,6 +109,17 @@ delete the original provider history as an automatic repair.
 | Docs | `corepack pnpm docs:build`, diff check |
 | Cross-stack | `corepack pnpm check`, `corepack pnpm test`, affected separate web suites |
 
+For Apply browser ownership, run locked pytest for
+`tests/test_apply_browser_ownership.py`, `tests/test_apply_chrome_dry_run_guard.py`,
+`tests/test_apply_origin_policy.py` and `tests/test_browser_capabilities.py`.
+Use real owned listener/client and process-group controls through browser launch,
+failed launch, cancellation, scoped cleanup, import and Python exit. Preserve
+unrelated occupants, reject changed handle/PID/session authority, prove the
+POSIX reaping fence and actual owned descendant exit, and retain failed records
+when root exit cannot be verified. Model Windows kernel-handle behavior without
+claiming native Windows qualification. The optional real-browser smoke remains
+separate; these ownership trials must not open a user browser or application.
+
 ## Schema-15 Forward Upgrade
 
 Use owned synthetic workspaces and the locked migration Python/Node runtimes.

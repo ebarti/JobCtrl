@@ -29,6 +29,30 @@ fresh request conversations and cancellation/shutdown rules are defined in
 [Agent Runtime Ownership](agent-runtime.md). Pipeline admission and Temporal
 activity capacity remain owned by their existing layers.
 
+### Apply browser ownership
+
+The Apply browser lifecycle records the exact `Popen` handle and original PID
+when it launches an isolated browser. Worker cleanup, launch failure,
+cancellation, capability revocation and Python exit use those records. They
+never discover termination targets from a CDP port or process name. An occupied
+CDP port fails before profile setup with guidance to choose another port or
+stop its owner explicitly. Worker IDs already being acquired or owned cannot
+replace a live record.
+
+On POSIX, `start_new_session` creates the browser's own session and group.
+Cleanup verifies that the original child still leads that session and group,
+and holds CPython's `Popen` reaping lock across verification and signaling.
+The unreaped child prevents PID/group reuse during that operation; a reaped
+leader or changed identity cannot authorize a group signal. On Windows,
+cleanup terminates the original browser kernel handle; it never invokes a
+PID-based tree-kill tool. Windows descendants that outlive that handle are not
+independently selected for termination.
+
+Scoped cleanup attempts each selected worker, waits for the owned root's exit,
+and preserves failed ownership records while reporting incomplete cleanup.
+The exit handler logs failures and does not sweep ports or adopt leftovers.
+These rules complement the native instance shutdown boundary described below.
+
 ## Source and bundled runtime boundaries
 
 The table above describes the source-development topology. The bundled

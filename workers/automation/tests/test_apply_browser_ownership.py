@@ -20,11 +20,16 @@ def isolate_browser_registry(monkeypatch):
     monkeypatch.setattr(chrome, "_launching_ports", set())
 
 
+class _OwnedChildren(list):
+    """Own child handles and the unmodified process factory for each trial."""
+
+
 @pytest.fixture
 def browser_seam(tmp_path, monkeypatch):
     """Keep real process creation/cleanup and substitute only Chrome/CDP."""
     popen = subprocess.Popen
-    children = []
+    children = _OwnedChildren()
+    children.popen = popen
     monkeypatch.setattr(chrome.config, "CHROME_WORKER_DIR", tmp_path / "profiles")
     monkeypatch.setattr(chrome, "require_system_browser_capability", lambda _: sys.executable)
     monkeypatch.setattr(chrome, "_wait_for_browser_cdp_endpoint", lambda *_: None)
@@ -261,3 +266,96 @@ def test_windows_cleanup_uses_original_process_handle_not_pid_tree(monkeypatch):
         chrome._chrome_procs.pop(81, None)
         chrome._chrome_identities.pop(81, None)
     assert calls == ["kernel-handle", ("wait", 10)]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX session ownership")
+def test_owned_session_descendants_exit_while_unrelated_group_survives(browser_seam, tmp_path, monkeypatch):
+    import time
+
+    real_popen = browser_seam.popen
+    port_file = tmp_path / "child-port"
+    child_code = (
+        "import socket,time; from pathlib import Path; s=socket.socket(); "
+        "s.bind(('127.0.0.1',0)); s.listen(); "
+        f"Path({str(port_file)!r}).write_text(str(s.getsockname()[1])); time.sleep(120)"
+    )
+    parent_code = (
+        "import subprocess,sys,time; "
+        f"subprocess.Popen([sys.executable,'-c',{child_code!r}]); time.sleep(120)"
+    )
+
+    def spawn(_command, **kwargs):
+        process = real_popen([sys.executable, "-c", parent_code], **kwargs)
+        browser_seam.append(process)
+        return process
+
+    monkeypatch.setattr(chrome.subprocess, "Popen", spawn)
+    process = launch(91)
+    deadline = time.monotonic() + 5
+    while not port_file.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert port_file.exists(), "owned browser child did not become ready"
+    port = int(port_file.read_text())
+    with socket.create_connection(("127.0.0.1", port), timeout=3):
+        pass
+    with real_popen([sys.executable, "-c", "import time; time.sleep(120)"], start_new_session=True) as control:
+        actual_killpg = os.killpg
+        recorded = []
+
+        def kill_group(pid, sig):
+            recorded.append((pid, sig))
+            assert process._waitpid_lock.locked()
+            actual_killpg(pid, sig)
+
+        monkeypatch.setattr(os, "killpg", kill_group)
+        try:
+            chrome.cleanup_worker(91, process)
+            assert process.returncode != 0
+            assert recorded == [(process.pid, 9)]
+            assert control.poll() is None
+            with socket.socket() as probe:
+                assert probe.connect_ex(("127.0.0.1", port)) != 0
+        finally:
+            control.kill()
+            control.wait(timeout=5)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX Popen reaping fence")
+def test_concurrent_poll_cannot_reap_leader_during_group_signal(browser_seam, monkeypatch):
+    import threading
+
+    process = launch(101)
+    actual_killpg = os.killpg
+    observed = []
+
+    def kill_group(pid, sig):
+        actual_killpg(pid, sig)
+        poller = threading.Thread(target=lambda: observed.append(process.poll()))
+        poller.start()
+        poller.join(timeout=3)
+        assert not poller.is_alive()
+        assert process.returncode is None
+
+    monkeypatch.setattr(os, "killpg", kill_group)
+    chrome.cleanup_worker(101, process)
+    assert observed == [None]
+    assert process.returncode != 0
+
+
+def test_failed_exit_is_reported_and_does_not_skip_other_owned_cleanup(browser_seam, monkeypatch):
+    first = launch(111)
+    second = launch(112)
+    actual_wait = first.wait
+
+    def timeout(*_, **__):
+        raise subprocess.TimeoutExpired("owned synthetic browser", 10)
+
+    monkeypatch.setattr(first, "wait", timeout)
+    with pytest.raises(chrome.BrowserCapabilityError, match=r"workers \[111\]"):
+        chrome.cleanup_workers([111, 112])
+    assert chrome._chrome_procs[111] is first
+    assert 112 not in chrome._chrome_procs
+    assert second.returncode != 0
+    monkeypatch.setattr(first, "wait", actual_wait)
+    actual_wait(timeout=5)
+    chrome.cleanup_worker(111, first)
