@@ -82,6 +82,11 @@ def recover_captured_postings(
         discovery_execution=discovery_execution,
         source_family=source_family if discovery_execution is not None else None,
     )
+    from jobctrl.infrastructure.discovery.archived_smart_posting import claim_recovery_owner
+    write_fence = claim_recovery_owner(
+        conn, execution=discovery_execution, family=source_family, attempt=activity_attempt,
+        owner_token=activity_owner_token, cancel_event=cancel_event,
+    )
     smart_clients = {}
     for listing_id, snapshot, target, source_id, payload in rows:
         if cancel_event is not None and cancel_event.is_set():
@@ -94,12 +99,12 @@ def recover_captured_postings(
         if source_family != "smartextract" and result_budget is not None:
             if acknowledge_admitted_capture(
                 conn, result_budget, tenant_id=tenant_id, listing_id=listing_id, snapshot=snapshot,
-                target=target, source_id=source_id, capture_key=capture_key,
+                target=target, source_id=source_id, capture_key=capture_key, write_fence=write_fence,
             ):
                 result["existing"] += 1
                 result["recovered_captures"] += 1
                 continue
-        if result_budget is not None and (
+        if source_family != "smartextract" and result_budget is not None and (
             result_budget.run_exhausted() or result_budget.source_exhausted(source_id)
         ):
             continue
@@ -135,12 +140,23 @@ def recover_captured_postings(
             result["recovered_capture_failures"] += 1
             continue
         if source_family == "smartextract":
+            from jobctrl.infrastructure.discovery.archived_smart_posting import CapturePublication, OriginalCaptureUnavailable
             from jobctrl.discovery.smartextract import _smart_extract_session, _store_jobs
             from jobctrl.infrastructure.discovery.live_browser import (
                 LiveChromeDiscoveryClient, PoliteLiveChromeHttpClient, prefer_live_browser,
             )
 
-            if source_id not in smart_clients:
+            publication = CapturePublication(
+                conn, tenant_id=TenantId(str(tenant_id)), capture_id=f"capture:{capture_key}", source_id=source_id,
+            )
+            resumed = publication.prepared() is not None
+            if not resumed and publication.requires_missing_receipt():
+                raise OriginalCaptureUnavailable()
+            if not resumed and result_budget is not None and (
+                result_budget.run_exhausted() or result_budget.source_exhausted(source_id)
+            ):
+                continue
+            if source_id not in smart_clients and not resumed:
                 selected = None
                 if discovery_execution is not None:
                     client = LiveChromeDiscoveryClient(
@@ -160,8 +176,9 @@ def recover_captured_postings(
                     discovery_execution=discovery_execution, cancel_event=cancel_event, source_id=source_id,
                     source_native_id=posting.source_native_id, tenant_id=TenantId(str(tenant_id)),
                     refresh_existing_job=False, observation_id_factory=lambda key=capture_key: f"capture:{key}",
-                    idempotency_prefix=f"capture:{capture_key}", browser_client=smart_clients[source_id],
+                    idempotency_prefix=f"capture:{capture_key}", browser_client=smart_clients.get(source_id),
                     result_budget=result_budget,
+                    write_fence=write_fence,
                 )
             except DiscoveryResultLimitReached:
                 continue
@@ -185,12 +202,24 @@ def recover_captured_postings(
                 # used the allowance. Leave this archived capture unconsumed.
                 continue
             new, existing, excluded = summary.new_jobs, summary.observed, not summary.total
-        conn.execute(
-            "UPDATE posting_triage SET consumed_at=? WHERE tenant_id=? AND listing_id=? "
-            "AND snapshot_fingerprint=? AND target_fingerprint=? AND consumed_at IS NULL",
-            (datetime.now(timezone.utc).isoformat(), str(tenant_id), listing_id, snapshot, target),
-        )
-        conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            write_fence()
+            if source_family == "smartextract":
+                publication = CapturePublication(
+                    conn, tenant_id=TenantId(str(tenant_id)), capture_id=f"capture:{capture_key}", source_id=source_id,
+                )
+                if publication.prepared() is not None and not publication.completed():
+                    raise RuntimeError("Archived posting publication is incomplete; capture retained for recovery")
+            conn.execute(
+                "UPDATE posting_triage SET consumed_at=? WHERE tenant_id=? AND listing_id=? "
+                "AND snapshot_fingerprint=? AND target_fingerprint=? AND consumed_at IS NULL",
+                (datetime.now(timezone.utc).isoformat(), str(tenant_id), listing_id, snapshot, target),
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
         result["new"] += new
         result["existing"] += existing
         result["recovered_captures"] += 1

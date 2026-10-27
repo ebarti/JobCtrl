@@ -88,6 +88,48 @@ alias table or geography sentence corpus decides suitability.
 These fixtures contact no live board and use no real user data. Local fixture
 proof does not replace the product QA or CI gates.
 
+## Archived Smart Extract Snapshot Recovery
+
+Run locked `pytest tests/test_captured_posting_recovery.py tests/test_archived_smart_posting_temporal.py`
+with the Smart Extract, limits and source-activity reliability suites. In an
+owned exact-schema SQLite workspace, fail actual snapshot persistence after
+canonical insertion. Retry the real source activity and replay its Temporal
+history: the original qualified bytes and three canonical determination IDs
+must converge to one snapshot and enrichment before acknowledgement, with one
+observation and no second admission. A last-slot insertion must still finish
+when its remaining execution/source allowance is zero; another new capture
+remains pending.
+
+Interrupt before each original discovery event, then after each recovered
+discovery event; retry must recover all three original event facts without
+changing the canonical observation or acquiring another posting. With no legacy
+journal and no first event, the capture-bound original owner observation must
+refuse before provider setup. A normal observation of a preexisting bare owner
+must retain its separate behavior. Seed multiple content-duplicate candidates
+and require one idempotent event per candidate across recovery. Change original
+event URLs, native/source/run IDs, confidence, extra fields and event/observation
+clocks while keeping the qualified capture and canonical rows unchanged; require
+refusal before public event publication or acknowledgement. Also alter a frozen
+context and its event consistently: the unchanged original canonical observation
+must still reject that forged operational claim.
+
+Interrupt after snapshot/enrichment/event/accepted-progress/completion writes
+and require atomic publication rollback plus retained capture evidence. Repeat
+a completed recovery without duplicate events or snapshots and without page,
+browser or provider setup. Use independent writers for changed metadata, later
+observations, accepted enrichment/snapshots, stage ownership and owner deletion,
+including permanent removal; stale recovery must preserve all their bytes and
+never recreate the owner. An unfinished enrichment/snapshot aggregate or stage
+owner must retain the capture rather than consume it as an accepted replacement.
+Cancellation and superseded source attempt tokens
+must retain retry evidence. Corrupt captured publication bytes or a canonical
+model receipt and require refusal without a replacement. The private prepared-capture body stays out of bus/log publication, generic
+Activity payloads and SSE, while completion/owner events contain references
+only. Pre-upgrade partial inserts without their original full-capture receipt
+must remain unconsumed and actionable rather than replacing missing history
+with newly fetched bytes. These are structural persistence and model-authority
+checks, not a semantic evaluation corpus or a live ATS reliability claim.
+
 ## Temporal Fault Injection
 
 Use an owned file-backed database and a reused activity thread to prove that
@@ -1122,6 +1164,14 @@ An execution-scoped canonical writer that omits its optional budget must refuse
 under the transaction when a bounded marker exists, including at an exhausted
 cap. Preserve caller savepoints and pending writes, and retain unbounded controls
 with no marker or an explicitly unbounded marker.
+
+Compose the frozen result plan with archived Smart Extract recovery through the
+production Temporal workflow: limit one, canonical admission, snapshot failure,
+then retry with zero remaining allowance. Require one admission, observation
+and snapshot, all three original discovery events exactly once, three total
+intake model calls, no fresh fetch, and successful history replay. Add a second
+unprepared capture: it stays pending without browser/provider setup, while the
+prepared first capture completes and is acknowledged.
 
 For actual offers, drive the per-job offer HTTP/client entry and rendered
 Application outcomes panel without interview prep. Verify null equity,
