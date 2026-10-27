@@ -27,7 +27,7 @@ func TestScopedCleanupAllowsRealUpdateAndRollback(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			setJobCtrlUserVersion(t, fixture.python, fixture.state, 14)
+			setJobCtrlUserVersion(t, fixture.python, fixture.state, currentJobCtrlSchemaVersion)
 			target := fixture.candidate
 			expected := lifecycleDatabaseValues(t, fixture.python, fixture.state)
 			if operation == "rollback" {

@@ -1587,6 +1587,9 @@ func validateStartState(ctx launchContext, state instanceState) error {
 	if err := validateStateIdentity(ctx, state); err != nil {
 		return err
 	}
+	if err := requireExecutionReceipt(ctx, state); err != nil {
+		return err
+	}
 	if state.OwnershipVerified && state.StoppedAt != nil {
 		return nil
 	}
