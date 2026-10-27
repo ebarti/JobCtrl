@@ -492,3 +492,49 @@ func TestP5OrdinaryHomebrewRollbackRecoversBeforeFormulaBootstrap(t *testing.T) 
 		t.Fatalf("ordinary Homebrew recovery journal=%#v err=%v", journal, err)
 	}
 }
+
+func TestPendingBridgeRefusesFailClosedUninstallAtPublicEntry(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 unavailable")
+	}
+	runtime, state := t.TempDir(), t.TempDir()
+	store, err := release.Open(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := installLifecycleRelease(t, runtime, "local-bridge-source-0001", 1, python)
+	if _, err := store.WriteSelectedActive(active, 0, active.BuildID, "local-fixture"); err != nil {
+		t.Fatal(err)
+	}
+	// Missing selector routes the public command through fail-closed uninstall.
+	if err := os.WriteFile(filepath.Join(runtime, "bridge-handoff.json"), []byte("synthetic pending handoff"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	profile := filepath.Join(state, "profile.json")
+	if err := os.WriteFile(profile, []byte("synthetic profile"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	activePath := filepath.Join(runtime, release.ActiveFile)
+	before, err := os.ReadFile(activePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := []string{"HOME=" + t.TempDir(), "JOBCTRL_RUNTIME_HOME=" + runtime, "JOBCTRL_DIR=" + state}
+	var output bytes.Buffer
+	if err := Run(filepath.Join(runtime, "bin", "jobctrl"), []string{"uninstall"}, env, &output, io.Discard); err == nil || !strings.Contains(err.Error(), "bridge handoff") {
+		t.Fatalf("public uninstall did not refuse: %v", err)
+	}
+	if after, err := os.ReadFile(activePath); err != nil || !bytes.Equal(after, before) {
+		t.Fatalf("active changed: %v", err)
+	}
+	if after, err := os.ReadFile(profile); err != nil || string(after) != "synthetic profile" {
+		t.Fatalf("profile changed: %q %v", after, err)
+	}
+	if _, err := os.Stat(filepath.Join(runtime, "releases", active.BuildID, "payload")); err != nil {
+		t.Fatalf("release removed: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(runtime, "bridge-handoff.json")); err != nil {
+		t.Fatalf("handoff removed: %v", err)
+	}
+}
