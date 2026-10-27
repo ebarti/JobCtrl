@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -79,7 +80,7 @@ func init() {
 		}
 		if os.Args[4] == "signal" || os.Args[4] == "disconnect" {
 			paths := strings.Split(os.Args[5], "|")
-			command := exec.Command("/usr/bin/python3", "-c", `import os,signal,sys,time
+			script := `import os,signal,sys,time
 os.setsid()
 def received(value,frame):
  open(sys.argv[2],"w").write(str(value))
@@ -87,11 +88,51 @@ def received(value,frame):
 signal.signal(signal.SIGINT,received)
 signal.signal(signal.SIGTERM,received)
 open(sys.argv[1],"w").write(str(os.getpid()))
-while True: time.sleep(.05)`, paths[0], paths[1], os.Args[4])
+while True: time.sleep(.05)`
+			arguments := []string{"/usr/bin/python3", "-c", script, paths[0], paths[1], os.Args[4]}
+			if os.Args[4] == "signal" {
+				// Match production's direct-Python exec: PID/start identity stays
+				// bound to the command root across the native-to-Python exec.
+				_ = syscall.Exec(arguments[0], arguments, os.Environ())
+				os.Exit(98)
+			}
+			// This native parent exits on TERM, leaving an ignoring detached
+			// child to exercise the separately timed leftover escalation.
+			command := exec.Command(arguments[0], arguments[1:]...)
 			if command.Run() != nil {
 				os.Exit(23)
 			}
 			os.Exit(0)
+		}
+		if os.Args[4] == "supervisor" {
+			paths := strings.Split(os.Args[5], "|")
+			read, write, err := os.Pipe()
+			if err != nil {
+				os.Exit(99)
+			}
+			command := exec.Command("/usr/bin/python3", "-c", `import os,signal,sys
+os.setsid()
+def external(value,frame): open(sys.argv[2],"w").write(str(value))
+signal.signal(signal.SIGTERM,external)
+signal.signal(signal.SIGINT,external)
+open(sys.argv[1],"w").write(str(os.getpid()))
+if sys.stdin.readline().strip()=="drain": open(sys.argv[2]+".drained","w").write("ordered")`, paths[0], paths[1])
+			command.Stdin = read
+			stopping := make(chan os.Signal, 1)
+			signal.Notify(stopping, os.Interrupt, syscall.SIGTERM)
+			if command.Start() != nil {
+				os.Exit(100)
+			}
+			<-stopping
+			time.Sleep(200 * time.Millisecond)
+			_, _ = io.WriteString(write, "drain\n")
+			write.Close()
+			read.Close()
+			if command.Wait() != nil {
+				os.Exit(101)
+			}
+			signal.Stop(stopping)
+			os.Exit(42)
 		}
 		// Parent exits while a new session execs a platform binary. Its environment
 		// is intentionally empty; coalition membership is the durable authority.
@@ -359,7 +400,7 @@ func TestOwnedExecutionForwardsSignalsAndControllerEOF(t *testing.T) {
 		name     string
 		signal   syscall.Signal
 		expected int
-	}{{"interrupt", syscall.SIGINT, 130}, {"terminate", syscall.SIGTERM, 143}, {"disconnect", syscall.SIGKILL, -1}} {
+	}{{"interrupt", syscall.SIGINT, 23}, {"terminate", syscall.SIGTERM, 23}, {"disconnect", syscall.SIGKILL, -1}} {
 		t.Run(scenario.name, func(t *testing.T) {
 			ctx := executionTestContext(t)
 			root := filepath.Dir(ctx.Instance.StatePath)
@@ -426,7 +467,7 @@ func TestOwnedExecutionForwardsSignalsAndControllerEOF(t *testing.T) {
 			if !errors.As(err, &exited) || (scenario.expected >= 0 && exited.ExitCode() != scenario.expected) {
 				t.Fatalf("unexpected outer result: %v; output=%s", err, output.String())
 			}
-			deadline = time.Now().Add(5 * time.Second)
+			deadline = time.Now().Add(10 * time.Second)
 			for {
 				raw, readErr := os.ReadFile(marker)
 				wanted := int(scenario.signal)
@@ -441,7 +482,7 @@ func TestOwnedExecutionForwardsSignalsAndControllerEOF(t *testing.T) {
 				}
 				time.Sleep(10 * time.Millisecond)
 			}
-			deadline = time.Now().Add(5 * time.Second)
+			deadline = time.Now().Add(10 * time.Second)
 			for {
 				info, inspectErr := procInfo(pid, procPIDTBSDInfo, procBSDInfoSize)
 				if errors.Is(inspectErr, syscall.ESRCH) || (inspectErr == nil && info[4] == 5) {
@@ -664,5 +705,76 @@ func TestOwnedExecutionTemporaryReceiptsAndRetirement(t *testing.T) {
 	}
 	if err = retireOwnedExecutionScopes(ctx); err != nil {
 		t.Fatalf("retirement not idempotent: %v", err)
+	}
+}
+
+func TestOwnedExecutionSupervisorOwnsOrderedDrain(t *testing.T) {
+	for _, requested := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL} {
+		t.Run(strconv.Itoa(int(requested)), func(t *testing.T) {
+			ctx := executionTestContext(t)
+			root := filepath.Dir(ctx.Instance.StatePath)
+			pidfile, marker := filepath.Join(root, "ordered-child.pid"), filepath.Join(root, "external-term")
+			outer := exec.Command(ctx.Executable, "__scope-test-outer", root, ctx.Instance.ID, "supervisor", pidfile, marker)
+			outer.Env = []string{"PATH=/usr/bin:/bin"}
+			if err := outer.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer outer.Process.Kill()
+			deadline := time.Now().Add(10 * time.Second)
+			for {
+				if raw, err := os.ReadFile(pidfile); err == nil && len(raw) > 0 {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("supervisor child did not start")
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			scopes, err := readOwnedExecutionScopes(ctx)
+			if err != nil || len(scopes) != 1 {
+				t.Fatalf("missing supervisor scope: %v", err)
+			}
+			defer cleanupExecutionTestArtifacts(scopes[0])
+			if err = outer.Process.Signal(requested); err != nil {
+				t.Fatal(err)
+			}
+			waited := make(chan error, 1)
+			go func() { waited <- outer.Wait() }()
+			select {
+			case err = <-waited:
+			case <-time.After(10 * time.Second):
+				t.Fatal("supervisor did not finish ordered drain")
+			}
+			if requested == syscall.SIGTERM {
+				var exited *exec.ExitError
+				if !errors.As(err, &exited) || exited.ExitCode() != 42 {
+					t.Fatalf("lost supervisor actual result: %v", err)
+				}
+			}
+			deadline = time.Now().Add(5 * time.Second)
+			for {
+				if _, err := os.Stat(marker + ".drained"); err == nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("supervisor was not allowed to drain child")
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			if raw, err := os.ReadFile(marker); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("child received external TERM during supervisor drain: %q %v", raw, err)
+			}
+			// The helper must observe a real zero census before EOF cleanup ends.
+			deadline = time.Now().Add(5 * time.Second)
+			for {
+				if _, err := processStartIdentity(scopes[0].RootPID); errors.Is(err, syscall.ESRCH) {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("helper failed to finish after owned scope drained")
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+		})
 	}
 }

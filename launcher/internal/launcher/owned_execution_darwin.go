@@ -272,11 +272,12 @@ func decodeExecutionReceipt(raw []byte, scope *executionScope) error {
 	return json.Unmarshal(raw, scope)
 }
 
-func signalExecutionMembers(ids [2]uint64, rootPID int, rootIdentity string, requested syscall.Signal) error {
+func executionMembers(ids [2]uint64) ([]ownedProcess, error) {
 	pids, err := userProcessIDs()
 	if err != nil {
-		return err
+		return nil, err
 	}
+	var members []ownedProcess
 	for _, pid := range pids {
 		if pid == os.Getpid() {
 			continue
@@ -286,7 +287,7 @@ func signalExecutionMembers(ids [2]uint64, rootPID int, rootIdentity string, req
 			continue
 		}
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if binary.LittleEndian.Uint32(info[4:]) == 5 {
 			continue
@@ -296,14 +297,14 @@ func signalExecutionMembers(ids [2]uint64, rootPID int, rootIdentity string, req
 			continue
 		}
 		if err != nil {
-			return err
+			return nil, err
 		}
 		memberIDs, err := processCoalitionIDs(pid)
 		if errors.Is(err, syscall.ESRCH) {
 			continue
 		}
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if memberIDs != ids {
 			continue
@@ -313,24 +314,146 @@ func signalExecutionMembers(ids [2]uint64, rootPID int, rootIdentity string, req
 			continue
 		}
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if before != after || (pid == rootPID && rootIdentity != "" && after != rootIdentity) {
-			continue
+		if before == after {
+			members = append(members, ownedProcess{PID: pid, Identity: after})
 		}
-		if err := syscall.Kill(pid, requested); err != nil && !errors.Is(err, syscall.ESRCH) {
+	}
+	return members, nil
+}
+
+func signalExecutionRoot(ids [2]uint64, pid int, identity string, requested syscall.Signal) error {
+	info, err := procInfo(pid, procPIDTBSDInfo, procBSDInfoSize)
+	if errors.Is(err, syscall.ESRCH) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if binary.LittleEndian.Uint32(info[4:]) == 5 {
+		return nil
+	}
+	if int(binary.LittleEndian.Uint32(info[20:])) != os.Getuid() {
+		return errors.New("execution root uid changed")
+	}
+	before := processIdentityFromBSD(info)
+	if identity == "" {
+		return errors.New("execution root identity unavailable")
+	}
+	if before != identity {
+		return nil
+	} // The recorded root exited; never signal a reused PID.
+	currentIDs, err := processCoalitionIDs(pid)
+	if errors.Is(err, syscall.ESRCH) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if currentIDs != ids {
+		return errors.New("execution root coalition changed")
+	}
+	after, err := processStartIdentity(pid)
+	if errors.Is(err, syscall.ESRCH) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if after != identity {
+		return nil
+	}
+	err = syscall.Kill(pid, requested)
+	if errors.Is(err, syscall.ESRCH) {
+		return nil
+	}
+	return err
+}
+
+func signalExecutionMembers(ids [2]uint64, requested syscall.Signal) error {
+	members, err := executionMembers(ids)
+	if err != nil {
+		return err
+	}
+	for _, member := range members {
+		if err := signalExecutionRoot(ids, member.PID, member.Identity, requested); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func cleanupExecutionMembers(ids [2]uint64) error {
-	if err := signalExecutionMembers(ids, 0, "", syscall.SIGTERM); err != nil {
+func waitExecutionRoot(pid int, identity string, timeout time.Duration) (bool, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		info, err := procInfo(pid, procPIDTBSDInfo, procBSDInfoSize)
+		if errors.Is(err, syscall.ESRCH) {
+			return true, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if binary.LittleEndian.Uint32(info[4:]) == 5 || processIdentityFromBSD(info) != identity {
+			return true, nil
+		}
+		if time.Now().After(deadline) {
+			return false, nil
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func waitExecutionMembers(ids [2]uint64, timeout time.Duration) (bool, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		members, err := executionMembers(ids)
+		if err != nil {
+			return false, err
+		}
+		if len(members) == 0 {
+			return true, nil
+		}
+		if time.Now().After(deadline) {
+			return false, nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func executionShutdownGrace(args []string) time.Duration {
+	if len(args) > 0 && (args[0] == "start" || args[0] == "dev" || args[0] == "__supervise") {
+		return supervisorShutdownTimeout
+	}
+	return cooperativeShutdownTimeout
+}
+
+func cleanupExecutionMembers(ids [2]uint64, rootPID int, rootIdentity string, args []string) error {
+	// The command root owns ordered shutdown. Its descendants receive no
+	// external signal until that owner exits or its existing grace expires.
+	if err := signalExecutionRoot(ids, rootPID, rootIdentity, syscall.SIGTERM); err != nil {
 		return err
 	}
-	time.Sleep(250 * time.Millisecond)
-	return signalExecutionMembers(ids, 0, "", syscall.SIGKILL)
+	if _, err := waitExecutionRoot(rootPID, rootIdentity, executionShutdownGrace(args)); err != nil {
+		return err
+	}
+	if err := signalExecutionMembers(ids, syscall.SIGTERM); err != nil {
+		return err
+	}
+	if zero, err := waitExecutionMembers(ids, shutdownTimeout); err != nil {
+		return err
+	} else if zero {
+		return nil
+	}
+	if err := signalExecutionMembers(ids, syscall.SIGKILL); err != nil {
+		return err
+	}
+	if zero, err := waitExecutionMembers(ids, shutdownTimeout); err != nil {
+		return err
+	} else if !zero {
+		return errors.New("owned execution members survived cleanup")
+	}
+	return nil
 }
 
 func authenticatedOwnedExecution(ctx launchContext) (bool, error) {
@@ -435,7 +558,6 @@ func ownedExecutionHelper(args []string) (bool, error) {
 	}
 	rootIdentity, identityErr := processStartIdentity(child.Process.Pid)
 	if identityErr != nil && !errors.Is(identityErr, syscall.ESRCH) {
-		_ = cleanupExecutionMembers(ids)
 		go child.Wait()
 		return true, errors.New("could not inspect authorized command identity")
 	}
@@ -467,20 +589,20 @@ waiting:
 			break waiting
 		case control := <-controls:
 			if control.Signal != int(syscall.SIGINT) && control.Signal != int(syscall.SIGTERM) {
-				_ = cleanupExecutionMembers(ids)
-				return true, errors.New("invalid execution control")
+				cleanupErr := cleanupExecutionMembers(ids, child.Process.Pid, rootIdentity, command.Arguments)
+				return true, errors.Join(errors.New("invalid execution control"), cleanupErr)
 			}
-			// Each recipient is checked against its start identity and this
-			// private launchd coalition. No process group or name grants authority.
-			if err := signalExecutionMembers(ids, child.Process.Pid, rootIdentity, syscall.Signal(control.Signal)); err != nil {
-				_ = cleanupExecutionMembers(ids)
-				return true, errors.New("could not forward execution signal")
+			// Only the verified command root receives interactive cancellation.
+			// A native supervisor retains ownership of its ordered child drain.
+			if err := signalExecutionRoot(ids, child.Process.Pid, rootIdentity, syscall.Signal(control.Signal)); err != nil {
+				cleanupErr := cleanupExecutionMembers(ids, child.Process.Pid, rootIdentity, command.Arguments)
+				return true, errors.Join(errors.New("could not forward execution signal"), err, cleanupErr)
 			}
 		case <-controlErrors:
 			// Losing the authenticated controller is never success. Receipts
 			// remain durable even if inspection or bounded cleanup fails.
-			_ = cleanupExecutionMembers(ids)
-			return true, errors.New("execution controller disconnected")
+			cleanupErr := cleanupExecutionMembers(ids, child.Process.Pid, rootIdentity, command.Arguments)
+			return true, errors.Join(errors.New("execution controller disconnected"), cleanupErr)
 		}
 	}
 	result := executionResult{}
@@ -497,8 +619,8 @@ waiting:
 		}
 	}
 	if err = json.NewEncoder(connection).Encode(result); err != nil {
-		_ = cleanupExecutionMembers(ids)
-		return true, err
+		cleanupErr := cleanupExecutionMembers(ids, child.Process.Pid, rootIdentity, command.Arguments)
+		return true, errors.Join(err, cleanupErr)
 	}
 	if result.Code != 0 {
 		return true, ownedExecutionExitError{result.Code}
