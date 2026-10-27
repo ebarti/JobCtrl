@@ -1270,6 +1270,7 @@ def _smart_extract_sites(sources: tuple[ScheduledSource, ...]) -> list[dict]:
             {
                 "name": str(source.adapter_config.get("name") or source.display_name),
                 "url": url,
+                "source_id": source.source_id,
                 "type": _smart_extract_site_type(source.adapter_config, url),
                 "query_mode": _smart_extract_query_mode(source.adapter_config, url),
             }
@@ -1496,9 +1497,7 @@ def run_discovery_source_family(
             source_ids = ()
         recovered = {"new": 0, "existing": 0, "recovered_captures": 0, "recovered_exclusions": 0,
                      "recovered_capture_failures": 0}
-        if not (limit > 0 and _discover_limit_consumed(start_count, limit)) and (
-            result_budget is None or not result_budget.run_exhausted()
-        ):
+        if result_budget is not None or not (limit > 0 and _discover_limit_consumed(start_count, limit)):
             recovered = recover_captured_postings(
                 conn,
                 tenant_id=LOCAL_TENANT,
@@ -1510,6 +1509,8 @@ def run_discovery_source_family(
                 limit=_discover_remaining_limit(start_count, limit),
                 cancel_event=cancel_event,
                 **({"result_budget": result_budget} if result_budget is not None else {}),
+                **({"activity_attempt": activity_attempt, "activity_owner_token": activity_owner_token}
+                   if activity_attempt is not None else {}),
             )
         result = {"new": 0, "existing": 0}
         # A bounded resumable consumer must also settle its recorded units when
@@ -1714,6 +1715,9 @@ def run_discovery_source_family(
                 "run_id": run_id,
                 "search_cfg": search_cfg,
             }
+            if activity_attempt is not None:
+                smart_kwargs["activity_attempt"] = activity_attempt
+                smart_kwargs["activity_owner_token"] = activity_owner_token
             if discovery_execution is not None:
                 smart_kwargs["discovery_execution"] = discovery_execution
             if provided_cancel_event is not None:
