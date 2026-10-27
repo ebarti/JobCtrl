@@ -272,7 +272,7 @@ func issue1275State(t *testing.T, component componentRecord) (launchContext, ins
 	}
 	manifest := runtimeManifest{}
 	manifest.Ports.TemporalGRPC, manifest.Ports.TemporalUI, manifest.Ports.API = 7233, 8233, 8766
-	ctx := launchContext{PayloadRoot: payload, Manifest: manifest, Distribution: distributionManifest{BuildID: "build"}, Instance: instance{ID: "instance", StateDir: stateRoot, StatePath: filepath.Join(stateRoot, "state.json"), ControlPath: filepath.Join(stateRoot, "control.lock")}}
+	ctx := launchContext{PayloadRoot: payload, Manifest: manifest, Distribution: distributionManifest{BuildID: "build"}, Instance: instance{ID: "instance", StateDir: stateRoot, StatePath: filepath.Join(stateRoot, "state.json"), LockPath: filepath.Join(stateRoot, "instance.lock"), ControlPath: filepath.Join(stateRoot, "control.lock")}}
 	state := instanceState{SchemaVersion: stateSchemaVersion, InstanceID: "instance", CanonicalStateDir: stateRoot, PayloadRoot: payload, BuildID: "build", ManifestSHA256: digest, Ports: runtimePorts{TemporalGRPC: 7233, TemporalUI: 8233, API: 8766}, Components: map[string]componentRecord{"worker": component}}
 	if err := writeState(ctx.Instance.StatePath, state); err != nil {
 		t.Fatal(err)

@@ -1083,7 +1083,7 @@ func TestStopTerminatesLiveRecordEvenWhenAnOldStateMarkedItExited(t *testing.T) 
 	}
 	manifest := runtimeManifest{}
 	manifest.Ports.TemporalGRPC, manifest.Ports.TemporalUI, manifest.Ports.API = 7233, 8233, 8766
-	ctx := launchContext{PayloadRoot: payload, Manifest: manifest, Distribution: distributionManifest{BuildID: "build"}, Instance: instance{ID: "instance", StateDir: stateRoot, StatePath: filepath.Join(stateRoot, "state.json"), ControlPath: filepath.Join(stateRoot, "control.lock")}}
+	ctx := launchContext{PayloadRoot: payload, Manifest: manifest, Distribution: distributionManifest{BuildID: "build"}, Instance: instance{ID: "instance", StateDir: stateRoot, StatePath: filepath.Join(stateRoot, "state.json"), LockPath: filepath.Join(stateRoot, "instance.lock"), ControlPath: filepath.Join(stateRoot, "control.lock")}}
 	oldExit := time.Now().UTC().Add(-time.Minute)
 	record.ExitedAt = &oldExit
 	state := instanceState{SchemaVersion: stateSchemaVersion, InstanceID: "instance", CanonicalStateDir: stateRoot, PayloadRoot: payload, BuildID: "build", ManifestSHA256: digest, Ports: runtimePorts{TemporalGRPC: 7233, TemporalUI: 8233, API: 8766}, Components: map[string]componentRecord{"worker": record}}

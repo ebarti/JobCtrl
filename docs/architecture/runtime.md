@@ -143,6 +143,12 @@ while its original group remains, the launcher refuses to signal that
 unanchored group and leaves shutdown unresolved. This direct API shutdown does
 not certify native runtime quiescence: detached descendants need independent
 ownership proof.
+When the verified supervisor is still alive, the stop command asks it to perform
+component shutdown first, then acquires the instance lock and reloads its
+registry after exit. A changed generation, unverifiable live supervisor or a
+supervisor that does not finish within the bounded wait blocks stop rather than
+allowing a second concurrent component shutdown or stopping a newly started
+runtime.
 When the worker receives SIGTERM during its run loop, it requests Temporal
 shutdown, fences new blocking activity submissions and waits for retained
 blocking executor work before closing provider resources. Startup and browser

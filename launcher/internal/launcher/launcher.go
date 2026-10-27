@@ -53,6 +53,9 @@ const (
 	// seconds draining RPC children. Allow that sequence to complete before
 	// falling back to the recorded-group termination policy.
 	cooperativeShutdownTimeout = 65 * time.Second
+	// The supervisor drains API and worker sequentially, then Temporal. Do not
+	// race that cleanup by signaling the components from another controller.
+	supervisorShutdownTimeout = 3 * time.Minute
 )
 
 var (
@@ -2185,6 +2188,15 @@ func allRecordedComponentsStopped(state instanceState) bool {
 	}
 	return true
 }
+
+func sameRuntimeGeneration(first, second instanceState) bool {
+	return first.StartedAt.Equal(second.StartedAt) &&
+		first.Supervisor.PID == second.Supervisor.PID &&
+		first.Supervisor.PGID == second.Supervisor.PGID &&
+		first.Supervisor.StartIdentity == second.Supervisor.StartIdentity &&
+		first.Supervisor.Executable == second.Supervisor.Executable
+}
+
 func stop(ctx launchContext) error {
 	control, err := acquireLock(ctx.Instance.ControlPath, false)
 	if err != nil {
@@ -2201,22 +2213,45 @@ func stop(ctx launchContext) error {
 	if err := validateStateIdentity(ctx, state); err != nil {
 		return err
 	}
+	initialState := state
+	// The supervisor is the owner of component shutdown. Ask it to drain first
+	// while holding the stop control lock, then reload its final state before
+	// handling any remaining groups. Signaling components concurrently with its
+	// cleanup could deliver a second TERM while a worker is draining.
+	if recordMatchesLiveProcess(state.Supervisor) {
+		if err := syscall.Kill(state.Supervisor.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return fmt.Errorf("signal verified supervisor: %w", err)
+		}
+		if !waitForPIDExit(state.Supervisor.PID, supervisorShutdownTimeout) {
+			return errors.New("supervisor did not finish component shutdown before the deadline; ownership remains unresolved")
+		}
+	} else if supervisorMayBeLive(state.Supervisor) {
+		return errors.New("supervisor ownership is unresolved; refusing concurrent component termination")
+	}
+	// A new supervisor could start after the old one exits. Reserve its same
+	// instance lock before re-reading state; a live or concurrently starting
+	// successor owns that lock and must never be signaled by this stop request.
+	instanceLock, err := acquireLock(ctx.Instance.LockPath, true)
+	if err != nil {
+		return fmt.Errorf("reserve stopped instance before registry readback: %w", err)
+	}
+	defer releaseLock(instanceLock)
+	state, err = readState(ctx.Instance.StatePath)
+	if err != nil {
+		return fmt.Errorf("read runtime registry after supervisor shutdown: %w", err)
+	}
+	if err := validateStateIdentity(ctx, state); err != nil {
+		return err
+	}
+	if !sameRuntimeGeneration(initialState, state) {
+		return errors.New("runtime generation changed during stop; refusing to signal or overwrite its registry")
+	}
 	failed := make([]string, 0)
 	for _, name := range []string{"api", "worker", "temporal"} {
 		if record, exists := state.Components[name]; exists && componentMayBeLive(record) {
 			if err := terminateComponentRecord(name, record); err != nil && componentMayBeLive(record) {
 				failed = append(failed, name+": "+err.Error())
 			}
-		}
-	}
-	if recordMatchesLiveProcess(state.Supervisor) {
-		_ = syscall.Kill(state.Supervisor.PID, syscall.SIGTERM)
-		deadline := time.Now().Add(shutdownTimeout)
-		for time.Now().Before(deadline) {
-			if !recordMatchesLiveProcess(state.Supervisor) {
-				break
-			}
-			time.Sleep(100 * time.Millisecond)
 		}
 	}
 	if len(failed) > 0 || !allRecordedComponentsStopped(state) || supervisorMayBeLive(state.Supervisor) {

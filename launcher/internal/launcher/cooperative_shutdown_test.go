@@ -25,7 +25,14 @@ func TestCooperativeStopDrainsOwnedChild(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "child-ready"), []byte("ready"), 0600); err != nil {
 			t.Fatal(err)
 		}
+		if err := os.WriteFile(filepath.Join(dir, "child-pid"), []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(10 * time.Second)
 		for {
+			if time.Now().After(deadline) {
+				t.Fatal("synthetic child release timed out")
+			}
 			select {
 			case <-sig:
 				_ = os.WriteFile(filepath.Join(dir, "child-signaled"), []byte("unsafe"), 0600)
@@ -47,18 +54,24 @@ func TestCooperativeStopDrainsOwnedChild(t *testing.T) {
 		if err := child.Start(); err != nil {
 			t.Fatal(err)
 		}
-		defer func() { _ = child.Process.Kill(); _ = child.Wait() }()
+		childFinished := false
+		defer func() {
+			if !childFinished {
+				_ = child.Process.Kill()
+				_ = child.Wait()
+			}
+		}()
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGTERM)
 		defer signal.Stop(sig)
 		deadline := time.Now().Add(5 * time.Second)
 		for time.Now().Before(deadline) {
-			if _, err := os.Stat(filepath.Join(dir, "child-ready")); err == nil {
+			if _, err := os.Stat(filepath.Join(dir, "child-pid")); err == nil {
 				break
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
-		if _, err := os.Stat(filepath.Join(dir, "child-ready")); err != nil {
+		if _, err := os.Stat(filepath.Join(dir, "child-pid")); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(dir, "leader-ready"), []byte("ready"), 0600); err != nil {
@@ -75,6 +88,7 @@ func TestCooperativeStopDrainsOwnedChild(t *testing.T) {
 		if err := child.Wait(); err != nil {
 			t.Fatalf("child did not drain cleanly: %v", err)
 		}
+		childFinished = true
 		if err := os.WriteFile(filepath.Join(dir, "drained"), []byte("done"), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -116,6 +130,23 @@ func TestCooperativeStopDrainsOwnedChild(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "leader-ready")); err != nil {
 		t.Fatal(err)
 	}
+	childRaw, err := os.ReadFile(filepath.Join(dir, "child-pid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	childPID, err := strconv.Atoi(string(childRaw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	childRecord, err := recordForProcess(childPID, "", executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if recordMatchesLiveProcess(childRecord) {
+			_ = syscall.Kill(childPID, syscall.SIGKILL)
+		}
+	})
 	ctx, state := issue1275State(t, record)
 	if err := writeState(ctx.Instance.StatePath, state); err != nil {
 		t.Fatal(err)
@@ -253,5 +284,202 @@ func TestCooperativeStopRefusesUnverifiedLeader(t *testing.T) {
 	}
 	if !processPIDAlive(record.PID) {
 		t.Fatal("unverified process was signaled")
+	}
+}
+
+// The synthetic supervisor invokes the production cleanup path. A separate
+// stop request arrives while that cleanup is draining its worker.
+func TestStopDoesNotDuplicateSupervisorDrainSignal(t *testing.T) {
+	dir := os.Getenv("JOBCTRL_TEST_CONCURRENT_DIR")
+	role := os.Getenv("JOBCTRL_TEST_CONCURRENT_ROLE")
+	if role == "worker" {
+		sig := make(chan os.Signal, 4)
+		signal.Notify(sig, syscall.SIGTERM)
+		defer signal.Stop(sig)
+		if err := os.WriteFile(filepath.Join(dir, "worker-ready"), []byte("ready"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-sig:
+		case <-time.After(10 * time.Second):
+			t.Fatal("worker never received shutdown")
+		}
+		if err := os.WriteFile(filepath.Join(dir, "worker-draining"), []byte("draining"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-sig:
+			_ = os.WriteFile(filepath.Join(dir, "duplicate"), []byte("unsafe"), 0600)
+			os.Exit(2)
+		case <-time.After(time.Second):
+		}
+		return
+	}
+	if role == "supervisor" {
+		instanceLock, err := acquireLock(os.Getenv("JOBCTRL_TEST_CONCURRENT_LOCK"), true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer releaseLock(instanceLock)
+		sig := make(chan os.Signal, 4)
+		signal.Notify(sig, syscall.SIGTERM)
+		defer signal.Stop(sig)
+		if err := os.WriteFile(filepath.Join(dir, "supervisor-ready"), []byte("ready"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-sig:
+		case <-time.After(10 * time.Second):
+			t.Fatal("supervisor never received shutdown")
+		}
+		statePath := os.Getenv("JOBCTRL_TEST_CONCURRENT_STATE")
+		state, err := readState(statePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		shutdownComponents(&state, nil, statePath)
+		return
+	}
+	dir = t.TempDir()
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := func(role string, statePath string, lockPath string) (*exec.Cmd, componentRecord, <-chan error) {
+		cmd := exec.Command(executable, "-test.run=^TestStopDoesNotDuplicateSupervisorDrainSignal$")
+		cmd.Env = []string{"JOBCTRL_TEST_CONCURRENT_ROLE=" + role, "JOBCTRL_TEST_CONCURRENT_DIR=" + dir, "JOBCTRL_TEST_CONCURRENT_STATE=" + statePath, "JOBCTRL_TEST_CONCURRENT_LOCK=" + lockPath, "PATH=/usr/bin:/bin"}
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		reaped := make(chan error, 1)
+		go func() { reaped <- cmd.Wait() }()
+		record, err := recordForProcess(cmd.Process.Pid, "", executable)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if recordMatchesLiveProcess(record) {
+				_ = syscall.Kill(record.PID, syscall.SIGKILL)
+			}
+			select {
+			case <-reaped:
+			case <-time.After(time.Second):
+			}
+		})
+		return cmd, record, reaped
+	}
+	waitMarker := func(name string) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatalf("missing synthetic marker %s", name)
+	}
+	_, worker, _ := start("worker", "", "")
+	waitMarker("worker-ready")
+	ctx, state := issue1275State(t, worker)
+	_, supervisor, _ := start("supervisor", ctx.Instance.StatePath, ctx.Instance.LockPath)
+	waitMarker("supervisor-ready")
+	state.Supervisor = supervisor
+	if err := writeState(ctx.Instance.StatePath, state); err != nil {
+		t.Fatal(err)
+	}
+	if !recordMatchesLiveProcess(supervisor) {
+		t.Fatal("synthetic supervisor identity did not match")
+	}
+	if err := syscall.Kill(supervisor.PID, syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	waitMarker("worker-draining")
+	if err := stop(ctx); err != nil {
+		if _, markerErr := os.Stat(filepath.Join(dir, "duplicate")); markerErr == nil {
+			t.Fatalf("stop delivered a duplicate worker signal while supervisor drained: %v", err)
+		}
+		t.Fatalf("stop raced supervisor cleanup: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "duplicate")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("worker received a duplicate signal: %v", err)
+	}
+	final, err := readState(ctx.Instance.StatePath)
+	if err != nil || final.Components["worker"].ExitedAt == nil || final.StoppedAt == nil {
+		t.Fatalf("stop did not retain supervisor shutdown state: %#v, %v", final, err)
+	}
+}
+
+func TestStopRefusesUnverifiedLiveSupervisorBeforeSignalingComponents(t *testing.T) {
+	_, worker, _ := startOwnedSleep(t)
+	_, supervisor, _ := startOwnedSleep(t)
+	ctx, state := issue1275State(t, worker)
+	state.Supervisor = supervisor
+	state.Supervisor.StartIdentity = "different-start"
+	if err := writeState(ctx.Instance.StatePath, state); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(ctx.Instance.StatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stop(ctx); err == nil || !strings.Contains(err.Error(), "supervisor ownership is unresolved") {
+		t.Fatalf("expected unresolved-supervisor refusal, got %v", err)
+	}
+	if !recordMatchesLiveProcess(worker) || !recordMatchesLiveProcess(supervisor) {
+		t.Fatal("unverified supervisor or worker was signaled")
+	}
+	after, err := os.ReadFile(ctx.Instance.StatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("unresolved-supervisor refusal changed the registry")
+	}
+}
+
+func TestStopDoesNotSignalWhileSuccessorHoldsInstanceLock(t *testing.T) {
+	_, worker, _ := startOwnedSleep(t)
+	ctx, _ := issue1275State(t, worker)
+	lock, err := acquireLock(ctx.Instance.LockPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseLock(lock)
+	before, err := os.ReadFile(ctx.Instance.StatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stop(ctx); !errors.Is(err, ErrLockHeld) {
+		t.Fatalf("expected instance-lock refusal, got %v", err)
+	}
+	if !recordMatchesLiveProcess(worker) {
+		t.Fatal("stop signaled a process while instance lock was owned")
+	}
+	after, err := os.ReadFile(ctx.Instance.StatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("instance-lock refusal changed the registry")
+	}
+}
+
+func TestRuntimeGenerationRejectsSuccessorIdentity(t *testing.T) {
+	initial := instanceState{StartedAt: time.Now().UTC(), Supervisor: componentRecord{PID: 123, PGID: 123, StartIdentity: "first", Executable: "/example"}}
+	updated := initial
+	updated.Supervisor.ExitedAt = new(time.Time)
+	if !sameRuntimeGeneration(initial, updated) {
+		t.Fatal("ordinary exit metadata changed the generation")
+	}
+	updated.Supervisor.StartIdentity = "second"
+	if sameRuntimeGeneration(initial, updated) {
+		t.Fatal("successor process identity was treated as original generation")
+	}
+	updated = initial
+	updated.StartedAt = initial.StartedAt.Add(time.Nanosecond)
+	if sameRuntimeGeneration(initial, updated) {
+		t.Fatal("successor start was treated as original generation")
 	}
 }
