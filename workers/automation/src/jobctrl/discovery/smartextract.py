@@ -54,6 +54,7 @@ from jobctrl.infrastructure.discovery.live_browser import (
 )
 from jobctrl.infrastructure.discovery.production_wiring import DurableJobEventPublisher
 from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
+from jobctrl.infrastructure.discovery.result_budget import DiscoveryResultLimitReached
 from jobctrl.infrastructure.discovery.smart_postings import LivePostingFetcher, SmartPostingIntake
 from jobctrl.discovery.target_queries import (
     query_specs_for_source,
@@ -183,6 +184,10 @@ def _store_jobs(
         url = _normalize_job_url(job.get("url"), source_url)
         if not url:
             continue
+        if refresh_existing_job and result_budget is not None and (
+            result_budget.run_exhausted() or result_budget.source_exhausted(source_id)
+        ):
+            break
         qualified = intake.prepare(url, job)
         if qualified is None:
             continue
@@ -203,7 +208,13 @@ def _store_jobs(
             canonical_url=qualified.url,
         )
         _raise_if_canceled(cancel_event)
-        summary = use_case.execute(tenant_id=tenant_id, postings=(posting,), run_id=run_id)
+        try:
+            summary = use_case.execute(tenant_id=tenant_id, postings=(posting,), run_id=run_id)
+        except DiscoveryResultLimitReached:
+            if not refresh_existing_job:
+                # Recovery must leave this capture unconsumed on refusal.
+                raise
+            break
         new += summary.new_jobs
         existing += int(summary.new_jobs == 0 and (summary.observed > 0 or summary.duplicates_linked > 0))
         if not summary.total:
