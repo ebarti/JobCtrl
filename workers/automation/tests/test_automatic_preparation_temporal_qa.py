@@ -61,6 +61,18 @@ ACTIVITIES = [
 ]
 
 
+def _seed_scoring_interpretation(job_id):
+    """Stand in for Enrich's persisted interpretation before score admission."""
+    from jobctrl.domain.identifiers import canonical_job_id
+    from jobctrl.infrastructure.preparation import SqlitePreparationTargetReader
+    from tests.determination_fakes import recorded_job_interpretation
+
+    conn = database.get_connection()
+    job = SqlitePreparationTargetReader(conn).load(LOCAL_TENANT, canonical_job_id(str(job_id)))
+    if job is not None and job.get("full_description"):
+        recorded_job_interpretation(conn, job)
+
+
 @pytest.fixture
 def world(tmp_path, monkeypatch):
     # This fixture tests cover generation after the user opts in.
@@ -73,9 +85,9 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DB_PATH", db_path)
     monkeypatch.setattr(database, "DB_PATH", db_path)
     connection = database.init_db(db_path)
-    from tests.determination_fakes import recorded_job_interpretation
     from jobctrl.domain.determinations import Source
     from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+    from jobctrl.infrastructure.enrichment.interpretation import read_job_interpretation
 
     original_build = scorer._build_use_case
 
@@ -92,7 +104,11 @@ def world(tmp_path, monkeypatch):
                 preflight=lambda: None,
             ),
         )
-        kwargs.setdefault("job_interpretation_reader", lambda job: recorded_job_interpretation(database.get_connection(db_path), job))
+        def read_interpretation(job):
+            result = read_job_interpretation(database.get_connection(db_path), job)
+            return result[0] if result else None
+
+        kwargs.setdefault("job_interpretation_reader", read_interpretation)
         kwargs.setdefault(
             "confirmed_preferences_reader",
             lambda snapshot, criteria: [Source(source_id="target:roles:0", text="Synthetic saved target")],
@@ -171,6 +187,7 @@ def world(tmp_path, monkeypatch):
 
         seed_fresh_availability(database.get_connection(), str(job_id))
         database.get_connection().commit()
+        _seed_scoring_interpretation(job_id)
         return original_score(
             job_id,
             **kwargs,
@@ -911,6 +928,7 @@ def evidence_world(world, monkeypatch):
 
     def score_with_synthetic_provider(job_id, **kwargs):
         # Keep production default repositories and require_employer_analysis=True.
+        _seed_scoring_interpretation(job_id)
         return ORIGINAL_SCORE(
             job_id,
             **kwargs,
