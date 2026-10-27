@@ -1,8 +1,9 @@
 """Private native v15 source binding and locked atomic activation.
 
 This helper never reports paths, rows, note text, or profile values. It refuses a
-live source that changed after paired backup and retains the SQLite writer lock
-through rename so a later writer cannot commit between validation and cutover.
+live source that changed after paired backup. Exact-v14 is extended in place
+under an exclusive SQLite lock; earlier source versions retain locked rename
+activation. Neither mechanism establishes runtime-generation quiescence.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from pathlib import Path
 
 from jobctrl.infrastructure.migrations.schema_manifest import EXACT_V15_MANIFEST, assert_exact_manifest, schema_dump
 from jobctrl.infrastructure.migrations.v11_to_v12_execute import _table_data_digest
+from jobctrl.infrastructure.migrations.v14_to_v15_inplace import InPlaceSourceChangedError, upgrade_v14_in_place
 from jobctrl.infrastructure.migrations.v7_to_v8_execute import _durable_table_names, _fsync_directory, _sha256_file
 
 
@@ -119,6 +121,19 @@ def activate(live: Path, candidate: Path, receipt: Path) -> None:
             raise RuntimeError("invalid candidate")
     finally:
         conn.close()
+    if expected.get("sourceVersion") == 14:
+        # The v14->v15 extension is additive. Keep the live inode and every
+        # committed WAL write on one SQLite database instead of publishing a
+        # snapshot copy over a possibly newer source. The writer lock is held
+        # before the receipt's source binding is revalidated.
+        try:
+            upgrade_v14_in_place(live, binding=expected)
+        except InPlaceSourceChangedError:
+            raise SourceChangedError() from None
+        candidate.unlink()
+        receipt.unlink()
+        _fsync_directory(live.parent)
+        return
     lock = sqlite3.connect(f"{live.resolve().as_uri()}?mode=rw", uri=True, timeout=0)
     try:
         try:

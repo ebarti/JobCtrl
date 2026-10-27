@@ -66,8 +66,11 @@ An already reviewed destructive selection is checked against that revision in
 the same write transaction as deletion. The reviewed-selection receipt itself
 is short-lived process memory, not a substitute for the durable revision.
 
-V15 migration constructs a separate candidate from a stopped source and binds
-activation to the preserved database/Temporal backup pair. Once a paired backup
+V15 migration constructs and verifies a separate candidate from a stopped source
+and binds activation to the preserved database/Temporal backup pair. Exact-v14
+activation applies the additive schema to the live database in a single SQLite
+transaction without replacing its inode; earlier source versions retain the
+sealed-candidate replacement path. Once a paired backup
 is recorded, update and rollback journals require the controller to preserve
 the live pair on an automatic failure or interruption. The journal remains for
 recovery; a user-requested rollback may still restore its selected backup as an
@@ -239,10 +242,12 @@ note text or retained context.
 Before native activation, the live source must match the paired source's exact
 schema and retained cells. A private binding seals its file identity/state and
 candidate digest. Activation requires a quiescent transition to DELETE journal
-mode, then rechecks those bindings under SQLite's exclusive lock through the
-atomic rename. This refuses a WAL connection that could acknowledge a write to
-the replaced inode. Source-sidecar cleanup completes under this lock before
-publication; sidecars created on the new live database belong to its writers.
+mode, then rechecks those bindings under SQLite's exclusive lock. For exact-v14
+the additive v15 schema is committed on the existing inode, preserving every
+existing table and sequence; the verified candidate is not used to replace live
+data. Sources before v14 retain the locked atomic rename and source-sidecar
+cleanup. These checks refuse a WAL reader that prevents the exclusive cutover;
+they do not independently prove that every detached runtime process has exited.
 An unmanaged writer or a commit after backup refuses activation. When the candidate has not changed the live database,
 recovery preserves the live source, including an independent committed write,
 instead of restoring an older backup over it. After activation or candidate

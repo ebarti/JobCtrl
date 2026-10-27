@@ -64,7 +64,7 @@ def _bound(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     return source, live, candidate, receipt
 
 
-def test_atomic_activation_holds_writer_lock_through_rename(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_atomic_activation_holds_writer_lock_through_cutover(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source, live, candidate, receipt = _bound(tmp_path)
     original = activation.os.replace
     checked = []
@@ -76,7 +76,21 @@ def test_atomic_activation_holds_writer_lock_through_rename(tmp_path: Path, monk
         checked.append(True)
         return original(old, new)
 
-    monkeypatch.setattr(activation.os, "replace", guarded_replace)
+    if _source_version == 14:
+        from jobctrl.infrastructure.migrations import v14_to_v15_inplace
+
+        original_extend = v14_to_v15_inplace._extend
+
+        def guarded_extend(conn):
+            original_extend(conn)
+            with sqlite3.connect(live, timeout=0) as writer:
+                with pytest.raises(sqlite3.OperationalError, match="locked"):
+                    writer.execute("UPDATE jobs SET title='late concurrent write'")
+            checked.append(True)
+
+        monkeypatch.setattr(v14_to_v15_inplace, "_extend", guarded_extend)
+    else:
+        monkeypatch.setattr(activation.os, "replace", guarded_replace)
     activation.activate(live, candidate, receipt)
     assert checked == [True]
     assert not candidate.exists() and not receipt.exists()
@@ -241,7 +255,7 @@ def test_quiescent_wal_source_activates_in_delete_mode(tmp_path: Path) -> None:
         assert conn.execute("SELECT title FROM jobs").fetchone() == ("paired title",)
 
 
-def test_writer_on_new_live_inode_keeps_its_acknowledged_wal_commit(
+def test_writer_after_activation_keeps_its_acknowledged_wal_commit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _, live, candidate, receipt = _bound(tmp_path)
@@ -253,15 +267,29 @@ def test_writer_on_new_live_inode_keeps_its_acknowledged_wal_commit(
         writer = sqlite3.connect(live, timeout=0)
         connections.append(writer)
         assert writer.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
-        writer.execute("UPDATE jobs SET title='new-inode acknowledged write'")
+        writer.execute("UPDATE jobs SET title='post-activation acknowledged write'")
         writer.commit()
 
-    monkeypatch.setattr(activation.os, "replace", write_to_new_live_after_replace)
+    if _source_version == 14:
+        original_unlink = Path.unlink
+
+        def write_before_candidate_cleanup(path, *args, **kwargs):
+            if path == candidate:
+                writer = sqlite3.connect(live, timeout=0)
+                connections.append(writer)
+                assert writer.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
+                writer.execute("UPDATE jobs SET title='post-activation acknowledged write'")
+                writer.commit()
+            return original_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", write_before_candidate_cleanup)
+    else:
+        monkeypatch.setattr(activation.os, "replace", write_to_new_live_after_replace)
     try:
         activation.activate(live, candidate, receipt)
         reader = sqlite3.connect(live)
         try:
-            assert reader.execute("SELECT title FROM jobs").fetchone() == ("new-inode acknowledged write",)
+            assert reader.execute("SELECT title FROM jobs").fetchone() == ("post-activation acknowledged write",)
             assert reader.execute("PRAGMA integrity_check").fetchone() == ("ok",)
         finally:
             reader.close()

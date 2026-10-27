@@ -449,6 +449,11 @@ active-job deletion and purge must retain their behavior. Verify the rendered
 Jobs flow and browser-local demo separately. Run the full worker and native
 migration suites with every supported source version, independent source-drift
 and old-controller compatibility checks before claiming an installed upgrade.
+For exact-v14, exercise the authenticated bound activation with a live WAL
+reader, a write between receipt validation and the SQLite lock, DDL and commit
+faults, and process interruption at the schema/commit boundaries. Verify the
+live inode and protected profile, resume, settings, search and external file
+bytes remain intact; reader/source drift must refuse safely.
 Commit synthetic writes to both databases after the paired backup and after
 activation, then inject candidate failure and interruption. Verify repeated
 ordinary and revoked recovery attempts retain the live files and resumable
