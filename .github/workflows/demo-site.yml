@@ -10,16 +10,17 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - ".npmrc"
       - "scripts/demo-*.mjs"
       - ".github/workflows/demo-site.yml"
   pull_request:
     paths:
       - "apps/web/**"
-      - "apps/demo-edge/**"
       - "packages/**"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - ".npmrc"
       - "scripts/demo-*.mjs"
       - ".github/workflows/demo-site.yml"
   workflow_dispatch:
@@ -55,7 +56,9 @@ jobs:
       - name: Install dependencies
         run: corepack pnpm install --frozen-lockfile
 
-      - name: Verify edge workers
+      - name: Verify edge workers before deployment
+        # PR edge checks belong to demo-edge.yml; production keeps this gate.
+        if: github.event_name != 'pull_request'
         run: corepack pnpm demo-edge:check && corepack pnpm demo-edge:test && corepack pnpm demo-edge:dry-run
 
       - name: Build browser-local demo
