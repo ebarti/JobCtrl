@@ -648,37 +648,83 @@ func TestCandidateExecutionRevalidatesTamperedImmutableLauncher(t *testing.T) {
 }
 
 func TestInterruptedTransitionWithRevokedPredecessorFailsClosed(t *testing.T) {
-	store, err := release.Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	old := lifecycleReceipt("local-build-0000001", "curl", 1)
-	candidate := lifecycleReceipt("local-build-0000002", "curl", 2)
-	if _, err := store.RecordMetadata("local", old.Sequence, 0, old.BuildID, old.DescriptorSHA256, nil); err != nil {
-		t.Fatal(err)
-	}
-	journal, err := store.Begin("update", &old, &candidate, candidate.DescriptorSHA256)
-	if err != nil {
-		t.Fatal(err)
-	}
-	journal.BackupID = "pair-before-revocation"
-	if err := store.Advance(&journal, release.PolicyPending, nil); err != nil {
-		t.Fatal(err)
-	}
-	state, err := store.ValidateMetadata(release.ChannelMetadata{Channel: "local", Sequence: candidate.Sequence, Minimum: 2, BuildID: candidate.BuildID, DescriptorDigest: candidate.DescriptorSHA256, Revoked: []string{old.BuildID}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.CommitMetadata(state); err != nil {
-		t.Fatal(err)
-	}
-	ctx := launchContext{Instance: instance{RuntimeHome: store.Home, StateDir: t.TempDir(), StatePath: filepath.Join(t.TempDir(), "state.json")}}
-	if recovered, err := recoverInterruptedTransition(ctx, store); recovered || err == nil || !strings.Contains(err.Error(), "revoked") {
-		t.Fatalf("revoked predecessor recovery = recovered:%v err:%v", recovered, err)
-	}
-	loaded, err := store.ReadJournal()
-	if err != nil || loaded.State != release.Failed {
-		t.Fatalf("revoked recovery did not preserve fail-closed audit state: %#v, %v", loaded, err)
+	for _, testCase := range []struct {
+		name          string
+		state         release.State
+		backupID      string
+		wantError     string
+		wantState     release.State
+		retainJournal bool
+	}{
+		{name: "before backup", state: release.Quiescing, wantError: "revoked", wantState: release.Failed},
+		{name: "missing backup after policy", state: release.PolicyPending, backupID: "pair-before-revocation", wantError: "no verified predecessor database pair", wantState: release.PolicyPending, retainJournal: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			store, err := release.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			old := lifecycleReceipt("local-build-0000001", "curl", 1)
+			candidate := lifecycleReceipt("local-build-0000002", "curl", 2)
+			if _, err := store.RecordMetadata("local", old.Sequence, 0, old.BuildID, old.DescriptorSHA256, nil); err != nil {
+				t.Fatal(err)
+			}
+			journal, err := store.Begin("update", &old, &candidate, candidate.DescriptorSHA256)
+			if err != nil {
+				t.Fatal(err)
+			}
+			journal.BackupID = testCase.backupID
+			if err := store.Advance(&journal, testCase.state, nil); err != nil {
+				t.Fatal(err)
+			}
+			state, err := store.ValidateMetadata(release.ChannelMetadata{Channel: "local", Sequence: candidate.Sequence, Minimum: 2, BuildID: candidate.BuildID, DescriptorDigest: candidate.DescriptorSHA256, Revoked: []string{old.BuildID}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.CommitMetadata(state); err != nil {
+				t.Fatal(err)
+			}
+			stateDir := t.TempDir()
+			for _, name := range []string{"jobctrl.db", "temporal.db"} {
+				if err := os.WriteFile(filepath.Join(stateDir, name), []byte("newer-"+name), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			journalBefore, err := os.ReadFile(filepath.Join(store.Home, release.JournalFile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			originalStart := startReleaseCommand
+			t.Cleanup(func() { startReleaseCommand = originalStart })
+			starts := 0
+			startReleaseCommand = func(_ launchContext, _ release.Receipt, _ string) error {
+				starts++
+				return errors.New("unexpected release start")
+			}
+			ctx := launchContext{Instance: instance{RuntimeHome: store.Home, StateDir: stateDir, StatePath: filepath.Join(stateDir, "state.json")}}
+			if recovered, err := recoverInterruptedTransition(ctx, store); recovered || err == nil || !strings.Contains(err.Error(), testCase.wantError) {
+				t.Fatalf("revoked predecessor recovery = recovered:%v err:%v", recovered, err)
+			}
+			loaded, err := store.ReadJournal()
+			if err != nil || loaded.State != testCase.wantState {
+				t.Fatalf("revoked recovery did not preserve fail-closed audit state: %#v, %v", loaded, err)
+			}
+			if testCase.retainJournal {
+				journalAfter, err := os.ReadFile(filepath.Join(store.Home, release.JournalFile))
+				if err != nil || !bytes.Equal(journalBefore, journalAfter) {
+					t.Fatalf("unverified backup changed the recovery journal: %v", err)
+				}
+			}
+			if starts != 0 {
+				t.Fatalf("revoked recovery started a release %d times", starts)
+			}
+			for _, name := range []string{"jobctrl.db", "temporal.db"} {
+				data, err := os.ReadFile(filepath.Join(stateDir, name))
+				if err != nil || string(data) != "newer-"+name {
+					t.Fatalf("revoked recovery changed %s: %v", name, err)
+				}
+			}
+		})
 	}
 }
 
