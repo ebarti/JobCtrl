@@ -545,3 +545,10 @@ it from the signed payload and retain schema-1 compatibility for verified
 legacy directories. Updating a closure preserves the prior installation and
 never repurposes a version-only directory. The [runtime contract](agent-runtime.md)
 keeps wheel/tree integrity and core-overlap refusal mandatory.
+
+Native lifecycle snapshots require the instance's durable execution ownership
+receipts and a completed zero-member kernel census. Process-group emptiness or
+a dead leader alone cannot certify the pair. Stop publishes its verified state
+before retiring those receipts, so an interrupted metadata cleanup can resume
+without losing the process boundary. Missing or legacy-untracked ownership
+blocks automatic backup/restore and preserves the live databases and registry.

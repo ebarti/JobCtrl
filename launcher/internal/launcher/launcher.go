@@ -8,6 +8,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -282,6 +283,8 @@ var signalProcessGroup groupSignaler = func(pgid int, signal syscall.Signal) err
 var openBrowser = func(url string) error { return exec.Command("/usr/bin/open", url).Run() }
 var temporalHealthProbe = probeTemporal
 var startCommand = executeStart
+var ownedExecutionRunner = runInOwnedExecution
+var stopCompletionCheckpoint func(string) error
 
 // Run is the only public CLI entrypoint. __supervise is reachable only through
 // the re-exec made by `jobctrl start`.
@@ -331,7 +334,7 @@ func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Write
 			return err
 		}
 		if !owned {
-			return runInOwnedExecution(ctx, args, stdout, stderr)
+			return ownedExecutionRunner(ctx, args, stdout, stderr)
 		}
 	}
 	if len(args) > 0 && args[0] == "__supervise" {
@@ -1529,6 +1532,9 @@ func readState(path string) (instanceState, error) {
 	if err := decodeStrict(path, &state); err != nil {
 		return state, err
 	}
+	if (state.OwnershipVerified && state.StoppedAt == nil) || (state.ExecutionScopeID != "" && !executionIDValid(state.ExecutionScopeID)) {
+		return state, errors.New("invalid runtime ownership state")
+	}
 	if state.SchemaVersion != stateSchemaVersion || state.InstanceID == "" || state.CanonicalStateDir == "" || state.PayloadRoot == "" || state.BuildID == "" || state.ManifestSHA256 == "" || state.Components == nil {
 		return state, errors.New("invalid runtime registry state")
 	}
@@ -1581,22 +1587,22 @@ func validateStartState(ctx launchContext, state instanceState) error {
 	if err := validateStateIdentity(ctx, state); err != nil {
 		return err
 	}
-	if err := validateStateBinding(ctx, state); err != nil && stateHasLiveProcesses(state) {
-		return fmt.Errorf("different JobCtrl release is still running for this state directory; run jobctrl status then jobctrl stop before starting this release")
-	}
 	if state.OwnershipVerified && state.StoppedAt != nil {
 		return nil
 	}
+	if err := validateStateBinding(ctx, state); err != nil && stateHasLiveProcesses(state) {
+		return fmt.Errorf("different JobCtrl release is still running for this state directory; run jobctrl status then jobctrl stop before starting this release")
+	}
 	if supervisorMayBeLive(state.Supervisor) {
 		return ErrAlreadyRunning
-	}
-	if state.ExecutionScopeID == "" && !state.OwnershipVerified && len(state.Components) > 0 {
-		return errUntrackedOwnership
 	}
 	for name, record := range state.Components {
 		if componentMayBeLive(record) {
 			return fmt.Errorf("%w: recorded %s component may still have live processes or unverifiable ownership; inspect jobctrl status and safely stop it before starting", ErrAlreadyRunning, name)
 		}
+	}
+	if state.ExecutionScopeID == "" && !state.OwnershipVerified && len(state.Components) > 0 {
+		return errUntrackedOwnership
 	}
 	return nil
 }
@@ -1814,7 +1820,7 @@ func supervise(ctx launchContext, ready io.Writer) (result error) {
 		if cleanupErr != nil && result == nil {
 			result = fmt.Errorf("clean up remaining instance processes: %w", cleanupErr)
 		}
-		if cleanupErr == nil && state.ExecutionScopeID != "" && allRecordedComponentsStopped(state) {
+		if cleanupErr == nil && state.ExecutionScopeID != "" {
 			state.OwnershipVerified = true
 			now := time.Now().UTC()
 			state.StoppedAt = &now
@@ -2211,6 +2217,40 @@ func terminateCooperativeRecord(record componentRecord, grace time.Duration) err
 	return terminateRecord(record)
 }
 
+// Modern scope cleanup never expands kill authority to a numeric process
+// group. The leader gets its clean-shutdown grace; the later coalition drain
+// handles independently verified leftovers.
+func terminateScopedLeader(name string, record componentRecord) error {
+	if !recordMatchesLiveProcess(record) {
+		return errors.New("component leader identity is unresolved")
+	}
+	if err := syscall.Kill(record.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return err
+	}
+	grace := shutdownTimeout
+	if name == "api" || name == "worker" {
+		grace = cooperativeShutdownTimeout
+	}
+	if waitForOwnedRecordExit(record, grace) {
+		return nil
+	}
+	return errors.New("component clean-shutdown deadline exceeded")
+}
+
+func waitForOwnedRecordExit(record componentRecord, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		info, err := processBSDInfoIncludingZombies(record.PID)
+		if errors.Is(err, syscall.ESRCH) || (err == nil && (binary.LittleEndian.Uint32(info[4:]) == 5 || processIdentityFromBSD(info) != record.StartIdentity)) {
+			return true
+		}
+		if err != nil || time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 func terminateComponentRecord(name string, record componentRecord) error {
 	if name == "api" || name == "worker" {
 		return terminateCooperativeRecord(record, cooperativeShutdownTimeout)
@@ -2224,7 +2264,23 @@ func shutdownComponents(state *instanceState, children map[string]*exec.Cmd, sta
 		if !exists || !componentMayBeLive(record) {
 			continue
 		}
-		if err := terminateComponentRecord(name, record); err == nil {
+		var cleanupErr error
+		if state.ExecutionScopeID != "" {
+			own, ownErr := processCoalitionIDs(os.Getpid())
+			target, targetErr := processCoalitionIDs(record.PID)
+			if ownErr != nil {
+				cleanupErr = ownErr
+			} else if targetErr != nil {
+				cleanupErr = targetErr
+			} else if own != target {
+				cleanupErr = errors.New("component left its execution scope; signal refused")
+			} else {
+				cleanupErr = terminateScopedLeader(name, record)
+			}
+		} else {
+			cleanupErr = terminateComponentRecord(name, record)
+		}
+		if err := cleanupErr; err == nil {
 			now := time.Now().UTC()
 			record.ExitedAt = &now
 		} else {
@@ -2265,6 +2321,22 @@ func stop(ctx launchContext) error {
 		if err := terminateOwnedProcesses(ctx, instanceState{}); err != nil {
 			return err
 		}
+		instanceLock, err := acquireLock(ctx.Instance.LockPath, true)
+		if err != nil {
+			return err
+		}
+		defer releaseLock(instanceLock)
+		if latest, err := readState(ctx.Instance.StatePath); err == nil {
+			if err := validateStateIdentity(ctx, latest); err != nil {
+				return err
+			}
+			if err := requireExecutionReceipt(ctx, latest); err != nil {
+				return err
+			}
+			return completeStoppedState(ctx, latest)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 		return retireOwnedExecutionScopes(ctx)
 	}
 	if err != nil {
@@ -2274,21 +2346,8 @@ func stop(ctx launchContext) error {
 		return err
 	}
 	initialState := state
-	if state.ExecutionScopeID != "" {
-		scopes, err := readOwnedExecutionScopes(ctx)
-		if err != nil {
-			return err
-		}
-		found := false
-		for _, scope := range scopes {
-			if scope.ID == state.ExecutionScopeID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return errors.New("the runtime execution receipt is missing; preserve the registry and workspace for recovery")
-		}
+	if err := requireExecutionReceipt(ctx, state); err != nil {
+		return err
 	}
 	ownedBeforeShutdown, err := inspectOwnedProcesses(ctx, state)
 	if err != nil {
@@ -2298,16 +2357,23 @@ func stop(ctx launchContext) error {
 	// while holding the stop control lock, then reload its final state before
 	// handling any remaining groups. Signaling components concurrently with its
 	// cleanup could deliver a second TERM while a worker is draining.
-	if recordMatchesLiveProcess(state.Supervisor) {
+	durableOwnership := state.ExecutionScopeID != "" || state.OwnershipVerified
+	supervisorOwned := !durableOwnership
+	for _, member := range ownedBeforeShutdown {
+		if member.PID == state.Supervisor.PID && member.Identity == state.Supervisor.StartIdentity {
+			supervisorOwned = true
+		}
+	}
+	if supervisorOwned && recordMatchesLiveProcess(state.Supervisor) {
 		if err := syscall.Kill(state.Supervisor.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 			return fmt.Errorf("signal verified supervisor: %w", err)
 		}
-		if !waitForPIDExit(state.Supervisor.PID, supervisorShutdownTimeout) {
+		if !waitForOwnedRecordExit(state.Supervisor, supervisorShutdownTimeout) {
 			if err := drainOwnedProcesses(ctx, state, ownedBeforeShutdown); err != nil {
 				return fmt.Errorf("supervisor cleanup exceeded its deadline: %w", err)
 			}
 		}
-	} else if supervisorMayBeLive(state.Supervisor) {
+	} else if supervisorMayBeLive(state.Supervisor) && state.ExecutionScopeID == "" {
 		return errors.New("supervisor ownership is unresolved; refusing concurrent component termination")
 	}
 	// A new supervisor could start after the old one exits. Reserve its same
@@ -2331,8 +2397,19 @@ func stop(ctx launchContext) error {
 	failed := make([]string, 0)
 	for _, name := range []string{"api", "worker", "temporal"} {
 		if record, exists := state.Components[name]; exists && componentMayBeLive(record) {
-			if err := terminateComponentRecord(name, record); err != nil && componentMayBeLive(record) {
-				failed = append(failed, name+": "+err.Error())
+			var cleanupErr error
+			if durableOwnership {
+				for _, member := range ownedBeforeShutdown {
+					if member.PID == record.PID && member.Identity == record.StartIdentity {
+						cleanupErr = terminateScopedLeader(name, record)
+						break
+					}
+				}
+			} else {
+				cleanupErr = terminateComponentRecord(name, record)
+			}
+			if cleanupErr != nil && componentMayBeLive(record) {
+				failed = append(failed, name+": "+cleanupErr.Error())
 			}
 		}
 	}
@@ -2340,29 +2417,71 @@ func stop(ctx launchContext) error {
 		return fmt.Errorf("verify instance-wide shutdown: %w", err)
 	}
 	// A verified child cleanup can resolve an earlier group-drain failure.
-	if allRecordedComponentsStopped(state) && !supervisorMayBeLive(state.Supervisor) {
+	durableScope := state.ExecutionScopeID != "" || state.OwnershipVerified
+	if durableScope || (allRecordedComponentsStopped(state) && !supervisorMayBeLive(state.Supervisor)) {
 		failed = nil
 	}
-	if len(failed) > 0 || !allRecordedComponentsStopped(state) || supervisorMayBeLive(state.Supervisor) {
+	if !durableScope && (len(failed) > 0 || !allRecordedComponentsStopped(state) || supervisorMayBeLive(state.Supervisor)) {
 		if len(failed) > 0 {
 			return fmt.Errorf("could not safely stop live component groups: %s", strings.Join(failed, ", "))
 		}
 		return errors.New("JobCtrl may still have live recorded processes or unverifiable component ownership after stop")
 	}
+	return completeStoppedState(ctx, state)
+}
+
+func requireExecutionReceipt(ctx launchContext, state instanceState) error {
+	if state.ExecutionScopeID == "" || (state.OwnershipVerified && state.StoppedAt != nil) {
+		return nil
+	}
+	scopes, err := readOwnedExecutionScopes(ctx)
+	if err != nil {
+		return err
+	}
+	for _, scope := range scopes {
+		if scope.ID == state.ExecutionScopeID {
+			return nil
+		}
+	}
+	return errors.New("the runtime execution receipt is missing; preserve the registry and workspace for recovery")
+}
+
+func completeStoppedState(ctx launchContext, state instanceState) error {
 	if state.ExecutionScopeID == "" && !state.OwnershipVerified && (len(state.Components) > 0 || state.Supervisor != (componentRecord{})) {
 		return errUntrackedOwnership
 	}
-	if err := retireOwnedExecutionScopes(ctx); err != nil {
-		return fmt.Errorf("retire cleaned execution records: %w", err)
-	}
+	// Publish the verified stopped proof before retiring its receipt. A
+	// process interruption must never leave an active-looking registry with
+	// the only durable ownership record already deleted.
 	now := time.Now().UTC()
 	state.StoppedAt = &now
 	state.OwnershipVerified = true
-	state.ExecutionScopeID = ""
-	return writeState(ctx.Instance.StatePath, state)
+	if err := writeState(ctx.Instance.StatePath, state); err != nil {
+		return err
+	}
+	if stopCompletionCheckpoint != nil {
+		if err := stopCompletionCheckpoint("stopped-proof-durable"); err != nil {
+			return err
+		}
+	}
+	if err := retireOwnedExecutionScopes(ctx); err != nil {
+		return fmt.Errorf("processes are stopped; retire execution records: %w", err)
+	}
+	if stopCompletionCheckpoint != nil {
+		if err := stopCompletionCheckpoint("execution-receipts-retired"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
+
 func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 	state, err := readState(ctx.Instance.StatePath)
+	if err == nil {
+		if err := requireExecutionReceipt(ctx, state); err != nil {
+			return err
+		}
+	}
 	processes, ownershipErr := inspectOwnedProcesses(ctx, state)
 	if ownershipErr != nil {
 		return ownershipErr

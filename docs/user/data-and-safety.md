@@ -217,6 +217,18 @@ the directory has other contents, or process ownership or database integrity is
 uncertain, preserve everything and seek help or use a verified backup. Native
 backups restore the JobCtrl and Temporal databases as a pair.
 
+#### Runtime cleanup failures
+
+A native paired backup, update or rollback must pass the complete process-cleanup
+gate. `jobctrl stop` requests clean shutdown, kills verified timed-out leftovers,
+and waits for their exit. Successful cleanup permits normal restart. A missing
+or unfamiliar ownership record is a failure, including legacy records that
+cannot identify detached children; JobCtrl preserves the registry and live data
+instead of claiming they are stopped. Inspect the reported process/permission
+problem and use qualified manual recovery. Do not delete ownership metadata or
+restore an older pair to bypass a refusal. Reboot is last-resort troubleshooting
+when cleanup cannot be recovered, not a prerequisite for normal lifecycle work.
+
 ### Credentials Outside The Workspace
 
 The macOS credential panel guides Codex, Claude, and Google setup. Codex uses
@@ -463,10 +475,3 @@ the source registry and locator queue. `source-proposals list` reads that histor
 without network access or mutations. See
 [Discovery](discovery.md#propose-sources-from-saved-posting-history) for review and
 explicit suppression reset.
-
-Native `jobctrl stop` first requests clean shutdown, then kills verified
-instance-owned leftovers that exceed the timeout and waits for exit. Successful
-cleanup permits normal restart. If cleanup fails, inspect the reported process
-or permission problem, stop the remaining JobCtrl processes and retry. Rebooting
-is a last-resort troubleshooting option when those processes cannot be stopped;
-it is not part of normal stop, backup, update or restart.

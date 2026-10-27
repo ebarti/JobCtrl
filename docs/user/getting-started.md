@@ -112,13 +112,15 @@ Use `jobctrl start --no-open` when you do not want a browser window, or
 Your workspace is stored under `~/.jobctrl/` by default and survives stops,
 updates, and rollbacks.
 
-If `jobctrl stop` cannot verify that a recorded service has exited, it reports
-the unresolved state instead of claiming the runtime is stopped. `start`,
-backup, update, and rollback can also refuse while that state remains. Check
-`jobctrl status` and investigate the reported process before retrying after it
-has exited. A process group can contain unrelated processes, so do not assume
-that an occupied group is safe to terminate. Keep the runtime registry and
-workspace data intact while resolving the problem.
+`jobctrl stop` requests a clean shutdown, terminates verified leftovers that
+exceed the timeout, and waits for exit. It tracks the instance's children even
+if they detach or their parent crashes. Successful cleanup permits normal
+restart. If a process, permission check or ownership record prevents cleanup,
+JobCtrl reports that failure and blocks backup or restart until it is resolved.
+Check `jobctrl status`, keep the registry and workspace intact, and investigate
+the reported problem. Older untracked registries remain ownership-unverified;
+do not delete them to force a successful status. Reboot is last-resort manual
+troubleshooting for an unrecoverable cleanup problem, not a normal requirement.
 
 ## 3. Complete First-Run Setup
 
@@ -270,10 +272,3 @@ to replace it; preserve those files and recover the pair before retrying.
 Capabilities that interpret text require a ready provider and spend allowance. Saved settings drive provider search directly, and fetched jobs proceed to full-posting analysis/scoring without a separate model intake gate. Generation preserves accepted artifacts on failed refreshes. The extension proposes model-mapped, saved-profile-backed answers for review before filling. Affected offline-demo capabilities report unavailable.
 
 See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
-
-Native `jobctrl stop` first requests clean shutdown, then kills verified
-instance-owned leftovers that exceed the timeout and waits for exit. Successful
-cleanup permits normal restart. If cleanup fails, inspect the reported process
-or permission problem, stop the remaining JobCtrl processes and retry. Rebooting
-is a last-resort troubleshooting option when those processes cannot be stopped;
-it is not part of normal stop, backup, update or restart.
