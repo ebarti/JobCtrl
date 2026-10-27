@@ -359,3 +359,25 @@ def test_failed_exit_is_reported_and_does_not_skip_other_owned_cleanup(browser_s
     monkeypatch.setattr(first, "wait", actual_wait)
     actual_wait(timeout=5)
     chrome.cleanup_worker(111, first)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX Popen reaping fence")
+def test_disappeared_group_still_waits_for_original_child(browser_seam, monkeypatch):
+    process = launch(131)
+    actual_wait = process.wait
+    process.kill()
+    waits = []
+
+    def missing_group(_pid):
+        raise ProcessLookupError()
+
+    def wait(*, timeout):
+        waits.append(timeout)
+        return actual_wait(timeout=timeout)
+
+    monkeypatch.setattr(os, "getpgid", missing_group)
+    monkeypatch.setattr(process, "wait", wait)
+    chrome.cleanup_worker(131, process)
+    assert waits == [10]
+    assert process.returncode != 0
+    monkeypatch.setattr(process, "wait", actual_wait)

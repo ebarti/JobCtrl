@@ -41,5 +41,7 @@ def terminate_owned_process(process: subprocess.Popen, *, launched_pid: int) -> 
                     raise ProcessOwnershipError("Apply process no longer owns its launch session")
                 os.killpg(launched_pid, signal.SIGKILL)
             except ProcessLookupError:
-                return
+                # The group may have exited between inspection and signal.
+                # Still reap/verify the original child below.
+                pass
     process.wait(timeout=10)
