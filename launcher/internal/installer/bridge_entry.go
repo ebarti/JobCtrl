@@ -198,6 +198,16 @@ func prepareSignedCachedBridge(options Options, input CachedBridgeInput) (*relea
 	if err := validateCanonicalArtifactURL(descriptor, sourceURL); err != nil {
 		return nil, empty, err
 	}
+	// Authenticate the role and bind it to this descriptor before staging its
+	// potentially large archive. The full predecessor, inventory and selector
+	// checks still run under the transition locks before the handoff.
+	claim, err := decodeVerifiedBridgeAttestation(claimRaw, claimSig, options.Trust)
+	if err != nil {
+		return nil, empty, err
+	}
+	if claim.SchemaVersion != 1 || claim.Role != "schema14-bridge" || claim.DatabaseSchema != 14 || claim.LauncherProtocol != 2 || claim.Platform != "darwin-arm64" || claim.Channel != descriptor.Channel || claim.CandidateDescriptorSHA256 != digestBytes(descriptorRaw) || claim.CandidateManifestSHA256 != descriptor.Artifact.ManifestSHA256 || !sha256Pattern.MatchString(claim.PredecessorDescriptorSHA256) || !sha256Pattern.MatchString(claim.PredecessorManifestSHA256) || !sha256Pattern.MatchString(claim.PredecessorInventorySHA256) || !sha256Pattern.MatchString(claim.CandidateInventorySHA256) || !sha256Pattern.MatchString(claim.ControllerSHA256) || claim.PredecessorDescriptorSHA256 == claim.CandidateDescriptorSHA256 {
+		return nil, empty, errors.New("bridge attestation identity invalid")
+	}
 	var staged Receipt
 	var target release.Receipt
 	if recovering {

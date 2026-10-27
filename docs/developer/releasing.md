@@ -167,7 +167,9 @@ reviewed, and verified before publication; the presence of source code or a
 synthetic test does not make the bridge available to installed users.
 
 The signed cached installer mode requires the descriptor URL, descriptor and
-signature, archive, and the bridge declaration and signature. It retains the
+signature, archive, and the bridge declaration and signature. It authenticates
+the declaration and its target descriptor before staging the archive, then
+checks the predecessor and both inventories under the transition locks. It retains the
 signed evidence before writing a handoff intent, selects the protocol-2 active
 receipt before replacing the selector, and finalizes channel policy without
 starting or stopping services or touching either database. `--bridge-recover`

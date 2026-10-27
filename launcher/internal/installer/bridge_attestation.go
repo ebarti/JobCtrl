@@ -51,12 +51,9 @@ type bridgeInventoryEntry struct {
 	Value string `json:"value,omitempty"`
 }
 
-// verifyBridgeAttestation must run under the transition and selection locks,
-// after normal distribution verification of both payloads and channel policy
-// admission. The caller must independently prevent payload substitution until
-// selector installation. A pathname-based inventory alone cannot provide that
-// guarantee against an independent same-user writer.
-func verifyBridgeAttestation(raw, signatureRaw []byte, trust map[string]ed25519.PublicKey, old, candidate release.Receipt, oldRoot, candidateRoot string) (bridgeAttestation, error) {
+// decodeVerifiedBridgeAttestation authenticates the bounded role declaration;
+// it does not establish predecessor, inventory, or controller authority.
+func decodeVerifiedBridgeAttestation(raw, signatureRaw []byte, trust map[string]ed25519.PublicKey) (bridgeAttestation, error) {
 	var claim bridgeAttestation
 	var signature bridgeAttestationSignature
 	if len(raw) > maxDescriptorBytes || len(signatureRaw) > maxSignatureBytes {
@@ -71,6 +68,19 @@ func verifyBridgeAttestation(raw, signatureRaw []byte, trust map[string]ed25519.
 		return claim, errors.New("bridge attestation signature invalid")
 	}
 	if err := decodeStrict(raw, "bridge attestation", &claim); err != nil {
+		return claim, err
+	}
+	return claim, nil
+}
+
+// verifyBridgeAttestation must run under the transition and selection locks,
+// after normal distribution verification of both payloads and channel policy
+// admission. The caller must independently prevent payload substitution until
+// selector installation. A pathname-based inventory alone cannot provide that
+// guarantee against an independent same-user writer.
+func verifyBridgeAttestation(raw, signatureRaw []byte, trust map[string]ed25519.PublicKey, old, candidate release.Receipt, oldRoot, candidateRoot string) (bridgeAttestation, error) {
+	claim, err := decodeVerifiedBridgeAttestation(raw, signatureRaw, trust)
+	if err != nil {
 		return claim, err
 	}
 	if !old.Valid() || !candidate.Valid() || old.Channel != candidate.Channel || claim.SchemaVersion != 1 || claim.Role != "schema14-bridge" || claim.DatabaseSchema != 14 || claim.LauncherProtocol != 2 || claim.Channel != old.Channel || claim.Channel == "local" || claim.Platform != "darwin-arm64" || claim.PredecessorDescriptorSHA256 != old.DescriptorSHA256 || claim.PredecessorManifestSHA256 != old.ManifestSHA256 || claim.CandidateDescriptorSHA256 != candidate.DescriptorSHA256 || claim.CandidateManifestSHA256 != candidate.ManifestSHA256 || old.DescriptorSHA256 == candidate.DescriptorSHA256 {
