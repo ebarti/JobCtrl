@@ -3,6 +3,17 @@
 Durable data lives on the user's machine in local SQLite stores, workspace
 files, the native OS credential store, and vendor-managed authentication stores.
 
+A fresh `jobctrl.db` is initialized as a closed exact-schema SQLite file in a
+private staging directory alongside the workspace, then published without
+replacing an existing path. Concurrent initializers either admit the published
+exact database or fail without deleting it. If database sidecars exist without
+their main file, creation refuses to adopt or remove them. Interrupted or
+unfamiliar staging directories are preserved for inspection rather than swept.
+When publication did not finish and its retained staged file still names the
+same database, a later start refuses to open it until the interrupted publication
+is investigated; the database, companions, and staging directory must be
+preserved for diagnosis.
+
 **Read this if** you need to know which table or file owns a piece of data, or
 where generated artifacts land on disk.
 

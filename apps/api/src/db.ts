@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import Database from "better-sqlite3";
 
 import { EXACT_V14_SCHEMA_MANIFEST, hasExactV14SchemaManifest } from "./schema-manifest.js";
@@ -50,7 +51,46 @@ function assertExactSchemaVersion(db: SqliteDatabase): void {
   }
 }
 
+/** Refuse a database whose atomic first-creation publication has not settled. */
+function hasUnresolvedInitialization(dbPath: string): boolean {
+  const target = fs.lstatSync(dbPath);
+  if (!target.isFile()) throw new Error("JobCtrl database path is not a regular file.");
+  const parent = path.dirname(dbPath);
+  for (const entry of fs.readdirSync(parent, { withFileTypes: true })) {
+    if (!entry.name.startsWith(".jobctrl-init-") || !entry.isDirectory()) continue;
+    const candidatePath = path.join(parent, entry.name, "candidate.db");
+    let candidate: fs.Stats;
+    try {
+      candidate = fs.lstatSync(candidatePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+    if (candidate.isFile() && candidate.dev === target.dev && candidate.ino === target.ino) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function assertNoUnresolvedInitialization(dbPath: string): void {
+  // Worker and API start concurrently. Briefly allow a live initializer to
+  // complete its publication; an interrupted one remains a safe refusal.
+  const deadline = Date.now() + 2_000;
+  const waitCell = new Int32Array(new SharedArrayBuffer(4));
+  while (hasUnresolvedInitialization(dbPath)) {
+    if (Date.now() >= deadline) {
+      throw new Error(
+        "JobCtrl database initialization has an unresolved publication; "
+          + "preserve the database and companions and inspect the retained staging directory.",
+      );
+    }
+    Atomics.wait(waitCell, 0, 0, 25);
+  }
+}
+
 export function openReadOnlyDatabase(dbPath: string): SqliteDatabase {
+  assertNoUnresolvedInitialization(dbPath);
   const db = new Database(dbPath, { readonly: true, fileMustExist: true });
   assertExactSchemaVersion(db);
   // Match the worker's PRAGMA so contended reads wait instead of failing
@@ -61,6 +101,7 @@ export function openReadOnlyDatabase(dbPath: string): SqliteDatabase {
 }
 
 export function openDatabase(dbPath: string): SqliteDatabase {
+  assertNoUnresolvedInitialization(dbPath);
   const db = new Database(dbPath, { fileMustExist: true });
   assertExactSchemaVersion(db);
   // Exact-v8 permanent deletion relies on the sealed schema's cascade and

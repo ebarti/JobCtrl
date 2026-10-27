@@ -409,6 +409,9 @@ func executeStart(ctx launchContext, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return err
+	}
 	if err := migrateHistoricalTransition(ctx); err != nil {
 		return fmt.Errorf("prepare target schema for historical update: %w", err)
 	}
@@ -1658,6 +1661,10 @@ func sendReady(writer io.Writer, err error) {
 }
 
 func supervise(ctx launchContext, ready io.Writer) (result error) {
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		sendReady(ready, err)
+		return err
+	}
 	lock, err := acquireLock(ctx.Instance.LockPath, true)
 	if err != nil {
 		sendReady(ready, err)
@@ -2267,6 +2274,9 @@ func version(ctx launchContext, output io.Writer, jsonOutput bool) error {
 	return err
 }
 func dispatchPython(ctx launchContext, args []string) error {
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return err
+	}
 	python := filepath.Join(ctx.PayloadRoot, "python", "bin", "python3")
 	argv := append([]string{python, "-I", "-B", "-m", "jobctrl"}, args...)
 	return syscall.Exec(python, argv, ctx.Environment)

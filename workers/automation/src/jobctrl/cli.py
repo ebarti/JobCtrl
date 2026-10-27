@@ -3232,11 +3232,11 @@ def backup(
     Nothing is ever deleted. To restore, stop the app and copy a backup file
     over ~/.jobctrl/jobctrl.db.
     """
-    from jobctrl.database import backup_database
+    from jobctrl.database import UnresolvedDatabaseInitializationError, backup_database
 
     try:
         destination = backup_database(output)
-    except (FileNotFoundError, FileExistsError, OSError, sqlite3.Error) as exc:
+    except (FileNotFoundError, FileExistsError, OSError, sqlite3.Error, UnresolvedDatabaseInitializationError) as exc:
         console.print(f"[red]Backup failed:[/red] {exc}")
         raise typer.Exit(code=1) from exc
 

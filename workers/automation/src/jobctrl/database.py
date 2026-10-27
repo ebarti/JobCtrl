@@ -11,8 +11,12 @@ persistent run and event telemetry.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import stat
+import tempfile
 import threading
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -65,15 +69,23 @@ class SchemaMigrationRequiredError(RuntimeError):
     """Raised when a stopped-runtime v6/v7 cutover has not been run."""
 
 
+class UnresolvedDatabaseInitializationError(RuntimeError):
+    """Raised when an interrupted initial publication needs inspection."""
+
+
 # Thread-local connection storage — each thread gets its own connection
 # (required for SQLite thread safety with parallel workers)
 _local = threading.local()
+_OPEN_SUPPORTS_DIR_FD = os.open in os.supports_dir_fd
+_LINK_SUPPORTS_DIR_FD = os.link in os.supports_dir_fd
 
 
 def get_connection(
     db_path: Path | str | None = None,
     *,
     enable_wal: bool = True,
+    require_existing: bool = False,
+    _owned_publication: bool = False,
 ) -> sqlite3.Connection:
     """Get a thread-local cached SQLite connection with WAL mode enabled.
 
@@ -88,6 +100,9 @@ def get_connection(
     """
     path = str(db_path or DB_PATH)
 
+    if not _owned_publication:
+        _refuse_unresolved_initialization(Path(path))
+
     if not hasattr(_local, "connections"):
         _local.connections = {}
 
@@ -100,15 +115,24 @@ def get_connection(
         except sqlite3.ProgrammingError:
             pass
 
-    conn = sqlite3.connect(path, timeout=30)
-    if enable_wal:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA busy_timeout=10000")
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    register_score_eligibility_sql(conn)
-    _local.connections[path] = conn
-    return conn
+    # SQLite's default mode silently creates a missing file.  Admission of an
+    # already published database must not recreate it after a concurrent move.
+    if require_existing:
+        conn = sqlite3.connect(f"{Path(path).absolute().as_uri()}?mode=rw", timeout=30, uri=True)
+    else:
+        conn = sqlite3.connect(path, timeout=30)
+    try:
+        if enable_wal:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=10000")
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        register_score_eligibility_sql(conn)
+        _local.connections[path] = conn
+        return conn
+    except BaseException:
+        conn.close()
+        raise
 
 
 def close_connection(db_path: Path | str | None = None) -> None:
@@ -163,6 +187,7 @@ def backup_database(
     source = Path(db_path or DB_PATH)
     if not source.exists():
         raise FileNotFoundError(f"No database to back up at {source}")
+    _refuse_unresolved_initialization(source)
 
     destination = _resolve_backup_destination(source, output)
     if destination.exists():
@@ -320,32 +345,180 @@ def create_exact_v14_database(
     db_path: Path | str | None = None,
 ) -> sqlite3.Connection:
     """Create a brand-new database directly from the exact v14 schema."""
+    from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
+
+    return _create_exact_database(db_path, 14, create_exact_v14_schema)
+
+
+def _create_exact_database(
+    db_path: Path | str | None,
+    schema_version: int,
+    create_schema: Callable[[sqlite3.Connection], None],
+) -> sqlite3.Connection:
+    """Build and publish one exact schema without replacing a competing owner."""
     path = Path(db_path or DB_PATH)
-    if path.exists():
-        raise FileExistsError(f"exact v14 creation requires a missing database path, found {path}")
+    if os.path.lexists(path):
+        raise FileExistsError(f"exact v{schema_version} creation requires a missing database path, found {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
+    parent_identity = path.parent.lstat()
+    if not stat.S_ISDIR(parent_identity.st_mode):
+        raise RuntimeError(f"database parent is not a regular directory: {path.parent}")
     # A deleted predecessor can still have a live connection cached by path.
     close_connection(path)
-    conn = get_connection(path)
+    # A missing main database with surviving sidecars is an unknown authority,
+    # not a fresh workspace. Never adopt, replace, or delete those files.
+    sidecars = tuple(Path(f"{path}{suffix}") for suffix in ("-wal", "-shm", "-journal"))
+    if any(os.path.lexists(sidecar) for sidecar in sidecars):
+        raise FileExistsError(f"exact v{schema_version} creation found existing database sidecars for {path}")
+
+    # Build the schema in memory so SQLite cannot write a rollback journal to a
+    # substituted staging path. Serialize the closed candidate into the private
+    # staging directory before publishing it without replacing any target.
+    staging = Path(tempfile.mkdtemp(prefix=".jobctrl-init-", dir=path.parent))
+    staging_identity = staging.lstat()
+    candidate = staging / "candidate.db"
+    candidate_identity: os.stat_result | None = None
+    published = False
+    admitted = False
+
+    def same_identity(target: Path, expected: os.stat_result) -> bool:
+        try:
+            actual = target.lstat()
+        except FileNotFoundError:
+            return False
+        return (actual.st_dev, actual.st_ino, actual.st_mode) == (
+            expected.st_dev, expected.st_ino, expected.st_mode,
+        )
+
+    def assert_staging_identity() -> None:
+        if not same_identity(path.parent, parent_identity) or not same_identity(staging, staging_identity):
+            raise RuntimeError("database initialization directory changed before publication")
+
     try:
-        if schema_dump(conn):
-            raise SchemaManifestError("fresh v14 creation found pre-existing schema")
+        conn = sqlite3.connect(":memory:", timeout=30)
+        try:
+            create_schema(conn)
+            conn.commit()
+            serialized = conn.serialize()
+        finally:
+            conn.close()
 
-        from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
+        assert_staging_identity()
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        directory_fd: int | None = None
+        try:
+            if _OPEN_SUPPORTS_DIR_FD:
+                directory_fd = os.open(staging, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+                opened_dir = os.fstat(directory_fd)
+                if (opened_dir.st_dev, opened_dir.st_ino) != (staging_identity.st_dev, staging_identity.st_ino):
+                    raise RuntimeError("database initialization directory changed before staging")
+                candidate_fd = os.open("candidate.db", flags, 0o644, dir_fd=directory_fd)
+            else:
+                # Exclusive creation protects an unfamiliar file on platforms
+                # without dir_fd support; identity checks still fail closed on drift.
+                candidate_fd = os.open(candidate, flags, 0o644)
+            with os.fdopen(candidate_fd, "wb") as candidate_file:
+                candidate_identity = os.fstat(candidate_file.fileno())
+                candidate_file.write(serialized)
+                candidate_file.flush()
+                os.fsync(candidate_file.fileno())
+            if directory_fd is not None:
+                os.fsync(directory_fd)
+        finally:
+            if directory_fd is not None:
+                os.close(directory_fd)
 
-        create_exact_v14_schema(conn)
-        conn.commit()
-        return conn
-    except BaseException:
-        close_connection(path)
-        for created_path in (
-            path,
-            Path(f"{path}-wal"),
-            Path(f"{path}-shm"),
-            Path(f"{path}-journal"),
-        ):
-            created_path.unlink(missing_ok=True)
-        raise
+        assert_staging_identity()
+        if candidate_identity is None or not same_identity(candidate, candidate_identity):
+            raise RuntimeError("database initialization candidate changed before publication")
+        if any(os.path.lexists(sidecar) for sidecar in sidecars):
+            raise FileExistsError(f"exact v{schema_version} creation found existing database sidecars for {path}")
+        if _OPEN_SUPPORTS_DIR_FD and _LINK_SUPPORTS_DIR_FD:
+            directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+            parent_fd = os.open(path.parent, directory_flags)
+            try:
+                stage_fd = os.open(staging, directory_flags)
+                try:
+                    actual_parent = os.fstat(parent_fd)
+                    actual_stage = os.fstat(stage_fd)
+                    if (actual_parent.st_dev, actual_parent.st_ino) != (parent_identity.st_dev, parent_identity.st_ino):
+                        raise RuntimeError("database parent changed before publication")
+                    if (actual_stage.st_dev, actual_stage.st_ino) != (staging_identity.st_dev, staging_identity.st_ino):
+                        raise RuntimeError("database staging directory changed before publication")
+                    os.link("candidate.db", path.name, src_dir_fd=stage_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
+                    published = True
+                    os.fsync(parent_fd)
+                finally:
+                    os.close(stage_fd)
+            finally:
+                os.close(parent_fd)
+        else:
+            os.link(candidate, path, follow_symlinks=False)
+            published = True
+        # Publication is the ownership boundary: never unlink the database or
+        # sidecars after this point, because another process may already use it.
+        assert_staging_identity()
+        if not same_identity(path, candidate_identity):
+            raise RuntimeError("published database changed before admission")
+        # Unknown sidecars created between the pre-publication check and the
+        # link must never be fed into SQLite or removed by this initializer.
+        if any(os.path.lexists(sidecar) for sidecar in sidecars):
+            raise RuntimeError(f"database sidecars appeared during publication for {path}")
+        # Do not request WAL until the post-open identity check. If a path was
+        # substituted before admission, enabling WAL could mutate its referent.
+        opened = get_connection(path, enable_wal=False, require_existing=True, _owned_publication=True)
+        if not same_identity(path, candidate_identity):
+            close_connection(path)
+            raise RuntimeError("published database changed during admission")
+        if any(os.path.lexists(sidecar) for sidecar in sidecars):
+            close_connection(path)
+            raise RuntimeError(f"database sidecars appeared during admission for {path}")
+        try:
+            opened.execute("PRAGMA journal_mode=WAL")
+            opened.execute("PRAGMA busy_timeout=10000")
+        except BaseException:
+            close_connection(path)
+            raise
+        admitted = True
+        return opened
+    finally:
+        # Only clean the file and directory created by this attempt. If their
+        # identity changed or unfamiliar entries appeared, preserve them.
+        if (not published or admitted) and same_identity(path.parent, parent_identity) and same_identity(staging, staging_identity):
+            if candidate_identity is not None and same_identity(candidate, candidate_identity):
+                candidate.unlink()
+            try:
+                staging.rmdir()
+            except OSError:
+                pass
+
+
+def _refuse_unresolved_initialization(path: Path) -> None:
+    """Do not adopt a database after a published creation failed admission.
+
+    A retained hard link identifies an interrupted publication without trusting
+    its name alone. The initial attempt leaves that link on every post-publish
+    failure. Unrelated staging directories and their contents remain untouched.
+    """
+    try:
+        target = path.lstat()
+        entries = list(path.parent.iterdir())
+    except FileNotFoundError:
+        return
+    for entry in entries:
+        if not entry.name.startswith(".jobctrl-init-"):
+            continue
+        try:
+            if not stat.S_ISDIR(entry.lstat().st_mode):
+                continue
+            candidate = (entry / "candidate.db").lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISREG(candidate.st_mode) and (candidate.st_dev, candidate.st_ino) == (target.st_dev, target.st_ino):
+            raise UnresolvedDatabaseInitializationError(
+                "database initialization has an unresolved publication; "
+                "preserve the database and companions and inspect the retained staging directory"
+            )
 
 
 def open_exact_v14_database(
@@ -355,7 +528,10 @@ def open_exact_v14_database(
     path = Path(db_path or DB_PATH)
     if not path.exists():
         raise FileNotFoundError(f"No database to open at {path}")
-    conn = get_connection(path, enable_wal=False)
+    if not stat.S_ISREG(path.lstat().st_mode):
+        raise FileExistsError(f"database path is not a regular file: {path}")
+    _refuse_unresolved_initialization(path)
+    conn = get_connection(path, enable_wal=False, require_existing=True)
     current_version = _assert_schema_version_supported(conn, supported_version=14)
     if current_version in (6, 7, 8, 9, 10, 11, 12):
         raise SchemaMigrationRequiredError(
@@ -374,7 +550,22 @@ def open_exact_v14_database(
 def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     """Create missing exact-v14 storage or validate an existing sealed database."""
     path = Path(db_path or DB_PATH)
-    return create_exact_v14_database(path) if not path.exists() else open_exact_v14_database(path)
+    if os.path.lexists(path):
+        if not stat.S_ISREG(path.lstat().st_mode):
+            raise FileExistsError(f"database path is not a regular file: {path}")
+        return open_exact_v14_database(path)
+    try:
+        return create_exact_v14_database(path)
+    except FileExistsError as conflict:
+        # A concurrent publisher may have won after our initial check. Only a
+        # regular complete database may be adopted; never follow a new symlink.
+        try:
+            existing = path.lstat()
+        except FileNotFoundError:
+            raise conflict
+        if not stat.S_ISREG(existing.st_mode):
+            raise
+        return open_exact_v14_database(path)
 
 
 def ensure_projection_tables_in_db(conn: sqlite3.Connection | None = None) -> list[str]:

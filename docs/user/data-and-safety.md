@@ -197,6 +197,26 @@ sqlite3 ~/.jobctrl/jobctrl.db \
   "DELETE FROM event_watermarks WHERE projection_name LIKE '%operations_projections%';"
 ```
 
+#### Interrupted first database creation
+
+If startup reports an unresolved database publication, do not delete or open
+`jobctrl.db` or its `-wal`, `-shm`, or `-journal` companions while JobCtrl is
+running. Stop every JobCtrl process and independently confirm that no process
+has the workspace database open. Keep a private copy of the database, all
+companions, and the `.jobctrl-init-*` staging directories before changing any
+of them. The workspace defaults to `~/.jobctrl/`; use the configured
+`JOBCTRL_DIR` instead when it is set.
+
+If no companions exist, identify the retained staging directory whose regular
+`candidate.db` is the **same device and inode** as the regular `jobctrl.db`.
+Only when that directory contains exactly that one file, and the database has
+been independently verified as a readable exact-schema database, removing the
+staged hard link and its now-empty directory permits startup to retry. Do not
+remove `jobctrl.db`. If any companion exists, the files are not the same inode,
+the directory has other contents, or process ownership or database integrity is
+uncertain, preserve everything and seek help or use a verified backup. Native
+backups restore the JobCtrl and Temporal databases as a pair.
+
 ### Credentials Outside The Workspace
 
 The macOS credential panel guides Codex, Claude, and Google setup. Codex uses
