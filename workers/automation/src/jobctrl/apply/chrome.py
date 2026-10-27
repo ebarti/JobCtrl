@@ -8,10 +8,12 @@ import json
 import logging
 import platform
 import shutil
+import socket
 import subprocess
 import threading
 import time
 from hashlib import sha256
+from collections.abc import Iterable
 from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import urlopen
@@ -24,6 +26,7 @@ from jobctrl.browser_capabilities import (
 )
 from jobctrl.apply.origins import canonical_http_origin, canonical_http_url
 from jobctrl.infrastructure.network import validate_public_http_url
+from jobctrl.infrastructure.process_ownership import ProcessOwnershipError, terminate_owned_process
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +38,10 @@ _CDP_READY_STABLE_PROBES = 10
 
 # Track Chrome processes per worker for cleanup
 _chrome_procs: dict[int, subprocess.Popen] = {}
-_chrome_lock = threading.Lock()
+_chrome_identities: dict[int, tuple[subprocess.Popen, int]] = {}
+_launching_workers: set[int] = set()
+_launching_ports: set[int] = set()
+_chrome_lock = threading.RLock()
 _dry_run_guards: dict[int, "_DryRunCdpGuard"] = {}
 _dry_run_guards_lock = threading.Lock()
 _public_destination_guards: dict[int, "_PublicDestinationCdpGuard"] = {}
@@ -50,68 +56,45 @@ _BLOCKED_WORKER_TARGET_TYPES = frozenset(
 # Cross-platform process helpers
 # ---------------------------------------------------------------------------
 
-def _kill_process_tree(pid: int) -> None:
-    """Kill a process and all its children.
+def _kill_process_tree(pid: int, *, process: subprocess.Popen | None = None) -> None:
+    """Terminate only a browser still bound to its original launch handle.
 
-    On Windows, Chrome spawns 10+ child processes (GPU, renderer, etc.),
-    so taskkill /T is needed to kill the entire tree. On Unix, os.killpg
-    handles the process group.
+    A PID, port, process name or current group alone is never kill authority.
+    POSIX Popen's reaping lock keeps the unreaped child PID from being reused
+    between verification and the signal. Its launch-created session establishes
+    group ownership; an exited leader cannot authorize cleanup of leftovers.
+    Windows uses the original kernel process handle, never taskkill's PID tree.
     """
-    import signal as _signal
+    with _chrome_lock:
+        if process is None:
+            return
+        owners = [
+            owned for worker_id, (owned, launched_pid) in _chrome_identities.items()
+            if owned is process and launched_pid == pid and process.pid == pid
+            and _chrome_procs.get(worker_id) is owned
+        ]
+        if len(owners) != 1:
+            raise BrowserCapabilityError("Cannot verify Apply browser process ownership")
+        try:
+            terminate_owned_process(owners[0], launched_pid=pid)
+        except ProcessOwnershipError as exc:
+            raise BrowserCapabilityError(str(exc)) from exc
 
+
+def _require_available_cdp_port(port: int) -> None:
+    """Refuse an occupied resource without inspecting or signalling its owner."""
+    if not 1 <= port <= 65535:
+        raise BrowserCapabilityError("Apply browser CDP port must be between 1 and 65535")
     try:
-        if platform.system() == "Windows":
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(pid)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=10,
-            )
-        else:
-            # Unix: kill entire process group
-            import os
-            try:
-                os.killpg(os.getpgid(pid), _signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                # Process already gone or owned by another user
-                try:
-                    os.kill(pid, _signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    pass
-    except Exception:
-        logger.debug("Failed to kill process tree for PID %d", pid, exc_info=True)
-
-
-def _kill_on_port(port: int) -> None:
-    """Kill any process listening on a specific port (zombie cleanup).
-
-    Uses netstat on Windows, lsof on macOS/Linux.
-    """
-    try:
-        if platform.system() == "Windows":
-            result = subprocess.run(
-                ["netstat", "-ano", "-p", "TCP"],
-                capture_output=True, text=True, timeout=10,
-            )
-            for line in result.stdout.splitlines():
-                if f":{port}" in line and "LISTENING" in line:
-                    pid = line.strip().split()[-1]
-                    if pid.isdigit():
-                        _kill_process_tree(int(pid))
-        else:
-            # macOS / Linux
-            result = subprocess.run(
-                ["lsof", "-ti", f":{port}"],
-                capture_output=True, text=True, timeout=10,
-            )
-            for pid_str in result.stdout.strip().splitlines():
-                pid_str = pid_str.strip()
-                if pid_str.isdigit():
-                    _kill_process_tree(int(pid_str))
-    except FileNotFoundError:
-        logger.debug("Port-kill tool not found (netstat/lsof) for port %d", port)
-    except Exception:
-        logger.debug("Failed to kill process on port %d", port, exc_info=True)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            if platform.system() == "Windows":
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            probe.bind(("127.0.0.1", port))
+    except OSError as exc:
+        raise BrowserCapabilityError(
+            f"Apply browser port {port} is unavailable; retry with a different port "
+            "or stop its owner yourself. JobCtrl did not terminate the occupant."
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -196,10 +179,31 @@ def launch_chrome(
     if port is None:
         port = BASE_CDP_PORT + worker_id
 
-    profile_dir = setup_worker_profile(worker_id)
+    with _chrome_lock:
+        if worker_id in _chrome_procs or worker_id in _launching_workers:
+            raise BrowserCapabilityError(f"Apply browser worker {worker_id} already has an owner")
+        if port in _launching_ports:
+            raise BrowserCapabilityError(f"Apply browser port {port} is already being acquired")
+        _launching_workers.add(worker_id)
+        _launching_ports.add(port)
 
-    # Kill any zombie Chrome from a previous run on this port
-    _kill_on_port(port)
+    try:
+        return _launch_chrome_owned(
+            worker_id, port, headless, dry_run,
+            chrome_exe=chrome_exe, approved_application_url=approved_application_url,
+        )
+    finally:
+        with _chrome_lock:
+            _launching_workers.discard(worker_id)
+            _launching_ports.discard(port)
+
+
+def _launch_chrome_owned(
+    worker_id: int, port: int, headless: bool, dry_run: bool, *,
+    chrome_exe: str, approved_application_url: str,
+) -> subprocess.Popen:
+    _require_available_cdp_port(port)
+    profile_dir = setup_worker_profile(worker_id)
 
     # Patch preferences to suppress restore nag
     _suppress_restore_nag(profile_dir)
@@ -226,15 +230,15 @@ def launch_chrome(
     if headless:
         cmd.append("--headless=new")
 
-    # On Unix, start in a new process group so we can kill the whole tree
+    # A dedicated session is created by Popen itself; no thread-unsafe preexec.
     kwargs: dict = dict(stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if platform.system() != "Windows":
-        import os
-        kwargs["preexec_fn"] = os.setsid
+        kwargs["start_new_session"] = True
 
     proc = subprocess.Popen(cmd, **kwargs)
     with _chrome_lock:
         _chrome_procs[worker_id] = proc
+        _chrome_identities[worker_id] = (proc, proc.pid)
 
     try:
         # Readiness is condition-based because a cold browser can take longer
@@ -256,7 +260,7 @@ def launch_chrome(
                 worker_id=worker_id,
                 process=proc,
             )
-    except Exception:
+    except BaseException:
         cleanup_worker(worker_id, proc)
         raise
     logger.info("[worker-%d] Chrome started on port %d (pid %d)",
@@ -276,6 +280,10 @@ def _wait_for_browser_cdp_endpoint(
     ready_url = ""
     ready_count = 0
     while True:
+        if process.poll() is not None:
+            raise BrowserCapabilityError(
+                "Chrome exited before its browser-level CDP endpoint became ready"
+            )
         version = _cdp_json(port, "/json/version")
         candidate_url = (
             str(version.get("webSocketDebuggerUrl") or "")
@@ -292,10 +300,6 @@ def _wait_for_browser_cdp_endpoint(
             ready_count = 0
         if ready_count >= stable_probes:
             return
-        if process.poll() is not None:
-            raise BrowserCapabilityError(
-                "Chrome exited before its browser-level CDP endpoint became ready"
-            )
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise BrowserCapabilityError(
@@ -553,7 +557,7 @@ class _ApplyCdpGuard:
             tracked = _chrome_procs.get(self._worker_id)
             if tracked is not self._process or self._process.poll() is not None:
                 return
-            _kill_process_tree(self._process.pid)
+            _kill_process_tree(self._process.pid, process=self._process)
 
     def record_protected_target(self, target_id: str) -> None:
         if not target_id:
@@ -1338,29 +1342,35 @@ def cleanup_worker(worker_id: int, process: subprocess.Popen | None) -> None:
         worker_id: Numeric worker identifier.
         process: The Popen handle returned by launch_chrome.
     """
-    if process and process.poll() is None:
-        _kill_process_tree(process.pid)
     with _chrome_lock:
+        if process is None or _chrome_procs.get(worker_id) is not process:
+            return
+        _kill_process_tree(process.pid, process=process)
         _chrome_procs.pop(worker_id, None)
+        _chrome_identities.pop(worker_id, None)
     logger.info("[worker-%d] Chrome cleaned up", worker_id)
 
 
 def kill_all_chrome() -> None:
-    """Kill all Chrome instances and any port zombies.
-
-    Called during graceful shutdown to ensure no orphan Chrome processes.
-    """
+    """Clean up browsers owned by this Python process without port sweeps."""
     with _chrome_lock:
-        procs = dict(_chrome_procs)
-        _chrome_procs.clear()
+        worker_ids = tuple(_chrome_procs)
+    cleanup_workers(worker_ids)
 
-    for wid, proc in procs.items():
-        if proc.poll() is None:
-            _kill_process_tree(proc.pid)
-        _kill_on_port(BASE_CDP_PORT + wid)
 
-    # Sweep base port in case of zombies
-    _kill_on_port(BASE_CDP_PORT)
+def cleanup_workers(worker_ids: Iterable[int]) -> None:
+    """Clean only the exact browser handles currently owned by these workers."""
+    with _chrome_lock:
+        procs = {wid: _chrome_procs[wid] for wid in worker_ids if wid in _chrome_procs}
+    failures = []
+    for wid, process in procs.items():
+        try:
+            cleanup_worker(wid, process)
+        except Exception as exc:
+            logger.error("[worker-%d] Apply browser cleanup failed: %s", wid, exc)
+            failures.append(wid)
+    if failures:
+        raise BrowserCapabilityError(f"Apply browser cleanup could not verify exit for workers {failures}")
 
 
 def reset_worker_dir(worker_id: int) -> Path:
@@ -1383,18 +1393,11 @@ def reset_worker_dir(worker_id: int) -> Path:
 
 
 def cleanup_on_exit() -> None:
-    """Atexit handler: kill all Chrome processes and sweep CDP ports.
+    """Atexit handler: clean only browsers launched by this Python process.
 
     Register this with atexit.register() at application startup.
     """
-    with _chrome_lock:
-        procs = dict(_chrome_procs)
-        _chrome_procs.clear()
-
-    for wid, proc in procs.items():
-        if proc.poll() is None:
-            _kill_process_tree(proc.pid)
-        _kill_on_port(BASE_CDP_PORT + wid)
-
-    # Sweep base port for any orphan
-    _kill_on_port(BASE_CDP_PORT)
+    try:
+        kill_all_chrome()
+    except Exception:
+        logger.exception("Apply browser exit cleanup incomplete; unverified resources were preserved")

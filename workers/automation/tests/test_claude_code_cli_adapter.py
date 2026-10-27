@@ -73,6 +73,13 @@ def _isolate_apply_tests_from_host_keychain(monkeypatch: pytest.MonkeyPatch) -> 
 
     from jobctrl import config
 
+    # These command/stream fakes have no OS process handle or launch session.
+    # Their default cleanup port is successful; ownership failures are injected
+    # explicitly below and real children are exercised in browser-owner QA.
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.process_ownership.terminate_owned_process",
+        lambda _process, *, launched_pid: None,
+    )
     monkeypatch.setattr(config, "_KEYCHAIN_FALLBACK_DIAGNOSTICS", ())
     monkeypatch.setattr(
         claude_code_cli,
@@ -734,13 +741,14 @@ def test_timeout_kills_only_registered_claude_process_tree(monkeypatch, tmp_path
     def fake_monotonic() -> float:
         return next(times, 1.0)
 
-    def fake_kill(pid: int) -> None:
-        killed.append(pid)
+    def fake_kill(_proc, *, launched_pid: int) -> None:
         assert _HangingPopen.last is not None
-        _HangingPopen.last.returncode = -9
+        if _HangingPopen.last.returncode is None:
+            killed.append(launched_pid)
+            _HangingPopen.last.returncode = -9
 
     monkeypatch.setattr(claude_code_cli.time, "monotonic", fake_monotonic)
-    monkeypatch.setattr("jobctrl.apply.chrome._kill_process_tree", fake_kill)
+    monkeypatch.setattr("jobctrl.infrastructure.process_ownership.terminate_owned_process", fake_kill)
 
     adapter = ClaudeCodeCliAdapter(
         log_dir=tmp_path,
@@ -766,8 +774,8 @@ def test_timeout_keeps_usage_received_before_process_hangs(monkeypatch, tmp_path
     times = iter([0.0, 0.0, 1.0])
     monkeypatch.setattr(claude_code_cli.time, "monotonic", lambda: next(times, 1.0))
     monkeypatch.setattr(
-        "jobctrl.apply.chrome._kill_process_tree",
-        lambda _pid: setattr(_UsageThenHangPopen.last, "returncode", -9),
+        "jobctrl.infrastructure.process_ownership.terminate_owned_process",
+        lambda _proc, *, launched_pid: setattr(_UsageThenHangPopen.last, "returncode", -9),
     )
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr("jobctrl.llm.record_llm_spend", lambda **kwargs: calls.append(kwargs))
@@ -788,11 +796,11 @@ def test_adapter_active_process_registry_kills_registered_process(monkeypatch) -
     proc = _HangingPopen(["claude"])
     killed: list[int] = []
 
-    def fake_kill(pid: int) -> None:
-        killed.append(pid)
+    def fake_kill(_proc, *, launched_pid: int) -> None:
+        killed.append(launched_pid)
         proc.returncode = -9
 
-    monkeypatch.setattr("jobctrl.apply.chrome._kill_process_tree", fake_kill)
+    monkeypatch.setattr("jobctrl.infrastructure.process_ownership.terminate_owned_process", fake_kill)
 
     claude_code_cli._register_active_claude_process(0, proc)
     kill_active_claude_processes()
@@ -875,3 +883,54 @@ def test_unbound_tool_result_cannot_supply_browser_evidence(monkeypatch, tmp_pat
     )
     assert result.submission_result.kind == "failed"
     assert result.submission_result.error == "non_verbatim_quote"
+
+
+def test_failed_scoped_cleanup_retains_exact_agent_owner(monkeypatch) -> None:
+    first = _HangingPopen(["claude"])
+    peer = _HangingPopen(["claude"])
+    captured = []
+    unsettled = True
+
+    def terminate(process, *, launched_pid):
+        captured.append((process, launched_pid))
+        if unsettled:
+            raise RuntimeError("owned exit unverified")
+        process.returncode = -9
+
+    monkeypatch.setattr("jobctrl.infrastructure.process_ownership.terminate_owned_process", terminate)
+    claude_code_cli._register_active_claude_process(41, first)
+    claude_code_cli._register_active_claude_process(42, peer)
+    try:
+        with pytest.raises(RuntimeError, match="could not verify exit"):
+            kill_active_claude_processes(worker_ids=(41,))
+        assert claude_code_cli._ACTIVE_CLAUDE_PROCS[41] is first
+        assert claude_code_cli._ACTIVE_CLAUDE_PROCS[42] is peer
+        assert captured == [(first, first.pid)]
+        unsettled = False
+        kill_active_claude_processes(worker_ids=(41,))
+        assert 41 not in claude_code_cli._ACTIVE_CLAUDE_PROCS
+        assert claude_code_cli._ACTIVE_CLAUDE_PROCS[42] is peer
+        assert peer.poll() is None
+    finally:
+        claude_code_cli._unregister_active_claude_process(41, first)
+        claude_code_cli._unregister_active_claude_process(42, peer)
+
+
+def test_exited_agent_does_not_discard_unverified_child_ownership(monkeypatch) -> None:
+    proc = _HangingPopen(["claude"])
+    proc.returncode = 0
+    captured = []
+
+    def unresolved(process, *, launched_pid):
+        captured.append((process, launched_pid))
+        raise RuntimeError("launch-session descendant exit remains unverified")
+
+    monkeypatch.setattr("jobctrl.infrastructure.process_ownership.terminate_owned_process", unresolved)
+    claude_code_cli._register_active_claude_process(43, proc)
+    try:
+        with pytest.raises(RuntimeError, match="could not verify exit"):
+            kill_active_claude_processes(worker_ids=(43,))
+        assert captured == [(proc, proc.pid)]
+        assert claude_code_cli._ACTIVE_CLAUDE_PROCS[43] is proc
+    finally:
+        claude_code_cli._unregister_active_claude_process(43, proc)

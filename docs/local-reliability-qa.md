@@ -109,6 +109,32 @@ delete the original provider history as an automatic repair.
 | Docs | `corepack pnpm docs:build`, diff check |
 | Cross-stack | `corepack pnpm check`, `corepack pnpm test`, affected separate web suites |
 
+For Apply browser ownership, run locked pytest for
+`tests/test_apply_browser_ownership.py`, `tests/test_apply_chrome_dry_run_guard.py`,
+`tests/test_apply_origin_policy.py` and `tests/test_browser_capabilities.py`.
+Use real owned listener/client and process-group controls through browser launch,
+failed launch, cancellation, scoped cleanup, import and Python exit. Preserve
+unrelated occupants, reject changed handle/PID/session authority, prove the
+POSIX reaping fence and actual owned descendant exit, and retain failed records
+when root or session exit cannot be verified. Reap an actual root while its
+listener child remains live, both in the original group and a separate group
+of the original session; cleanup must retain the owner, preserve the child and
+unrelated control, and still clean another selected owner. Also terminate a live
+root while its child survives in another group. After the child exits itself,
+a read-only empty-session retry may settle the retained record without a signal.
+Use a real fork/session-handoff relay to create a successor after enumeration
+while the inspected ancestor leaves the original session. Repeat the race
+across both otherwise-empty observations: changing PID/generation inventories
+must retain the owner while the successor remains in the original session.
+Only enumeration/timing seams may be controlled; PID, session and generation
+metadata must come from the actual owned processes.
+Inject an agent cleanup timeout through the real registry entry point and prove
+retention, selected-peer cleanup, unselected-owner preservation and exact retry.
+Model Windows kernel-handle termination followed by explicit unverified
+descendant completion and retained ownership, without claiming native Windows
+Apply qualification. The optional real-browser smoke remains
+separate; these ownership trials must not open a user browser or application.
+
 ## Schema-15 Forward Upgrade
 
 Use owned synthetic workspaces and the locked migration Python/Node runtimes.

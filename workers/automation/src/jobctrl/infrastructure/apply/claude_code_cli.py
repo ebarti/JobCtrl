@@ -133,6 +133,7 @@ _ENV_ALLOWLIST = {
 
 _DEFAULT_MODEL_SENTINELS = {"", "default"}
 _ACTIVE_CLAUDE_PROCS: dict[int, subprocess.Popen] = {}
+_ACTIVE_CLAUDE_IDENTITIES: dict[int, tuple[subprocess.Popen, int]] = {}
 _ACTIVE_CLAUDE_LOCK = threading.Lock()
 
 
@@ -148,15 +149,23 @@ def _enqueue_stdout_lines(stream: Any, out: "queue.Queue[str | None]") -> None:
         out.put(None)
 
 
-def kill_active_claude_processes() -> None:
-    """Best-effort cleanup hook for launcher Ctrl-C handling."""
+def kill_active_claude_processes(*, worker_ids: tuple[int, ...] | None = None) -> None:
+    """Clean selected launch-owned agents, retaining any unverified handles."""
     with _ACTIVE_CLAUDE_LOCK:
         procs = tuple(_ACTIVE_CLAUDE_PROCS.items())
 
+    failures = []
     for worker_id, proc in procs:
-        if proc.poll() is None:
+        if worker_ids is not None and worker_id not in worker_ids:
+            continue
+        try:
             _kill_process_tree_if_alive(proc)
-        _unregister_active_claude_process(worker_id, proc)
+            _unregister_active_claude_process(worker_id, proc)
+        except Exception:
+            log.exception("Apply agent cleanup incomplete for worker %s", worker_id)
+            failures.append(worker_id)
+    if failures:
+        raise RuntimeError(f"Apply agent cleanup could not verify exit for workers {failures}")
 
 
 class ClaudeCodeCliAdapter:
@@ -434,6 +443,7 @@ class ClaudeCodeCliAdapter:
 
             proc.wait(timeout=5)
             returncode = proc.returncode
+            _kill_process_tree_if_alive(proc)
             _unregister_active_claude_process(worker_id, proc)
             proc = None
 
@@ -520,9 +530,8 @@ class ClaudeCodeCliAdapter:
             raise
         finally:
             if proc is not None:
+                _kill_process_tree_if_alive(proc)
                 _unregister_active_claude_process(worker_id, proc)
-                if proc.poll() is None:
-                    _kill_process_tree_if_alive(proc)
             try:
                 mcp_config_path.unlink(missing_ok=True)
             except Exception:  # noqa: BLE001
@@ -616,6 +625,7 @@ def _popen_kwargs(*, env: dict[str, str], cwd: str) -> dict[str, Any]:
 def _register_active_claude_process(worker_id: int, proc: subprocess.Popen) -> None:
     with _ACTIVE_CLAUDE_LOCK:
         _ACTIVE_CLAUDE_PROCS[int(worker_id)] = proc
+        _ACTIVE_CLAUDE_IDENTITIES[int(worker_id)] = (proc, proc.pid)
 
 
 def _unregister_active_claude_process(worker_id: int, proc: subprocess.Popen) -> None:
@@ -623,15 +633,20 @@ def _unregister_active_claude_process(worker_id: int, proc: subprocess.Popen) ->
         active = _ACTIVE_CLAUDE_PROCS.get(int(worker_id))
         if active is proc:
             _ACTIVE_CLAUDE_PROCS.pop(int(worker_id), None)
+            _ACTIVE_CLAUDE_IDENTITIES.pop(int(worker_id), None)
 
 
 def _kill_process_tree_if_alive(proc: subprocess.Popen) -> None:
-    try:
-        from jobctrl.apply.chrome import _kill_process_tree
+    from jobctrl.infrastructure.process_ownership import ProcessOwnershipError, terminate_owned_process
 
-        _kill_process_tree(proc.pid)
-    except Exception:  # noqa: BLE001
-        log.exception("_kill_process_tree_if_alive: kill failed (best-effort)")
+    with _ACTIVE_CLAUDE_LOCK:
+        identities = [
+            launched_pid for worker_id, (owned, launched_pid) in _ACTIVE_CLAUDE_IDENTITIES.items()
+            if owned is proc and _ACTIVE_CLAUDE_PROCS.get(worker_id) is proc
+        ]
+        if len(identities) != 1:
+            raise ProcessOwnershipError("Cannot verify Apply agent process ownership")
+        terminate_owned_process(proc, launched_pid=identities[0])
 
 
 __all__ = ["ClaudeCodeCliAdapter", "kill_active_claude_processes"]
