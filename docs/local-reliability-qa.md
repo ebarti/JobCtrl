@@ -116,8 +116,17 @@ Use real owned listener/client and process-group controls through browser launch
 failed launch, cancellation, scoped cleanup, import and Python exit. Preserve
 unrelated occupants, reject changed handle/PID/session authority, prove the
 POSIX reaping fence and actual owned descendant exit, and retain failed records
-when root exit cannot be verified. Model Windows kernel-handle behavior without
-claiming native Windows qualification. The optional real-browser smoke remains
+when root or session exit cannot be verified. Reap an actual root while its
+listener child remains live, both in the original group and a separate group
+of the original session; cleanup must retain the owner, preserve the child and
+unrelated control, and still clean another selected owner. Also terminate a live
+root while its child survives in another group. After the child exits itself,
+a read-only empty-session retry may settle the retained record without a signal.
+Inject an agent cleanup timeout through the real registry entry point and prove
+retention, selected-peer cleanup, unselected-owner preservation and exact retry.
+Model Windows kernel-handle termination followed by explicit unverified
+descendant completion and retained ownership, without claiming native Windows
+Apply qualification. The optional real-browser smoke remains
 separate; these ownership trials must not open a user browser or application.
 
 ## Schema-15 Forward Upgrade

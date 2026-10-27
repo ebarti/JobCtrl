@@ -45,11 +45,23 @@ and holds CPython's `Popen` reaping lock across verification and signaling.
 The unreaped child prevents PID/group reuse during that operation; a reaped
 leader or changed identity cannot authorize a group signal. On Windows,
 cleanup terminates the original browser kernel handle; it never invokes a
-PID-based tree-kill tool. Windows descendants that outlive that handle are not
-independently selected for termination.
+PID-based tree-kill tool. That root exit cannot certify descendant exit, so
+Windows Apply cleanup reports unavailable descendant verification and retains
+ownership. Native Windows Apply remains unqualified; this does not change the
+separate Windows credential adapter.
 
-Scoped cleanup attempts each selected worker, waits for the owned root's exit,
-and preserves failed ownership records while reporting incomplete cleanup.
+Root exit alone does not prove POSIX session exit. After waiting for the root,
+cleanup uses a read-only kernel process census (`libproc` on macOS and `/proc`
+on Linux) to observe the old session, including members in other groups. Two
+complete observations without live members permit retirement. A live member,
+changed identity or unavailable/incomplete census keeps cleanup unresolved;
+an exited leader never authorizes another signal. Zombies count as exited.
+The observation does not recover authority over descendants that escape the
+launch session.
+
+Scoped browser and agent cleanup attempt each selected worker and preserve
+failed ownership records while reporting incomplete cleanup. The agent adapter
+also verifies cleanup after a naturally exited root, before removing its record.
 The exit handler logs failures and does not sweep ports or adopt leftovers.
 These rules complement the native instance shutdown boundary described below.
 
