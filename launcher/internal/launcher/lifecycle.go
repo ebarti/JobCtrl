@@ -126,9 +126,9 @@ func refuseUncertainTransitionRollback(journal release.Journal, pair *databasePa
 		if journal.Operation == "update" && journal.State == release.RollbackRestoring && journal.BackupID == "" && journal.TargetBackupID == "" && !journal.PreserveLiveOnFailure {
 			return nil
 		}
-		return errors.New("transition may have activated a migration without a verified database pair; retain the live databases and journal for explicit recovery")
+		return errors.New("transition may have activated a migration without a verified database pair; automatic recovery is unavailable; retain the live databases and journal")
 	}
-	return errors.New("transition may have activated or started a candidate; retain the live databases and journal for explicit recovery")
+	return errors.New("transition may have activated or started a candidate; automatic recovery is unavailable; retain the live databases and journal")
 }
 
 // recoverRevokedTransitionBeforePrepare handles an interrupted security
@@ -176,7 +176,7 @@ func recoverRevokedTransitionBeforePrepare(env []string, output io.Writer) (bool
 		return true, errors.New("security transition changed while recovery was acquiring locks")
 	}
 	if journal.PreserveLiveOnFailure {
-		return true, errors.New("transition requires live database preservation; retain the live databases and journal for explicit recovery")
+		return true, errors.New("transition requires live database preservation; automatic recovery is unavailable; retain the live databases and journal")
 	}
 	ctx, err := transitionContextForReceipt(env, store, *journal.Candidate)
 	if err != nil {
@@ -860,7 +860,7 @@ func rollbackExisting(ctx launchContext, store *release.Store, active release.Ac
 		return err
 	}
 	fail := func(cause error) error {
-		return fmt.Errorf("%w; rollback may have changed the live pair or received later commits; retain the live databases and transition journal for explicit recovery", cause)
+		return fmt.Errorf("%w; rollback may have changed the live pair or received later commits; automatic recovery is unavailable; retain the live databases and transition journal", cause)
 	}
 	if err := store.Advance(&journal, release.RollbackRestoring, nil); err != nil {
 		return fail(err)
@@ -945,7 +945,7 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 		return false, err
 	}
 	if journal.PreserveLiveOnFailure {
-		return false, errors.New("transition requires live database preservation; retain the live databases and journal for explicit recovery")
+		return false, errors.New("transition requires live database preservation; automatic recovery is unavailable; retain the live databases and journal")
 	}
 	if journal.Old == nil {
 		return false, errors.New("unfinished transition has no prior release receipt")
@@ -1311,7 +1311,7 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 	}
 
 	rollbackFailure := func(cause error) error {
-		return fmt.Errorf("%w; a paired backup may no longer include later commits; retain the live databases and transition journal for explicit recovery", cause)
+		return fmt.Errorf("%w; a paired backup may no longer include later commits; automatic recovery is unavailable; retain the live databases and transition journal", cause)
 	}
 	if databaseVersion != currentJobCtrlSchemaVersion {
 		candidatePath, err := sealedV7CandidateBuilder(candidateRuntime, pair, journal.ID)

@@ -180,16 +180,21 @@ finalized channel policy, and promotion. Acquisition, update, rollback,
 backup, retention, and uninstall serialize through transition then selection
 locking; selector resolution holds a shared selection lock through supervisor
 readiness. Before a candidate is promoted, recorded component processes and
-groups must pass the registry's PID/PGID quiescence checks, and both
-`JOBCTRL_DIR/jobctrl.db` and `JOBCTRL_DIR/temporal.db` receive online,
+groups must pass the registry's PID/PGID checks. These checks do not establish
+that detached descendants exited. Both `JOBCTRL_DIR/jobctrl.db` and
+`JOBCTRL_DIR/temporal.db` receive online,
 hash-verified paired backups.
 While a journal is unfinished, ordinary commands remain blocked. Internal
 `start --no-open` and its detached supervisor may proceed only from the exact
 payload authorized by the matching durable journal, executable transition state
 and immutable manifest. A compatible authenticated public selector may supervise
 that payload; arbitrary public commands and environment flags alone cannot grant
-this exception. Rollback retains this compatible controller while restoring the
-older payload and its exact database pair. The Homebrew frontend respects the
+this exception. Once a paired backup may be stale, the preservation flag keeps
+the live databases and journal rather than automatically restoring the backup.
+Automatic recovery of post-backup protected states is unavailable until the
+writer quiescence and forward recovery checks can be established. Rollback retains
+this compatible controller while restoring the older payload and its exact
+database pair when a rollback is safely admitted. The Homebrew frontend respects the
 completed rollback until an explicit update is requested. When a historical
 controller skipped migration using its own compiled schema target, the new
 candidate performs its target-owned sealed migration from that controller's

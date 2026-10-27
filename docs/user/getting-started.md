@@ -248,20 +248,24 @@ use the updated formula, while bundled-installer installations use their signed
 release channel. Pulling source changes does not publish an update to installed
 users.
 
-When a release requires a database migration, the updater stops the runtime,
-backs up the application database and Temporal history together, verifies a
-separate migrated database, and activates it before checking startup health.
-If activation or readiness fails, recovery restores the saved pair. An explicit
-rollback also restores the database snapshot associated with the previous
-release: data added since that snapshot is not carried backward.
+When a release requires a database migration, the updater requests runtime
+shutdown, backs up the application database and Temporal history together,
+verifies a separate migrated database, and activates it before checking startup
+health.
+An interrupted transition may retain the live databases and block commands
+when the saved pair could omit later writes. If JobCtrl reports that automatic
+recovery is unavailable, keep the live databases and transition journal intact;
+retrying rollback cannot resolve that state automatically. An explicit rollback
+restores the database snapshot associated with the previous release: data added
+since that snapshot is not carried backward.
 
 Rollback keeps a compatible launcher for recovery while restoring the older
 application. Homebrew commands preserve that selection until you explicitly run
 `jobctrl update` again. If an older updater reports a failed candidate and cannot
-restart its previous release, run `jobctrl rollback` through the corrected
-launcher to restore the saved database pair and restart the previous application.
-The corrected installer and formula also handle an installation you have never
-started. If an existing database/history pair is incomplete, updating refuses
+restart its previous release, recovery depends on the transition state and the
+available compatible controller. The installer and formula also handle an
+installation you have never started. If an existing database/history pair is
+incomplete, updating refuses
 to replace it; preserve those files and recover the pair before retrying.
 
 

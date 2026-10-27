@@ -62,7 +62,7 @@ func recoverBridgeBeforeBootstrap(env, args []string, output io.Writer) (bool, e
 	completed := journal.State == release.RolledBack
 	handoff := journal.State == release.SelectorHandoffPending || journal.State == release.SelectorReplaced || completed
 	if !early && !handoff {
-		return true, fmt.Errorf("schema transition at %s requires explicit recovery; live databases and journal remain preserved", journal.State)
+		return true, fmt.Errorf("schema transition at %s; automatic recovery is unavailable; retain the live databases and journal", journal.State)
 	}
 	if journal.SchemaVersion != 2 || journal.Operation != "update" || journal.Old == nil || journal.Candidate == nil ||
 		!journal.Old.Valid() || !journal.Candidate.Valid() || journal.DescriptorSHA256 != journal.Candidate.DescriptorSHA256 ||

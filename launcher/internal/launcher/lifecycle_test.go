@@ -821,7 +821,7 @@ func TestRealFailedPromotionPreservesPairedSQLiteWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = promoteExisting(fixture.ctx, fixture.store, initial, fixture.candidate.BuildID, "update", io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "forced candidate health failure") || !strings.Contains(err.Error(), "retain the live databases") || !strings.Contains(err.Error(), "explicit recovery") {
+	if err == nil || !strings.Contains(err.Error(), "forced candidate health failure") || !strings.Contains(err.Error(), "retain the live databases") || !strings.Contains(err.Error(), "automatic recovery is unavailable") {
 		t.Fatalf("failed promotion was not explicitly refused: %v", err)
 	}
 	journal, err := fixture.store.ReadJournal()
@@ -845,7 +845,7 @@ func TestRealFailedPromotionPreservesPairedSQLiteWrites(t *testing.T) {
 	before := snapshotPromotionBoundaryFiles(t, fixture)
 	for attempt := 0; attempt < 2; attempt++ {
 		recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store)
-		if recovered || err == nil || !strings.Contains(err.Error(), "retain the live databases") || !strings.Contains(err.Error(), "explicit recovery") {
+		if recovered || err == nil || !strings.Contains(err.Error(), "retain the live databases") || !strings.Contains(err.Error(), "automatic recovery is unavailable") {
 			t.Fatalf("recovery attempt %d = %v, %v", attempt, recovered, err)
 		}
 		if after := snapshotPromotionBoundaryFiles(t, fixture); !reflect.DeepEqual(before, after) {

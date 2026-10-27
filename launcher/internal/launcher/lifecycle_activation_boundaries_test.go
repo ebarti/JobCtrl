@@ -301,7 +301,7 @@ func TestP5PromotionRecoveryRespectsEveryActivationBoundary(t *testing.T) {
 							t.Fatalf("unsafe recovery reported success at %s", testCase.state)
 						}
 					}
-					if recoverErr == nil || !strings.Contains(recoverErr.Error(), "retain the live databases") || !strings.Contains(recoverErr.Error(), "explicit recovery") {
+					if recoverErr == nil || !strings.Contains(recoverErr.Error(), "retain the live databases") || !strings.Contains(recoverErr.Error(), "automatic recovery is unavailable") {
 						t.Fatalf("boundary %s recovery attempt %d = %v", testCase.state, attempt, recoverErr)
 					}
 					if after := snapshotPromotionBoundaryFiles(t, fixture); !reflect.DeepEqual(before, after) {

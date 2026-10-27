@@ -133,6 +133,12 @@ func TestBridgeRollbackRecoversOnlyAuthenticatedEarlyStates(t *testing.T) {
 			}
 			env := []string{"HOME=" + home, "JOBCTRL_RUNTIME_HOME=" + home, "JOBCTRL_DIR=" + data}
 			var output bytes.Buffer
+			if tc.success {
+				statusErr := Run(selector, []string{"status"}, env, io.Discard, io.Discard)
+				if statusErr == nil || !strings.Contains(statusErr.Error(), "run `jobctrl rollback`") || strings.Contains(statusErr.Error(), "automatic recovery is unavailable") {
+					t.Fatalf("early transition guidance: %v", statusErr)
+				}
+			}
 			if tc.mutate == "pending-handoff" {
 				handled, gotErr := recoverBridgeBeforeBootstrap(env, []string{"rollback"}, &output)
 				if !handled || !errors.Is(gotErr, errPendingBridgeHandoff) {

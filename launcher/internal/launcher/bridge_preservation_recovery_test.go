@@ -96,10 +96,18 @@ func TestRunPreservesFlaggedBridgeJournalBeforeRecoveryMutation(t *testing.T) {
 					err = Run(selector, []string{"rollback"}, env, io.Discard, io.Discard)
 					expected := "retain the live databases"
 					if flagged {
-						expected = "requires explicit recovery; live databases and journal remain preserved"
+						expected = "automatic recovery is unavailable; retain the live databases and journal"
 					}
 					if err == nil || !strings.Contains(err.Error(), expected) {
 						t.Errorf("incompatible recovery returned %v", err)
+					}
+					if !revoked {
+						// The ordinary command gate must not promise that rollback
+						// can resolve a protected post-backup transition.
+						statusErr := Run(selector, []string{"status"}, env, io.Discard, io.Discard)
+						if statusErr == nil || !strings.Contains(statusErr.Error(), "automatic recovery is unavailable") || strings.Contains(statusErr.Error(), "run `jobctrl rollback`") {
+							t.Errorf("status returned misleading recovery guidance: %v", statusErr)
+						}
 					}
 					afterJournal, err := os.ReadFile(journalPath)
 					if err != nil {

@@ -188,7 +188,7 @@ func TestPolicyFinalizationInterruptionPreservesLivePairBeforeHomebrewBootstrap(
 	for attempt := 0; attempt < 2; attempt++ {
 		var output bytes.Buffer
 		err := Run(formulaExecutable, []string{"rollback"}, environment, &output, io.Discard)
-		if err == nil || !strings.Contains(err.Error(), "retain the live databases") || !strings.Contains(err.Error(), "explicit recovery") {
+		if err == nil || !strings.Contains(err.Error(), "retain the live databases") || !strings.Contains(err.Error(), "automatic recovery is unavailable") {
 			t.Fatalf("security recovery attempt %d did not explicitly refuse: %v", attempt, err)
 		}
 		if strings.Contains(output.String(), "Recovered the verified security-update candidate") {
