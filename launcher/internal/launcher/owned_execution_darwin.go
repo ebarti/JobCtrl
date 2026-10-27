@@ -20,6 +20,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/ebarti/jobctrl/launcher/internal/release"
 )
 
 const executionScopeVariable = "JOBCTRL_EXECUTION_SCOPE"
@@ -675,6 +677,42 @@ func executionOutput(writer io.Writer) (*os.File, func(), error) {
 	}, nil
 }
 
+// prepare authenticates the payload inventory. Public selectors can be a
+// deliberately retained compatible bridge, whose own signed inventory is
+// authorized by the existing selector/journal verifier instead of the active
+// payload's launcher digest. Environment values grant no exception.
+func verifyOwnedExecutionExecutable(ctx launchContext, executable string) error {
+	if len(ctx.Distribution.Files) == 0 {
+		return nil
+	} // Raw backend test contexts only.
+	expected, err := manifestRegularFile(ctx.Distribution, "launcher/jobctrl")
+	if err != nil {
+		return err
+	}
+	actual, err := sha256Path(executable)
+	if err != nil {
+		return err
+	}
+	if actual == expected {
+		return nil
+	}
+	if !sameExecutable(executable, filepath.Join(ctx.Instance.RuntimeHome, "bin", "jobctrl")) {
+		return errors.New("execution launcher differs from authenticated payload inventory")
+	}
+	store, err := release.Open(ctx.Instance.RuntimeHome)
+	if err != nil {
+		return errors.New("execution selector inventory could not be authenticated")
+	}
+	active, err := store.ReadActive()
+	if err != nil {
+		return errors.New("execution selector inventory could not be authenticated")
+	}
+	if err = verifyPublicSelector(store.Home, executable, active); err != nil {
+		return errors.New("execution selector differs from authenticated selector inventory")
+	}
+	return nil
+}
+
 func runInOwnedExecution(ctx launchContext, args []string, stdout, stderr io.Writer) error {
 	sandboxSelector := environmentMap(ctx.Environment)[executionQASandboxVariable]
 	if sandboxSelector != "" && sandboxSelector != executionQASandboxSelector {
@@ -695,6 +733,9 @@ func runInOwnedExecution(ctx launchContext, args []string, stdout, stderr io.Wri
 	}
 	if !sameExecutable(executable, ctx.Executable) {
 		return errors.New("execution launcher does not match authenticated executable")
+	}
+	if err = verifyOwnedExecutionExecutable(ctx, executable); err != nil {
+		return err
 	}
 	id, err := releaseRandomID()
 	if err != nil {
@@ -773,6 +814,9 @@ func runInOwnedExecution(ctx launchContext, args []string, stdout, stderr io.Wri
 	after, err := processStartIdentity(hello.PID)
 	if err != nil || after != identity {
 		return errors.New("execution helper identity changed")
+	}
+	if err = verifyOwnedExecutionExecutable(ctx, executable); err != nil {
+		return err
 	}
 	scope := executionScope{1, id, ctx.Instance.ID, ctx.Instance.StateDir, ctx.Instance.RuntimeHome, boot, label, domain, hello.PID, identity, ids}
 	if err = validateExecutionScope(ctx, scope); err != nil {

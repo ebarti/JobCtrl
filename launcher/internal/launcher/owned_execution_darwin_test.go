@@ -863,3 +863,24 @@ func TestOwnedExecutionPlistPreservesCompiledProfileText(t *testing.T) {
 		t.Fatal("plist element text is not safely escaped")
 	}
 }
+
+func TestOwnedExecutionRejectsChangedInventoryDigestBeforeAdmission(t *testing.T) {
+	ctx := executionTestContext(t)
+	if err := json.Unmarshal([]byte(`{"files":[{"type":"file","path":"launcher/jobctrl","mode":"0755","sha256":"`+strings.Repeat("0", 64)+`"}]}`), &ctx.Distribution); err != nil {
+		t.Fatal(err)
+	}
+	if err := runInOwnedExecution(ctx, []string{"unused"}, io.Discard, io.Discard); err == nil {
+		t.Fatal("changed authenticated inventory digest accepted")
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(ctx.Instance.StatePath), "executions")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("mismatched executable published execution receipt")
+	}
+	actual, err := sha256Path(ctx.Executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx.Distribution.Files[0].SHA256 = actual
+	if err = verifyOwnedExecutionExecutable(ctx, ctx.Executable); err != nil {
+		t.Fatalf("matching authenticated inventory rejected: %v", err)
+	}
+}
