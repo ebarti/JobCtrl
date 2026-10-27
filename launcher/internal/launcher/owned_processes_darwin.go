@@ -199,6 +199,13 @@ func discoverOwnedProcesses(ctx launchContext, state instanceState) ([]ownedProc
 	if len(scopes) > 0 {
 		return discoverScopedProcesses(ctx, state, scopes)
 	}
+	// Modern registries never fall back to historical PID records after the
+	// execution receipts have been retired. Those PIDs may now be reused or
+	// may have been invalid registry references from the start. Only a fresh
+	// durable scope can grant authority over a later execution.
+	if state.ExecutionScopeID != "" || state.OwnershipVerified {
+		return nil, nil
+	}
 	pids, err := userProcessIDs()
 	if err != nil {
 		return nil, fmt.Errorf("enumerate process ownership: %w", err)

@@ -146,6 +146,19 @@ func TestScopedStopRejectsForeignRegistrySignalAuthority(t *testing.T) {
 	if err = validateStartState(contexts[0], stopped); err != nil {
 		t.Fatalf("forged foreign record blocked normal restart after verified stop: %v", err)
 	}
+	// With receipts retired, repeated public control must not fall back to
+	// the foreign historical registry records and acquire new kill authority.
+	if owned, err := inspectOwnedProcesses(contexts[0], stopped); err != nil || len(owned) != 0 {
+		t.Fatalf("retired modern registry adopted historical PIDs: %v count=%d", err, len(owned))
+	}
+	var statusOutput bytes.Buffer
+	if err = status(contexts[0], &statusOutput, true); err != nil || !strings.Contains(statusOutput.String(), `"status":"stopped"`) {
+		t.Fatalf("repeat modern status did not preserve stopped proof: %v %s", err, statusOutput.String())
+	}
+	if err = stop(contexts[0]); err != nil {
+		t.Fatalf("repeat stop after retirement failed: %v", err)
+	}
+	assertForeignPreserved()
 	// Admit a new real platform command without any manual registry repair.
 	startPlatformOrphan(contexts[0], "restart.pid")
 	if err = stop(contexts[0]); err != nil {
