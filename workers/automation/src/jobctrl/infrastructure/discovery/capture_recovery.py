@@ -31,6 +31,8 @@ def recover_captured_postings(
     limit=0,
     cancel_event=None,
     result_budget=None,
+    activity_attempt=None,
+    activity_owner_token=None,
 ):
     """Consume at most 100 archived captures, counting only new jobs toward limit."""
     from jobctrl.infrastructure.discovery.production_wiring import DurableJobEventPublisher

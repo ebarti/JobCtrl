@@ -1419,6 +1419,7 @@ def build_scrape_targets(
                 targets.append(
                     {
                         "name": site_name,
+                        **({"source_id": site["source_id"]} if site.get("source_id") else {}),
                         "url": expanded_url,
                         "query": query,
                         "query_spec": query_spec,
@@ -1431,6 +1432,7 @@ def build_scrape_targets(
             targets.append(
                 {
                     "name": site_name,
+                        **({"source_id": site["source_id"]} if site.get("source_id") else {}),
                     "url": expanded_url,
                     "query": None,
                     "queries": query_specs,
@@ -1453,6 +1455,8 @@ def _run_all(
     run_id: str = "smartextract",
     discovery_execution: DiscoveryExecutionRef | None = None,
     result_budget=None,
+    activity_attempt=None,
+    activity_owner_token=None,
 ) -> dict:
     """Run smart extract on all targets.
 
@@ -1506,7 +1510,7 @@ def _run_all(
                 discovery_execution=discovery_execution,
                 cancel_event=cancel_event,
                 browser_client=selected_clients.get(id(target)),
-                source_id=(f"smart_extract:{re.sub('[^a-z0-9]+', '-', str(target.get('name') or 'site').casefold()).strip('-') or 'site'}"),
+                source_id=target.get("source_id") or (f"smart_extract:{re.sub('[^a-z0-9]+', '-', str(target.get('name') or 'site').casefold()).strip('-') or 'site'}"),
                 result_budget=result_budget,
             )
             total_new += new
@@ -1606,6 +1610,8 @@ def run_smart_extract(
     discovery_execution: DiscoveryExecutionRef | None = None,
     search_cfg: dict | None = None,
     result_budget=None,
+    activity_attempt=None,
+    activity_owner_token=None,
 ) -> dict:
     """Main entry point for AI-powered smart extraction.
 
@@ -1642,4 +1648,6 @@ def run_smart_extract(
         run_id=run_id or "smartextract",
         discovery_execution=discovery_execution,
         result_budget=result_budget,
+        activity_attempt=activity_attempt,
+        activity_owner_token=activity_owner_token,
     )
