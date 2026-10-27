@@ -1458,6 +1458,18 @@ def run_discovery_source_family(
             conn, discovery_execution, limit=limit, start_count=start_count, source_limits=effective_limits,
         )
 
+    def available_sources(sources: tuple[ScheduledSource, ...]) -> tuple[ScheduledSource, ...]:
+        if result_budget is None:
+            return sources
+        counts = result_budget.counts()
+        return tuple(source for source in sources if source.should_run
+                     and counts[source.source_id] < result_budget.source_limits[source.source_id])
+
+    def fetch_allowance(sources: tuple[ScheduledSource, ...]) -> int:
+        if result_budget is None:
+            return limit
+        return result_budget.remaining(tuple(source.source_id for source in sources if source.should_run))
+
     def fetch_with_limits(fetch, sources, run_id):
         if cancel_event.is_set():
             return {"new": 0, "existing": 0}
@@ -1483,7 +1495,7 @@ def run_discovery_source_family(
         result = {"new": 0, "existing": 0}
         # A bounded resumable consumer must also settle its recorded units when
         # a prior attempt reached the cap immediately before it disappeared.
-        can_fetch = result_budget is None or family == "jobspy" or not result_budget.run_exhausted()
+        can_fetch = result_budget is None or family == "jobspy" or fetch_allowance(sources) > 0
         if not cancel_event.is_set() and can_fetch:
             result.update(fetch(run_id) or {})
         result["existing"] = int(result.get("existing") or 0) + recovered["existing"]
@@ -1582,15 +1594,19 @@ def run_discovery_source_family(
             return {"family": family, "status": "skipped", "result": {}, "source_ids": []}
 
         def run_ats(run_id: str | None = None) -> dict:
+            allowance = fetch_allowance(ats_sources)
+            if result_budget is not None and allowance == 0:
+                return {"new": 0, "existing": 0}
+            runnable = available_sources(ats_sources)
             console.print("  [cyan]Canonical ATS APIs...[/cyan]")
             result = run_scheduled_ats_sources(
                 conn,
-                ats_sources,
+                runnable,
                 search_cfg=search_cfg,
                 run_id=run_id or f"discovery:ats_api:{uuid.uuid4().hex}",
                 limit=_scheduled_limit_for_sources(
-                    ats_sources,
-                    limit,
+                    runnable,
+                    allowance,
                 ),
                 **({"discovery_execution": discovery_execution} if discovery_execution is not None else {}),
                 **({"result_budget": result_budget} if result_budget is not None else {}),
@@ -1624,17 +1640,17 @@ def run_discovery_source_family(
             return {"family": family, "status": "skipped", "result": {}, "source_ids": []}
 
         def run_workday(run_id: str | None = None) -> dict:
+            allowance = fetch_allowance(workday_sources)
+            if result_budget is not None and allowance == 0:
+                return {"new": 0, "existing": 0}
+            runnable = available_sources(workday_sources)
             console.print("  [cyan]Workday corporate scraper...[/cyan]")
             from jobctrl.discovery.workday import run_workday_discovery
 
             workday_kwargs: dict[str, Any] = {
-                "employers": _workday_employers_for_sources(workday_sources),
+                "employers": _workday_employers_for_sources(runnable),
                 "workers": bounded_workers,
-                "limit": _scheduled_limit(
-                    schedule,
-                    "workday",
-                    limit,
-                ),
+                "limit": _scheduled_limit_for_sources(runnable, allowance),
                 "run_id": run_id,
                 "search_cfg": search_cfg,
             }
@@ -1672,16 +1688,20 @@ def run_discovery_source_family(
             return {"family": family, "status": "skipped", "result": {}, "source_ids": []}
 
         def run_smart_extract_source(run_id: str | None = None) -> dict:
+            allowance = fetch_allowance(smart_extract_sources)
+            if result_budget is not None and allowance == 0:
+                return {"new": 0, "existing": 0}
+            runnable = available_sources(smart_extract_sources)
             console.print("  [cyan]Smart extract (AI-powered scraping)...[/cyan]")
-            enqueue_manual_action_for_sources(conn, smart_extract_sources)
+            enqueue_manual_action_for_sources(conn, runnable)
             from jobctrl.discovery.smartextract import run_smart_extract
 
             smart_kwargs: dict[str, Any] = {
-                "sites": _smart_extract_sites(smart_extract_sources),
+                "sites": _smart_extract_sites(runnable),
                 "workers": bounded_workers,
                 "limit": _scheduled_limit_for_sources(
-                    smart_extract_sources,
-                    limit,
+                    runnable,
+                    allowance,
                 ),
                 "run_id": run_id,
                 "search_cfg": search_cfg,

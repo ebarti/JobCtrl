@@ -76,10 +76,17 @@ class DiscoveryResultBudget:
         return self.counts()[source_id] >= self.source_limits[source_id]
 
     def run_exhausted(self) -> bool:
+        return self.remaining() == 0
+
+    def remaining(self, source_ids: tuple[str, ...] | None = None) -> int:
+        """Forecast fetch capacity; only record_insert authorizes a new write."""
         counts = self.counts()
-        return (
-            sum(counts.values()) >= self.limit
-            or all(counts[key] >= cap for key, cap in self.source_limits.items())
+        selected = tuple(self.source_limits) if source_ids is None else tuple(dict.fromkeys(source_ids))
+        if any(source not in self.source_limits for source in selected):
+            raise ValueError("source is outside the frozen result budget")
+        return min(
+            max(self.limit - sum(counts.values()), 0),
+            sum(max(self.source_limits[source] - counts[source], 0) for source in selected),
         )
 
     def record_insert(self, job_id: str, source_id: str) -> None:

@@ -251,6 +251,19 @@ def test_per_source_cap_leaves_other_family_capacity(owned):
     assert sorted(row["source_id"] for row in receipts(owned.conn)) == [ATS, WORKDAY, WORKDAY]
 
 
+@pytest.mark.parametrize("family,source", [("workday", WORKDAY), ("smartextract", SMART), ("jobspy", BOARD)])
+def test_exhausted_source_does_not_refetch_while_other_family_has_capacity(owned, family, source):
+    kwargs = plan(owned, limit=3, sources=(ATS, source))
+    kwargs["source_result_limits"][source] = 1
+    first = runner.run_discovery_source_family(family, **kwargs)
+    requests = list(owned.requests), list(ManyIndeed.requests)
+    second = runner.run_discovery_source_family(family, **kwargs)
+    assert first["result"]["new"] == second["result"]["new"] == 1
+    assert (owned.requests, ManyIndeed.requests) == requests
+    assert len(receipts(owned.conn)) == 1
+    assert runner.run_discovery_source_family("ats_api", **kwargs)["result"]["new"] == 2
+
+
 def test_foreign_observation_cannot_spend_another_source_allowance(owned):
     from tests.test_discovery_result_budget import prepared, EXECUTION as INTAKE_EXECUTION
     allowance = DiscoveryResultBudget(owned.conn, INTAKE_EXECUTION, limit=1, start_count=0, source_limits={BOARD: 1})

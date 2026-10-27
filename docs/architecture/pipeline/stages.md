@@ -105,6 +105,10 @@ Key facts about the four activities:
   arbitrate the final slot atomically. Global Jobs row-count changes carry no
   admission authority. Family progress counts only that family's receipts;
   reaching its source cap leaves the other sources' allowance available.
+  Dispatch forecasts the remaining run and source allowance from these receipts,
+  removes exhausted sources, and returns before scheduling a zero allowance.
+  That forecast reduces acquisition work; only the canonical writer transaction
+  authorizes an insert when producers race.
   Zero remaining capacity refuses a new canonical insert, while an explicitly
   unbounded user request has no bounded admission authority. Recovery may still
   finish an already-admitted capture at the cap before fresh acquisition stops.
