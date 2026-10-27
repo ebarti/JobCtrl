@@ -189,6 +189,12 @@ in managed staging for retry; the transition lock serializes acquisition with
 uninstall, and successful cleanup leaves unfamiliar cache files untouched. This
 explicit mode does not discover bridges, select a final target, or provide
 automatic curl or Homebrew upgrades.
+An optional planned handoff accepts a separately signed final target descriptor
+and its canonical URL. The installer retains these signed bytes with the bridge
+evidence and rechecks channel, sequence, safety floor and cross-revocation
+before selection and on offline recovery. This step does not promote or verify
+the target payload. Normal acquisition and publication of per-predecessor
+bridge artifacts are not yet connected to this opt-in plan.
 
 The handoff uses the transition and selection locks shared by supported
 release mutators. The [threat model](security.md#threat-model-trust-boundaries-and-assumptions)

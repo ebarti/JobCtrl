@@ -23,6 +23,9 @@ type CachedBridgeInput struct {
 	// RecoveryDescriptorURL binds an evidence-only retry without providing
 	// acquisition inputs. It does not authorize re-staging an archive.
 	RecoveryDescriptorURL string
+	// Optional final target binds a planned handoff to an authenticated next
+	// release. Recovery uses the retained signed evidence instead of these paths.
+	TargetDescriptorURL, TargetDescriptorPath, TargetSignaturePath string
 }
 
 func bridgeEvidencePath(home, digest string) string {
@@ -90,7 +93,7 @@ func findCompletedBridge(home, digest string) (bridgeHandoffIntent, error) {
 	return none, nil
 }
 
-const maxBridgeEvidenceBytes = 4 * maxDescriptorBytes
+const maxBridgeEvidenceBytes = 6 * maxDescriptorBytes
 
 type bridgeEvidenceBundle struct {
 	SchemaVersion        int    `json:"schemaVersion"`
@@ -99,6 +102,9 @@ type bridgeEvidenceBundle struct {
 	DescriptorSignature  []byte `json:"descriptorSignature"`
 	Attestation          []byte `json:"attestation"`
 	AttestationSignature []byte `json:"attestationSignature"`
+	TargetDescriptorURL  string `json:"targetDescriptorUrl,omitempty"`
+	TargetDescriptor     []byte `json:"targetDescriptor,omitempty"`
+	TargetSignature      []byte `json:"targetSignature,omitempty"`
 }
 
 func prepareSignedCachedBridge(options Options, input CachedBridgeInput) (*release.Store, bridgeHandoffEvidence, error) {
@@ -169,12 +175,29 @@ func prepareSignedCachedBridgeWithTransition(options Options, input CachedBridge
 		if err != nil {
 			return nil, empty, err
 		}
+		if input.TargetDescriptorURL != "" || input.TargetDescriptorPath != "" || input.TargetSignaturePath != "" {
+			if input.TargetDescriptorURL == "" || input.TargetDescriptorPath == "" || input.TargetSignaturePath == "" {
+				return nil, empty, errors.New("bridge final target requires complete signed descriptor inputs")
+			}
+			bundle.TargetDescriptorURL = input.TargetDescriptorURL
+			bundle.TargetDescriptor, err = readBridgeRegular(input.TargetDescriptorPath, maxDescriptorBytes)
+			if err != nil {
+				return nil, empty, err
+			}
+			bundle.TargetSignature, err = readBridgeRegular(input.TargetSignaturePath, maxSignatureBytes)
+			if err != nil {
+				return nil, empty, err
+			}
+		}
 	}
-	if bundle.SchemaVersion != 1 || len(bundle.Descriptor) > maxDescriptorBytes || len(bundle.DescriptorSignature) > maxSignatureBytes || len(bundle.Attestation) > maxDescriptorBytes || len(bundle.AttestationSignature) > maxSignatureBytes {
+	if bundle.SchemaVersion != 1 || len(bundle.Descriptor) > maxDescriptorBytes || len(bundle.DescriptorSignature) > maxSignatureBytes || len(bundle.Attestation) > maxDescriptorBytes || len(bundle.AttestationSignature) > maxSignatureBytes || len(bundle.TargetDescriptor) > maxDescriptorBytes || len(bundle.TargetSignature) > maxSignatureBytes {
 		return nil, empty, errors.New("invalid bridge signed evidence")
 	}
 	if recovering && ((input.DescriptorURL != "" && input.DescriptorURL != bundle.DescriptorURL) || (input.RecoveryDescriptorURL != "" && input.RecoveryDescriptorURL != bundle.DescriptorURL)) {
 		return nil, empty, errors.New("requested bridge differs from retained recovery evidence")
+	}
+	if recovering && input.TargetDescriptorURL != "" && input.TargetDescriptorURL != bundle.TargetDescriptorURL {
+		return nil, empty, errors.New("requested final target differs from retained bridge evidence")
 	}
 	bundleRaw, err := encodeJSON(bundle)
 	if err != nil || len(bundleRaw) > maxBridgeEvidenceBytes {
@@ -205,6 +228,27 @@ func prepareSignedCachedBridgeWithTransition(options Options, input CachedBridge
 	}
 	if err := validateCanonicalArtifactURL(descriptor, sourceURL); err != nil {
 		return nil, empty, err
+	}
+	var finalTarget *Descriptor
+	if bundle.TargetDescriptorURL != "" || len(bundle.TargetDescriptor) != 0 || len(bundle.TargetSignature) != 0 {
+		if bundle.TargetDescriptorURL == "" || len(bundle.TargetDescriptor) == 0 || len(bundle.TargetSignature) == 0 {
+			return nil, empty, errors.New("bridge final target evidence is incomplete")
+		}
+		targetURL, targetBuild, err := validateImmutableDescriptorURL(bundle.TargetDescriptorURL)
+		if err != nil {
+			return nil, empty, err
+		}
+		target, err := verifyDescriptor(bundle.TargetDescriptor, bundle.TargetSignature, options.Trust, false, targetURL, false)
+		if err != nil {
+			return nil, empty, err
+		}
+		if target.BuildID != targetBuild || target.Channel != descriptor.Channel {
+			return nil, empty, errors.New("bridge final target identity or channel mismatch")
+		}
+		if err := validateCanonicalArtifactURL(target, targetURL); err != nil {
+			return nil, empty, err
+		}
+		finalTarget = &target
 	}
 	// Authenticate the role and bind it to this descriptor before staging its
 	// potentially large archive. The full predecessor, inventory and selector
@@ -284,6 +328,11 @@ func prepareSignedCachedBridgeWithTransition(options Options, input CachedBridge
 			}
 		} else {
 			return zero, "", nil, errors.New("bridge active receipt changed")
+		}
+		if finalTarget != nil {
+			if err := validatePlannedBridgePolicy(store, active.Receipt, metadata, *finalTarget, digestBytes(bundle.TargetDescriptor)); err != nil {
+				return zero, "", nil, fmt.Errorf("bridge final target policy: %w", err)
+			}
 		}
 		trust := launcher.DistributionTrust{PublicKeys: options.Trust, ExpectedChannel: descriptor.Channel}
 		oldManifest, err := launcher.VerifyDistributionPayload(oldRoot, trust)

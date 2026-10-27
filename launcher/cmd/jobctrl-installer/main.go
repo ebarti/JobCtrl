@@ -20,6 +20,7 @@ func main() {
 	var releaseURL, home, descriptorURL, descriptorFile, signatureFile, archiveFile, source string
 	var bridgeRoleFile, bridgeRoleSignatureFile string
 	var bridgeDescriptorURL, bridgeRoleURL string
+	var bridgeTargetURL, bridgeTargetFile, bridgeTargetSignatureFile string
 	var allowUnsignedLocal, stageOnly, jsonOutput, bridgeRecover bool
 	flag.StringVar(&releaseURL, "release-url", "", "signed release channel-pointer URL (default: compiled channel)")
 	flag.StringVar(&home, "home", "", "JobCtrl runtime home (default: ~/Library/Application Support/JobCtrl)")
@@ -33,6 +34,9 @@ func main() {
 	flag.BoolVar(&jsonOutput, "json", false, "write the exact immutable install receipt as JSON")
 	flag.StringVar(&bridgeRoleFile, "bridge-role-file", "", "signed schema-14 bridge declaration")
 	flag.StringVar(&bridgeRoleSignatureFile, "bridge-role-signature-file", "", "signature for the bridge declaration")
+	flag.StringVar(&bridgeTargetURL, "bridge-target-descriptor-url", "", "immutable URL for the signed final target descriptor")
+	flag.StringVar(&bridgeTargetFile, "bridge-target-descriptor-file", "", "signed final target descriptor")
+	flag.StringVar(&bridgeTargetSignatureFile, "bridge-target-signature-file", "", "final target descriptor signature")
 	flag.BoolVar(&bridgeRecover, "bridge-recover", false, "complete a previously interrupted authenticated bridge handoff")
 	flag.StringVar(&bridgeDescriptorURL, "bridge-descriptor-url", "", "canonical immutable signed bridge descriptor URL")
 	flag.StringVar(&bridgeRoleURL, "bridge-role-url", "", "canonical signed bridge role URL in the same immutable build")
@@ -49,7 +53,7 @@ func main() {
 		fail("--source must be curl or homebrew")
 	}
 	bridgeNetwork := bridgeDescriptorURL != "" || bridgeRoleURL != ""
-	bridge := bridgeRecover || bridgeRoleFile != "" || bridgeRoleSignatureFile != "" || bridgeNetwork
+	bridge := bridgeRecover || bridgeRoleFile != "" || bridgeRoleSignatureFile != "" || bridgeNetwork || bridgeTargetURL != "" || bridgeTargetFile != "" || bridgeTargetSignatureFile != ""
 	if source == "homebrew" && !bridgeRecover && (allowUnsignedLocal || descriptorURL == "" || descriptorFile == "" || signatureFile == "" || archiveFile == "") {
 		fail("--source homebrew requires the complete signed cached formula descriptor, signature, and archive mode")
 	}
@@ -64,12 +68,12 @@ func main() {
 			fail("bridge handoff requires signed cached inputs and cannot use stage-only or release-url")
 		}
 		if bridgeNetwork {
-			if source != "curl" || bridgeRecover || descriptorURL != "" || descriptorFile != "" || signatureFile != "" || archiveFile != "" || bridgeRoleFile != "" || bridgeRoleSignatureFile != "" || bridgeDescriptorURL == "" || bridgeRoleURL == "" {
-				fail("network bridge requires both bridge URLs and cannot mix cached inputs or recovery flags")
+			if source != "curl" || bridgeRecover || descriptorURL != "" || descriptorFile != "" || signatureFile != "" || archiveFile != "" || bridgeRoleFile != "" || bridgeRoleSignatureFile != "" || bridgeDescriptorURL == "" || bridgeRoleURL == "" || bridgeTargetURL != "" || bridgeTargetFile != "" || bridgeTargetSignatureFile != "" {
+				fail("network bridge requires both bridge URLs and cannot mix cached inputs, target files or recovery flags")
 			}
 			receipt, err = installer.InstallSignedNetworkBridge(options, bridgeDescriptorURL, bridgeRoleURL)
 		} else if bridgeRecover {
-			if descriptorURL != "" || descriptorFile != "" || signatureFile != "" || archiveFile != "" || bridgeRoleFile != "" || bridgeRoleSignatureFile != "" {
+			if descriptorURL != "" || descriptorFile != "" || signatureFile != "" || archiveFile != "" || bridgeRoleFile != "" || bridgeRoleSignatureFile != "" || bridgeTargetURL != "" || bridgeTargetFile != "" || bridgeTargetSignatureFile != "" {
 				fail("bridge recovery uses only retained signed evidence; do not pass acquisition files")
 			}
 			receipt, err = installer.InstallSignedCachedBridge(options, installer.CachedBridgeInput{})
@@ -77,7 +81,7 @@ func main() {
 			if descriptorURL == "" || descriptorFile == "" || signatureFile == "" || archiveFile == "" || bridgeRoleFile == "" || bridgeRoleSignatureFile == "" {
 				fail("bridge handoff requires the complete signed descriptor, archive and bridge declaration")
 			}
-			receipt, err = installer.InstallSignedCachedBridge(options, installer.CachedBridgeInput{DescriptorURL: descriptorURL, DescriptorPath: descriptorFile, DescriptorSignaturePath: signatureFile, ArchivePath: archiveFile, AttestationPath: bridgeRoleFile, AttestationSignaturePath: bridgeRoleSignatureFile})
+			receipt, err = installer.InstallSignedCachedBridge(options, installer.CachedBridgeInput{DescriptorURL: descriptorURL, DescriptorPath: descriptorFile, DescriptorSignaturePath: signatureFile, ArchivePath: archiveFile, AttestationPath: bridgeRoleFile, AttestationSignaturePath: bridgeRoleSignatureFile, TargetDescriptorURL: bridgeTargetURL, TargetDescriptorPath: bridgeTargetFile, TargetSignaturePath: bridgeTargetSignatureFile})
 		}
 	} else if allowUnsignedLocal {
 		if !policy.AllowUnsignedLocal {
