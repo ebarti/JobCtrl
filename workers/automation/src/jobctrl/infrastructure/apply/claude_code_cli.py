@@ -150,16 +150,23 @@ def _enqueue_stdout_lines(stream: Any, out: "queue.Queue[str | None]") -> None:
 
 
 def kill_active_claude_processes(*, worker_ids: tuple[int, ...] | None = None) -> None:
-    """Best-effort cleanup hook for launcher Ctrl-C handling."""
+    """Clean selected launch-owned agents, retaining any unverified handles."""
     with _ACTIVE_CLAUDE_LOCK:
         procs = tuple(_ACTIVE_CLAUDE_PROCS.items())
 
+    failures = []
     for worker_id, proc in procs:
         if worker_ids is not None and worker_id not in worker_ids:
             continue
-        if proc.poll() is None:
-            _kill_process_tree_if_alive(proc)
-        _unregister_active_claude_process(worker_id, proc)
+        try:
+            if proc.poll() is None:
+                _kill_process_tree_if_alive(proc)
+            _unregister_active_claude_process(worker_id, proc)
+        except Exception:
+            log.exception("Apply agent cleanup incomplete for worker %s", worker_id)
+            failures.append(worker_id)
+    if failures:
+        raise RuntimeError(f"Apply agent cleanup could not verify exit for workers {failures}")
 
 
 class ClaudeCodeCliAdapter:
@@ -631,19 +638,16 @@ def _unregister_active_claude_process(worker_id: int, proc: subprocess.Popen) ->
 
 
 def _kill_process_tree_if_alive(proc: subprocess.Popen) -> None:
-    from jobctrl.infrastructure.process_ownership import terminate_owned_process
+    from jobctrl.infrastructure.process_ownership import ProcessOwnershipError, terminate_owned_process
 
-    try:
-        with _ACTIVE_CLAUDE_LOCK:
-            identities = [
-                launched_pid for worker_id, (owned, launched_pid) in _ACTIVE_CLAUDE_IDENTITIES.items()
-                if owned is proc and _ACTIVE_CLAUDE_PROCS.get(worker_id) is proc
-            ]
-            if len(identities) != 1:
-                return
-            terminate_owned_process(proc, launched_pid=identities[0])
-    except Exception:  # noqa: BLE001
-        log.exception("_kill_process_tree_if_alive: kill failed (best-effort)")
+    with _ACTIVE_CLAUDE_LOCK:
+        identities = [
+            launched_pid for worker_id, (owned, launched_pid) in _ACTIVE_CLAUDE_IDENTITIES.items()
+            if owned is proc and _ACTIVE_CLAUDE_PROCS.get(worker_id) is proc
+        ]
+        if len(identities) != 1:
+            raise ProcessOwnershipError("Cannot verify Apply agent process ownership")
+        terminate_owned_process(proc, launched_pid=identities[0])
 
 
 __all__ = ["ClaudeCodeCliAdapter", "kill_active_claude_processes"]

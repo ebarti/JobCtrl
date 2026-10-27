@@ -875,3 +875,34 @@ def test_unbound_tool_result_cannot_supply_browser_evidence(monkeypatch, tmp_pat
     )
     assert result.submission_result.kind == "failed"
     assert result.submission_result.error == "non_verbatim_quote"
+
+
+def test_failed_scoped_cleanup_retains_exact_agent_owner(monkeypatch) -> None:
+    first = _HangingPopen(["claude"])
+    peer = _HangingPopen(["claude"])
+    captured = []
+    unsettled = True
+
+    def terminate(process, *, launched_pid):
+        captured.append((process, launched_pid))
+        if unsettled:
+            raise RuntimeError("owned exit unverified")
+        process.returncode = -9
+
+    monkeypatch.setattr("jobctrl.infrastructure.process_ownership.terminate_owned_process", terminate)
+    claude_code_cli._register_active_claude_process(41, first)
+    claude_code_cli._register_active_claude_process(42, peer)
+    try:
+        with pytest.raises(RuntimeError, match="could not verify exit"):
+            kill_active_claude_processes(worker_ids=(41,))
+        assert claude_code_cli._ACTIVE_CLAUDE_PROCS[41] is first
+        assert claude_code_cli._ACTIVE_CLAUDE_PROCS[42] is peer
+        assert captured == [(first, first.pid)]
+        unsettled = False
+        kill_active_claude_processes(worker_ids=(41,))
+        assert 41 not in claude_code_cli._ACTIVE_CLAUDE_PROCS
+        assert claude_code_cli._ACTIVE_CLAUDE_PROCS[42] is peer
+        assert peer.poll() is None
+    finally:
+        claude_code_cli._unregister_active_claude_process(41, first)
+        claude_code_cli._unregister_active_claude_process(42, peer)
