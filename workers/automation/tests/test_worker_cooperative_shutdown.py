@@ -3,6 +3,7 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import os
+from pathlib import Path
 import subprocess
 import sys
 import threading
@@ -117,15 +118,17 @@ async def main():
 asyncio.run(main())
 """
     completed = subprocess.run(
-        [sys.executable, "-c", source], env=os.environ.copy(),
+        [sys.executable, "-c", source],
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")},
         capture_output=True, text=True, timeout=10, check=False,
     )
     assert completed.returncode == 0, completed.stderr
 
 
 @pytest.mark.asyncio
-async def test_real_worker_cli_handles_sigterm_with_synthetic_temporal(tmp_path):
+async def test_real_worker_cli_handles_sigterm_with_synthetic_temporal(tmp_path, monkeypatch):
     """Exercise CLI wiring without credentials, browsers, or auto-apply."""
+    monkeypatch.delenv("PYTHONPATH", raising=False)
     source = """
 import sys
 from types import SimpleNamespace
@@ -160,7 +163,7 @@ cli.app()
             "LANGFUSE_DISABLE": "1",
             "OTEL_SDK_DISABLED": "true",
             "PATH": "/usr/bin:/bin",
-            "PYTHONPATH": os.environ["PYTHONPATH"],
+            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
             "PYTHONUNBUFFERED": "1",
             "TEMPORAL_ADDRESS": address,
         }
