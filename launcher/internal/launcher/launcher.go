@@ -2265,9 +2265,6 @@ func stop(ctx launchContext) error {
 	if !sameRuntimeGeneration(initialState, state) {
 		return errors.New("runtime generation changed during stop; refusing to signal or overwrite its registry")
 	}
-	if err := drainOwnedProcesses(ctx, state, ownedBeforeShutdown); err != nil {
-		return fmt.Errorf("verify instance-wide shutdown: %w", err)
-	}
 	failed := make([]string, 0)
 	for _, name := range []string{"api", "worker", "temporal"} {
 		if record, exists := state.Components[name]; exists && componentMayBeLive(record) {
@@ -2275,6 +2272,13 @@ func stop(ctx launchContext) error {
 				failed = append(failed, name+": "+err.Error())
 			}
 		}
+	}
+	if err := drainOwnedProcesses(ctx, state, ownedBeforeShutdown); err != nil {
+		return fmt.Errorf("verify instance-wide shutdown: %w", err)
+	}
+	// A verified child cleanup can resolve an earlier group-drain failure.
+	if allRecordedComponentsStopped(state) && !supervisorMayBeLive(state.Supervisor) {
+		failed = nil
 	}
 	if len(failed) > 0 || !allRecordedComponentsStopped(state) || supervisorMayBeLive(state.Supervisor) {
 		if len(failed) > 0 {

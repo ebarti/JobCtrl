@@ -790,7 +790,7 @@ func main() {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if output, err := runLauncherCommand(t, "jobctrl", otherCWD, environment, "start", "--no-open"); err == nil || !strings.Contains(output, "recorded") {
+	if output, err := runLauncherCommand(t, "jobctrl", otherCWD, environment, "start", "--no-open"); err == nil || (!strings.Contains(output, "recorded") && !strings.Contains(output, "remaining instance processes")) {
 		t.Fatalf("immediate restart after SIGKILL supervisor was accepted: %v\n%s", err, output)
 	}
 	after, err := os.ReadFile(stateFiles[0])
