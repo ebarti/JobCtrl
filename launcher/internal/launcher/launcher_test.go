@@ -797,15 +797,17 @@ func main() {
 	if err != nil || string(after) != string(before) {
 		t.Fatalf("immediate restart overwrote orphan registry: %v", err)
 	}
-	if output, err := runLauncherCommand(t, "jobctrl", otherCWD, environment, "stop"); err != nil {
-		t.Fatalf("stop orphaned fixture: %v\n%s", err, output)
+	if output, err := runLauncherCommand(t, "jobctrl", otherCWD, environment, "stop"); err == nil || !strings.Contains(output, "reboot") {
+		t.Fatalf("orphaned fixture did not require reboot: %v\n%s", err, output)
 	}
+	markOwnedFixtureReboot(t, stateFiles[0])
 	if output, err := runLauncherCommand(t, "jobctrl", otherCWD, environment, "start", "--no-open"); err != nil {
 		t.Fatalf("restart after orphan cleanup: %v\n%s", err, output)
 	}
-	if output, err := runLauncherCommand(t, "jobctrl", otherCWD, environment, "stop"); err != nil {
-		t.Fatalf("final fixture stop: %v\n%s", err, output)
+	if output, err := runLauncherCommand(t, "jobctrl", otherCWD, environment, "stop"); err == nil || !strings.Contains(output, "reboot") {
+		t.Fatalf("final fixture stop did not require reboot: %v\n%s", err, output)
 	}
+	markOwnedFixtureReboot(t, stateFiles[0])
 
 	store, err := release.Open(instanceRoot)
 	if err != nil {
@@ -1090,14 +1092,18 @@ func TestStopTerminatesLiveRecordEvenWhenAnOldStateMarkedItExited(t *testing.T) 
 	if err := writeState(ctx.Instance.StatePath, state); err != nil {
 		t.Fatal(err)
 	}
-	if err := stop(ctx); err != nil {
-		t.Fatalf("stop must repair stale live process record: %v", err)
+	if err := stop(ctx); !errors.Is(err, errRebootRequired) {
+		t.Fatalf("stop must retain uncertainty after terminating a stale live process record: %v", err)
 	}
 	if err := <-reaped; err == nil {
 		t.Fatal("sleep unexpectedly exited cleanly after stop")
 	}
 	if processPIDAlive(record.PID) || processGroupAlive(record.PGID) {
 		t.Fatal("stop left the falsely marked-live owned process group running")
+	}
+	syntheticBoot(t, syntheticBootTwo)
+	if err := stop(ctx); err != nil {
+		t.Fatalf("stop after reboot: %v", err)
 	}
 	updated, err := readState(ctx.Instance.StatePath)
 	if err != nil || updated.StoppedAt == nil {
@@ -1347,8 +1353,9 @@ func TestStateIdentitySeparatesStaleAndLiveDifferentReleaseRecords(t *testing.T)
 	if err := os.WriteFile(filepath.Join(payload, "manifest.json"), []byte("new manifest"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ctx := launchContext{PayloadRoot: payload, Distribution: distributionManifest{BuildID: "new"}, Manifest: runtimeManifest{}, Instance: instance{ID: "instance", StateDir: "/state"}}
-	stale := instanceState{InstanceID: "instance", CanonicalStateDir: "/state", PayloadRoot: "/old", BuildID: "old", ManifestSHA256: "old", Components: map[string]componentRecord{}}
+	stateDir := t.TempDir()
+	ctx := launchContext{PayloadRoot: payload, Distribution: distributionManifest{BuildID: "new"}, Manifest: runtimeManifest{}, Instance: instance{ID: "instance", StateDir: stateDir, StatePath: filepath.Join(stateDir, "state.json")}}
+	stale := instanceState{InstanceID: "instance", CanonicalStateDir: stateDir, PayloadRoot: "/old", BuildID: "old", ManifestSHA256: "old", Components: map[string]componentRecord{}}
 	if err := validateStateIdentity(ctx, stale); err != nil {
 		t.Fatal(err)
 	}

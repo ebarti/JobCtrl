@@ -168,8 +168,13 @@ jobctrl backup
 ```
 
 The installed command snapshots `jobctrl.db` and `temporal.db` together into a
-new `backups/pair-<id>/` directory. If JobCtrl is running, it stops for the
-snapshot and starts again afterward. `--output` takes an absolute directory.
+new `backups/pair-<id>/` directory. If JobCtrl has run services or a Python
+command, first run `jobctrl stop`, reboot the Mac, and retry the backup before
+starting JobCtrl again. This proves detached children from the earlier boot
+cannot still be writing. A refused backup creates no database pair and does
+not restore older data. Keep `execution-boot.json` and the runtime registry;
+deleting either is not a substitute for the reboot. `--output` takes an absolute
+directory.
 The two files are one restore unit: never restore just one of them. The
 launcher has no restore command for these pairs; updates and rollbacks write and
 restore their own, as described in

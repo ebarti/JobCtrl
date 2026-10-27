@@ -331,6 +331,7 @@ func TestIssue1275OrphanedGroupBlocksStopStartAndRecoversAfterExit(t *testing.T)
 	if !waitForProcessGroupExit(record.PGID, 5*time.Second) {
 		t.Fatal("fixture group did not exit")
 	}
+	syntheticBoot(t, syntheticBootTwo)
 	if err := stop(ctx); err != nil {
 		t.Fatalf("stop did not recover after group exit: %v", err)
 	}
@@ -469,6 +470,7 @@ func TestIssue1275DirectBackupRefusesLiveOrphanWithoutChangingDatabases(t *testi
 	if !waitForProcessGroupExit(record.PGID, 5*time.Second) {
 		t.Fatal("fixture group did not exit")
 	}
+	syntheticBoot(t, syntheticBootTwo)
 	if err := stop(fixture.ctx); err != nil {
 		t.Fatalf("stop after group exit: %v", err)
 	}
