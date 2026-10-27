@@ -263,7 +263,7 @@ func bootstrapPromoteOrExec(executable string, args, inheritedEnv []string, stdo
 	var promotedContext launchContext
 	active, err := store.ReadActive()
 	if errors.Is(err, os.ErrNotExist) {
-		if err := bootstrapFirstInstallWithEnv(store, candidate, inheritedEnv); err != nil {
+		if err := bootstrapFirstInstall(store, candidate); err != nil {
 			return err
 		}
 	} else if err != nil {
@@ -308,13 +308,6 @@ func bootstrapPromoteOrExec(executable string, args, inheritedEnv []string, stdo
 			// active record (and advance its generation) for every command. A
 			// matching curl/migration selection still records its acquisition
 			// adoption once so later `jobctrl update` routes through Homebrew.
-			verified, err := verifyInstalledReleaseForExecution(store, candidate)
-			if err != nil {
-				return err
-			}
-			if err := CheckWorkspaceSelection(store.Home, verified.payloadRoot, inheritedEnv, false); err != nil {
-				return err
-			}
 			if active.Acquisition != "homebrew" {
 				if _, lockErr = store.WriteSelectedActive(active.Receipt, active.Generation, active.SelectorBuildID, "homebrew"); lockErr != nil {
 					return lockErr
@@ -347,10 +340,6 @@ func bootstrapPromoteOrExec(executable string, args, inheritedEnv []string, stdo
 }
 
 func bootstrapFirstInstall(store *release.Store, candidate release.Receipt) error {
-	return bootstrapFirstInstallWithEnv(store, candidate, os.Environ())
-}
-
-func bootstrapFirstInstallWithEnv(store *release.Store, candidate release.Receipt, env []string) error {
 	transition, err := store.TransitionLock()
 	if err != nil {
 		return err
@@ -375,9 +364,6 @@ func bootstrapFirstInstallWithEnv(store *release.Store, candidate release.Receip
 	}
 	policy, err := readInstalledPolicy(store.Home, candidate)
 	if err != nil {
-		return err
-	}
-	if err := CheckWorkspaceSelection(store.Home, verified.payloadRoot, env, true); err != nil {
 		return err
 	}
 	journal, err := store.Begin("install", nil, &candidate, candidate.DescriptorSHA256)

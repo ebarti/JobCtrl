@@ -290,14 +290,6 @@ func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Write
 	if err := refusePendingBridgeHandoff(runtimeHome); err != nil {
 		return err
 	}
-	if len(args) == 1 && args[0] == "update" && environmentMap(inheritedEnv)["JOBCTRL_TRANSITION_TARGET"] == "" {
-		if handled, err := resumeRebootUpdate(inheritedEnv, stdout); handled {
-			return err
-		}
-	}
-	if err := refuseUnfinishedRebootUpdate(runtimeHome, args, inheritedEnv); err != nil {
-		return err
-	}
 	if len(args) > 0 && args[0] == "rollback" {
 		if handled, err := recoverBridgeBeforeBootstrap(inheritedEnv, args, stdout); handled {
 			return err

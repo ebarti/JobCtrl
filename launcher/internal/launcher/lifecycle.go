@@ -351,12 +351,6 @@ type verifiedRelease struct {
 // substitute for re-checking it when another process may have modified it
 // since staging or since the initial candidate validation.
 func verifyInstalledReleaseForExecution(store *release.Store, receipt release.Receipt) (verifiedRelease, error) {
-	return verifyInstalledReleaseEvidence(store, receipt, true)
-}
-
-// Retired release evidence may identify preserved data even after its code is
-// revoked. Only the forExecution path grants permission to run that payload.
-func verifyInstalledReleaseEvidence(store *release.Store, receipt release.Receipt, forExecution bool) (verifiedRelease, error) {
 	installed, err := readInstalledReceipt(store.Home, receipt.BuildID)
 	if err != nil {
 		return verifiedRelease{}, err
@@ -369,10 +363,8 @@ func verifyInstalledReleaseEvidence(store *release.Store, receipt release.Receip
 			return verifiedRelease{}, fmt.Errorf("verify immutable release policy: %w", err)
 		}
 	}
-	if forExecution {
-		if err := store.Permit(receipt); err != nil {
-			return verifiedRelease{}, fmt.Errorf("release is not permitted by authenticated channel policy: %w", err)
-		}
+	if err := store.Permit(receipt); err != nil {
+		return verifiedRelease{}, fmt.Errorf("release is not permitted by authenticated channel policy: %w", err)
 	}
 	payloadRoot := filepath.Join(store.Home, "releases", receipt.BuildID, "payload")
 	distribution, err := loadAndVerifyDistributionManifest(payloadRoot)
@@ -508,7 +500,7 @@ func advance(store *release.Store, journal *release.Journal, state release.State
 			// An abrupt interruption models SIGKILL/power loss after the journal
 			// fsync. Do not relabel it failed: the next lifecycle invocation must
 			// see the durable milestone and recover from it.
-			if errors.Is(err, errTransitionInterrupted) || journal.PreserveLiveOnFailure {
+			if errors.Is(err, errTransitionInterrupted) {
 				return err
 			}
 			_ = store.Advance(journal, release.Failed, err)
@@ -836,7 +828,7 @@ func rollbackExisting(ctx launchContext, store *release.Store, active release.Ac
 		return err
 	}
 	if !protocolSupports(activeVerified.distribution, launcherProtocol) || !protocolSupports(targetVerified.distribution, launcherProtocol) {
-		return fmt.Errorf("current launcher protocol %d cannot supervise both active and rollback payloads; keep the current release; cross-schema rollback is unavailable", launcherProtocol)
+		return fmt.Errorf("current launcher protocol %d cannot supervise both active and rollback payloads; choose a retained compatible bridge release", launcherProtocol)
 	}
 	journal, err := store.Begin("rollback", &active.Receipt, &target, target.DescriptorSHA256)
 	if err != nil {
@@ -1119,11 +1111,6 @@ func parseBuildTarget(args []string, command string) (string, error) {
 // rollback. Candidate code starts while active.json still names old, then the
 // only selection pointer changes after the real launcher readiness probe.
 func promoteExisting(ctx launchContext, store *release.Store, active release.Active, build, operation string, output io.Writer) (result error) {
-	if operation == "update" {
-		if handled, err := promoteRebootUpdate(ctx, build, "", output); handled {
-			return err
-		}
-	}
 	transition, err := store.TransitionLock()
 	if err != nil {
 		return fmt.Errorf("acquire lifecycle transition lock: %w", err)
@@ -1189,7 +1176,7 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 	if active.SelectorBuildID != candidate.BuildID {
 		candidateProtocol := candidateVerified.runtime.LauncherProtocol
 		if !protocolSupports(activeVerified.distribution, candidateProtocol) || !protocolSupports(candidateVerified.distribution, candidateProtocol) {
-			return fmt.Errorf("candidate launcher protocol %d cannot supervise both active and candidate payloads; use the new authenticated installer after the documented reboot boundary", candidateProtocol)
+			return fmt.Errorf("candidate launcher protocol %d cannot supervise both active and candidate payloads; stage an explicit compatible bridge release", candidateProtocol)
 		}
 	}
 	unused, err := unusedDatabasePair(ctx.Instance.StateDir)

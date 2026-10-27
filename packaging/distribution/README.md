@@ -58,6 +58,24 @@ transitive package, binary, dynamic library, and license. A production builder
 must fail when a payload component is absent from the inventory, marked
 developer-only, not approved for bundling, or missing its required attribution.
 
+The schema-v15 candidate requires launcher protocol 2. Historical protocol-1
+controllers, including v0.3.1, must refuse this candidate before beginning a
+database transition: their rollback cannot safely preserve an independent
+source commit after candidate startup refuses. A direct installed upgrade from
+v0.3.1, and a rollback across that protocol boundary, therefore require a
+separately released and verified compatible bridge. That bridge must own a
+v15-aware, source-preserving transition or hand off control before mutation;
+advertising a wider protocol range alone is insufficient. No such bridge is
+provided by this candidate. Fresh installations and interrupted-transition
+recovery still require their own release verification.
+
+The v15 payload includes `launcher/schema-transition.json`, declaring source
+schema 14 and target schema 15. The file is part of the signed payload
+inventory; its mode, size and SHA-256 bind the declaration to the release.
+The builder requires the exact declaration and fails if it is absent or
+altered. A declaration alone does not authorize a transition: the bridge must
+verify the signed release and its transition contract before mutation.
+
 The manifest's `files` array covers every regular file and symbolic link except
 `manifest.json` itself and its detached `manifest.sig`; those two files form the
 signed envelope and cannot self-hash. SBOM, licenses, notices, provenance, and
@@ -169,23 +187,51 @@ channel. Prerelease artifacts use the same release manifest key, Developer ID
 code signature, and notarization gate as stable artifacts; stable promotion
 also requires `stableReleaseStatus` to be `ready`.
 
-## Controller protocol and schema upgrades
+### Protocol-2 bridge candidate
 
-The schema-15 payload declares launcher compatibility `minimum = maximum = 2`.
-It includes an inventory-bound `launcher/schema-transition.json` declaring the
-exact v14-to-v15 transition. A released protocol-1 controller must reject this
-payload before its backup/restore boundary. The new authenticated installer
-performs the upgrade after the user stops automatic startup and reboots; it
-never executes the predecessor's recovery code. The selection remains on the
-predecessor until the new payload becomes healthy.
+The source installer contains a bridge handoff for a separately reviewed
+schema-14 payload whose signed distribution permits launcher protocol 2 only.
+This is a local candidate, not evidence that a bridge has been published or
+that existing installations can update to a later schema. The bridge payload
+and installer must be built and reviewed as release artifacts before use; the
+subsequent database migration and its writer-quiescence and recovery gates
+require their own proof.
 
-An interrupted update retains the live app and Temporal files, the original
-backup, and its forward-recovery journal. After reboot, the retained target's
-`jobctrl update` takes a fresh live-pair backup and continues forward. It does not
-restore an older pair or permit schema-14 rollback. Existing schema-15 data may
-be reinstalled after the same reboot admission; schema-14 data without its
-original predecessor selection is refused for inspection. Release qualification
-must cover the [manual installed-upgrade contract](../../docs/developer/releasing.md#qualify-the-schema-15-installed-upgrade).
+The source tree includes `launcher/cmd/jobctrl-bridge-attest` for generating
+the separately signed role declaration from two already signed archives. It
+authenticates each immutable descriptor and archive, verifies each extracted
+signed manifest, compares the complete predecessor and bridge inventories,
+and checks the resulting declaration with the native bridge verifier. The
+signing key must come from the protected release environment. This command
+does not build, code-sign, notarize, publish, acquire, or activate a bridge;
+none of those release and migration gates is established by its output.
+
+The signed cached handoff requires the canonical descriptor URL, descriptor,
+descriptor signature, archive, and a separately signed bridge-role declaration
+and signature. The declaration binds the predecessor and candidate descriptor
+and manifest identities, schema 14, protocol 2, complete payload inventories,
+and the reviewed controller digest. Both distributions, the selected source
+and channel policy are checked before selection. Apart from the controller,
+runtime protocol field, and distribution signature envelopes, the bridge must
+retain the predecessor's payload inventory and runtime configuration. An
+unsigned local descriptor or a protocol-1-compatible target cannot authorize
+this handoff.
+
+The installer holds the transition lock followed by the exclusive selection
+lock, durably retains the authenticated evidence and handoff intent, and changes
+the active receipt before replacing the public selector. It then finalizes the
+signed channel policy and selector, retaining a completion record. A retry
+after the active receipt changes recovers forward using the retained, reverified
+evidence; it does not restore the protocol-1 selection. The handoff itself does
+not stop the runtime or read, migrate, back up, or restore either database. A
+resumable or unrecognized release journal, changed source selection, mismatched
+selector, or invalid evidence refuses the handoff.
+
+The lock contract serializes supported JobCtrl release mutators. As in the
+[security threat model](../../docs/developer/security.md#threat-model-trust-boundaries-and-assumptions),
+it does not establish protection against a hostile process with control of the
+same OS account or local disk. Selector and payload checks do not claim to pin
+every path against that attacker.
 
 ## Production payload builder
 

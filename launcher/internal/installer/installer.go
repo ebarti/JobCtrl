@@ -135,7 +135,6 @@ type Receipt struct {
 }
 
 type Options struct {
-	Environment        []string
 	Home               string
 	ReleaseURL         string
 	Trust              map[string]ed25519.PublicKey
@@ -1196,17 +1195,10 @@ func installArchiveLocked(options Options, descriptor Descriptor, descriptorByte
 	}
 	defer selection.Close()
 	prior := uint64(0)
-	selectionEnv := options.Environment
-	if selectionEnv == nil {
-		selectionEnv = os.Environ()
-	}
 	if active, activeErr := shared.ReadActive(); activeErr == nil {
 		if active.Receipt.BuildID == receipt.BuildID {
 			if active.Receipt != (release.Receipt{SchemaVersion: receipt.SchemaVersion, BuildID: receipt.BuildID, Channel: receipt.Channel, Sequence: receipt.Sequence, ArtifactSHA256: receipt.ArtifactSHA256, ManifestSHA256: receipt.ManifestSHA256, DescriptorSHA256: receipt.DescriptorSHA256, PolicySHA256: receipt.PolicySHA256, DescriptorURL: receipt.DescriptorURL, InstalledAt: receipt.InstalledAt}) {
 				return Receipt{}, errors.New("active build identity conflicts with authenticated immutable receipt")
-			}
-			if err := launcher.CheckWorkspaceSelection(shared.Home, filepath.Join(releasePath, "payload"), selectionEnv, false); err != nil {
-				return Receipt{}, err
 			}
 			if active.Acquisition != source {
 				if _, err := shared.WriteSelectedActive(active.Receipt, active.Generation, active.SelectorBuildID, source); err != nil {
@@ -1217,9 +1209,6 @@ func installArchiveLocked(options Options, descriptor Descriptor, descriptorByte
 		return receipt, nil
 	} else if !errors.Is(activeErr, os.ErrNotExist) {
 		return Receipt{}, activeErr
-	}
-	if err := launcher.CheckWorkspaceSelection(shared.Home, filepath.Join(releasePath, "payload"), selectionEnv, true); err != nil {
-		return Receipt{}, err
 	}
 	journal, err := shared.Begin("install", nil, &release.Receipt{SchemaVersion: receipt.SchemaVersion, BuildID: receipt.BuildID, Channel: receipt.Channel, Sequence: receipt.Sequence, ArtifactSHA256: receipt.ArtifactSHA256, ManifestSHA256: receipt.ManifestSHA256, DescriptorSHA256: receipt.DescriptorSHA256, PolicySHA256: receipt.PolicySHA256, DescriptorURL: receipt.DescriptorURL, InstalledAt: receipt.InstalledAt}, receipt.DescriptorSHA256)
 	if err != nil {
