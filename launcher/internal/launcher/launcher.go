@@ -408,7 +408,7 @@ func dispatchCommand(ctx launchContext, args []string, stdout, stderr io.Writer)
 		if len(args) != 1 {
 			return errors.New("usage: jobctrl stop")
 		}
-		return stopStandalone(ctx)
+		return stop(ctx)
 	case "status":
 		if len(args) == 2 && args[1] == "--pipeline" {
 			return dispatchPython(ctx, []string{"pipeline-status"})
@@ -1580,13 +1580,6 @@ func validateStartState(ctx launchContext, state instanceState) error {
 	if err := validateStateIdentity(ctx, state); err != nil {
 		return err
 	}
-	quiescent, err := runtimeQuiescent(ctx, state)
-	if err != nil {
-		return err
-	}
-	if quiescent {
-		return nil
-	}
 	if err := validateStateBinding(ctx, state); err != nil && stateHasLiveProcesses(state) {
 		return fmt.Errorf("different JobCtrl release is still running for this state directory; run jobctrl status then jobctrl stop before starting this release")
 	}
@@ -1598,7 +1591,7 @@ func validateStartState(ctx launchContext, state instanceState) error {
 			return fmt.Errorf("%w: recorded %s component may still have live processes or unverifiable ownership; inspect jobctrl status and safely stop it before starting", ErrAlreadyRunning, name)
 		}
 	}
-	return fmt.Errorf("%w; for an older runtime, run jobctrl stop before rebooting to record its recovery fence", errRebootRequired)
+	return nil
 }
 func recordForProcess(pid int, logPath, executable string) (componentRecord, error) {
 	identity, err := readProcessIdentity(pid)
@@ -1687,10 +1680,6 @@ func startDetached(ctx launchContext) error {
 		}
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read existing runtime registry: %w", err)
-	} else if quiescent, err := runtimeQuiescent(ctx, instanceState{}); err != nil {
-		return err
-	} else if !quiescent {
-		return errRebootRequired
 	}
 	read, write, err := os.Pipe()
 	if err != nil {
@@ -1985,11 +1974,6 @@ func startComponent(ctx launchContext, state *instanceState, name string) (*exec
 		_ = command.Wait()
 		return nil, fmt.Errorf("publish %s before launch: %w", name, err)
 	}
-	if err := recordExecutionBoot(ctx); err != nil {
-		_ = gateWrite.Close()
-		_ = command.Wait()
-		return nil, fmt.Errorf("fence %s execution before launch: %w", name, err)
-	}
 	written, writeErr := io.WriteString(gateWrite, "start\n")
 	_ = gateWrite.Close()
 	// A complete gate message authorizes execution even if a writer reports
@@ -2231,9 +2215,6 @@ func shutdownComponents(state *instanceState, children map[string]*exec.Cmd, sta
 }
 
 func allRecordedComponentsStopped(state instanceState) bool {
-	if len(state.Components) > 0 {
-		return false
-	}
 	for _, record := range state.Components {
 		// A reused PID, a surviving group, or incomplete ownership metadata
 		// cannot certify quiescence, even when the recorded leader has exited.
@@ -2252,23 +2233,6 @@ func sameRuntimeGeneration(first, second instanceState) bool {
 		first.Supervisor.Executable == second.Supervisor.Executable
 }
 
-func stopStandalone(ctx launchContext) error {
-	releaseSelection(&ctx)
-	store, err := releaseStore(ctx)
-	if err != nil {
-		return err
-	}
-	selection, err := store.TryExclusiveSelectionLock()
-	if err != nil {
-		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return fmt.Errorf("cannot reserve runtime admission for stop; finish active commands or lifecycle operations first: %w", errRebootRequired)
-		}
-		return fmt.Errorf("reserve runtime admission for stop: %w", err)
-	}
-	defer selection.Close()
-	return stop(ctx)
-}
-
 func stop(ctx launchContext) error {
 	control, err := acquireLock(ctx.Instance.ControlPath, false)
 	if err != nil {
@@ -2277,13 +2241,6 @@ func stop(ctx launchContext) error {
 	defer releaseLock(control)
 	state, err := readState(ctx.Instance.StatePath)
 	if errors.Is(err, os.ErrNotExist) {
-		quiescent, err := runtimeQuiescent(ctx, instanceState{})
-		if err != nil {
-			return err
-		}
-		if !quiescent {
-			return errRebootRequired
-		}
 		return nil
 	}
 	if err != nil {
@@ -2291,28 +2248,6 @@ func stop(ctx launchContext) error {
 	}
 	if err := validateStateIdentity(ctx, state); err != nil {
 		return err
-	}
-	if err := ensureLegacyExecutionFence(ctx, state); err != nil {
-		return err
-	}
-	if quiescent, err := runtimeQuiescent(ctx, state); err != nil {
-		return err
-	} else if quiescent {
-		lock, err := acquireLock(ctx.Instance.LockPath, true)
-		if err != nil {
-			return err
-		}
-		defer releaseLock(lock)
-		fresh, err := readState(ctx.Instance.StatePath)
-		if err != nil || !sameRuntimeGeneration(state, fresh) {
-			return errors.New("runtime generation changed while verifying reboot recovery")
-		}
-		if quiescent, err := runtimeQuiescent(ctx, fresh); err != nil || !quiescent {
-			return errRebootRequired
-		}
-		now := time.Now().UTC()
-		fresh.StoppedAt = &now
-		return writeState(ctx.Instance.StatePath, fresh)
 	}
 	initialState := state
 	// The supervisor is the owner of component shutdown. Ask it to drain first
@@ -2356,10 +2291,14 @@ func stop(ctx launchContext) error {
 		}
 	}
 	if len(failed) > 0 || !allRecordedComponentsStopped(state) || supervisorMayBeLive(state.Supervisor) {
-		if len(failed) > 0 {
-			return fmt.Errorf("could not safely stop live component groups: %s; %w", strings.Join(failed, ", "), errRebootRequired)
+		state.StoppedAt = nil
+		if err := writeState(ctx.Instance.StatePath, state); err != nil {
+			return err
 		}
-		return errRebootRequired
+		if len(failed) > 0 {
+			return fmt.Errorf("could not safely stop live component groups: %s", strings.Join(failed, ", "))
+		}
+		return errors.New("JobCtrl may still have live recorded processes or unverifiable component ownership after stop")
 	}
 	now := time.Now().UTC()
 	state.StoppedAt = &now
@@ -2368,17 +2307,6 @@ func stop(ctx launchContext) error {
 func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 	state, err := readState(ctx.Instance.StatePath)
 	if errors.Is(err, os.ErrNotExist) {
-		quiescent, err := runtimeQuiescent(ctx, instanceState{})
-		if err != nil {
-			return err
-		}
-		if !quiescent {
-			if jsonOutput {
-				return json.NewEncoder(output).Encode(map[string]any{"status": "reboot-required", "components": map[string]any{}, "recovery": errRebootRequired.Error()})
-			}
-			_, err := fmt.Fprintln(output, errRebootRequired)
-			return err
-		}
 		if jsonOutput {
 			_, _ = io.WriteString(output, "{\"status\":\"stopped\",\"components\":{}}\n")
 		} else {
@@ -2390,10 +2318,6 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 		return err
 	}
 	if err := validateStateIdentity(ctx, state); err != nil {
-		return err
-	}
-	quiescent, err := runtimeQuiescent(ctx, state)
-	if err != nil {
 		return err
 	}
 	differentRelease := validateStateBinding(ctx, state) != nil
@@ -2409,12 +2333,12 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 	workerRecord := state.Components["worker"]
 	apiRecord := state.Components["api"]
 	apiWorkerHealth := errors.New("API is not running")
-	if !quiescent && !differentRelease && recordMatchesLiveProcess(apiRecord) && recordMatchesLiveProcess(workerRecord) {
+	if !differentRelease && recordMatchesLiveProcess(apiRecord) && recordMatchesLiveProcess(workerRecord) {
 		apiWorkerHealth = probeAPIWorker(ctx, workerRecord.PID)
 	}
 	for _, name := range []string{"temporal", "worker", "api"} {
 		record, found := state.Components[name]
-		live := !quiescent && found && recordMatchesLiveProcess(record)
+		live := found && recordMatchesLiveProcess(record)
 		stateName := "stopped"
 		if live {
 			stateName = "running"
@@ -2428,15 +2352,15 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 			}
 		} else {
 			allReady = false
-			if !quiescent && found && componentMayBeLive(record) {
+			if found && componentMayBeLive(record) {
 				stateName = "orphaned"
-			} else if !quiescent && found {
+			} else if found && record.ExitedAt == nil {
 				stateName = "stale"
 			}
 		}
 		components[name] = componentStatus{stateName, record.PID, record.LogPath, record.ExitedAt, record.ExitError}
 	}
-	supervisorLive := !quiescent && recordMatchesLiveProcess(state.Supervisor)
+	supervisorLive := recordMatchesLiveProcess(state.Supervisor)
 	overall := "stopped"
 	if allReady && supervisorLive {
 		overall = "running"
@@ -2452,12 +2376,8 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 	if differentRelease {
 		overall = "different-release"
 	}
-	recovery := ""
-	if quiescent {
+	if state.StoppedAt != nil && !stateHasLiveProcesses(state) {
 		overall = "stopped"
-	} else if !supervisorLive {
-		overall = "reboot-required"
-		recovery = errRebootRequired.Error()
 	}
 	if jsonOutput {
 		return json.NewEncoder(output).Encode(struct {
@@ -2466,13 +2386,9 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 			StateDir      string                     `json:"stateDir"`
 			SupervisorPID int                        `json:"supervisorPid"`
 			Components    map[string]componentStatus `json:"components"`
-			Recovery      string                     `json:"recovery,omitempty"`
-		}{overall, state.InstanceID, state.CanonicalStateDir, state.Supervisor.PID, components, recovery})
+		}{overall, state.InstanceID, state.CanonicalStateDir, state.Supervisor.PID, components})
 	}
 	fmt.Fprintf(output, "JobCtrl: %s\n", overall)
-	if recovery != "" {
-		fmt.Fprintln(output, recovery)
-	}
 	for _, name := range []string{"temporal", "worker", "api"} {
 		item := components[name]
 		fmt.Fprintf(output, "%-9s %-8s pid=%d\n", name, item.State, item.PID)
@@ -2559,22 +2475,6 @@ func version(ctx launchContext, output io.Writer, jsonOutput bool) error {
 }
 func dispatchPython(ctx launchContext, args []string) error {
 	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
-		return err
-	}
-	// Direct payload invocations must join the same selection fence as the
-	// public selector; otherwise they can race a lifecycle operation.
-	if ctx.selection == nil {
-		store, err := releaseStore(ctx)
-		if err != nil {
-			return err
-		}
-		ctx.selection, err = store.SelectionLock(false)
-		if err != nil {
-			return err
-		}
-		defer ctx.selection.Close()
-	}
-	if err := recordExecutionBoot(ctx); err != nil {
 		return err
 	}
 	python := filepath.Join(ctx.PayloadRoot, "python", "bin", "python3")

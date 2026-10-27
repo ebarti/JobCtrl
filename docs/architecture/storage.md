@@ -34,7 +34,6 @@ Unless overridden by `JOBCTRL_DIR`, the local authority root is
 | `tailored_resumes/`, `cover_letters/`, `logs/` | Generated material and logs registered by SQLite metadata where applicable. |
 | `browser-profiles/`, `extension-capability-token`, `chrome-workers/`, `apply-workers/` | Consented copied profiles for separate compatibility capabilities, extension pairing, and browser/apply execution state. Integrated Discovery uses the current Chrome profile through the extension and never stores a copy; its bridge task bodies/results are API-process-memory-only. Browser-adoption metadata is in `config.json`. |
 | `backups/` and legacy `resume.*` / style files | User-created database snapshots, guarded job-data-purge recovery bundles, and pre-migration resume inputs. |
-| Native instance `execution-boot.json` | Owner-private execution admission metadata under the runtime instance directory. It binds the canonical workspace to the last kernel boot session in which native services or Python commands were admitted. Keep it with the runtime registry; only a later boot proves those descendants have ended. See [Runtime & Processes](runtime.md). |
 
 Developer supervisors additionally use checkout-local `.dev/` process, log,
 and Temporal files; those are not installed-user authorities but remain

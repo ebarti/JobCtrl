@@ -810,7 +810,7 @@ bridge release; see [Getting Started](getting-started.md#update-roll-back-or-rem
 | Lifecycle command | What it does |
 | --- | --- |
 | `start` | Start the local services and open the app (`--no-open`, `--foreground`). |
-| `stop` / `status` / `open` | Stop verified services, report state (`--json`, or `--pipeline` for pipeline stats), or open the app. After services or Python commands have run, stop records a reboot requirement before backup, update, rollback or restart; see [Start JobCtrl](getting-started.md#_2-start-jobctrl). |
+| `stop` / `status` / `open` | Stop the runtime, report its state (`--json`, or `--pipeline` for pipeline stats), or open the app. Stop refuses to report success when recorded service ownership or exit is unresolved; see [Start JobCtrl](getting-started.md#_2-start-jobctrl). |
 | `logs [component]` | Show the last 200 lines of the `temporal`, `worker`, or `api` log, or of all three when no component is given. |
 | `version` | Print the installed version (`--json`). |
 | `update` / `rollback` / `uninstall` | Install a newer release, restore an earlier application and its saved database pair (`--to <build-id>`), or remove JobCtrl. Rollback keeps a compatible recovery launcher; Homebrew preserves the selection until an explicit update. `uninstall --remove-data` also deletes your local data after you type a confirmation phrase. |
