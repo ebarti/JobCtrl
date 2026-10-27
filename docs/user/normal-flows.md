@@ -599,7 +599,9 @@ jobctrl apply --url https://example.com/job/123 --dry-run
 
 The first dry-runs Apply for one eligible job; the second dry-runs a specific job
 by URL. A dry run never submits — it shows what would happen without sending
-anything.
+anything. A finite `--limit` bounds the number of jobs claimed by that batch,
+including jobs skipped after claim. A URL-targeted batch stays on that job even
+if more workers are configured. Use `--continuous` to keep polling instead.
 
 </WorkflowSurfacePanel>
 
@@ -813,7 +815,7 @@ exist only in the installed launcher.
 | `source-proposals from-history` / `list` / `reset CANDIDATE_ID` | Explicitly propose sources from saved canonical posting/application URLs, read retained evidence and review history, or reset one rejected coordinate. Review and promotion use the existing Source locator; see [Discovery](discovery.md#propose-sources-from-saved-posting-history). |
 | `discover` / `enrich` / `score` / `tailor` / `cover` | Start one stage; `score --rescore` re-scores jobs that already have a score. |
 | `job <url>` | Tailor and/or apply one job (`--tailor`, `--apply`, `--dry-run`). |
-| `apply` | Start apply automation (`--dry-run`, `--url`, `--continuous` to keep polling for new jobs). Utility modes: `--mark-applied`, `--mark-failed`, `--reset-failed`, and `--gen` (inspection-only dry-run prompt). |
+| `apply` | Start apply automation (`--dry-run`, `--url`, `--limit` for a maximum number of claimed jobs, `--continuous` to keep polling for new jobs). Utility modes: `--mark-applied`, `--mark-failed`, `--reset-failed`, and `--gen` (inspection-only dry-run prompt). |
 | `retry <stage> <url>` | Reset one failed stage for one job (`--reset-attempts`, `--run`). Enrich retains accepted content and automatically renews an exhausted stage budget; see [Enrichment](enrichment-and-extraction.md). |
 | `action <stage>` | Low-level single-action dispatch with JSON output, for scripts. |
 | `compensation-refresh` | Re-parse posted salaries and refresh market estimates for all jobs or one (`--job-id`, `--observations-json`, `--no-eurotoptech`). |

@@ -1561,7 +1561,7 @@ def compensation_refresh(
 @app.command()
 def apply(
     limit: Optional[int] = typer.Option(
-        None, "--limit", "-l", help="Max applications to submit (default: all ready jobs)."
+        None, "--limit", "-l", help="Maximum jobs to claim, including skipped jobs (default: all ready jobs)."
     ),
     workers: int = typer.Option(1, "--workers", "-w", help="Number of parallel browser workers."),
     min_score: int = typer.Option(7, "--min-score", help="Minimum fit score for job selection."),
