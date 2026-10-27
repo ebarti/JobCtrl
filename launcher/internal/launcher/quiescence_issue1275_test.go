@@ -280,9 +280,13 @@ func issue1275State(t *testing.T, component componentRecord) (launchContext, ins
 	return ctx, state
 }
 
-func TestIssue1275OrphanedGroupBlocksStopStartAndRecoversAfterExit(t *testing.T) {
+func TestIssue1275LegacyOrphanRemainsUnverifiedAfterGroupExit(t *testing.T) {
 	record, child := startOrphanedGroup(t)
 	ctx, state := issue1275State(t, record)
+	before, err := os.ReadFile(ctx.Instance.StatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	previousSignal := signalProcessGroup
 	calls := 0
 	signalProcessGroup = func(int, syscall.Signal) error { calls++; return errors.New("unexpected group signal") }
@@ -331,15 +335,28 @@ func TestIssue1275OrphanedGroupBlocksStopStartAndRecoversAfterExit(t *testing.T)
 	if !waitForProcessGroupExit(record.PGID, 5*time.Second) {
 		t.Fatal("fixture group did not exit")
 	}
-	if err := stop(ctx); err != nil {
-		t.Fatalf("stop did not recover after group exit: %v", err)
+	if err := stop(ctx); !errors.Is(err, errUntrackedOwnership) {
+		t.Fatalf("legacy cleanup falsely certified historical descendants after group exit: %v", err)
+	}
+	if after, err := os.ReadFile(ctx.Instance.StatePath); err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("legacy cleanup changed registry evidence after group exit: %v", err)
 	}
 	persisted, err = readState(ctx.Instance.StatePath)
-	if err != nil || persisted.StoppedAt == nil {
-		t.Fatalf("stopped state not recorded: %+v %v", persisted, err)
+	if err != nil || persisted.StoppedAt != nil || persisted.OwnershipVerified {
+		t.Fatalf("legacy cleanup persisted a false stopped proof: %+v %v", persisted, err)
 	}
-	if err := validateStartState(ctx, persisted); err != nil {
-		t.Fatalf("start still refused after safe exit: %v", err)
+	if err := validateStartState(ctx, persisted); !errors.Is(err, errUntrackedOwnership) {
+		t.Fatalf("legacy start must preserve the unresolved ownership history: %v", err)
+	}
+	out.Reset()
+	if err := status(ctx, &out, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(out.Bytes(), &observed); err != nil {
+		t.Fatal(err)
+	}
+	if observed.Status != "ownership-unverified" {
+		t.Fatalf("status hid legacy ownership uncertainty: %s", out.String())
 	}
 }
 
@@ -433,7 +450,7 @@ func TestIssue1275MalformedSupervisorCannotCertifyQuiescence(t *testing.T) {
 	}
 }
 
-func TestIssue1275DirectBackupRefusesLiveOrphanWithoutChangingDatabases(t *testing.T) {
+func TestIssue1275LegacyBackupRefusesBeforeAndAfterOrphanExit(t *testing.T) {
 	fixture := newV6ActivationFixture(t)
 	fixture.ctx.Instance.ID = "synthetic-instance"
 	record, child := startOrphanedGroup(t)
@@ -446,6 +463,10 @@ func TestIssue1275DirectBackupRefusesLiveOrphanWithoutChangingDatabases(t *testi
 		t.Fatal(err)
 	}
 	before := lifecycleDatabaseDigests(t, fixture.state)
+	registryBefore, err := os.ReadFile(fixture.ctx.Instance.StatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	outputDir := t.TempDir()
 	err = backup(fixture.ctx, []string{"--output", outputDir}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "quiesce") {
@@ -461,28 +482,29 @@ func TestIssue1275DirectBackupRefusesLiveOrphanWithoutChangingDatabases(t *testi
 	if !recordMatchesLiveProcess(child) {
 		t.Fatal("backup affected the unverified orphan")
 	}
-	// The test owns this child and verified its complete identity above. End
-	// it directly, then require a fresh stop and a successful public backup.
+	// The test can end its verified child, but that cannot establish a complete
+	// ownership history for an unscoped legacy runtime. Stop and backup must
+	// preserve the registry and pair rather than certify unknown descendants.
 	if err := syscall.Kill(child.PID, syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
 	if !waitForProcessGroupExit(record.PGID, 5*time.Second) {
 		t.Fatal("fixture group did not exit")
 	}
-	if err := stop(fixture.ctx); err != nil {
-		t.Fatalf("stop after group exit: %v", err)
+	if err := stop(fixture.ctx); !errors.Is(err, errUntrackedOwnership) {
+		t.Fatalf("legacy stop must retain unknown historical ownership: %v", err)
 	}
-	if err := backup(fixture.ctx, []string{"--output", outputDir}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("backup after safe stop: %v", err)
+	if err := backup(fixture.ctx, []string{"--output", outputDir}, &bytes.Buffer{}); !errors.Is(err, errUntrackedOwnership) {
+		t.Fatalf("legacy backup must still refuse after the known group exits: %v", err)
 	}
-	entries, err := os.ReadDir(outputDir)
-	if err != nil || len(entries) != 1 {
-		t.Fatalf("expected one recovered backup pair: %v %v", entries, err)
+	if entries, err := os.ReadDir(outputDir); err != nil || len(entries) != 0 {
+		t.Fatalf("legacy backup created output without a complete ownership proof: %v %v", entries, err)
 	}
-	liveValues := lifecycleDatabaseValues(t, fixture.python, fixture.state)
-	backupValues := lifecycleDatabaseValues(t, fixture.python, filepath.Join(outputDir, entries[0].Name()))
-	if !sameDatabaseDigests(liveValues, backupValues) {
-		t.Fatalf("backup pair reopened with wrong values: %v != %v", liveValues, backupValues)
+	if after := lifecycleDatabaseDigests(t, fixture.state); !sameDatabaseDigests(before, after) {
+		t.Fatalf("legacy cleanup or backup changed the database pair: %v -> %v", before, after)
+	}
+	if after, err := os.ReadFile(fixture.ctx.Instance.StatePath); err != nil || !bytes.Equal(registryBefore, after) {
+		t.Fatalf("legacy cleanup or backup changed registry evidence: %v", err)
 	}
 }
 

@@ -25,9 +25,9 @@ func TestRunAuthenticatesTransitionStartupBeforeDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	previousChannel, previousKey, previousStart := releaseChannel, releaseTrustKeyBase64, startCommand
+	previousChannel, previousKey, previousStart, previousRunner := releaseChannel, releaseTrustKeyBase64, startCommand, ownedExecutionRunner
 	t.Cleanup(func() {
-		releaseChannel, releaseTrustKeyBase64, startCommand = previousChannel, previousKey, previousStart
+		releaseChannel, releaseTrustKeyBase64, startCommand, ownedExecutionRunner = previousChannel, previousKey, previousStart, previousRunner
 	})
 	releaseChannel, releaseTrustKeyBase64 = "stable", base64.StdEncoding.EncodeToString(public)
 	sentinel := errors.New("authenticated transition reached start")
@@ -114,7 +114,14 @@ func TestRunAuthenticatesTransitionStartupBeforeDispatch(t *testing.T) {
 			if scenario.selector {
 				executable = filepath.Join(home, "bin", "jobctrl")
 			}
-			calls := 0
+			calls, scopeCalls := 0, 0
+			// Run must complete the real prepare, receipt and journal guards
+			// before crossing this infrastructure-only boundary. Actual kernel
+			// scope launch/re-exec is covered by separate native entry tests.
+			ownedExecutionRunner = func(ctx launchContext, args []string, stdout, stderr io.Writer) error {
+				scopeCalls++
+				return dispatchCommand(ctx, args, stdout, stderr)
+			}
 			startCommand = func(ctx launchContext, _ []string, _ io.Writer) error {
 				calls++
 				if ctx.Distribution.BuildID != build {
@@ -130,11 +137,11 @@ func TestRunAuthenticatesTransitionStartupBeforeDispatch(t *testing.T) {
 			var output bytes.Buffer
 			err = Run(executable, scenario.args, env, &output, &output)
 			if scenario.allow {
-				if !errors.Is(err, sentinel) || calls != 1 {
-					t.Fatalf("authorized startup was blocked: calls=%d, err=%v", calls, err)
+				if !errors.Is(err, sentinel) || calls != 1 || scopeCalls != 1 {
+					t.Fatalf("authorized startup was blocked: calls=%d, scopeCalls=%d, err=%v", calls, scopeCalls, err)
 				}
-			} else if err == nil || errors.Is(err, sentinel) || calls != 0 {
-				t.Fatalf("unauthorized startup reached dispatch: calls=%d, err=%v", calls, err)
+			} else if err == nil || errors.Is(err, sentinel) || calls != 0 || scopeCalls != 0 {
+				t.Fatalf("unauthorized startup crossed the execution or dispatch boundary: calls=%d, scopeCalls=%d, err=%v", calls, scopeCalls, err)
 			}
 		})
 	}

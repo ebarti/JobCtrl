@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"os/exec"
@@ -14,7 +15,8 @@ import (
 )
 
 // The synthetic leader owns a same-group child and must finish its work before
-// the child exits. External group-wide TERM breaks that ordering.
+// the child exits. External group-wide TERM breaks that ordering. This legacy
+// fixture has no durable scope, so successful drain cannot certify all history.
 func TestCooperativeStopDrainsOwnedChild(t *testing.T) {
 	dir := os.Getenv("JOBCTRL_TEST_DRAIN_DIR")
 	switch os.Getenv("JOBCTRL_TEST_DRAIN_ROLE") {
@@ -151,8 +153,18 @@ func TestCooperativeStopDrainsOwnedChild(t *testing.T) {
 	if err := writeState(ctx.Instance.StatePath, state); err != nil {
 		t.Fatal(err)
 	}
-	if err := stop(ctx); err != nil {
-		t.Fatalf("owned component did not stop: %v", err)
+	before, err := os.ReadFile(ctx.Instance.StatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stop(ctx); !errors.Is(err, errUntrackedOwnership) {
+		t.Fatalf("legacy cleanup must retain its ownership uncertainty: %v", err)
+	}
+	if after, err := os.ReadFile(ctx.Instance.StatePath); err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("legacy cleanup changed the registry without durable ownership: %v", err)
+	}
+	if processPIDAlive(record.PID) || processPIDAlive(childPID) || processGroupAlive(record.PGID) {
+		t.Fatal("cooperative legacy cleanup left a recorded leader or child running")
 	}
 	if _, err := os.Stat(filepath.Join(dir, "child-signaled")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("child received external group signal: %v", err)
@@ -338,6 +350,15 @@ func TestStopDoesNotDuplicateSupervisorDrainSignal(t *testing.T) {
 			t.Fatal(err)
 		}
 		shutdownComponents(&state, nil, statePath)
+		// The supervisor may persist its own verified component exits. Stop
+		// must preserve those exact bytes without inventing a full legacy proof.
+		final, err := os.ReadFile(statePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "supervisor-final-state"), final, 0600); err != nil {
+			t.Fatal(err)
+		}
 		return
 	}
 	dir = t.TempDir()
@@ -396,18 +417,28 @@ func TestStopDoesNotDuplicateSupervisorDrainSignal(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitMarker("worker-draining")
-	if err := stop(ctx); err != nil {
+	if err := stop(ctx); !errors.Is(err, errUntrackedOwnership) {
 		if _, markerErr := os.Stat(filepath.Join(dir, "duplicate")); markerErr == nil {
 			t.Fatalf("stop delivered a duplicate worker signal while supervisor drained: %v", err)
 		}
-		t.Fatalf("stop raced supervisor cleanup: %v", err)
+		t.Fatalf("legacy cleanup did not retain its ownership uncertainty: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "duplicate")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("worker received a duplicate signal: %v", err)
 	}
+	expected, err := os.ReadFile(filepath.Join(dir, "supervisor-final-state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after, err := os.ReadFile(ctx.Instance.StatePath); err != nil || !bytes.Equal(expected, after) {
+		t.Fatalf("stop changed the supervisor's final legacy registry: %v", err)
+	}
 	final, err := readState(ctx.Instance.StatePath)
-	if err != nil || final.Components["worker"].ExitedAt == nil || final.StoppedAt == nil {
-		t.Fatalf("stop did not retain supervisor shutdown state: %#v, %v", final, err)
+	if err != nil || final.Components["worker"].ExitedAt == nil || final.StoppedAt != nil || final.OwnershipVerified {
+		t.Fatalf("stop did not preserve the supervisor drain without a false ownership proof: %#v, %v", final, err)
+	}
+	if processPIDAlive(worker.PID) || processGroupAlive(worker.PGID) || processPIDAlive(supervisor.PID) {
+		t.Fatal("cooperative legacy cleanup left a recorded worker or supervisor running")
 	}
 }
 
