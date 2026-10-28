@@ -161,7 +161,7 @@ export function JobRunTimelineWorkspace({
       >
         <div className="job-run-workspace__timeline">
           <Section title="Timeline">
-            <ApplyRunTimeline runId={runId} events={run?.events ?? []} applyEvents={run?.applyEvents ?? []} />
+            <ApplyRunTimeline jobId={jobId} runId={runId} events={run?.events ?? []} applyEvents={run?.applyEvents ?? []} />
           </Section>
         </div>
       </RouteWorkspace>

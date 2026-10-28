@@ -228,6 +228,10 @@ the stored payload. `events` continues to describe workflow lifecycle history.
 The optional `jobId` query parameter lets the job timeline recover its history
 while the Apply projection lags; a durable start must confirm the association.
 The lookup uses the tenant/job event index and never scans other jobs' events.
+For a durable Apply saga row with a run-event ID, the stream sends a safe
+`ApplyRunEventRecorded` summary before its original event frame. Only the
+original frame advances the SSE cursor, so an interruption between the frames
+replays the summary. The summary contains no stored event payload.
 
 Run detail separates `failureDiagnostics.automaticRetryable` from
 `failureDiagnostics.manualRecoveryAvailable`; the latter means an operator can

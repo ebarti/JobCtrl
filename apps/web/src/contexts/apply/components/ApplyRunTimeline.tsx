@@ -16,6 +16,7 @@ const EMPTY_EVENTS: readonly unknown[] = [];
 
 export interface ApplyRunTimelineProps {
   runId: string;
+  jobId?: string;
   events?: readonly unknown[];
   applyEvents?: readonly unknown[];
 }
@@ -36,7 +37,7 @@ export function applyRunEventLevelTone(level: string): StatusTagTone {
   return "info";
 }
 
-export function ApplyRunTimeline({ runId, events = EMPTY_EVENTS, applyEvents = EMPTY_EVENTS }: ApplyRunTimelineProps): JSX.Element {
+export function ApplyRunTimeline({ runId, jobId, events = EMPTY_EVENTS, applyEvents = EMPTY_EVENTS }: ApplyRunTimelineProps): JSX.Element {
   const tenantId = useTenantId();
   const queryKey = useMemo(() => applyRunsKeys.detail(tenantId, runId), [runId, tenantId]);
   const { data } = useQuery<ApplyRunWithEvents>({
@@ -52,6 +53,7 @@ export function ApplyRunTimeline({ runId, events = EMPTY_EVENTS, applyEvents = E
     const persisted = applyEvents.map(normalizeApplyRunEventEntry);
     const knownRunEvents = new Set(persisted.flatMap((event) => event.runEventId === undefined ? [] : [event.runEventId]));
     const live = (data?.events ?? []).map(normalizeApplyRunEventEntry).filter((event) => {
+      if (jobId && event.jobId !== jobId) return false;
       if (event.runEventId === undefined) return true;
       if (knownRunEvents.has(event.runEventId)) return false;
       knownRunEvents.add(event.runEventId);
@@ -65,7 +67,7 @@ export function ApplyRunTimeline({ runId, events = EMPTY_EVENTS, applyEvents = E
         return leftTime - rightTime || left.index - right.index;
       })
       .map(({ event }) => event);
-  }, [events, applyEvents, data?.events]);
+  }, [events, applyEvents, data?.events, jobId]);
 
   return (
     <div className="apply-run-timeline" data-run-id={runId}>

@@ -234,6 +234,47 @@ describe("event stream reconciliation", () => {
     expect(screen.getAllByText("Live synthetic event")).toHaveLength(1);
   });
 
+  it("retains live events during an initial run read and displays only the selected tenant, job, and run", async () => {
+    const queryClient = createTestQueryClient();
+    const ports = buildTestPorts({ eventStream: new SseEventStreamAdapter() });
+    const initial = deferred<{ events: unknown[]; applyEvents: unknown[] }>();
+    const refreshed = deferred<{ events: unknown[]; applyEvents: unknown[] }>();
+    const read = vi.fn().mockImplementationOnce(() => initial.promise).mockImplementationOnce(() => refreshed.promise);
+    const runId = "synthetic-run";
+    const jobId = "synthetic-job";
+    function View() {
+      const query = useQuery({ queryKey: workflowRunsKeys.jobDetail(LOCAL_TENANT, runId, jobId), queryFn: read });
+      return query.data ? <ApplyRunTimeline runId={runId} jobId={jobId} events={query.data.events} applyEvents={query.data.applyEvents} /> : <div>Loading run</div>;
+    }
+    render(<PortsProvider ports={ports}><TenantProvider><QueryClientProvider client={queryClient}>
+      <EventStreamProvider><View /></EventStreamProvider>
+    </QueryClientProvider></TenantProvider></PortsProvider>);
+    await screen.findByText("Loading run");
+    const source = ControlledEventSource.instances[0]!;
+    const envelope = (tenantId: string, job: string, run: string, message: string) => JSON.stringify({
+      tenantId, jobId: job, payload: { tenantId, jobId: job, runId: run, event: { event_id: 2, event_type: "BrowserLaunched", message } },
+    });
+    await act(async () => {
+      source.emit("open");
+      source.emit("ApplyRunEventRecorded", envelope(LOCAL_TENANT, "other-job", runId, "Wrong job"));
+      source.emit("ApplyRunEventRecorded", envelope("other-tenant", jobId, runId, "Wrong tenant"));
+      source.emit("ApplyRunEventRecorded", envelope(LOCAL_TENANT, jobId, "other-run", "Wrong run"));
+      source.emit("ApplyRunEventRecorded", envelope(LOCAL_TENANT, jobId, runId, "Live synthetic saga"));
+      source.emit("ApplyRunEventRecorded", envelope(LOCAL_TENANT, jobId, runId, "Live synthetic saga"));
+    });
+    expect(queryClient.getQueryData(applyRunsKeys.detail(LOCAL_TENANT, "other-run"))).toBeUndefined();
+    await act(async () => { initial.resolve({ events: [], applyEvents: [] }); await initial.promise; });
+    await screen.findByText("Live synthetic saga");
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    await act(async () => { refreshed.resolve({ events: [], applyEvents: [{ sourceEventId: "1", runEventId: 1,
+      type: "SagaStarted", at: null, level: "info", message: "Missed synthetic saga" }] }); await refreshed.promise; });
+    await screen.findByText("Missed synthetic saga");
+    expect(screen.getAllByText("Live synthetic saga")).toHaveLength(1);
+    expect(screen.queryByText("Wrong job")).not.toBeInTheDocument();
+    expect(screen.queryByText("Wrong tenant")).not.toBeInTheDocument();
+    expect(screen.queryByText("Wrong run")).not.toBeInTheDocument();
+  });
+
   it("scopes reconciliation and event delivery to the current subscription after a tenant switch", async () => {
     const otherTenant = "tenant-b" as TenantId;
     const queryClient = createTestQueryClient();

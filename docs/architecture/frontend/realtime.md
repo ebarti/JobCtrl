@@ -307,7 +307,9 @@ Two patterns exist; both have a place:
   operations invalidate because status membership and aggregation can change.
 - `ApplyRunEventRecorded` directly appends its complete ordered event. This
   high-frequency path avoids a refetch per event; a later read still provides
-  reconciliation.
+  reconciliation. Events arriving during an observed initial run read are
+  retained until the timeline mounts; the job timeline displays only events
+  bearing its selected job identity.
 
 The router never resets component-owned filters, selection, pagination, or
 scroll position. A query update changes data under the existing view state.

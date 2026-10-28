@@ -8,6 +8,7 @@ export interface ApplyRunEventEntry {
   readonly data: Record<string, unknown>;
   readonly runEventId?: number;
   readonly sourceEventId?: string;
+  readonly jobId?: string;
 }
 
 export interface ApplyRunWithEvents {
@@ -37,10 +38,12 @@ export function normalizeApplyRunEventEntry(event: unknown): ApplyRunEventEntry 
   const message = nullableText(source["message"]);
   const runEventId = source["runEventId"] ?? source["event_id"] ?? source["eventId"];
   const sourceEventId = source["sourceEventId"];
+  const jobId = source["jobId"];
   return {
     at, type, level, message, data,
     ...(typeof runEventId === "number" && Number.isSafeInteger(runEventId) && runEventId > 0 ? { runEventId } : {}),
     ...(typeof sourceEventId === "string" && sourceEventId ? { sourceEventId } : {}),
+    ...(typeof jobId === "string" && jobId ? { jobId } : {}),
   };
 }
 
@@ -56,5 +59,7 @@ export function appendApplyRunEvent<T extends ApplyRunWithEvents>(
     return undefined;
   }
   const entry = normalizeApplyRunEventEntry(event.payload.event);
-  return { ...current, events: [...current.events, entry] };
+  const jobId = (event.payload as unknown as Record<string, unknown>)["jobId"];
+  const scoped = typeof jobId === "string" && jobId ? { ...entry, jobId } : entry;
+  return { ...current, events: [...current.events, scoped] };
 }

@@ -38,8 +38,8 @@ export const applyRunStartedHandler = (
 
 // Per target §7.5 / §8.4: high-frequency apply-run timeline events
 // patch the cached projection in place rather than triggering a refetch
-// per per-second tick.  The patch is a no-op when the apply-run drawer
-// is closed (no cache entry yet); reopen re-fetches and reconciles.
+// per per-second tick. A loading, observed run retains events until its
+// timeline mounts; unrelated, unobserved runs do not create timeline caches.
 export const applyRunEventRecordedHandler = (
   event: ApplyRunEventRecorded,
 ): readonly InvalidationItem[] => {

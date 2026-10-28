@@ -1,8 +1,10 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 import Database from "better-sqlite3";
 import type { ProfileConfigResponse } from "@jobctrl/contracts";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-import { loadE2eDbPath, QA_PLATFORM_JOB_ID } from "../fixtures/e2e-state.js";
+import { loadE2eDbPath } from "../fixtures/e2e-state.js";
 
 test.setTimeout(90_000);
 
@@ -252,28 +254,41 @@ test("first open merges missed durable Apply history with an event arriving duri
   const streamGate = gate();
   const readGate = gate();
   const readCaptured = gate();
-  const inserted: Array<number | bigint> = [];
+  const jobId = "00000000-0000-4000-8000-00000000a484";
   const runId = "qa-lagged-apply-run";
   let streams = 0;
+  const streamEvents: Array<{ eventName: string; data: string }> = [];
   await observeNativeStream(page);
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Network.enable");
+  cdp.on("Network.eventSourceMessageReceived", (event) => streamEvents.push({ eventName: event.eventName, data: event.data }));
   await page.route("**/v1/events/stream**", async (route) => {
     streams++;
     await streamGate.promise;
     await route.continue().catch(() => undefined);
   });
   try {
+    db.prepare("INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at) VALUES ('local', ?, 'https://example.test/qa-apply', 'Synthetic job', 'Synthetic', 'test', ?)")
+      .run(jobId, "2026-05-04T12:00:00Z");
+    db.prepare("INSERT INTO job_stage_states (tenant_id, job_id, stage, state, updated_at) VALUES ('local', ?, 'apply', 'running', ?)")
+      .run(jobId, "2026-05-04T12:00:00Z");
     const columns = (db.pragma("table_info(workflow_run_projections)") as Array<{ name: string }>).map((column) => column.name);
     db.prepare(`INSERT INTO workflow_run_projections (${columns.join(", ")}) SELECT ${columns.map((column) => column === "workflow_id" ? "?" : column).join(", ")} FROM workflow_run_projections WHERE tenant_id = 'local' AND workflow_id = 'qa-run-1'`).run(runId);
-    await page.goto(`/jobs/${QA_PLATFORM_JOB_ID}/run/${runId}`, { waitUntil: "domcontentloaded" });
-    await expect(page.getByText("Apply workflow started (dry-run)")).toBeVisible({ timeout: 30_000 });
-    await expect.poll(() => streams).toBeGreaterThan(0);
     const insert = db.prepare(`INSERT INTO job_events
       (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json)
       VALUES ('local', ?, 1, 'apply', ?, 'info', ?, ?, ?)`);
-    inserted.push(insert.run(QA_PLATFORM_JOB_ID, "ApplyRunStarted", "Synthetic Apply start", "2026-05-04T12:00:00Z",
-      JSON.stringify({ run_id: runId })).lastInsertRowid);
-    inserted.push(insert.run(QA_PLATFORM_JOB_ID, "SagaStarted", "Missed synthetic Apply event", "2026-05-04T12:00:01Z",
-      JSON.stringify({ run_id: runId, event_id: 71 })).lastInsertRowid);
+    insert.run(jobId, "ApplyRunStarted", "Synthetic Apply start", "2026-05-04T12:00:00Z", JSON.stringify({ run_id: runId }));
+    const writeSaga = (count: number) => {
+      const result = spawnSync("uv", ["--project", "workers/automation", "run", "--locked", "--no-sync", "python",
+        fileURLToPath(new URL("../fixtures/write-apply-saga-event.py", import.meta.url)), loadE2eDbPath(), jobId, runId, String(count)], {
+        cwd: fileURLToPath(new URL("../../../../", import.meta.url)), encoding: "utf8", timeout: 30_000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+    };
+    await page.goto(`/jobs/${jobId}/run/${runId}`, { waitUntil: "domcontentloaded" });
+    await expect(page.getByText("Apply workflow started (dry-run)")).toBeVisible({ timeout: 30_000 });
+    await expect.poll(() => streams).toBeGreaterThan(0);
+    writeSaga(1);
     expect(db.prepare("SELECT 1 FROM apply_run_projections WHERE tenant_id = 'local' AND run_id = ?").get(runId)).toBeUndefined();
     await page.route(`**/v1/workflow-runs/${runId}**`, async (route) => {
       const response = await route.fetch();
@@ -284,24 +299,30 @@ test("first open merges missed durable Apply history with an event arriving duri
     streamGate.release();
     await waitForNativeOpen(page);
     await readCaptured.promise;
-    inserted.push(insert.run(QA_PLATFORM_JOB_ID, "ApplyRunEventRecorded", "stream event", "2026-05-04T12:00:02Z",
-      JSON.stringify({ runId, event: { event_id: 72, event_type: "SyntheticLive", level: "info", message: "Live synthetic Apply event", occurred_at: "2026-05-04T12:00:02Z" } })).lastInsertRowid);
+    writeSaga(2);
     await expect(page.getByText("Live synthetic Apply event")).toBeVisible({ timeout: 15_000 });
+    const liveFrame = streamEvents.find((event) => event.eventName === "ApplyRunEventRecorded" && event.data.includes("Live synthetic Apply event"));
+    expect(liveFrame).toBeDefined();
+    expect(liveFrame!.data).not.toContain("private_synthetic_canary");
     readGate.release();
     await expect(page.getByText("Missed synthetic Apply event")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("Live synthetic Apply event")).toHaveCount(1);
-    const detail = await (await page.request.get(`/v1/workflow-runs/${runId}?jobId=${QA_PLATFORM_JOB_ID}`)).json();
+    const detail = await (await page.request.get(`/v1/workflow-runs/${runId}?jobId=${jobId}`)).json();
     expect(detail.applyEvents).toEqual(expect.arrayContaining([
-      expect.objectContaining({ runEventId: 71, message: "Missed synthetic Apply event" }),
-      expect.objectContaining({ runEventId: 72, message: "Live synthetic Apply event" }),
+      expect.objectContaining({ runEventId: 1, message: "Missed synthetic Apply event" }),
+      expect.objectContaining({ runEventId: 2, message: "Live synthetic Apply event" }),
     ]));
+    expect(db.prepare("SELECT event_type FROM job_events WHERE tenant_id = 'local' AND job_id = ? AND event_type IN ('SagaStarted', 'BrowserLaunched') ORDER BY event_id").all(jobId))
+      .toEqual([{ event_type: "SagaStarted" }, { event_type: "BrowserLaunched" }]);
     await page.screenshot({ path: testInfo.outputPath("first-open-apply-timeline.png") });
   } finally {
     streamGate.release();
     readGate.release();
-    for (const id of inserted) db.prepare("DELETE FROM job_events WHERE event_id = ?").run(id);
+    db.prepare("DELETE FROM job_events WHERE tenant_id = 'local' AND job_id = ?").run(jobId);
     db.prepare("DELETE FROM apply_run_projections WHERE tenant_id = 'local' AND run_id = ?").run(runId);
     db.prepare("DELETE FROM workflow_run_projections WHERE tenant_id = 'local' AND workflow_id = ?").run(runId);
+    db.prepare("DELETE FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ?").run(jobId);
+    db.prepare("DELETE FROM jobs WHERE tenant_id = 'local' AND job_id = ?").run(jobId);
     db.close();
   }
 });
