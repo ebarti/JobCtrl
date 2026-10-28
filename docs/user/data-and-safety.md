@@ -153,6 +153,11 @@ Unless a row says otherwise, every path below is relative to JOBCTRL_DIR
 | `gmail/` | Gmail OAuth client and token files. |
 | Baseline/legacy resume files | `resume.txt`, `resume.pdf`, and older local style/template files. |
 
+The resume-import wizard also keeps its selected PDF and filename in the web
+app's browser-local storage, outside `JOBCTRL_DIR`. Cancel keeps that selection;
+earlier-version import data remains separately stored even after current cleanup.
+removal and failure recovery are described in [Candidate Profile](candidate-profile.md#current-import-limitation).
+
 PDFs created with a Plate editor's **Export PDF** control are ordinary browser
 downloads, so their destination is the download location selected by the
 browser or operating system rather than `JOBCTRL_DIR`. JobCtrl does not register

@@ -57,11 +57,35 @@ resume, or application decision actually used.
 ## Current Import Limitation
 
 The web import flow previews your PDF and asks whether to extract profile data,
-style, or both. Its confirmation currently receives an API draft, clears the
+style, or both. Its confirmation currently receives an API draft, removes the
 upload state and returns to `/profile`, which loads the saved profile. It does
 not populate the editor with that extracted draft or save imported facts. Review
 and save deliberate changes through Profile; completing import alone does not
 establish a saved change.
+
+The selected PDF and its filename are stored in this browser so the wizard can
+survive navigation and refresh. Leaving the wizard or choosing **Cancel** keeps
+the saved PDF. **Remove saved PDF** clears the current selection, as does
+successful import cleanup. An earlier version's separate saved copy is retained:
+the upload step identifies it and offers a download when it can be read.
+Removing the current selection does not erase that earlier copy; clearing this
+site's browser data removes both copies. If the browser
+cannot read, save, or remove its data, the wizard explains the failure and lets
+you retry. A failed replacement leaves the previously saved selection unchanged.
+If import succeeds but removing the PDF fails, retrying removal does not repeat
+the import request. Once removal succeeds, you can choose the same PDF again
+and start a new import; an identical request already running must first finish.
+The request's PDF, filename and options and the returned draft stay in memory
+for the current app session, even after the stored upload is removed. The draft
+is not staged in the Profile editor; reloading the app clears these in-memory
+copies. If cleanup failed before a reload, the app no longer knows the earlier
+request completed, so submitting again can repeat it.
+
+The current version coordinates saves and removal between open tabs. If another
+tab changes the selection, return to upload and choose **Load latest saved
+PDF** before continuing. If browser storage is unavailable, enable site data and retry in a current browser. Reload or close
+older JobCtrl tabs: older versions cannot coordinate with each other and may
+still change the earlier copy. They cannot erase the current version's record.
 
 Reviewed multi-source intake, duplicate/conflict reconciliation and item-level
 fact promotion are **proposed, not implemented**. The [owning intake design and
