@@ -256,6 +256,8 @@ test("first open merges missed durable Apply history with an event arriving duri
   const readCaptured = gate();
   const jobId = "00000000-0000-4000-8000-00000000a484";
   const runId = "qa-lagged-apply-run";
+  const workflowMessage = "Synthetic Apply workflow started";
+  let workflowEventId: number | bigint | undefined;
   let streams = 0;
   const streamEvents: Array<{ eventName: string; data: string }> = [];
   await observeNativeStream(page);
@@ -272,8 +274,17 @@ test("first open merges missed durable Apply history with an event arriving duri
       .run(jobId, "2026-05-04T12:00:00Z");
     db.prepare("INSERT INTO job_stage_states (tenant_id, job_id, stage, state, updated_at) VALUES ('local', ?, 'apply', 'running', ?)")
       .run(jobId, "2026-05-04T12:00:00Z");
-    const columns = (db.pragma("table_info(workflow_run_projections)") as Array<{ name: string }>).map((column) => column.name);
-    db.prepare(`INSERT INTO workflow_run_projections (${columns.join(", ")}) SELECT ${columns.map((column) => column === "workflow_id" ? "?" : column).join(", ")} FROM workflow_run_projections WHERE tenant_id = 'local' AND workflow_id = 'qa-run-1'`).run(runId);
+    const startedAt = "2026-05-04T12:00:00Z";
+    db.prepare(`INSERT INTO workflow_run_projections
+      (workflow_id, tenant_id, workflow_type, status, input_summary_json, retryable, started_at, events_json)
+      VALUES (?, 'local', 'ApplyWorkflow', 'in_progress', '{}', 0, ?, ?)`)
+      .run(runId, startedAt, JSON.stringify([{ eventType: "WorkflowStarted", occurredAt: startedAt,
+        status: "in_progress", message: workflowMessage }]));
+    workflowEventId = db.prepare(`INSERT INTO job_events
+      (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json)
+      VALUES ('local', NULL, 1, 'workflow', 'WorkflowStarted', 'info', ?, ?, ?)`)
+      .run(workflowMessage, startedAt, JSON.stringify({ workflowId: runId, workflowType: "ApplyWorkflow",
+        status: "in_progress", startedAt, message: workflowMessage })).lastInsertRowid;
     const insert = db.prepare(`INSERT INTO job_events
       (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json)
       VALUES ('local', ?, 1, 'apply', ?, 'info', ?, ?, ?)`);
@@ -285,8 +296,13 @@ test("first open merges missed durable Apply history with an event arriving duri
       });
       expect(result.status, result.stderr).toBe(0);
     };
+    const initialRead = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === `/v1/workflow-runs/${runId}` && response.ok(), { timeout: 30_000 });
     await page.goto(`/jobs/${jobId}/run/${runId}`, { waitUntil: "domcontentloaded" });
-    await expect(page.getByText("Apply workflow started (dry-run)")).toBeVisible({ timeout: 30_000 });
+    expect((await (await initialRead).json()).events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ eventType: "WorkflowStarted", message: workflowMessage }),
+    ]));
+    await expect(page.getByText(workflowMessage)).toBeVisible({ timeout: 30_000 });
     await expect.poll(() => streams).toBeGreaterThan(0);
     writeSaga(1);
     expect(db.prepare("SELECT 1 FROM apply_run_projections WHERE tenant_id = 'local' AND run_id = ?").get(runId)).toBeUndefined();
@@ -319,6 +335,7 @@ test("first open merges missed durable Apply history with an event arriving duri
     streamGate.release();
     readGate.release();
     db.prepare("DELETE FROM job_events WHERE tenant_id = 'local' AND job_id = ?").run(jobId);
+    if (workflowEventId !== undefined) db.prepare("DELETE FROM job_events WHERE event_id = ?").run(workflowEventId);
     db.prepare("DELETE FROM apply_run_projections WHERE tenant_id = 'local' AND run_id = ?").run(runId);
     db.prepare("DELETE FROM workflow_run_projections WHERE tenant_id = 'local' AND workflow_id = ?").run(runId);
     db.prepare("DELETE FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ?").run(jobId);
