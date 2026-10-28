@@ -1,0 +1,123 @@
+name: QA 1322 unsigned distribution smoke
+
+on:
+  push:
+    branches: ["qa/1322-bundled-smoke-20261028"]
+
+permissions:
+  contents: read
+
+jobs:
+  unsigned-payload:
+    name: Unsigned bundled capture and restart
+    runs-on: macos-15
+    timeout-minutes: 150
+    steps:
+      - name: Create isolated tool directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/jobctrl-qa-home" "$RUNNER_TEMP/jobctrl-qa-cache" "$RUNNER_TEMP/jobctrl-qa-config" "$RUNNER_TEMP/jobctrl-qa-uv-cache" "$RUNNER_TEMP/jobctrl-qa-tmp"
+          printf '%s\n' "HOME=$RUNNER_TEMP/jobctrl-qa-home" "XDG_CACHE_HOME=$RUNNER_TEMP/jobctrl-qa-cache" "XDG_CONFIG_HOME=$RUNNER_TEMP/jobctrl-qa-config" "UV_CACHE_DIR=$RUNNER_TEMP/jobctrl-qa-uv-cache" "TMPDIR=$RUNNER_TEMP/jobctrl-qa-tmp" >> "$GITHUB_ENV"
+      - name: Checkout exact QA commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify reviewed parent and QA-only changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^)" = 59a996e63dc23d8336b2f7d5ca17c0d01238b498
+          test "$(git rev-parse HEAD:scripts/distribution-build.mjs)" = d48868b9c62b65185c4b9a51780b718907f839b2
+          test "$(git rev-parse HEAD:scripts/distribution-build.test.mjs)" = c73878afb9018d5978b604a2858b2264503f27be
+          printf '%s\n' .github/workflows/qa-1322-distribution.yml scripts/distribution-build.mjs scripts/distribution-build.test.mjs | LC_ALL=C sort > "$RUNNER_TEMP/expected-qa-paths"
+          git diff --name-only HEAD^ HEAD | LC_ALL=C sort > "$RUNNER_TEMP/actual-qa-paths"
+          diff -u "$RUNNER_TEMP/expected-qa-paths" "$RUNNER_TEMP/actual-qa-paths"
+      - name: Set up pinned Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.21.1
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: 0.11.7
+      - name: Verify isolated uv configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$(uv --version)" in "uv 0.11.7"|"uv 0.11.7 "*) ;; *) exit 1 ;; esac
+          if [[ -n "${UV_EXCLUDE_NEWER+x}" ]]; then
+            echo "Unexpected UV_EXCLUDE_NEWER override" >&2
+            exit 1
+          fi
+          uv export --project workers/automation --frozen --no-dev --no-default-groups --no-emit-project --python 3.12 --offline --output-file "$RUNNER_TEMP/jobctrl-qa-core-requirements.txt" > /dev/null
+          uv export --project workers/automation --frozen --no-dev --no-default-groups --no-emit-project --python 3.12 --offline --format cyclonedx1.5 --output-file "$RUNNER_TEMP/jobctrl-qa-core-sbom.json" > /dev/null
+      - name: Install locked dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Build and smoke an unsigned local payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/distribution-build.mjs real \
+            --output "$RUNNER_TEMP/jobctrl-qa-payload" \
+            --cache "$RUNNER_TEMP/jobctrl-qa-downloads" \
+            --build-id qa-1322-bundled-smoke \
+            --source-date-epoch "$(git show -s --format=%ct HEAD^)" \
+            > "$RUNNER_TEMP/jobctrl-qa-summary.json"
+          jq -e '.mode == "real" and .smoke.status == "pass" and .smoke.credentialIsolation.status == "pass" and .smoke.credentialIsolation.nativeCredentialReads == 0 and .smoke.semanticModel.provider == "distribution-smoke" and .smoke.semanticModel.boundary == "model-port-test-double" and .smoke.networkIsolation.nonLoopbackProbe.status == "blocked" and .smoke.postSmokePayloadTree == "exact-manifest-match" and .smoke.manualCaptureWorkflow.status == "succeeded" and .smoke.runtimeRestart.status == "pass" and .smoke.runtimeRestart.jobPersisted == true and .smoke.runtimeRestart.workflowProjectionPersisted == true and .smoke.runtimeRestart.temporalRunPersisted == true' "$RUNNER_TEMP/jobctrl-qa-summary.json" > /dev/null
+          jq -c '{mode, manifestSha256, archiveSha256, smoke: {status: .smoke.status, credentialIsolation: .smoke.credentialIsolation, semanticModel: .smoke.semanticModel, manualCaptureWorkflow: .smoke.manualCaptureWorkflow, runtimeRestart: .smoke.runtimeRestart, runtimeTermination: .smoke.runtimeTermination, networkIsolation: .smoke.networkIsolation}}' "$RUNNER_TEMP/jobctrl-qa-summary.json"
+
+  linux-browser:
+    name: Synthetic two-alert capture recovery
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Create isolated tool directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/jobctrl-linux-qa"
+          mkdir -p "$root/home" "$root/cache" "$root/config" "$root/corepack" "$root/browsers" "$root/tmp/workspaces"
+          printf '%s\n' "HOME=$root/home" "XDG_CACHE_HOME=$root/cache" "XDG_CONFIG_HOME=$root/config" "COREPACK_HOME=$root/corepack" "PLAYWRIGHT_BROWSERS_PATH=$root/browsers" "TMPDIR=$root/tmp" >> "$GITHUB_ENV"
+      - name: Checkout exact QA commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify exact parent and QA-only paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^)" = 59a996e63dc23d8336b2f7d5ca17c0d01238b498
+          printf '%s\n' .github/workflows/qa-1322-distribution.yml scripts/distribution-build.mjs scripts/distribution-build.test.mjs | LC_ALL=C sort > "$RUNNER_TEMP/linux-expected-qa-paths"
+          git diff --name-only HEAD^ HEAD | LC_ALL=C sort > "$RUNNER_TEMP/linux-actual-qa-paths"
+          diff -u "$RUNNER_TEMP/linux-expected-qa-paths" "$RUNNER_TEMP/linux-actual-qa-paths"
+      - name: Set up pinned Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.21.1
+      - name: Install locked dependencies and hosted Chromium
+        run: |
+          corepack pnpm install --frozen-lockfile
+          corepack pnpm --filter @jobctrl/web exec playwright install --with-deps chromium
+      - name: Exercise both alerts with loopback-only networking
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo unshare --net -- /bin/bash -euo pipefail -c '
+            ip link set lo up
+            test "$(ip -o link show | wc -l)" -eq 1
+            exec runuser -u "$1" -- env -i \
+              PATH="$3" HOME="$2/home" TMPDIR="$2/tmp" \
+              XDG_CACHE_HOME="$2/cache" XDG_CONFIG_HOME="$2/config" COREPACK_HOME="$2/corepack" \
+              PLAYWRIGHT_BROWSERS_PATH="$2/browsers" JOBCTRL_E2E_APP_DIR="$2/tmp/workspaces" \
+              JOBCTRL_E2E_ISOLATED=1 JOBCTRL_E2E_PROFILE_SUGGESTIONS=1 CI=true \
+              corepack pnpm --filter @jobctrl/web exec playwright test --config=e2e/playwright.config.ts \
+                e2e/tests/manual-capture-recovery.spec.ts --project=chromium --retries=0
+          ' _ "$(id -un)" "$RUNNER_TEMP/jobctrl-linux-qa" "$PATH"

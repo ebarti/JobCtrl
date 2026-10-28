@@ -2501,6 +2501,15 @@ export async function prepareExtractedSmokeLayout({ archivePath, outputRoot }) {
   const stateRoot = path.join(canonicalHomeRoot, ".jobctrl");
   await mkdir(stateRoot, { recursive: true, mode: 0o700 });
   const canonicalStateRoot = await realpath(stateRoot);
+  // QA-only sentinels keep every native credential fallback out of this
+  // owned state. The model port remains the explicit smoke test double.
+  await writeFile(path.join(canonicalStateRoot, ".env"), [
+    "OPENAI_API_KEY=synthetic-smoke-not-a-credential",
+    "ANTHROPIC_API_KEY=synthetic-smoke-not-a-credential",
+    "GEMINI_API_KEY=synthetic-smoke-not-a-credential",
+    "CAPSOLVER_API_KEY=synthetic-smoke-not-a-credential",
+    "",
+  ].join("\n"), { mode: 0o600, flag: "wx" });
   invariant(
     canonicalHomeRoot !== payloadRoot
       && !canonicalHomeRoot.startsWith(`${payloadRoot}${path.sep}`)
@@ -2546,6 +2555,27 @@ async function smokeExtractedPayload(archivePath, outputRoot, contracts, {
   };
   await mkdir(stockEnvironment.JOBCTRL_DIR, { recursive: true, mode: 0o700 });
   const nodeExecutable = path.join(payloadRoot, contracts.componentPaths.get("node-runtime"), "bin", "node");
+  const credentialFence = await runLoopbackSandboxed(stockEnvironment.JOBCTRL_PYTHON_EXECUTABLE, [
+    "-I", "-B", "-c",
+    `import json
+from jobctrl.native_credentials import NativeCredentialStore, PROVIDER_SECRET_KEYS
+
+def blocked(*args, **kwargs):
+    raise AssertionError("native credential store must not be read in this smoke")
+
+NativeCredentialStore.read = blocked
+NativeCredentialStore.inspect = blocked
+from jobctrl.config import load_env
+expected = {"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "CAPSOLVER_API_KEY"}
+assert set(PROVIDER_SECRET_KEYS) == expected
+diagnostics = load_env()
+assert {row.key for row in diagnostics} == expected
+assert all(row.status == "explicit" for row in diagnostics)
+print(json.dumps({"status": "pass", "nativeCredentialReads": 0}, sort_keys=True))`,
+  ], { cwd: payloadRoot, env: stockEnvironment });
+  const credentialIsolation = JSON.parse(credentialFence.stdout.trim());
+  invariant(credentialIsolation.status === "pass" && credentialIsolation.nativeCredentialReads === 0,
+            "synthetic smoke did not fence native credential reads");
   const networkProbe = await runLoopbackSandboxed(stockEnvironment.JOBCTRL_PYTHON_EXECUTABLE, [
     "-I", "-B", "-c",
     `import json
@@ -2865,6 +2895,7 @@ with sync_playwright() as playwright:
     runtimeRestart: restartEvidence,
     runtimeTermination: { first: firstTermination, second: secondTermination },
     nativeLauncherLifecycle,
+    credentialIsolation,
     networkIsolation,
     postSmokePayloadTree: "exact-manifest-match",
     extractionForbiddenAudit,

@@ -826,12 +826,15 @@ test("smoke extraction keeps generated state outside the exact immutable payload
   assert.ok(!layout.homeRoot.startsWith(`${layout.payloadRoot}${path.sep}`));
   assert.ok(!layout.stateRoot.startsWith(`${layout.payloadRoot}${path.sep}`));
   assert.ok(!layout.payloadRoot.startsWith(`${layout.homeRoot}${path.sep}`));
+  const envFile = path.join(layout.stateRoot, ".env");
+  assert.equal((await lstat(envFile)).mode & 0o777, 0o600);
+  assert.deepEqual((await readFile(envFile, "utf8")).trim().split("\n").map((line) => line.split("=")[0]), [
+    "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "CAPSOLVER_API_KEY",
+  ]);
 
   await writeFile(path.join(layout.stateRoot, "distribution-smoke.pdf"), "smoke state\n", { mode: 0o644 });
   assert.equal(await verifyExactPayloadTree(layout.payloadRoot, build.manifest), true);
-  assert.ok((await buildFileInventory(layout.canonicalExtractedRoot)).some(
-    (file) => file.path === "home/.jobctrl/distribution-smoke.pdf",
-  ));
+  assert.ok((await lstat(path.join(layout.stateRoot, "distribution-smoke.pdf"))).isFile());
   assert.ok(!(await buildFileInventory(layout.payloadRoot)).some(
     (file) => file.path === "home/.jobctrl/distribution-smoke.pdf",
   ));
