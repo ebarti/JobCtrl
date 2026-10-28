@@ -849,6 +849,11 @@ test("installed Python pruning removes proven build sources, docs, examples, and
     ["google/protobuf/testdata/__init__.py", ""],
     ["numpy/random/_examples/example.pyx", "source\n"],
     ["playwright/driver/README.md", "docs\n"],
+    ["playwright/driver/package/lib/tools/skills/playwright-cli/SKILL.md", "development docs\n"],
+    ["playwright/driver/package/lib/tools/skills/playwright-trace/SKILL.md", "development docs\n"],
+    ["playwright/driver/package/lib/coreBundle.js", "runtime\n"],
+    ["typer/.agents/skills/typer/SKILL.md", "development docs\n"],
+    ["typer/main.py", "runtime\n"],
     ["temporalio/contrib/openai_agents/README.md", "docs\n"],
     ["runtime-package/.gitattributes", "*.py text\n"],
     ["runtime-package/.gitmodules", "[submodule]\n"],
@@ -860,6 +865,7 @@ test("installed Python pruning removes proven build sources, docs, examples, and
     await writeFile(destination, contents, { mode: 0o644 });
   }
 
+  await assert.rejects(scanForbiddenPayload(root), /known non-runtime Python source\/docs\/fixture closure/);
   const result = await pruneInstalledPythonTree(root);
 
   assert.equal(result.temporalBridge.status, "temporal-bridge-build-sources-pruned");
@@ -871,8 +877,11 @@ test("installed Python pruning removes proven build sources, docs, examples, and
   ]);
   assert.deepEqual((await buildFileInventory(root)).map((file) => file.path), [
     "httpx-1.0.dist-info/licenses/LICENSE.md",
+    "playwright/driver/package/lib/coreBundle.js",
     "temporalio/bridge/temporal_sdk_bridge.abi3.so",
+    "typer/main.py",
   ]);
+  await assert.doesNotReject(scanForbiddenPayload(root));
 });
 
 test("forbidden scan rejects provider packs, dev tools, caches, and build-path leaks", async (context) => {

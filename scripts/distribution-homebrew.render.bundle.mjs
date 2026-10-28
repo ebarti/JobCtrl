@@ -9229,7 +9229,9 @@ var PYTHON_RUNTIME_NON_RUNTIME_PATHS = /* @__PURE__ */ new Set([
   "opentelemetry/sdk/_configuration/README.md",
   "opentelemetry/sdk/metrics/_internal/exponential_histogram/mapping/ieee_754.md",
   "playwright/driver/README.md",
-  "playwright/driver/package/README.md"
+  "playwright/driver/package/README.md",
+  "playwright/driver/package/lib/tools/skills",
+  "typer/.agents/skills"
 ]);
 function invariant3(condition, message) {
   if (!condition) throw new Error(message);
