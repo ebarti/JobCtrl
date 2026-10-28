@@ -2323,6 +2323,10 @@ data: {"tenantId":"local","jobId":"job-...","artifactId":"...","generation":2,"a
 
 event: heartbeat
 data: {"watermark":12346}
+
+# Sent when database access or polling fails:
+event: error
+data: {"code":"event_stream_unavailable"}
 ```
 
 Each frame:
@@ -2382,7 +2386,56 @@ Tenant scope is mandatory; there is no "all tenants" mode
    neither is supplied — first connect streams from the current tail with
    no backfill).
 
-If both header and query are present, `Last-Event-ID` wins.
+If both header and query are present, `Last-Event-ID` wins. When the database is
+absent or unavailable at first connection and no resume position is supplied,
+the cursor starts at zero because the current tail cannot be read; restoration
+can therefore replay historical events. The server retains an established
+subscriber's cursor across a database failure and resumes after it when the
+observed database path identity and schema remain unchanged.
+
+### Database failures
+
+If opening, validating, or polling the event database fails, the API sends each
+subscriber an `error` event with code `event_stream_unavailable` and keeps the
+stream open. The browser adapter treats this event as disconnected. The event
+contains no SQLite error, path, or event data. Keepalive comments continue, but
+heartbeats are suppressed while the stream is unavailable. The server retries
+database access at most once every five seconds while subscribers remain; after
+a successful poll of the same database, it resumes ordered, tenant-scoped
+delivery and sends a heartbeat. The stream retains its first accepted SQLite
+connection across read failures and checks the path identity and schema before
+and after reads before publishing their results. If no valid database was ever
+opened, the first valid database can be admitted automatically. Closing the last subscriber stops
+polling. If the database has never existed since the stream was registered, it
+remains a quiet stream until it appears.
+
+Once a valid database has been opened, an observed file identity or schema
+change cannot prove that its event history continues the old one. The stream
+stops polling, sends
+`event: error` with code `event_stream_workspace_changed`, and stays degraded for
+all subscribers without replay or heartbeat. That frame includes an empty `id:`
+field so an `EventSource` that receives it clears its saved `Last-Event-ID` for
+native reconnects. It cannot clear an explicit `?since` in the request URL;
+callers must discard that cursor when creating a fresh subscription.
+
+The web adapter keeps the old subscription in `workspace_changed` status even
+if its transport reconnects, and ignores its domain events. The UI instructs the
+user to stop JobCtrl and inspect the workspace using the
+[stopped restore procedure](../user/data-and-safety.md#back-up-and-restore),
+then restart the JobCtrl runtime and reload the page for a fresh subscription.
+A machine reboot is not part of this recovery. If a tab was offline and never
+received the reset frame, its old native cursor can survive an API restart;
+numeric event IDs cannot establish history continuity across that restart or an
+unsupported in-place database rewrite. SQLite schema rejection remains enforced;
+this behavior does not repair or modify the database.
+
+Path checks do not prove the identity of the SQLite handle opened during first
+admission. If the live path changes from database A to B and back to A while the
+connection is opening, SQLite can open B while both path checks see A; the stream
+can then publish B's events without a workspace-change warning. Replacing or
+restoring a database while JobCtrl is running is unsupported. Stop the runtime
+before using the [restore procedure](../user/data-and-safety.md#back-up-and-restore),
+then restart JobCtrl and reload the page for a fresh subscription.
 
 ### Cadences
 

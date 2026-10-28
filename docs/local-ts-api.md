@@ -407,8 +407,14 @@ verification sequence is in [Local Development](local-development.md).
 ## Server-Sent Events — `GET /v1/events/stream`
 
 The endpoint tails tenant-scoped `job_events`, emits typed SSE frames, and uses
-event IDs for replay. The browser invalidation router maps each event type to the
-smallest safe query-key set. See
+event IDs for replay. If the event database cannot be opened or read, the stream
+signals that it is unavailable and retains each subscriber's cursor. It retries
+without terminating the API; a detected database change sends a cursor-reset
+signal and stays degraded until stopped-runtime recovery and a fresh UI
+subscription. The browser shows the recovery steps. Path checks cannot identify
+an A → B → A replacement during initial SQLite open; stop JobCtrl before any
+database restore or replacement. The invalidation router
+maps each event type to the smallest safe query-key set. See
 [Operations & Events](api/operations-and-events.md#server-sent-events) and the
 [frontend realtime architecture](architecture/frontend/realtime.md).
 

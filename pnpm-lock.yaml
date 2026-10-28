@@ -105,6 +105,9 @@ importers:
       '@types/node':
         specifier: ^25.6.0
         version: 25.9.2
+      eventsource:
+        specifier: 3.0.7
+        version: 3.0.7
       tsx:
         specifier: ^4.23.15
         version: 4.23.15

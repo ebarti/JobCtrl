@@ -321,9 +321,22 @@ typed Server-Sent Events. The client:
 3. invalidates or safely patches the cache, and
 4. lets projection reads reconcile the UI.
 
-Event IDs support reconnect replay; keepalives preserve quiet connections. See
-the [frontend realtime design](../architecture/frontend/realtime.md) for cache
-behavior and the [complete SSE contract](complete-contract.md#server-sent-events-—-get-v1eventsstream)
+Event IDs support reconnect replay; keepalives preserve quiet connections. A
+database access or query failure sends an `error` event without database details,
+pauses heartbeat claims, and retries database access every five seconds while
+keeping each subscriber's tenant and cursor. A successful poll of the same
+database resumes delivery and sends a heartbeat. If a database change is
+detected, the stream sends a reset for the native reconnect cursor and remains
+degraded instead of applying the old cursor to a different history. The UI shows the
+stopped-runtime recovery and reload steps. A caller that supplied `?since` must
+discard that URL cursor when creating a fresh subscription. A tab that never
+received the reset frame cannot establish continuity across an offline restore.
+Path checks cannot verify the SQLite handle if the path changes A → B → A during
+first admission, so that unsupported live replacement can emit the wrong history
+without a warning. Stop JobCtrl before restoring or replacing the database, then
+restart it and reload the page.
+An absent database at first connection remains a quiet stream. See the [frontend realtime design](../architecture/frontend/realtime.md)
+for cache behavior and the [complete SSE contract](complete-contract.md#server-sent-events-—-get-v1eventsstream)
 for framing and precedence rules.
 
 `DryRunCompleted` refreshes apply history, run reads, the review queue, job reads

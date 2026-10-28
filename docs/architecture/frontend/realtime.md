@@ -198,6 +198,18 @@ and above the theme/density providers. It also exposes `useEventStreamStatus`
 (consumed by `<ConnectionStatusPill>`). It renders no UI of its own — it
 manages the subscription lifecycle.
 
+A detected workspace database change carries an empty SSE `id:` to clear the
+native reconnect cursor and reports `workspace_changed`. The adapter keeps that
+status and ignores events on the old subscription even if the transport reconnects.
+The status pill shows the stopped-runtime inspection, JobCtrl restart, and page
+reload steps. A fresh subscription clears the latch; explicit `?since` callers
+must discard their own URL cursor. A tab that was offline when the server sent
+the reset cannot establish event-history continuity from its old numeric cursor.
+Path checks can also miss an A → B → A replacement during initial SQLite open;
+always stop JobCtrl before a database restore or replacement.
+The [API contract](../../api/complete-contract.md#database-failures) owns the
+wire format and recovery boundary.
+
 ## 7.4 The Invalidation Router
 
 A pure function maps each `DomainEvent` to tenant-scoped invalidation or exact

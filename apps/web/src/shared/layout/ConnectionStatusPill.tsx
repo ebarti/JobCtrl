@@ -8,6 +8,7 @@ const STATUS_LABEL: Record<EventStreamStatus, string> = {
   connecting: "Connecting",
   open: "Live",
   closed: "Reconnecting",
+  workspace_changed: "Workspace changed",
 };
 
 const CONNECTION_LOST_THRESHOLD_MS = 30_000;
@@ -17,18 +18,21 @@ export function ConnectionStatusPill() {
   const health = useHealthQuery();
   const workerStatus = health.data?.worker.status ?? "healthy";
   const workerUnhealthy = workerStatus !== "healthy";
+  const workspaceChanged = status === "workspace_changed";
   const lostForLong = useDisconnectedLongerThan(status, CONNECTION_LOST_THRESHOLD_MS);
-  const label = workerUnhealthy
-    ? "Worker unavailable"
-    : lostForLong
-      ? "Offline"
-      : STATUS_LABEL[status];
+  const label = workspaceChanged
+    ? STATUS_LABEL.workspace_changed
+    : workerUnhealthy
+      ? "Worker unavailable"
+      : lostForLong
+        ? "Offline"
+        : STATUS_LABEL[status];
   const spend = health.data?.llmSpend;
   return (
     <div className="connection-pill-group">
       <span
         className="connection-pill"
-        data-status={workerUnhealthy ? "lost" : lostForLong ? "lost" : status}
+        data-status={workspaceChanged || workerUnhealthy || lostForLong ? "lost" : status}
         aria-live="polite"
         data-typography="status"
       >
@@ -44,7 +48,17 @@ export function ConnectionStatusPill() {
           {formatSpendLine(spend.estimatedUsd, spend.dailyBudgetUsd, spend.unlimited)}
         </span>
       ) : null}
-      {workerUnhealthy ? (
+      {workspaceChanged ? (
+        <div
+          className="connection-banner"
+          data-state="error"
+          data-typography="body"
+          role="alert"
+          aria-live="assertive"
+        >
+          The workspace database changed. Stop JobCtrl, inspect the workspace, restart JobCtrl, and reload this page.
+        </div>
+      ) : workerUnhealthy ? (
         <div
           className="connection-banner"
           data-state="error"
@@ -77,7 +91,7 @@ function formatSpendLine(estimatedUsd: number, dailyBudgetUsd: number, unlimited
 function useDisconnectedLongerThan(status: EventStreamStatus, thresholdMs: number): boolean {
   const [tripped, setTripped] = useState(false);
   useEffect(() => {
-    if (status === "open") {
+    if (status === "open" || status === "workspace_changed") {
       setTripped(false);
       return;
     }

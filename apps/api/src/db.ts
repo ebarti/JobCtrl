@@ -42,11 +42,9 @@ function assertExactSchemaVersion(db: SqliteDatabase): void {
   // only upgrade path; runtime admission accepts only the completed v15 shape.
   const current = db.pragma("user_version", { simple: true }) as number;
   if (current !== SUPPORTED_SCHEMA_VERSION) {
-    db.close();
     throw new IncompatibleSchemaVersionError(current);
   }
   if (!hasExactV15SchemaManifest(db)) {
-    db.close();
     throw new IncompatibleSchemaManifestError();
   }
 }
@@ -92,28 +90,46 @@ function assertNoUnresolvedInitialization(dbPath: string): void {
 export function openReadOnlyDatabase(dbPath: string): SqliteDatabase {
   assertNoUnresolvedInitialization(dbPath);
   const db = new Database(dbPath, { readonly: true, fileMustExist: true });
-  assertExactSchemaVersion(db);
-  // Match the worker's PRAGMA so contended reads wait instead of failing
-  // immediately with SQLITE_BUSY.  Worker writes hold the WAL briefly;
-  // 5s gives the API process room to retry transparently.
-  db.pragma("busy_timeout = 5000");
-  return db;
+  try {
+    assertExactSchemaVersion(db);
+    // Match the worker's PRAGMA so contended reads wait instead of failing
+    // immediately with SQLITE_BUSY.  Worker writes hold the WAL briefly;
+    // 5s gives the API process room to retry transparently.
+    db.pragma("busy_timeout = 5000");
+    return db;
+  } catch (error) {
+    try {
+      db.close();
+    } catch {
+      // Preserve the original open failure.
+    }
+    throw error;
+  }
 }
 
 export function openDatabase(dbPath: string): SqliteDatabase {
   assertNoUnresolvedInitialization(dbPath);
   const db = new Database(dbPath, { fileMustExist: true });
-  assertExactSchemaVersion(db);
-  // Exact-v8 permanent deletion relies on the sealed schema's cascade and
-  // RESTRICT constraints. SQLite enables those constraints per connection.
-  db.pragma("foreign_keys = ON");
-  // L4 (round-1 review): now that read endpoints write (projection
-  // refresh) and the worker process also writes to the same
-  // ``*_projections`` tables + watermark, SQLite contention is more
-  // likely.  Match the worker's ``PRAGMA busy_timeout=10000`` half-way
-  // so the API doesn't fail with ``SQLITE_BUSY`` on a write conflict.
-  db.pragma("busy_timeout = 5000");
-  return db;
+  try {
+    assertExactSchemaVersion(db);
+    // Exact-v8 permanent deletion relies on the sealed schema's cascade and
+    // RESTRICT constraints. SQLite enables those constraints per connection.
+    db.pragma("foreign_keys = ON");
+    // L4 (round-1 review): now that read endpoints write (projection
+    // refresh) and the worker process also writes to the same
+    // ``*_projections`` tables + watermark, SQLite contention is more
+    // likely.  Match the worker's ``PRAGMA busy_timeout=10000`` half-way
+    // so the API doesn't fail with ``SQLITE_BUSY`` on a write conflict.
+    db.pragma("busy_timeout = 5000");
+    return db;
+  } catch (error) {
+    try {
+      db.close();
+    } catch {
+      // Preserve the original open failure.
+    }
+    throw error;
+  }
 }
 
 export function databaseExists(dbPath: string): boolean {

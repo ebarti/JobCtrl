@@ -197,6 +197,11 @@ rm -f ~/.jobctrl/jobctrl.db-wal ~/.jobctrl/jobctrl.db-shm
 cp ~/.jobctrl/backups/jobctrl-<timestamp>.db ~/.jobctrl/jobctrl.db
 ```
 
+After restoring or replacing a database, restart JobCtrl (or rerun
+`corepack pnpm dev` in a source checkout) and reload any open JobCtrl browser
+tabs to create fresh event subscriptions. API callers that supplied an explicit
+`?since` cursor must discard it and start a fresh subscription too.
+
 Always restore the whole file; never hand-import individual tables. Read-model
 projection watermarks only move forward, so if a database is ever rebuilt
 piecemeal, delete the Python and TypeScript operations-projection watermarks to
