@@ -390,6 +390,15 @@ project, create an OAuth **Desktop app** client, and save its downloaded JSON as
 writes a private local token to `$JOBCTRL_GMAIL_TOKEN_PATH`; `jobctrl doctor`
 then re-checks readiness.
 
+Authentication and refresh stage a complete token before replacing the saved
+file. A write or permission failure before replacement leaves the last accepted
+token intact. An interrupted process may leave a temporary token file beside
+the token; it does not authorize or revoke a Google grant.
+The authorization flow requests offline access and requires its own usable
+refresh token. If Google omits it, authorization fails without replacing an
+existing token; retry authorization. JobCtrl does not assume an older refresh
+token belongs to the account selected in a new consent flow.
+
 The connector requests `gmail.readonly` and `gmail.send`. Read-only access is
 used for bounded verification-code and outcome lookups. Send access is used
 only for the owned email-application path after a dry-run records the recipient

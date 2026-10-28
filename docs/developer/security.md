@@ -224,8 +224,12 @@ inherited environment variables first, with a process-start native OS
 credential-store fallback for the fixed secret allowlist. The fallback never
 overrides a non-empty environment value and never exposes the stored value through HTTP, logs, or diagnostics.
 The adapters use macOS Keychain, Windows Credential Manager, and Linux Secret
-Service. The CapSolver key is an env var scoped to the owned solver tool; Gmail token files are local;
-job-site passwords, if saved, remain local profile data and are not exposed to
+Service. The CapSolver key is an env var scoped to the owned solver tool; Gmail token files are local and
+use a private same-directory staged replacement for authentication and refresh.
+Windows stages use a protected current-user and LocalSystem DACL at creation;
+filesystems without persistent ACLs refuse the write. Provider errors and token
+contents are not included in persistence errors.
+Job-site passwords, if saved, remain local profile data and are not exposed to
 the page-reading agent.
 SQLite, generated artifacts, browser profiles, logs, prompts, completions, and
 worker directories are sensitive. Langfuse/OTel export is opt-in and
