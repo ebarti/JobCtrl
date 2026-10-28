@@ -92,6 +92,20 @@ func runActualNativeApplyModuleFixture(t *testing.T, temporal bool) {
 	writeLocalEnvelope(t, payload, manifest)
 	home, evidence := t.TempDir(), t.TempDir()
 	environment := []string{"HOME=" + home, "PATH=/usr/bin:/bin", "JOBCTRL_DIR=" + filepath.Join(home, "data"), "JOBCTRL_RUNTIME_HOME=" + filepath.Join(home, "runtime"), executionQASandboxVariable + "=" + executionQASandboxSelector, "LANGFUSE_DISABLE=1", "OTEL_SDK_DISABLED=true"}
+	if temporal {
+		temporalCLI := os.Getenv("JOBCTRL_TEMPORAL_CLI_PATH")
+		if temporalCLI == "" {
+			temporalCLI, err = exec.LookPath("temporal")
+			if err != nil {
+				t.Fatalf("Temporal integration requires JOBCTRL_TEMPORAL_CLI_PATH or temporal on the test runner PATH: %v", err)
+			}
+		}
+		info, statErr := os.Stat(temporalCLI)
+		if !filepath.IsAbs(temporalCLI) || statErr != nil || !info.Mode().IsRegular() || info.Mode()&0111 == 0 {
+			t.Fatalf("Temporal integration requires an absolute executable CLI path, got %q: %v", temporalCLI, statErr)
+		}
+		environment = append(environment, "JOBCTRL_TEMPORAL_CLI_PATH="+temporalCLI)
+	}
 	instance, err := resolveInstance(environment)
 	if err != nil {
 		t.Fatal(err)

@@ -22,7 +22,6 @@ app, evidence = Path(app_arg).resolve(), Path(evidence_arg).resolve()
 os.environ["JOBCTRL_DIR"] = str(app)
 os.environ["LANGFUSE_DISABLE"] = "1"
 os.environ["OTEL_SDK_DISABLED"] = "true"
-os.environ["JOBCTRL_TEMPORAL_CLI_PATH"] = "/opt/homebrew/bin/temporal"
 
 from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker  # noqa: E402
 from jobctrl import config, database  # noqa: E402
