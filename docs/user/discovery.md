@@ -54,6 +54,10 @@ optional browser request headers. Every saved value goes to SQLite. Schedule
 changes need a worker restart; boards, limits, and parallelism apply on the
 next run; user-agent changes apply to the next source family.
 
+If you edit runtime settings while a save is in progress, newer values that
+differ from the saved response remain unsaved. Save again to apply them, or
+discard them to return to the last saved values.
+
 Parallel families are capped at four and should not exceed the worker's active
 activity slots. See
 [Concurrency & Fan-out](../architecture/pipeline/concurrency.md).

@@ -148,6 +148,10 @@ under `/settings/**` is stored in
 | `applyMaxBudgetUsd` | **Settings → General → Application runtime** | `config.json` | `5` | Per-application AI-agent budget cap in USD. |
 | `applyTimeoutSeconds` | **Settings → General → Application runtime** | `config.json` | `900` | Time limit in seconds for one application-agent run. |
 
+If you edit application runtime settings while a save is in progress, newer
+values that differ from the saved response remain unsaved. Save again to apply
+them, or discard them to return to the last saved values.
+
 ### Maximum AI budget per application {#runtime-setting-maximum-ai-budget-per-application}
 
 This setting caps AI-agent spend for one newly started Apply job. `0` is a
