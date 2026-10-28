@@ -506,6 +506,9 @@ signal cannot unwind a blocked worker-pool thread), with a 45-minute job
 ceiling behind it. CI points `TMPDIR` at `/dev/shm` when available so
 hosted-runner disk latency cannot amplify the SQLite migration tests; the
 macOS launcher workflow still proves the migration boundary on real disk.
+Python CI installs a checksum-verified Temporal CLI before the suite and passes
+its path to local dev-server tests, so they do not depend on an SDK download
+during a test. Time-skipping tests retain the SDK's normal download/cache path.
 If the SDK's automatic test-server download is unavailable locally, point
 `JOBCTRL_TEMPORAL_TEST_SERVER_PATH` at an existing Temporal time-skipping test
 server executable and `JOBCTRL_TEMPORAL_CLI_PATH` at an installed Temporal CLI.
