@@ -11,8 +11,10 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from types import SimpleNamespace
+import uuid
 
 
 def _publish_ready(path: Path, evidence: dict) -> None:
@@ -37,7 +39,53 @@ def install() -> None:
     from jobctrl.domain.ports.apply import AgentResult, BrowserSession
     from jobctrl.infrastructure import apply as adapters, network
     from jobctrl.infrastructure.process_ownership import terminate_owned_process
+    from jobctrl.infrastructure import process_ownership
     from tests.test_apply_use_cases import _FakeSnapshot
+
+    # Observe the real census without changing its authority or deadline. Only
+    # aggregate inventory differences and the exact owned session are saved.
+    original_read = process_ownership._read_process_inventory
+    original_wait = process_ownership._wait_for_session_exit
+    census_context = threading.local()
+
+    def observed_read():
+        trace = getattr(census_context, "trace", None)
+        try:
+            inventory, complete = original_read()
+        except Exception as exc:
+            if trace is not None:
+                trace["samples"].append({"error": type(exc).__name__})
+            raise
+        if trace is not None:
+            previous = trace["previous"]
+            changes = None if previous is None else sum(
+                1 for pid in previous.keys() | inventory.keys() if previous.get(pid) != inventory.get(pid)
+            )
+            members = sorted(pid for pid, (_, sid, active, _) in inventory.items()
+                             if active and sid == trace["session_id"])
+            trace["samples"].append({"complete": complete, "inventory_size": len(inventory),
+                                     "inventory_changes": changes, "session_members": members})
+            trace["previous"] = inventory
+        return inventory, complete
+
+    def observed_wait(session_id):
+        prior = getattr(census_context, "trace", None)
+        trace = {"session_id": session_id, "samples": [], "previous": None, "outcome": "refused"}
+        census_context.trace = trace
+        try:
+            original_wait(session_id)
+            trace["outcome"] = "verified"
+        finally:
+            census_context.trace = prior
+            trace.pop("previous")
+            directory = config.APP_DIR / "qa-census-observations"
+            directory.mkdir(mode=0o700, exist_ok=True)
+            path = directory / f"{uuid.uuid4().hex}.json"
+            path.write_text(json.dumps(trace))
+            path.chmod(0o600)
+
+    process_ownership._read_process_inventory = observed_read
+    process_ownership._wait_for_session_exit = observed_wait
 
     class Ports:
         def __init__(self):
@@ -96,3 +144,30 @@ def install() -> None:
     chrome.cleanup_workers = ports.cleanup_workers
     launcher._load_profile_snapshot = _FakeSnapshot
     network.validate_public_http_url = lambda _url: SimpleNamespace(allowed=True, reason="")
+    marker = config.APP_DIR / "qa-batch-worker-crash"
+    if marker.is_file():
+        mode = marker.read_text()
+        calls = 0
+        original_acquire = launcher.acquire_job
+
+        def crash_before_claim(**kwargs):
+            nonlocal calls
+            calls += 1
+            if mode == "one_dry_run" and calls == 1:
+                job = original_acquire(**kwargs)
+                if job is None:
+                    raise RuntimeError("synthetic native claim was unavailable")
+                return job
+            if mode == "after_progress" and calls == 1:
+                return {"tenant_id": "local", "job_id": str(uuid.uuid4()), "title": "synthetic"}
+            raise RuntimeError("synthetic pre-claim worker crash")
+
+        launcher.acquire_job = crash_before_claim
+        if mode in {"after_progress", "one_dry_run"}:
+            from jobctrl.domain.apply.value_objects import Applied
+
+            launcher.run_job = lambda *_args, **_kwargs: (
+                DryRunComplete(navigated_to="https://example.test/apply") if mode == "one_dry_run"
+                else Applied(applied_at="2026-10-28T00:00:00Z", verification_confidence=1.0), 1,
+            )
+            launcher.mark_result = lambda *_args, **_kwargs: None

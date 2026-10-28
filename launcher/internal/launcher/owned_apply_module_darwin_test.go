@@ -142,7 +142,13 @@ func runActualNativeApplyModuleFixture(t *testing.T, temporal bool) {
 	peerCtx := ctx
 	peerCtx.Environment = append(append([]string{}, environment...), "JOBCTRL_APPLY_TEST_ROOT="+peerFixture, "JOBCTRL_APPLY_TEST_CONTEXT="+string(encoded))
 	if err := runInOwnedExecution(peerCtx, []string{"__apply-test-peer"}, io.Discard, os.Stderr); err != nil {
-		t.Fatal(err)
+		var diagnostic []byte
+		if log, openErr := os.Open(filepath.Join(peerFixture, "writer.log")); openErr == nil {
+			diagnostic, _ = io.ReadAll(io.LimitReader(log, 4096))
+			log.Close()
+			_ = os.WriteFile(filepath.Join(evidence, "peer-writer.log"), diagnostic, 0600)
+		}
+		t.Fatalf("owned synthetic peer startup: %v; bounded writer stderr: %s", err, diagnostic)
 	}
 	peerRaw, err := os.ReadFile(filepath.Join(peerFixture, "writer.pid"))
 	if err != nil {
@@ -266,6 +272,24 @@ func runActualNativeApplyModuleFixture(t *testing.T, temporal bool) {
 			t.Fatal("native completion did not release the exact run's custody")
 		}
 	}
+	if temporal {
+		observations, err := filepath.Glob(filepath.Join(instance.StateDir, "qa-census-observations", "*.json"))
+		if err != nil || len(observations) == 0 {
+			t.Fatal("native process-session census observations missing")
+		}
+		for _, path := range observations {
+			var observation struct {
+				SessionID int               `json:"session_id"`
+				Outcome   string            `json:"outcome"`
+				Samples   []json.RawMessage `json:"samples"`
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil || json.Unmarshal(raw, &observation) != nil || observation.SessionID <= 0 || len(observation.Samples) == 0 || observation.Outcome != "verified" {
+				t.Fatal("invalid or refused native process-session census observation")
+			}
+		}
+		t.Logf("observed %d real owned-session cleanup censuses", len(observations))
+	}
 	if current, err := processStartIdentity(peerPID); err != nil || current != peerIdentity {
 		t.Fatalf("same-instance peer did not survive both Apply runs: %v", err)
 	}
@@ -290,7 +314,7 @@ func preserveApplyFailureEvidence(t *testing.T, evidence string, instance instan
 		t.Logf("preserve owned failure evidence: %v", err)
 		return
 	}
-	for name, root := range map[string]string{"scenario": evidence, "invocations": filepath.Join(instance.StateDir, "apply-invocations"), "executions": filepath.Join(filepath.Dir(instance.StatePath), "executions"), "completions": filepath.Join(filepath.Dir(instance.StatePath), "completed-executions")} {
+	for name, root := range map[string]string{"scenario": evidence, "invocations": filepath.Join(instance.StateDir, "apply-invocations"), "census": filepath.Join(instance.StateDir, "qa-census-observations"), "executions": filepath.Join(filepath.Dir(instance.StatePath), "executions"), "completions": filepath.Join(filepath.Dir(instance.StatePath), "completed-executions")} {
 		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr

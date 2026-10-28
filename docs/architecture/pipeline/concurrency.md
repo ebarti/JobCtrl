@@ -320,6 +320,27 @@ on `127.0.0.1`; they never rediscover a browser through a reused port or localho
 alias. An occupied caller hint never grants signal authority. Prior files are retained, never reset for a new attempt. Internal
 fan-out and finite-batch claim limits retain their existing bounds.
 
+An exception escaping an internal worker fails the batch while preserving
+completed job counts from that worker and any peers. The
+`failed` count remains a count of job failures; `worker_crashes` separately
+reports crashed workers without asserting an individual job or submission
+outcome. The workflow records a failed lifecycle and does not automatically
+retry the batch. Cleanup refusal still fails non-retryably and retains custody;
+when all workers joined, its result includes their completed counts. Otherwise
+`counts_known` is false. Older activity histories with no worker-crash
+observation also leave their count completeness unknown. Empty queues and
+handled per-job failures retain their existing outcomes.
+
+In installed execution, the child defers its terminal batch metric in the
+private invocation directory. The parent publishes it only after native
+completion and custody recovery have been verified for the exact invocation.
+An unverified cleanup is recorded as failed with unknown counts; if the parent
+exits before settlement, only the started metric may remain. In this protocol, a
+missing or invalid deferred record cannot produce a successful metric. This
+record carries no job content and does not establish custody or authorize a
+retry. Legacy children retain their earlier metric behavior; arbitrary mixed
+versions do not gain the new ordering guarantee.
+
 Canonical `ApplyClaimAcquired` records establish tenant/job/RunId ownership.
 Writer-locked comparisons protect result, saga, artifact and integration-event
 publication; a late old `ApplyRunStarted` cannot establish a new owner. Startup
@@ -340,6 +361,13 @@ Source-only unresolved custody remains explicit; neither missing metadata nor
 session-zero is a recovery waiver. A scoped cleanup failure fences that worker's
 next claim and preserves its prior files. Existing approval, posting-availability
 and final-submit authorization remain mandatory.
+
+Process-session exit verification requires two consecutive complete, identical
+system-wide process-generation inventories with no active members of the owned
+session within one second. Unrelated process churn can prevent verification even
+when no active owned-session members appear in the samples; the result remains
+cleanup unverified and custody is retained. A reboot is neither an admission
+prerequisite nor a substitute for the required completion proof.
 
 Source-only owner crash recovery acquires only that run's existing lifetime file
 and rechecks the canonical tenant/job/RunId under the writer. Batch candidate

@@ -9,18 +9,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import logging
 import os
 from pathlib import Path
+import re
 import signal
+import sqlite3
 import subprocess
 import sys
 import threading
+import time
 import uuid
 
 from jobctrl import config
+from jobctrl.apply.batch_outcome import ApplyBatchCleanupIncomplete, ApplyBatchCounts, ApplyBatchWorkersCrashed
 from jobctrl.apply.native_custody import capture_native_custody, verify_native_completion
-from jobctrl.apply.ownership import ApplyLauncherCleanupIncomplete, ApplyLauncherRun
+from jobctrl.apply.ownership import ApplyLauncherBusy, ApplyLauncherCleanupIncomplete, ApplyLauncherRun
 from jobctrl.apply.process_birth import ApplyCustodyJournal, CustodyUnverified, _directory, _id, _read, _write
+
+logger = logging.getLogger(__name__)
 
 
 _OPTION_TYPES = {
@@ -63,6 +70,115 @@ def _native_command() -> list[str]:
 
 
 @dataclass
+class _MetricState:
+    admitted: bool = False
+    verified_binding: dict | None = None
+
+
+def _publish_scoped_metric(identity: str, options: dict, state: _MetricState, started: float,
+                           output: tuple[int, int] | None, error: BaseException | None) -> None:
+    """Publish a child metric only after native custody and its result are verified."""
+    from jobctrl.apply.launcher import _record_apply_batch_metric
+
+    try:
+        metric = None
+        directory = _invocation_dir(identity)
+        _directory(directory)
+        path = directory / "terminal-metric.json"
+        has_sidecar = path.exists() or path.is_symlink()
+        value = None
+        if has_sidecar:
+            try:
+                value = _read(path)
+            except (CustodyUnverified, OSError, ValueError, TypeError):
+                logger.warning("Deferred Apply metric is unavailable or invalid", exc_info=True)
+        legacy = not has_sidecar or (value is not None and type(value.get("schema")) is int
+                                    and value == {"schema": 1, "request_id": identity, "state": "requested"})
+        # A verified older child already published its own terminal metric.
+        # Retain that behavior without emitting a duplicate.
+        if state.verified_binding is not None and legacy:
+            return
+        if state.verified_binding is None and error is not None and legacy:
+            from jobctrl.database import get_connection
+            try:
+                legacy_terminal = get_connection().execute(
+                    "SELECT 1 FROM operational_attempt_metrics WHERE stage='apply' AND attempt_kind='apply_batch' "
+                    "AND run_id=? AND outcome != 'started' LIMIT 1", (f"apply:{identity}",),
+                ).fetchone()
+            except sqlite3.OperationalError as exc:
+                if "no such table" not in str(exc):
+                    raise
+                legacy_terminal = None
+            if legacy_terminal is not None:
+                return
+        if state.verified_binding is not None and value is not None and not legacy:
+            try:
+                common = {"schema", "request_id", "native_custody", "state"}
+                if (type(value.get("schema")) is not int or value["schema"] != 1
+                        or value.get("request_id") != identity or value.get("native_custody") != state.verified_binding):
+                    raise ValueError("Deferred Apply metric does not match its verified invocation")
+                if value.get("state") == "pending" and set(value) == common:
+                    value = None
+                elif (set(value) != common | {"outcome", "duration_ms", "counts", "error_class"}
+                        or value.get("state") != "complete" or value["outcome"] not in {"succeeded", "dry_run", "failed"}
+                        or type(value["duration_ms"]) is not int or value["duration_ms"] < 0
+                        or (value["error_class"] is not None and (
+                            not isinstance(value["error_class"], str)
+                            or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,127}", value["error_class"])
+                        ))):
+                    raise ValueError("Invalid deferred Apply metric")
+                if value is not None:
+                    counts = ApplyBatchCounts.from_dict(value["counts"])
+                    if ((value["outcome"] == "succeeded" and (options["dry_run"] or counts.failed or value["error_class"] is not None))
+                            or (value["outcome"] == "dry_run" and (not options["dry_run"] or value["error_class"] is not None))
+                            or (value["outcome"] == "failed" and not counts.failed and value["error_class"] is None)):
+                        raise ValueError("Deferred Apply metric has inconsistent outcome")
+                    if error is None:
+                        if output != (counts.applied, counts.failed) or counts.worker_crashes:
+                            raise ValueError("Deferred Apply metric does not match the verified result")
+                    elif isinstance(error, (ApplyBatchWorkersCrashed, ApplyBatchCleanupIncomplete)):
+                        if counts != error.counts or value["outcome"] != "failed":
+                            raise ValueError("Deferred Apply metric does not match the verified failure")
+                    else:
+                        value = None
+                    if value is not None:
+                        metric = value, counts
+            except (CustodyUnverified, OSError, ValueError, TypeError, KeyError):
+                logger.warning("Deferred Apply metric is unavailable or invalid", exc_info=True)
+
+        # Old children have no sidecar and already record their own metric.
+        # Their existing result remains readable after native completion.
+        if error is None and metric is None:
+            return
+        if error is not None and metric is None:
+            counts = None
+            outcome = "failed"
+            error_class = "ApplyLauncherCleanupIncomplete" if isinstance(error, ApplyLauncherCleanupIncomplete) else type(error).__name__
+            duration_ms = int((time.monotonic() - started) * 1000)
+        else:
+            value, counts = metric
+            outcome = value["outcome"]
+            error_class = value["error_class"]
+            duration_ms = value["duration_ms"]
+
+        workers = options["workers"]
+        if options["target_job_id"] is not None:
+            workers = 1
+        elif not options["continuous"] and options["limit"] > 0:
+            workers = min(workers, options["limit"])
+        _record_apply_batch_metric(
+            outcome=outcome, run_id=f"apply:{identity}", tenant_id=options["tenant_id"],
+            job_id=options["target_job_id"], dry_run=options["dry_run"], workers=workers, model=options["model"],
+            duration_ms=duration_ms, total_applied=counts.applied if counts else None,
+            total_failed=counts.failed if counts else None, worker_crashes=counts.worker_crashes if counts else None,
+            counts_known=counts is not None, error_class=error_class, error_message=error_class,
+        )
+    except Exception:
+        # Metrics are best effort and cannot grant cleanup or retry authority.
+        logger.exception("Could not publish the deferred Apply metric")
+
+
+@dataclass
 class ScopedApplyExecution:
     identity: str = field(default_factory=lambda: uuid.uuid4().hex)
     _guard: threading.Lock = field(default_factory=threading.Lock, repr=False)
@@ -88,10 +204,27 @@ class ScopedApplyExecution:
 
     def run(self, options: dict) -> tuple[int, int]:
         options = _options(options)
+        state = _MetricState()
+        started = time.monotonic()
+        try:
+            output = self._run_scoped(options, state)
+        except BaseException as exc:
+            if state.admitted:
+                _publish_scoped_metric(self.identity, options, state, started, None, exc)
+            raise
+        else:
+            if state.admitted:
+                _publish_scoped_metric(self.identity, options, state, started, output, None)
+            return output
+
+    def _run_scoped(self, options: dict, metric_state: _MetricState) -> tuple[int, int]:
         command = _native_command()
         config.APP_DIR.mkdir(parents=True, exist_ok=True)
         directory = _invocation_dir(self.identity)
         directory.mkdir(mode=0o700)
+        _write(directory / "terminal-metric.json", {
+            "schema": 1, "request_id": self.identity, "state": "requested",
+        })
         request = {"schema": 1, "request_id": self.identity, "launcher_id": self.identity, "options": options}
         with (directory / "launcher.log").open("xb") as log:
             os.chmod(directory / "launcher.log", 0o600)
@@ -101,6 +234,7 @@ class ScopedApplyExecution:
                 process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT,
                                            start_new_session=True)
                 self._process, self._launched_pid = process, process.pid
+                metric_state.admitted = True
             try:
                 pending_input = json.dumps(request).encode("utf-8")
                 while True:
@@ -133,6 +267,8 @@ class ScopedApplyExecution:
             from jobctrl.apply.launcher import recover_apply_custody
             if journal.path.exists():
                 recover_apply_custody(self.identity)
+            if result is not None and result.get("native_custody") == binding:
+                metric_state.verified_binding = binding
         except (CustodyUnverified, OSError, ValueError) as exc:
             raise ApplyLauncherCleanupIncomplete("Apply native execution cleanup remains unverified; its custody is retained") from exc
         finally:
@@ -142,7 +278,23 @@ class ScopedApplyExecution:
                 or type(result["schema"]) is not int or result["schema"] != 1
                 or result["request_id"] != self.identity or result["launcher_id"] != self.identity):
             raise RuntimeError("Apply scoped worker exited without its exact result")
-        if process.returncode != 0 or result["error"] is not None:
+        error = result["error"]
+        if isinstance(error, dict):
+            # Interpret failure details only after the exact native completion
+            # above has authenticated this invocation and its cleanup.
+            if set(error) != {"code", "counts"} or result["output"] is not None or process.returncode == 0:
+                raise ValueError("Apply scoped worker returned malformed failure details")
+            counts = ApplyBatchCounts.from_dict(error["counts"])
+            if error["code"] == "apply_worker_crashed":
+                raise ApplyBatchWorkersCrashed(counts)
+            if error["code"] == "apply_launcher_cleanup_incomplete":
+                raise ApplyBatchCleanupIncomplete("Apply owned cleanup remains unresolved", counts)
+            raise ValueError("Apply scoped worker returned an unknown failure code")
+        if process.returncode != 0 and error == "ApplyLauncherCleanupIncomplete":
+            raise ApplyLauncherCleanupIncomplete("Apply scoped worker cleanup remains unresolved")
+        if process.returncode != 0 and error == "ApplyLauncherBusy":
+            raise ApplyLauncherBusy("Apply scoped worker could not acquire its launcher")
+        if process.returncode != 0 or error is not None:
             raise RuntimeError("Apply scoped worker failed; inspect its retained launcher log")
         output = result["output"]
         if not isinstance(output, list) or len(output) != 2 or any(type(value) is not int or value < 0 for value in output):
@@ -166,12 +318,42 @@ def main() -> None:
     result = {"schema": 1, "request_id": request["request_id"], "launcher_id": request["launcher_id"],
               "native_custody": binding, "output": None, "error": None}
     run = ApplyLauncherRun(identity=request["launcher_id"])
+    metric_path = directory / "terminal-metric.json"
+    defer_metric = metric_path.exists() or metric_path.is_symlink()
+    if defer_metric:
+        metric_request = _read(metric_path)
+        if (type(metric_request.get("schema")) is not int
+                or metric_request != {"schema": 1, "request_id": request["request_id"], "state": "requested"}):
+            raise CustodyUnverified("Invalid deferred Apply metric request")
+        _write(metric_path, {
+            "schema": 1, "request_id": request["request_id"], "native_custody": binding, "state": "pending",
+        })
+
+    def defer_terminal_metric(metric: dict) -> None:
+        # This private handoff contains no job content. It is not interpreted
+        # until the parent verifies the exact native completion and binding.
+        try:
+            _write(metric_path, {
+                "schema": 1, "request_id": request["request_id"], "native_custody": binding, "state": "complete",
+                "outcome": metric["outcome"], "duration_ms": metric["duration_ms"],
+                "counts": {"applied": metric["total_applied"], "failed": metric["total_failed"],
+                           "worker_crashes": metric["worker_crashes"]},
+                "error_class": metric["error_class"],
+            })
+        except Exception:
+            logger.exception("Could not defer the Apply terminal metric")
+
     prior_handlers = {kind: signal.getsignal(kind) for kind in (signal.SIGINT, signal.SIGTERM)}
     for kind in prior_handlers:
         signal.signal(kind, lambda _signal, _frame: run.cancel())
     try:
         from jobctrl.apply.launcher import main as run_launcher
-        result["output"] = list(run_launcher(**options, install_signal_handlers=False, launcher_run=run))
+        result["output"] = list(run_launcher(**options, install_signal_handlers=False, launcher_run=run,
+                                             _terminal_metric_sink=defer_terminal_metric if defer_metric else None))
+    except (ApplyBatchWorkersCrashed, ApplyBatchCleanupIncomplete) as exc:
+        code = "apply_worker_crashed" if isinstance(exc, ApplyBatchWorkersCrashed) else "apply_launcher_cleanup_incomplete"
+        result["error"] = {"code": code, "counts": exc.counts.to_dict()}
+        raise
     except BaseException as exc:
         result["error"] = type(exc).__name__
         raise
