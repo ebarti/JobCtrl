@@ -915,6 +915,39 @@ describe("local TypeScript API", () => {
         jobId,
       }),
     );
+    let privateRunEventId = 0;
+    for (const eventType of ["EmailApplicationCandidateRecorded", "EmailApplicationSendFailed", "EmailApplicationSent", "AgentResult", "AssistantText", "ToolUse", "ApplyTerminalDetermination", "ApplicationFailed"]) {
+      const privateRow = insertEvent.run("local", jobId, "apply", eventType, occurredAt, JSON.stringify({
+        jobId, run_id: "private-email-run", event_id: ++privateRunEventId, subject: "private-email-canary", body: "private-email-canary",
+        recipient: "private-email-canary", message: "private-email-canary", provider_error: "private-email-canary",
+        reason: "email_send_outcome_ambiguous:private-email-canary",
+      }));
+      db.prepare("UPDATE job_events SET message=? WHERE event_id=?")
+        .run("private-email-canary", privateRow.lastInsertRowid);
+    }
+    insertEvent.run("local", jobId, "apply", "ApplyRunEventRecorded", occurredAt, JSON.stringify({
+      run_id: "private-email-run", event: { event_type: "EmailApplicationSendFailed", message: "private-email-canary",
+        payload: { provider_error: "private-email-canary" } },
+    }));
+    for (const eventKey of ["event_type", "eventType"]) {
+      for (const eventType of ["AgentResult", "AssistantText", "ToolUse", "ApplyTerminalDetermination"]) {
+        insertEvent.run("local", jobId, "apply", "ApplyRunEventRecorded", occurredAt, JSON.stringify({
+          run_id: "private-email-run", message: "private-agent-canary",
+          event: { [eventKey]: eventType, message: "private-agent-canary",
+            payload: { raw_output: "private-agent-canary", input_preview: "private-agent-canary" } },
+        }));
+      }
+      for (const legacy of [
+        { reason: "email_send_outcome_ambiguous:private-legacy-exception-canary", result: "needs_verification" },
+        { result: { kind: "failed", error: "email_send_outcome_ambiguous:private-legacy-exception-canary" } },
+      ]) {
+        insertEvent.run("local", jobId, "apply", "ApplicationFailed", occurredAt,
+          JSON.stringify({ jobId, run_id: "private-email-run", message: "private-legacy-exception-canary", ...legacy }));
+        insertEvent.run("local", jobId, "apply", "ApplyRunEventRecorded", occurredAt,
+          JSON.stringify({ run_id: "private-email-run", event: { [eventKey]: "ApplicationFailed",
+            message: "private-legacy-exception-canary", payload: legacy } }));
+      }
+    }
     const canonical = insertEvent.run(
       "local",
       jobId,
@@ -942,6 +975,13 @@ describe("local TypeScript API", () => {
 
     expect(streamed).toContain(expectedId);
     expect(streamed).toContain("event: StageReset");
+    expect(streamed).toContain("event: EmailApplicationCandidateRecorded");
+    expect(streamed).toContain("private-email-run");
+    expect(streamed).not.toContain("private-email-canary");
+    expect(streamed).not.toContain("private-agent-canary");
+    expect(streamed).not.toContain("private-legacy-exception-canary");
+    expect(streamed).toContain("email_send_outcome_ambiguous");
+    expect(streamed).toContain("event: AgentResult");
     expect(streamed).toContain(`\"tenantId\":\"local\"`);
     expect(streamed).toContain(`\"jobId\":\"${jobId}\"`);
     expect(streamed).toContain(`\"postingUrl\":\"${jobUrl}\"`);
@@ -1608,6 +1648,65 @@ describe("local TypeScript API", () => {
     } finally {
       await app.close();
     }
+  });
+
+  it("keeps historical private email content out of broad activity and Apply timelines", async () => {
+    const db = new Database(options.dbPath);
+    const privateEvent = { event_type: "EmailApplicationCandidateRecorded", level: "info",
+      occurred_at: "2026-04-29T10:15:00+00:00", message: "private-historical-email-canary",
+      payload: { run_id: "run-1", body: "private-historical-email-canary" } };
+    db.prepare("UPDATE apply_run_projections SET events_json=? WHERE run_id='run-1'")
+      .run(JSON.stringify([privateEvent, { ...privateEvent, event_type: "AgentResult" },
+        { ...privateEvent, event_type: "ApplyRunEventRecorded" }]));
+    db.prepare(`INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,level,message,occurred_at,payload_json)
+      VALUES ('local',?,1,'apply','EmailApplicationCandidateRecorded','info',?,?,?)`)
+      .run(jobIdFor("https://example.com/jobs/ready"), privateEvent.message, privateEvent.occurred_at,
+        JSON.stringify(privateEvent.payload));
+    db.prepare(`INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,level,message,occurred_at,payload_json)
+      VALUES ('local',?,1,'apply','AgentResult','info',?,?,?)`)
+      .run(jobIdFor("https://example.com/jobs/ready"), privateEvent.message, privateEvent.occurred_at,
+        JSON.stringify({ raw_output: "private-historical-email-canary" }));
+    db.prepare(`INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,level,message,occurred_at,payload_json)
+      VALUES ('local',?,1,'apply','ApplyRunEventRecorded','info',?,?,?)`)
+      .run(jobIdFor("https://example.com/jobs/ready"), privateEvent.message, privateEvent.occurred_at,
+        JSON.stringify({ event: { event_type: "AgentResult", payload: { raw_output: privateEvent.message } } }));
+    for (const eventType of ["AssistantText", "ToolUse", "ApplyTerminalDetermination", "ApplicationFailed"]) {
+      db.prepare(`INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,level,message,occurred_at,payload_json)
+        VALUES ('local',?,1,'apply',?,'info',?,?,?)`)
+        .run(jobIdFor("https://example.com/jobs/ready"), eventType, privateEvent.message, privateEvent.occurred_at,
+          JSON.stringify({ run_id: "run-1", input_preview: privateEvent.message,
+            reason: `email_send_outcome_ambiguous:${privateEvent.message}` }));
+    }
+    db.prepare(`INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,level,message,occurred_at,payload_json)
+      VALUES ('local',?,1,'apply','EmailApplicationSent','info',NULL,?,?)`)
+      .run(jobIdFor("https://example.com/jobs/ready"), privateEvent.occurred_at,
+        JSON.stringify({ run_id: "run-1", body: "private-payload-only-canary" }));
+    db.prepare(`INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,level,message,occurred_at,payload_json)
+      VALUES ('local',?,1,'apply','SagaStarted','info',?,?,?)`)
+      .run(jobIdFor("https://example.com/jobs/ready"), "public-synthetic-progress", privateEvent.occurred_at,
+        JSON.stringify({ run_id: "run-1" }));
+    db.prepare("UPDATE apply_run_projections SET events_json=? WHERE run_id='run-1'")
+      .run(JSON.stringify(["AssistantText", "ToolUse", "ApplyTerminalDetermination", "ApplicationFailed"].map((event_type) =>
+        ({ ...privateEvent, event_type, payload: { reason: `email_send_outcome_ambiguous:${privateEvent.message}` } }))));
+    db.close();
+    const app = buildApp(options);
+    const summary = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+    expect(summary.statusCode, summary.body).toBe(200);
+    expect(summary.body).not.toContain("private-historical-email-canary");
+    expect(summary.body).toContain("AssistantText");
+    const activity = await app.inject({ method: "GET", url: "/v1/debug/activity?pageSize=100" });
+    expect(activity.statusCode, activity.body).toBe(200);
+    expect(activity.body).not.toContain("private-historical-email-canary");
+    const search = await app.inject({ method: "GET", url: "/v1/debug/activity?q=private-historical-email-canary" });
+    expect(search.statusCode, search.body).toBe(200);
+    expect(search.json().items).toEqual([]);
+    const payloadSearch = await app.inject({ method: "GET", url: "/v1/debug/activity?q=private-payload-only-canary" });
+    expect(payloadSearch.statusCode, payloadSearch.body).toBe(200);
+    expect(payloadSearch.json().items).toEqual([]);
+    const publicSearch = await app.inject({ method: "GET", url: "/v1/debug/activity?q=public-synthetic-progress" });
+    expect(publicSearch.statusCode, publicSearch.body).toBe(200);
+    expect(publicSearch.json().items).toMatchObject([{ eventType: "SagaStarted", message: "public-synthetic-progress" }]);
+    await app.close();
   });
 
   it("returns dashboard summary from the existing SQLite schema", async () => {

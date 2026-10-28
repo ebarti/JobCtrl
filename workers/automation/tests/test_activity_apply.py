@@ -241,3 +241,53 @@ async def test_apply_activity_non_continuous_floors_limit_at_one():
 
     apply_main_mock.assert_called_once()
     assert apply_main_mock.call_args.kwargs["limit"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body,confirmed", [(b"{}", False), (b'{"id":"owned-message"}', True)])
+async def test_temporal_apply_activity_settles_owned_email_and_blocks_restart(tmp_path, monkeypatch, body, confirmed):
+    """Real Temporal/activity heartbeat + use-case/saga/storage; HTTP/browser/model are synthetic.
+
+    The launcher main seam avoids personal browser/process lifecycle operations;
+    the fixture uses production acquisition and the production terminal writer.
+    """
+    from .test_apply_regressions import _owned_email_probe, _email_counts
+    from jobctrl.apply import launcher
+    from jobctrl.database import close_connection, get_connection
+    from jobctrl.domain.apply import Applied
+
+    db_path, _, job_id, ctx, calls, _, execute, attachment = _owned_email_probe(
+        tmp_path, monkeypatch, body=body)
+    accepted = attachment.read_bytes()
+    executed = False
+    def owned_main(**_kwargs):
+        nonlocal executed
+        try:
+            if executed:
+                assert launcher.acquire_job(target_job_id=job_id, worker_id=2, run_ctx={}, approval_required=False) is None
+                return 0, 0
+            executed = True
+            result = execute().submission_result
+            applied = isinstance(result, Applied)
+            launcher.mark_result(job_id, "applied" if applied else "failed", run_ctx=ctx)
+            return int(applied), int(not applied)
+        finally:
+            close_connection(db_path)
+    monkeypatch.setattr(launcher, "main", owned_main)
+    queue = f"owned-email-{uuid.uuid4()}"
+    try:
+        async with time_skipping_env() as env:
+            async with Worker(env.client, task_queue=queue, workflows=[_ApplyHarness],
+                              activities=[apply_activity], workflow_runner=UnsandboxedWorkflowRunner()):
+                for restart in (False, True):
+                    output = await env.client.execute_workflow(
+                        _ApplyHarness.run, ApplyActivityInput(tenant_id="local", job_id=job_id, approval_required=False),
+                        id=f"owned-email-{uuid.uuid4()}", task_queue=queue,
+                        execution_timeout=timedelta(seconds=30))
+                    assert (output.applied, output.failed) == ((0, 0) if restart else (int(confirmed), int(not confirmed)))
+        conn = get_connection(db_path)
+        counts = _email_counts(conn, job_id)
+        assert (len(calls), counts["ApplySubmitIntended"], counts["EmailApplicationSent"], counts["ApplicationSubmitted"]) == (1, 1, int(confirmed), int(confirmed))
+        assert attachment.read_bytes() == accepted
+    finally:
+        close_connection(db_path)

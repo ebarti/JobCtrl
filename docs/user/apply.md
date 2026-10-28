@@ -220,6 +220,38 @@ sender rechecks its capability, records submit intent immediately before the
 send, and accepts only the exact recipient and attachment approved in Apply
 Review.
 
+An HTTP success alone does not mark an email application Applied. Gmail must
+return a JSON object with a nonblank string message `id`. `threadId` may be
+absent; if supplied, it must also be a nonblank string. Other response fields
+are ignored, but the entire response must be valid JSON; `NaN` and infinities
+are rejected. The internal receipt must match the recorded tenant, job, run,
+intent, material generation and exact candidate fingerprint.
+
+Missing, malformed or mismatched confirmation leaves the durable intent in
+place and parks the application in nonretryable `needs_verification`. Ordinary
+pickup and restart do not resend it. Review the employer site or confirmation
+email before resolving the uncertainty. If a valid confirmation was already
+persisted before the worker lost its acknowledgement, recovery can settle that
+same operation once without sending again. Candidate previews remain available
+in Apply Review; broad events and timelines carry references rather than the
+email body or provider error text.
+
+Confirmation, the submitted fact and the owned stage commit together. Losing
+the acknowledgement after that commit cannot leave an accepted send without
+its application history or let a delayed settlement replace a successor.
+Recovery rechecks the same operation under the writer lock before parking it,
+so it cannot replace an accepted concurrent confirmation with uncertainty.
+Settlement resolves the current durable owner under that same lock. A caller
+without a run identity cannot bypass receipt validation; a foreign run cannot
+settle the current email operation.
+Success notifications follow the commit; a failed settlement does not announce
+an application as submitted. A duplicate execution of the same run is refused
+without replacing the original operation's result or consuming its receipt.
+Replaying the exact saved event is safe; a different event at the same sequence
+is a conflict. Agent text, tool previews and terminal determination excerpts stay
+in canonical storage rather than broad notifications. Historical email-failure
+reasons and displayed needs-verification errors omit raw provider exceptions.
+
 ## Repeat-Application Protection
 
 Before every live application claim, JobCtrl compares the target with confirmed

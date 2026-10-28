@@ -339,6 +339,23 @@ An absent database at first connection remains a quiet stream. See the [frontend
 for cache behavior and the [complete SSE contract](complete-contract.md#server-sent-events-—-get-v1eventsstream)
 for framing and precedence rules.
 
+`EmailApplicationCandidateRecorded` invalidates Apply Review using its run
+reference. The canonical preview stays available through the review queue.
+Direct email events, `AgentResult`, `AssistantText`, `ToolUse`,
+`ApplyTerminalDetermination` and their `ApplyRunEventRecorded` wrappers expose
+references/status only, including on reconnect replay of historical rows.
+Historical `ApplicationFailed` reasons/results carrying the exact owned-email
+ambiguity code are bounded, including the former colon-delimited exception
+suffix. Broad activity, workflow/Apply timelines and needs-verification stage
+messages follow the same privacy policy; canonical review keeps its candidate.
+Recipients, subjects, bodies, attachment names, provider identifiers and raw
+provider errors are omitted from broad delivery. A malformed send confirmation
+produces no `ApplicationSubmitted` invalidation. Owned email success notifications
+are emitted only after confirmation, submitted fact and stage commit together;
+a rolled-back settlement emits no success invalidation. The owning run may
+publish wrappers for its exact durable records after that commit; a successor
+or a changed event cannot publish under the prior owner's authority.
+
 `DryRunCompleted` refreshes apply history, run reads, the review queue, job reads
 and Dashboard from projections. It means the dry-run finished without submitting;
 it does not apply `ApplicationSubmitted` semantics or update submission analytics.

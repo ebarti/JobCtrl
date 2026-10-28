@@ -554,9 +554,31 @@ recipient/attachment candidate. Terminal apply outcomes are
    idempotently. Combined with the per-job workflow ID
    (`apply-{tenant}-{jobKey}` + `USE_EXISTING`, one live apply per job) and the
    **live retry policy of exactly one attempt**, an owned send is never silently
-   retried into a duplicate. A crash or provider exception after intent parks
-   the stage in `needs_verification`. Dry-runs, which submit nothing, get two
-   attempts.
+   retried into a duplicate. Gmail HTTP success requires a JSON object with a
+   nonblank string `id`; `threadId` is optional but strictly nonblank when
+   supplied. Other Message fields are discarded after strict JSON decoding;
+   nonstandard constants such as `NaN` and infinities invalidate the response.
+   The intent persists an
+   immutable tenant/job/run/intent/material-generation/candidate-fingerprint
+   binding before transport admission. The saga and SQLite writer both
+   validate confirmation against it. Confirmation and intent use unique event
+   idempotency keys; settlement takes the SQLite writer lock and checks current
+   ownership from the durable current run rather than a caller-supplied lookup
+   key. Missing identity resolves that owner; foreign identity is refused.
+   Confirmation, submitted fact and the owned stage commit in one
+   transaction, with keys scoped to tenant, job and run. A crash, malformed response or provider exception after intent
+   parks the stage in nonretryable `needs_verification`, unless a valid owned
+   confirmation was already persisted. Recovery can settle that receipt once
+   without another send. Recovery holds the writer lock while rechecking ownership,
+   terminal state and confirmation before parking. Late receipts cannot overwrite
+   a successor. Owned aggregate notifications wait for commit, including caller
+   transactions, and are discarded on rollback. Duplicate execution is refused
+   without settling or releasing the original operation. Child sequence numbers
+   are replay keys only when the immutable event identity matches; admission
+   acknowledgement loss reconciles the exact owned intent before checkpointing
+   uncertainty. Streaming assistant/tool text and determination excerpts remain
+   canonical rather than entering broad event delivery. Dry-runs,
+   which submit nothing, get two attempts.
 3. **Repeat-application protection.** Every live claim recomputes relationships
    from canonical job identity, accepted duplicate links, and confirmed
    application facts. Exact identity blocks by default; same employer plus a

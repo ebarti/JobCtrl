@@ -45,6 +45,7 @@ import re
 import sqlite3
 import threading
 import urllib.parse
+from jobctrl.domain.apply.event_privacy import public_apply_error_message
 from jobctrl.infrastructure.projections.fetch_failure import fetch_failure_from_stage_metadata
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -2303,7 +2304,7 @@ class ProjectionBuilder:
                     finished_at=_row_nullable_str(row, "finished_at"),
                     duration_ms=_row_nullable_int(row, "duration_ms"),
                     error_code=_row_nullable_str(row, "error_code"),
-                    error_message=_row_nullable_str(row, "error_message"),
+                    error_message=public_apply_error_message(_row_nullable_str(row, "error_code"), _row_nullable_str(row, "error_message")),
                     retryable=_row_nullable_int(row, "retryable") != 0,
                     blocked_by=tuple(str(item) for item in blocked_by) if isinstance(blocked_by, list) else (),
                     next_action=_row_nullable_str(row, "next_action"),
@@ -4128,17 +4129,20 @@ class ProjectionBuilder:
 
         employer = _canonical_employer(meta)
 
+        from jobctrl.domain.apply.event_privacy import email_event_references
+
         events_payload: list[dict] = []
         for event in events:
+            safe_payload = email_event_references(event["event_type"], event["payload"])
             entry = {
                 "event_type": event["event_type"],
                 "level": event["level"],
                 "occurred_at": event["occurred_at"],
             }
-            if event["message"]:
+            if event["message"] and safe_payload is event["payload"]:
                 entry["message"] = event["message"]
-            if event["payload"]:
-                entry["payload"] = event["payload"]
+            if safe_payload:
+                entry["payload"] = safe_payload
             events_payload.append(entry)
 
         return ApplyRunProjection(

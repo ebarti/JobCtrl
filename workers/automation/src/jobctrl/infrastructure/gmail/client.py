@@ -30,6 +30,35 @@ _FEEDBACK_TERMS = (
 )
 
 
+class GmailSendError(RuntimeError):
+    """Bounded send failure; never retains a provider response or exception."""
+
+
+def _reject_json_constant(_value: str) -> None:
+    # Python's default decoder accepts NaN/Infinity, which are not JSON.
+    raise ValueError("gmail_send_invalid_confirmation")
+
+
+def validate_send_confirmation(payload: object) -> dict[str, str]:
+    """Accept messages.send's Message id; threadId is optional, but strict.
+
+    https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/send
+    Other Message fields are deliberately discarded, including private bodies.
+    """
+    if not isinstance(payload, dict):
+        raise GmailSendError("gmail_send_invalid_confirmation")
+    message_id = payload.get("id")
+    if not isinstance(message_id, str) or not message_id.strip():
+        raise GmailSendError("gmail_send_invalid_confirmation")
+    result = {"id": message_id}
+    if "threadId" in payload:
+        thread_id = payload["threadId"]
+        if not isinstance(thread_id, str) or not thread_id.strip():
+            raise GmailSendError("gmail_send_invalid_confirmation")
+        result["threadId"] = thread_id
+    return result
+
+
 class GmailClient:
     """Small Gmail client backed by the existing httpx dependency."""
 
@@ -108,18 +137,22 @@ class GmailClient:
             filename=attachment_name or attachment.name,
         )
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii").rstrip("=")
-        with self._client() as http:
-            response = http.post(
-                f"{GMAIL_API_ROOT}/messages/send",
-                headers=self._headers(),
-                json={"raw": raw},
-            )
-            response.raise_for_status()
-            payload = response.json()
-        return {
-            "id": str(payload.get("id") or ""),
-            "threadId": str(payload.get("threadId") or ""),
-        }
+        try:
+            with self._client() as http:
+                response = http.post(
+                    f"{GMAIL_API_ROOT}/messages/send",
+                    headers=self._headers(),
+                    json={"raw": raw},
+                )
+                response.raise_for_status()
+                payload = response.json(parse_constant=_reject_json_constant)
+        except httpx.HTTPStatusError:
+            raise GmailSendError("gmail_send_provider_error") from None
+        except httpx.HTTPError:
+            raise GmailSendError("gmail_send_transport_error") from None
+        except ValueError:
+            raise GmailSendError("gmail_send_invalid_confirmation") from None
+        return validate_send_confirmation(payload)
 
     def search_feedback_emails(
         self,
