@@ -91,6 +91,29 @@ jobs:
             mkdir -p "$tmpdir"
             echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
           fi
+      - name: Install verified Temporal CLI for integration tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Pin the Linux archive for the same CLI version used by the
+          # packaged runtime. Avoid SDK downloads during individual tests.
+          if [[ "$RUNNER_OS" != "Linux" || "$RUNNER_ARCH" != "X64" ]]; then
+            echo "No verified Temporal CLI for $RUNNER_OS/$RUNNER_ARCH" >&2
+            exit 1
+          fi
+          archive="$RUNNER_TEMP/jobctrl-temporal-linux-amd64.tar.gz"
+          executable_dir="$RUNNER_TEMP/jobctrl-temporal-linux-amd64"
+          curl --fail --location --silent --show-error --retry 4 --retry-all-errors \
+            --retry-delay 2 --connect-timeout 15 --max-time 120 \
+            --output "$archive" \
+            https://github.com/temporalio/cli/releases/download/v1.7.3/temporal_cli_1.7.3_linux_amd64.tar.gz
+          printf '%s  %s\n' '32a4320080342bccab37633b8777f548aa0b413c3d37fdbc7cb9d861c5fa11d0' "$archive" | sha256sum --check
+          mkdir -p "$executable_dir"
+          tar -xOf "$archive" temporal > "$executable_dir/temporal"
+          chmod 700 "$executable_dir/temporal"
+          "$executable_dir/temporal" --version
+          echo "JOBCTRL_TEMPORAL_CLI_PATH=$executable_dir/temporal" >> "$GITHUB_ENV"
       - name: Install Chromium for guarded availability regression
         run: uv --project workers/automation run --locked --all-extras playwright install --with-deps chromium
       - name: Test
