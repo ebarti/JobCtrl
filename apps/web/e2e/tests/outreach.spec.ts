@@ -552,3 +552,160 @@ test("Outreach planner: seeded contacts, supervised research, draft review, send
 
   assertSensitiveValuesStayOutOfEventsAndProjections(dbPath);
 });
+
+// Presentation fixture: worker/HTTP tests separately establish persistence.
+// Keep this on the existing owned Playwright services and synthetic seed.
+test("Outreach conflict retains edits and completed checks after the review card disappears", async ({ page }) => {
+  const dbPath = loadE2eDbPath();
+  seedOutreachPlanner(dbPath);
+  const edited = "Synthetic edit retained for deliberate reconciliation.";
+  let attempts = 0;
+  await page.route(`**/v1/outreach/threads/${CONTACT_THREAD_ID}/drafts`, async (route) => {
+    attempts += 1;
+    const db = new Database(dbPath);
+    try {
+      // Simulate a concurrent accepted review while the revision is delayed.
+      db.prepare("UPDATE outreach_drafts SET status='rejected', rejected_at=?, reason='Synthetic concurrent review' WHERE tenant_id='local' AND draft_id='draft-e2e-blocked'").run(NOW);
+    } finally { db.close(); }
+    await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({
+      ok: false, error: "outreach_publication_conflict", outcome: "conflict", threadId: CONTACT_THREAD_ID,
+      message: "Outreach changed while this draft was being verified.",
+      unpublishedDraft: {
+        bodyText: edited, kind: "intro_request", provenance: [],
+        gateResults: {
+          passed: true, computedAgainst: "rendered_draft", determinationIds: ["synthetic-claim-check", "synthetic-quality-check"],
+          lineAnchors: [], sourceContext: null, fabrications: [],
+          validation: { passed: true, errors: [], warnings: [] },
+          judge: { approved: true, score: 0.9, criterionScores: {}, issues: [], notes: "Explicit synthetic quality review" },
+        },
+      },
+    }) });
+  });
+  await page.goto(`/outreach/${CONTACT_ID}`);
+  const panel = page.getByRole("article", { name: "Contact details" });
+  await expect(panel.getByRole("heading", { name: "Draft under review" })).toBeVisible();
+  await panel.getByRole("button", { name: "Revise draft", exact: true }).click();
+  await panel.getByRole("textbox", { name: "Edit message" }).fill(edited);
+  await panel.getByRole("button", { name: "Revise draft", exact: true }).click();
+  const conflict = panel.getByRole("group", { name: "Unpublished revision" });
+  await expect(conflict).toBeVisible();
+  await expect(panel.getByRole("heading", { name: "Draft under review" })).toHaveCount(0);
+  await expect(panel.getByRole("heading", { name: "Approved message" })).toBeVisible();
+  await expect(panel.getByRole("textbox", { name: "Edit message" })).toHaveValue(edited);
+  await conflict.getByText("Unpublished message and completed verification").click();
+  await expect(conflict.getByText(/synthetic-claim-check/)).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Revise draft", exact: true })).toBeDisabled();
+  expect(attempts).toBe(1);
+  await conflict.getByRole("checkbox", { name: /I compared the current thread/ }).check();
+  await panel.getByRole("button", { name: "Revise draft", exact: true }).click();
+  await expect.poll(() => attempts).toBe(2);
+  await expect(panel.getByRole("button", { name: "Revise draft", exact: true })).toBeDisabled();
+});
+
+// Presentation-only response fixture; normal HTTP/RPC creation races are
+// separately exercised by the API/worker regressions.
+test("Generation conflict keeps its completed proposal through a failed deliberate retry", async ({ page }) => {
+  seedOutreachPlanner(loadE2eDbPath());
+  const body = "Synthetic generated proposal retained for comparison.";
+  let calls = 0;
+  await page.route(`**/v1/contacts/${CONTACT_ID}/outreach/drafts`, async (route) => {
+    calls += 1;
+    if (calls > 1) {
+      await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ message: "Synthetic generation provider unavailable" }) });
+      return;
+    }
+    await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({
+      ok: false, error: "outreach_publication_conflict", outcome: "conflict", threadId: "unpublished-competing-thread",
+      message: "Outreach changed while this draft was being verified.",
+      unpublishedDraft: {
+        bodyText: body, kind: "intro_request",
+        provenance: [{ claimId: "synthetic-generated-claim", section: "body", generatedText: body, contactFactIds: [], profileGrounded: false, rationale: "Explicit synthetic source choice" }],
+        gateResults: {
+          passed: true, computedAgainst: "rendered_draft", determinationIds: ["synthetic-generated-check", "synthetic-quality-check"],
+          lineAnchors: [], sourceContext: null, fabrications: [],
+          validation: { passed: true, errors: [], warnings: [] },
+          judge: { approved: true, score: 0.9, criterionScores: {}, issues: [], notes: "Explicit synthetic quality review" },
+        },
+      },
+    }) });
+  });
+  await page.goto(`/outreach/${CONTACT_ID}`);
+  const panel = page.getByRole("article", { name: "Contact details" });
+  await expect(panel.getByRole("heading", { name: "Approved message" })).toBeVisible();
+  await panel.getByRole("button", { name: "Generate draft", exact: true }).click();
+  const proposal = panel.getByRole("group", { name: "Unpublished draft" });
+  await expect(proposal).toBeVisible();
+  await proposal.getByText("Unpublished message and completed verification").click();
+  await expect(proposal.getByText(body, { exact: true })).toBeVisible();
+  await expect(proposal.getByText(/synthetic-generated-check/)).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Generate draft", exact: true })).toBeDisabled();
+  expect(calls).toBe(1);
+  await proposal.getByRole("checkbox", { name: /I compared the current thread/ }).check();
+  await panel.getByRole("button", { name: "Generate draft", exact: true }).click();
+  await expect(panel.getByText("Synthetic generation provider unavailable")).toBeVisible();
+  await expect(proposal.getByText(body, { exact: true })).toBeVisible();
+  await expect(panel.getByRole("heading", { name: "Approved message" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Generate draft", exact: true })).toBeDisabled();
+  expect(calls).toBe(2);
+});
+
+// Presentation fixture: a synthetic response and owned database model a saved
+// revision; the HTTP/RPC worker races separately prove persistence authority.
+test("Later typing remains available after the submitted revision succeeds", async ({ page }) => {
+  const dbPath = loadE2eDbPath();
+  seedOutreachPlanner(dbPath);
+  const baseline = new Database(dbPath, { readonly: true });
+  const approved = baseline.prepare("SELECT * FROM outreach_drafts WHERE tenant_id='local' AND draft_id='draft-e2e-approved'").get();
+  const sends = baseline.prepare("SELECT * FROM outreach_send_logs WHERE tenant_id='local' AND thread_id=? ORDER BY send_log_id").all(CONTACT_THREAD_ID);
+  const followUp = baseline.prepare("SELECT follow_up_due_at, follow_up_basis, follow_up_state FROM outreach_threads WHERE tenant_id='local' AND thread_id=?").get(CONTACT_THREAD_ID);
+  baseline.close();
+
+  const submitted = "Synthetic submitted revision A";
+  const later = "Synthetic later edit B";
+  const requests: string[] = [];
+  let release = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route(`**/v1/outreach/threads/${CONTACT_THREAD_ID}/drafts`, async (route) => {
+    const body = route.request().postDataJSON() as { editedBodyText: string };
+    requests.push(body.editedBodyText);
+    if (requests.length === 1) await held;
+    const db = new Database(dbPath);
+    try {
+      db.transaction(() => {
+        db.prepare("UPDATE outreach_drafts SET status='superseded' WHERE tenant_id='local' AND thread_id=? AND status='candidate'").run(CONTACT_THREAD_ID);
+        db.prepare(`INSERT INTO outreach_drafts
+          (tenant_id, draft_id, thread_id, generation, kind, status, body_text, gate_results_json, provenance_json, created_at, approved_at, rejected_at, reason)
+          SELECT 'local', ?, thread_id, (SELECT MAX(generation) + 1 FROM outreach_drafts WHERE tenant_id='local' AND thread_id=?),
+            kind, 'candidate', ?, gate_results_json, provenance_json, ?, NULL, NULL, ''
+          FROM outreach_drafts WHERE tenant_id='local' AND draft_id='draft-e2e-approved'`).run(`draft-e2e-published-${requests.length}`, CONTACT_THREAD_ID, body.editedBodyText, NOW);
+      })();
+    } finally { db.close(); }
+    const current = await page.request.get(`/v1/contacts/${CONTACT_ID}/outreach`);
+    expect(current.ok()).toBe(true);
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(await current.json()) });
+  });
+  await page.goto(`/outreach/${CONTACT_ID}`);
+  const panel = page.getByRole("article", { name: "Contact details" });
+  await panel.getByRole("button", { name: "Revise draft", exact: true }).click();
+  const input = panel.getByRole("textbox", { name: "Edit message" });
+  await input.fill(submitted);
+  await panel.getByRole("button", { name: "Revise draft", exact: true }).click();
+  await expect.poll(() => requests).toEqual([submitted]);
+  await input.fill(later);
+  release();
+  await expect(panel.getByText(/newer edits remain here and have not been verified/i)).toBeVisible();
+  await expect(input).toHaveValue(later);
+  await expect(panel.getByText(submitted, { exact: true }).first()).toBeVisible();
+  expect(requests).toEqual([submitted]);
+  await panel.getByRole("button", { name: "Revise draft", exact: true }).click();
+  await expect.poll(() => requests).toEqual([submitted, later]);
+  await expect(input).toHaveCount(0);
+  await expect(panel.getByText(later, { exact: true }).first()).toBeVisible();
+
+  const after = new Database(dbPath, { readonly: true });
+  try {
+    expect(after.prepare("SELECT * FROM outreach_drafts WHERE tenant_id='local' AND draft_id='draft-e2e-approved'").get()).toEqual(approved);
+    expect(after.prepare("SELECT * FROM outreach_send_logs WHERE tenant_id='local' AND thread_id=? ORDER BY send_log_id").all(CONTACT_THREAD_ID)).toEqual(sends);
+    expect(after.prepare("SELECT follow_up_due_at, follow_up_basis, follow_up_state FROM outreach_threads WHERE tenant_id='local' AND thread_id=?").get(CONTACT_THREAD_ID)).toEqual(followUp);
+  } finally { after.close(); }
+});

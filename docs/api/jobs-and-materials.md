@@ -344,6 +344,15 @@ remain drafts until their review gate is satisfied.
 <a id="contact-research"></a>
 <a id="outreach-drafts"></a>
 
+Generation and revision compare their complete starting thread state at
+publication. A concurrent draft/review/send-log/reminder change returns
+`409 outreach_publication_conflict` with private unpublished text, completed
+gates and provenance, leaving current content and history unchanged. The caller
+refetches and deliberately reconciles before retrying; see the
+[conflict response](complete-contract.md#outreach-drafts). The open editor
+retains those results across refresh, including disappearance of the review
+card. This does not add command idempotency or automatic sending.
+
 ## Reviewed Locale Variants
 
 `POST /v1/jobs/:jobId/material-locales` provides history, source-linked generation,

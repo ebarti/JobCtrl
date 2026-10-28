@@ -20,6 +20,7 @@ export function useReviseDraftMutation(
   const { api } = usePorts();
   const queryClient = useQueryClient();
   return useMutation({
+    retry: false,
     mutationKey: outreachKeys.thread(tenantId, threadId),
     mutationFn: (body: ReviseOutreachDraftRequest) => api.reviseOutreachDraft(threadId, body),
     onSettled: () => {

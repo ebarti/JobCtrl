@@ -66,6 +66,47 @@ yourself. The current cadence policy belongs to
 [Apply → Outreach Follow-Ups](apply.md#outreach-follow-ups) and is not duplicated
 here.
 
+## When Outreach Changes During Verification
+
+Generation and revision verify the thread state they started from. If another request commits
+an approval, rejection, draft, send log or reminder change before it finishes,
+the completed proposal reports a conflict and leaves the current thread intact.
+The editor keeps your text and the unpublished verification results even when
+refresh replaces or removes the original review card. Those results are private
+proposals, not an approved message or a published generation.
+
+You can continue editing while a revision is being verified. If the submitted
+version is saved, newer typing remains in the editor and has not been verified.
+You can submit that newer text deliberately or discard it.
+
+Compare the current accepted message, review history, send logs and reminder
+with your edit. Confirm that comparison in the editor before deliberately
+retrying; retry runs the gates again against the current state. JobCtrl does not
+automatically regenerate or overwrite the newer facts. Unpublished results are
+retained in the open editor, not saved as canonical draft history; leaving or
+reloading the page can discard them. If the thread was removed, preserve your
+text before leaving and open the current contact to start again.
+
+For a generation conflict, open **Unpublished message and completed verification**
+to inspect the completed body, checks and provenance. Compare them with the
+current thread, including a winner from another first-generation request, then
+confirm the comparison before choosing **Generate draft** again. The previous
+proposal stays available during a deliberate retry and after a provider failure;
+it clears on success or when you explicitly discard it. Generation never retries
+automatically.
+
+Within an open panel, edits and unpublished proposals belong to their recipient
+and optional job. Selecting another recipient or job suspends the previous work;
+return to its original target to resume it. It cannot be confirmed or submitted
+while another target is displayed. Generation proposals also retain their offer
+purpose and offer revision context. Switching tenant or leaving the panel ends
+these private sessions; there is no persistent recovery store.
+
+If an acknowledgement is lost, read the thread and its generation history
+before issuing another command. A completed write can already be present;
+this conflict protocol does not make repeated commands idempotent and never
+replays a send action.
+
 ## Contact Import
 
 Open **Import contacts**, choose CSV or vCard, enter the source filename, and

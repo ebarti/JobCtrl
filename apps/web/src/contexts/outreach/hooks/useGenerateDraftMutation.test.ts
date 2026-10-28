@@ -38,3 +38,19 @@ describe("useGenerateDraftMutation", () => {
     ).toBeUndefined();
   });
 });
+
+it("never automatically regenerates a conflict even when the application mutation default retries", async () => {
+  const { createTestQueryClient } = await import("../../../test/render.js");
+  const { makeOutreachPublicationConflict } = await import("../../../test/fixtures/outreach.js");
+  const queryClient = createTestQueryClient();
+  queryClient.setDefaultOptions({ mutations: { retry: 2, retryDelay: 0 } });
+  let calls = 0;
+  server.use(http.post("*/v1/contacts/:contactId/outreach/drafts", () => {
+    calls += 1;
+    return HttpResponse.json(makeOutreachPublicationConflict(), { status: 409 });
+  }));
+  const { result } = renderHookWithProviders(() => useGenerateDraftMutation("contact-1"), { queryClient });
+  act(() => result.current.mutate({}));
+  await waitFor(() => expect(result.current.isError).toBe(true));
+  expect(calls).toBe(1);
+});

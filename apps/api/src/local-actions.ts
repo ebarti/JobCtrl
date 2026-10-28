@@ -1,4 +1,4 @@
-import { outreachWorkerError } from "./outreach-generation-errors.js";
+import { OutreachPublicationConflictError, outreachWorkerError } from "./outreach-generation-errors.js";
 import { callRpc } from "./json-rpc-adapter.js";
 /**
  * Local action dispatchers — JSON-RPC backed (Phase 9 / S-34).
@@ -26,6 +26,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   DEFAULT_PIPELINE_LLM_MODEL,
+  GenerateOutreachDraftResultSchema,
   PIPELINE_ACTION_JOB_KEY,
   RederiveLearningRecommendationsResultSchema,
   GenerateInterviewPrepParamsSchema,
@@ -353,19 +354,11 @@ export function createOutreachDraftGenerator(
 export const defaultOutreachDraftGenerator: OutreachDraftGenerator = createOutreachDraftGenerator();
 
 function parseOutreachDraftResult(result: unknown): OutreachDraftGeneratorOutcome {
-  if (!isRecord(result)) {
-    throw new Error("Outreach draft generation returned no result.");
+  const parsed = GenerateOutreachDraftResultSchema.parse(result);
+  if ("outcome" in parsed) {
+    throw new OutreachPublicationConflictError(parsed);
   }
-  return {
-    threadId: typeof result.threadId === "string" ? result.threadId : "",
-    contactId: typeof result.contactId === "string" ? result.contactId : "",
-    jobId: typeof result.jobId === "string" ? result.jobId : null,
-    draftId: typeof result.draftId === "string" ? result.draftId : "",
-    generation: typeof result.generation === "number" ? result.generation : 0,
-    kind: typeof result.kind === "string" ? result.kind : "intro_request",
-    status: typeof result.status === "string" ? result.status : "candidate",
-    gatePassed: result.gatePassed === true,
-  };
+  return parsed;
 }
 
 export const defaultArtifactOpener: ArtifactOpener = async (artifactPath) => {
