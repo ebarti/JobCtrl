@@ -38,12 +38,22 @@ if mode == "writer":
     # Spawned with setsid by target: escapes its Apply root/session but remains
     # inside the actual native execution coalition, which the Go stop owns.
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    (evidence / "writer-ready.json").write_text(json.dumps({"pid": os.getpid(), "sid": os.getsid(0)}))
-    counter = 0
-    while True:
-        counter += 1
-        (evidence / "writer-ticks").write_text(str(counter))
-        time.sleep(0.01)
+    # Establish a nonempty progress file before announcing readiness. Keep it
+    # open and update a fixed-width value so SIGKILL cannot leave it truncated.
+    with (evidence / "writer-ticks").open("w", encoding="utf-8") as ticks:
+        counter = 0
+        ticks.write(f"{counter:020d}")
+        ticks.flush()
+        ready = evidence / "writer-ready.json"
+        temporary = evidence / "writer-ready.tmp"
+        temporary.write_text(json.dumps({"pid": os.getpid(), "sid": os.getsid(0)}))
+        temporary.replace(ready)
+        while True:
+            counter += 1
+            ticks.seek(0)
+            ticks.write(f"{counter:020d}")
+            ticks.flush()
+            time.sleep(0.01)
 
 if mode == "target":
     subprocess.Popen([sys.executable, __file__, "writer", source, str(app), str(evidence)], start_new_session=True)

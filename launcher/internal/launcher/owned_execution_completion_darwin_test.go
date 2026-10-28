@@ -109,6 +109,12 @@ func TestNativeCompletionRecoversApplyCustodyAfterEscapedWriter(t *testing.T) {
 			if raw, err := os.ReadFile(filepath.Join(evidence, name)); err == nil && len(raw) > 0 {
 				return raw
 			}
+			select {
+			case err := <-done:
+				output, _ := os.ReadFile(logPath)
+				t.Fatalf("native Apply harness exited before publishing %s: %v %s", name, err, output)
+			default:
+			}
 			if time.Now().After(deadline) {
 				output, _ := os.ReadFile(logPath)
 				t.Fatalf("native Apply harness did not publish %s: %s", name, output)
@@ -188,6 +194,18 @@ func TestNativeCompletionRecoversApplyCustodyAfterEscapedWriter(t *testing.T) {
 	}
 	if !processPIDAlive(writer.PID) {
 		t.Fatal("read-only refusal terminated the escaped writer")
+	}
+	// Observe actual writer progress before asking the native scope to stop.
+	beforeStop := waitFile("writer-ticks")
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		current, err := os.ReadFile(filepath.Join(evidence, "writer-ticks"))
+		if err == nil && len(current) > 0 && !bytes.Equal(beforeStop, current) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("escaped writer did not make progress before native stop")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	started := time.Now()
 	if err := stop(ctx); err != nil {
