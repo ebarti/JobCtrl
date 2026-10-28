@@ -669,15 +669,19 @@ def test_actual_fork_session_handoff_cannot_retire_unseen_successor(browser_seam
 import json,os,time
 from pathlib import Path
 state=Path(STATE)
+def publish(pid, suffix, value):
+    temporary=state/f'{pid}.{suffix}.tmp'
+    temporary.write_text(value)
+    os.replace(temporary, state/f'{pid}.{suffix}')
 while True:
     pid=os.getpid()
-    (state/f'{pid}.json').write_text(json.dumps({'pid':pid,'sid':os.getsid(0)}))
+    publish(pid, 'json', json.dumps({'pid':pid,'sid':os.getsid(0)}))
     command=state/f'{pid}.cmd'
     while not command.exists(): time.sleep(0.002)
     action=command.read_text()
     command.unlink()
     if action=='exit':
-        (state/f'{pid}.done').write_text('exiting')
+        publish(pid, 'done', 'exiting')
         break
     assert action=='relay'
     successor=os.fork()
@@ -685,7 +689,7 @@ while True:
         continue
     os.setsid()
     while not (state/f'{successor}.json').exists(): time.sleep(0.002)
-    (state/f'{pid}.ack').write_text(str(successor))
+    publish(pid, 'ack', str(successor))
 """.replace("STATE", repr(str(state)))
     root_code = (
         "import subprocess,sys,time; from pathlib import Path; "
@@ -703,10 +707,15 @@ while True:
     current = [int(next(state.glob("*.json")).stem)]
     relays = []
 
+    def send_command(pid, action):
+        temporary = state / f"{pid}.cmd.tmp"
+        temporary.write_text(action)
+        os.replace(temporary, state / f"{pid}.cmd")
+
     def handoff(pid):
         if pid != current[0] or len(relays) >= 2:
             return
-        (state / f"{pid}.cmd").write_text("relay")
+        send_command(pid, "relay")
         ack = state / f"{pid}.ack"
         deadline = time.monotonic() + 5
         while not ack.exists() and time.monotonic() < deadline:
@@ -777,7 +786,7 @@ while True:
         assert control.poll() is None
     finally:
         for path in state.glob("*.json"):
-            (state / f"{path.stem}.cmd").write_text("exit")
+            send_command(path.stem, "exit")
         deadline = time.monotonic() + 5
         while len(list(state.glob("*.done"))) != len(list(state.glob("*.json"))) and time.monotonic() < deadline:
             time.sleep(0.002)
