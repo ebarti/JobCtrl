@@ -118,8 +118,8 @@ from jobctrl.domain.materials.services import (
 from jobctrl.domain.ports.artifact_review import ArtifactStatus, JudgeVerdict, ValidationResult
 from jobctrl.domain.materials.value_objects import ArtifactType, ControlRule, LlmModelSpec, RenderFormat, TransformType
 from jobctrl.domain.ports.events import EventPublisher
-from jobctrl.domain.ports.llm import LlmMessage, LlmPort
-from jobctrl.domain.determinations import Source, DeterminationFailure, call_model, parse_model_result
+from jobctrl.domain.ports.llm import LlmFailure, LlmMessage, LlmPort
+from jobctrl.domain.determinations import Source, DeterminationFailure, call_model, llm_failure_code, parse_model_result
 from jobctrl.domain.job_snapshot import build_jd_snapshot
 from jobctrl.domain.ports.claim_verification import ArtifactLine, ClaimVerifier
 from jobctrl.domain.ports.job_interpretation import JobInterpreter
@@ -3681,6 +3681,8 @@ class TailorResumeUseCase:
             result = self._run_voice_sdk(request)
         except DeterminationFailure:
             raise
+        except LlmFailure as error:
+            raise DeterminationFailure(llm_failure_code(error)) from None
         except Exception:
             raise DeterminationFailure("provider_error") from None
         voiced_payload = apply_voice_to_payload(tailored_payload, result)

@@ -40,6 +40,7 @@ class ResultMessage:
 class _Options:
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
+        self.__dict__.update(kwargs)
 
 
 def _claude_query(*, prompt: str, options: _Options):

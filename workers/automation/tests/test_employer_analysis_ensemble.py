@@ -102,6 +102,7 @@ class ResultMessage:
 class _FakeClaudeOptions:
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
+        self.__dict__.update(kwargs)
 
 
 def _isolated_sdk_options() -> dict[str, object]:
@@ -272,8 +273,10 @@ class TestClaudeAdapter:
             return _gen()
 
         adapter = ClaudeAnalysisAdapter(query_fn=query, options_factory=_FakeClaudeOptions)
-        with pytest.raises(RuntimeError, match="retries exhausted"):
+        with pytest.raises(ProviderCallError) as raised:
             await adapter.draft("system", JD)
+        assert raised.value.code == "schema_validation_failed"
+        assert raised.value.envelope.additional_detail_code == "error_max_structured_output_retries"
 
     async def test_draft_opens_generation_span_with_model_and_tokens(self, in_memory_exporter) -> None:
         adapter = ClaudeAnalysisAdapter(
@@ -328,8 +331,10 @@ class TestClaudeAdapter:
             return _gen()
 
         adapter = ClaudeAnalysisAdapter(query_fn=query, options_factory=_FakeClaudeOptions)
-        with pytest.raises(RuntimeError, match="retries exhausted"):
+        with pytest.raises(ProviderCallError) as raised:
             await adapter.draft("system", JD)
+        assert raised.value.code == "schema_validation_failed"
+        assert raised.value.envelope.additional_detail_code == "error_max_structured_output_retries"
 
         spans = in_memory_exporter.get_finished_spans()
         assert len(spans) == 1

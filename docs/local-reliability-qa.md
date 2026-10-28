@@ -343,6 +343,23 @@ parallel admitted requests above the idle-cache count, fresh conversation IDs,
 model/effort and named permissions, partial-usage accounting, original typed
 failures, startup-publication ordering and complete cancellation cleanup.
 
+Run `tests/test_claude_terminal_failure.py` with those checks. Through the
+actual kit and synthetic SDK messages, reject nonempty failed terminal results
+for plain, structured, analysis and voice calls, as well as a failed kit schema
+result. Check retained usage and failed generation spans, distinct execution,
+schema and budget outcomes, bounded retries, and preservation of the previous
+accepted artifact and verified voice-stage candidate. Do not use real provider
+credentials or model responses for these cases.
+Also fail stream iteration and runtime cleanup after an observed terminal
+receipt: account its usage once, retain its primary failure, and record the
+post-terminal failure separately. A pre-terminal transport failure keeps its
+existing provider-failure behavior.
+Cancel each caller after receipt, including repeated cancellation and a late
+cleanup failure; require cancellation to propagate, terminal usage to reach the
+owned spend ledger once, and previously accepted material to remain intact.
+Also cover a receipt observed during cancellation cleanup and cancellation
+before any receipt.
+
 Use a configured provider only in an owned synthetic workspace. Repeat calls
 through the production LlmPort and inspect actual kit process-start/reuse
 metadata and distinct conversation IDs. A reused Python adapter object is not

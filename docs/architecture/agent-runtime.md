@@ -88,7 +88,20 @@ The kit dispatches the native query with a fresh conversation, tool-free
 options, strict permissions and the existing supported credential/bare-runtime
 configuration. It does not reuse a conversational client across independent
 artifact generators and judges. Native terminal messages remain available to
-the owner so usage is accounted before failure classification and parsing.
+the owner so usage is accounted before failure classification and parsing. The
+kit's success status and native failure tags are both checked before accepting
+text or structured output. Execution failures follow provider-availability
+rules; structured-output failures use the bounded response-repair path, and a
+budget or turn-limit failure does not mark the provider unavailable. A failed
+voice rewrite keeps the already verified candidate.
+When the stream or runtime fails after a terminal receipt, observed terminal
+usage and the primary failure remain authoritative, with a separate
+content-free post-terminal failure flag. A successful terminal followed by
+such a failure is not accepted.
+If the caller cancels after a receipt is observed, SDK cleanup is joined and
+the terminal usage is recorded once on the caller's lane before cancellation
+propagates; the cancelled result is never accepted. A cleanup failure during
+that cancellation is reported without its contents.
 
 ### Antigravity
 

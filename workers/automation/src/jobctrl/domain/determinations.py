@@ -155,6 +155,17 @@ def validate_citations(result: BaseModel, sources: Sequence[Source]) -> None:
 T = TypeVar("T", bound=BaseModel)
 
 
+def llm_failure_code(error: LlmFailure) -> str:
+    """Map typed model failures to the existing safe determination protocol."""
+    if error.code in {"provider_unavailable", "budget_denied"}:
+        return error.code
+    if error.code == "invalid_json":
+        return "malformed_json"
+    if error.code == "schema_validation_failed":
+        return "schema_violation"
+    return "provider_error" if error.retryable else "provider_non_retryable"
+
+
 def call_model(*, llm, messages, response_schema, lane, preflight, **kwargs):
     if llm is None:
         raise DeterminationFailure("provider_unavailable")
@@ -173,17 +184,7 @@ def call_model(*, llm, messages, response_schema, lane, preflight, **kwargs):
             raise DeterminationFailure("malformed_json") from None
         except Exception as error:
             if isinstance(error, LlmFailure):
-                code = error.code
-                if code in {"provider_unavailable", "budget_denied"}:
-                    raise DeterminationFailure(code) from None
-                if code == "invalid_json":
-                    raise DeterminationFailure("malformed_json") from None
-                if code == "schema_validation_failed":
-                    raise DeterminationFailure("schema_violation") from None
-                if not error.retryable:
-                    # Keep adapter authority in the safe serialized protocol;
-                    # callers must not turn a terminal turn into an automatic retry.
-                    raise DeterminationFailure("provider_non_retryable") from None
+                raise DeterminationFailure(llm_failure_code(error)) from None
             raise DeterminationFailure("provider_error") from None
 
 
