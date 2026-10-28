@@ -10433,7 +10433,7 @@ async function collectMcpNodeContributors(payloadRoot, contracts) {
   return collectPayloadNpmContributors(payloadRoot, path3.join(mcpRoot, "node_modules"), {
     expectedKeys: /* @__PURE__ */ new Set([
       `@playwright/mcp@${contracts.versions["playwright-mcp"]}`,
-      "playwright-core@1.62.0-alpha-2026-06-29"
+      "playwright-core@1.64.0-alpha-1790635538000"
     ])
   });
 }

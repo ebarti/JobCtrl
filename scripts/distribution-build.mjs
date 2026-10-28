@@ -1401,12 +1401,12 @@ export async function collectPayloadNpmContributors(payloadRoot, nodeModules, { 
   return merged;
 }
 
-async function collectMcpNodeContributors(payloadRoot, contracts) {
+export async function collectMcpNodeContributors(payloadRoot, contracts) {
   const mcpRoot = componentRoot(payloadRoot, contracts, "playwright-mcp");
   return collectPayloadNpmContributors(payloadRoot, path.join(mcpRoot, "node_modules"), {
     expectedKeys: new Set([
       `@playwright/mcp@${contracts.versions["playwright-mcp"]}`,
-      "playwright-core@1.62.0-alpha-2026-06-29",
+      "playwright-core@1.64.0-alpha-1790635538000",
     ]),
   });
 }
