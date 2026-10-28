@@ -278,14 +278,9 @@ func runActualNativeApplyModuleFixture(t *testing.T, temporal bool) {
 			t.Fatal("native process-session census observations missing")
 		}
 		for _, path := range observations {
-			var observation struct {
-				SessionID int               `json:"session_id"`
-				Outcome   string            `json:"outcome"`
-				Samples   []json.RawMessage `json:"samples"`
-			}
 			raw, err := os.ReadFile(path)
-			if err != nil || json.Unmarshal(raw, &observation) != nil || observation.SessionID <= 0 || len(observation.Samples) == 0 || observation.Outcome != "verified" {
-				t.Fatal("invalid or refused native process-session census observation")
+			if diagnostic := describeApplyCensusObservation(raw, err); diagnostic != "" {
+				t.Fatal(diagnostic)
 			}
 		}
 		t.Logf("observed %d real owned-session cleanup censuses", len(observations))
@@ -303,6 +298,69 @@ func runActualNativeApplyModuleFixture(t *testing.T, temporal bool) {
 	if !waitForOwnedRecordExit(componentRecord{PID: peerPID, StartIdentity: peerIdentity}, time.Second) {
 		t.Fatal("final cleanup left the control alive")
 	}
+}
+
+// Report only bounded aggregate counts. Session IDs, PIDs, paths and raw
+// inventory values are deliberately excluded from hosted test logs.
+func describeApplyCensusObservation(raw []byte, readErr error) string {
+	if readErr != nil {
+		return "native process-session census observation could not be read"
+	}
+	if !json.Valid(raw) {
+		return "native process-session census observation has invalid JSON"
+	}
+	var observation struct {
+		SessionID int               `json:"session_id"`
+		Outcome   string            `json:"outcome"`
+		Samples   []json.RawMessage `json:"samples"`
+	}
+	if json.Unmarshal(raw, &observation) != nil {
+		return "native process-session census observation has invalid schema"
+	}
+	if observation.SessionID <= 0 {
+		return "native process-session census observation has invalid session identity"
+	}
+	if len(observation.Samples) == 0 {
+		return "native process-session census observation has no samples"
+	}
+	if observation.Outcome == "verified" {
+		return ""
+	}
+	if observation.Outcome != "refused" {
+		return "native process-session census observation has invalid outcome"
+	}
+	var complete, incomplete, unknown, changed, occupied, errors, malformed int
+	for _, rawSample := range observation.Samples {
+		var sample struct {
+			Complete         *bool              `json:"complete"`
+			InventoryChanges *int               `json:"inventory_changes"`
+			SessionMembers   *[]json.RawMessage `json:"session_members"`
+			Error            *json.RawMessage   `json:"error"`
+		}
+		if json.Unmarshal(rawSample, &sample) != nil {
+			malformed++
+			unknown++
+			continue
+		}
+		if sample.Complete == nil {
+			unknown++
+		} else if *sample.Complete {
+			complete++
+		} else {
+			incomplete++
+		}
+		if sample.InventoryChanges != nil && *sample.InventoryChanges > 0 {
+			changed++
+		}
+		if sample.SessionMembers != nil && len(*sample.SessionMembers) > 0 {
+			occupied++
+		}
+		if sample.Error != nil {
+			errors++
+		}
+	}
+	return fmt.Sprintf("native process-session census refused: samples=%d complete=%d incomplete=%d unknown=%d changed_samples=%d occupied_samples=%d error_samples=%d malformed_samples=%d",
+		len(observation.Samples), complete, incomplete, unknown, changed, occupied, errors, malformed)
 }
 
 // Preserve only owned synthetic logs, history and ownership metadata before
