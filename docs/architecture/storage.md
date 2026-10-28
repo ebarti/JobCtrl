@@ -36,6 +36,17 @@ Unless overridden by `JOBCTRL_DIR`, the local authority root is
 | `apply-runs/<launcherId>/owner.lock` | Stable per-run logical lifetime lease. It does not serialize other jobs or prove descendant exit; source recovery requires the exact existing recorded inode and preserves known failures. |
 | `apply-runs/<launcherId>/custody.json` | Private durable Apply job and birth custody, bound to the physical workspace and native execution. Records contain only resource/run identifiers, never applicant materials. Exact lifetime state fences the logical source owner; its best-effort settlement never certifies escaped-tree retirement. Native retirement uses actual completion proof. |
 | `browser-profiles/`, `extension-capability-token`, `chrome-workers/`, `apply-workers/` | Consented copied profiles for separate compatibility capabilities, extension pairing, and browser/apply execution state. Integrated Discovery uses the current Chrome profile through the extension and never stores a copy; its bridge task bodies/results are API-process-memory-only. Browser-adoption metadata is in `config.json`. |
+
+Gmail authentication and refresh serialize a valid token into an exclusive
+same-directory stage, set its permissions before writing, flush the file, and
+atomically replace the canonical token. Failures before replacement preserve
+accepted bytes; handled failures remove their owned stage. New authorization
+requires its own nonblank refresh token and never borrows one from an unproven
+account identity. On POSIX the stage is
+mode `0600`. On Windows a protected DACL grants access to the current user and
+LocalSystem from file creation, and a filesystem without persistent ACLs is
+refused; a volume whose ACL support cannot be determined is also refused. A
+process killed before replacement can leave its private stage behind.
 | `backups/` and legacy `resume.*` / style files | User-created database snapshots, guarded job-data-purge recovery bundles, and pre-migration resume inputs. |
 
 Developer supervisors additionally use checkout-local `.dev/` process, log,
