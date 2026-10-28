@@ -392,6 +392,54 @@ Update the owning schemas/prompts and source contracts together. Prove the model
 
 Outreach calls claim verification through a port, using confirmed contact facts and canonical profile sources. An independent quality judge assesses tone. User edits receive the same model checks before approval. The user confirms a draft and records sending separately; generation never sends a message.
 
+### Outreach Publication Boundary
+
+`SqliteOutreachThreadRepository.load` reads the complete tenant/thread row,
+all draft generations and all send logs in one SQLite snapshot. An immutable,
+exact canonical-state tuple accompanies the aggregate through its replacements;
+expected absence is distinct from overwrite authority. Generation captures this
+base before synthesis, and revision before verification. Read transactions end
+before model calls; model authority, lane/spend preflight and offer/profile
+source fences keep their existing owners.
+
+At save, SQLite writer ownership precedes comparison. A changed or deleted base,
+or competing first creation for the same tenant/contact/job, raises
+`OutreachPublicationConflict` before canonical mutation. This migration-free
+comparison uses full canonical rows, not timestamp equality or a process-local
+counter. Unrelated tenants and threads do not invalidate the base. Concurrent
+revisions from one base can publish at most one next generation.
+
+Persistence inserts new draft and send-log identities, updates existing draft
+lifecycle columns explicitly, and never deletes/recreates accepted history.
+Bodies, gate/provenance records and prior review evidence remain immutable.
+Canonical changes, new determination anchors and durable lifecycle events commit
+as one transaction; subscriber fanout runs best effort after commit. A failed
+publication rolls them all back. Completed model determinations have their own
+persistence lifecycle and can survive a conflict without becoming draft authority.
+
+TypeScript approval/rejection, send logging and reminder transitions acquire
+writer ownership before loading or validating the current state, including offer
+bindings and approved-draft requirements. Their fact and event writes share the
+same transaction. The Python RPC transports a stale proposal as a separate result
+variant; the API maps it to HTTP 409. No accepted ID or generation is assigned to
+the returned private proposal. The web editor is mounted independently of the
+current review card, retaining text and completed results across refetch/SSE,
+and asks for deliberate reconciliation before another verification attempt.
+When a revision succeeds, the editor closes only if its current input still
+matches the submitted input snapshot. Newer typing stays available and unverified;
+the completed request never submits those later edits automatically.
+Open-page sessions partition the mounted review/editor state by tenant, contact
+and optional job. Inactive recipient/job sessions remain hidden and inert,
+including their reconciliation controls; returning to the original target resumes
+its work. Pending callbacks retain that target's own mutation context. Tenant
+changes reset these sessions. Generation also partitions by purpose and offer
+revision, retains its private conflict separately from the mutation error and
+presents the completed body, checks and provenance. Another generation requires
+explicit comparison, and a failed deliberate retry preserves the last proposal.
+Neither generation nor conflict recovery automatically retries a model call.
+This retention ends when the panel unmounts or the page reloads. The protocol does not add contact
+edit CAS, command replay identities or any send transport.
+
 ## Key Code Pointers
 
 - `domain/materials/claim_verification.py` and `domain/ports/claim_verification.py`.

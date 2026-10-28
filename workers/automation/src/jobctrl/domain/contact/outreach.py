@@ -364,6 +364,14 @@ def _parse_dt(iso: str) -> datetime:
     return parsed
 
 
+class OutreachPublicationConflict(RuntimeError):
+    """The completed proposal has no authority over the newer canonical thread."""
+
+    def __init__(self, proposal: "OutreachThread") -> None:
+        super().__init__("Outreach changed while this draft was being verified. Review the current thread before retrying.")
+        self.proposal = proposal
+
+
 @dataclass(frozen=True)
 class OutreachThread:
     """Aggregate root for the outreach state of one ``(contact, optional job)``.
@@ -383,6 +391,10 @@ class OutreachThread:
     updated_at: str = ""
     send_logs: tuple[OutreachSendLog, ...] = field(default_factory=tuple)
     follow_up: FollowUpSchedule = field(default_factory=FollowUpSchedule)
+
+    # Exact persisted base carried through immutable aggregate replacements.
+    # None means expected absence, never unconditional overwrite authority.
+    publication_base: tuple | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.thread_id, str) or not self.thread_id.strip():

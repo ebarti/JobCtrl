@@ -1,6 +1,6 @@
 import { PermanentDeleteSelectionConflict, PermanentDeleteSelectionRegistry } from "./permanent-delete-selection.js";
 import { readJobCtrlSettings } from "./settings-config.js";
-import { OutreachGenerationError } from "./outreach-generation-errors.js";
+import { OutreachGenerationError, OutreachPublicationConflictError } from "./outreach-generation-errors.js";
 import { registerOfferRoutes } from "./offer-routes.js";
 import { readCompanyBriefing } from "./company-briefings.js";
 
@@ -5139,6 +5139,10 @@ function withDb<T>(
         message: error.message,
       };
     }
+    if (error instanceof OutreachPublicationConflictError) {
+      void reply.code(409);
+      return { ok: false, error: "outreach_publication_conflict", message: error.message, ...error.conflict };
+    }
     if (error instanceof OutreachGenerationError) {
       void reply.code(error.code === "budget_denied" ? 429 : error.code === "provider_unavailable" ? 503 : error.code.startsWith("offer_") ? 409 : 502);
       return { ok: false, error: error.code, message: error.message };
@@ -5222,6 +5226,10 @@ async function withWritableDb<T>(
           unprocessedJobKeys: error.unprocessedJobKeys ?? [],
         } : {}),
       };
+    }
+    if (error instanceof OutreachPublicationConflictError) {
+      void reply.code(409);
+      return { ok: false, error: "outreach_publication_conflict", message: error.message, ...error.conflict };
     }
     if (error instanceof OutreachGenerationError) {
       void reply.code(error.code === "budget_denied" ? 429 : error.code === "provider_unavailable" ? 503 : error.code.startsWith("offer_") ? 409 : 502);

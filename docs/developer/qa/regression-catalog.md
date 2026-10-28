@@ -843,6 +843,36 @@ publisher canaries, worker-built Apply projections, legacy replay and canonical
 Apply Review distinct. Reopening an ambiguous attempt must make no new transport
 call; a persisted valid confirmation may settle only its own current operation.
 
+For Outreach publication, run locked pytest for
+`workers/automation/tests/test_outreach_repository_v7.py`,
+`test_outreach_draft_gates.py`, `test_offer_outreach.py` and the existing Outreach
+no-send/projection/follow-up suites. Run API `test/outreach.test.ts` with the
+controller-prepared Python `.venv` available: its owned synthetic model ports
+exercise real registered RPC, independent SQLite connections and normal HTTP.
+Hold revision inside verification, separately commit send/approve/reject/newer
+draft/schedule/reschedule/complete/dismiss, then require an explicit conflict
+and exact preservation of canonical rows, anchors and lifecycle event counts.
+Race revisions, first creation and deleted bases; freeze timestamps, interleave
+snapshot reads, retain unrelated tenant/thread controls, inject row/anchor/event
+failures, lose an HTTP acknowledgement and reopen the runtime/database. Require
+one winner generation/event and no automatic regeneration or send replay.
+
+Frontend form/hook/panel regressions and `e2e/tests/outreach.spec.ts` cover visible
+conflict recovery, retained edits/checks after card replacement/removal and
+deliberate retry. Type a newer edit while a revision is pending and verify it
+survives success, failure and conflict; it must never be resubmitted automatically,
+and both deliberate submission and discard must work. Include the real Offer recipient selector with a cached second
+recipient: an earlier recipient's edit, completion and comparison controls must
+remain suspended until returning to that recipient. Repeat for another job and
+for generation's purpose/offer-revision scope, including a completion arriving
+while another target is displayed. Exercise delayed generation and competing
+first creation through the normal generation caller, preserving completed body,
+checks and provenance across refetch and a failed deliberate retry. Global
+mutation retry defaults must never cause automatic generation or revision. Browser presentation fixtures are separate from HTTP/RPC
+persistence proof. See the [publication design](../../architecture/tailoring.md#outreach-publication-boundary)
+and [user recovery](../../user/contacts-and-outreach.md#when-outreach-changes-during-verification).
+
+
 For interpretation metadata citation sources, run locked
 `pytest tests/test_interpretation_citable_fields.py tests/test_remaining_determinations.py tests/test_binding_repair_feedback.py tests/test_analysis_retry_boundaries.py`.
 Use owned exact-schema storage and explicit synthetic model decisions. Omit

@@ -89,3 +89,43 @@ describe("<ReviseDraftForm>", () => {
     }
   });
 });
+
+it("retains unpublished results and edits after conflict and requires deliberate reconciliation before retry", async () => {
+  const { makeOutreachPublicationConflict } = await import("../../../test/fixtures/outreach.js");
+  let calls = 0;
+  server.use(http.post("*/v1/outreach/threads/:threadId/drafts", () => {
+    calls += 1;
+    return HttpResponse.json(makeOutreachPublicationConflict(), { status: 409 });
+  }));
+  const onRevised = vi.fn();
+  const view = renderWithProviders(<ReviseDraftForm threadId="thread-1" contactId="contact-1" initialBodyText="Original" onRevised={onRevised} />);
+  fireEvent.change(view.getByRole("textbox", { name: "Edit message" }), { target: { value: "My retained message" } });
+  fireEvent.click(view.getByRole("button", { name: "Revise draft" }));
+  await waitFor(() => expect(view.getByRole("group", { name: "Unpublished revision" })).toBeInTheDocument());
+  expect(view.getByRole("textbox")).toHaveValue("My retained message");
+  expect(view.getByRole("button", { name: "Revise draft" })).toBeDisabled();
+  expect(view.getByText(/synthetic-claim-review/)).toBeInTheDocument();
+  expect(onRevised).not.toHaveBeenCalled();
+  expect(calls).toBe(1);
+  fireEvent.click(view.getByRole("checkbox", { name: /I compared the current thread/ }));
+  fireEvent.click(view.getByRole("button", { name: "Revise draft" }));
+  await waitFor(() => expect(calls).toBe(2));
+  await waitFor(() => expect(view.getByRole("button", { name: "Revise draft" })).toBeDisabled());
+});
+
+it("closes after success when the unchanged input was trimmed for the request", async () => {
+  const onRevised = vi.fn();
+  let finish: (response: Response) => void = () => {};
+  let submitted = "";
+  server.use(http.post("*/v1/outreach/threads/:threadId/drafts", async ({ request }) => {
+    submitted = ((await request.json()) as { editedBodyText: string }).editedBodyText;
+    return new Promise<Response>((resolve) => { finish = resolve; });
+  }));
+  const view = renderWithProviders(<ReviseDraftForm threadId="thread-1" contactId="contact-1" initialBodyText="Original" onRevised={onRevised} />);
+  fireEvent.change(view.getByRole("textbox", { name: "Edit message" }), { target: { value: "  Unchanged synthetic edit  " } });
+  fireEvent.click(view.getByRole("button", { name: "Revise draft" }));
+  await waitFor(() => expect(submitted).toBe("Unchanged synthetic edit"));
+  finish(HttpResponse.json(makeOutreachThreadResponse()));
+  await waitFor(() => expect(onRevised).toHaveBeenCalledTimes(1));
+  expect(view.queryByText(/newer edits remain here/i)).not.toBeInTheDocument();
+});
