@@ -29,6 +29,7 @@
     "@jobctrl/tsconfig": "workspace:*",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.6.0",
+    "eventsource": "3.0.7",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
     "vitest": "^4.1.12"

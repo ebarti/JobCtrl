@@ -78,6 +78,23 @@ describe("<ConnectionStatusPill>", () => {
     expect(alert).toHaveTextContent("No JobCtrl automation worker heartbeat has been written to the API database.");
   });
 
+  it("shows actionable workspace-change recovery even when worker health is unavailable", async () => {
+    const { eventStream } = renderConnectionStatusPill({
+      health: {
+        ...sampleHealthResponse,
+        worker: { ...sampleHealthResponse.worker, status: "missing", message: "Worker unavailable" },
+      },
+    });
+    await waitFor(() => expect(eventStream.subscriptions.length).toBe(1));
+    await act(async () => { eventStream.setStatus("workspace_changed"); });
+    expect(screen.getByText("Workspace changed")).toHaveAttribute("data-status", "lost");
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Stop JobCtrl");
+    expect(alert).toHaveTextContent("inspect the workspace");
+    expect(alert).toHaveTextContent("restart JobCtrl");
+    expect(alert).toHaveTextContent("reload this page");
+  });
+
   it("surfaces long event-stream disconnections as a status banner", async () => {
     const { eventStream } = renderConnectionStatusPill();
     await waitFor(() => expect(eventStream.subscriptions.length).toBe(1));
