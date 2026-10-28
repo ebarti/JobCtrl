@@ -37,6 +37,7 @@ from pydantic import ValidationError
 from jobctrl.domain.determinations import DeterminationFailure
 from jobctrl.domain.ports.analysis_agreement import AnalysisAgreementJudge
 from jobctrl.infrastructure.llm.provider_availability import provider_route_available, record_provider_failure
+from jobctrl.infrastructure.llm.provider_errors import ProviderCallError
 
 from jobctrl.domain.materials.analysis import (
     AnalysisAgreement,
@@ -113,6 +114,11 @@ async def _draft_with_retry(
             if record_provider_failure(
                 getattr(adapter, "provider_id", "injected"), adapter.model_id, exc,
                 default_model=getattr(adapter, "default_model_selection", False),
+            ):
+                raise
+            if (
+                isinstance(exc, ProviderCallError) and exc.envelope.provider == "claude"
+                and not exc.retryable and exc.code != "schema_validation_failed"
             ):
                 raise
             last_error = exc

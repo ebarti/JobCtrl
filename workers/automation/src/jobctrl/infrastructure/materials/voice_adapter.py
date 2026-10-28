@@ -34,7 +34,7 @@ from jobctrl.llm_lanes import lane_bound
 from jobctrl.infrastructure.setup_probes import bundled_claude_sdk_options
 from jobctrl.runtime import activate_provider_pack, is_bundled_runtime
 from jobctrl.infrastructure.llm.provider_availability import record_provider_failure
-from jobctrl.infrastructure.llm.provider_errors import raise_on_claude_execution_failure
+from jobctrl.infrastructure.llm.provider_errors import raise_on_claude_failure
 
 # A query callable: (prompt, options) -> async iterator of SDK messages.
 QueryFn = Callable[..., AsyncIterator[Any] | Awaitable[AsyncIterator[Any]]]
@@ -201,10 +201,11 @@ class ClaudeVoiceAdapter:
             try:
                 messages = await _collect_sdk_messages(
                     query_fn, prompt=user_prompt, options=options, model=self._model, operation="voice",
+                    record_cancelled_usage=record,
                 )
                 input_tokens, output_tokens = _usage_from_messages(messages)
                 record("", input_tokens=input_tokens, output_tokens=output_tokens)
-                raise_on_claude_execution_failure(messages, model=self._model, operation="voice")
+                raise_on_claude_failure(messages, model=self._model, operation="voice")
             except Exception as error:
                 record_provider_failure("claude", self._model, error)
                 raise
