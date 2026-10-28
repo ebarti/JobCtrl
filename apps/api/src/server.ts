@@ -2793,7 +2793,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get<{ Params: { runId: string } }>("/v1/workflow-runs/:runId", async (request, reply) =>
     withDb(reply, options.dbPath, (db) => {
-      const detail = getWorkflowRunDetail(db, decodeRouteParam(request.params.runId));
+      const { jobId } = z.object({ jobId: z.string().uuid().optional() }).parse(request.query);
+      const detail = getWorkflowRunDetail(db, decodeRouteParam(request.params.runId), jobId);
       if (!detail) {
         void reply.code(404);
         return { ok: false, error: "workflow_run_not_found" };

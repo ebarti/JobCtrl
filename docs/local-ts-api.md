@@ -451,6 +451,10 @@ Native `EventSource` reconnect plus durable event IDs is the normal recovery
 path. Projection refetches remain the correctness backstop if a client misses an
 invalidation.
 
+Workflow-run detail also returns the selected Apply run's durable event
+summaries separately from workflow lifecycle events. Their identities and
+privacy boundary are documented in [Operations & Events](api/operations-and-events.md#workflow-runs).
+
 ### Required-Bullet Coaching
 
 The opt-in `POST /v1/profile/required-bullet-suggestions` route calls the configured

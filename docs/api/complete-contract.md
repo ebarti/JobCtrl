@@ -1363,6 +1363,15 @@ status, input summary, failure cause (`errorCode` / `errorMessage` /
 `retryable`), Temporal run id, and the folded lifecycle timeline — or `404`
 (`{ ok: false, error: "workflow_run_not_found" }`) for an unknown id. The
 `/runs/$runId` detail workspace renders it for every workflow type.
+Apply details also return `applyEvents`, a separate array of summaries from
+the selected tenant/job/run's durable Apply event rows. Each has a
+`sourceEventId`, a nullable monotonic `runEventId`, `type`, `at`, `level`, and
+`message`. No event payload is returned; non-Apply workflows return an empty
+array. The browser can use the run-event ID to reconcile an already delivered
+live event with its durable copy.
+The optional canonical `jobId` query parameter scopes the Apply history to
+that job. If the Apply projection is still absent, a matching durable start
+must confirm the run/job association before any Apply rows are returned.
 `POST /v1/workflow-runs/:runId/actions/cancel` dispatches a worker-backed
 `cancel_run` request for in-flight workflow IDs that are not tied to a concrete
 job row, such as global Discover or Apply runs started from the Pipelines tab.
@@ -1372,9 +1381,7 @@ transition. Whether cancellation wins or loses its race with completion, the
 terminal result and folded timeline remain inspectable through the same detail
 route.
 `GET /v1/dashboard/summary` also carries recent apply-run timeline summaries
-from `apply_run_projections.events_json` (`type`, `level`, `message`, `at`) so
-the run detail workspace renders persisted history without exposing raw event
-payloads.
+from `apply_run_projections.events_json` (`type`, `level`, `message`, `at`).
 
 Dashboard pipeline progress can include an optional
 `sourceProgress.recoveredUnits: number | null`. For broad-board discovery it is

@@ -214,7 +214,9 @@ The user-visible surfaces divide the work:
   the current document, including unsaved edits, directly to a PDF download.
 - `/preferences` owns tailoring permissions, writing style, resume templates,
   and the default template; Apply Review can override the template for one job.
-  Template payloads hold style/layout only, not candidate or job facts.
+  Template payloads hold style/layout only, not candidate or job facts. An
+  unsaved template draft remains available when saved templates refresh or you
+  switch between templates during the same session.
 - `/settings/models` owns the generator/judge execution policy used by newly
   started work. The current fields and fallback rules belong to
   [Configuration](configuration.md), not this page.

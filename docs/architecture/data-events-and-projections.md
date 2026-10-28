@@ -118,6 +118,15 @@ identify a dirty job or family, then read canonical aggregate tables to build
 the current read shape. Apply-run and workflow-run projections fold their
 lifecycle events more directly.
 
+Workflow-run detail keeps its lifecycle timeline separate from Apply history.
+For an Apply workflow it also reads the selected tenant, job, and run's durable
+Apply event rows directly, so a delayed Python projection does not hide a
+committed event. The response exposes only event identity, type, time, level and
+message; it does not return event payloads. Where the Apply writer supplies a
+monotonic run-event ID, the web timeline uses it to reconcile live and saved
+copies. If the projection has not established a job yet, a job-scoped request
+must find a matching durable Apply start before its events can be read.
+
 Discovery's `DiscoveryResultPlanFrozen` operational marker binds an exact
 tenant/workflow/run to its bounded or unbounded mode, result cap and source-ID
 allowances using a versioned integrity digest. It contains no queries or private

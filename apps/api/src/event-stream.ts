@@ -1,5 +1,6 @@
 import { offerEventReferences } from "./offers.js";
 import { screeningEventReferences } from "./screening-answers.js";
+import { applyTimelineEnvelope } from "./apply-event-stream.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
@@ -24,7 +25,10 @@ interface EventRow {
   readonly event_id: number;
   readonly tenant_id: string;
   readonly job_id: string | null;
+  readonly stage: string | null;
   readonly event_type: string | null;
+  readonly level: string | null;
+  readonly message: string | null;
   readonly payload_json: string | null;
   readonly occurred_at: string | null;
 }
@@ -78,7 +82,7 @@ export function registerEventStreamRoute(app: FastifyInstance, options: EventStr
     try {
       return connection
         .prepare(
-          "SELECT event_id, tenant_id, job_id, event_type, payload_json, occurred_at "
+          "SELECT event_id, tenant_id, job_id, stage, event_type, level, message, payload_json, occurred_at "
             + "FROM job_events "
             + "WHERE event_id > ? "
             + "  AND tenant_id = ? "
@@ -292,6 +296,12 @@ function writeEventRow(reply: FastifyReply, row: EventRow): void {
   const envelope = canonicalSseEnvelope(row);
   if (envelope === null) {
     return;
+  }
+  const timeline = applyTimelineEnvelope(row, envelope);
+  if (timeline) {
+    // Keep the original cursor until the original frame is dispatched. A
+    // disconnect between frames replays this summary rather than skipping it.
+    writeRaw(reply, `event: ApplyRunEventRecorded\n${formatDataField(JSON.stringify(timeline))}\n\n`);
   }
   const dataLine = formatDataField(JSON.stringify(envelope));
   writeRaw(

@@ -210,6 +210,7 @@ describe("<JobsView> realtime UI state", () => {
       events: [],
     });
     const unrelatedKey = ["tenant", LOCAL_TENANT, "unrelated", "realtime"];
+    const otherTenantKey = ["tenant", "synthetic-other-tenant", "unrelated", "realtime"];
 
     harness.queryClient.setQueryData(
       jobsKeys.detail(LOCAL_TENANT, initialJob.jobKey),
@@ -231,11 +232,18 @@ describe("<JobsView> realtime UI state", () => {
       workflowDetail,
     );
     harness.queryClient.setQueryData(unrelatedKey, { retained: true });
+    harness.queryClient.setQueryData(otherTenantKey, { retained: true });
 
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
     expect(await screen.findByText(initialJob.title)).toBeInTheDocument();
     await waitFor(() => expect(eventStream.subscriptions).toHaveLength(1));
+    // This port is already open when subscribed, so first-open reconciliation
+    // marks the current tenant's inactive reads stale before any domain event.
+    expect(harness.queryClient.getQueryState(unrelatedKey)?.isInvalidated).toBe(true);
+    expect(harness.queryClient.getQueryState(otherTenantKey)?.isInvalidated).toBe(false);
+    // Establish a fresh baseline so the assertions below isolate event routing.
+    harness.queryClient.setQueryData(unrelatedKey, { retained: true });
     await user.click(
       screen.getByRole("checkbox", { name: `Select ${initialJob.title}` }),
     );
@@ -313,6 +321,7 @@ describe("<JobsView> realtime UI state", () => {
     expect(harness.queryClient.getQueryState(unrelatedKey)?.isInvalidated).toBe(
       false,
     );
+    expect(harness.queryClient.getQueryState(otherTenantKey)?.isInvalidated).toBe(false);
     expect(screen.getByText("1 selected")).toBeInTheDocument();
     expect(
       screen.getByRole("checkbox", { name: `Select ${latestJob.title}` }),

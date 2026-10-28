@@ -982,8 +982,8 @@ export class JobCtrlApiClient {
     return this.get("/v1/workflow-runs", query);
   }
 
-  workflowRun(runId: string): Promise<WorkflowRunDetail> {
-    return this.get(`/v1/workflow-runs/${encodeURIComponent(runId)}`);
+  workflowRun(runId: string, jobId?: string): Promise<WorkflowRunDetail> {
+    return this.get(`/v1/workflow-runs/${encodeURIComponent(runId)}`, jobId ? { jobId } : undefined);
   }
 
   cancelWorkflowRun(runId: string): Promise<ActionRunResponse> {

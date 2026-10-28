@@ -5625,6 +5625,7 @@ function workflowRunsFilterPayload(query: WorkflowRunsListQuery): Record<string,
 export function getWorkflowRunDetail(
   db: SqliteDatabase,
   runId: string,
+  requestedJobId?: string,
 ): WorkflowRunDetail | null {
   refreshProjections(db, DEFAULT_TENANT);
   const applyJoin = ` LEFT JOIN apply_run_projections arp
@@ -5692,7 +5693,69 @@ export function getWorkflowRunDetail(
     finishedAt: summary.finishedAt,
     durationMs: summary.durationMs,
     events: parseWorkflowRunTimeline(row.events_json),
+    applyEvents: summary.workflowType === "ApplyWorkflow" || (!summary.workflowType && row.apply_job_id)
+      ? readWorkflowApplyTimeline(db, runId, nullableString(row.apply_job_id), inputSummary, requestedJobId)
+      : [],
   };
+}
+
+function readWorkflowApplyTimeline(
+  db: SqliteDatabase,
+  runId: string,
+  projectedJobId: string | null,
+  inputSummary: Record<string, unknown>,
+  requestedJobId?: string,
+): NonNullable<WorkflowRunDetail["applyEvents"]> {
+  const inputJobId = nullableString(inputSummary.jobId);
+  const legacyInputJobId = nullableString(inputSummary.job_id);
+  const candidate = inputJobId && legacyInputJobId && inputJobId !== legacyInputJobId
+    ? null : inputJobId ?? legacyInputJobId;
+  if (requestedJobId && projectedJobId && requestedJobId !== projectedJobId) return [];
+  const jobId = projectedJobId ?? requestedJobId ?? candidate;
+  if (!jobId) return [];
+  const rows = allRows<{
+    event_id: number | string;
+    job_id: string | null;
+    event_type: string | null;
+    level: string | null;
+    message: string | null;
+    occurred_at: string | null;
+    payload_json: string | null;
+  }>(db, `SELECT event_id, job_id, event_type, level, message, occurred_at, payload_json
+    FROM job_events INDEXED BY idx_job_events_job_time
+    WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'
+      AND CASE WHEN json_valid(payload_json)
+        THEN COALESCE(json_extract(payload_json, '$.run_id'), json_extract(payload_json, '$.runId')) = ?
+        ELSE 0 END
+    ORDER BY event_id`, [DEFAULT_TENANT, jobId, runId]);
+
+  // A workflow input alone is not evidence that the run acquired this job.
+  // While its projection lags, require a matching durable start at this job.
+  if (!projectedJobId && !rows.some((row) => {
+    if (row.event_type !== "ApplyRunStarted") return false;
+    try {
+      const payload: unknown = JSON.parse(row.payload_json ?? "{}");
+      return isRecord(payload) && !(typeof payload.run_id === "string" && typeof payload.runId === "string" && payload.run_id !== payload.runId);
+    } catch { return false; }
+  })) return [];
+  return rows.flatMap((row) => {
+    if (row.job_id !== jobId) return [];
+    let payload: unknown;
+    try { payload = JSON.parse(row.payload_json ?? "{}"); } catch { return []; }
+    if (!isRecord(payload)) return [];
+    if (typeof payload.run_id === "string" && typeof payload.runId === "string" && payload.run_id !== payload.runId) return [];
+    const nested = row.event_type === "ApplyRunEventRecorded" && isRecord(payload.event) ? payload.event : null;
+    const event = nested ?? payload;
+    const runEventId = event.event_id ?? event.eventId;
+    return [{
+      sourceEventId: String(row.event_id),
+      runEventId: typeof runEventId === "number" && Number.isSafeInteger(runEventId) && runEventId > 0 ? runEventId : null,
+      at: nested ? nullableString(nested.occurred_at ?? nested.occurredAt ?? nested.at) ?? row.occurred_at : row.occurred_at,
+      type: nested ? stringField(nested.event_type ?? nested.eventType ?? nested.type) || "event" : stringField(row.event_type) || "event",
+      level: nested ? stringField(nested.level) || "info" : stringField(row.level) || "info",
+      message: nested ? nullableString(nested.message) : row.message,
+    }];
+  });
 }
 
 const PROVIDER_FAILURE_MAX_TOTAL = 100;
