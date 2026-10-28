@@ -18,8 +18,11 @@ import json
 import re
 import sqlite3
 import threading
+import uuid
+from contextlib import nullcontext
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Iterable
 from urllib.parse import urlparse
@@ -56,7 +59,6 @@ from jobctrl.domain.discovery.value_objects import (
 )
 from jobctrl.domain.errors import ConfigurationError, TransientNetworkError
 from jobctrl.domain.enrichment import DetailPage, ExtractionTier, FullDescription, JobEnrichment
-from jobctrl.domain.enrichment.services import CssSelectorExtractor, JsonLdExtractor
 from jobctrl.domain.enrichment.snapshot_services import (
     ContentAcquisitionService,
     TierExtractor,
@@ -163,6 +165,18 @@ class ManualCaptureImportOutcome:
     snapshot_version: int | None
     promoted_to_job_enrichment: bool
     quarantine_reason: str
+
+
+class ManualCaptureExtractionFailure(RuntimeError):
+    """A capture did not yield a successful posting snapshot."""
+
+    def __init__(self, message, *, determination_id=None):
+        super().__init__(message)
+        self.determination_id = determination_id
+
+
+class ManualCaptureStateChanged(RuntimeError):
+    """The queued capture or its existing owner no longer permits publication."""
 
 
 @dataclass(frozen=True)
@@ -852,132 +866,376 @@ def import_manual_capture_item(
     capture: ManualCaptureImport,
     *,
     tenant_id: TenantId = LOCAL_TENANT,
+    cancel_event: threading.Event | None = None,
+    cancel_lock: threading.Lock | None = None,
+    expected_queue_state: tuple[object, object, object] | None = None,
+    attempt_authority: dict[str, Any] | None = None,
+    expected_generation: str | None = None,
 ) -> ManualCaptureImportOutcome:
-    """Import one queued manual capture through Discovery + Enrichment."""
-    row = conn.execute(
-        """
-        SELECT item_id, originating_url, source_id, reason, retry_context_json
-        FROM manual_capture_queue
-        WHERE tenant_id = ? AND item_id = ? AND status = 'pending'
-        LIMIT 1
-        """,
-        (str(tenant_id), capture.item_id),
-    ).fetchone()
-    if row is None:
-        raise ValueError(f"Manual capture item {capture.item_id!r} was not found")
+    """Retain the input, then atomically publish only an extracted capture."""
+    from jobctrl.infrastructure.discovery.archived_smart_posting import (
+        PublicationConnection,
+        PublicationPublisher,
+    )
 
-    originating_url = _row_value(row, "originating_url", 1)
-    source_id = _row_value(row, "source_id", 2) or f"manual_capture:{capture.item_id}"
-    retry_context = _json_dict(_row_value(row, "retry_context_json", 4))
-    captured_url = capture.captured_url or str(originating_url)
+    def check_canceled() -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise ManualCaptureStateChanged("Manual capture import was canceled")
+
+    if conn.in_transaction:
+        raise RuntimeError("Manual capture import requires its own transaction")
+    check_canceled()
     content = manual_capture_content(capture)
-    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    now = utc_now()
-    retry_context["manual_capture_provenance"] = {
-        "source_kind": SourceKind.USER_MEDIATED_CAPTURE.value,
-        "originating_url": str(originating_url),
-        "source_id": str(source_id),
-        "capture_mode": capture.capture_mode,
-        "captured_at": now,
-        "future_manual_action_required": capture.future_manual_action_required,
-    }
-    capture_client = retry_context.get("capture_client")
-    if isinstance(capture_client, str) and capture_client.strip():
-        retry_context["manual_capture_provenance"]["capture_client"] = capture_client.strip()
-    extension_version = retry_context.get("extension_version")
-    if isinstance(extension_version, str) and extension_version.strip():
-        retry_context["manual_capture_provenance"]["extension_version"] = extension_version.strip()
+    token = uuid.uuid4().hex
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = conn.execute(
+            """
+            SELECT item_id, originating_url, source_id, reason, retry_context_json
+            FROM manual_capture_queue
+            WHERE tenant_id = ? AND item_id = ? AND status = 'pending'
+            LIMIT 1
+            """,
+            (str(tenant_id), capture.item_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"Manual capture item {capture.item_id!r} was not found")
+        if expected_queue_state is not None and (
+            _row_value(row, "originating_url", 1), _row_value(row, "source_id", 2),
+            _row_value(row, "retry_context_json", 4),
+        ) != expected_queue_state:
+            raise ManualCaptureStateChanged("Manual capture changed before input retention")
+        originating_url = str(_row_value(row, "originating_url", 1))
+        source_id = str(_row_value(row, "source_id", 2) or f"manual_capture:{capture.item_id}")
+        retry_context = _json_dict(_row_value(row, "retry_context_json", 4))
+        if retry_context.get("manual_capture_generation") != expected_generation:
+            raise ManualCaptureStateChanged("The manual capture was closed and reopened")
+        previous = retry_context.get("manual_capture_admission")
+        if previous is not None:
+            if (not isinstance(previous, dict) or type(previous.get("scheduled_us")) is not int
+                or attempt_authority is None or type(attempt_authority.get("scheduled_us")) is not int
+                or attempt_authority["scheduled_us"] <= previous["scheduled_us"]):
+                raise ManualCaptureStateChanged("A newer manual capture attempt already owns this item")
+        if attempt_authority is not None:
+            if (type(attempt_authority.get("scheduled_us")) is not int
+                or not isinstance(attempt_authority.get("run_id"), str) or not attempt_authority["run_id"]
+                or not isinstance(attempt_authority.get("activity_id"), str) or not attempt_authority["activity_id"]
+                or type(attempt_authority.get("attempt")) is not int or attempt_authority["attempt"] < 1):
+                raise ManualCaptureStateChanged("Manual capture attempt identity is invalid")
+            retry_context["manual_capture_admission"] = dict(attempt_authority)
+        captured_url = capture.captured_url or originating_url
+        retry_context["manual_capture_draft"] = {
+            "token": token,
+            "capture_mode": capture.capture_mode,
+            "captured_url": captured_url,
+            "content": content if capture.content_text or capture.content_html_base64 else "",
+            "note": capture.note,
+            "future_manual_action_required": capture.future_manual_action_required,
+        }
+        locator = _manual_capture_posting(
+            source_id=source_id, item_id=capture.item_id, url=captured_url,
+            content="", originating_url=originating_url,
+        )
+        owner_error = None
+        try:
+            before = _manual_capture_owner_state(conn, tenant_id, locator, include_content=False)
+        except ManualCaptureStateChanged as exc:
+            before = None
+            owner_error = exc
+        original_job_ids = (
+            frozenset(row[0] for row in conn.execute("SELECT job_id FROM jobs WHERE tenant_id=?", (str(tenant_id),)))
+            if before is None else None
+        )
+        data_version = conn.execute("PRAGMA data_version").fetchone()[0]
+        check_canceled()
+        conn.execute(
+            "UPDATE manual_capture_queue SET retry_context_json = ? WHERE tenant_id = ? AND item_id = ?",
+            (json.dumps(retry_context, sort_keys=True), str(tenant_id), capture.item_id),
+        )
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+
+    # Model decisions run without holding a SQLite writer lock. Their persisted
+    # source bindings still belong to this tenant and the captured URL.
+    if owner_error is not None:
+        raise owner_error
+    legacy_owner = retry_context.get("manual_capture_legacy_owner")
+    if legacy_owner is not None and not _manual_capture_legacy_owner_valid(
+        conn, tenant_id, capture.item_id, source_id, legacy_owner, locator,
+    ):
+        raise ManualCaptureStateChanged("The original manual capture owner changed")
+    acquisition = _manual_capture_acquisition_service(
+        conn, captured_url=captured_url, content=content, tenant_id=tenant_id,
+    )
+    try:
+        result = acquisition.acquire(
+            tenant_id=str(tenant_id), job_id="", url=captured_url,
+            source_id=source_id, policy_id="user_mediated_capture",
+        )
+    except ManualCaptureExtractionFailure as exc:
+        check_canceled()
+        if exc.determination_id:
+            _retain_manual_capture_decision(conn, tenant_id, capture.item_id, captured_url, token, exc)
+        raise
+    if not result.ok or result.description is None or result.description_hash is None:
+        raise ManualCaptureExtractionFailure("Manual capture extraction did not produce a posting")
+    selected = _manual_capture_selected_fields(conn, tenant_id, captured_url, result.evidence)
+    posting = _manual_capture_posting(
+        source_id=source_id, item_id=capture.item_id, url=captured_url,
+        content=content, originating_url=originating_url, selected=selected,
+    )
+    selected_owner = _manual_capture_owner_state(conn, tenant_id, posting)
+    if (before is None and selected_owner is None and original_job_ids is not None
+        and not original_job_ids.issubset(
+            row[0] for row in conn.execute("SELECT job_id FROM jobs WHERE tenant_id=?", (str(tenant_id),))
+        )):
+        raise ManualCaptureStateChanged("A Job was deleted during capture selection")
+    if selected_owner != before:
+        if before is None and selected_owner is not None and conn.execute("PRAGMA data_version").fetchone()[0] == data_version:
+            # A pre-existing exact content match is safe only if no independent
+            # writer committed while the model selected its source fields.
+            before = selected_owner
+        else:
+            raise ManualCaptureStateChanged("Manual capture owner changed during selection")
+    check_canceled()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        current = conn.execute(
+            "SELECT originating_url, source_id, status, retry_context_json FROM manual_capture_queue "
+            "WHERE tenant_id = ? AND item_id = ?",
+            (str(tenant_id), capture.item_id),
+        ).fetchone()
+        if (current is None or current["status"] != "pending"
+            or current["originating_url"] != originating_url
+            or (current["source_id"] or f"manual_capture:{capture.item_id}") != source_id
+            or _json_dict(current["retry_context_json"]) != retry_context
+            or _manual_capture_owner_state(conn, tenant_id, posting) != before):
+            raise ManualCaptureStateChanged("Manual capture ownership changed")
+        if legacy_owner is not None and not _manual_capture_legacy_owner_valid(
+            conn, tenant_id, capture.item_id, source_id, legacy_owner, posting,
+        ):
+            raise ManualCaptureStateChanged("The original manual capture owner changed")
+
+        # Existing adapters normally commit eagerly. The publication proxy
+        # makes discovery, snapshot, enrichment, events and acknowledgement one
+        # writer transaction, as in archived Smart Extract recovery.
+        transaction = PublicationConnection(conn)
+        publisher = PublicationPublisher(transaction, stage="discover")
+        repository = SqliteJobRepository(transaction)
+        use_case = DiscoverJobsUseCase(repository=repository, publisher=publisher, refresh_existing_job=False)
+        if legacy_owner is None:
+            use_case.execute(tenant_id=tenant_id, postings=(posting,), run_id=f"manual-capture:{capture.item_id}")
+        identity = repository.resolve_by_posting_url(tenant_id, posting.posting_url)
+        if identity is None or (legacy_owner is not None and str(identity.job_id) != legacy_owner):
+            raise RuntimeError("Manual capture import did not persist a canonical JobId")
+        job_id = identity.job_id
+
+        class _PreparedAcquisition:
+            def acquire(self, **_kwargs):
+                return result
+
+        class _CheckedEnrichmentRepository(SqliteEnrichmentRepository):
+            failed = False
+
+            def save(self, *args, **kwargs):
+                try:
+                    return super().save(*args, **kwargs)
+                except Exception:
+                    self.failed = True
+                    raise
+
+        enrichment = _CheckedEnrichmentRepository(transaction)
+        snapshot_publisher = PublicationPublisher(transaction, stage="enrich")
+        snapshot_use_case = CapturePostingSnapshotUseCase(
+            snapshot_repository=SqlitePostingSnapshotSetRepository(transaction),
+            acquisition_service=_PreparedAcquisition(),
+            publisher=snapshot_publisher,
+            enrichment_repository=enrichment,
+        )
+        outcome = snapshot_use_case.execute(
+            tenant_id=tenant_id, job_id=job_id, url=captured_url,
+            source_id=source_id, policy_id="user_mediated_capture", promote_to_job_enrichment=True,
+        )
+        if (not outcome.ok or not outcome.captured_snapshot_version
+            or publisher.failed or snapshot_publisher.failed or enrichment.failed):
+            raise RuntimeError("Manual capture snapshot publication failed")
+
+        now = utc_now()
+        quarantine_reason = (
+            outcome.snapshot_set.latest_snapshot.quarantine_reason.value if outcome.snapshot_set.latest_snapshot else ""
+        )
+        if quarantine_reason and quarantine_reason != QuarantineReason.NONE.value:
+            if conn.execute(
+                "SELECT 1 FROM discovery_quarantine_entries WHERE tenant_id=? AND job_id=?",
+                (str(tenant_id), str(job_id)),
+            ).fetchone() is not None:
+                raise ManualCaptureStateChanged("Existing quarantine evidence requires review")
+            _upsert_quarantine_entry(
+                transaction, tenant_id=tenant_id, job_id=job_id, source_id=source_id,
+                reason=quarantine_reason, confidence=None, snapshot_version=outcome.captured_snapshot_version,
+                captured_at=now, title=posting.metadata.title, posting_url=captured_url,
+                notice_text="Manual capture imported but held for review.",
+            )
+        retry_context = _json_dict(current["retry_context_json"])
+        retry_context.pop("manual_capture_draft", None)
+        retry_context.pop("manual_capture_legacy_owner", None)
+        retry_context.pop("manual_capture_recovery_unverified", None)
+        retry_context.pop("manual_capture_reopen_authority", None)
+        retry_context["manual_capture_generation"] = uuid.uuid4().hex
+        retry_context["manual_capture_provenance"] = {
+            "source_kind": SourceKind.USER_MEDIATED_CAPTURE.value,
+            "originating_url": originating_url, "source_id": source_id,
+            "capture_mode": capture.capture_mode, "captured_at": now,
+            "future_manual_action_required": capture.future_manual_action_required,
+        }
+        for name in ("capture_client", "extension_version"):
+            value = retry_context.get(name)
+            if isinstance(value, str) and value.strip():
+                retry_context["manual_capture_provenance"][name] = value.strip()
+        check_canceled()
+        updated = conn.execute(
+            """UPDATE manual_capture_queue SET status = 'imported', imported_at = ?, capture_mode = ?,
+                   captured_url = ?, content_sha256 = ?, content_length = ?, note = ?,
+                   future_manual_action_required = ?, retry_context_json = ?, job_id = ?
+               WHERE tenant_id = ? AND item_id = ? AND status = 'pending'""",
+            (now, capture.capture_mode, captured_url, hashlib.sha256(content.encode("utf-8")).hexdigest(),
+             len(content), capture.note, int(capture.future_manual_action_required),
+             json.dumps(retry_context, sort_keys=True), str(job_id), str(tenant_id), capture.item_id),
+        )
+        if updated.rowcount != 1:
+            raise ManualCaptureStateChanged("Manual capture queue changed")
+        # Serialize cancellation with the publication commit. Whichever takes
+        # this lock first determines whether the capture can become imported.
+        with cancel_lock if cancel_lock is not None else nullcontext():
+            check_canceled()
+            conn.commit()
+        return ManualCaptureImportOutcome(
+            item_id=capture.item_id, job_id=str(job_id), snapshot_version=outcome.captured_snapshot_version,
+            promoted_to_job_enrichment=outcome.promoted_to_job_enrichment, quarantine_reason=quarantine_reason,
+        )
+    except BaseException:
+        conn.rollback()
+        raise
+
+
+def _manual_capture_owner_state(conn, tenant_id, posting, *, include_content=True):
+    """Snapshot owner evidence before model work; reject changed or deleted owners."""
+    from jobctrl.domain.job_content_identity import is_genuine_employer_identity
 
     repository = SqliteJobRepository(conn)
-    use_case = DiscoverJobsUseCase(
-        repository=repository,
-        publisher=DurableJobEventPublisher(conn, stage="discover"),
+    identity = default_canonical_identity(posting)
+    match = repository.find_canonical_owner(
+        tenant_id, source_id=posting.source_id, source_native_id=identity.source_native_id,
+        canonical_url=identity.canonical_url,
     )
-    posting = _manual_capture_posting(
-        source_id=str(source_id),
-        item_id=capture.item_id,
-        url=captured_url,
-        content=content,
-        originating_url=str(originating_url),
-    )
-    use_case.execute(
-        tenant_id=tenant_id,
-        postings=(posting,),
-        run_id=f"manual-capture:{capture.item_id}",
-    )
-    identity = repository.resolve_by_posting_url(tenant_id, posting.posting_url)
-    if identity is None:
-        raise RuntimeError("Manual capture import did not persist a canonical JobId")
-    job_id = identity.job_id
-
-    snapshot_use_case = _manual_capture_snapshot_use_case(
-        conn,
-        captured_url=captured_url,
-        content=content,
-    )
-    outcome = snapshot_use_case.execute(
-        tenant_id=tenant_id,
-        job_id=job_id,
-        url=captured_url,
-        source_id=str(source_id),
-        policy_id="user_mediated_capture",
-        promote_to_job_enrichment=True,
-    )
-    quarantine_reason = (
-        outcome.snapshot_set.latest_snapshot.quarantine_reason.value if outcome.snapshot_set.latest_snapshot else ""
-    )
-    if outcome.ok and quarantine_reason and quarantine_reason != QuarantineReason.NONE.value:
-        _upsert_quarantine_entry(
-            conn,
-            tenant_id=tenant_id,
-            job_id=job_id,
-            source_id=str(source_id),
-            reason=quarantine_reason,
-            confidence=None,
-            snapshot_version=outcome.captured_snapshot_version,
-            captured_at=now,
-            title=posting.metadata.title,
-            posting_url=captured_url,
-            notice_text="Manual capture imported but held for review.",
+    if match is None and include_content and is_genuine_employer_identity(posting.employer.name):
+        match = repository.find_content_owner(
+            tenant_id, title=posting.metadata.title, company=posting.employer.name,
+            description=posting.metadata.description,
         )
+    if match is None:
+        return None
+    job_id = str(match.job_id)
+    owner = repository.load(tenant_id, match.job_id)
+    if owner is None or owner.is_deleted:
+        raise ManualCaptureStateChanged("The existing Job was deleted")
+    key = (str(tenant_id), job_id)
+    queries = (
+        "SELECT * FROM jobs WHERE tenant_id=? AND job_id=?",
+        "SELECT * FROM jobctrl_deleted_jobs WHERE tenant_id=? AND job_id=?",
+        "SELECT * FROM posting_snapshot_sets WHERE tenant_id=? AND job_id=?",
+        "SELECT * FROM job_enrichments WHERE tenant_id=? AND job_id=?",
+        "SELECT * FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage='enrich'",
+        "SELECT * FROM job_source_observations WHERE tenant_id=? AND job_id=? ORDER BY source_observation_id",
+        "SELECT * FROM discovery_quarantine_entries WHERE tenant_id=? AND job_id=?",
+    )
+    return (job_id, *(tuple(tuple(row) for row in conn.execute(query, key).fetchall()) for query in queries))
 
-    conn.execute(
-        """
-        UPDATE manual_capture_queue
-         SET status = 'imported',
-             imported_at = ?,
-             capture_mode = ?,
-             captured_url = ?,
-             content_sha256 = ?,
-             content_length = ?,
-             note = ?,
-             future_manual_action_required = ?,
-             retry_context_json = ?,
-             job_id = ?
-         WHERE tenant_id = ? AND item_id = ?
-        """,
-        (
-            now,
-            capture.capture_mode,
-            captured_url,
-            content_hash,
-            len(content),
-            capture.note,
-            1 if capture.future_manual_action_required else 0,
-            json.dumps(retry_context, sort_keys=True),
-            str(job_id),
-            str(tenant_id),
-            capture.item_id,
-        ),
-    )
-    conn.commit()
-    return ManualCaptureImportOutcome(
-        item_id=capture.item_id,
-        job_id=str(job_id),
-        snapshot_version=outcome.captured_snapshot_version,
-        promoted_to_job_enrichment=outcome.promoted_to_job_enrichment,
-        quarantine_reason=quarantine_reason,
-    )
+
+def _manual_capture_legacy_owner_valid(conn, tenant_id, item_id, source_id, owner_id, posting):
+    """An unverified receipt may only resume its exact, still-live original owner."""
+    if not isinstance(owner_id, str):
+        return False
+    url = default_canonical_identity(posting).canonical_url
+    return conn.execute(
+        """SELECT 1 FROM jobs j JOIN job_source_observations o
+             ON o.tenant_id=j.tenant_id AND o.job_id=j.job_id
+           WHERE j.tenant_id=? AND j.job_id=? AND o.source_id=? AND o.source_native_id=?
+             AND o.run_id=? AND o.observed_url=?
+             AND NOT EXISTS (SELECT 1 FROM jobctrl_deleted_jobs d WHERE d.tenant_id=j.tenant_id
+                 AND d.job_id=j.job_id AND (d.restored_at IS NULL OR julianday(d.restored_at)<=julianday(d.deleted_at)))
+             """,
+        (str(tenant_id), owner_id, source_id, item_id, f"manual-capture:{item_id}", url),
+    ).fetchone() is not None
+
+
+def reopen_unverified_manual_capture(conn, tenant_id, item_id, *, expected_generation=None, attempt_authority=None):
+    """Reopen an unverified historical receipt only after explicit resubmission."""
+    if conn.in_transaction:
+        raise RuntimeError("Manual capture recovery requires its own transaction")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = conn.execute(
+            """SELECT m.*, s.snapshot_set_json, s.latest_snapshot_version FROM manual_capture_queue m
+               LEFT JOIN posting_snapshot_sets s ON s.tenant_id=m.tenant_id AND s.job_id=m.job_id
+               WHERE m.tenant_id=? AND m.item_id=? AND m.status='imported'""",
+            (str(tenant_id), item_id),
+        ).fetchone()
+        eligible = False
+        if row is not None:
+            source_id = str(row["source_id"] or f"manual_capture:{item_id}")
+            context = _json_dict(row["retry_context_json"])
+            provenance = context.get("manual_capture_provenance")
+            content_hash = row["content_sha256"]
+            snapshot = _json_dict(row["snapshot_set_json"]) if row["snapshot_set_json"] is not None else None
+            snapshots = snapshot.get("snapshots") if snapshot is not None else []
+            eligible = (
+                context.get("manual_capture_generation") == expected_generation
+                and
+                isinstance(content_hash, str) and len(content_hash) == 64
+                and all(char in "0123456789abcdef" for char in content_hash)
+                and isinstance(row["content_length"], int) and row["content_length"] >= 0
+                and isinstance(provenance, dict) and provenance.get("source_kind") == "user_mediated_capture"
+                and provenance.get("source_id") == source_id
+                and provenance.get("originating_url") == row["originating_url"]
+                and provenance.get("capture_mode") == row["capture_mode"]
+                and provenance.get("captured_at") == row["imported_at"] and bool(row["imported_at"])
+                and provenance.get("future_manual_action_required") == bool(row["future_manual_action_required"])
+                and isinstance(snapshots, list)
+                and not any(isinstance(item, dict) and item.get("source_id") == source_id
+                            and item.get("raw_text_hash") == content_hash
+                            and type(item.get("snapshot_version")) is int and item["snapshot_version"] > 0
+                            for item in snapshots)
+                and conn.execute(
+                    """SELECT 1 FROM jobs j JOIN job_source_observations o
+                        ON o.tenant_id=j.tenant_id AND o.job_id=j.job_id
+                       WHERE j.tenant_id=? AND j.job_id=? AND o.source_id=? AND o.source_native_id=? AND o.run_id=?
+                         AND o.observed_url=?
+                         AND NOT EXISTS (SELECT 1 FROM jobctrl_deleted_jobs d WHERE d.tenant_id=j.tenant_id
+                             AND d.job_id=j.job_id AND (d.restored_at IS NULL OR julianday(d.restored_at)<=julianday(d.deleted_at)))""",
+                    (str(tenant_id), row["job_id"], source_id, item_id, f"manual-capture:{item_id}", row["captured_url"]),
+                ).fetchone() is not None
+            )
+        if eligible:
+            generation = uuid.uuid4().hex
+            context["manual_capture_generation"] = generation
+            if attempt_authority is not None:
+                context["manual_capture_reopen_authority"] = {
+                    "run_id": attempt_authority.get("run_id"), "previous_generation": expected_generation,
+                    "generation": generation,
+                }
+            context["manual_capture_legacy_owner"] = row["job_id"]
+            context["manual_capture_recovery_unverified"] = True
+            conn.execute("UPDATE manual_capture_queue SET status='pending', retry_context_json=? "
+                         "WHERE tenant_id=? AND item_id=? AND status='imported'",
+                         (json.dumps(context, sort_keys=True), str(tenant_id), item_id))
+        conn.commit()
+        return generation if eligible else None
+    except BaseException:
+        conn.rollback()
+        raise
 
 
 def build_discovery_acceptance_report(
@@ -1550,13 +1808,30 @@ def _enqueue_manual_capture(
             retry_context_json, required_at, status
         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
         ON CONFLICT(tenant_id, item_id) DO UPDATE SET
-            originating_url = excluded.originating_url,
-            source_id = excluded.source_id,
+            originating_url = CASE
+                WHEN json_valid(manual_capture_queue.retry_context_json)
+                     AND (json_type(manual_capture_queue.retry_context_json, '$.manual_capture_draft') = 'object'
+                       OR json_type(manual_capture_queue.retry_context_json, '$.manual_capture_legacy_owner') = 'text'
+                       OR json_type(manual_capture_queue.retry_context_json, '$.manual_capture_admission') = 'object')
+                    THEN manual_capture_queue.originating_url ELSE excluded.originating_url END,
+            source_id = CASE
+                WHEN json_valid(manual_capture_queue.retry_context_json)
+                     AND (json_type(manual_capture_queue.retry_context_json, '$.manual_capture_draft') = 'object'
+                       OR json_type(manual_capture_queue.retry_context_json, '$.manual_capture_legacy_owner') = 'text'
+                       OR json_type(manual_capture_queue.retry_context_json, '$.manual_capture_admission') = 'object')
+                    THEN manual_capture_queue.source_id ELSE excluded.source_id END,
             reason = excluded.reason,
             retry_context_json = CASE
                 WHEN manual_capture_queue.status IN ('imported', 'dismissed')
                     THEN manual_capture_queue.retry_context_json
-                ELSE excluded.retry_context_json
+                WHEN json_valid(manual_capture_queue.retry_context_json)
+                    THEN json_patch(excluded.retry_context_json, json_object(
+                         'manual_capture_draft', json_extract(manual_capture_queue.retry_context_json, '$.manual_capture_draft'),
+                         'manual_capture_legacy_owner', json_extract(manual_capture_queue.retry_context_json, '$.manual_capture_legacy_owner'),
+                         'manual_capture_admission', json_extract(manual_capture_queue.retry_context_json, '$.manual_capture_admission'),
+                         'manual_capture_generation', json_extract(manual_capture_queue.retry_context_json, '$.manual_capture_generation'),
+                         'manual_capture_reopen_authority', json_extract(manual_capture_queue.retry_context_json, '$.manual_capture_reopen_authority')))
+                ELSE manual_capture_queue.retry_context_json
             END,
             required_at = excluded.required_at,
             status = CASE
@@ -1607,7 +1882,10 @@ def enqueue_manual_capture_for_job_url_import(
     conn.execute(
         """
         UPDATE manual_capture_queue
-           SET status = 'pending',
+           SET retry_context_json = CASE WHEN status IN ('imported', 'dismissed') AND json_valid(retry_context_json)
+                   THEN json_set(retry_context_json, '$.manual_capture_generation', lower(hex(randomblob(16))))
+                   ELSE retry_context_json END,
+               status = 'pending',
                imported_at = NULL,
                dismissed_at = NULL,
                capture_mode = NULL,
@@ -1941,30 +2219,159 @@ def _location_values(search_cfg: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(locations)
 
 
-def _manual_capture_snapshot_use_case(
+def _manual_capture_acquisition_service(
     conn: sqlite3.Connection,
     *,
     captured_url: str,
     content: str,
+    tenant_id: TenantId,
 ):
+    from jobctrl.domain.enrichment.services import ExtractionResult
+    from jobctrl.domain.enrichment.value_objects import ApplicationUrl
+    from jobctrl.infrastructure.enrichment.posting_sources import posting_page_sources
+
     class _ManualFetcher:
         def fetch(self, url: str) -> DetailPage:  # noqa: ARG002
             return _detail_page_from_manual_content(captured_url, content)
 
-    acquisition = ContentAcquisitionService(
-        active_verifier=ActiveStateVerifier(page_interpreter=build_page_interpreter(conn)),
+    class _ManualInterpreter:
+        def __init__(self):
+            self.delegate = build_page_interpreter(conn, tenant_id=str(tenant_id))
+            self.receipts = []
+
+        def interpret(self, **kwargs):
+            decision, receipt = self.delegate.interpret(**kwargs)
+            if (decision.page_kind.value != "posting"
+                or decision.access_state.value in {"login_required", "challenge"}):
+                raise ManualCaptureExtractionFailure(
+                    "The capture is not an accessible individual posting",
+                    determination_id=receipt.determination_id,
+                )
+            self.receipts.append(receipt)
+            return decision, receipt
+
+        def description_quality(self, **kwargs):
+            return self.delegate.description_quality(**kwargs)
+
+    class _ManualVerifier:
+        def __init__(self):
+            self.interpreter = _ManualInterpreter()
+            self.delegate = ActiveStateVerifier(page_interpreter=self.interpreter)
+
+        def verify(self, page, *, signals=None):
+            from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+
+            observed = []
+            state, method = self.delegate.verify(page, signals=observed)
+            page_signals = [signal for signal in observed if signal.get("kind") == "page_determination"]
+            if len(self.interpreter.receipts) != 1 or len(page_signals) != 1:
+                raise ManualCaptureExtractionFailure("The capture page could not be verified")
+            receipt = self.interpreter.receipts[0]
+            stored = SqliteDeterminationRepository(conn).find(str(tenant_id), receipt.determination_id)
+            if (stored is None or page_signals[0].get("determination_id") != receipt.determination_id
+                or stored != receipt or stored.entity_id != captured_url
+                or stored.tenant_id != str(tenant_id) or stored.kind != "page_interpretation"
+                or stored.lane != "enrichment"):
+                raise ManualCaptureExtractionFailure("The capture page decision could not be verified")
+            if signals is not None:
+                signals.extend(observed)
+            return state, method
+
+        def description_quality(self, **kwargs):
+            return self.delegate.description_quality(**kwargs)
+
+    class _SourceBoundExtractor:
+        error = None
+        receipt_id = None
+
+        def extract(self, page):
+            try:
+                sources, origins = posting_page_sources(page, entity_id=captured_url)
+                selected, receipt = build_manual_capture_posting_extractor(conn, tenant_id).extract(
+                    entity_id=captured_url, sources=sources, source_urls=origins,
+                )
+                self.receipt_id = receipt.determination_id
+                return ExtractionResult(
+                    ok=True,
+                    full_description=FullDescription(text=selected.description.value),
+                    application_url=ApplicationUrl(value=selected.application_url.value)
+                    if selected.application_url.value else None,
+                )
+            except Exception as exc:
+                self.error = exc
+                return ExtractionResult(ok=False)
+
+    extractor = _SourceBoundExtractor()
+    service = ContentAcquisitionService(
+        active_verifier=_ManualVerifier(),
         fetcher=_ManualFetcher(),
-        extractors=(
-            TierExtractor(tier=ExtractionTier.JSON_LD, extractor=JsonLdExtractor()),
-            TierExtractor(tier=ExtractionTier.CSS_SELECTORS, extractor=CssSelectorExtractor()),
-        ),
+        extractors=(TierExtractor(tier=ExtractionTier.LLM_ASSISTED, extractor=extractor),),
     )
-    return CapturePostingSnapshotUseCase(
-        snapshot_repository=SqlitePostingSnapshotSetRepository(conn),
-        acquisition_service=acquisition,
-        publisher=DurableJobEventPublisher(conn, stage="enrich"),
-        enrichment_repository=SqliteEnrichmentRepository(conn),
-    )
+
+    class _ManualAcquisition:
+        def acquire(self, **kwargs):
+            result = service.acquire(**kwargs)
+            if extractor.error is not None:
+                raise extractor.error
+            if result.ok and extractor.receipt_id:
+                return replace(result, evidence=(*result.evidence, f"posting_extraction_determination:{extractor.receipt_id}"))
+            return result
+
+    return _ManualAcquisition()
+
+
+def build_manual_capture_posting_extractor(conn, tenant_id):
+    """Use the same cited source selection and spend preflight as URL imports."""
+    from jobctrl.domain.enrichment.page_interpretation import ModelPagePostingExtractor
+    from jobctrl.infrastructure.determinations import determination_dependencies
+
+    return ModelPagePostingExtractor(**determination_dependencies(conn, tenant_id=str(tenant_id), lane="enrichment"))
+
+
+def _retain_manual_capture_decision(conn, tenant_id, item_id, captured_url, token, failure):
+    """Join the rejected page decision to its exact still-pending draft."""
+    from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+
+    receipt = SqliteDeterminationRepository(conn).find(str(tenant_id), failure.determination_id)
+    if (receipt is None or receipt.tenant_id != str(tenant_id) or receipt.entity_id != captured_url
+        or receipt.kind != "page_interpretation" or receipt.lane != "enrichment"):
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = conn.execute(
+            "SELECT retry_context_json FROM manual_capture_queue WHERE tenant_id=? AND item_id=? AND status='pending'",
+            (str(tenant_id), item_id),
+        ).fetchone()
+        context = _json_dict(row[0]) if row is not None else {}
+        draft = context.get("manual_capture_draft")
+        if isinstance(draft, dict) and draft.get("token") == token:
+            draft["page_determination_id"] = failure.determination_id
+            conn.execute(
+                "UPDATE manual_capture_queue SET retry_context_json=? WHERE tenant_id=? AND item_id=? AND status='pending'",
+                (json.dumps(context, sort_keys=True), str(tenant_id), item_id),
+            )
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+
+
+def _manual_capture_selected_fields(conn, tenant_id, captured_url, evidence):
+    from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+
+    refs = [value.removeprefix("posting_extraction_determination:") for value in evidence
+            if value.startswith("posting_extraction_determination:")]
+    if len(refs) != 1:
+        raise ManualCaptureExtractionFailure("The posting selection receipt is unavailable")
+    receipt = SqliteDeterminationRepository(conn).find(str(tenant_id), refs[0])
+    if (receipt is None or receipt.kind != "posting_extraction" or receipt.entity_id != captured_url
+        or receipt.tenant_id != str(tenant_id) or receipt.lane != "enrichment"):
+        raise ManualCaptureExtractionFailure("The posting selection receipt is invalid")
+    names = ("title", "employer", "description", "location", "salary", "application_url")
+    fields = {name: receipt.result.get(name, {}).get("value") for name in names}
+    if any(not isinstance(value, str) for value in fields.values()) or not fields["title"] or not fields["description"]:
+        raise ManualCaptureExtractionFailure("The posting selection receipt is incomplete")
+    return fields
 
 
 def _manual_capture_posting(
@@ -1974,18 +2381,19 @@ def _manual_capture_posting(
     url: str,
     content: str,
     originating_url: str,
+    selected: dict[str, str] | None = None,
 ) -> ScrapedJobPosting:
-    title = _extract_title(content) or "User-mediated captured posting"
-    employer_name = _extract_employer(content)
+    title = selected["title"] if selected is not None else _extract_title(content) or "User-mediated captured posting"
+    employer_name = selected["employer"] if selected is not None else _extract_employer(content)
     return ScrapedJobPosting(
         posting_url=PostingUrl(value=url),
         source=Source(board="User-mediated capture"),
         employer=(Employer(name=employer_name) if employer_name else Employer.unknown()),
         metadata=JobMetadata(
             title=title,
-            salary="",
-            description="Manual capture imported by the user.",
-            location=_extract_location(content),
+            salary=selected["salary"] if selected is not None else "",
+            description=selected["description"] if selected is not None else "Manual capture imported by the user.",
+            location=selected["location"] if selected is not None else _extract_location(content),
         ),
         strategy=SearchStrategy.MANUAL,
         source_id=source_id,

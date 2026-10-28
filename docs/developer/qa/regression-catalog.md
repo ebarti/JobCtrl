@@ -589,6 +589,13 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For Manual Capture extraction recovery, use the synthetic recipe in
+[Discovery Transaction Recovery](../../local-reliability-qa.md#discovery-transaction-recovery).
+Join the successful snapshot and model determinations to the same tenant,
+source and captured page; a failed refresh preserves accepted evidence and a
+pending draft. Historical imports without a matching snapshot remain unverified;
+an exact original observation and new user submission are required for recapture.
+
 For legacy evidence preservation (#1281), run locked
 `pytest tests/test_legacy_evidence_preservation.py tests/test_legacy_evidence_recovery.py tests/test_semantic_storage.py tests/test_v12_activation.py`
 and the full worker and native launcher suites with this checkout's locked

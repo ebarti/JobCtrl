@@ -362,13 +362,14 @@ def test_manual_capture_workflow_id_is_hashed_bounded_and_tenant_scoped() -> Non
     assert manual_capture_import_workflow_id("tenant/a", special_item + "2") != first
 
 
-def test_workflow_spec_preserves_guard_and_uses_deterministic_id() -> None:
+def test_workflow_spec_preserves_guard_and_uses_deterministic_id(monkeypatch, tmp_path) -> None:
+    app_dir, db_path = _isolate_runtime(monkeypatch, tmp_path)
     params = {
         "tenantId": "local",
         "itemId": "manual-1",
         "captureMode": "saved_html",
-        "expectedAppDir": "/tmp/jobctrl",
-        "expectedDbPath": "/tmp/jobctrl/jobctrl.db",
+        "expectedAppDir": app_dir,
+        "expectedDbPath": db_path,
         "contentText": _CAPTURE_HTML,
         "capturedUrl": _CAPTURE_URL,
         "note": "captured by user",
@@ -386,13 +387,28 @@ def test_workflow_spec_preserves_guard_and_uses_deterministic_id() -> None:
         tenant_id="local",
         item_id="manual-1",
         capture_mode="saved_html",
-        expected_app_dir="/tmp/jobctrl",
-        expected_db_path="/tmp/jobctrl/jobctrl.db",
+        expected_app_dir=app_dir,
+        expected_db_path=db_path,
         content_text=_CAPTURE_HTML,
         captured_url=_CAPTURE_URL,
         note="captured by user",
         future_manual_action_required=True,
     )
+
+
+@pytest.mark.parametrize('runtime_fields', ['both', 'app_only', 'db_only', 'neither'])
+def test_workflow_spec_resolves_generation_for_optional_runtime_fields(monkeypatch, tmp_path, runtime_fields) -> None:
+    app_dir, db_path = _isolate_runtime(monkeypatch, tmp_path)
+    conn = _seed_pending(tmp_path / 'jobctrl.db')
+    conn.execute("UPDATE manual_capture_queue SET retry_context_json=? WHERE item_id='manual-1'",
+                 ('{"manual_capture_generation":"synthetic-generation"}',))
+    conn.commit()
+    params = {'tenantId': 'local', 'itemId': 'manual-1', 'captureMode': 'saved_html', 'contentText': _CAPTURE_HTML}
+    if runtime_fields in {'both', 'app_only'}:
+        params['expectedAppDir'] = app_dir
+    if runtime_fields in {'both', 'db_only'}:
+        params['expectedDbPath'] = db_path
+    assert build_manual_capture_import_workflow_spec(params).args[0].capture_generation == 'synthetic-generation'
 
 
 def test_manual_capture_workflow_and_activity_are_registered() -> None:
@@ -465,6 +481,23 @@ def test_jsonrpc_handler_surfaces_temporal_start_failure() -> None:
 
     assert response is not None
     assert response.to_dict()["error"]["code"] == INTERNAL_ERROR
+
+
+def test_jsonrpc_manual_capture_conflict_is_safe_and_other_methods_keep_existing_error() -> None:
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+
+    async def starter(_spec):
+        raise WorkflowAlreadyStartedError('synthetic-id', 'SyntheticWorkflow')
+
+    server = JsonRpcServer(workflow_starter=starter)
+    register_default_handlers(server, canceler=_stub_canceler)
+    manual = server.dispatch(JsonRpcRequest(method='manual_capture_import', id=1, params={
+        'itemId': 'manual-1', 'captureMode': 'saved_html', 'contentText': 'synthetic content',
+    }))
+    assert manual.to_dict()['error'] == {'code': -32009, 'message': 'manual_capture_in_progress'}
+    server.register('synthetic_other', lambda _: WorkflowStartSpec(workflow=ManualCaptureImportWorkflow, args=()), mode='workflow')
+    other = server.dispatch(JsonRpcRequest(method='synthetic_other', id=2, params={}))
+    assert other.to_dict()['error']['code'] == INTERNAL_ERROR
 
 
 @pytest.mark.asyncio
@@ -557,6 +590,9 @@ async def test_manual_capture_activity_enforces_expected_runtime_guard() -> None
 
 @pytest.fixture(autouse=True)
 def semantic_workflow_models(monkeypatch):
+    from tests.manual_capture_fakes import install_manual_capture_selection, install_manual_page_model
     from tests.workflow_determination_fakes import install_page_models
 
     install_page_models(monkeypatch)
+    install_manual_page_model(monkeypatch)
+    install_manual_capture_selection(monkeypatch)

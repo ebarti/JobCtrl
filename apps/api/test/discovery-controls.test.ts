@@ -3,6 +3,7 @@ import Database from "better-sqlite3";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
 
 import { buildApp } from "../src/server.js";
 import type { JsonRpcResponse, ManualCaptureImportRequest, RpcMethod } from "../src/contracts.js";
@@ -1190,7 +1191,7 @@ describe("discovery product controls API", () => {
         importedAt,
         input.captureMode,
         input.capturedUrl,
-        "a".repeat(64),
+        crypto.createHash("sha256").update(input.contentText ?? "").digest("hex"),
         input.contentText?.length ?? 0,
         input.futureManualActionRequired ? 1 : 0,
         JSON.stringify(retryContext),
@@ -1198,6 +1199,13 @@ describe("discovery product controls API", () => {
         "local",
         itemId,
       );
+      db.prepare(`INSERT INTO posting_snapshot_sets
+        (tenant_id,job_id,snapshot_set_json,latest_snapshot_version,latest_active_state,updated_at)
+        VALUES ('local',?,?,1,'active',?)`).run(
+          REPLAY_JOB_ID,
+          JSON.stringify({ snapshots: [{ source_id: 'manual_capture:extension', snapshot_version: 1, raw_text_hash: crypto.createHash('sha256').update(input.contentText ?? '').digest('hex') }] }),
+          importedAt,
+        );
       db.close();
       return {
         ok: true,
@@ -1330,6 +1338,8 @@ describe("discovery product controls API", () => {
                 retry_context: {
                   manual_capture_provenance: {
                     originating_url: "https://example.com/protected/job",
+                    capture_mode: "saved_html",
+                    future_manual_action_required: true,
                   },
                 },
                 error: null,

@@ -261,6 +261,23 @@ tests cover immediate optimistic feedback and rollback on failure.
 
 ## Discovery Transaction Recovery
 
+For Manual Capture recovery, run `tests/test_manual_capture_recovery.py` with
+the manual-capture workflow and discovery wiring tests. Use owned synthetic
+workspaces and controlled model/provider ports. Exercise failed extraction,
+model and database failures, cancellation, concurrent attempts, older accepted
+content and deletion; require no duplicate capture observation and a successful
+snapshot before acknowledgement. Run and replay the real Temporal failure and retry,
+and verify local API and rendered retry controls. Opposing cited page-kind and
+access verdicts must control admission; source selection must exclude an unrelated
+posting without a lexical fallback. Historical review requires the exact original
+tenant/source observation and explicit page resubmission; unmatched old failure
+events remain unverified, and deleted owners must remain untouched.
+Exercise two different submissions against the same active Temporal workflow,
+and a timed-out older attempt that resumes before and after its first queue read.
+Neither may acknowledge the wrong input or replace a newer retained draft, even
+after dismissal and explicit reopening. A retry of the same historical recovery
+workflow must retain its own admission after a retryable provider failure.
+
 Run the `discovery-transactions` recipe for preparation or enrichment transaction
 changes. Seed failed and exhausted Tailor rows whose downstream stages are already
 reconciled, with a scoring policy already present. Repeat the empty preparation

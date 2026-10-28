@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 from dataclasses import asdict, dataclass, is_dataclass
 from collections.abc import Callable
 from typing import Any
 
-from temporalio.common import WorkflowIDReusePolicy
+from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 
 from jobctrl.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
 from jobctrl.contact.activities import ResearchSourceInput
@@ -501,22 +502,45 @@ def build_manual_capture_import_workflow_spec(
     future_manual_action_required = params.get("futureManualActionRequired", False)
     if not isinstance(future_manual_action_required, bool):
         raise ValueError("futureManualActionRequired must be a boolean")
+    expected_app_dir = _optional_string(params, "expectedAppDir")
+    expected_db_path = _optional_string(params, "expectedDbPath")
+    generation = None
+    from jobctrl.database import get_connection
+    from jobctrl.infrastructure.runtime_identity import assert_expected_runtime
+
+    assert_expected_runtime(expected_app_dir=expected_app_dir, expected_db_path=expected_db_path)
+    row = get_connection(require_existing=True).execute(
+        "SELECT retry_context_json FROM manual_capture_queue WHERE tenant_id=? AND item_id=?",
+        (tenant_id, item_id),
+    ).fetchone()
+    if row is not None:
+        try:
+            context = json.loads(row[0])
+            if not isinstance(context, dict):
+                raise ValueError
+            generation = context.get("manual_capture_generation")
+            if generation is not None and (not isinstance(generation, str) or not generation):
+                raise ValueError
+        except (ValueError, TypeError):
+            raise ValueError("manual capture generation is unavailable") from None
     payload = ManualCaptureImportWorkflowInput(
         tenant_id=tenant_id,
         item_id=item_id,
         capture_mode=capture_mode,
-        expected_app_dir=_optional_string(params, "expectedAppDir"),
-        expected_db_path=_optional_string(params, "expectedDbPath"),
+        expected_app_dir=expected_app_dir,
+        expected_db_path=expected_db_path,
         content_text=content_text,
         content_html_base64=content_html_base64,
         captured_url=captured_url,
         note=_optional_string(params, "note", allow_empty=True),
         future_manual_action_required=future_manual_action_required,
+        capture_generation=generation,
     )
     return WorkflowStartSpec(
         workflow=ManualCaptureImportWorkflow,
         args=(payload,),
         workflow_id=manual_capture_import_workflow_id(tenant_id, item_id),
+        id_conflict_policy=WorkflowIDConflictPolicy.FAIL,
     )
 
 

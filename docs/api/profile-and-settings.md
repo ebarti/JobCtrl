@@ -134,6 +134,8 @@ and the [wire contract](complete-contract.md#discovery-controls).
 
 These controls decide where discovery may look and how proposed sources or jobs
 enter the system. They do not hold provider credentials or raw feed contents.
+The Manual Capture queue retains user-submitted pending page content locally for
+review and retry; see the [capture contract](complete-contract.md#discovery-controls).
 
 ## Settings And Credentials
 

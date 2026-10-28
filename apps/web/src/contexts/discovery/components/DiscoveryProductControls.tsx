@@ -1411,15 +1411,18 @@ function ManualCapturePanel({
       <div className="discovery-panel-head">
         <h3 data-typography="component-title">Manual capture</h3>
         <span className="meta" data-typography="metadata">
-          {items.length} pending
+          {items.length} to review
         </span>
       </div>
       <div className="rows compact">
         {items.map((item) => (
           <ManualCaptureRow
-            key={item.itemId}
+            key={`${item.itemId}:${manualCaptureDraft(item).token}`}
             item={item}
             importing={importCapture.isPending}
+            importError={importCapture.isError && importCapture.variables?.itemId === item.itemId
+              ? "Import failed. Review the retained capture and try again."
+              : null}
             dismissing={dismiss.isPending}
             onImport={importItem}
             onDismiss={(itemId) => dismiss.mutate(itemId)}
@@ -1438,30 +1441,35 @@ function ManualCapturePanel({
 function ManualCaptureRow({
   item,
   importing,
+  importError,
   dismissing,
   onImport,
   onDismiss,
 }: {
   item: ManualCaptureItem;
   importing: boolean;
+  importError: string | null;
   dismissing: boolean;
   onImport: (itemId: string, body: ManualCaptureImportRequest) => void;
   onDismiss: (itemId: string) => void;
 }) {
+  const draft = manualCaptureDraft(item);
   const [captureMode, setCaptureMode] =
-    useState<ManualCaptureImportRequest["captureMode"]>("copied_url");
-  const [capturedUrl, setCapturedUrl] = useState(item.originatingUrl);
-  const [content, setContent] = useState("");
-  const [note, setNote] = useState("");
+    useState<ManualCaptureImportRequest["captureMode"]>(draft.captureMode);
+  const [capturedUrl, setCapturedUrl] = useState(draft.capturedUrl);
+  const [content, setContent] = useState(draft.content);
+  const [note, setNote] = useState(draft.note);
   const [futureManualActionRequired, setFutureManualActionRequired] =
-    useState(false);
+    useState(draft.futureManualActionRequired);
   const contentRequired = requiresContent(captureMode);
   const urlRequired =
     captureMode === "copied_url" || captureMode === "current_page";
   const contentLabel = manualCaptureContentLabel(captureMode);
+  const needsRecapture = item.retryContext.manual_capture_recovery_unverified === true;
   const canImport =
     (!urlRequired || capturedUrl.trim().length > 0) &&
-    (!contentRequired || content.trim().length > 0);
+    (!contentRequired || content.trim().length > 0) &&
+    (!needsRecapture || (captureMode !== "copied_url" && content.trim().length > 0));
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1494,6 +1502,10 @@ function ManualCaptureRow({
         <span className="manual-capture-reason">
           {manualActionDetail(item.reason)}
         </span>
+        {needsRecapture ? <span>Previous import has no matching saved snapshot. Its outcome is unverified; select saved HTML or pasted text and provide the page again.</span> : null}
+        {item.retryContext.manual_capture_page_decision === "access_blocked" ? <span>The captured page was identified as a login or access challenge.</span> : null}
+        {item.retryContext.manual_capture_page_decision === "posting_unverified" ? <span>The captured page was not identified as one job posting.</span> : null}
+        {importError ? <span role="alert">{importError}</span> : null}
         <form className="manual-capture-form" onSubmit={submit}>
           <Field className="field">
             <FieldLabel htmlFor={`${item.itemId}-capture-mode`}>
@@ -1540,7 +1552,7 @@ function ManualCaptureRow({
               required={urlRequired}
             />
           </Field>
-          {contentRequired ? (
+          {contentRequired || (captureMode === "current_page" && draft.content) ? (
             <Field className="field wide">
               <FieldLabel htmlFor={`${item.itemId}-captured-content`}>
                 {contentLabel}
@@ -1549,7 +1561,7 @@ function ManualCaptureRow({
                 id={`${item.itemId}-captured-content`}
                 value={content}
                 onChange={(event) => setContent(event.target.value)}
-                required
+                required={contentRequired}
                 rows={3}
               />
             </Field>
@@ -1629,10 +1641,34 @@ function requiresContent(
   );
 }
 
+function manualCaptureDraft(item: ManualCaptureItem): {
+  token: string;
+  captureMode: ManualCaptureImportRequest["captureMode"];
+  capturedUrl: string;
+  content: string;
+  note: string;
+  futureManualActionRequired: boolean;
+} {
+  const value = item.retryContext.manual_capture_draft;
+  const draft = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const captureMode = CAPTURE_MODES.find((mode) => mode.value === draft.capture_mode)?.value ?? "copied_url";
+  return {
+    token: typeof draft.token === "string" ? draft.token : "",
+    captureMode,
+    capturedUrl: typeof draft.captured_url === "string" ? draft.captured_url : item.originatingUrl,
+    content: typeof draft.content === "string" ? draft.content : "",
+    note: typeof draft.note === "string" ? draft.note : "",
+    futureManualActionRequired: draft.future_manual_action_required === true,
+  };
+}
+
 function manualCaptureContentLabel(
   captureMode: ManualCaptureImportRequest["captureMode"],
 ): string {
   if (captureMode === "saved_html") return "Saved HTML";
+  if (captureMode === "current_page") return "Captured page content";
   if (captureMode === "email_import") return "Email content";
   return "Pasted text";
 }
@@ -1653,7 +1689,7 @@ function buildManualCapturePayload(input: {
   const note = input.note.trim();
   if (capturedUrl) payload.capturedUrl = capturedUrl;
   if (note) payload.note = note;
-  if (input.captureMode === "saved_html") {
+  if (input.captureMode === "saved_html" || (input.captureMode === "current_page" && content)) {
     payload.contentHtmlBase64 = encodeUtf8Base64(content);
   } else if (requiresContent(input.captureMode)) {
     payload.contentText = content;

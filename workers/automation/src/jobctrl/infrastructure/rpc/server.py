@@ -28,6 +28,7 @@ from typing import Any, Callable, Iterable, TextIO
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
+from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from jobctrl.domain.rpc.messages import (
     INTERNAL_ERROR,
@@ -204,6 +205,10 @@ class JsonRpcServer:
         try:
             handle = asyncio.run(self._workflow_starter(start_spec))
         except Exception as exc:  # noqa: BLE001
+            if request.method == "manual_capture_import" and isinstance(exc, WorkflowAlreadyStartedError):
+                return JsonRpcResponse.failure(
+                    request.id, JsonRpcError(-32009, "manual_capture_in_progress"),
+                )
             logger.exception("Workflow start failed for %s", request.method)
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             span.record_exception(exc)

@@ -5,11 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import threading
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from temporalio import activity, workflow
+from temporalio.workflow import ActivityCancellationType
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
 
@@ -32,6 +34,7 @@ class ManualCaptureImportWorkflowInput:
     captured_url: str | None = None
     note: str | None = None
     future_manual_action_required: bool = False
+    capture_generation: str | None = None
 
 
 @dataclass(frozen=True)
@@ -62,6 +65,8 @@ _MANUAL_CAPTURE_RETRY = RetryPolicy(
         "invalid_capture_input",
         "not_found",
         "capture_replay_mismatch",
+        "manual_capture_extraction_failed",
+        "manual_capture_state_changed",
         "RuntimeIdentityMismatch",
     ],
 )
@@ -82,11 +87,32 @@ async def manual_capture_import_activity(
         expected_app_dir=payload.expected_app_dir,
         expected_db_path=payload.expected_db_path,
     )
+    cancel_event = threading.Event()
+    cancel_lock = threading.Lock()
+    info = activity.info()
+    if not info.workflow_run_id:
+        raise ApplicationError("Manual capture attempt identity is unavailable", type="manual_capture_state_changed", non_retryable=True)
+    scheduled = info.current_attempt_scheduled_time.astimezone(timezone.utc)
+    attempt_authority = {
+        "scheduled_us": (scheduled - datetime(1970, 1, 1, tzinfo=timezone.utc)) // timedelta(microseconds=1),
+        "run_id": info.workflow_run_id,
+        "activity_id": info.activity_id,
+        "attempt": info.attempt,
+    }
+
+    def cancel() -> None:
+        with cancel_lock:
+            cancel_event.set()
+
     return await run_blocking_with_heartbeat(
-        lambda: execute_manual_capture_import(payload),
+        lambda: execute_manual_capture_import(
+            payload, cancel_event=cancel_event, cancel_lock=cancel_lock, attempt_authority=attempt_authority,
+        ),
         starting_message="manual-capture import starting",
         progress_message="manual-capture import still running",
         activity_name="manual_capture_import",
+        on_cancel=cancel,
+        poll_interval=1.0,
     )
 
 
@@ -94,6 +120,9 @@ def execute_manual_capture_import(
     payload: ManualCaptureImportWorkflowInput,
     *,
     conn: sqlite3.Connection | None = None,
+    cancel_event: threading.Event | None = None,
+    cancel_lock: threading.Lock | None = None,
+    attempt_authority: dict[str, Any] | None = None,
 ) -> ManualCaptureImportActivityOutput:
     """Import or reconstruct one stable manual-capture result.
 
@@ -103,11 +132,15 @@ def execute_manual_capture_import(
     come from persisted columns, so the first result and retry result are equal.
     """
     from jobctrl.database import get_connection
+    from jobctrl.domain.determinations import DeterminationFailure
     from jobctrl.domain.tenant import TenantId
     from jobctrl.infrastructure.discovery.production_wiring import (
         ManualCaptureImport,
+        ManualCaptureExtractionFailure,
+        ManualCaptureStateChanged,
         import_manual_capture_item,
         manual_capture_content,
+        reopen_unverified_manual_capture,
     )
 
     connection = conn or get_connection()
@@ -134,13 +167,52 @@ def execute_manual_capture_import(
             error_type="not_found",
         )
 
+    # Only an explicit submission containing actual page bytes can reopen an
+    # unverified historical receipt. A URL alone cannot recover content.
+    generation = payload.capture_generation
+    if str(row["status"]) == "imported" and (payload.content_text or payload.content_html_base64):
+        reopened = reopen_unverified_manual_capture(
+            connection, TenantId(payload.tenant_id), payload.item_id, expected_generation=generation,
+            attempt_authority=attempt_authority,
+        )
+        if reopened:
+            generation = reopened
+            row = _capture_row(connection, payload.tenant_id, payload.item_id)
+    if str(row["status"]) == "pending" and attempt_authority is not None:
+        context = _retry_context(row["retry_context_json"])
+        reopened = context.get("manual_capture_reopen_authority")
+        if (isinstance(reopened, dict) and reopened.get("run_id") == attempt_authority.get("run_id")
+            and reopened.get("previous_generation") == generation
+            and reopened.get("generation") == context.get("manual_capture_generation")):
+            generation = reopened["generation"]
+
     if str(row["status"]) == "pending":
         try:
             import_manual_capture_item(
                 connection,
                 capture,
                 tenant_id=TenantId(payload.tenant_id),
+                cancel_event=cancel_event,
+                cancel_lock=cancel_lock,
+                expected_queue_state=(row["originating_url"], row["source_id"], row["retry_context_json"]),
+                attempt_authority=attempt_authority,
+                expected_generation=generation,
             )
+        except ManualCaptureExtractionFailure as exc:
+            raise _non_retryable(
+                "The captured page could not be extracted. Review the retained capture and try again.",
+                error_type="manual_capture_extraction_failed",
+            ) from exc
+        except ManualCaptureStateChanged as exc:
+            raise _non_retryable(
+                "The capture or its Job changed while importing. Review the retained capture and try again.",
+                error_type="manual_capture_state_changed",
+            ) from exc
+        except DeterminationFailure as exc:
+            raise ApplicationError(
+                "The captured page could not be interpreted. Review the retained capture and try again.",
+                type=f"semantic_determination_{exc.code}", non_retryable=not exc.retryable,
+            ) from None
         except ValueError:
             # A concurrent attempt may have committed after our read. Only an
             # imported row that passes the full replay check can recover it.
@@ -156,7 +228,7 @@ def execute_manual_capture_import(
     imported = _capture_row(connection, payload.tenant_id, payload.item_id)
     if imported is None or str(imported["status"]) != "imported":
         raise RuntimeError("Manual capture importer returned without an imported queue row")
-    return _validated_imported_result(payload, capture, imported, content)
+    return _validated_imported_result(payload, capture, imported, content, connection)
 
 
 def _capture_row(
@@ -183,6 +255,7 @@ def _validated_imported_result(
     capture: Any,
     row: sqlite3.Row,
     content: str,
+    conn: sqlite3.Connection,
 ) -> ManualCaptureImportActivityOutput:
     from jobctrl.domain.identifiers import canonical_job_id
 
@@ -235,6 +308,33 @@ def _validated_imported_result(
         raise _non_retryable(
             f"Manual capture replay does not match the imported row ({fields})",
             error_type="capture_replay_mismatch",
+        )
+
+    owner = conn.execute(
+        """SELECT 1 FROM jobs j WHERE j.tenant_id=? AND j.job_id=? AND NOT EXISTS
+           (SELECT 1 FROM jobctrl_deleted_jobs d WHERE d.tenant_id=j.tenant_id AND d.job_id=j.job_id
+            AND (d.restored_at IS NULL OR julianday(d.restored_at)<=julianday(d.deleted_at)))""",
+        (payload.tenant_id, job_id),
+    ).fetchone()
+    if owner is None:
+        raise _non_retryable(
+            "The original Job no longer permits this capture to be imported.",
+            error_type="manual_capture_state_changed",
+        )
+    snapshot = conn.execute(
+        "SELECT snapshot_set_json FROM posting_snapshot_sets WHERE tenant_id=? AND job_id=?",
+        (payload.tenant_id, job_id),
+    ).fetchone()
+    snapshot_set = _retry_context(snapshot[0]) if snapshot else {}
+    snapshots = snapshot_set.get("snapshots")
+    if not isinstance(snapshots, list) or not any(
+        isinstance(item, dict) and item.get("source_id") == expected_source_id
+        and item.get("raw_text_hash") == expected_hash
+        and type(item.get("snapshot_version")) is int and item["snapshot_version"] > 0 for item in snapshots
+    ):
+        raise _non_retryable(
+            "The original capture has no matching successful snapshot. Submit the captured page again.",
+            error_type="manual_capture_extraction_failed",
         )
 
     return ManualCaptureImportActivityOutput(
@@ -293,11 +393,18 @@ class ManualCaptureImportWorkflow:
             expected_db_path=payload.expected_db_path,
         )
         try:
+            activity_options = {}
+            if workflow.patched("manual-capture-cancellation-v1"):
+                activity_options = {
+                    "heartbeat_timeout": timedelta(seconds=10),
+                    "cancellation_type": ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+                }
             output = await workflow.execute_activity(
                 manual_capture_import_activity,
                 payload,
                 start_to_close_timeout=_DEFAULT_TIMEOUT,
                 retry_policy=_MANUAL_CAPTURE_RETRY,
+                **activity_options,
             )
         except CancelledError:
             await emit_workflow_outcome(
@@ -312,6 +419,18 @@ class ManualCaptureImportWorkflow:
             )
             raise
         except ActivityError as exc:
+            if isinstance(exc.cause, CancelledError):
+                await emit_workflow_outcome(
+                    tenant_id=payload.tenant_id,
+                    workflow_type="ManualCaptureImportWorkflow",
+                    status="canceled",
+                    started_at=started_at,
+                    error_code="workflow_canceled",
+                    error_message="Workflow canceled by request.",
+                    expected_app_dir=payload.expected_app_dir,
+                    expected_db_path=payload.expected_db_path,
+                )
+                raise CancelledError("Workflow canceled by request.") from exc
             error_code = _activity_error_code(exc) or "manual_capture_import_failed"
             error_message = _activity_error_message(exc, error_code)
             await emit_workflow_outcome(
@@ -370,10 +489,14 @@ def _activity_error_code(exc: ActivityError) -> str | None:
     cause = exc.cause
     if isinstance(cause, ApplicationError):
         code = cause.type or ""
+        if code.startswith("semantic_determination_"):
+            return code
         if code in {
             "not_found",
             "capture_replay_mismatch",
             "invalid_capture_input",
+            "manual_capture_extraction_failed",
+            "manual_capture_state_changed",
             "RuntimeIdentityMismatch",
         }:
             return code

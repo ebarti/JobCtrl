@@ -606,6 +606,60 @@ describe("DiscoveryProductControls", () => {
     );
   });
 
+  it("asks for page content before resubmitting an evidenced historical failure", async () => {
+    renderWithProviders(<DiscoveryProductControls />, {
+      ports: buildTestPorts({ api: {
+        manualCaptureQueue: vi.fn(async () => ({ ok: true as const, items: [{
+          itemId: "legacy-1", originatingUrl: "https://example.com/jobs/legacy", sourceId: "legacy-source",
+          reason: "login_required" as const, retryContext: { manual_capture_recovery_unverified: true },
+          requiredAt: "2026-05-15T10:00:00+00:00", status: "imported" as const,
+        }] })),
+      } }),
+    });
+    expect(await screen.findByText(/Previous import has no matching saved snapshot/)).toBeInTheDocument();
+    const button = screen.getByRole("button", { name: /import https:\/\/example.com\/jobs\/legacy/i });
+    expect(button).toBeDisabled();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("combobox", { name: "Capture mode" }));
+    await user.click(await screen.findByRole("option", { name: "Pasted text" }));
+    await user.type(screen.getByLabelText("Pasted text"), "A newly supplied page");
+    expect(button).toBeEnabled();
+  });
+
+  it("restores a retained capture and shows a failed retry without losing the content", async () => {
+    const importManualCapture = vi.fn(async () => { throw new Error("safe worker failure"); });
+    renderWithProviders(<DiscoveryProductControls />, {
+      ports: buildTestPorts({ api: {
+        manualCaptureQueue: vi.fn(async () => ({
+          ok: true as const,
+          items: [{
+            itemId: "manual-retry", originatingUrl: "https://example.com/protected/retry",
+            sourceId: "manual_capture:extension", reason: "browser_extension_capture" as const,
+            retryContext: { manual_capture_page_decision: "posting_unverified", manual_capture_draft: {
+              token: "attempt-1", capture_mode: "current_page", captured_url: "https://example.com/protected/retry",
+              content: "<main>Synthetic retained page</main>", note: "Review", future_manual_action_required: true,
+              page_determination_id: "synthetic-page-receipt",
+            } },
+            requiredAt: "2026-05-15T10:00:00+00:00", status: "pending" as const,
+          }],
+        })),
+        importManualCapture,
+      } }),
+    });
+    const content = await screen.findByLabelText("Captured page content");
+    expect(screen.getByText("The captured page was not identified as one job posting.")).toBeInTheDocument();
+    expect(content).toHaveValue("<main>Synthetic retained page</main>");
+    expect(screen.getByLabelText("Note")).toHaveValue("Review");
+    expect(screen.getByRole("checkbox", { name: "Needs manual follow-up" })).toBeChecked();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /import https:\/\/example.com\/protected\/retry/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Review the retained capture and try again");
+    expect(screen.getByLabelText("Captured page content")).toHaveValue("<main>Synthetic retained page</main>");
+    expect(importManualCapture).toHaveBeenCalledWith("manual-retry", expect.objectContaining({
+      captureMode: "current_page", contentHtmlBase64: "PG1haW4+U3ludGhldGljIHJldGFpbmVkIHBhZ2U8L21haW4+",
+    }));
+  });
+
   it("imports pasted manual capture content with follow-up provenance", async () => {
     const importManualCapture = vi.fn(async () => ({
       ok: true as const,

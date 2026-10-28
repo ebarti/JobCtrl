@@ -865,6 +865,11 @@ type and policy metadata are visible as columns instead of compact badges:
   their existing local review queues. Direct URLs from broad-board discovery
   retain their normal learning path, fenced by pending history proposals,
   durable rejection and disabled/quarantined source intent.
+  Manual Capture returns pending submitted drafts in `retryContext` for local
+  review. It also lists historical imports with an exact original observation
+  but no matching saved snapshot using their stored `status: "imported"` and
+  `manual_capture_recovery_unverified: true`; absence of a matching snapshot
+  does not attribute a recorded failure to that item.
 - `POST /v1/discovery/locator-candidates/:candidateId/promote` explicitly promotes
   the candidate, reusing a history proposal's active registry overlap without
   changing its configuration. It records `SourceLocationCandidateReviewed`
@@ -885,10 +890,21 @@ type and policy metadata are visible as columns instead of compact badges:
   quarantined lead and records feedback for source-quality aggregation.
 - `POST /v1/discovery/manual-capture/:itemId/import` records user-mediated
   capture provenance for copied URLs, current-page URLs, pasted text, saved
-  HTML, and email imports. Raw pasted or saved content is not copied into domain
-  events; the API stores only local metadata such as content length and hash.
+  HTML, and email imports. Pending capture content and details are stored locally
+  for retry and returned by the queue read. They are removed from the queue on
+  successful import or dismissal, and are not copied into domain events.
+  Success requires a matching persisted snapshot. Extraction failures return
+  `422`; a changed capture or owner, or another active import of the same item,
+  returns `409`. Retry after the active import finishes. Database and model failures
+  leave the pending draft available when its initial storage succeeded.
+  Page identity, access and source-field selection are cited model decisions;
+  listing, unknown-identity and login/challenge verdicts cannot create a Job.
+  An unverified historical receipt requires explicit resubmission of page content;
+  it reuses the original live Job and observation, preserves older accepted
+  snapshots, and never recreates a deleted owner. Temporal history can retain
+  the submitted workflow input.
 - `POST /v1/discovery/manual-capture/:itemId/dismiss` dismisses a pending
-  manual-capture item.
+  manual-capture item, including an unverified historical import.
 - `POST /v1/discovery/feedback` records `DiscoveryFeedbackRecorded` with IDs,
   source, kind, and timestamp only; free-form notes stay out of the domain event
   payload.
@@ -2197,7 +2213,9 @@ run link to its exact activity stream.
   `manual_capture:extension`, then delegates to the existing manual-capture
   worker importer. Re-sending the same `captureId` while import is still pending
   updates the same queue row instead of creating a duplicate; replays of an
-  imported row return the original `ManualCaptureImportResponse`; replays of a
+  imported row return the original `ManualCaptureImportResponse` only when the
+  submitted content and metadata match its live owner and recorded snapshot;
+  replays of a
   dismissed row return a terminal 2xx no-op so the extension can clear local
   retry state without reopening the dismissed capture.
 - `GET /v1/extension/autofill/profile` returns the explicitly saved, whitelisted

@@ -196,6 +196,14 @@ See [Operations & Events](api/operations-and-events.md#pipeline-operations-snaps
 
 ## Discovery Controls
 
+Manual Capture retains a submitted pending draft for local review and retry;
+successful import requires a matching snapshot. The queue may also identify an
+unverified historical import that needs explicit page resubmission. See the
+[complete contract](api/complete-contract.md#discovery-controls).
+The legacy internal `jobctrl.discovery.manual_capture_import` bridge does not
+supersede a Temporal-owned capture; review and retry it in the Manual Capture
+queue instead.
+
 Source registry, quarantine, locator candidates, manual capture, schedules, and
 role-match feedback are covered in
 [Profile & Settings](api/profile-and-settings.md#discovery-controls).

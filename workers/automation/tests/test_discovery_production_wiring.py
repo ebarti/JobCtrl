@@ -54,8 +54,10 @@ def import_manual_capture_item(conn, capture, **kwargs):
 
 @pytest.fixture(autouse=True)
 def page_models(monkeypatch):
+    from tests.manual_capture_fakes import install_manual_capture_selection, install_manual_page_model
     from tests.page_fakes import interpreter
 
+    install_manual_capture_selection(monkeypatch)
     monkeypatch.setattr("jobctrl.enrichment.detail.build_page_interpreter", lambda *args, **kwargs: interpreter())
     monkeypatch.setattr(
         "jobctrl.infrastructure.enrichment.page_interpretation.build_page_interpreter",
@@ -65,6 +67,7 @@ def page_models(monkeypatch):
         "jobctrl.infrastructure.discovery.production_wiring.build_page_interpreter",
         lambda *args, **kwargs: interpreter(),
     )
+    install_manual_page_model(monkeypatch)
 
 
 def _insert_v7_job(
@@ -938,7 +941,7 @@ def test_manual_capture_import_runs_discovery_enrichment_and_snapshot_pipeline(
         """,
         (outcome.job_id,),
     ).fetchone()
-    assert tuple(enrichment_row) == ("enriched", "json_ld")
+    assert tuple(enrichment_row) == ("enriched", "llm_assisted")
     snapshot_row = conn.execute(
         """
         SELECT latest_snapshot_version, latest_active_state
@@ -991,6 +994,7 @@ def test_manual_capture_import_preserves_extension_capture_provenance(
             item_id,
         ),
     )
+    conn.commit()
 
     import_manual_capture_item(
         conn,

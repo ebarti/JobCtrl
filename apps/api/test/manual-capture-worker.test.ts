@@ -53,6 +53,8 @@ function successResponse(): JsonRpcResponse {
         retry_context: {
           manual_capture_provenance: {
             originating_url: "https://example.test/jobs/1",
+            capture_mode: "pasted_text",
+            future_manual_action_required: true,
             capture_client: "browser_extension",
             extension_version: "0.3.0",
           },
@@ -97,6 +99,38 @@ function importerFor(response: JsonRpcResponse): {
 }
 
 describe("createWorkerManualCaptureImporter", () => {
+  it("returns a conflict for another active capture import", async () => {
+    const { importer } = importerFor({
+      jsonrpc: "2.0", id: 1, error: { code: -32009, message: "manual_capture_in_progress" },
+    });
+    await expect(importer("manual-1", input, context)).rejects.toMatchObject({
+      statusCode: 409, message: expect.stringContaining("in progress"),
+    });
+  });
+
+  it("does not acknowledge a different request from a mismatched workflow result", async () => {
+    const { importer } = importerFor(successResponse());
+    await expect(importer("manual-1", { ...input, captureMode: "saved_html" }, context)).rejects.toMatchObject({
+      statusCode: 409, message: expect.stringContaining("conflicts"),
+    });
+    await expect(importer("another-item", input, context)).rejects.toMatchObject({ statusCode: 409 });
+    await expect(importer("manual-1", { ...input, futureManualActionRequired: false }, context))
+      .rejects.toMatchObject({ statusCode: 409 });
+  });
+
+  it.each([
+    ["manual_capture_extraction_failed", 422, "could not extract a posting"],
+    ["manual_capture_state_changed", 409, "changed during import"],
+    ["semantic_determination_provider_error", 503, "temporarily unavailable"],
+    ["semantic_determination_field_binding_invalid", 422, "could not be interpreted"],
+  ])("maps %s to actionable safe feedback", async (code, statusCode, message) => {
+    const { importer } = importerFor(failureResponse(code));
+    await expect(importer("manual-1", input, context)).rejects.toMatchObject({
+      statusCode,
+      message: expect.stringContaining(message),
+    });
+  });
+
   it("calls manual_capture_import with the complete awaited workflow contract and preserves the public response", async () => {
     const { importer, dispatcher } = importerFor(successResponse());
 
