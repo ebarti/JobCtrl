@@ -109,6 +109,16 @@ delete the original provider history as an automatic repair.
 | Docs | `corepack pnpm docs:build`, diff check |
 | Cross-stack | `corepack pnpm check`, `corepack pnpm test`, affected separate web suites |
 
+For event-stream reconciliation, use an owned synthetic workspace with the
+actual API and a Linux-isolated browser. Read before a delayed or failed first
+connection, commit a change before the server chooses its cursor, and verify
+the mounted view refreshes without another event. Hold an initial read across
+open, and exercise reconnect, tenant switches, a pending profile save and a
+dirty template draft. For an Apply run, write a durable run event before open,
+deliver a live event while its detail refresh is held, and prove both remain
+visible after the response. Check that stored payloads and unrelated tenant/job
+rows are not exposed or attributed to the run.
+
 For Apply browser ownership, run locked pytest for
 `tests/test_apply_browser_ownership.py`, `tests/test_apply_chrome_dry_run_guard.py`,
 `tests/test_apply_origin_policy.py` and `tests/test_browser_capabilities.py`.

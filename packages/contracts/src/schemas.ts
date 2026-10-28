@@ -2735,6 +2735,17 @@ export interface WorkflowRunTimelineEvent {
   readonly message: string | null;
 }
 
+/** A persisted Apply event, scoped to its workflow run and job. */
+export interface WorkflowApplyTimelineEvent {
+  readonly sourceEventId: string;
+  /** Monotonic event identity within the Apply run, when the writer supplied it. */
+  readonly runEventId: number | null;
+  readonly at: string | null;
+  readonly type: string;
+  readonly level: string;
+  readonly message: string | null;
+}
+
 /**
  * Privacy-safe aggregation of provider failures recorded for one tailoring
  * workflow. No prompts, provider messages, SDK objects, or generated content
@@ -2813,6 +2824,8 @@ export interface WorkflowRunDetail {
   readonly finishedAt: string | null;
   readonly durationMs: number | null;
   readonly events: readonly WorkflowRunTimelineEvent[];
+  /** Separate Apply history; omitted by older or browser-local adapters. */
+  readonly applyEvents?: readonly WorkflowApplyTimelineEvent[];
 }
 
 export const APPLY_URL_OUTCOME_CODES = [

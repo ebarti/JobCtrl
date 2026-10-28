@@ -42,9 +42,16 @@ export const applyRunStartedHandler = (
 // is closed (no cache entry yet); reopen re-fetches and reconciles.
 export const applyRunEventRecordedHandler = (
   event: ApplyRunEventRecorded,
-): readonly InvalidationItem[] => [
-  patchApplyRunEvent(event.tenantId, event.payload.runId, event),
-];
+): readonly InvalidationItem[] => {
+  const payload = event.payload as unknown as Record<string, unknown>;
+  const camel = payload["runId"];
+  const snake = payload["run_id"];
+  if (typeof camel === "string" && typeof snake === "string" && camel !== snake) return [];
+  const runId = typeof camel === "string" ? camel : snake;
+  return typeof runId === "string" && runId.length > 0
+    ? [patchApplyRunEvent(event.tenantId, runId, event)]
+    : [];
+};
 
 export const applySubmitIntendedHandler = (
   event: ApplySubmitIntended,

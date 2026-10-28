@@ -142,6 +142,8 @@ streams from the current tail (no backfill).
   current tail.
 - The browser's auto-reconnect sends `Last-Event-ID` automatically; no
   application code needed for the common case.
+- When the stream first opens, reconcile the current tenant's cached reads:
+  without a cursor, changes before that connection are outside the stream.
 - For IndexedDB-hydrated cold start (§9.7), the application explicitly
   passes `?since=<persistedWatermark>` on first connect.
 - Parse each `event` + `data` frame with `parseDomainEvent` — it validates
@@ -385,10 +387,18 @@ sequenceDiagram
 The `EventStreamProvider` exposes `status` to the AppShell. When
 `status === "closed"` for more than 30s, the shell renders a banner
 "Connection lost — events paused; data will refresh when reconnected."
-On reconnection, the provider triggers a one-shot
-`queryClient.invalidateQueries()` (full cache invalidation) to recover
-from any events lost during the gap. (`Last-Event-ID` covers the common
-case; the full invalidation is a backstop.)
+On first connection and each subsequent reconnection, the provider invalidates
+the current tenant's reads once to recover changes outside the stream's cursor.
+Active cached reads refetch; inactive reads are marked stale. An unfinished
+initial read is allowed to settle for any awaiting route loader, then invalidated
+independently so its older response cannot be the final cached result. Repeated
+open or heartbeat notifications do not repeat the reconciliation. Mutations
+and locally edited form state remain separate from these canonical reads. The
+locally patched apply-run timeline is a disabled presentation cache;
+the workflow-run detail refresh returns separate workflow and Apply histories.
+The timeline retains live entries and reconciles matching Apply entries by
+their run-scoped event IDs, without treating equal-length lists as equivalent.
+`Last-Event-ID` covers the common reconnect case; reconciliation is a backstop.
 
 ## 7.8 Tenant Scoping in Realtime
 

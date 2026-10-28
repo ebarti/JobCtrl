@@ -13,6 +13,7 @@ import { Button } from "../../../shared/ui/button.js";
 import { Field, FieldGroup, FieldLabel } from "../../../shared/ui/field.js";
 import { Input } from "../../../shared/ui/input.js";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "../../../shared/ui/select.js";
+import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import {
   useSaveResumeTemplateMutation,
   useSetDefaultResumeTemplateMutation,
@@ -104,81 +105,134 @@ const DENSITY_TOKENS: Record<
   },
 };
 
+interface TemplateDraft {
+  readonly template: ResumeTemplateSummary;
+  readonly displayName: string;
+  readonly theme: ResumeTemplateTheme;
+  readonly layout: ResumeTemplateLayout;
+  readonly dirty: boolean;
+}
+
+function templateDraft(template: ResumeTemplateSummary): TemplateDraft {
+  return {
+    template,
+    displayName: template.displayName,
+    theme: cloneTheme(template.activeVersion.theme),
+    layout: { ...template.activeVersion.layout },
+    dirty: false,
+  };
+}
+
+function draftKey(tenantId: string, templateId: string): string {
+  return JSON.stringify([tenantId, templateId]);
+}
+
 export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePanelProps): JSX.Element {
+  const tenantId = useTenantId();
   const templatesQuery = useResumeTemplatesQuery();
   const saveTemplate = useSaveResumeTemplateMutation();
   const setDefaultTemplate = useSetDefaultResumeTemplateMutation();
   const templates = templatesQuery.data?.templates ?? [];
   const fallbackTemplate = resolveEffectiveResumeTemplateSummary(templatesQuery.data);
-  const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null);
-  const activeTemplate = templates.find((template) => template.templateId === activeTemplateId) ?? fallbackTemplate;
-  const [displayName, setDisplayName] = useState("");
-  const [theme, setTheme] = useState<ResumeTemplateTheme | null>(null);
-  const [layout, setLayout] = useState<ResumeTemplateLayout>({});
+  const [selections, setSelections] = useState<Map<string, string>>(() => new Map());
+  const [drafts, setDrafts] = useState<Record<string, TemplateDraft>>({});
+  const [accepted, setAccepted] = useState<Record<string, ResumeTemplateSummary>>({});
+  const [savingTenants, setSavingTenants] = useState<Set<string>>(() => new Set());
+  const [saveErrors, setSaveErrors] = useState<Record<string, string | null>>({});
+  const [saveDefaultErrors, setSaveDefaultErrors] = useState<Record<string, string | null>>({});
+  const activeTemplateId = selections.get(tenantId) ?? null;
+  const selectTemplate = (id: string) => setSelections((previous) => new Map(previous).set(tenantId, id));
+  const selectedId = activeTemplateId ?? fallbackTemplate?.templateId ?? null;
+  const listed = templates.find((template) => template.templateId === selectedId);
+  const key = selectedId ? draftKey(tenantId, selectedId) : null;
+  const acknowledged = key ? accepted[key] : undefined;
+  const activeTemplate = acknowledged && (!listed || acknowledged.activeVersion.versionNumber >= listed.activeVersion.versionNumber)
+    ? acknowledged
+    : listed ?? (key ? drafts[key]?.template : undefined) ?? (!selectedId ? fallbackTemplate : null);
+  const draft = activeTemplate ? drafts[draftKey(tenantId, activeTemplate.templateId)] : undefined;
+  const displayName = draft?.displayName ?? "";
+  const theme = draft?.theme ?? null;
+  const layout = draft?.layout ?? {};
 
   useEffect(() => {
     if (!activeTemplateId && fallbackTemplate) {
-      setActiveTemplateId(fallbackTemplate.templateId);
+      setSelections((previous) => new Map(previous).set(tenantId, fallbackTemplate.templateId));
     }
-  }, [activeTemplateId, fallbackTemplate]);
+  }, [activeTemplateId, fallbackTemplate, tenantId]);
 
   useEffect(() => {
     if (!activeTemplate) return;
-    setDisplayName(activeTemplate.displayName);
-    setTheme(cloneTheme(activeTemplate.activeVersion.theme));
-    setLayout({ ...activeTemplate.activeVersion.layout });
-  }, [activeTemplate]);
+    setDrafts((previous) => {
+      const draftId = draftKey(tenantId, activeTemplate.templateId);
+      const current = previous[draftId];
+      if (current?.dirty) return previous;
+      if (current && current.template.activeVersion.versionId === activeTemplate.activeVersion.versionId
+        && current.template.displayName === activeTemplate.displayName) return previous;
+      return { ...previous, [draftId]: templateDraft(activeTemplate) };
+    });
+  }, [activeTemplate, tenantId]);
 
   const previewStyle = useMemo(
     () => (theme ? resumeTemplatePreviewStyle(theme) : undefined),
     [theme],
   );
-  const saveError = saveTemplate.error instanceof Error ? saveTemplate.error.message : null;
-  const defaultError = setDefaultTemplate.error instanceof Error ? setDefaultTemplate.error.message : null;
+  const saveError = saveErrors[tenantId] ?? null;
+  const defaultError = saveDefaultErrors[tenantId] ?? (setDefaultTemplate.error instanceof Error ? setDefaultTemplate.error.message : null);
   const selectedTemplateCanBeDefault = Boolean(activeTemplate);
   const selectedTemplateIsDefault =
     activeTemplate && templatesQuery.data?.defaultTemplate?.templateId === activeTemplate.templateId;
-  const isSaving = saveTemplate.isPending || setDefaultTemplate.isPending;
-  const templateSelectItems = templates.map((template) => ({ label: template.displayName, value: template.templateId }));
+  const isSaving = savingTenants.has(tenantId) || setDefaultTemplate.isPending;
+  const templateSelectItems = [
+    ...templates.map((template) => ({ label: template.displayName, value: template.templateId })),
+    ...(activeTemplate && !templates.some((template) => template.templateId === activeTemplate.templateId)
+      ? [{ label: activeTemplate.displayName, value: activeTemplate.templateId }]
+      : []),
+  ];
+
+  const editDraft = (change: (current: TemplateDraft) => TemplateDraft) => {
+    if (!activeTemplate) return;
+    setDrafts((previous) => {
+      const draftId = draftKey(tenantId, activeTemplate.templateId);
+      const current = previous[draftId];
+      if (!current) return previous;
+      return { ...previous, [draftId]: { ...change(current), dirty: true } };
+    });
+  };
 
   const updateTheme = <K extends keyof ResumeTemplateTheme>(key: K, value: ResumeTemplateTheme[K]) => {
-    setTheme((current) => (current ? { ...current, [key]: value } : current));
+    editDraft((current) => ({ ...current, theme: { ...current.theme, [key]: value } }));
   };
   const updateMargin = (key: keyof ResumeTemplateTheme["marginMm"], value: number) => {
-    setTheme((current) =>
-      current
-        ? {
-            ...current,
-            marginMm: {
-              ...current.marginMm,
-              [key]: value,
-            },
-          }
-        : current,
-    );
+    editDraft((current) => ({
+      ...current,
+      theme: { ...current.theme, marginMm: { ...current.theme.marginMm, [key]: value } },
+    }));
   };
   const saveCurrent = (makeDefault: boolean) => {
     if (!theme || !displayName.trim()) return;
     const editableTemplateId = activeTemplate?.builtIn ? undefined : activeTemplate?.templateId;
-    saveTemplate.mutate(
-      {
+    setSavingTenants((previous) => new Set(previous).add(tenantId));
+    setSaveErrors((previous) => ({ ...previous, [tenantId]: null }));
+    setSaveDefaultErrors((previous) => ({ ...previous, [tenantId]: null }));
+    void saveTemplate.mutateAsync({
+      body: {
         templateId: editableTemplateId,
         displayName: displayName.trim(),
         theme,
         layout,
       },
-      {
-        onSuccess: (response) => {
-          setActiveTemplateId(response.template.templateId);
-          if (makeDefault) {
-            setDefaultTemplate.mutate({
-              templateId: response.template.templateId,
-              versionId: response.template.activeVersion.versionId,
-            });
-          }
-        },
-      },
-    );
+      makeDefault,
+    }).then(({ saved, defaultError: error }) => {
+      const savedKey = draftKey(tenantId, saved.template.templateId);
+      setAccepted((previous) => ({ ...previous, [savedKey]: saved.template }));
+      setDrafts((previous) => ({ ...previous, [savedKey]: templateDraft(saved.template) }));
+      setSelections((previous) => new Map(previous).set(tenantId, saved.template.templateId));
+      if (error) setSaveDefaultErrors((previous) => ({ ...previous, [tenantId]: error.message }));
+    }).catch((error: unknown) => {
+      setSaveErrors((previous) => ({ ...previous, [tenantId]: error instanceof Error ? error.message : String(error) }));
+    }).finally(() => {
+      setSavingTenants((previous) => { const next = new Set(previous); next.delete(tenantId); return next; });
+    });
   };
 
   const workspaceControls = (
@@ -196,7 +250,7 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
             onClick={() => saveCurrent(false)}
           >
             <IconDeviceFloppy aria-hidden="true" data-icon="inline-start" />
-            {saveTemplate.isPending ? "saving" : "save version"}
+            {savingTenants.has(tenantId) ? "saving" : "save version"}
           </Button>
           <Button
             disabled={!theme || isSaving || !displayName.trim()}
@@ -236,10 +290,10 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
         <Field className="field">
           <FieldLabel htmlFor="resume-template-selection">Template</FieldLabel>
           <Select
-            disabled={!templates.length || isSaving}
+            disabled={!templateSelectItems.length || isSaving}
             items={templateSelectItems}
             value={activeTemplate?.templateId ?? null}
-            onValueChange={(nextValue) => { if (nextValue !== null) setActiveTemplateId(nextValue); }}
+            onValueChange={(nextValue) => { if (nextValue !== null) selectTemplate(nextValue); }}
           >
             <SelectTrigger id="resume-template-selection" aria-label="Template" className="w-full"><SelectValue placeholder="No templates available" /></SelectTrigger>
             <SelectContent><SelectGroup>{templateSelectItems.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
@@ -251,7 +305,10 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
             id="resume-template-name"
             disabled={!theme || isSaving}
             value={displayName}
-            onChange={(event) => setDisplayName(event.target.value)}
+            onChange={(event) => {
+              const value = event.target.value;
+              editDraft((current) => ({ ...current, displayName: value }));
+            }}
           />
         </Field>
         <Field className="field">

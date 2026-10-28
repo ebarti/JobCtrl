@@ -6,6 +6,8 @@ export interface ApplyRunEventEntry {
   readonly level: string;
   readonly message: string | null;
   readonly data: Record<string, unknown>;
+  readonly runEventId?: number;
+  readonly sourceEventId?: string;
 }
 
 export interface ApplyRunWithEvents {
@@ -33,7 +35,13 @@ export function normalizeApplyRunEventEntry(event: unknown): ApplyRunEventEntry 
   const type = text(source["type"] ?? source["event_type"] ?? source["eventType"]) || "event";
   const level = text(source["level"]) || "info";
   const message = nullableText(source["message"]);
-  return { at, type, level, message, data };
+  const runEventId = source["runEventId"] ?? source["event_id"] ?? source["eventId"];
+  const sourceEventId = source["sourceEventId"];
+  return {
+    at, type, level, message, data,
+    ...(typeof runEventId === "number" && Number.isSafeInteger(runEventId) && runEventId > 0 ? { runEventId } : {}),
+    ...(typeof sourceEventId === "string" && sourceEventId ? { sourceEventId } : {}),
+  };
 }
 
 // Used by the §7.4 / §7.5 invalidation router's setQueryData path. Phase 5
