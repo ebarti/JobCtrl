@@ -8,7 +8,7 @@ permissions:
   deployments: read
 
 jobs:
-  guard:
+  linux-guard:
     name: Deployment guards and baseline are safe
     if: ${{ vars.DEMO_DEPLOY_ENABLED == 'false' && vars.DOCS_DEPLOY_ENABLED == 'false' && vars.DEMO_PREVIEW_DEPLOY_ENABLED != 'true' }}
     runs-on: ubuntu-latest
@@ -25,3 +25,19 @@ jobs:
             "https://api.github.com/repos/ebarti/JobCtrl/deployments?per_page=1" \
             | jq -e '.[0].id == 7367367170 and .[0].environment == "demo-production"' > /dev/null
           echo "Deployment guards and baseline are safe."
+
+  windows-guard:
+    name: Deployment guards and baseline are safe (Windows)
+    if: ${{ vars.DEMO_DEPLOY_ENABLED == 'false' && vars.DOCS_DEPLOY_ENABLED == 'false' && vars.DEMO_PREVIEW_DEPLOY_ENABLED != 'true' }}
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify unchanged deployment baseline
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/vnd.github+json" }
+          $latest = @(Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/ebarti/JobCtrl/deployments?per_page=1")[0]
+          if (-not $latest -or $latest.id -ne 7367367170 -or $latest.environment -ne "demo-production") { throw "Deployment baseline changed or is unavailable." }
+          Write-Output "Deployment guards and baseline are safe."
