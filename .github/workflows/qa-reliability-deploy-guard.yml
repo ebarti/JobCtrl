@@ -1,0 +1,17 @@
+name: Reliability deployment guard
+
+on:
+  push:
+    branches: ["qa/reliability-deploy-guard-20261028"]
+
+permissions: {}
+
+jobs:
+  guard:
+    name: Deployment guards are disabled
+    if: ${{ vars.DEMO_DEPLOY_ENABLED == 'false' && vars.DOCS_DEPLOY_ENABLED == 'false' && vars.DEMO_PREVIEW_DEPLOY_ENABLED != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Confirm safe deployment guards
+        run: echo "Deployment guards are disabled."
