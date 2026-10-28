@@ -53,6 +53,16 @@ class _InMemoryApplyRunRepository:
     def __init__(self) -> None:
         self._store: dict[tuple[str, str], ApplyRun] = {}
 
+    def admit_email_intent(self, run: ApplyRun) -> None:
+        self.save(run)
+
+    def email_intent_matches(self, run: ApplyRun) -> bool:
+        stored = self.load(run.tenant_id, run.run_id)
+        return bool(stored and any(event.event_type == "ApplySubmitIntended" for event in stored.events))
+
+    def email_intent_durable(self, run: ApplyRun) -> bool:
+        return self.email_intent_matches(run)
+
     def save(self, run: ApplyRun) -> None:
         self._store[(str(run.tenant_id), str(run.run_id))] = run
 
@@ -111,11 +121,12 @@ class _FakeEmailSender:
     def __init__(self):
         self.sent = []
 
-    def send_email_application(self, candidate):
+    def send_email_application(self, candidate, *, operation):
         self.sent.append(candidate)
         return EmailApplicationSendResult(
             provider="gmail",
             message_id="message-1",
+            operation=operation,
             thread_id="thread-1",
         )
 

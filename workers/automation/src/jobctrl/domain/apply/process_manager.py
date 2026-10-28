@@ -43,7 +43,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from contextlib import nullcontext
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
@@ -62,10 +62,13 @@ from jobctrl.domain.apply.value_objects import (
 from jobctrl.domain.ports.apply import (
     AgentResult,
     ApplyRunRepository,
+    ApplyRunWriteConflict,
     AutonomousAgentPort,
     BrowserPort,
     BrowserSession,
     EmailApplicationCandidate,
+    EmailApplicationOperation,
+    EmailApplicationSendResult,
     EmailApplicationSenderPort,
 )
 
@@ -562,6 +565,12 @@ class ApplySaga:
                 retryable=True,
             )
 
+        operation = EmailApplicationOperation(
+            tenant_id=str(run.tenant_id), job_id=str(run.job_id), run_id=str(run.run_id),
+            intent_id=f"email:{run.run_id}", material_version=str(material_version or ""),
+            candidate_fingerprint=candidate.fingerprint(),
+        )
+        intent_admission_started = False
         try:
             with self._availability_authorizer(str(run.tenant_id), str(run.job_id), posting_url, str(run.run_id)):
                 intended_at = _utc_now()
@@ -577,19 +586,47 @@ class ApplySaga:
                         "material_version": str(material_version or ""),
                         "submission_channel": "email",
                         "intended_at": intended_at,
+                        "operation": asdict(operation),
                     },
                 )
-                self._repository.save(intended_run)
+                intent_admission_started = True
+                self._repository.admit_email_intent(intended_run)
+            if not self._repository.email_intent_durable(intended_run):
+                # An authorizer may leave the intent in a caller-owned
+                # transaction. Never commit it or send against that uncertainty.
+                raise ApplyRunWriteConflict("Email intent is not durably committed")
             run = intended_run
+        except ApplyRunWriteConflict:
+            # Another invocation already owns the intent. Do not fabricate a
+            # failed aggregate whose sequence could consume the owner's receipt.
+            raise
         except Exception:  # noqa: BLE001 - freshness/intent ownership port
+            if intent_admission_started:
+                try:
+                    if self._repository.email_intent_matches(intended_run):
+                        # The intent may have committed before its acknowledgement
+                        # was lost. Keep that immutable child in the failed checkpoint.
+                        run = intended_run
+                except Exception:
+                    # Without a trustworthy read, only recovery may settle/park
+                    # the original operation; do not invent a competing history.
+                    raise ApplyRunWriteConflict("Email intent requires recovery") from None
+                run = run.record_event(
+                    event_type="ApplySubmissionBlocked", occurred_at=_utc_now(), level="warn",
+                    message="owned email intent persistence could not be verified",
+                    payload={"reason": "email_intent_unverified", "submission_channel": "email"},
+                )
+                return run, Failed(error="email_send_outcome_ambiguous", retryable=False)
             run = run.record_event(event_type="ApplySubmissionBlocked", occurred_at=_utc_now(), level="warn",
                                    message="Check availability or inspect the employer posting before retrying.",
                                    payload={"reason": "posting_availability_unverified", "submission_channel": "email"})
             return run, Failed(error="POSTING_AVAILABILITY_UNVERIFIED: check availability or inspect the employer posting", retryable=True)
 
         try:
-            send_result = self._email_sender.send_email_application(candidate)
-        except Exception as exc:  # noqa: BLE001 - translate provider failures into terminal apply state
+            send_result = self._email_sender.send_email_application(candidate, operation=operation)
+            if type(send_result) is not EmailApplicationSendResult or not send_result.confirms(operation):
+                raise ValueError("email_send_invalid_confirmation")
+        except Exception:  # noqa: BLE001 - all post-intent failures are ambiguous
             run = run.record_event(
                 event_type="EmailApplicationSendFailed",
                 occurred_at=_utc_now(),
@@ -597,11 +634,10 @@ class ApplySaga:
                 message="email application outcome is ambiguous after sender error",
                 payload={
                     "reason": "email_send_outcome_ambiguous",
-                    "provider_error": str(exc)[:500],
                 },
             )
             return run, Failed(
-                error=f"email_send_outcome_ambiguous:{str(exc)[:120]}",
+                error="email_send_outcome_ambiguous",
                 retryable=False,
             )
 
@@ -611,8 +647,7 @@ class ApplySaga:
             level="info",
             message="email application sent by owned adapter",
             payload={
-                "recipient": candidate.recipient_email,
-                "attachment_artifact_id": candidate.attachment_artifact_id,
+                "operation": asdict(operation),
                 "provider": send_result.provider,
                 "message_id": send_result.message_id,
                 "thread_id": send_result.thread_id,

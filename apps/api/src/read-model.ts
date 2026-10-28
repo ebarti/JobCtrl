@@ -1,3 +1,4 @@
+import { isPrivateApplyEvent } from "@jobctrl/domain-types";
 import { companyBriefingSummaries } from "./company-briefings.js";
 import { resolveJobLocator } from "./job-locators.js";
 import { EMPLOYER_ANALYSIS_PROMPT_VERSION } from "./contracts.js";
@@ -5159,12 +5160,17 @@ function listActivityFromEvents(
   }
   const normalizedQuery = query.q.trim();
   if (normalizedQuery) {
+    // Search the same public message presented by activity, never raw
+    // historical Apply messages or payloads that the response redacts.
+    db.function("jobctrl_public_activity_message", { deterministic: true },
+      (eventType: string | null, payload: string | null, message: string | null) =>
+        publicActivityMessage(eventType, payload, message));
     const search = `%${normalizedQuery.toLowerCase()}%`;
     activityClauses.push(`(
       LOWER(COALESCE(e.level, '')) LIKE ?
       OR LOWER(COALESCE(e.stage, '')) LIKE ?
       OR LOWER(${eventTypePredicate}) LIKE ?
-      OR LOWER(COALESCE(e.message, '')) LIKE ?
+      OR LOWER(jobctrl_public_activity_message(e.event_type, e.payload_json, e.message)) LIKE ?
       OR LOWER(COALESCE(jp.title, '')) LIKE ?
       OR LOWER(COALESCE(jp.employer, '')) LIKE ?
       OR LOWER(COALESCE(e.job_id, '')) LIKE ?
@@ -5214,6 +5220,7 @@ function listActivityFromEvents(
       e.stage,
       e.level,
       e.message,
+      e.payload_json,
       e.occurred_at,
       jp.title    AS title,
       jp.employer AS employer
@@ -5255,6 +5262,7 @@ function getActivityEventFromEvents(db: SqliteDatabase, eventId: string): Activi
        e.stage,
        e.level,
        e.message,
+      e.payload_json,
        e.occurred_at,
        jp.title    AS title,
        jp.employer AS employer
@@ -5295,9 +5303,15 @@ function activityRowToSummary(row: Record<string, unknown>): ActivityEventSummar
     company: nullableString(row.employer),
     stage: stringField(row.stage) || "system",
     level: stringField(row.level) || "info",
-    message: stringField(row.message) || "event",
+    message: publicActivityMessage(row.event_type, row.payload_json, row.message),
     at: nullableString(row.occurred_at),
   };
+}
+
+function publicActivityMessage(eventType: unknown, payload: unknown, message: unknown): string {
+  return isPrivateApplyEvent(eventType, parseJsonRecord(nullableString(payload)) ?? {}) || eventType === "ApplyRunEventRecorded"
+    ? "Apply status changed"
+    : stringField(message) || "event";
 }
 
 /**
@@ -6043,7 +6057,7 @@ function parseWorkflowRunTimeline(value: unknown): WorkflowRunTimelineEvent[] {
     eventType: stringField(event.eventType ?? event.event_type) || "event",
     occurredAt: nullableString(event.occurredAt ?? event.occurred_at),
     status: nullableString(event.status),
-    message: nullableString(event.message),
+    message: (isPrivateApplyEvent(event.eventType ?? event.event_type, isRecord(event.payload) ? event.payload : event) || (event.eventType ?? event.event_type) === "ApplyRunEventRecorded") ? null : nullableString(event.message),
   }));
 }
 
@@ -6178,7 +6192,7 @@ function parseApplyRunTimelineEvents(value: string | null): DashboardSummary["ap
     const type = stringField(event.event_type ?? event.eventType ?? event.type) || "event";
     const at = nullableString(event.occurred_at ?? event.occurredAt ?? event.at);
     const level = stringField(event.level) || "info";
-    const message = nullableString(event.message);
+    const message = (isPrivateApplyEvent(type, isRecord(event.payload) ? event.payload : event) || type === "ApplyRunEventRecorded") ? null : nullableString(event.message);
     return { at, type, level, message };
   });
 }
@@ -6237,6 +6251,9 @@ function publicStagePresentation(
   nextAction: string | null;
   retryable: boolean;
 } {
+  if (errorCode === "APPLY_NEEDS_VERIFICATION") {
+    errorMessage = "Apply reached submit intent; verify the employer site or confirmation email before retrying.";
+  }
   if (rawState === "exhausted") {
     return {
       state: "failed",

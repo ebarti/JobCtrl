@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+import { AUTOMATION_PROJECT_DIR } from "../src/python-runtime.js";
 import { recordArtifactAuthority, recordCompensationAuthority, recordRoleFeedback } from "./semantic-fixtures.js";
 import { recordOutcomeDecision, recordRepeatDecision } from "./semantic-fixtures.js";
 import { seedApplicationUrl } from "./seed-enrichment.js";
@@ -1550,6 +1552,73 @@ describe("application feedback API", () => {
     await app.close();
   });
 
+  it("reads actual worker-written private stream events through API summaries and canonical review", async () => {
+    const fixtureRoot = path.join(tempDir, "owned-worker");
+    const fixture = spawnSync(path.join(AUTOMATION_PROJECT_DIR, ".venv", "bin", "python"),
+      [path.join(AUTOMATION_PROJECT_DIR, "tests", "apply_receipt_privacy_fixture.py"), fixtureRoot],
+      { encoding: "utf8", timeout: 20_000, env: { ...process.env, JOBCTRL_DIR: path.join(fixtureRoot, "sandbox") } });
+    expect(fixture.status, `${fixture.stdout}\n${fixture.stderr}`).toBe(0);
+    const observed = JSON.parse(fixture.stdout.trim()) as { dbPath: string; jobId: string; runId: string;
+      canary: string; httpCalls: number; intent: number; confirmation: number; submitted: number };
+    expect(observed).toMatchObject({ httpCalls: 1, intent: 1, confirmation: 0, submitted: 0 });
+    const db = new Database(observed.dbPath);
+    const stored = db.prepare("SELECT event_type,message,payload_json FROM job_events WHERE job_id=?").all(observed.jobId);
+    expect(JSON.stringify(stored)).toContain(observed.canary);
+    const lastId = (db.prepare("SELECT MAX(event_id) AS id FROM job_events").get() as { id: number }).id;
+    db.close();
+    const app = buildApp({ ...options, dbPath: observed.dbPath });
+    try {
+      for (const url of ["/v1/dashboard/summary", "/v1/debug/activity?pageSize=100", "/v1/jobs"]) {
+        const response = await app.inject({ method: "GET", url });
+        expect(response.statusCode, response.body).toBe(200);
+        expect(response.body, url).not.toContain(observed.canary);
+        expect(response.body, url).not.toContain("private-candidate-canary");
+        expect(response.body, url).not.toContain("apply@example.com");
+      }
+      await app.listen({ host: "127.0.0.1", port: 0 });
+      const address = app.server.address();
+      if (!address || typeof address === "string") throw new Error("Expected owned API address");
+      const abort = new AbortController();
+      const stream = await fetch(`http://127.0.0.1:${address.port}/v1/events/stream?tenantId=local&since=0`, { signal: abort.signal });
+      const reader = stream.body?.getReader();
+      if (!reader) throw new Error("Expected owned event stream");
+      let replay = "";
+      const decoder = new TextDecoder();
+      try {
+        while (!replay.includes(`id: ${lastId}\n`)) {
+          let timeout: ReturnType<typeof setTimeout> | undefined;
+          const next = await Promise.race([reader.read(), new Promise<never>((_, reject) => {
+            timeout = setTimeout(() => reject(new Error("Owned Apply replay timed out")), 5_000);
+          })]).finally(() => clearTimeout(timeout));
+          if (next.done) break;
+          replay += decoder.decode(next.value, { stream: true });
+        }
+        expect(replay).toContain(`id: ${lastId}\n`);
+        expect(replay).toContain("event: AssistantText");
+        expect(replay).toContain("event: ToolUse");
+        expect(replay).not.toContain(observed.canary);
+        expect(replay).not.toContain("private-candidate-canary");
+        expect(replay).not.toContain("apply@example.com");
+      } finally {
+        await reader.cancel();
+        abort.abort();
+      }
+      const review = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+      expect(review.statusCode, review.body).toBe(200);
+      expect(queueItem(review.json(), observed.jobId)?.emailApplication).toMatchObject({
+        body: expect.stringContaining("private-candidate-canary"), candidateRunId: observed.runId,
+      });
+      expect(queueItem(review.json(), observed.jobId)?.latestApplyRun?.result).not.toBe("applied");
+      const detail = await app.inject({ method: "GET", url: `/v1/jobs/${observed.jobId}` });
+      expect(detail.statusCode, detail.body).toBe(200);
+      expect((detail.json().stages as Array<{ stage: string; state: string }>).find((stage) => stage.stage === "apply"))
+        .toMatchObject({ state: "needs_verification" });
+      expect(detail.body).not.toContain(observed.canary);
+    } finally {
+      await app.close();
+    }
+  }, 30_000);
+
   it("requires submit approval to bind the email application candidate", async () => {
     const db = new Database(options.dbPath);
     db.prepare(
@@ -1573,11 +1642,16 @@ describe("application feedback API", () => {
         run_id: "dry-run-email-candidate",
         recipient: "apply@example.com",
         subject: "Application for Staff Engineer",
-        body: "Hello",
+        body: "private-apply-review-canary",
         attachment_artifact_id: "resume-pdf-1",
         attachment_name: "Resume.pdf",
       }),
     );
+    db.prepare(`INSERT INTO job_events (
+      tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+    ) VALUES ('local', ?, 1, 'apply', 'AgentResult', 'info', ?, ?, ?)`)
+      .run(READY_JOB_ID, "private-agent-review-canary", NOW,
+        JSON.stringify({ run_id: "dry-run-email-candidate", raw_output: "private-agent-review-canary" }));
     db.close();
     const app = buildApp(options);
     const readyKey = encodeURIComponent(READY_JOB);
@@ -1588,8 +1662,13 @@ describe("application feedback API", () => {
       attachmentArtifactId: "resume-pdf-1",
       attachmentName: "Resume.pdf",
       candidateRunId: "dry-run-email-candidate",
+      body: "private-apply-review-canary",
     });
 
+    const dashboard = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+    expect(dashboard.statusCode, dashboard.body).toBe(200);
+    expect(dashboard.body).not.toContain("private-agent-review-canary");
+    expect(dashboard.body).not.toContain("private-apply-review-canary");
     const missingBinding = await app.inject({
       method: "POST",
       url: `/v1/jobs/${readyKey}/apply-review/decision`,

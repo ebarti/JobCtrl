@@ -781,6 +781,55 @@ newer owner, including unchanged cache attempt counts and valid explicit
 rescores. A nullable/unknown SDK status must preserve ownership; same-owner rows
 outside a single-job preparation's canonical job must remain unchanged.
 
+For owned email confirmation, run locked pytest on `tests/test_gmail_connector.py`,
+`tests/test_apply_saga.py`, `tests/test_apply_use_cases.py`,
+`tests/test_apply_regressions.py`, `tests/test_apply_runs_projection_from_events.py`,
+`tests/test_repeat_application_prevention.py`, `tests/test_workflow_apply.py`,
+`tests/test_activity_apply.py` and `tests/test_rpc_handlers_apply_workflow.py`.
+The receipt cases in `test_apply_regressions.py` traverse production acquisition,
+use case, saga, Gmail client/sender, SQLite persistence, settlement and recovery
+with synthetic storage and fake external transports. Exercise empty/204,
+malformed/nonobject JSON, strict required/optional IDs, provider/transport
+failures, forged operation bindings, independent concurrent settlement writers,
+late receipts and interruption before/after confirmation persistence. Cover
+nonstandard JSON constants inside ignored response fields, missing/foreign
+settlement identities and ownership resolution under the writer lock, including
+caller-owned commit/rollback and repeated settlement after a valid receipt.
+Exercise a caller-owned transaction with both the no-op availability seam and
+the production publisher: no send or caller commit may occur before a durable
+intent. An independent connection must see the committed intent at transport
+admission. After valid settlement, verify every owned event wrapper is published
+and reject forged, foreign or successor-owned wrappers.
+Inspect exact transport/intent/confirmation/submitted-fact counts and unchanged
+accepted bytes. The bounded Temporal activity cases use the production use case and
+writer behind a launcher-main seam, avoiding browser/process lifecycle effects.
+They do not qualify a real browser or remote Gmail delivery.
+Use the production in-process bus and projection subscriber to count success
+notifications alongside durable rows. Inject terminal-artifact and submitted-fact
+write failures; rollback must publish neither success event and a permitted
+settlement retry must publish each once. Exercise inherited commit, rollback,
+savepoint rollback and close, with an independent connection observing durable
+facts at notification time. Race recovery against confirmation in both writer
+orders. Pause the original sender after transport success, run a duplicate on an
+independent connection and release the original receipt: one intent, confirmation
+and submitted fact must survive, with no competing failure or second send. Also
+cover malformed/lost-ack originals, exact replay, changed child identities and
+legacy rows without a fingerprint.
+Replay direct and wrapped `AgentResult`, `AssistantText`, `ToolUse` and
+`ApplyTerminalDetermination` private-content canaries as well as email events.
+Exercise historical `ApplicationFailed` ambiguity reasons/results with raw
+exception suffixes. The production CLI-adapter regression uses synthetic stream
+messages and fake subprocess/Gmail transports. The worker-to-API fixture
+`tests/apply_receipt_privacy_fixture.py` feeds actual canonical writes into API
+summary/activity/detail, SSE replay and Apply Review reads; broad delivery must
+be safe while canonical review and determination provenance retain their source.
+
+Run `corepack pnpm --filter @jobctrl/api exec vitest run test/server.test.ts test/application-feedback.test.ts`
+for SSE replay filtering and canonical preview retention. Keep direct and wrapped
+publisher canaries, worker-built Apply projections, legacy replay and canonical
+Apply Review distinct. Reopening an ambiguous attempt must make no new transport
+call; a persisted valid confirmation may settle only its own current operation.
+
 For interpretation metadata citation sources, run locked
 `pytest tests/test_interpretation_citable_fields.py tests/test_remaining_determinations.py tests/test_binding_repair_feedback.py tests/test_analysis_retry_boundaries.py`.
 Use owned exact-schema storage and explicit synthetic model decisions. Omit

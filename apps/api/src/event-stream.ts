@@ -4,7 +4,7 @@ import { screeningEventReferences } from "./screening-answers.js";
 import { applyTimelineEnvelope } from "./apply-event-stream.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
-import { LOCAL_TENANT } from "@jobctrl/domain-types";
+import { LOCAL_TENANT, applyEventReferences } from "@jobctrl/domain-types";
 
 import { createRetainedDatabase, databaseExists, SUPPORTED_SCHEMA_VERSION, type SqliteDatabase } from "./db.js";
 import { resolveLoopbackCorsOrigin } from "./local-origin.js";
@@ -395,6 +395,10 @@ function canonicalSseEnvelope(row: EventRow): Record<string, unknown> | null {
   if (!isRecord(payload)) {
     return null;
   }
+  // Historical rows retain private previews for canonical Apply Review.
+  // Replay emits references only, including legacy wrapped publisher events.
+  payload = applyEventReferences(row.event_type, payload);
+  if (!isRecord(payload)) return null;
   if (row.event_type === "OfferRecordChanged") {
     payload = offerEventReferences(payload);
     if (!isRecord(payload)) return null;

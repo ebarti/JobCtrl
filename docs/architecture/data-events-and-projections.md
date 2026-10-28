@@ -147,6 +147,43 @@ all historical event families: pipeline failures can persist an exception
 message. Treat exception text as potentially durable and sanitize it at the
 producer rather than placing sensitive values in exceptions.
 
+Owned email Apply keeps the full `EmailApplicationCandidateRecorded` preview
+in the canonical event ledger for Apply Review. Its direct publisher event,
+wrapped `ApplyRunEventRecorded`, derived Apply timeline and SSE replay expose
+only references/status. This filtering also applies when historical private
+rows are replayed. The same filtering covers `AgentResult`, `AssistantText`,
+`ToolUse` and `ApplyTerminalDetermination`: raw model output, tool-input previews,
+recipient data and citation excerpts can repeat private application content.
+Canonical events and determination provenance retain those sources; their direct
+and wrapped notifications carry references. Historical `ApplicationFailed`
+payloads with the exact `email_send_outcome_ambiguous` code, including its former
+colon-delimited exception suffix, expose only a bounded reason/result. Broad
+stage messages for `APPLY_NEEDS_VERIFICATION` use a bounded verification message.
+`EmailApplicationSent` retains validated provider identifiers
+and the operation binding in canonical storage; broad delivery omits those
+provider identifiers. Send failures use a bounded ambiguity reason, without raw
+exceptions or provider bodies. Apply Review reads the canonical preview rather
+than reconstructing it from broad events.
+The launcher owns the email `ApplicationSubmitted` publication when it settles
+the durable receipt; the use case does not emit an earlier duplicate terminal
+notification. Owned Apply aggregate notifications wait until the SQLite owner
+commits, including when settlement inherits a caller transaction. Rollback,
+rollback to a caller savepoint and connection close discard uncommitted
+notifications. Each callback checks its exact committed event row before fan-out;
+receipt and submitted-fact subscribers observe the complete settlement together.
+A process stop after commit can lose an in-memory notification; durable event
+replay remains authoritative.
+
+Apply child-event replay compares immutable type, timestamp, level, message and
+source payload, with a stored fingerprint for newly written events. A sequence
+number alone cannot authorize replay. Older events are compared against their
+canonical envelope without rewriting accepted history. A duplicate execution
+or intent admission raises a write conflict and produces no competing terminal
+aggregate or lock-release event. If intent admission loses acknowledgement, the
+saga reads back the exact owned operation before retaining that intent in its
+nonretryable failure checkpoint; an unavailable read leaves resolution to
+recovery and never authorizes another transport call.
+
 Interview preparation has three separate authorities: the installed immutable
 public catalog, generation-versioned job prep with retained source context,
 and independently revisioned tenant/job/question notes. The catalog list/detail
@@ -170,7 +207,8 @@ still begins at the owning domain/application boundary.
 2. `record_job_event` inserts the `job_events` row that becomes durable when
    the caller commits, then publishes an in-memory `DomainEvent` through the
    process-wide `InProcessEventBus`.
-3. That notification currently occurs before the caller commits. The wildcard
+3. Outside the commit-bound owned Apply aggregate path described above, that
+   notification occurs before the caller commits. The wildcard
    `ProjectionBuilder` subscriber refreshes through the publishing thread's
    thread-local SQLite connection inside a savepoint when a transaction is
    already open. The publisher retains commit and rollback ownership.

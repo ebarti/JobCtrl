@@ -1,3 +1,5 @@
+import { isPrivateApplyEvent } from "@jobctrl/domain-types";
+
 /** Project a durable Apply saga row to the browser's existing live-event contract. */
 export function applyTimelineEnvelope(
   row: {
@@ -32,7 +34,8 @@ export function applyTimelineEnvelope(
       tenantId: row.tenant_id,
       jobId: row.job_id,
       runId,
-      event: { event_id: eventId, event_type: row.event_type, occurred_at: row.occurred_at, level: row.level ?? "info", message: row.message },
+      event: { event_id: eventId, event_type: row.event_type, occurred_at: row.occurred_at, level: row.level ?? "info",
+        message: isPrivateApplyEvent(row.event_type, data) ? null : row.message },
     },
   };
 }

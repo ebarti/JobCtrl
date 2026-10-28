@@ -47,9 +47,11 @@ import {
   createApplicationEmailFeedbackIngested,
   createApplicationOutcomeRecorded,
   createApplicationSubmitted,
+  createApplicationFailed,
   createDryRunCompleted,
   createApplyReviewDecisionRecorded,
   createApplyRunStarted,
+  createApplyRunEventRecorded,
   createOutcomeSuggestionDecided,
 } from "../src/events/apply.js";
 import { createStageStarted, createStageCompleted } from "../src/events/orchestration.js";
@@ -1268,4 +1270,38 @@ describe("DOMAIN_EVENT_TYPES enumeration", () => {
       expect(DOMAIN_EVENT_TYPES).toContain(eventType);
     }
   });
+});
+
+
+describe("Apply event privacy", () => {
+  it.each(["event_type", "eventType"])("omits private AgentResult content carried by %s", (eventKey) => {
+    const event = createApplyRunEventRecorded(LOCAL_TENANT, {
+      runId: "owned-email-run",
+      event: { [eventKey]: "AgentResult", event_id: 7, level: "info",
+        message: "private-agent-canary", payload: { raw_output: "private-agent-canary" } },
+    });
+    expect(event.payload.runId).toBe("owned-email-run");
+    expect(event.payload.event).toMatchObject({ event_id: 7, level: "info" });
+    expect(JSON.stringify(event)).not.toContain("private-agent-canary");
+  });
+});
+
+
+it.each(["AssistantText", "ToolUse", "ApplyTerminalDetermination"])("redacts private %s content in wrapped notifications", (eventType) => {
+  for (const key of ["event_type", "eventType"]) {
+    const event = createApplyRunEventRecorded(LOCAL_TENANT, { runId: "run-owned",
+      event: { [key]: eventType, message: "private-stream-canary", payload: { input_preview: "private-stream-canary" } } });
+    expect(event.payload.runId).toBe("run-owned");
+    expect(JSON.stringify(event)).not.toContain("private-stream-canary");
+  }
+});
+
+it("bounds historical provider exceptions in direct and wrapped failure factories", () => {
+  const result = { kind: "failed", error: "email_send_outcome_ambiguous:private-provider-canary", retryable: false };
+  const event = createApplicationFailed(LOCAL_TENANT, { jobId: "job-owned", runId: "run-owned", result, attemptNumber: 1 });
+  expect(event.payload.result).toEqual({ ...result, error: "email_send_outcome_ambiguous" });
+  expect(event.payload.jobId).toBe("job-owned");
+  const wrapped = createApplyRunEventRecorded(LOCAL_TENANT, { runId: "run-owned",
+    event: { event_type: "ApplicationFailed", payload: { result } } });
+  expect(JSON.stringify(wrapped)).not.toContain("private-provider-canary");
 });

@@ -742,3 +742,5 @@ type AssertEnumExhaustive = [DomainEventType] extends [EnumeratedDomainEventType
 
 const _assertExhaustive: AssertEnumExhaustive = true;
 void _assertExhaustive;
+
+export { applyEventReferences, isPrivateApplyEvent } from "./apply-privacy.js";

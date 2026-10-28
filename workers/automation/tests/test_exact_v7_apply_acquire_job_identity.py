@@ -495,7 +495,7 @@ def test_targeted_apply_lifecycle_preserves_other_tenant_job_id(
     class _UseCase:
         def execute(self, **kwargs):
             captured.update(kwargs)
-            return SimpleNamespace(skipped=True)
+            return SimpleNamespace(skipped=True, skip_reason="")
 
     monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: conn)
     monkeypatch.setattr("jobctrl.apply.launcher._build_use_case", _UseCase)

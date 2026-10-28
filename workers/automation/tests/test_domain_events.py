@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.domain.events.base import create_domain_event
 from jobctrl.domain.events.discovery import (
@@ -563,3 +565,22 @@ class TestAllEventsCarryTenantId:
         ]
         for event in events:
             assert event.tenant_id == "local", f"{event.event_type} missing tenant_id"
+
+
+@pytest.mark.parametrize("location", ["reason", "error", "result"])
+def test_historical_email_ambiguity_is_bounded_in_direct_and_wrapped_events(location):
+    from jobctrl.domain.apply.event_privacy import email_event_references
+    reason = "email_send_outcome_ambiguous: private-provider-exception-canary"
+    payload = {"run_id": "run-email", "message": "private-provider-exception-canary"}
+    payload[location] = {"kind": "failed", "error": reason, "retryable": False} if location == "result" else reason
+    direct = email_event_references("ApplicationFailed", payload)
+    assert direct["reason"] == "email_send_outcome_ambiguous"
+    assert "private-provider-exception-canary" not in str(direct)
+    for key in ("event_type", "eventType"):
+        wrapped = create_apply_run_event_recorded(LOCAL_TENANT, ApplyRunEventRecordedPayload(
+            run_id="run-email", event={key: "ApplicationFailed", "message": "private-provider-exception-canary", "payload": payload}))
+        assert "private-provider-exception-canary" not in str(wrapped)
+    event = create_application_failed(LOCAL_TENANT, ApplicationFailedPayload(
+        job_id="j1", run_id="run-email", result={"kind": "failed", "error": reason}, attempt_number=1))
+    assert event.payload["result"]["error"] == "email_send_outcome_ambiguous"
+    assert event.payload["job_id"] == "j1"

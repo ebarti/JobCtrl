@@ -116,12 +116,16 @@ def get_connection(
         except sqlite3.ProgrammingError:
             pass
 
+    from jobctrl.infrastructure.commit_notifications import NotificationConnection
+
     # SQLite's default mode silently creates a missing file.  Admission of an
     # already published database must not recreate it after a concurrent move.
     if require_existing:
-        conn = sqlite3.connect(f"{Path(path).absolute().as_uri()}?mode=rw", timeout=30, uri=True)
+        conn = sqlite3.connect(
+            f"{Path(path).absolute().as_uri()}?mode=rw", timeout=30, uri=True, factory=NotificationConnection,
+        )
     else:
-        conn = sqlite3.connect(path, timeout=30)
+        conn = sqlite3.connect(path, timeout=30, factory=NotificationConnection)
     try:
         if enable_wal:
             conn.execute("PRAGMA journal_mode=WAL")
