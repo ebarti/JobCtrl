@@ -24,6 +24,7 @@ on:
       - "workers/automation/tests/fixtures/shipped_v6_schema.sql"
       - "workers/automation/tests/v6_migration_fixture.py"
       - "workers/automation/tests/helpers/apply_*.py"
+      - "workers/automation/tests/test_native_apply_readiness.py"
       - "workers/automation/tests/test_apply_regressions.py"
       - "workers/automation/tests/test_apply_use_cases.py"
       - "workers/automation/tests/temporal_env.py"
@@ -59,6 +60,7 @@ on:
       - "workers/automation/tests/fixtures/shipped_v6_schema.sql"
       - "workers/automation/tests/v6_migration_fixture.py"
       - "workers/automation/tests/helpers/apply_*.py"
+      - "workers/automation/tests/test_native_apply_readiness.py"
       - "workers/automation/tests/test_apply_regressions.py"
       - "workers/automation/tests/test_apply_use_cases.py"
       - "workers/automation/tests/temporal_env.py"
@@ -152,9 +154,15 @@ jobs:
         run: |
           set -euo pipefail
           echo "JOBCTRL_MIGRATION_TEST_NODE=$(command -v node)" >> "$GITHUB_ENV"
+      - name: Test native fixture publication
+        working-directory: workers/automation
+        run: |
+          "$JOBCTRL_MIGRATION_TEST_PYTHON" -m unittest tests.test_native_apply_readiness
       - name: Vet native launcher
         working-directory: launcher
         run: go vet ./...
       - name: Test native launcher
         working-directory: launcher
-        run: go test -race ./...
+        # The package takes over nine minutes on hosted runners; keep a bounded
+        # package deadline with room for ordinary runner variation.
+        run: go test -race -timeout 15m ./...

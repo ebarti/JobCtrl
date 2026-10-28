@@ -10,8 +10,24 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import time
 from types import SimpleNamespace
+
+
+def _publish_ready(path: Path, evidence: dict) -> None:
+    # Existence is the reader's readiness signal, so publish only complete JSON.
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False
+        ) as stream:
+            temporary = Path(stream.name)
+            json.dump(evidence, stream)
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def install() -> None:
@@ -61,7 +77,7 @@ def install() -> None:
             evidence = {"job_id": job, "run_id": run_id, "worker_id": browser.worker_id,
                         "port": browser.cdp_port, "pid": browser.pid, "work_dir": browser.worker_dir,
                         "scope_id": os.environ["JOBCTRL_APPLY_EXECUTION_SCOPE"]}
-            (controls / f"ready-{job}.json").write_text(json.dumps(evidence))
+            _publish_ready(controls / f"ready-{job}.json", evidence)
             release = controls / f"release-{job}"
             deadline = time.monotonic() + 120
             while not release.exists():
