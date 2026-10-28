@@ -4,14 +4,24 @@ on:
   push:
     branches: ["qa/reliability-deploy-guard-20261028"]
 
-permissions: {}
+permissions:
+  deployments: read
 
 jobs:
   guard:
-    name: Deployment guards are disabled
+    name: Deployment guards and baseline are safe
     if: ${{ vars.DEMO_DEPLOY_ENABLED == 'false' && vars.DOCS_DEPLOY_ENABLED == 'false' && vars.DEMO_PREVIEW_DEPLOY_ENABLED != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Confirm safe deployment guards
-        run: echo "Deployment guards are disabled."
+      - name: Verify unchanged deployment baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/ebarti/JobCtrl/deployments?per_page=1" \
+            | jq -e '.[0].id == 7367367170 and .[0].environment == "demo-production"' > /dev/null
+          echo "Deployment guards and baseline are safe."
