@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import atexit
 from contextlib import contextmanager
+from dataclasses import dataclass
 import html
 import json
 import logging
@@ -35,7 +36,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from rich.console import Console
 from rich.live import Live
@@ -43,6 +44,7 @@ from rich.live import Live
 from jobctrl import config
 from jobctrl.domain.apply.value_objects import Applied, DryRunComplete, Failed, SubmissionResult
 from jobctrl.apply import prompt as prompt_mod  # noqa: F401  -- kept for back-compat imports
+from jobctrl.apply.batch_outcome import ApplyBatchCleanupIncomplete, ApplyBatchCounts, ApplyBatchWorkersCrashed
 from jobctrl.apply.chrome import (
     BASE_CDP_PORT,
     cleanup_on_exit,
@@ -2702,6 +2704,27 @@ def run_job(
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class _WorkerProgress:
+    """Counts already published by one worker, retained if its loop crashes."""
+
+    applied: int = 0
+    failed: int = 0
+
+
+@dataclass
+class _BatchProgress:
+    applied: int = 0
+    failed: int = 0
+    worker_crashes: int = 0
+    joined: bool = False
+    terminal_metric: dict[str, Any] | None = None
+    metric_started: float | None = None
+
+    def counts(self) -> ApplyBatchCounts:
+        return ApplyBatchCounts(self.applied, self.failed, self.worker_crashes)
+
+
 def worker_loop(
     worker_id: int = 0,
     limit: int = 1,
@@ -2716,10 +2739,10 @@ def worker_loop(
     tenant_id: str | None = None,
     launcher_run: ApplyLauncherRun | None = None,
     poll_interval: float | None = None,
+    _progress: _WorkerProgress | None = None,
 ) -> tuple[int, int]:
     """Run jobs sequentially until ``limit`` is reached or the queue is empty."""
-    applied = 0
-    failed = 0
+    progress = _progress if _progress is not None else _WorkerProgress()
     continuous = limit == 0
     jobs_done = 0
     empty_polls = 0
@@ -2841,7 +2864,7 @@ def worker_loop(
                     run_ctx=run_ctx,
                     tenant_id=job_tenant_id,
                 )
-                applied += 1
+                progress.applied += 1
                 update_state(
                     worker_id,
                     jobs_applied=1,
@@ -2869,7 +2892,7 @@ def worker_loop(
                     run_ctx=run_ctx,
                     tenant_id=job_tenant_id,
                 )
-                failed += 1
+                progress.failed += 1
                 update_state(worker_id, jobs_failed=1, jobs_done=1)
         except KeyboardInterrupt:
             release_lock(
@@ -2889,14 +2912,14 @@ def worker_loop(
                 run_ctx=run_ctx,
                 tenant_id=job_tenant_id,
             )
-            failed += 1
+            progress.failed += 1
             update_state(worker_id, jobs_failed=1)
 
         if target_job_id is not None:
             break
 
     update_state(worker_id, run_id="", status="done", last_action="finished")
-    return applied, failed
+    return progress.applied, progress.failed
 
 
 # ---------------------------------------------------------------------------
@@ -2920,23 +2943,50 @@ def main(
     approval_required: bool = True,
     workflow_id: str | None = None,
     launcher_run: ApplyLauncherRun | None = None,
+    _terminal_metric_sink: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[int, int]:
     """Run an independently owned Apply cohort with bounded internal fan-out."""
     run = launcher_run or ApplyLauncherRun()
-    with run.lease():
-        try:
-            if run.stop_event.is_set():
-                return 0, 0
-            return _main(
-                limit=limit, target_job_id=target_job_id, tenant_id=tenant_id,
-                min_score=min_score, headless=headless, model=model, dry_run=dry_run,
-                continuous=continuous, poll_interval=poll_interval, workers=workers,
-                snapshot=snapshot, install_signal_handlers=install_signal_handlers,
-                approval_required=approval_required, workflow_id=workflow_id,
-                launcher_run=run,
-            )
-        finally:
-            run.finish()
+    batch = _BatchProgress()
+    outer_error: BaseException | None = None
+    try:
+        with run.lease():
+            try:
+                if run.stop_event.is_set():
+                    batch.joined = True
+                    return 0, 0
+                return _main(
+                    limit=limit, target_job_id=target_job_id, tenant_id=tenant_id,
+                    min_score=min_score, headless=headless, model=model, dry_run=dry_run,
+                    continuous=continuous, poll_interval=poll_interval, workers=workers,
+                    snapshot=snapshot, install_signal_handlers=install_signal_handlers,
+                    approval_required=approval_required, workflow_id=workflow_id,
+                    launcher_run=run, batch_progress=batch,
+                )
+            finally:
+                run.finish()
+    except ApplyLauncherCleanupIncomplete as exc:
+        outer_error = exc
+        # Do not claim counts when the launcher never joined its workers.
+        if batch.joined:
+            raise ApplyBatchCleanupIncomplete(str(exc), batch.counts()) from exc
+        raise
+    except BaseException as exc:
+        outer_error = exc
+        raise
+    finally:
+        if batch.terminal_metric is not None:
+            metric = batch.terminal_metric
+            if batch.metric_started is not None:
+                metric["duration_ms"] = int((time.time() - batch.metric_started) * 1000)
+            if isinstance(outer_error, ApplyLauncherCleanupIncomplete):
+                metric.update(outcome="failed", error_class="ApplyLauncherCleanupIncomplete", error_message=str(outer_error))
+            elif outer_error is not None and metric["outcome"] != "failed":
+                metric.update(outcome="failed", error_class=type(outer_error).__name__, error_message=str(outer_error))
+            if _terminal_metric_sink is None:
+                _record_apply_batch_metric(**metric)
+            else:
+                _terminal_metric_sink(metric)
 
 
 def _main(
@@ -2956,11 +3006,13 @@ def _main(
     workflow_id: str | None = None,
     *,
     launcher_run: ApplyLauncherRun,
+    batch_progress: _BatchProgress,
 ) -> tuple[int, int]:
     config.ensure_dirs()
     console = Console()
     batch_run_id = f"apply:{launcher_run.identity}"
     batch_started = time.time()
+    batch_progress.metric_started = batch_started
     metric_error_class: str | None = None
     metric_error_message: str | None = None
     stable_tenant_id = TenantId(str(tenant_id or LOCAL_TENANT))
@@ -2999,6 +3051,7 @@ def _main(
 
     total_applied = 0
     total_failed = 0
+    worker_crashes = 0
 
     launcher_run.allocate_workers(workers)
     reset_dashboard(launcher_run.worker_ids)
@@ -3039,21 +3092,40 @@ def _main(
             refresh_thread.start()
 
             if workers == 1:
-                total_applied, total_failed = worker_loop(
-                    worker_id=0,
-                    limit=effective_limit,
-                    target_job_id=target_job_id,
-                    min_score=min_score,
-                    headless=headless,
-                    model=model,
-                    dry_run=dry_run,
-                    snapshot=snapshot,
-                    approval_required=approval_required,
-                    workflow_id=workflow_id,
-                    tenant_id=stable_tenant_id,
-                    launcher_run=launcher_run,
-                    poll_interval=poll_interval,
-                )
+                single_progress = _WorkerProgress()
+                try:
+                    total_applied, total_failed = worker_loop(
+                        worker_id=0,
+                        limit=effective_limit,
+                        target_job_id=target_job_id,
+                        min_score=min_score,
+                        headless=headless,
+                        model=model,
+                        dry_run=dry_run,
+                        snapshot=snapshot,
+                        approval_required=approval_required,
+                        workflow_id=workflow_id,
+                        tenant_id=stable_tenant_id,
+                        launcher_run=launcher_run,
+                        poll_interval=poll_interval,
+                        _progress=single_progress,
+                    )
+                except BaseException as exc:
+                    total_applied, total_failed = single_progress.applied, single_progress.failed
+                    if isinstance(exc, ApplyLauncherCleanupIncomplete):
+                        worker_crashes = 1
+                        raise
+                    if not isinstance(exc, Exception):
+                        raise
+                    logger.exception("Worker 0 crashed")
+                    worker_crashes = 1
+                    metric_error_class = "apply_worker_crashed"
+                    metric_error_message = "apply_worker_crashed"
+                finally:
+                    batch_progress.applied = total_applied
+                    batch_progress.failed = total_failed
+                    batch_progress.worker_crashes = worker_crashes
+                    batch_progress.joined = True
             else:
                 if effective_limit:
                     base = effective_limit // workers
@@ -3062,6 +3134,7 @@ def _main(
                 else:
                     limits = [0] * workers
 
+                progress = [_WorkerProgress() for _ in range(workers)]
                 with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="apply-worker") as executor:
                     futures = {
                         executor.submit(
@@ -3079,6 +3152,7 @@ def _main(
                             tenant_id=stable_tenant_id,
                             launcher_run=launcher_run,
                             poll_interval=poll_interval,
+                            _progress=progress[i],
                         ): i
                         # Zero is the continuous sentinel in worker_loop, not
                         # an empty finite allocation. Do not start such workers
@@ -3087,29 +3161,41 @@ def _main(
                         if not effective_limit or limits[i] > 0
                     }
 
-                    results: list[tuple[int, int]] = []
                     cleanup_failure: ApplyLauncherCleanupIncomplete | None = None
                     for future in as_completed(futures):
                         wid = futures[future]
                         try:
-                            results.append(future.result())
+                            applied, failed = future.result()
                         except Exception as exc:  # noqa: BLE001
                             logger.exception("Worker %d crashed", wid)
-                            results.append((0, 0))
+                            # Keep known completed job counts separate from the
+                            # crashed worker's unknown job/submission outcome.
+                            applied, failed = progress[wid].applied, progress[wid].failed
+                            total_applied += applied
+                            total_failed += failed
+                            worker_crashes += 1
                             if isinstance(exc, ApplyLauncherCleanupIncomplete):
                                 cleanup_failure = cleanup_failure or exc
+                            else:
+                                metric_error_class = "apply_worker_crashed"
+                                metric_error_message = "apply_worker_crashed"
+                        else:
+                            total_applied += applied
+                            total_failed += failed
+                    batch_progress.applied = total_applied
+                    batch_progress.failed = total_failed
+                    batch_progress.worker_crashes = worker_crashes
+                    batch_progress.joined = True
                     if cleanup_failure is not None:
                         raise cleanup_failure
-
-                total_applied = sum(r[0] for r in results)
-                total_failed = sum(r[1] for r in results)
 
             _dashboard_running = False
             refresh_thread.join(timeout=2)
             live.update(render_full(launcher_run.worker_ids))
 
         totals = get_totals(launcher_run.worker_ids)
-        console.print(f"\n[bold]Done: {total_applied} applied, {total_failed} failed (${totals['cost']:.3f})[/bold]")
+        crash_summary = f", {worker_crashes} worker(s) crashed" if worker_crashes else ""
+        console.print(f"\n[bold]Completed work: {total_applied} applied, {total_failed} failed{crash_summary} (${totals['cost']:.3f})[/bold]")
         console.print(f"Logs: {config.LOG_DIR}")
     except KeyboardInterrupt:
         metric_error_class = "manual_abort_apply"
@@ -3129,20 +3215,17 @@ def _main(
             metric_outcome = "dry_run"
         else:
             metric_outcome = "succeeded" if total_failed == 0 else "failed"
-        _record_apply_batch_metric(
-            outcome=metric_outcome,
-            run_id=batch_run_id,
-            tenant_id=stable_tenant_id,
-            job_id=target_job_id,
-            dry_run=dry_run,
-            workers=workers,
-            model=model,
-            duration_ms=int((time.time() - batch_started) * 1000),
-            total_applied=total_applied,
-            total_failed=total_failed,
-            error_class=metric_error_class,
-            error_message=metric_error_message,
-        )
+        # The owner still has to finish its scoped cleanup after _main returns.
+        # Publish the terminal metric only after that boundary has completed.
+        batch_progress.terminal_metric = {
+            "outcome": metric_outcome, "run_id": batch_run_id, "tenant_id": stable_tenant_id,
+            "job_id": target_job_id, "dry_run": dry_run, "workers": workers, "model": model,
+            "duration_ms": int((time.time() - batch_started) * 1000),
+            "total_applied": total_applied, "total_failed": total_failed, "worker_crashes": worker_crashes,
+            "error_class": metric_error_class, "error_message": metric_error_message,
+        }
+    if worker_crashes:
+        raise ApplyBatchWorkersCrashed(batch_progress.counts())
     return total_applied, total_failed
 
 
@@ -3156,8 +3239,10 @@ def _record_apply_batch_metric(
     workers: int,
     model: str,
     duration_ms: int | None = None,
-    total_applied: int = 0,
-    total_failed: int = 0,
+    total_applied: int | None = 0,
+    total_failed: int | None = 0,
+    worker_crashes: int | None = 0,
+    counts_known: bool = True,
     error_class: str | None = None,
     error_message: str | None = None,
 ) -> None:
@@ -3173,7 +3258,7 @@ def _record_apply_batch_metric(
             tenant_id=tenant_id,
             job_id=str(canonical_job_id(str(job_id))) if job_id is not None else None,
             duration_ms=duration_ms,
-            counts={"total": total_applied + total_failed},
+            counts={"total": total_applied + total_failed if total_applied is not None and total_failed is not None else None},
             error_class=error_class,
             error_message=error_message,
             metadata={
@@ -3182,6 +3267,9 @@ def _record_apply_batch_metric(
                 "model": model,
                 "applied": total_applied,
                 "failed": total_failed,
+                "failedJobs": total_failed,
+                "workerCrashes": worker_crashes,
+                "countsKnown": counts_known if outcome != "started" else False,
             },
         )
         conn.commit()

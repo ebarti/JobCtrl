@@ -142,7 +142,13 @@ func runActualNativeApplyModuleFixture(t *testing.T, temporal bool) {
 	peerCtx := ctx
 	peerCtx.Environment = append(append([]string{}, environment...), "JOBCTRL_APPLY_TEST_ROOT="+peerFixture, "JOBCTRL_APPLY_TEST_CONTEXT="+string(encoded))
 	if err := runInOwnedExecution(peerCtx, []string{"__apply-test-peer"}, io.Discard, os.Stderr); err != nil {
-		t.Fatal(err)
+		var diagnostic []byte
+		if log, openErr := os.Open(filepath.Join(peerFixture, "writer.log")); openErr == nil {
+			diagnostic, _ = io.ReadAll(io.LimitReader(log, 4096))
+			log.Close()
+			_ = os.WriteFile(filepath.Join(evidence, "peer-writer.log"), diagnostic, 0600)
+		}
+		t.Fatalf("owned synthetic peer startup: %v; bounded writer stderr: %s", err, diagnostic)
 	}
 	peerRaw, err := os.ReadFile(filepath.Join(peerFixture, "writer.pid"))
 	if err != nil {
@@ -266,6 +272,19 @@ func runActualNativeApplyModuleFixture(t *testing.T, temporal bool) {
 			t.Fatal("native completion did not release the exact run's custody")
 		}
 	}
+	if temporal {
+		observations, err := filepath.Glob(filepath.Join(instance.StateDir, "qa-census-observations", "*.json"))
+		if err != nil || len(observations) == 0 {
+			t.Fatal("native process-session census observations missing")
+		}
+		for _, path := range observations {
+			raw, err := os.ReadFile(path)
+			if diagnostic := describeApplyCensusObservation(raw, err); diagnostic != "" {
+				t.Fatal(diagnostic)
+			}
+		}
+		t.Logf("observed %d real owned-session cleanup censuses", len(observations))
+	}
 	if current, err := processStartIdentity(peerPID); err != nil || current != peerIdentity {
 		t.Fatalf("same-instance peer did not survive both Apply runs: %v", err)
 	}
@@ -281,6 +300,69 @@ func runActualNativeApplyModuleFixture(t *testing.T, temporal bool) {
 	}
 }
 
+// Report only bounded aggregate counts. Session IDs, PIDs, paths and raw
+// inventory values are deliberately excluded from hosted test logs.
+func describeApplyCensusObservation(raw []byte, readErr error) string {
+	if readErr != nil {
+		return "native process-session census observation could not be read"
+	}
+	if !json.Valid(raw) {
+		return "native process-session census observation has invalid JSON"
+	}
+	var observation struct {
+		SessionID int               `json:"session_id"`
+		Outcome   string            `json:"outcome"`
+		Samples   []json.RawMessage `json:"samples"`
+	}
+	if json.Unmarshal(raw, &observation) != nil {
+		return "native process-session census observation has invalid schema"
+	}
+	if observation.SessionID <= 0 {
+		return "native process-session census observation has invalid session identity"
+	}
+	if len(observation.Samples) == 0 {
+		return "native process-session census observation has no samples"
+	}
+	if observation.Outcome == "verified" {
+		return ""
+	}
+	if observation.Outcome != "refused" {
+		return "native process-session census observation has invalid outcome"
+	}
+	var complete, incomplete, unknown, changed, occupied, errors, malformed int
+	for _, rawSample := range observation.Samples {
+		var sample struct {
+			Complete         *bool              `json:"complete"`
+			InventoryChanges *int               `json:"inventory_changes"`
+			SessionMembers   *[]json.RawMessage `json:"session_members"`
+			Error            *json.RawMessage   `json:"error"`
+		}
+		if json.Unmarshal(rawSample, &sample) != nil {
+			malformed++
+			unknown++
+			continue
+		}
+		if sample.Complete == nil {
+			unknown++
+		} else if *sample.Complete {
+			complete++
+		} else {
+			incomplete++
+		}
+		if sample.InventoryChanges != nil && *sample.InventoryChanges > 0 {
+			changed++
+		}
+		if sample.SessionMembers != nil && len(*sample.SessionMembers) > 0 {
+			occupied++
+		}
+		if sample.Error != nil {
+			errors++
+		}
+	}
+	return fmt.Sprintf("native process-session census refused: samples=%d complete=%d incomplete=%d unknown=%d changed_samples=%d occupied_samples=%d error_samples=%d malformed_samples=%d",
+		len(observation.Samples), complete, incomplete, unknown, changed, occupied, errors, malformed)
+}
+
 // Preserve only owned synthetic logs, history and ownership metadata before
 // TempDir cleanup. Database/profile/artifact payloads are never copied.
 func preserveApplyFailureEvidence(t *testing.T, evidence string, instance instance) {
@@ -290,7 +372,7 @@ func preserveApplyFailureEvidence(t *testing.T, evidence string, instance instan
 		t.Logf("preserve owned failure evidence: %v", err)
 		return
 	}
-	for name, root := range map[string]string{"scenario": evidence, "invocations": filepath.Join(instance.StateDir, "apply-invocations"), "executions": filepath.Join(filepath.Dir(instance.StatePath), "executions"), "completions": filepath.Join(filepath.Dir(instance.StatePath), "completed-executions")} {
+	for name, root := range map[string]string{"scenario": evidence, "invocations": filepath.Join(instance.StateDir, "apply-invocations"), "census": filepath.Join(instance.StateDir, "qa-census-observations"), "executions": filepath.Join(filepath.Dir(instance.StatePath), "executions"), "completions": filepath.Join(filepath.Dir(instance.StatePath), "completed-executions")} {
 		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr

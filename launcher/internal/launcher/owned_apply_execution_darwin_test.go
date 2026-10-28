@@ -76,15 +76,22 @@ while True:
 `
 	mode, _ := os.ReadFile(filepath.Join(root, "mode"))
 	writer := exec.Command("/usr/bin/python3", "-I", "-B", "-c", script, filepath.Join(root, "writer.pid"), filepath.Join(root, "ticks"), string(mode))
-	writer.Stdout, writer.Stderr = io.Discard, io.Discard
-	if writer.Start() != nil {
+	writerLog, err := os.OpenFile(filepath.Join(root, "writer.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	if err != nil {
 		os.Exit(96)
 	}
+	writer.Stdout, writer.Stderr = io.Discard, writerLog
+	if writer.Start() != nil {
+		writerLog.Close()
+		os.Exit(96)
+	}
+	writerLog.Close()
 	for deadline := time.Now().Add(5 * time.Second); ; {
 		if raw, err := os.ReadFile(filepath.Join(root, "writer.pid")); err == nil && len(raw) > 0 {
 			break
 		}
 		if time.Now().After(deadline) {
+			fmt.Fprintf(os.Stderr, "owned synthetic peer writer did not publish readiness; process alive: %t\n", writer.Process.Signal(syscall.Signal(0)) == nil)
 			os.Exit(97)
 		}
 		time.Sleep(time.Millisecond)

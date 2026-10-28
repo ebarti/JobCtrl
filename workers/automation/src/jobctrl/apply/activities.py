@@ -42,6 +42,8 @@ class ApplyActivityOutput:
     applied: int
     failed: int
     error: str | None = None
+    # Older activity histories have no worker-crash observation.
+    worker_crashes: int | None = None
 
 
 @activity.defn(name="apply")
@@ -68,6 +70,7 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
     )
     from jobctrl.browser_capabilities import require_system_browser_capability
     from jobctrl.apply.launcher import main as apply_main
+    from jobctrl.apply.batch_outcome import ApplyBatchCleanupIncomplete, ApplyBatchWorkersCrashed
     from jobctrl.apply.ownership import ApplyLauncherBusy, ApplyLauncherCleanupIncomplete, ApplyLauncherRun
 
     assert_activity_runtime(
@@ -127,7 +130,17 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
             applied=int(applied),
             failed=int(failed),
             error=None,
+            worker_crashes=0,
         )
+    except ApplyBatchWorkersCrashed as exc:
+        return ApplyActivityOutput(
+            status="failed", applied=exc.counts.applied, failed=exc.counts.failed,
+            error="apply_worker_crashed", worker_crashes=exc.counts.worker_crashes,
+        )
+    except ApplyBatchCleanupIncomplete as exc:
+        raise ApplicationError(
+            str(exc), exc.counts.to_dict(), type="apply_launcher_cleanup_incomplete", non_retryable=True,
+        ) from exc
     except (ApplyLauncherBusy, ApplyLauncherCleanupIncomplete) as exc:
         code = "apply_launcher_busy" if isinstance(exc, ApplyLauncherBusy) else "apply_launcher_cleanup_incomplete"
         raise ApplicationError(str(exc), type=code, non_retryable=True) from exc

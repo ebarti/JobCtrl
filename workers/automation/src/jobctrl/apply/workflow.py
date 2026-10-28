@@ -25,6 +25,7 @@ with workflow.unsafe.imports_passed_through():
         ApplyActivityOutput,
         apply_activity,
     )
+    from jobctrl.apply.batch_outcome import ApplyBatchCounts
     from jobctrl.infrastructure.temporal.finalize import (
         emit_workflow_outcome,
         emit_workflow_started,
@@ -65,6 +66,9 @@ class ApplyWorkflowResult:
     error: str | None = None
     applied: int = 0
     failed: int = 0
+    # None identifies historical or failed executions with no observation.
+    worker_crashes: int | None = None
+    counts_known: bool | None = None
 
 
 _APPLY_LIVE_RETRY = RetryPolicy(
@@ -163,11 +167,22 @@ class ApplyWorkflow:
                 heartbeat_timeout=timedelta(seconds=60),
             )
         except ActivityError as exc:
+            counts = None
+            cause = exc.cause
+            if isinstance(cause, ApplicationError) and cause.type == "apply_launcher_cleanup_incomplete" and len(cause.details) == 1:
+                try:
+                    counts = ApplyBatchCounts.from_dict(cause.details[0])
+                except ValueError:
+                    pass
             return ApplyWorkflowResult(
                 ok=False,
                 run_id=info.workflow_id,
                 status="failed",
                 error=str(exc.cause if exc.cause else exc),
+                applied=counts.applied if counts is not None else 0,
+                failed=counts.failed if counts is not None else 0,
+                worker_crashes=counts.worker_crashes if counts is not None else None,
+                counts_known=counts is not None,
             )
 
         return ApplyWorkflowResult(
@@ -177,6 +192,10 @@ class ApplyWorkflow:
             error=result.error,
             applied=result.applied,
             failed=result.failed,
+            worker_crashes=getattr(result, "worker_crashes", None),
+            # Old activity histories cannot establish that their counts
+            # included work from every worker.
+            counts_known=getattr(result, "worker_crashes", None) is not None,
         )
 
 

@@ -94,6 +94,12 @@ port, dashboard and work files. Finishing or cancelling one run leaves the other
 running. Every attempt receives fresh work directories, so a restart or another
 worker cannot reset an earlier attempt's files. A worker whose process cleanup
 cannot verify exit stops claiming further jobs and retains the prior files.
+If a batch worker crashes, the batch fails and reports worker crashes separately
+from completed job counts. A cleanup refusal means exit could not be verified;
+it does not establish that an owned process is still running. Other process
+activity can prevent the required verification even when no member of the owned
+session appears in the observations. Rebooting is not a prerequisite and does
+not replace the required cleanup proof.
 
 Installed macOS Apply runs verify cleanup of their own execution before
 returning, so a normal rehearsal or retry does not require stopping the app.
