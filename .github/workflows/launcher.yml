@@ -10,6 +10,12 @@ on:
     paths:
       - "launcher/**"
       - "workers/automation/src/jobctrl/database.py"
+      - "workers/automation/src/jobctrl/browser_capabilities.py"
+      - "workers/automation/src/jobctrl/config.py"
+      - "workers/automation/src/jobctrl/state.py"
+      - "workers/automation/src/jobctrl/runtime.py"
+      - "workers/automation/src/jobctrl/apply/**"
+      - "workers/automation/src/jobctrl/infrastructure/apply/**"
       - "workers/automation/src/jobctrl/domain/**"
       - "workers/automation/src/jobctrl/infrastructure/migrations/**"
       - "workers/automation/src/jobctrl/infrastructure/projections/**"
@@ -17,6 +23,13 @@ on:
       - "workers/automation/src/jobctrl/infrastructure/temporal/**"
       - "workers/automation/tests/fixtures/shipped_v6_schema.sql"
       - "workers/automation/tests/v6_migration_fixture.py"
+      - "workers/automation/tests/helpers/apply_*.py"
+      - "workers/automation/tests/test_apply_regressions.py"
+      - "workers/automation/tests/test_apply_use_cases.py"
+      - "workers/automation/tests/temporal_env.py"
+      - "workers/automation/tests/availability_fixture.py"
+      - "packaging/distribution/components.lock.json"
+      - "packaging/distribution/capability-policy.json"
       - "workers/automation/pyproject.toml"
       - "workers/automation/uv.lock"
       - "apps/api/package.json"
@@ -32,6 +45,12 @@ on:
     paths:
       - "launcher/**"
       - "workers/automation/src/jobctrl/database.py"
+      - "workers/automation/src/jobctrl/browser_capabilities.py"
+      - "workers/automation/src/jobctrl/config.py"
+      - "workers/automation/src/jobctrl/state.py"
+      - "workers/automation/src/jobctrl/runtime.py"
+      - "workers/automation/src/jobctrl/apply/**"
+      - "workers/automation/src/jobctrl/infrastructure/apply/**"
       - "workers/automation/src/jobctrl/domain/**"
       - "workers/automation/src/jobctrl/infrastructure/migrations/**"
       - "workers/automation/src/jobctrl/infrastructure/projections/**"
@@ -39,6 +58,13 @@ on:
       - "workers/automation/src/jobctrl/infrastructure/temporal/**"
       - "workers/automation/tests/fixtures/shipped_v6_schema.sql"
       - "workers/automation/tests/v6_migration_fixture.py"
+      - "workers/automation/tests/helpers/apply_*.py"
+      - "workers/automation/tests/test_apply_regressions.py"
+      - "workers/automation/tests/test_apply_use_cases.py"
+      - "workers/automation/tests/temporal_env.py"
+      - "workers/automation/tests/availability_fixture.py"
+      - "packaging/distribution/components.lock.json"
+      - "packaging/distribution/capability-policy.json"
       - "workers/automation/pyproject.toml"
       - "workers/automation/uv.lock"
       - "apps/api/package.json"
@@ -91,12 +117,34 @@ jobs:
           version: 0.11.7
           enable-cache: true
           cache-dependency-glob: workers/automation/uv.lock
-      - name: Sync the locked migration runtime
+      - name: Sync the locked native integration runtime
         shell: bash
         run: |
           set -euo pipefail
-          uv --project workers/automation sync --locked --no-default-groups
+          # Native Apply fixtures reuse pytest-decorated seeds and controlled ports.
+          uv --project workers/automation sync --locked --no-default-groups --group release-check
           echo "JOBCTRL_MIGRATION_TEST_PYTHON=$GITHUB_WORKSPACE/workers/automation/.venv/bin/python3" >> "$GITHUB_ENV"
+      - name: Install the verified Temporal integration runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { readFile, writeFile } from 'node:fs/promises';
+          import path from 'node:path';
+          const lock = JSON.parse(await readFile('packaging/distribution/components.lock.json', 'utf8'));
+          const input = lock.inputs.find((entry) => entry.id === 'temporal-runtime-archive');
+          if (lock.platform !== `${process.platform}-${process.arch}` || !input) throw new Error('No locked Temporal runtime for this runner');
+          const response = await fetch(input.url);
+          if (!response.ok) throw new Error(`Temporal download failed: ${response.status}`);
+          const archive = Buffer.from(await response.arrayBuffer());
+          if (createHash('sha256').update(archive).digest('hex') !== input.sha256) throw new Error('Temporal archive digest mismatch');
+          await writeFile(path.join(process.env.RUNNER_TEMP, 'jobctrl-temporal.tar.gz'), archive);
+          NODE
+          mkdir -p "$RUNNER_TEMP/jobctrl-temporal"
+          tar -xOf "$RUNNER_TEMP/jobctrl-temporal.tar.gz" temporal > "$RUNNER_TEMP/jobctrl-temporal/temporal"
+          chmod 700 "$RUNNER_TEMP/jobctrl-temporal/temporal"
+          echo "JOBCTRL_TEMPORAL_CLI_PATH=$RUNNER_TEMP/jobctrl-temporal/temporal" >> "$GITHUB_ENV"
       - name: Install locked TypeScript migration probe
         run: corepack pnpm install --frozen-lockfile
       - name: Bind the migration integration Node runtime

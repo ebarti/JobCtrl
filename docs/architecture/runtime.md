@@ -781,6 +781,72 @@ The plan and phase-by-phase surface inventory live in
 `docs/plans/implemented/2026-07-05-crawl-politeness-plan.md`; the ADR is in
 [`docs/decisions.md`](../decisions.md).
 
+## Apply Launcher Ownership
+
+In the installed macOS runtime, the activity invokes the fixed native
+`__apply-execution` command before executable readiness or other external
+preflight. It creates a fresh existing launchd execution scope with durable
+`purpose: "apply"`; a mere environment marker cannot authorize the worker.
+The fixed `jobctrl.apply.execution` module runs the launcher there. Normal
+completion, error, cancellation and controller loss drain only that scope,
+including detached descendants, before publishing exact native completion.
+The parent consumes counts only after controller exit and proof verification.
+Ordinary same-job retries therefore need no whole-app stop. Other scopes remain
+active. This uses the existing native execution machinery and shared activity
+capacity, not another scheduler or containment service.
+
+Apply launchers admit distinct jobs independently. Each invocation owns its
+cancellation event, cleanup monitor, dashboard resource set and fresh resource
+identities. Every subsequent attempt receives another exclusive work/profile
+namespace. Chrome's private endpoint file binds its OS-assigned port and browser
+WebSocket identity, and both MCP transports receive that exact socket; a display worker number never
+selects an earlier run's resources. Startup does not recover all running jobs.
+
+Private `apply-runs/<launcherId>/custody.json` manifests bind the physical
+workspace, canonical job attempts and authenticated native execution receipt.
+A process birth intent is fsynced before `Popen`. A crash before or after spawn
+publication leaves unknown custody; there is no missing-receipt waiver or
+inherited-descriptor/bootstrap protocol. Synchronous no-created-child spawn
+failure can abort only that birth intent. Ordinary exact-handle/session cleanup
+closes in-memory resources but does not certify full-tree retirement: descendants
+may have escaped the recorded session. Different-job peers continue independently.
+
+Recovery of the selected old installed launcher requires its exact native execution's
+completion attestation at
+`instances/<instanceId>/completed-executions/<scopeId>.json`. Native scope stop
+persists the full-receipt/digest-bound proof before removing the original
+execution receipt. It survives restart and covers escaped descendants. Missing,
+changed or linked proofs preserve native custody.
+
+Source-checkout Apply uses best-effort descendant cleanup with no Go/helper
+requirement. It joins workers, attempts and waits for its exact tracked children,
+and allows an ordinarily finished job to retry after an accepted canonical
+terminal outcome. It records `full_tree_verified: false`; detached-descendant
+completion is not proven. Each source owner holds a private per-run lifetime lease through its blocking
+thread and cleanup. A normal source retry or an ended-owner crash recovery can
+settle only that exact logical claim; it never claims escaped-tree verification.
+An active/abandoned thread keeps its lease, known cleanup failures are durable,
+and recorded submit intent stays protected even after a generic stage reset.
+Lifetime files are never created, unlinked or replaced as recovery proof. Fresh namespaces and RunId writer
+fences preserve successors and accepted data.
+
+After launcher workers have joined and tracked cleanup succeeds, source claims
+can publish best-effort `ApplyClaimSettled` only when the exact accepted event
+matches the canonical terminal stage. Installed claims with born resources wait
+for the native completion; a no-birth logical claim can settle directly. A saga event whose canonical result write
+rolled back does not settle ownership. Submit-intent ambiguity remains parked.
+Installed born-process custody uses the actual native completion instead.
+
+`ApplyClaimAcquired` establishes the canonical attempt owner separately from
+replayable saga start events. Automatic results, repository events, determinations,
+artifacts, lock-release notices, integration publications and final submit
+checks compare the exact tenant/job/RunId under the SQLite writer. Late old
+callbacks cannot overwrite a successor. Same-job admission checks only that
+job's retained owner and preserves submit-intent ambiguity. Each worker proves
+its prior scoped cleanup before its next claim; failure preserves its files and
+stops further claims while peers settle already-owned work. See
+[Apply launcher admission](pipeline/concurrency.md#apply-launcher-admission).
+
 ## Workflow Orchestration (Local Temporal)
 
 A local Temporal dev server (`temporal server start-dev --db-filename

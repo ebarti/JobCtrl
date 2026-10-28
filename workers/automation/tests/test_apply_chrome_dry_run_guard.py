@@ -25,6 +25,7 @@ def permit_browser_for_existing_guard_tests(monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setattr(chrome, "_chrome_procs", {})
     monkeypatch.setattr(chrome, "_chrome_identities", {})
+    monkeypatch.setattr(chrome, "_chrome_endpoints", {})
 
     monkeypatch.setattr(
         chrome,
@@ -180,6 +181,7 @@ def test_dry_run_cdp_guard_blocks_hostile_employer_exfiltration(tmp_path, monkey
     def setup_profile(worker_id: int) -> Path:
         profile = tmp_path / f"profile-{worker_id}"
         (profile / "Default").mkdir(parents=True, exist_ok=True)
+        profile.chmod(0o700)
         return profile
 
     monkeypatch.setattr(chrome, "setup_worker_profile", setup_profile)
@@ -194,6 +196,7 @@ def test_dry_run_cdp_guard_blocks_hostile_employer_exfiltration(tmp_path, monkey
             approved_application_url=f"http://127.0.0.1:{server.server_port}/",
         )
         try:
+            dry_port, _ = chrome.get_worker_endpoint(901, dry_proc)
             _wait_for_page_target(dry_port)
             _wait_for_dry_run_guard(dry_port)
             _create_page_target(dry_port, "about:blank")
@@ -241,6 +244,7 @@ def test_dry_run_cdp_guard_blocks_hostile_employer_exfiltration(tmp_path, monkey
             approved_application_url=f"http://127.0.0.1:{server.server_port}/",
         )
         try:
+            live_port, _ = chrome.get_worker_endpoint(902, live_proc)
             _navigate_and_read_blocked_flag(
                 live_port,
                 f"http://127.0.0.1:{server.server_port}/",
@@ -297,6 +301,7 @@ def test_live_origin_guard_blocks_cross_origin_worker_request(
     def setup_profile(worker_id: int) -> Path:
         profile = tmp_path / f"profile-{worker_id}"
         (profile / "Default").mkdir(parents=True, exist_ok=True)
+        profile.chmod(0o700)
         return profile
 
     monkeypatch.setattr(chrome, "setup_worker_profile", setup_profile)
@@ -315,6 +320,7 @@ def test_live_origin_guard_blocks_cross_origin_worker_request(
             dry_run=False,
             approved_application_url=approved_url,
         )
+        port, _ = chrome.get_worker_endpoint(905, process)
         _wait_for_page_target(port)
         _create_page_target(port, approved_url)
         deadline = time.time() + 5
@@ -496,6 +502,12 @@ def test_browser_guard_session_blocks_hostile_dry_run_events_before_resume(monke
     session._close()
 
 
+def _publish_test_endpoint(command, process, port):
+    profile = Path(next(arg.split("=", 1)[1] for arg in command if arg.startswith("--user-data-dir=")))
+    (profile / "DevToolsActivePort").write_text(f"{port}\n/devtools/browser/ready")
+    return process
+
+
 def test_launch_chrome_installs_public_destination_guard_for_live_runs(tmp_path, monkeypatch):
     calls: list[tuple[str, int]] = []
 
@@ -508,17 +520,18 @@ def test_launch_chrome_installs_public_destination_guard_for_live_runs(tmp_path,
     def setup_profile(worker_id: int) -> Path:
         profile = tmp_path / f"profile-{worker_id}"
         (profile / "Default").mkdir(parents=True, exist_ok=True)
+        profile.chmod(0o700)
         return profile
 
     monkeypatch.setattr(chrome, "setup_worker_profile", setup_profile)
     monkeypatch.setattr(chrome, "_require_available_cdp_port", lambda _port: None)
     monkeypatch.setattr(chrome, "_suppress_restore_nag", lambda _profile: None)
     monkeypatch.setattr(chrome.config, "get_chrome_path", lambda: "/bin/echo")
-    monkeypatch.setattr(chrome.subprocess, "Popen", lambda *_args, **_kwargs: _FakeProcess())
+    monkeypatch.setattr(chrome.subprocess, "Popen", lambda command, **_kwargs: _publish_test_endpoint(command, _FakeProcess(), 9555))
     monkeypatch.setattr(
         chrome,
         "_cdp_json",
-        lambda _port, _path: {"webSocketDebuggerUrl": "ws://ready"},
+        lambda _port, _path: {"webSocketDebuggerUrl": "ws://127.0.0.1:9555/devtools/browser/ready"},
     )
     monkeypatch.setattr(chrome.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(
@@ -552,8 +565,8 @@ def test_launch_chrome_waits_for_browser_cdp_endpoint(tmp_path, monkeypatch):
             [],
             [],
             *[
-                {"webSocketDebuggerUrl": "ws://127.0.0.1/devtools/browser/ready"}
-                for _ in range(chrome._CDP_READY_STABLE_PROBES)
+                {"webSocketDebuggerUrl": "ws://127.0.0.1:9777/devtools/browser/ready"}
+                for _ in range(chrome._CDP_READY_STABLE_PROBES + 1)
             ],
         ]
     )
@@ -567,6 +580,7 @@ def test_launch_chrome_waits_for_browser_cdp_endpoint(tmp_path, monkeypatch):
     def setup_profile(worker_id: int) -> Path:
         profile = tmp_path / f"profile-{worker_id}"
         (profile / "Default").mkdir(parents=True, exist_ok=True)
+        profile.chmod(0o700)
         return profile
 
     def cdp_json(port: int, path: str):
@@ -577,7 +591,7 @@ def test_launch_chrome_waits_for_browser_cdp_endpoint(tmp_path, monkeypatch):
     monkeypatch.setattr(chrome, "_require_available_cdp_port", lambda _port: None)
     monkeypatch.setattr(chrome, "_suppress_restore_nag", lambda _profile: None)
     monkeypatch.setattr(chrome.config, "get_chrome_path", lambda: "/bin/echo")
-    monkeypatch.setattr(chrome.subprocess, "Popen", lambda *_args, **_kwargs: _FakeProcess())
+    monkeypatch.setattr(chrome.subprocess, "Popen", lambda command, **_kwargs: _publish_test_endpoint(command, _FakeProcess(), 9777))
     monkeypatch.setattr(chrome, "_cdp_json", cdp_json)
     monkeypatch.setattr(chrome.time, "sleep", sleeps.append)
     monkeypatch.setattr(
@@ -596,7 +610,7 @@ def test_launch_chrome_waits_for_browser_cdp_endpoint(tmp_path, monkeypatch):
 
     assert probes == [
         (9777, "/json/version")
-        for _ in range(2 + chrome._CDP_READY_STABLE_PROBES)
+        for _ in range(3 + chrome._CDP_READY_STABLE_PROBES)
     ]
     assert sleeps == [
         chrome._CDP_READY_POLL_SECONDS
@@ -620,6 +634,7 @@ def test_launch_chrome_cleans_up_when_cdp_process_exits(tmp_path, monkeypatch):
     def setup_profile(worker_id: int) -> Path:
         profile = tmp_path / f"profile-{worker_id}"
         (profile / "Default").mkdir(parents=True, exist_ok=True)
+        profile.chmod(0o700)
         return profile
 
     monkeypatch.setattr(chrome, "setup_worker_profile", setup_profile)
@@ -641,7 +656,7 @@ def test_launch_chrome_cleans_up_when_cdp_process_exits(tmp_path, monkeypatch):
 
     with pytest.raises(
         chrome.BrowserCapabilityError,
-        match="exited before its browser-level CDP endpoint became ready",
+        match="live Apply browser launch ownership",
     ):
         chrome.launch_chrome(
             worker_id=907,
@@ -667,17 +682,18 @@ def test_launch_chrome_uses_combined_dry_run_guard_for_dry_runs(tmp_path, monkey
     def setup_profile(worker_id: int) -> Path:
         profile = tmp_path / f"profile-{worker_id}"
         (profile / "Default").mkdir(parents=True, exist_ok=True)
+        profile.chmod(0o700)
         return profile
 
     monkeypatch.setattr(chrome, "setup_worker_profile", setup_profile)
     monkeypatch.setattr(chrome, "_require_available_cdp_port", lambda _port: None)
     monkeypatch.setattr(chrome, "_suppress_restore_nag", lambda _profile: None)
     monkeypatch.setattr(chrome.config, "get_chrome_path", lambda: "/bin/echo")
-    monkeypatch.setattr(chrome.subprocess, "Popen", lambda *_args, **_kwargs: _FakeProcess())
+    monkeypatch.setattr(chrome.subprocess, "Popen", lambda command, **_kwargs: _publish_test_endpoint(command, _FakeProcess(), 9666))
     monkeypatch.setattr(
         chrome,
         "_cdp_json",
-        lambda _port, _path: {"webSocketDebuggerUrl": "ws://ready"},
+        lambda _port, _path: {"webSocketDebuggerUrl": "ws://127.0.0.1:9666/devtools/browser/ready"},
     )
     monkeypatch.setattr(chrome.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(

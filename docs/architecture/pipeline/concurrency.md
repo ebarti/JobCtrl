@@ -235,7 +235,7 @@ Two knobs that look like Temporal concurrency but are not:
 | Worker readiness | worker-backed API actions return 503 until a healthy heartbeat exists | [Runtime & Processes](../runtime.md) |
 | Observed capacity | fresh matching heartbeat rows; exact slots include every activity even when safe detail is omitted | [Operations & Events](operations.md#pipeline-operations-snapshot) |
 | Task-queue pressure | approximate workflow/activity backlog and poller observations; unavailable/unsupported are not zero | `GET /v1/pipeline/operations` |
-| Apply single-flight | per-job workflow id + submit-intent checkpoint | [Stage Walkthrough](stages.md#apply) |
+| Apply ownership | independent launcher resources, exact canonical attempt owner, per-job workflow id and submit-intent checkpoint | [Stage Walkthrough](stages.md#apply) |
 
 ### Worker-Capacity Analysis (Parallel Families)
 
@@ -300,3 +300,51 @@ resources, four canonical redirect hops, 20-second HTTP/browser operations,
 one million bytes per response and 12 million bytes per check. All waits and
 network work happen outside SQLite writer transactions. Local refusals release
 job ownership without recording employer evidence or increasing evidence backoff.
+
+## Apply Launcher Admission
+
+Distinct-job Apply activities can overlap within the existing shared activity
+capacity. Installed macOS activities first enter a dedicated native execution;
+its real full-scope cleanup/completion permits normal same-job retry without
+stopping the application. Each launcher keeps its own stop event, dashboard selection, process
+handles and cleanup monitor. Completion, failure or cancellation selects only
+that launcher's resources, including children registered after cancellation's
+first cleanup pass. The monitor is joined before the launcher returns.
+
+Every attempt receives fresh exclusive work/profile identities, even when a
+worker continues to another job or another activity displays worker 0. Chrome
+chooses port 0 and publishes its actual endpoint in the fresh profile's private
+`DevToolsActivePort`. The producer binds the exact process, file and browser
+WebSocket UUID. Guards, Playwright MCP and apply tools use that verified socket
+on `127.0.0.1`; they never rediscover a browser through a reused port or localhost
+alias. An occupied caller hint never grants signal authority. Prior files are retained, never reset for a new attempt. Internal
+fan-out and finite-batch claim limits retain their existing bounds.
+
+Canonical `ApplyClaimAcquired` records establish tenant/job/RunId ownership.
+Writer-locked comparisons protect result, saga, artifact and integration-event
+publication; a late old `ApplyRunStarted` cannot establish a new owner. Startup
+never sweeps active peer jobs. An active source lifetime lease, known cleanup
+failure or ambiguous submit intent blocks only its exact job, regardless of a
+workflow projection or administrative stage reset.
+Exact native completion can retire the selected old custody and preserve any
+submit-intent outcome as `needs_verification`. An accepted canonical terminal
+source claim can settle best-effort after tracked cleanup; an isolated saga
+event or rolled-back terminal write cannot release an active owner.
+
+Durable per-run birth intents survive owner death before process registration.
+Root/session cleanup does not prove escaped descendant exit. Installed full-tree
+custody uses its dedicated native execution's verified completion; source
+logical settlement explicitly remains best effort.
+Different-job successors need no global cleanup or app-stop admission gate.
+Source-only unresolved custody remains explicit; neither missing metadata nor
+session-zero is a recovery waiver. A scoped cleanup failure fences that worker's
+next claim and preserves its prior files. Existing approval, posting-availability
+and final-submit authorization remain mandatory.
+
+Source-only owner crash recovery acquires only that run's existing lifetime file
+and rechecks the canonical tenant/job/RunId under the writer. Batch candidate
+selection exposes running rows only to this cheap exact-owner gate; it stops at
+the next eligible candidate, preserving active peers. The recovery marker says
+tracked cleanup and full-tree verification were not established. Recorded submit
+intent remains protected even if a generic stage reset made the job pending.
+Missing/replaced lifetime metadata and known cleanup failure refuse recovery.

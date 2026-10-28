@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
@@ -26,6 +27,9 @@ import (
 
 const executionScopeVariable = "JOBCTRL_EXECUTION_SCOPE"
 const executionHelperArgument = "__scope-executor"
+const applyExecutionArgument = "__apply-execution"
+const applyWorkerArgument = "__apply-worker"
+const applyExecutionVariable = "JOBCTRL_APPLY_EXECUTION_SCOPE"
 const executionQASandboxVariable = "JOBCTRL_EXECUTION_QA_SANDBOX"
 const executionQASandboxSelector = "loopback-only-v1"
 
@@ -48,6 +52,7 @@ type executionScope struct {
 	RootPID       int       `json:"rootPid"`
 	RootIdentity  string    `json:"rootIdentity"`
 	CoalitionIDs  [2]uint64 `json:"coalitionIds"`
+	Purpose       string    `json:"purpose,omitempty"`
 }
 
 type executionHello struct {
@@ -64,8 +69,9 @@ type executionControl struct {
 }
 
 type executionResult struct {
-	Code   int  `json:"code"`
-	Failed bool `json:"failed"`
+	Code         int    `json:"code"`
+	Failed       bool   `json:"failed"`
+	CleanupError string `json:"cleanupError,omitempty"`
 }
 type ownedExecutionExitError struct{ code int }
 
@@ -148,6 +154,9 @@ func executionScopeDirectory(ctx launchContext, create bool) (string, error) {
 	return dir, nil
 }
 func validateExecutionScope(ctx launchContext, s executionScope) error {
+	if s.Purpose != "" && s.Purpose != "apply" {
+		return errors.New("invalid execution scope purpose")
+	}
 	if s.SchemaVersion != 1 || !executionIDValid(s.ID) || s.InstanceID != ctx.Instance.ID || s.StateDir != ctx.Instance.StateDir || s.RuntimeHome != ctx.Instance.RuntimeHome || s.RootPID <= 0 || s.RootIdentity == "" || len(s.RootIdentity) > 128 || s.CoalitionIDs[0] == 0 || s.CoalitionIDs[1] == 0 || s.JobLabel != "dev.jobctrl.exec."+ctx.Instance.ID+"."+s.ID {
 		return errors.New("invalid execution scope receipt")
 	}
@@ -222,7 +231,7 @@ func readOwnedExecutionScopes(ctx launchContext) ([]executionScope, error) {
 			return nil, statErr
 		}
 		stat, ok := info.Sys().(*syscall.Stat_t)
-		if !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || info.Size() > 16384 || !ok || int(stat.Uid) != os.Getuid() {
+		if !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || info.Size() > 16384 || !ok || int(stat.Uid) != os.Getuid() || stat.Nlink != 1 {
 			file.Close()
 			return nil, errors.New("unsafe execution receipt")
 		}
@@ -250,7 +259,7 @@ func readOwnedExecutionScopes(ctx launchContext) ([]executionScope, error) {
 // Receipt keys have one exact spelling. encoding/json alone accepts duplicate
 // fields and case-insensitive aliases, so check the object before struct decode.
 func decodeExecutionReceipt(raw []byte, scope *executionScope) error {
-	allowed := map[string]bool{"schemaVersion": true, "id": true, "instanceId": true, "stateDir": true, "runtimeHome": true, "bootSession": true, "jobLabel": true, "domain": true, "rootPid": true, "rootIdentity": true, "coalitionIds": true}
+	allowed := map[string]bool{"schemaVersion": true, "id": true, "instanceId": true, "stateDir": true, "runtimeHome": true, "bootSession": true, "jobLabel": true, "domain": true, "rootPid": true, "rootIdentity": true, "coalitionIds": true, "purpose": true}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	token, err := decoder.Token()
 	if err != nil || token != json.Delim('{') {
@@ -272,14 +281,23 @@ func decodeExecutionReceipt(raw []byte, scope *executionScope) error {
 	if token, err = decoder.Token(); err != nil || token != json.Delim('}') {
 		return errors.New("invalid execution receipt end")
 	}
-	if len(seen) != len(allowed) {
-		return errors.New("incomplete execution receipt")
+	for key := range allowed {
+		if key != "purpose" && !seen[key] {
+			return errors.New("incomplete execution receipt")
+		}
 	}
 	var extra any
 	if decoder.Decode(&extra) != io.EOF {
 		return errors.New("trailing execution receipt")
 	}
-	return json.Unmarshal(raw, scope)
+	*scope = executionScope{}
+	if err := json.Unmarshal(raw, scope); err != nil {
+		return err
+	}
+	if seen["purpose"] && scope.Purpose != "apply" {
+		return errors.New("invalid execution receipt purpose")
+	}
+	return nil
 }
 
 var executionProcessIDs = userProcessIDs
@@ -289,51 +307,28 @@ func executionMembers(ids [2]uint64) ([]ownedProcess, error) {
 	// An enumerated parent can fork and disappear before inspection, and a
 	// live exec can temporarily have no inspectable coalition. Neither case
 	// certifies zero: require another complete pass before reporting cleanup.
+	var previousEmpty map[int]executionProcessObservation
 	for attempt := 0; attempt < 32; attempt++ {
-		pids, err := executionProcessIDs()
+		observed, inventory, complete, err := executionProcessInventory(executionProcessIDs, executionProcessCoalitions)
 		if err != nil {
 			return nil, err
 		}
 		var members []ownedProcess
-		uncertain := false
-		for _, pid := range pids {
-			if pid == os.Getpid() {
-				continue
-			}
-			before, err := processBSDInfoIncludingZombies(pid)
-			if errors.Is(err, syscall.ESRCH) {
-				uncertain = true
-				continue
-			}
-			if err != nil {
-				return nil, err
-			}
-			if int(binary.LittleEndian.Uint32(before[20:])) != os.Getuid() || binary.LittleEndian.Uint32(before[4:]) == 5 {
-				continue
-			}
-			identity := processIdentityFromBSD(before)
-			memberIDs, coalitionErr := executionProcessCoalitions(pid)
-			after, err := processBSDInfoIncludingZombies(pid)
-			if errors.Is(err, syscall.ESRCH) {
-				uncertain = true
-				continue
-			}
-			if err != nil {
-				return nil, err
-			}
-			if binary.LittleEndian.Uint32(after[4:]) == 5 || processIdentityFromBSD(after) != identity || errors.Is(coalitionErr, syscall.ESRCH) {
-				uncertain = true
-				continue
-			}
-			if coalitionErr != nil {
-				return nil, coalitionErr
-			}
-			if memberIDs == ids {
-				members = append(members, ownedProcess{PID: pid, Identity: identity, CoalitionIDs: memberIDs})
+		for _, member := range observed {
+			if member.CoalitionIDs == ids {
+				members = append(members, member)
 			}
 		}
-		if len(members) > 0 || !uncertain {
+		if len(members) > 0 {
 			return members, nil
+		}
+		if complete {
+			if previousEmpty != nil && maps.Equal(previousEmpty, inventory) {
+				return members, nil
+			}
+			previousEmpty = inventory
+		} else {
+			previousEmpty = nil
 		}
 	}
 	return nil, errors.New("execution member census remained uncertain; cleanup could not verify zero")
@@ -617,22 +612,28 @@ func ownedExecutionHelper(args []string) (bool, error) {
 		}
 	}()
 	cleanup := func() error {
+		var cleanupErr error
 		if cancellation == nil {
-			return cleanupExecutionMembers(ids, child.Process.Pid, rootIdentity, command.Arguments)
+			cleanupErr = cleanupExecutionMembers(ids, child.Process.Pid, rootIdentity, command.Arguments)
+		} else {
+			// EOF or another control must not signal the root again or restart
+			// the clean-shutdown grace already admitted by the first cancellation.
+			remaining := time.Until(cancelAt)
+			if remaining < 0 {
+				remaining = 0
+			}
+			cleanupErr = cleanupExecutionAfterRootSignal(ids, child.Process.Pid, rootIdentity, remaining)
 		}
-		// EOF or another control must not signal the root again or restart
-		// the clean-shutdown grace already admitted by the first cancellation.
-		remaining := time.Until(cancelAt)
-		if remaining < 0 {
-			remaining = 0
+		if cleanupErr == nil && isApplyExecution(command.Arguments) {
+			return attestApplyHelperCompletion(command.Environment, ids)
 		}
-		return cleanupExecutionAfterRootSignal(ids, child.Process.Pid, rootIdentity, remaining)
+		return cleanupErr
 	}
 waiting:
 	for {
 		select {
 		case waitErr = <-waited:
-			if cancellation != nil {
+			if cancellation != nil || isApplyExecution(command.Arguments) {
 				if err := cleanupExecutionLeftovers(ids); err != nil {
 					return true, errors.Join(errors.New("could not clean cancelled execution"), err)
 				}
@@ -670,6 +671,15 @@ waiting:
 			// remain durable even if inspection or bounded cleanup fails.
 			cleanupErr := cleanup()
 			return true, errors.Join(errors.New("execution controller disconnected"), cleanupErr)
+		}
+	}
+	if isApplyExecution(command.Arguments) {
+		// Completion must survive controller death after this result is sent.
+		// The drained native helper is the sole remaining trusted member and
+		// returns without spawning further work after publishing its proof.
+		if err := attestApplyHelperCompletion(command.Environment, ids); err != nil {
+			_ = json.NewEncoder(connection).Encode(executionResult{Code: 1, CleanupError: err.Error()})
+			return true, errors.Join(errors.New("could not attest completed Apply execution"), err)
 		}
 	}
 	result := executionResult{}
@@ -875,7 +885,10 @@ func runInOwnedExecution(ctx launchContext, args []string, stdout, stderr io.Wri
 	if err = verifyOwnedExecutionExecutable(ctx, executable); err != nil {
 		return err
 	}
-	scope := executionScope{1, id, ctx.Instance.ID, ctx.Instance.StateDir, ctx.Instance.RuntimeHome, boot, label, domain, hello.PID, identity, ids}
+	scope := executionScope{SchemaVersion: 1, ID: id, InstanceID: ctx.Instance.ID, StateDir: ctx.Instance.StateDir, RuntimeHome: ctx.Instance.RuntimeHome, BootSession: boot, JobLabel: label, Domain: domain, RootPID: hello.PID, RootIdentity: identity, CoalitionIDs: ids}
+	if isApplyExecution(args) {
+		scope.Purpose = "apply"
+	}
 	if err = validateExecutionScope(ctx, scope); err != nil {
 		return err
 	}
@@ -896,12 +909,15 @@ func runInOwnedExecution(ctx launchContext, args []string, stdout, stderr io.Wri
 	}
 	defer closeErr()
 	environment := make([]string, 0, len(ctx.Environment)+1)
-	for _, value := range ctx.Environment {
-		if !strings.HasPrefix(value, executionScopeVariable+"=") {
+	for _, value := range ownedProcessEnvironment(ctx) {
+		if !strings.HasPrefix(value, executionScopeVariable+"=") && !strings.HasPrefix(value, applyExecutionVariable+"=") {
 			environment = append(environment, value)
 		}
 	}
 	environment = append(environment, executionScopeVariable+"="+id)
+	if isApplyExecution(args) {
+		environment = append(environment, applyExecutionVariable+"="+id)
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -943,8 +959,16 @@ func runInOwnedExecution(ctx launchContext, args []string, stdout, stderr io.Wri
 	if result.Failed {
 		return errors.New("authorized command could not start")
 	}
+	if result.CleanupError != "" {
+		return fmt.Errorf("Apply execution cleanup incomplete: %s", result.CleanupError)
+	}
 	if result.Code < 0 || result.Code > 255 {
 		return errors.New("invalid execution result")
+	}
+	if isApplyExecution(args) {
+		if err := completeApplyExecution(ctx, scope); err != nil {
+			return fmt.Errorf("verify Apply execution completion: %w", err)
+		}
 	}
 	if result.Code != 0 {
 		return ownedExecutionExitError{result.Code}
@@ -960,6 +984,10 @@ func retireOwnedExecutionScopes(ctx launchContext) error {
 	if err != nil || len(scopes) == 0 {
 		return err
 	}
+	return retireExecutionScopes(ctx, scopes, true)
+}
+
+func retireExecutionScopes(ctx launchContext, scopes []executionScope, entireInstance bool) error {
 	dir, err := executionScopeDirectory(ctx, false)
 	if err != nil {
 		return err
@@ -992,6 +1020,38 @@ func retireOwnedExecutionScopes(ctx launchContext) error {
 		}
 		snapshots = append(snapshots, snapshot{scope, raw, info})
 	}
+	boot, err := executionBootSession()
+	if err != nil {
+		return err
+	}
+	completions := make([]executionCompletion, 0, len(snapshots))
+	// Callers hold the lifecycle control lock after a complete zero census
+	// covering every selected scope. Unselected scopes may remain live for a
+	// completed Apply activity. Preflight all proofs before publishing any.
+	for _, snapshot := range snapshots {
+		completion := executionCompletionForReceipt(snapshot.scope, snapshot.raw, boot)
+		previous, err := readExecutionCompletion(ctx, snapshot.scope.ID)
+		if errors.Is(err, os.ErrNotExist) {
+			completions = append(completions, completion)
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if previous.Scope != snapshot.scope || previous.ReceiptSHA256 != completion.ReceiptSHA256 {
+			return errors.New("execution completion does not match its retired receipt")
+		}
+	}
+	for _, completion := range completions {
+		if err := publishExecutionCompletion(ctx, completion); err != nil {
+			return fmt.Errorf("persist verified execution completion: %w", err)
+		}
+	}
+	if stopCompletionCheckpoint != nil {
+		if err := stopCompletionCheckpoint("execution-completions-durable"); err != nil {
+			return err
+		}
+	}
 	// Complete every fallible launchd operation before deleting any receipt.
 	for _, snapshot := range snapshots {
 		if err := bootoutOwnedExecution(snapshot.scope.Domain, snapshot.scope.JobLabel); err != nil {
@@ -1002,7 +1062,7 @@ func retireOwnedExecutionScopes(ctx launchContext) error {
 	if err != nil {
 		return err
 	}
-	if len(current) != len(snapshots) {
+	if entireInstance && len(current) != len(snapshots) {
 		return errors.New("execution receipt set changed during retirement")
 	}
 	for _, snapshot := range snapshots {

@@ -12,6 +12,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from .apply_execution_fixture import in_process_apply_execution as in_process_apply_execution
+
 import pytest
 from temporalio import activity
 from temporalio.client import WorkflowFailureError

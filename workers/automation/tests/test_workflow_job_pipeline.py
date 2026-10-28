@@ -16,6 +16,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from .apply_execution_fixture import in_process_apply_execution as in_process_apply_execution
+
 import pytest
 from temporalio import activity, workflow
 from temporalio.client import WorkflowFailureError
@@ -766,7 +768,14 @@ async def test_pipeline_workflow_runs_apply_as_child_workflow():
 
     assert result.stages_completed == ["apply"]
     assert result.stages_failed == []
-    assert apply_mock.call_args.kwargs == {
+    from jobctrl.apply.ownership import ApplyLauncherRun
+
+    launcher_kwargs = dict(apply_mock.call_args.kwargs)
+    launcher_run = launcher_kwargs.pop("launcher_run")
+    assert isinstance(launcher_run, ApplyLauncherRun)
+    assert not launcher_run.stop_event.is_set()
+    assert launcher_run.worker_ids == ()  # the mocked launcher has not admitted resources
+    assert launcher_kwargs == {
         "limit": 2,
         "target_job_id": None,
         "tenant_id": "local",

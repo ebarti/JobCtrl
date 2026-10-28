@@ -48,6 +48,25 @@ def conn(tmp_path: Path) -> sqlite3.Connection:
     return init_db(tmp_path / "jobctrl.db")
 
 
+def _record_apply_owner(
+    conn: sqlite3.Connection,
+    tenant_id: str,
+    job_id: str,
+    run_id: str,
+    *,
+    event_type: str = "ApplyRunStarted",
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO job_events (
+            tenant_id, job_id, identity_version, stage, event_type,
+            occurred_at, payload_json
+        ) VALUES (?, ?, 1, 'apply', ?, ?, ?)
+        """,
+        (tenant_id, job_id, event_type, TIMESTAMP, json.dumps({"run_id": run_id})),
+    )
+
+
 def _insert_ready_job(
     conn: sqlite3.Connection,
     tenant_id: str,
@@ -480,8 +499,13 @@ def test_targeted_apply_lifecycle_preserves_other_tenant_job_id(
 
     monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: conn)
     monkeypatch.setattr("jobctrl.apply.launcher._build_use_case", _UseCase)
-    monkeypatch.setattr("jobctrl.apply.launcher.reset_worker_dir", lambda _worker_id: tmp_path)
-    monkeypatch.setattr("jobctrl.apply.launcher.add_event", lambda _message: None)
+    worker_root = tmp_path / "owned-apply-workers"
+    worker_dir = worker_root / "worker-0"
+    worker_dir.mkdir(parents=True)
+    accepted_file = worker_dir / "accepted.txt"
+    accepted_file.write_text("accepted artifact")
+    monkeypatch.setattr("jobctrl.apply.launcher.config.APPLY_WORKER_DIR", worker_root)
+    monkeypatch.setattr("jobctrl.apply.launcher.add_event", lambda _message, **_kwargs: None)
     monkeypatch.setattr("jobctrl.apply.launcher.update_state", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         "jobctrl.browser_capabilities.require_system_browser_capability",
@@ -498,6 +522,8 @@ def test_targeted_apply_lifecycle_preserves_other_tenant_job_id(
     assert captured["tenant_id"] == TenantId(OTHER_TENANT)
     assert captured["job"]["tenant_id"] == OTHER_TENANT
     assert captured["job"]["job_id"] == OTHER_JOB_ID
+    assert captured["worker_dir"] == str(worker_dir)
+    assert accepted_file.read_text() == "accepted artifact"
 
     rows = conn.execute(
         """
@@ -508,6 +534,7 @@ def test_targeted_apply_lifecycle_preserves_other_tenant_job_id(
         """
     ).fetchall()
     assert [tuple(row) for row in rows] == [
+        (OTHER_TENANT, OTHER_JOB_ID, "ApplyClaimAcquired"),
         (OTHER_TENANT, OTHER_JOB_ID, "ApplyRunStarted"),
         (OTHER_TENANT, OTHER_JOB_ID, "LockReleased"),
     ]
@@ -532,6 +559,9 @@ def test_apply_result_release_and_manual_mark_write_exact_v7_identity(
             """,
             (tenant_id, job_id, TIMESTAMP),
         )
+    # Existing v7 running attempts establish authority through their legacy start.
+    _record_apply_owner(conn, LOCAL_TENANT, LOCAL_JOB_ID, "local-result-run")
+    _record_apply_owner(conn, OTHER_TENANT, OTHER_JOB_ID, "other-result-run")
     conn.commit()
     monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: conn)
     monkeypatch.setattr("jobctrl.apply.launcher.config.LOG_DIR", tmp_path)
@@ -851,6 +881,7 @@ def test_matching_terminal_event_reconciles_running_state_without_duplication(
         """,
         (LOCAL_TENANT, LOCAL_JOB_ID, TIMESTAMP),
     )
+    _record_apply_owner(conn, LOCAL_TENANT, LOCAL_JOB_ID, "dry-run-reconcile")
     conn.execute(
         """
         INSERT INTO job_events (
@@ -909,6 +940,70 @@ def test_matching_terminal_event_reconciles_running_state_without_duplication(
         ).fetchone()[0]
         == 1
     )
+
+
+@pytest.mark.parametrize("authority", ["missing", "legacy_successor", "canonical_successor"])
+def test_terminal_receipt_cannot_authorize_missing_or_stale_apply_owner(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    authority: str,
+) -> None:
+    for tenant_id, job_id in (
+        (LOCAL_TENANT, LOCAL_JOB_ID),
+        (OTHER_TENANT, OTHER_JOB_ID),
+    ):
+        _insert_ready_job(conn, tenant_id, job_id)
+        conn.execute(
+            """
+            INSERT INTO job_stage_states (
+                tenant_id, job_id, stage, state, attempt_count, updated_at
+            ) VALUES (?, ?, 'apply', 'running', 1, ?)
+            """,
+            (tenant_id, job_id, TIMESTAMP),
+        )
+    _record_apply_owner(conn, OTHER_TENANT, OTHER_JOB_ID, "active-peer")
+    if authority != "missing":
+        _record_apply_owner(conn, LOCAL_TENANT, LOCAL_JOB_ID, "old-run")
+        _record_apply_owner(
+            conn,
+            LOCAL_TENANT,
+            LOCAL_JOB_ID,
+            "successor-run",
+            event_type=(
+                "ApplyClaimAcquired" if authority == "canonical_successor" else "ApplyRunStarted"
+            ),
+        )
+    conn.execute(
+        """
+        INSERT INTO job_events (
+            tenant_id, job_id, identity_version, stage, event_type,
+            occurred_at, payload_json
+        ) VALUES (?, ?, 1, 'apply', 'DryRunCompleted', ?, ?)
+        """,
+        (
+            LOCAL_TENANT,
+            LOCAL_JOB_ID,
+            TIMESTAMP,
+            json.dumps({"run_id": "old-run", "result": "dry_run_complete", "dry_run": True}),
+        ),
+    )
+    conn.commit()
+    before = {
+        table: [tuple(row) for row in conn.execute(f"SELECT * FROM {table} ORDER BY rowid")]
+        for table in ("job_events", "job_stage_states", "job_artifacts")
+    }
+    monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: conn)
+    monkeypatch.setattr("jobctrl.apply.launcher.config.LOG_DIR", tmp_path / "apply-logs")
+    run_ctx = {"run_id": "old-run", "tenant_id": LOCAL_TENANT}
+
+    mark_result(JobId(LOCAL_JOB_ID), "dry_run", run_ctx=run_ctx, tenant_id=TenantId(LOCAL_TENANT))
+    mark_result(JobId(LOCAL_JOB_ID), "applied", run_ctx=run_ctx, tenant_id=TenantId(LOCAL_TENANT))
+    release_lock(JobId(LOCAL_JOB_ID), run_ctx=run_ctx, tenant_id=TenantId(LOCAL_TENANT))
+
+    for table, rows in before.items():
+        assert [tuple(row) for row in conn.execute(f"SELECT * FROM {table} ORDER BY rowid")] == rows
+    assert not (tmp_path / "apply-logs").exists()
 
 
 def _record_submitted_application(

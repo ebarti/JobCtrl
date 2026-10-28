@@ -62,6 +62,8 @@ class BrowserSession:
     worker_dir: str | None = None
     handle: Any | None = None
     dry_run_evidence: Callable[[], Mapping[str, Any]] | None = None
+    # Exact browser-level WebSocket identity from the owned profile receipt.
+    browser_ws_url: str = ""
 
     @property
     def cdp_port(self) -> int:

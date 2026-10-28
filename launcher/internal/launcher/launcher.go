@@ -357,6 +357,28 @@ func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Write
 			return fmt.Errorf("read release transition journal: %w", journalErr)
 		}
 	}
+	if len(args) > 0 && args[0] == applyExecutionArgument {
+		if len(args) != 1 {
+			return errors.New("invalid private Apply execution arguments")
+		}
+		// Each activity receives its own existing OS execution boundary, even
+		// when invoked by a worker in the long-lived supervisor's scope.
+		return ownedExecutionRunner(ctx, []string{applyWorkerArgument}, stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == applyWorkerArgument {
+		if len(args) != 1 {
+			return errors.New("invalid private Apply worker arguments")
+		}
+		values := environmentMap(ctx.Environment)
+		if values[applyExecutionVariable] == "" || values[applyExecutionVariable] != values[executionScopeVariable] {
+			return errors.New("Apply worker requires its dedicated native execution")
+		}
+		owned, err := authenticatedApplyExecution(ctx)
+		if err != nil || !owned {
+			return errors.Join(errors.New("Apply worker requires an authenticated native execution"), err)
+		}
+		return dispatchApplyWorker(ctx)
+	}
 	if commandRequiresOwnedExecution(args) {
 		owned, err := authenticatedOwnedExecution(ctx)
 		if err != nil {
@@ -2737,4 +2759,17 @@ func dispatchPython(ctx launchContext, args []string) error {
 	}
 	defer restore()
 	return syscall.Exec(python, argv, ownedProcessEnvironment(ctx))
+}
+
+func dispatchApplyWorker(ctx launchContext) error {
+	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return err
+	}
+	python := filepath.Join(ctx.PayloadRoot, "python", "bin", "python3")
+	restore, err := ctx.selection.InheritOnExec()
+	if err != nil {
+		return fmt.Errorf("retain release selection lock for Apply worker: %w", err)
+	}
+	defer restore()
+	return syscall.Exec(python, []string{python, "-I", "-B", "-m", "jobctrl.apply.execution"}, ownedProcessEnvironment(ctx))
 }

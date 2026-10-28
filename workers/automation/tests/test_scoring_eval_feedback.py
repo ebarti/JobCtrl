@@ -34,8 +34,10 @@ def _connection() -> sqlite3.Connection:
           event_id INTEGER PRIMARY KEY AUTOINCREMENT,
           tenant_id TEXT NOT NULL,
           job_id TEXT,
+          stage TEXT,
           event_type TEXT NOT NULL,
-          message TEXT
+          message TEXT,
+          payload_json TEXT
         );
         """
     )

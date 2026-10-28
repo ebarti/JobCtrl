@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import os
+from pathlib import Path
 import socket
 import subprocess
 import sys
@@ -16,8 +18,56 @@ from jobctrl.apply import chrome
 def isolate_browser_registry(monkeypatch):
     monkeypatch.setattr(chrome, "_chrome_procs", {})
     monkeypatch.setattr(chrome, "_chrome_identities", {})
+    monkeypatch.setattr(chrome, "_chrome_endpoints", {})
     monkeypatch.setattr(chrome, "_launching_workers", set())
     monkeypatch.setattr(chrome, "_launching_ports", set())
+
+
+def _publish_synthetic_endpoint(command):
+    profile = Path(next(arg.split("=", 1)[1] for arg in command if arg.startswith("--user-data-dir=")))
+    port = free_port()
+    (profile / "DevToolsActivePort").write_text(f"{port}\n/devtools/browser/{port}")
+
+
+_SESSION_LISTENER_CODE = """
+import fcntl,os,select,socket,sys,time
+from pathlib import Path
+owner_fd=int(sys.argv[1])
+port_file=Path(sys.argv[2])
+listener=None
+try:
+    assert fcntl.fcntl(owner_fd,fcntl.F_GETFL)&os.O_ACCMODE==os.O_RDONLY
+    if sys.argv[3]=='1': os.setpgid(0,0)
+    # The optional gate lets the death test stop its owner before publication.
+    if len(sys.argv)>4:
+        while not Path(sys.argv[4]).exists():
+            if select.select([owner_fd],[],[],0.01)[0]: sys.exit(0)
+    listener=socket.socket()
+    listener.bind(('127.0.0.1',0))
+    listener.listen()
+    port_file.write_text(str(listener.getsockname()[1]))
+    ready,_,_=select.select([owner_fd,listener],[],[])
+    if listener in ready and owner_fd not in ready:
+        with listener.accept()[0] as client:
+            client.settimeout(1)
+            assert client.recv(16)==b'exit'
+finally:
+    if listener is not None: listener.close()
+    os.close(owner_fd)
+    Path(str(port_file)+'.exited').write_text('exited')
+"""
+
+
+@contextmanager
+def _session_listener_lifetime():
+    # Only pytest holds the writer. Neither the intermediate root nor its
+    # listener inherits it, so even abrupt pytest death makes the reader ready.
+    reader, writer = os.pipe()
+    try:
+        yield reader
+    finally:
+        os.close(writer)
+        os.close(reader)
 
 
 class _OwnedChildren(list):
@@ -32,16 +82,18 @@ def browser_seam(tmp_path, monkeypatch):
     children.popen = popen
     monkeypatch.setattr(chrome.config, "CHROME_WORKER_DIR", tmp_path / "profiles")
     monkeypatch.setattr(chrome, "require_system_browser_capability", lambda _: sys.executable)
-    monkeypatch.setattr(chrome, "_wait_for_browser_cdp_endpoint", lambda *_: None)
+    monkeypatch.setattr(chrome, "_wait_for_browser_cdp_endpoint", lambda *_, **__: None)
     monkeypatch.setattr(chrome, "install_public_destination_cdp_guard", lambda *_, **__: None)
     monkeypatch.setattr(chrome, "install_dry_run_cdp_guard", lambda *_, **__: None)
 
     def spawn(_command, **kwargs):
         process = popen([sys.executable, "-c", "import time; time.sleep(120)"], **kwargs)
         children.append(process)
+        _publish_synthetic_endpoint(_command)
         return process
 
     monkeypatch.setattr(chrome.subprocess, "Popen", spawn)
+    monkeypatch.setattr(chrome, "_cdp_json", lambda port, _: {"webSocketDebuggerUrl": f"ws://127.0.0.1:{port}/devtools/browser/{port}"})
     yield children
     # Own every cleanup target independently of the production registry.
     for process in children:
@@ -152,7 +204,7 @@ def test_verified_browser_cleanup_preserves_other_browser_and_control(browser_se
 def test_launch_failure_and_cancellation_clean_exact_browser(browser_seam, monkeypatch, failure):
     control = launch(21)
 
-    def fail(*_):
+    def fail(*_, **__):
         raise failure
 
     monkeypatch.setattr(chrome, "_wait_for_browser_cdp_endpoint", fail)
@@ -290,9 +342,11 @@ def test_owned_session_descendants_exit_while_unrelated_group_survives(browser_s
     def spawn(_command, **kwargs):
         process = real_popen([sys.executable, "-c", parent_code], **kwargs)
         browser_seam.append(process)
+        _publish_synthetic_endpoint(_command)
         return process
 
     monkeypatch.setattr(chrome.subprocess, "Popen", spawn)
+    monkeypatch.setattr(chrome, "_cdp_json", lambda port, _: {"webSocketDebuggerUrl": f"ws://127.0.0.1:{port}/devtools/browser/{port}"})
     process = launch(91)
     deadline = time.monotonic() + 5
     while not port_file.exists() and time.monotonic() < deadline:
@@ -395,48 +449,48 @@ def test_live_session_child_blocks_cleanup_after_root_exit_then_retry_settles(
     control = launch(201)
     selected_peer = launch(203)
     port_file = tmp_path / "surviving-child-port"
-    child_code = (
-        "import os,socket; from pathlib import Path; "
-        + ("os.setpgid(0,0); " if separate_group else "")
-        + "s=socket.socket(); s.bind(('127.0.0.1',0)); s.listen(); "
-        + f"Path({str(port_file)!r}).write_text(str(s.getsockname()[1])); "
-        + "c,_=s.accept(); assert c.recv(16)==b'exit'; c.close(); s.close()"
-    )
-    parent_code = (
-        "import subprocess,sys,time; from pathlib import Path; "
-        f"subprocess.Popen([sys.executable,'-c',{child_code!r}]); "
-        f"p=Path({str(port_file)!r}); "
-        "\nwhile not p.exists(): time.sleep(0.01)\n"
-        + ("time.sleep(120)\n" if not root_reaped else "")
-    )
+    release_root = tmp_path / "release-root"
+    with _session_listener_lifetime() as owner_fd:
+        parent_code = (
+            "import select,subprocess,sys; from pathlib import Path; "
+            f"subprocess.Popen([sys.executable,'-c',{_SESSION_LISTENER_CODE!r},"
+            f"str({owner_fd}),{str(port_file)!r},{str(int(separate_group))!r}],pass_fds=({owner_fd},)); "
+            f"p=Path({str(port_file)!r}); "
+            f"ended=lambda: bool(select.select([{owner_fd}],[],[],0.01)[0]); "
+            "\nwhile not p.exists() and not ended(): pass\n"
+            + ("while not ended(): pass\n" if not root_reaped else
+               f"p=Path({str(release_root)!r})\nwhile not p.exists() and not ended(): pass\n")
+        )
 
-    def spawn(_command, **kwargs):
-        process = browser_seam.popen([sys.executable, "-c", parent_code], **kwargs)
-        browser_seam.append(process)
-        return process
+        def spawn(_command, **kwargs):
+            process = browser_seam.popen(
+                [sys.executable, "-c", parent_code], pass_fds=(owner_fd,), **kwargs)
+            browser_seam.append(process)
+            _publish_synthetic_endpoint(_command)
+            return process
 
-    monkeypatch.setattr(chrome.subprocess, "Popen", spawn)
-    root = launch(202)
-    deadline = time.monotonic() + 5
-    while not port_file.exists() and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert port_file.exists(), "owned surviving child did not start"
-    if root_reaped:
-        assert root.wait(timeout=5) == 0
-    else:
-        assert root.poll() is None
-    port = int(port_file.read_text())
-    signals = []
-    actual_killpg = os.killpg
+        monkeypatch.setattr(chrome.subprocess, "Popen", spawn)
+        monkeypatch.setattr(chrome, "_cdp_json", lambda port, _: {"webSocketDebuggerUrl": f"ws://127.0.0.1:{port}/devtools/browser/{port}"})
+        root = launch(202)
+        deadline = time.monotonic() + 5
+        while not port_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert port_file.exists(), "owned surviving child did not start"
+        if root_reaped:
+            release_root.touch()
+            assert root.wait(timeout=5) == 0
+        else:
+            assert root.poll() is None
+        port = int(port_file.read_text())
+        signals = []
+        actual_killpg = os.killpg
 
-    def signal_group(pid, sig):
-        signals.append((pid, sig))
-        actual_killpg(pid, sig)
+        def signal_group(pid, sig):
+            signals.append((pid, sig))
+            actual_killpg(pid, sig)
 
-    monkeypatch.setattr(os, "killpg", signal_group)
-    expected_signals = ([(root.pid, 9)] if not root_reaped else []) + [(selected_peer.pid, 9)]
-    exited_child = False
-    try:
+        monkeypatch.setattr(os, "killpg", signal_group)
+        expected_signals = ([(root.pid, 9)] if not root_reaped else []) + [(selected_peer.pid, 9)]
         with pytest.raises(chrome.BrowserCapabilityError, match=r"workers \[202\]"):
             chrome.cleanup_workers([202, 203])
         assert chrome._chrome_procs[202] is root
@@ -449,16 +503,92 @@ def test_live_session_child_blocks_cleanup_after_root_exit_then_retry_settles(
         # Request its own controlled exit; do not signal an unanchored old PID.
         with socket.create_connection(("127.0.0.1", port), timeout=3) as client:
             client.sendall(b"exit")
-        exited_child = True
         chrome.cleanup_workers([202])
         assert 202 not in chrome._chrome_procs
         assert 202 not in chrome._chrome_identities
         assert signals == expected_signals
         assert control.poll() is None
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX inherited lifetime descriptor")
+def test_session_listener_exits_on_failure_before_cleanup_body(browser_seam, tmp_path, monkeypatch):
+    import time
+    from jobctrl.infrastructure.process_ownership import verify_session_exit
+
+    publish = _publish_synthetic_endpoint
+
+    def fail_after_spawn(command):
+        profile = next(arg for arg in command if arg.startswith("--user-data-dir="))
+        if "/worker-202-" in profile:
+            raise RuntimeError("controlled failure before launch returns")
+        publish(command)
+
+    monkeypatch.setattr(sys.modules[__name__], "_publish_synthetic_endpoint", fail_after_spawn)
+    with pytest.raises(RuntimeError, match="controlled failure before launch returns"):
+        test_live_session_child_blocks_cleanup_after_root_exit_then_retry_settles(
+            browser_seam, tmp_path, monkeypatch, root_reaped=True, separate_group=True,
+        )
+    root = browser_seam[-1]
+    assert root.wait(timeout=5) == 0  # EOF also releases the intermediate root.
+    exited = tmp_path / "surviving-child-port.exited"
+    deadline = time.monotonic() + 5
+    while not exited.exists() and time.monotonic() < deadline:
+        time.sleep(.01)
+    assert exited.read_text() == "exited"
+    verify_session_exit(root.pid)
+    assert all(control.poll() is None for control in browser_seam[:-1])
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX inherited lifetime descriptor")
+@pytest.mark.parametrize("published", [False, True])
+def test_session_listener_exits_on_owner_death_without_finally(browser_seam, tmp_path, monkeypatch, published):
+    import time
+    from jobctrl.infrastructure.process_ownership import verify_session_exit
+
+    port_file = tmp_path / "owner-death-port"
+    # A never-released gate makes the pre-publication death case deterministic.
+    gate_args = [] if published else [str(tmp_path / "never-publish")]
+    owner_code = (
+        "import os,subprocess,sys; reader,writer=os.pipe(); "
+        f"subprocess.Popen([sys.executable,'-c',{_SESSION_LISTENER_CODE!r},str(reader),"
+        f"{str(port_file)!r},'1']+{gate_args!r},pass_fds=(reader,)); "
+        "os.close(reader); print('spawned',flush=True); "
+        "assert sys.stdin.buffer.read(1)==b'x'; os._exit(23)"
+    )
+    owner = browser_seam.popen(
+        [sys.executable, "-c", owner_code], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, start_new_session=True,
+    )
+    browser_seam.append(owner)
+    try:
+        assert owner.stdout.readline() == b"spawned\n"
+        deadline = time.monotonic() + 5
+        while published and not port_file.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert port_file.exists() is published
+        # Hard exit skips every Python finalizer. Only kernel descriptor closure
+        # releases this independently grouped child; no PID/group signal is used.
+        with monkeypatch.context() as no_signals:
+            no_signals.setattr(os, "kill", lambda *_: pytest.fail("no PID signal authority"))
+            no_signals.setattr(os, "killpg", lambda *_: pytest.fail("no group signal authority"))
+            owner.stdin.write(b"x")
+            owner.stdin.flush()
+            assert owner.wait(timeout=5) == 23
+            exited = Path(str(port_file) + ".exited")
+            deadline = time.monotonic() + 5
+            while not exited.exists() and time.monotonic() < deadline:
+                time.sleep(.01)
+            assert exited.read_text() == "exited"
+            verify_session_exit(owner.pid)
+        if published:
+            with socket.socket() as probe:
+                assert probe.connect_ex(("127.0.0.1", int(port_file.read_text()))) != 0
+        else:
+            assert not port_file.exists()
     finally:
-        if not exited_child:
-            with socket.create_connection(("127.0.0.1", port), timeout=3) as client:
-                client.sendall(b"exit")
+        owner.stdin.close()
+        owner.stdout.close()
+        owner.stderr.close()
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX session completion")

@@ -583,3 +583,77 @@ recorded-run settlement without a preflight retry loop. Exercise the fail-closed
 cases in the [regression catalog](developer/qa/regression-catalog.md). Worker-wide
 scheduler changes also require the full worker suite and a restarted runtime
 using the tested candidate.
+
+
+## Apply Launcher Ownership
+
+Run locked `pytest tests/test_apply_launcher_ownership.py tests/test_apply_crash_custody.py tests/test_apply_dashboard_isolation.py`
+with Apply batch, launcher, saga, approval/submit-intent and agent-adapter suites,
+including `tests/test_apply_execution.py`.
+Use real Temporal and owned synthetic HOME, workspace and SQLite state; control
+only browser/agent/external ports. Admit two distinct-job activities together,
+then complete, fail, cancel and abandon one while its peer retains its event,
+process, accepted files, canonical owner and result. Replay every history.
+
+Reuse dashboard worker numbers and exercise multiple internal workers advancing
+concurrently: each allocation must return its own fresh identity/port pair.
+A prior attempt's namespace is never reset. Scope reset, totals, rendering and
+events to exact resource IDs, including the empty selection; event floods and
+startup cannot evict a peer's history. Cleanup failure must fence the next claim,
+preserve the real listener/registry/files and settle other selected workers.
+
+For installed native mode, kill a real owner before spawn, between spawn and
+local handle publication, after publication and after root exit. The selected
+old custody remains unknown without actual native authority; a different-job
+successor is admitted and preserves the old files/process. Administrative stage
+reset must not transfer the same job. Inject stale result, aggregate/artifact,
+lock-release and bus publications
+and prove none mutate a successor. A synchronous no-created-child spawn failure
+must abort its intent without permanently gating future unrelated work. Retained
+on-disk custody must not retain closed routing entries or reaped-root pipe FDs.
+
+Run native `TestNativeCompletionRecoversApplyCustodyAfterEscapedWriter` with the
+locked checkout Python. Authenticate the actual coalition/receipt, lose the
+Python owner, retain a TERM-ignoring setsid writer, refuse only selected old
+custody retirement and admit an unrelated peer. Real native stop must verify
+KILL/exit, persist exact completion and preserve another instance. A fresh native
+execution consumes that proof and retires only the selected journal. Assert final
+cleanup of both owned scopes. Include the `execution-completions-durable`
+interruption boundary, metadata refusal tests and full native race/vet checks.
+No fabricated ownership flag, guessed PID, missing-receipt waiver or reboot
+prerequisite stands in for observed authority. Use no real account/application.
+
+Qualify the fixed installed module through actual Temporal and an authenticated
+local native payload whose only controlled seams are browser/model/network and
+synthetic profile ports. Keep actual activity dispatch, fixed module, canonical
+claims, saga, per-Apply coalition, selected cleanup and native completion. Admit
+two distinct jobs together; complete/fail/cancel each while the peer retains its
+process, files, owner and accepted result; replay histories. Rehearse the same job
+again after actual per-run cleanup, preserving fresh IDs and directories. Spawn
+a TERM-ignoring setsid writer from the adopted executable’s readiness preflight
+to prove the scope begins before that probe. Cover success, command error,
+cancellation, controller death, interrupted completion publication/retirement and
+final cleanup of every owned scope. These observed native-authority requirements
+apply to installed mode. Qualify source-checkout Apply against the best-effort
+requirements below, without adding a mandatory native helper or compiler dependency.
+
+Filesystem and network isolation alone do not isolate macOS Keychain. Real
+Chromium QA must run on an isolated hosted runner/container unless Keychain
+access is demonstrably isolated. Never reset or alter the user's Keychain to
+make a test pass. Use synthetic CDP/WebSocket stubs for host ownership and stale
+endpoint tests; a temporary HOME/profile does not establish Keychain isolation.
+
+For source-checkout Apply, prove normally finished born-resource attempts can
+retry after their exact tracked children have exited, with fresh files and
+RunIds and `full_tree_verified: false`. Active owners, known cleanup failures and
+ambiguous submit intent must remain protected. This best-effort source behavior
+requires no native helper build, Go toolchain or Linux guardian.
+
+Source hard-crash QA uses real owned Python processes and a retained private
+control pipe for every deliberately surviving child. Confirm close-on-exec owner
+FD non-inheritance even with `close_fds=False`, actual owner exit, normal
+untargeted batch recovery, unchanged old files and stale-RunId write refusal.
+Stop the test child through its exact pipe and observe exit; never infer signal
+authority from an orphan numeric PID. Keep active/abandoned owner leases busy,
+refuse missing/linked/replaced lock files and persist known cleanup failure
+before release. A generic stage reset must not waive exact submit-intent ambiguity.

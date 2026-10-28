@@ -7,13 +7,15 @@ import uuid
 from datetime import timedelta
 from pathlib import Path
 
+from .apply_execution_fixture import in_process_apply_execution as in_process_apply_execution
+
 import pytest
 from temporalio import activity
 from temporalio import workflow
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from jobctrl import browser_capabilities
-from jobctrl.apply import launcher
+from jobctrl.apply import launcher, ownership
 from jobctrl.apply.activities import ApplyActivityInput, ApplyActivityOutput, apply_activity
 from jobctrl.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
 from jobctrl.domain.apply.value_objects import DryRunComplete, Failed
@@ -83,12 +85,12 @@ def apply_queue(monkeypatch):
     monkeypatch.setattr(launcher, "_load_profile_snapshot", lambda: object())
     monkeypatch.setattr(launcher, "recover_ambiguous_running_apply", lambda _console: 0)
     monkeypatch.setattr(launcher, "_record_apply_batch_metric", lambda **_kwargs: None)
-    monkeypatch.setattr(launcher, "kill_all_chrome", lambda: None)
-    monkeypatch.setattr(launcher, "init_worker", lambda _worker_id: None)
+    monkeypatch.setattr("jobctrl.apply.chrome.cleanup_workers", lambda _workers: None, raising=False)
+    monkeypatch.setattr(launcher, "init_worker", lambda _worker_id, **_kwargs: None)
     monkeypatch.setattr(launcher, "update_state", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(launcher, "add_event", lambda *_args: None)
-    monkeypatch.setattr(launcher, "render_full", lambda: "")
-    monkeypatch.setattr(launcher, "get_totals", lambda: {"cost": 0})
+    monkeypatch.setattr(launcher, "add_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(launcher, "render_full", lambda *_args: "")
+    monkeypatch.setattr(launcher, "get_totals", lambda *_args: {"cost": 0})
     monkeypatch.setattr(launcher, "Live", _NoLive)
     monkeypatch.setattr(launcher, "mark_result", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(launcher, "release_lock", lambda *_args, **_kwargs: None)
@@ -114,7 +116,8 @@ def test_finite_batch_claims_no_more_than_limit(apply_queue, limit, skipped):
     assert result == (0, 0)
     assert len(queue.claims) == limit
     assert queue.claims == queue.processed
-    assert all(worker < limit and approval for worker, _target, approval in queue.calls)
+    assert len({worker for worker, _target, _approval in queue.calls}) <= limit
+    assert all(approval for _worker, _target, approval in queue.calls)
     assert len(queue.jobs) == 6 - limit
 
 
@@ -124,7 +127,7 @@ def test_targeted_skipped_job_does_not_repeat_or_claim_another(apply_queue):
     launcher.main(limit=2, workers=3, target_job_id=target, dry_run=True, install_signal_handlers=False)
     assert queue.claims == [target]
     assert queue.processed == [target]
-    assert queue.calls == [(0, target, True)]
+    assert [(target_id, approval) for _worker, target_id, approval in queue.calls] == [(target, True)]
 
 
 def test_interrupted_claim_counts_toward_finite_limit(apply_queue, monkeypatch):
@@ -163,9 +166,10 @@ def test_finite_batch_reports_only_admitted_workers(apply_queue, monkeypatch):
 def test_explicit_continuous_workers_poll_until_stopped(apply_queue, monkeypatch):
     queue = apply_queue(count=0)
     # A controlled wait ends each standing worker without waiting on a clock.
-    monkeypatch.setattr(launcher._stop_event, "wait", lambda timeout: True)
-    launcher.main(limit=3, continuous=True, workers=2, dry_run=True, install_signal_handlers=False)
-    assert {worker for worker, _target, _approval in queue.calls} == {0, 1}
+    run = ownership.ApplyLauncherRun()
+    monkeypatch.setattr(run.stop_event, "wait", lambda timeout: True)
+    launcher.main(limit=3, continuous=True, workers=2, dry_run=True, install_signal_handlers=False, launcher_run=run)
+    assert len({worker for worker, _target, _approval in queue.calls}) == 2
     assert queue.claims == []
 
 
@@ -197,7 +201,9 @@ class _ContinuousActivityHarness:
 @pytest.mark.asyncio
 async def test_continuous_activity_explicitly_keeps_all_workers_polling(apply_queue, monkeypatch):
     queue = apply_queue(count=0)
-    monkeypatch.setattr(launcher._stop_event, "wait", lambda timeout: True)
+    run = ownership.ApplyLauncherRun()
+    monkeypatch.setattr(run.stop_event, "wait", lambda timeout: True)
+    monkeypatch.setattr(ownership, "ApplyLauncherRun", lambda: run)
     task_queue = f"apply-continuous-{uuid.uuid4()}"
     async with local_env() as env:
         async with Worker(env.client, task_queue=task_queue, workflows=[_ContinuousActivityHarness],
@@ -207,7 +213,7 @@ async def test_continuous_activity_explicitly_keeps_all_workers_polling(apply_qu
                 id=f"apply-continuous-{uuid.uuid4()}", task_queue=task_queue, execution_timeout=timedelta(seconds=30),
             )
     assert result.status == "ok"
-    assert {worker for worker, _target, _approval in queue.calls} == {0, 1}
+    assert len({worker for worker, _target, _approval in queue.calls}) == 2
 
 
 @pytest.mark.asyncio
@@ -234,6 +240,6 @@ async def test_workflow_activity_and_launcher_share_finite_limit(apply_queue, li
     assert all(approval for _worker, _target, approval in queue.calls)
     if targeted:
         assert queue.claims == [target]
-        assert queue.calls == [(0, target, True)]
+        assert [(target_id, approval) for _worker, target_id, approval in queue.calls] == [(target, True)]
     else:
         assert len(queue.jobs) == 6 - limit

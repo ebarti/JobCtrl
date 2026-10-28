@@ -168,7 +168,7 @@ class ApplySaga:
         *,
         apply_run: ApplyRun,
         browser_config: BrowserWorkerConfig,
-        prompt: ApplyPrompt,
+        prompt: ApplyPrompt | Callable[[BrowserSession], ApplyPrompt],
         model: str,
         material_version: str = "",
         materials_generation: int | str | None = None,
@@ -229,6 +229,7 @@ class ApplySaga:
             # 1. Launch browser
             try:
                 session = self._browser.launch(browser_config)
+                browser_config = session.config
                 browser_launched = True
                 run = run.record_event(
                     event_type="BrowserLaunched",
@@ -277,9 +278,10 @@ class ApplySaga:
 
             # 3. Drive the agent
             try:
+                resolved_prompt = prompt(session) if callable(prompt) else prompt
                 agent_invoked = True
                 agent_result: AgentResult = self._agent.submit_application(
-                    prompt=prompt,
+                    prompt=resolved_prompt,
                     browser=session,
                     model=model,
                     dry_run=browser_config.dry_run,

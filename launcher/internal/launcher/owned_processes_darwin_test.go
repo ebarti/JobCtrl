@@ -278,7 +278,7 @@ func init() {
 }
 
 func TestStopFinalizationRecoversAfterActualProcessInterruption(t *testing.T) {
-	for _, stage := range []string{"stopped-proof-durable", "execution-receipts-retired"} {
+	for _, stage := range []string{"stopped-proof-durable", "execution-completions-durable", "execution-receipts-retired"} {
 		t.Run(stage, func(t *testing.T) {
 			ctx := executionTestContext(t)
 			root := filepath.Dir(ctx.Instance.StatePath)
@@ -321,6 +321,9 @@ func TestStopFinalizationRecoversAfterActualProcessInterruption(t *testing.T) {
 			}
 			if rows, err := readOwnedExecutionScopes(ctx); err != nil || len(rows) != 0 {
 				t.Fatalf("receipts not retired: %v", err)
+			}
+			if completion, err := readExecutionCompletion(ctx, scopes[0].ID); err != nil || completion.Scope != scopes[0] {
+				t.Fatalf("interrupted stop lost its durable execution completion: %v", err)
 			}
 		})
 	}

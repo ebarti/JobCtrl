@@ -12,8 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any
-from urllib.parse import urlparse
-from urllib.request import urlopen
+from urllib.parse import quote, urlparse
 
 from jobctrl import __version__
 from jobctrl.infrastructure.captcha import (
@@ -845,17 +844,37 @@ def _url_origin(value: str) -> str:
 
 
 def _first_page_ws_url(cdp_endpoint: str) -> str:
+    """Select a page through the exact owned browser socket, never rediscovery.
+
+    HTTP /json/list can select a different browser after a port is recycled.
+    The browser UUID in this WebSocket path must first accept the connection;
+    target IDs returned on that socket cannot come from a replacement browser.
+    """
     parsed = urlparse(cdp_endpoint)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError("CDP endpoint is not configured")
-    with urlopen(f"{cdp_endpoint.rstrip('/')}/json/list", timeout=3) as response:
-        targets = json.loads(response.read().decode("utf-8"))
-    for target in targets:
-        if isinstance(target, dict) and target.get("type") == "page":
-            ws_url = str(target.get("webSocketDebuggerUrl") or "")
-            if ws_url:
-                return ws_url
-    raise RuntimeError("no page target is available for artifact upload")
+    if (parsed.scheme != "ws" or parsed.hostname != "127.0.0.1" or parsed.port is None
+            or not parsed.path.startswith("/devtools/browser/") or not parsed.path.removeprefix("/devtools/browser/")
+            or parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment):
+        raise ValueError("Apply tools require the exact verified loopback browser WebSocket identity")
+    try:
+        import websocket
+    except Exception as exc:
+        raise RuntimeError("websocket-client is required for apply tools") from exc
+    ws = websocket.create_connection(cdp_endpoint, timeout=5, suppress_origin=True)
+    try:
+        ws.send(json.dumps({"id": 1, "method": "Target.getTargets", "params": {}}))
+        while True:
+            message = json.loads(ws.recv())
+            if message.get("id") != 1:
+                continue
+            if "error" in message:
+                raise RuntimeError("verified browser refused target inspection")
+            for target in message.get("result", {}).get("targetInfos", []):
+                if isinstance(target, dict) and target.get("type") == "page" and target.get("targetId"):
+                    target_id = quote(str(target["targetId"]), safe="")
+                    return f"ws://127.0.0.1:{parsed.port}/devtools/page/{target_id}"
+            raise RuntimeError("no page target is available in the verified browser")
+    finally:
+        ws.close()
 
 
 def _error(request_id: Any, code: int, message: str) -> dict[str, Any]:
