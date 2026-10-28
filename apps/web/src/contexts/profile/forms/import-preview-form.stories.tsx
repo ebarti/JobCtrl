@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useEffect } from "react";
 
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useProfileImportStore } from "../stores/profile-import-store.js";
 import { ImportPreviewForm } from "./import-preview-form.js";
 
@@ -25,18 +26,35 @@ function StoreSeed({
   importProfile: boolean;
   importStyle: boolean;
 }) {
+  const { storage } = usePorts();
   const setUpload = useProfileImportStore((state) => state.setUpload);
   const setOptions = useProfileImportStore((state) => state.setOptions);
   const reset = useProfileImportStore((state) => state.reset);
   useEffect(() => {
-    if (filename) {
-      setUpload(filename, "JVBERi0xLjQK");
-      setOptions(importProfile, importStyle);
-    } else {
-      reset();
-    }
-    return () => reset();
-  }, [filename, importProfile, importStyle, setUpload, setOptions, reset]);
+    let active = true;
+    void (async () => {
+      await useProfileImportStore.getState().hydrate(storage);
+      if (!active) return;
+      if (filename) {
+        if (
+          (await setUpload(filename, "JVBERi0xLjQK", storage, () => active)) &&
+          active
+        )
+          await setOptions(importProfile, importStyle, storage);
+      } else await reset(storage, () => active);
+    })();
+    return () => {
+      active = false;
+    };
+  }, [
+    filename,
+    importProfile,
+    importStyle,
+    setUpload,
+    setOptions,
+    reset,
+    storage,
+  ]);
   return null;
 }
 
