@@ -774,6 +774,22 @@ while True:
 
         monkeypatch.setattr(Path, "iterdir", scoped_iterdir)
         monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    # Allow both deliberate handoffs to occur before the verifier's short
+    # deadline can expire. Bound the pause using the real clock so a broken
+    # handoff still terminates the test.
+    clock_started = time.monotonic()
+
+    class HandoffClock:
+        @staticmethod
+        def monotonic():
+            now = time.monotonic()
+            if len(relays) < 2 and now - clock_started < 5:
+                return clock_started
+            return now
+
+        sleep = staticmethod(time.sleep)
+
+    monkeypatch.setattr(process_ownership, "time", HandoffClock)
     monkeypatch.setattr(process_ownership, "_SESSION_EXIT_TIMEOUT_SECONDS", 0.2)
     monkeypatch.setattr(os, "killpg", lambda *_: pytest.fail("reaped relay root cannot signal"))
     try:
