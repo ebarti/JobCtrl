@@ -114,6 +114,9 @@ jobs:
           chmod 700 "$executable_dir/temporal"
           "$executable_dir/temporal" --version
           echo "JOBCTRL_TEMPORAL_CLI_PATH=$executable_dir/temporal" >> "$GITHUB_ENV"
+      - name: Install verified Temporal time-skipping test server
+        shell: bash
+        run: bash scripts/install-temporal-test-server.sh
       - name: Install Chromium for guarded availability regression
         run: uv --project workers/automation run --locked --all-extras playwright install --with-deps chromium
       - name: Test
