@@ -10,9 +10,8 @@ import {
   getExtensionAutofillProfile,
   getExtensionFormMapping,
   LocalApiError,
-  postExtensionCapture,
 } from "./local-api";
-import { clearCaptureQueue, enqueueCapture, flushCaptureQueue, loadCaptureQueue } from "./queue";
+import { CaptureQueueUnavailableError, clearCaptureQueue, enqueueCapture, flushCaptureQueue, loadCaptureQueue } from "./queue";
 
 const TOKEN_STORAGE_KEY = "jobctrlExtensionCapabilityToken";
 const INSTALLATION_STORAGE_KEY = "jobctrlDiscoveryInstallationId";
@@ -22,6 +21,7 @@ const DISCOVERY_EXECUTOR_COUNT = 4;
 type BackgroundMessage =
   | { type: "captureCurrentTab" }
   | { type: "clearQueue" }
+  | { type: "retryQueue" }
   | { type: "getStatus" }
   | { type: "reviewAutofill" }
   | { type: "selectDiscoveryProfile" }
@@ -30,6 +30,7 @@ type BackgroundMessage =
 type BackgroundResponse =
   | { ok: true; status: "captured"; jobKey: string | null; queueSize: number }
   | { ok: true; status: "queued"; queueSize: number; message: string }
+  | { ok: true; status: "queue_flushed"; flushed: number; queueSize: number; message: string | null }
   | {
       ok: true;
       status: "ready";
@@ -50,6 +51,8 @@ type AutofillProbeResponse =
   | { ok: false; error: string; message: string };
 
 const browserApi = getBrowserApi();
+// Keep one storage handle for every queue operation in this worker.
+const captureQueueStorage = browserApi.storage.local;
 let discoveryPolling: Promise<void> | null = null;
 
 browserApi.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -80,8 +83,16 @@ async function handleMessage(browser: BrowserApi, message: unknown): Promise<Bac
     case "captureCurrentTab":
       return captureCurrentTab(browser);
     case "clearQueue":
-      await clearCaptureQueue(browser.storage.local);
+      await clearCaptureQueue(captureQueueStorage);
       return getReadyStatus(browser);
+    case "retryQueue": {
+      const token = await readToken(browser);
+      if (!token) {
+        return { ok: false, error: "not_paired", message: "Paste and save the pairing token first." };
+      }
+      const flush = await flushCaptureQueue(captureQueueStorage, token);
+      return { ok: true, status: "queue_flushed", flushed: flush.flushed, queueSize: flush.remaining, message: flush.failure };
+    }
     case "getStatus":
       return getReadyStatus(browser);
     case "reviewAutofill":
@@ -99,7 +110,6 @@ async function handleMessage(browser: BrowserApi, message: unknown): Promise<Bac
         replace: true,
       });
       await browser.storage.local.set({ [TOKEN_STORAGE_KEY]: token });
-      await clearCaptureQueue(browser.storage.local);
       wakeDiscoveryPolling(browser);
       return { ok: true, status: "token_saved" };
     }
@@ -124,7 +134,7 @@ async function handleMessage(browser: BrowserApi, message: unknown): Promise<Bac
 async function getReadyStatus(browser: BrowserApi): Promise<Extract<BackgroundResponse, { status: "ready" }>> {
   const [token, queue, apiReady, installationId] = await Promise.all([
     readToken(browser),
-    loadCaptureQueue(browser.storage.local),
+    loadCaptureQueue(captureQueueStorage),
     checkLocalApiReady(),
     getOrCreateInstallationId(browser),
   ]);
@@ -312,29 +322,23 @@ async function captureCurrentTab(browser: BrowserApi): Promise<BackgroundRespons
     extensionVersion: browser.runtime.getManifest().version ?? "unknown",
   } satisfies ExtensionCaptureIngestRequest);
 
+  // Persist first, so worker termination during the first request cannot lose
+  // an unacknowledged capture.
+  const queued = await enqueueCapture(captureQueueStorage, capture);
   try {
-    const response = await postExtensionCapture(token, capture);
-    const flush = await flushCaptureQueue(browser.storage.local, token);
-    return {
-      ok: true,
-      status: "captured",
-      jobKey: response.jobKey,
-      queueSize: flush.remaining,
-    };
-  } catch (error) {
-    if (error instanceof LocalApiError && (error.status === 401 || error.status === 403)) {
-      return {
-        ok: false,
-        error: "pairing_token_rejected",
-        message: "JobCtrl rejected the pairing token. Copy a fresh token from Settings.",
-      };
+    const flush = await flushCaptureQueue(captureQueueStorage, token);
+    const acknowledged = flush.acknowledgements.find((item) => item.id === queued.item.id);
+    if (acknowledged) return { ok: true, status: "captured", jobKey: acknowledged.jobKey, queueSize: flush.remaining };
+    const pending = await loadCaptureQueue(captureQueueStorage);
+    if (pending.some((item) => item.id === queued.item.id)) {
+      return { ok: true, status: "queued", queueSize: pending.length, message: flush.failure ?? "Waiting for the next synchronization." };
     }
-    const queued = await enqueueCapture(browser.storage.local, capture);
+    return { ok: false, error: "capture_discarded", message: "The capture was cleared before it could be saved." };
+  } catch {
     return {
-      ok: true,
-      status: "queued",
-      queueSize: queued.queueSize,
-      message: error instanceof Error ? error.message : "Local JobCtrl API is unavailable.",
+      ok: false,
+      error: "capture_queue_unavailable",
+      message: "The capture was queued locally, but synchronization could not be confirmed. Check the queue before retrying.",
     };
   }
 }
@@ -395,6 +399,7 @@ function isBackgroundMessage(value: unknown): value is BackgroundMessage {
   return (
     candidate.type === "captureCurrentTab" ||
     candidate.type === "clearQueue" ||
+    candidate.type === "retryQueue" ||
     candidate.type === "getStatus" ||
     candidate.type === "reviewAutofill" ||
     candidate.type === "selectDiscoveryProfile" ||
@@ -417,7 +422,7 @@ function isHttpUrl(value: unknown): value is string {
 function errorResponse(error: unknown): BackgroundResponse {
   return {
     ok: false,
-    error: "extension_error",
+    error: error instanceof CaptureQueueUnavailableError ? "capture_queue_unavailable" : "extension_error",
     message: error instanceof Error ? error.message : "The extension request failed.",
   };
 }

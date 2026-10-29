@@ -583,6 +583,19 @@ autofill reads a separate sanitized profile DTO from the Candidate Profile read
 path; it does not expose profile passwords, resume content, generated
 artifacts, or apply submission authority.
 
+The extension background worker persists a capture in its separate local queue
+before the first send. Short storage mutations are serialized; network sends
+run outside the queue lock, and a completed-import or explicit-dismissal
+acknowledgement removes only its matching queued ID. A request deadline covers
+the response body; a timeout or nonterminal response leaves the item queued.
+Flushes using different pairing tokens run in order, with each retry taking a
+fresh queue snapshot after the previous flush settles. Pending captures survive
+pairing, reload, and age until an acknowledgement or explicit clear. The
+25-item capacity rejects new captures rather than evicting existing ones. Legacy
+rows without a capture ID receive one durably before their next send. A response
+lost before that legacy ID existed remains historically ambiguous; later retries
+reuse the new ID.
+
 Discovery adds an installation-identity layer above the token: an explicit
 token save binds one extension-local UUID in a mode-`0600` app-dir file, and
 every heartbeat, lease-control, and completion request must present it. The

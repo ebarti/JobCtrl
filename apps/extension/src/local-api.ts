@@ -55,13 +55,16 @@ export async function postExtensionCapture(
   options: LocalApiOptions = {},
 ): Promise<ExtensionCaptureIngestResponse> {
   const parsed = ExtensionCaptureIngestSchema.parse(capture);
+  if (!parsed.captureId) {
+    throw new LocalApiError("Capture requires a stable ID before sending.");
+  }
   const bearer = token.trim();
   if (!bearer) {
     throw new LocalApiError("Missing extension capability token.");
   }
   const fetchImpl = options.fetchImpl ?? fetch;
   const baseUrl = normalizeLoopbackBaseUrl(options.baseUrl);
-  const response = await fetchWithTimeout(
+  const body = await fetchCaptureBodyWithTimeout(
     fetchImpl,
     `${baseUrl}/v1/extension/captures`,
     {
@@ -74,10 +77,73 @@ export async function postExtensionCapture(
     },
     options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
   );
-  if (!response.ok) {
-    throw new LocalApiError(`Local JobCtrl API rejected capture: ${response.status}.`, response.status);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(parsed.captureId));
+  const expectedItemId = `extension:${Array.from(new Uint8Array(digest).slice(0, 16), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+  if (!isCaptureAcknowledgement(body, expectedItemId, parsed)) {
+    throw new LocalApiError("Local JobCtrl API did not acknowledge this capture.");
   }
-  return (await response.json()) as ExtensionCaptureIngestResponse;
+  return body;
+}
+
+function isCaptureAcknowledgement(
+  value: unknown,
+  expectedItemId: string,
+  capture: ExtensionCaptureIngestRequest,
+): value is ExtensionCaptureIngestResponse {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const result = value as Record<string, unknown>;
+  if (result.ok !== true || result.itemId !== expectedItemId || !(typeof result.jobKey === "string" || result.jobKey === null)) return false;
+  if (result.status === "dismissed") {
+    return result.jobKey === null && (typeof result.dismissedAt === "string" || result.dismissedAt === null) && typeof result.message === "string";
+  }
+  // The documented completed-import response is untagged. Any other status
+  // must not be mistaken for an import just because import fields are present.
+  if (result.status !== undefined) return false;
+  const provenance = result.provenance;
+  if (!provenance || typeof provenance !== "object" || Array.isArray(provenance)) return false;
+  const source = provenance as Record<string, unknown>;
+  return typeof result.importedAt === "string" && result.importedAt.length > 0 &&
+    source.sourceKind === "user_mediated_capture" && source.originatingUrl === capture.originatingUrl &&
+    source.captureMode === capture.captureMode && source.futureManualActionRequired === capture.futureManualActionRequired;
+}
+
+async function fetchCaptureBodyWithTimeout(
+  fetchImpl: typeof fetch,
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<unknown> {
+  const controller = new AbortController();
+  const timeoutError = new LocalApiError(`Local JobCtrl API request timed out after ${timeoutMs}ms.`);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(timeoutError);
+      controller.abort();
+    }, timeoutMs);
+  });
+  const request = (async () => {
+    const response = await fetchImpl(input, { ...init, signal: controller.signal });
+    if (controller.signal.aborted) {
+      void response.body?.cancel().catch(() => undefined);
+      throw timeoutError;
+    }
+    if (!response.ok) {
+      throw new LocalApiError(`Local JobCtrl API rejected capture: ${response.status}.`, response.status);
+    }
+    try {
+      return await response.json() as unknown;
+    } catch {
+      throw new LocalApiError("Local JobCtrl API returned an invalid capture acknowledgement.");
+    }
+  })();
+  try {
+    // Abort stops a real fetch; the race also bounds callers if a body reader
+    // or injected fetch implementation does not promptly honor the signal.
+    return await Promise.race([request, deadline]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 export async function getExtensionAutofillProfile(
