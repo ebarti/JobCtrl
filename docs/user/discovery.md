@@ -30,6 +30,11 @@ named table views and presentation preferences live locally in this browser.
 | Runtime and schedule | `discovery_settings` | Next run or source family; schedule changes require a worker restart |
 | Sources, locator candidates, quarantine, and manual capture | Discovery context tables | Immediately for review state; next use for source execution |
 
+Target search and Automation settings attempt to autosave an edited draft after
+five seconds without an edit. A failed save keeps the draft and error visible,
+without repeatedly submitting the unchanged draft. Choose **Save changes** to
+retry, or edit the draft to schedule another attempt.
+
 ## Saved Source Review Views
 
 In **Source controls → Source registry**, use **Save as view** to name the

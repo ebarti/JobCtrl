@@ -173,10 +173,13 @@ invisible text layer keeps the PDF searchable and extractable. The **Export
 PDF** action itself does not save a profile or template, register the download
 as a JobCtrl artifact, or change Apply approval state.
 
-Profile and preference forms validate before saving. Their autosave and explicit
-Save buttons use the same mutation path; the exact delay and field contract are
-owned by the [Profile & Settings API](../api/profile-and-settings.md), not by
-this lifecycle overview.
+Profile and preference forms validate before saving. After five seconds without
+an edit, they attempt to autosave the current draft; the explicit **Save
+changes** button uses the same mutation path. If a save fails, the draft and
+error remain visible. An unchanged draft is not automatically submitted again;
+choose **Save changes** to retry, or edit the draft to schedule another attempt.
+The [Profile & Settings API](../api/profile-and-settings.md) owns the field and
+version contract.
 
 Legal or screening attestations are never inferred. Leave an answer unknown if
 you cannot attest to it; Apply fails closed on required missing profile data.
