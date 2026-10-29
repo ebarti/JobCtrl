@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import tempfile
 from collections.abc import AsyncIterator, Callable
@@ -230,27 +231,74 @@ async def _codex_client_context(
         # just that operation prevents close() racing an unpublished process,
         # while the subsequent local initialize handshake remains cancellable.
         startup = asyncio.create_task(client._client.start())
+        request_cancelled = False
+        entry_error: BaseException | None = None
         try:
-            await asyncio.shield(startup)
-            await client.__aenter__()
-            yield client
+            try:
+                # Waiting does not cancel startup or install shield's event-loop
+                # exception reporter when the caller is cancelled on Python 3.14.
+                try:
+                    await asyncio.wait({startup})
+                    startup.result()
+                    await client.__aenter__()
+                except BaseException as error:
+                    entry_error = error
+                    raise
+                yield client
+            except asyncio.CancelledError:
+                request_cancelled = True
+                raise
         finally:
             async def stop() -> None:
                 try:
-                    await startup
+                    try:
+                        await startup
+                    except BaseException as error:
+                        # The startup task must be joined, but re-awaiting an
+                        # already observed cancellation can replace its args.
+                        same_cancellation = (
+                            startup.cancelled()
+                            and isinstance(error, asyncio.CancelledError)
+                            and isinstance(entry_error, asyncio.CancelledError)
+                        )
+                        if error is not entry_error and not same_cancellation:
+                            raise
                 finally:
-                    await client.close()
+                    try:
+                        await client.close()
+                    except Exception:
+                        if entry_error is None:
+                            raise
+                        # A failed managed entry never reaches the kit's
+                        # sanitized __aexit__ boundary. Preserve its original
+                        # failure and report the secondary cleanup failure.
+                        logging.getLogger(__name__).warning('Codex client cleanup failed during startup.')
+                    except BaseException as error:
+                        if entry_error is None:
+                            raise
+                        # Cleanup cancellation and fatal control flow must not
+                        # be hidden, but their SDK payloads can be private.
+                        from jobctrl.infrastructure.llm.agent_runtime_codex import _safe_cleanup_exception
+
+                        safe_error = _safe_cleanup_exception(error)
+                        logging.getLogger(__name__).warning('Codex client cleanup failed during startup.')
+                        raise safe_error from None
 
             shutdown = asyncio.create_task(stop())
             interrupted = False
-            while True:
+            while not shutdown.done():
                 try:
-                    await asyncio.shield(shutdown)
-                    break
+                    await asyncio.wait({shutdown})
                 except asyncio.CancelledError:
-                    if shutdown.cancelled():
-                        raise
                     interrupted = True
+            try:
+                shutdown.result()
+            except asyncio.CancelledError:
+                raise
+            except BaseException:
+                if request_cancelled or interrupted:
+                    logging.getLogger(__name__).warning("Codex startup or cleanup failed during cancellation.")
+                raise
             if interrupted:
                 raise asyncio.CancelledError()
 

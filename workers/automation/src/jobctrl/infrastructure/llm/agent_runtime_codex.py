@@ -6,9 +6,11 @@ Every kit task creates a fresh ephemeral conversation.
 """
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import hashlib
 import json
+import logging
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -21,7 +23,7 @@ from agent_runtime_kit.adapters.codex import CodexAgentRuntime
 
 from jobctrl.infrastructure.llm.agent_runtime_pool import agent_runtime_service
 from jobctrl.infrastructure.llm.codex_turn import CodexTurnOutcome, run_codex_turn
-from jobctrl.infrastructure.llm.provider_errors import codex_protocol_error
+from jobctrl.infrastructure.llm.provider_errors import ProviderCallError, codex_protocol_error, provider_exception_error
 from jobctrl.infrastructure.llm.task_instructions import (
     CODEX_TASK_INSTRUCTIONS, CODEX_TASK_INSTRUCTION_PROFILE,
 )
@@ -54,6 +56,51 @@ class _Config:
     cwd: str | None = None
     env: dict[str, str] | None = None
     config_overrides: tuple[str, ...] = ()
+
+
+class _CodexCleanupError(RuntimeError):
+    """A content-free failure at the SDK cleanup boundary."""
+
+
+def _safe_exception_tree(
+    error: BaseException, *, group_message: str, failure_factory: Callable[[BaseException], BaseException],
+) -> BaseException:
+    """Rebuild SDK errors without their contents while retaining control flow."""
+    pending = [(error, False)]
+    sanitized: list[BaseException] = []
+    while pending:
+        current, expanded = pending.pop()
+        if isinstance(current, BaseExceptionGroup):
+            if not expanded:
+                pending.append((current, True))
+                pending.extend((item, False) for item in reversed(current.exceptions))
+                continue
+            count = len(current.exceptions)
+            children = sanitized[-count:]
+            del sanitized[-count:]
+            sanitized.append(BaseExceptionGroup(group_message, children))
+        elif isinstance(current, asyncio.CancelledError):
+            sanitized.append(asyncio.CancelledError())
+        elif isinstance(current, KeyboardInterrupt):
+            sanitized.append(KeyboardInterrupt())
+        elif isinstance(current, SystemExit):
+            # Non-integer exit payloads are printed by Python; retain their
+            # failure exit status without forwarding potentially private text.
+            code = current.code
+            sanitized.append(SystemExit(code if type(code) in (int, bool) or code is None else 1))
+        elif isinstance(current, GeneratorExit):
+            sanitized.append(GeneratorExit())
+        else:
+            sanitized.append(failure_factory(current))
+    return sanitized[0]
+
+
+def _safe_cleanup_exception(error: BaseException) -> BaseException:
+    """Retain cleanup control flow without forwarding SDK exception contents."""
+    return _safe_exception_tree(
+        error, group_message='Codex client cleanup failed.',
+        failure_factory=lambda _error: _CodexCleanupError('Codex client cleanup failed.'),
+    )
 
 
 class _Thread:
@@ -92,44 +139,85 @@ class _Client:
         self._startup = None
 
     async def __aenter__(self) -> _Client:
-        import asyncio
-
         if self._managed_startup:
             # The native context joins process publication itself. Keep the
             # initialize handshake cancellable instead of shielding all entry.
-            self._client = await self._context.__aenter__()
+            failure = None
+            try:
+                self._client = await self._context.__aenter__()
+            except ProviderCallError:
+                raise
+            except Exception as error:
+                state = _call.get()
+                failure = provider_exception_error(
+                    provider='openai', model=state.model, operation=state.operation, error=error,
+                )
+            except BaseExceptionGroup as error:
+                state = _call.get()
+
+                def classify(item: BaseException) -> ProviderCallError:
+                    if isinstance(item, ProviderCallError):
+                        # Keep the bounded envelope, not the original error's
+                        # potentially private notes or cause chain.
+                        return ProviderCallError(item.envelope)
+                    return provider_exception_error(
+                        provider='openai', model=state.model, operation=state.operation, error=item,
+                    )
+
+                failure = _safe_exception_tree(
+                    error, group_message='Codex managed startup failed.', failure_factory=classify,
+                )
+            if failure is not None:
+                # Classify before the kit can chain the SDK exception into a
+                # traceback. Direct cancellation and fatal control flow bypass
+                # this; mixed groups retain those members without SDK details.
+                raise failure from None
             self._entered = True
             return self
         self._startup = asyncio.create_task(self._context.__aenter__())
         try:
-            self._client = await asyncio.shield(self._startup)
+            await asyncio.wait({self._startup})
+            self._client = self._startup.result()
+        except asyncio.CancelledError:
+            if await self._join_startup():
+                logging.getLogger(__name__).warning('Codex startup failed during cancellation.')
+            raise
         except BaseException:
             await self._join_startup()
             raise
         return self
 
-    async def _join_startup(self) -> None:
-        import asyncio
-
+    async def _join_startup(self) -> bool:
         if self._startup is None:
-            return
+            return False
         while not self._startup.done():
             try:
-                await asyncio.shield(self._startup)
+                await asyncio.wait({self._startup})
             except asyncio.CancelledError:
                 continue
-            except BaseException:
-                break
         # Retrieve startup failure without replacing the caller's original
         # exception. The kit still owns unconditional context teardown.
         if self._startup.done() and not self._startup.cancelled():
-            self._startup.exception()
+            return self._startup.exception() is not None
+        return False
 
     async def __aexit__(self, *args: Any) -> None:
         await self._join_startup()
         # A failed managed entry already closed its app-server and storage.
         if not self._managed_startup or self._entered:
-            await self._context.__aexit__(*args)
+            safe_error = None
+            try:
+                await self._context.__aexit__(*args)
+            except BaseException as error:
+                safe_error = _safe_cleanup_exception(error)
+            if safe_error is not None:
+                # The kit does not report BaseExceptionGroups itself. Keep a
+                # safe diagnostic while preserving their control-flow members.
+                if isinstance(safe_error, BaseExceptionGroup) and not isinstance(safe_error, Exception):
+                    logging.getLogger(__name__).warning('Codex client cleanup failed.')
+                # The kit may call this while handling another failure, so
+                # suppress any inherited context in event-loop tracebacks too.
+                raise safe_error from None
 
     async def thread_start(
         self, *, approval_mode: Any, sandbox: Any = None, model: str | None = None,

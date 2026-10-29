@@ -11,6 +11,7 @@ import asyncio
 import atexit
 import concurrent.futures
 import contextvars
+import logging
 import os
 import threading
 from collections.abc import Callable, Coroutine, Hashable
@@ -28,10 +29,18 @@ async def _settle(awaitable: Coroutine[Any, Any, Any]) -> Any:
     canceled = False
     while not pending.done():
         try:
-            await asyncio.shield(pending)
+            # Wait for completion without propagating cancellation to the
+            # cleanup task. A canceled shield reports a later task exception
+            # to the event loop on Python 3.14, even when we retrieve it below.
+            await asyncio.wait({pending})
         except asyncio.CancelledError:
             canceled = True
-    result = pending.result()
+    try:
+        result = pending.result()
+    except Exception:
+        if canceled:
+            logging.getLogger(__name__).warning("Agent runtime cleanup failed during cancellation.")
+        raise
     if canceled:
         raise asyncio.CancelledError
     return result
