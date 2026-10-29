@@ -9,6 +9,57 @@ import pytest
 from jobctrl.infrastructure import process_ownership
 
 
+@pytest.mark.parametrize('denied_call', [1, 2])
+def test_darwin_process_list_reports_explicit_permission_denial(denied_call):
+    import ctypes
+    import errno
+    from types import SimpleNamespace
+
+    calls = []
+
+    def list_pids(*_args):
+        calls.append(1)
+        if len(calls) == denied_call:
+            ctypes.set_errno(errno.EPERM)
+            return 0
+        return ctypes.sizeof(ctypes.c_int)
+
+    with pytest.raises(process_ownership.ProcessInspectionDenied, match='denied a process inspection'):
+        process_ownership._darwin_process_ids(SimpleNamespace(proc_listpids=list_pids))
+
+
+@pytest.mark.parametrize('expected_tasks', [1, 2])
+def test_scoped_census_reports_denial_only_when_scope_cannot_be_accounted(monkeypatch, expected_tasks):
+    import ctypes
+    import errno
+    from types import SimpleNamespace
+
+    class Function:
+        def __call__(self, pid, flavor, _arg, pointer, _size):
+            if pid == 1:
+                ctypes.set_errno(errno.EACCES)
+                return 0
+            info = pointer._obj
+            if flavor == 17:
+                info.unique_id, info.pid_version = 22, 1
+            elif flavor == 13:
+                info.pid, info.pgid, info.state = pid, pid, 1
+            elif flavor == 20:
+                info.ids[0] = 42
+            return ctypes.sizeof(info)
+
+    library = SimpleNamespace(proc_listpids=Function(), proc_pidinfo=Function())
+    monkeypatch.setattr(ctypes, 'CDLL', lambda *_args, **_kwargs: library)
+    monkeypatch.setattr(process_ownership, '_darwin_process_ids', lambda _: {1, 2})
+    monkeypatch.setattr(process_ownership, 'os', SimpleNamespace(getsid=lambda _pid: 123))
+    if expected_tasks == 2:
+        with pytest.raises(process_ownership.ProcessInspectionDenied, match='denied a process inspection'):
+            process_ownership._darwin_process_inventory(native_scope=(42, expected_tasks))
+    else:
+        inventory, complete = process_ownership._darwin_process_inventory(native_scope=(42, expected_tasks))
+        assert complete and set(inventory) == {2}
+
+
 def test_native_census_rejects_a_fork_during_an_empty_observation(monkeypatch):
     counts = iter(((10, 2), (11, 2)))
     monkeypatch.setattr(process_ownership, "_native_coalition_counts", lambda _: next(counts))

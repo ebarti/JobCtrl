@@ -94,16 +94,18 @@ Distinct-job Apply runs can overlap. Each run owns its cancellation, browser,
 port, dashboard and work files. Finishing or cancelling one run leaves the other
 running. Every attempt receives fresh work directories, so a restart or another
 worker cannot reset an earlier attempt's files. A worker whose process cleanup
-cannot verify exit stops claiming further jobs and retains the prior files.
+cannot verify exit stops new claims and retains the prior files; other workers
+already processing a job can finish and keep their accepted results.
 If a batch worker crashes, the batch fails and reports worker crashes separately
 from completed job counts. A cleanup refusal means exit could not be verified;
 it does not establish that an owned process is still running. Installed macOS
 Apply uses its own native execution scope to verify cleanup despite unrelated
 process activity. When that scoped evidence is unavailable, cleanup remains
-conservative. Rebooting is not a prerequisite and does not replace the required
-cleanup proof. If the system denies a required process inspection, Apply reports
-that failure while retaining the affected custody; other unverified failures
-remain reported as unverified.
+conservative and retries briefly while observations settle. Rebooting is not a
+prerequisite and does not replace the required cleanup proof. If the system denies
+a required process inspection or signal, Apply reports the type of failure while
+retaining the affected custody; other unverified failures remain reported as
+unverified.
 
 Installed macOS Apply runs verify cleanup of their own execution before
 returning, so a normal rehearsal or retry does not require stopping the app.

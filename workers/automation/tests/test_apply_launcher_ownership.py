@@ -494,9 +494,12 @@ def test_cancellation_cleans_browser_registered_after_first_cleanup(owned_runtim
                     process.wait(timeout=5)
 
 
-def test_unverified_worker_exit_fences_next_claim_and_preserves_runtime_files(owned_runtime, monkeypatch):
+@pytest.mark.parametrize("inspection_denied", [False, True])
+def test_unverified_worker_exit_fences_next_claim_and_preserves_runtime_files(owned_runtime, monkeypatch, inspection_denied):
     from jobctrl.infrastructure.apply.local_chrome import LocalChromeAdapter
-    from jobctrl.infrastructure.process_ownership import ProcessOwnershipError
+    from jobctrl.infrastructure.process_ownership import (
+        INSPECTION_DENIED_MESSAGE, ProcessInspectionDenied, ProcessOwnershipError,
+    )
 
     app, first, second = owned_runtime
 
@@ -529,13 +532,16 @@ def test_unverified_worker_exit_fences_next_claim_and_preserves_runtime_files(ow
 
     def terminate(*args, **kwargs):
         if unverified:
+            if inspection_denied:
+                raise ProcessInspectionDenied(INSPECTION_DENIED_MESSAGE)
             raise ProcessOwnershipError("controlled exit cannot be verified")
         return actual_terminate(*args, **kwargs)
 
     monkeypatch.setattr(chrome, "terminate_owned_process", terminate)
     try:
-        with pytest.raises(ownership.ApplyLauncherCleanupIncomplete):
+        with pytest.raises(ownership.ApplyLauncherCleanupIncomplete) as failure:
             launcher.main(limit=2, workers=1, dry_run=True, install_signal_handlers=False)
+        assert (str(failure.value) == INSPECTION_DENIED_MESSAGE) is inspection_denied
         assert ports.launch_attempts == 1
         assert ports.files[0].read_bytes() == b"accepted synthetic bytes"
         assert all(process.poll() is None for process in ports.processes.values())
