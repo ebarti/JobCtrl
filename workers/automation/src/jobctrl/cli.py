@@ -124,7 +124,7 @@ def migrate_credentials(
 _projection_subscription = None
 
 
-def _bootstrap(*, reconcile_posted_compensation: bool = False) -> None:
+def _bootstrap(*, reconcile_posted_compensation: bool = False, strict_projection_refresh: bool = False) -> None:
     """Common setup: load env, create dirs, init DB, refresh projections.
 
     Phase 9 (S-32): the ``ProjectionBuilder`` runs an initial backfill on
@@ -132,6 +132,9 @@ def _bootstrap(*, reconcile_posted_compensation: bool = False) -> None:
     current canonical state before any stage logic runs.  This is
     cheap (incremental from the watermark) and ensures the dashboards
     don't go blank after a fresh DB or a schema migration.
+
+    Digest reads opt into an error if this refresh fails; other commands can
+    continue using their existing projections while a later refresh retries.
 
     The same builder also subscribes (idempotently) to the process-wide
     ``InProcessEventBus`` so events emitted later in the worker run
@@ -160,7 +163,11 @@ def _bootstrap(*, reconcile_posted_compensation: bool = False) -> None:
         # event — including ``ThreadPoolExecutor`` worker threads in
         # ``apply --workers > 1``) opens a connection on its own
         # thread instead of reusing the bootstrap-thread handle.
-        builder = ProjectionBuilder(conn_factory=get_connection)
+        builder = (
+            ProjectionBuilder(conn_factory=get_connection, strict_reads=True)
+            if strict_projection_refresh
+            else ProjectionBuilder(conn_factory=get_connection)
+        )
         builder.refresh()
         if _projection_subscription is None:
             from jobctrl.infrastructure.events import get_default_publisher
@@ -177,6 +184,8 @@ def _bootstrap(*, reconcile_posted_compensation: bool = False) -> None:
         except Exception:  # noqa: BLE001 - preserve the original failure
             log.exception("ProjectionBuilder bootstrap rollback failed")
         log.exception("ProjectionBuilder backfill on bootstrap failed")
+        if strict_projection_refresh:
+            raise
 
 
 def _check_tier2_stage(stage: str) -> None:
@@ -1842,7 +1851,7 @@ def digest(
     ),
 ) -> None:
     """Show the local daily digest."""
-    _bootstrap()
+    _bootstrap(strict_projection_refresh=True)
 
     from jobctrl.database import get_connection
     from jobctrl.digest import acknowledge_digest, build_digest

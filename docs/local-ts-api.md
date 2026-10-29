@@ -48,6 +48,10 @@ Dashboard source-health and digest blocked-source entries retain stable
 `sourceId` values and may include `displayName` from the source registry.
 Clients prefer that name, including current JobStreaming board labels for
 historical source keys. Names do not change source-health or quarantine facts.
+Digest job counts require the local tenant's canonical JobId, and date filters
+compare instants at millisecond precision. The explicit acknowledgement route
+serializes with Python writers and commits the watermark and review event
+together; passive digest reads do not acknowledge.
 
 ## Profile And Preferences
 

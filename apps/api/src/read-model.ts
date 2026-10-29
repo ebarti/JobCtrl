@@ -540,32 +540,32 @@ export function acknowledgeDigest(
   options: AcknowledgeDigestOptions = {},
 ): DigestAcknowledgeResponse {
   ensureDigestStateTable(db);
-  const previous = readDigestState(db).lastAcknowledgedAt;
-  const now = options.now ?? new Date();
-  const nowIso = now.toISOString();
-  const requestedAcknowledgedAt = options.acknowledgedAt ?? nowIso;
-  const acknowledgedAt = boundedAcknowledgeTimestamp(requestedAcknowledgedAt, nowIso);
-  const nextAcknowledgedAt =
-    previous && Date.parse(previous) > Date.parse(acknowledgedAt) ? previous : acknowledgedAt;
+  return db.transaction((): DigestAcknowledgeResponse => {
+    const previous = readDigestState(db).lastAcknowledgedAt;
+    const now = options.now ?? new Date();
+    const nowIso = now.toISOString();
+    const requestedAcknowledgedAt = options.acknowledgedAt ?? nowIso;
+    const acknowledgedAt = boundedAcknowledgeTimestamp(requestedAcknowledgedAt, nowIso);
+    const comparison = previous ? compareDigestTimestamps(previous, acknowledgedAt) : 0;
+    if (comparison === null) throw new Error("digest watermark is not a valid timestamp");
+    const nextAcknowledgedAt = previous && comparison > 0 ? previous : acknowledgedAt;
 
-  db.prepare(
-    `INSERT INTO digest_state (tenant_id, last_acknowledged_at, updated_at)
-     VALUES (?, ?, ?)
-     ON CONFLICT(tenant_id) DO UPDATE SET
-       last_acknowledged_at = excluded.last_acknowledged_at,
-       updated_at = excluded.updated_at`,
-  ).run(DEFAULT_TENANT, nextAcknowledgedAt, nowIso);
+    db.prepare(
+      `INSERT INTO digest_state (tenant_id, last_acknowledged_at, updated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(tenant_id) DO UPDATE SET
+         last_acknowledged_at = excluded.last_acknowledged_at,
+         updated_at = excluded.updated_at`,
+    ).run(DEFAULT_TENANT, nextAcknowledgedAt, nowIso);
 
-  recordDigestReviewedEvent(db, {
-    acknowledgedAt: nextAcknowledgedAt,
-    previousAcknowledgedAt: previous,
-    reviewedAt: nowIso,
-  });
+    recordDigestReviewedEvent(db, {
+      acknowledgedAt: nextAcknowledgedAt,
+      previousAcknowledgedAt: previous,
+      reviewedAt: nowIso,
+    });
 
-  return {
-    ok: true,
-    state: readDigestState(db),
-  };
+    return { ok: true, state: readDigestState(db) };
+  }).immediate();
 }
 
 export function buildDigest(db: SqliteDatabase, options: BuildDigestOptions = {}): DailyDigest {
@@ -574,7 +574,11 @@ export function buildDigest(db: SqliteDatabase, options: BuildDigestOptions = {}
   const generatedAt = now.toISOString();
   const since = readDigestState(db).lastAcknowledgedAt;
   const highFitThreshold = normalizeDigestThreshold(options.minFitScore);
-  const queueItems = options.applyReviewQueue?.items ?? [];
+  const queue = options.applyReviewQueue?.items ?? [];
+  const canonicalJobs = queue.length
+    ? new Set(allRows<{ job_id: string }>(db, "SELECT job_id FROM jobs WHERE tenant_id = ?", [DEFAULT_TENANT]).map((row) => row.job_id))
+    : null;
+  const queueItems = canonicalJobs ? queue.filter((item) => canonicalJobs.has(item.jobKey)) : queue;
   const preparation = buildPreparationSummary(db, DEFAULT_TENANT);
   return {
     ok: true,
@@ -605,11 +609,26 @@ export function buildDigest(db: SqliteDatabase, options: BuildDigestOptions = {}
 }
 
 function boundedAcknowledgeTimestamp(candidate: string, nowIso: string): string {
-  const candidateTime = Date.parse(candidate);
-  const nowTime = Date.parse(nowIso);
-  if (!Number.isFinite(candidateTime)) return nowIso;
-  if (candidateTime > nowTime) return nowIso;
+  const comparison = compareDigestTimestamps(candidate, nowIso);
+  if (comparison === null || comparison > 0) return nowIso;
   return candidate;
+}
+
+function compareDigestTimestamps(left: string, right: string): number | null {
+  const leftMs = Date.parse(left);
+  const rightMs = Date.parse(right);
+  if (!Number.isFinite(leftMs) || !Number.isFinite(rightMs)) return null;
+  if (leftMs !== rightMs) return leftMs < rightMs ? -1 : 1;
+  // Date.parse truncates after milliseconds. Retain later fractional digits
+  // when protecting a historical watermark that was stored more precisely.
+  const tail = (value: string): string =>
+    (value.trim().match(/[T ]\d{2}:\d{2}:\d{2}\.(\d+)(?=Z|[+-]\d{2}:?\d{2}$|$)/i)?.[1] ?? "").slice(3);
+  const leftTail = tail(left);
+  const rightTail = tail(right);
+  const length = Math.max(leftTail.length, rightTail.length);
+  const a = leftTail.padEnd(length, "0");
+  const b = rightTail.padEnd(length, "0");
+  return a === b ? 0 : a < b ? -1 : 1;
 }
 
 function recordDigestReviewedEvent(
@@ -715,10 +734,27 @@ function countDigestNewMatches(
   highFitThreshold: number,
 ): DailyDigest["newMatches"] {
   const activeFilter = jobSqlFilter(digestBaseJobQuery());
-  const sinceClause = since ? " AND (discovered_at >= ? OR scored_at >= ?)" : "";
-  const sinceParams: SqliteValue[] = since ? [since, since] : [];
-  const where = `${activeFilter.where}${sinceClause}`;
-  const params = [...activeFilter.params, ...sinceParams];
+  const where = `${activeFilter.where} AND EXISTS (
+    SELECT 1 FROM jobs j
+    WHERE j.tenant_id = job_list_projections.tenant_id AND j.job_id = job_list_projections.job_id
+  )`;
+  const params = activeFilter.params;
+  if (since) {
+    const watermark = Date.parse(since);
+    if (!Number.isFinite(watermark)) throw new Error("digest watermark is not a valid timestamp");
+    let count = 0;
+    let highFitCount = 0;
+    const rows = db.prepare(`SELECT discovered_at, scored_at, fit_score FROM job_list_projections${where}`)
+      .iterate(...params) as Iterable<{ discovered_at: string | null; scored_at: string | null; fit_score: number | null }>;
+    for (const row of rows) {
+      const discovered = Date.parse(row.discovered_at ?? "");
+      const scored = Date.parse(row.scored_at ?? "");
+      if (!(Number.isFinite(discovered) && discovered >= watermark) && !(Number.isFinite(scored) && scored >= watermark)) continue;
+      count++;
+      if (row.fit_score !== null && row.fit_score >= highFitThreshold) highFitCount++;
+    }
+    return { count, highFitCount };
+  }
   return {
     count: countRows(db, `SELECT COUNT(*) AS count FROM job_list_projections${where}`, params),
     highFitCount: countRows(
@@ -756,7 +792,7 @@ const FOLLOW_UP_STOP_OUTCOMES = new Set([
 ]);
 
 function countFollowUpsDue(db: SqliteDatabase, now: Date): number {
-  const cutoff = new Date(now.getTime() - DIGEST_FOLLOW_UP_THRESHOLD_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const cutoff = now.getTime() - DIGEST_FOLLOW_UP_THRESHOLD_DAYS * 24 * 60 * 60 * 1000;
   const rows = allRows<{
     job_id: string;
     kind: string;
@@ -764,32 +800,38 @@ function countFollowUpsDue(db: SqliteDatabase, now: Date): number {
     recorded_at: string | null;
   }>(
     db,
-    `SELECT job_id, kind, occurred_at, recorded_at
-       FROM application_outcomes
-      WHERE tenant_id = ?
-      ORDER BY job_id ASC, occurred_at ASC, recorded_at ASC`,
+    `SELECT o.job_id, o.kind, o.occurred_at, o.recorded_at
+       FROM application_outcomes o
+      WHERE o.tenant_id = ?
+        AND EXISTS (SELECT 1 FROM jobs j WHERE j.tenant_id = o.tenant_id AND j.job_id = o.job_id)`,
     [DEFAULT_TENANT],
   );
-  const byJob = new Map<string, { appliedAt: string | null; lastActivityAt: string | null; stopped: boolean }>();
-  for (const row of rows) {
+  const events = rows.map((row) => ({
+    ...row,
+    occurredMs: Date.parse(row.occurred_at || row.recorded_at || ""),
+    recordedMs: Date.parse(row.recorded_at || row.occurred_at || ""),
+  })).filter((row) => Number.isFinite(row.occurredMs));
+  events.sort((a, b) => a.job_id.localeCompare(b.job_id) || a.occurredMs - b.occurredMs
+    || (Number.isFinite(a.recordedMs) ? a.recordedMs : a.occurredMs) - (Number.isFinite(b.recordedMs) ? b.recordedMs : b.occurredMs));
+  const byJob = new Map<string, { appliedAt: number | null; lastActivityAt: number | null; stopped: boolean }>();
+  for (const row of events) {
     const jobKey = row.job_id;
     const current = byJob.get(jobKey) ?? {
       appliedAt: null,
       lastActivityAt: null,
       stopped: false,
     };
-    const occurredAt = row.occurred_at || row.recorded_at || "";
-    if (!occurredAt) continue;
-    if (!current.lastActivityAt || occurredAt > current.lastActivityAt) {
+    const occurredAt = row.occurredMs;
+    if (current.lastActivityAt === null || occurredAt > current.lastActivityAt) {
       current.lastActivityAt = occurredAt;
     }
     if (row.kind === "applied_confirmation") {
-      if (!current.appliedAt || occurredAt > current.appliedAt) {
+      if (current.appliedAt === null || occurredAt > current.appliedAt) {
         current.appliedAt = occurredAt;
         current.stopped = false;
       }
     } else if (
-      current.appliedAt &&
+      current.appliedAt !== null &&
       occurredAt > current.appliedAt &&
       FOLLOW_UP_STOP_OUTCOMES.has(row.kind)
     ) {
@@ -799,7 +841,7 @@ function countFollowUpsDue(db: SqliteDatabase, now: Date): number {
   }
   let count = 0;
   for (const item of byJob.values()) {
-    if (item.appliedAt && !item.stopped && item.lastActivityAt && item.lastActivityAt <= cutoff) {
+    if (item.appliedAt !== null && !item.stopped && item.lastActivityAt !== null && item.lastActivityAt <= cutoff) {
       count += 1;
     }
   }
@@ -973,7 +1015,8 @@ function activeJobIdSet(db: SqliteDatabase): Set<string> {
   });
   const rows = allRows<{ job_id: string }>(
     db,
-    `SELECT job_id FROM job_list_projections${filter.where}`,
+    `SELECT job_id FROM job_list_projections${filter.where}
+      AND EXISTS (SELECT 1 FROM jobs j WHERE j.tenant_id = job_list_projections.tenant_id AND j.job_id = job_list_projections.job_id)`,
     filter.params,
   );
   return new Set(rows.map((row) => row.job_id).filter(Boolean));
