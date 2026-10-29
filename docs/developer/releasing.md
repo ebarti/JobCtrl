@@ -210,6 +210,15 @@ development dependencies. The signed formula-cache adapter replaces only
 Homebrew acquisition. Keep installers, migrations, services and data/history
 checks real; use only owned synthetic workspaces.
 
+Before channel promotion, the public-asset smoke also upgrades disposable
+workspaces from the latest stable release using the actual curl bootstrap and
+unmodified Homebrew with the signer-rendered formula. It verifies service
+readiness, a retained job and external resume, paired backup hashes, Temporal
+workflow history, and stop/restart. The curl path also verifies real readiness
+failure and forward recovery with later application and Temporal WAL commits for
+the schema-15 transition. Its retained report is additional evidence; it does
+not replace the full schema-15 interruption and policy matrix below.
+
 Verify the Homebrew formula with unmodified Homebrew: strict Developer ID checks
 must accept the actual released executables and reject an ad-hoc control inside
 the build sandbox. Live notarization belongs to the normal-user bootstrap before

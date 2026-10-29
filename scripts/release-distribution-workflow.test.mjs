@@ -231,6 +231,23 @@ test("draft and final publication reject mismatched, absent, and duplicate asset
   assert.ok(publish.indexOf("gh release verify-asset") > publish.indexOf('test "$immutable" = true'));
 });
 
+test("stable promotion waits for real released curl and Homebrew upgrade evidence", () => {
+  const workflow = loadYaml(workflowUrl);
+  const smoke = workflow.jobs["smoke-and-verify"];
+  const names = smoke.steps.map((step) => step.name);
+  const name = "Qualify upgrades through the released curl and Homebrew acquisition paths";
+  const qualification = smoke.steps.find((step) => step.name === name);
+  assert.ok(qualification);
+  assert.equal(qualification.if, "${{ inputs.channel == 'stable' }}");
+  assert.ok(names.indexOf(name) > names.indexOf("Verify the signer-rendered stable formula and write smoke evidence"));
+  assert.ok(names.indexOf(name) < names.indexOf("Seal the smoke-tested formula"));
+  assert.match(qualification.run, /node scripts\/released-acquisition-upgrade\.mjs/);
+  assert.match(qualification.run, /released-acquisition-upgrade\.json/);
+  assert.ok(workflow.jobs["promote-channel-pointer"].needs.includes("smoke-and-verify"));
+  assert.match(workflow.jobs["promote-channel-pointer"].if, /needs\['smoke-and-verify'\]\.result == 'success'/);
+  assert.match(smoke.steps.find((step) => step.name === "Upload only credential-free smoke and promotion evidence").with.path, /released-acquisition-upgrade\.json/);
+});
+
 test("Homebrew publishes only the signer-bound formula after its credential-free lifecycle passes", async (context) => {
   const workflow = loadYaml(workflowUrl);
   assert.equal(workflow.jobs["sync-homebrew"], undefined);

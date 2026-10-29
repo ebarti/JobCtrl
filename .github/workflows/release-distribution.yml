@@ -928,6 +928,16 @@ jobs:
             --trust "$release/release-keys.json"
           ruby -c "$release/jobctrl.rb"
 
+      - name: Qualify upgrades through the released curl and Homebrew acquisition paths
+        if: ${{ inputs.channel == 'stable' }}
+        env:
+          JOBCTRL_RELEASE_PUBLIC_KEY: ${{ needs.resolve.outputs.release_public_key }}
+          JOBCTRL_RELEASE_KEY_ID: ${{ needs.resolve.outputs.release_key_id }}
+        run: |
+          node scripts/released-acquisition-upgrade.mjs \
+            --release-dir "$RUNNER_TEMP/release" \
+            --output "$RUNNER_TEMP/released-acquisition-upgrade.json"
+
       - name: Audit, install, test, and run the rendered formula lifecycle
         if: ${{ inputs.channel == 'stable' }}
         env:
@@ -984,6 +994,7 @@ jobs:
           path: |
             ${{ runner.temp }}/release/published-candidate-smoke.json
             ${{ runner.temp }}/release/homebrew-promotion-evidence.json
+            ${{ runner.temp }}/released-acquisition-upgrade.json
           if-no-files-found: error
           retention-days: 14
 
