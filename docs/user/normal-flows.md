@@ -854,6 +854,14 @@ Cross-protocol rollback is refused. See
 | `worker` | Run the long-lived Temporal worker. |
 | `rpc` | JSON-RPC server started by the TypeScript API (internal). |
 
+The digest counts new matches, stale scores and review items by their saved job
+identity. Hidden, closed and deleted jobs are excluded from those counts. New
+matches use the last review time and the configured high-fit threshold, which
+`--min-fit-score` can override for one read. Follow-ups use saved application
+outcomes and the seven-day threshold. Reading the digest does not advance its
+review time; `--acknowledge` records it with a review event. If the digest cannot
+refresh or read its data, the command fails instead of reporting zero counts.
+
 
 ## Semantic Determination Authority
 

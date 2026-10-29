@@ -413,12 +413,17 @@ apply-review materials, stale scores, pending approvals, derived follow-ups due,
 and budget status. Passive reads never advance `digest_state.last_acknowledged_at`;
 only the explicit acknowledge flow may move the watermark. The digest uses a
 timestamp watermark and a UTC follow-up cutoff, resolving the plan's local-vs-UTC
-day-boundary inconsistency in favor of UTC.
+day-boundary inconsistency in favor of UTC. Match dates and follow-up outcomes
+are compared as instants at millisecond precision, including stored offsets.
+Each digest job must belong to the local tenant's canonical jobs table.
 `blockedSources.sources[]` keeps its stable `sourceId` and may include an
 optional registry-resolved `displayName`, which clients prefer for presentation.
 `POST /v1/digest/acknowledge` accepts an optional `acknowledgedAt` ISO
 timestamp, advances the watermark monotonically, and returns the updated
-`digest_state`. Acknowledge writes also record `DigestReviewed`, which lets the
+`digest_state`. Independent Python and API writers serialize before reading the
+prior watermark; the watermark and `DigestReviewed` event commit together.
+An acknowledgement within a caller-owned transaction leaves its commit or
+rollback to that caller. The event lets the
 SSE invalidation router refresh the dashboard digest query without any external
 delivery channel.
 `POST /v1/jobs/:key/score-correction` writes a new corrected `job_scores`

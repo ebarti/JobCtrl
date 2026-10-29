@@ -1939,6 +1939,21 @@ name, or host path.
 <a id="daily-digest-smoke"></a>
 <a id="resume-tailoring-quality-eval-gate"></a>
 
+### Daily digest
+
+Run the digest CLI against an owned synthetic workspace admitted to the current
+schema, both empty and populated. Check canonical job and tenant joins, one
+count per job with multiple snapshots, hidden/closed/deleted and active jobs,
+score corrections, approvals, follow-ups, threshold and watermark filters, and
+deep links. Exercise offsets and fractional precision against instant cutoffs.
+A foreign tenant's rows must not change local counts. A failed or
+unavailable read or projection refresh must fail instead of returning zeros.
+Passive reads preserve the review watermark; explicit acknowledgement records
+the canonical review event and watermark together, or leaves both unchanged if
+the event write fails. Interleave independent Python and API writers with the
+newer acknowledgement committing first; retry a lost response and preserve a
+caller-owned transaction on success and failure.
+
 ### Saved posting availability
 
 Run `pytest tests/test_preparation_availability_cache.py tests/test_posting_availability_review.py tests/test_saved_posting_availability.py`

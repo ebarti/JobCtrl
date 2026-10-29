@@ -774,6 +774,10 @@ class ProjectionBuilder:
     For single-threaded callers (CLI bootstrap, tests) the factory can
     legitimately return the same shared connection on every call:
     ``ProjectionBuilder(conn_factory=lambda: conn)``.
+
+    ``strict_reads`` propagates database errors that legacy-compatible reads
+    normally tolerate, so the enclosing refresh rolls back instead of
+    publishing an incomplete projection. Missing rows remain valid empty data.
     """
 
     def __init__(
@@ -781,9 +785,11 @@ class ProjectionBuilder:
         *,
         conn_factory: Callable[[], sqlite3.Connection],
         tenant_id: TenantId = LOCAL_TENANT,
+        strict_reads: bool = False,
     ) -> None:
         self._conn_factory = conn_factory
         self._tenant_id: TenantId = tenant_id
+        self._strict_reads = strict_reads
         # Thread-local binding scope for refresh().  Each thread that
         # calls refresh() (or _on_event) gets its own conn / store /
         # watermarks rooted at the connection the factory returned on
@@ -983,6 +989,8 @@ class ProjectionBuilder:
                     if job_id:
                         dirty_job_ids.add(str(job_id))
             except sqlite3.OperationalError:
+                if self._strict_reads:
+                    raise
                 # ``jobs`` table not yet created (very-fresh DB) — nothing
                 # to backfill.
                 pass
@@ -1113,6 +1121,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return False
         return row is not None
 
@@ -1135,6 +1145,8 @@ class ProjectionBuilder:
                 (tenant,),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return
         live_ids: set[str] = set()
         for row in contact_rows:
@@ -1204,6 +1216,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return False
         return row is not None
 
@@ -1228,6 +1242,8 @@ class ProjectionBuilder:
                 (tenant,),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return
         live_ids: set[str] = set()
         for row in task_rows:
@@ -1306,6 +1322,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return False
         return row is not None
 
@@ -1330,6 +1348,8 @@ class ProjectionBuilder:
                 (tenant,),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return
         live_ids: set[str] = set()
         for row in thread_rows:
@@ -1416,6 +1436,8 @@ class ProjectionBuilder:
                 (tenant,),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return
         live_ids: set[str] = set()
         for row in rows:
@@ -2119,6 +2141,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             row = None
         if row is None:
             return {
@@ -2169,6 +2193,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             row = None
         if row is None:
             return {"ok": True, "recordStatus": "not_requested", "jobId": job_id}
@@ -2275,6 +2301,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             rows = []
         # ``sqlite3.Row`` (configured via ``row_factory``) is always mapping-like,
         # never a plain tuple — drop the dead isinstance branch so the dict's
@@ -2331,6 +2359,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return {}
         if row is None:
             return {}
@@ -2371,6 +2401,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return {}
         if generation_row is None:
             return {}
@@ -2388,6 +2420,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id, int(max_generation)),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return {}
         result: dict = {"generation": int(max_generation)}
         for row in artifact_rows:
@@ -2436,6 +2470,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return {}
         metadata_jsons = [
             _row_nullable_str(row, "metadata_json"),
@@ -2465,6 +2501,8 @@ class ProjectionBuilder:
                     (str(self._tenant_id), job_id, base_generation),
                 ).fetchone()
             except sqlite3.OperationalError:
+                if self._strict_reads:
+                    raise
                 row = None
             metadata.append(_row_nullable_str(row, "metadata_json"))
             try:
@@ -2486,6 +2524,8 @@ class ProjectionBuilder:
                     (str(self._tenant_id), job_id, base_generation),
                 ).fetchall()
             except sqlite3.OperationalError:
+                if self._strict_reads:
+                    raise
                 rows = []
             metadata.extend(_row_nullable_str(row, "metadata_json") for row in rows)
         if base_artifact_ids:
@@ -2509,6 +2549,8 @@ class ProjectionBuilder:
                     (str(self._tenant_id), job_id, *base_artifact_ids),
                 ).fetchall()
             except sqlite3.OperationalError:
+                if self._strict_reads:
+                    raise
                 rows = []
             metadata.extend(_row_nullable_str(row, "metadata_json") for row in rows)
         return metadata
@@ -2531,6 +2573,8 @@ class ProjectionBuilder:
                 else repository.load(self._tenant_id, JobId(job_id))
             )
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return None
         if record is None:
             return None
@@ -2568,6 +2612,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return empty
         if not generation_rows:
             return empty
@@ -2617,6 +2663,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return {}
         if row is None:
             return {}
@@ -2647,6 +2695,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return {}
         if row is None:
             return {}
@@ -2677,6 +2727,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             row = None
         occurred_at = _row_nullable_str(row, "occurred_at")
         if occurred_at:
@@ -2695,6 +2747,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return None
         occurred_at = _row_nullable_str(row, "occurred_at")
         return ("external_confirmed", occurred_at) if occurred_at else None
@@ -2710,6 +2764,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return None
         if row is None:
             return None
@@ -2743,6 +2799,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return set()
         return {
             str(row["job_id"] if not isinstance(row, tuple) else row[0])
@@ -2798,6 +2856,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return set()
         return {
             str(row["job_id"] if not isinstance(row, tuple) else row[0])
@@ -2832,6 +2892,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return set()
         return {
             str(row["job_id"] if not isinstance(row, tuple) else row[0])
@@ -2864,6 +2926,8 @@ class ProjectionBuilder:
                 (self._score_audit_backfill_marker,),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return False
         return row is not None
 
@@ -2888,6 +2952,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return set()
         return {
             str(row["job_id"] if not isinstance(row, tuple) else row[0])
@@ -2909,6 +2975,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return set()
         return {
             str(row["job_id"] if not isinstance(row, tuple) else row[0])
@@ -2931,6 +2999,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return set()
         return {
             str(row["job_id"] if not isinstance(row, tuple) else row[0])
@@ -2974,6 +3044,8 @@ class ProjectionBuilder:
                     }
                 )
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             pass
         try:
             for row in self._conn.execute(
@@ -3006,6 +3078,8 @@ class ProjectionBuilder:
                     }
                 )
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             pass
         return artifacts
 
@@ -3026,6 +3100,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return {}
 
         by_artifact: dict[str, list[dict[str, Any]]] = {}
@@ -3110,6 +3186,8 @@ class ProjectionBuilder:
                 ).fetchone()[0]
             )
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             dry_runs = 0
 
         # Funnel per stage.
@@ -3329,6 +3407,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return {}
         grouped: dict[str, list[dict[str, str | None]]] = {}
         for row in rows:
@@ -3352,6 +3432,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return counts
         for row in rows:
             status = _row_str(row, "status").strip().lower()
@@ -3424,6 +3506,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return False
         event_count = int(event_row[0] or 0) if event_row else 0
         projection_count = int(projection_row[0] or 0) if projection_row else 0
@@ -3751,6 +3835,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return False
         event_count = int(event_row[0] or 0) if event_row else 0
         projection_count = int(projection_row[0] or 0) if projection_row else 0
@@ -3789,6 +3875,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), *WORKFLOW_EVENT_TYPES),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return {}
         out: dict[str, list[dict]] = {}
         for row in rows:
@@ -3976,6 +4064,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             return {}
         out: dict[str, list[dict]] = {}
         for row in rows:
@@ -4123,6 +4213,8 @@ class ProjectionBuilder:
                 (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
+            if self._strict_reads:
+                raise
             meta = None
         if meta is not None:
             title = _row_str(meta, "title") or title
