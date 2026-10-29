@@ -2016,7 +2016,7 @@ describe("<ApplyReviewView>", () => {
     });
     const render = vi.fn<ReturnType<typeof buildTestPorts>["api"]["renderResumeReviewDraft"]>();
     const applyJob = vi.fn();
-    renderWithProviders(<ApplyReviewView />, { ports: buildTestPorts({ api: {
+    const { rerender } = renderWithProviders(<ApplyReviewView />, { ports: buildTestPorts({ api: {
       applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
       createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft })),
       saveResumeReviewDraftRevision: save, renderResumeReviewDraft: render, applyJob,
@@ -2058,7 +2058,11 @@ describe("<ApplyReviewView>", () => {
     caret.collapse(true);
     window.getSelection()!.removeAllRanges();
     window.getSelection()!.addRange(caret);
+    // JSDOM does not position the caret on pointer input. Publish the range
+    // through the editor's pointer boundary before a rerender or save settles.
+    fireEvent.pointerUp(pastedLeaf, { button: 0, pointerType: "mouse" });
     fireEvent(document, new Event("selectionchange"));
+    rerender(<ApplyReviewView />);
     await act(async () => new Promise((resolve) => setTimeout(resolve, 150)));
     const selection = window.getSelection();
     const anchor = selection?.anchorNode;
