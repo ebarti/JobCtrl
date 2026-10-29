@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -197,13 +198,15 @@ var readProcessOwnership = readProcessScope
 var scopedProcessIDs = userProcessIDs
 var executionProcessBSDInfo = processBSDInfoIncludingZombies
 
-func discoverOwnedProcesses(ctx launchContext, state instanceState) ([]ownedProcess, error) {
+type executionWitnesses map[executionScope]struct{}
+
+func discoverOwnedProcesses(ctx launchContext, state instanceState, witnesses ...executionWitnesses) ([]ownedProcess, error) {
 	scopes, err := readOwnedExecutionScopes(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if len(scopes) > 0 {
-		return discoverScopedProcesses(ctx, state, scopes)
+		return discoverScopedProcesses(ctx, state, scopes, witnesses...)
 	}
 	// Modern registries never fall back to historical PID records after the
 	// execution receipts have been retired. Those PIDs may now be reused or
@@ -346,11 +349,11 @@ func signalDiscoveredProcess(p ownedProcess, signal syscall.Signal) error {
 // detached/reparented child remains discoverable; process groups are not the
 // final proof. Repeat discovery across fork/exit races and verify zero writers.
 func terminateOwnedProcesses(ctx launchContext, state instanceState) error {
-	return drainOwnedProcesses(ctx, state, nil)
+	return drainOwnedProcesses(ctx, state, nil, make(executionWitnesses))
 }
 
-func drainOwnedProcesses(ctx launchContext, state instanceState, known []ownedProcess) error {
-	if err := drainScopedCommandRoots(ctx, state); err != nil {
+func drainOwnedProcesses(ctx launchContext, state instanceState, known []ownedProcess, witnesses executionWitnesses) error {
+	if err := drainScopedCommandRoots(ctx, state, witnesses); err != nil {
 		return err
 	}
 	deadline := time.Now().Add(shutdownTimeout)
@@ -361,7 +364,7 @@ func drainOwnedProcesses(ctx launchContext, state instanceState, known []ownedPr
 	}
 	signaled := map[string]syscall.Signal{}
 	for time.Now().Before(finalDeadline) {
-		processes, err := inspectOwnedProcesses(ctx, state)
+		processes, err := inspectOwnedProcesses(ctx, state, witnesses)
 		if err != nil {
 			return err
 		}
@@ -407,7 +410,7 @@ func drainOwnedProcesses(ctx launchContext, state instanceState, known []ownedPr
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	remaining, err := inspectOwnedProcesses(ctx, state)
+	remaining, err := inspectOwnedProcesses(ctx, state, witnesses)
 	if err != nil {
 		return err
 	}
@@ -421,9 +424,94 @@ func drainOwnedProcesses(ctx launchContext, state instanceState, known []ownedPr
 	return fmt.Errorf("JobCtrl processes remain after termination (PIDs %s); stop those processes and retry", strings.Join(pids, ", "))
 }
 
+func currentScopeTransportAlive(scope executionScope) (bool, error) {
+	if scope.RootPID == os.Getpid() {
+		return false, nil // The caller is already counted separately.
+	}
+	before, err := processBSDInfoIncludingZombies(scope.RootPID)
+	if errors.Is(err, syscall.ESRCH) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if binary.LittleEndian.Uint32(before[4:]) == 5 || processIdentityFromBSD(before) != scope.RootIdentity {
+		return false, nil
+	}
+	ids, err := processCoalitionIDs(scope.RootPID)
+	if errors.Is(err, syscall.ESRCH) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	after, err := processBSDInfoIncludingZombies(scope.RootPID)
+	if errors.Is(err, syscall.ESRCH) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if binary.LittleEndian.Uint32(after[4:]) == 5 || processIdentityFromBSD(after) != scope.RootIdentity {
+		return false, nil
+	}
+	if ids != scope.CoalitionIDs {
+		return false, errors.New("current execution transport changed coalition")
+	}
+	return true, nil
+}
+
+// The scope counter is atomic. In the current scope only the inspecting
+// command and its exact verified transport may be excluded. Fence a live
+// transport on both sides of the count so its exit cannot hide a successor.
+func scopedTaskZero(ctx launchContext, scope executionScope, currentScope string, witnesses ...executionWitnesses) (bool, bool) {
+	allowed := uint64(0)
+	transport := false
+	if scope.ID == currentScope {
+		allowed = 1 // currentExecutionScope already authenticated the caller.
+		var err error
+		transport, err = currentScopeTransportAlive(scope)
+		if err != nil {
+			return false, false
+		}
+		if transport {
+			allowed++
+		}
+	}
+	count, err := readCoalitionActiveTaskCount(scope.CoalitionIDs[0])
+	if errors.Is(err, syscall.ESRCH) && scope.ID != currentScope {
+		if len(witnesses) > 0 {
+			if _, observed := witnesses[0][scope]; observed {
+				return true, true
+			}
+		}
+		// Only the exact same-boot completion made by a controller that
+		// witnessed the scope can explain an already-reaped coalition.
+		completion, completionErr := readExecutionCompletion(ctx, scope.ID)
+		raw, marshalErr := json.Marshal(scope)
+		if completionErr == nil && marshalErr == nil {
+			expected := executionCompletionForReceipt(scope, append(raw, '\n'), scope.BootSession)
+			exited, exitErr := waitExecutionRoot(scope.RootPID, scope.RootIdentity, 0)
+			if exitErr == nil && exited && completion.Scope == scope && completion.ReceiptSHA256 == expected.ReceiptSHA256 && completion.VerificationBootSession == scope.BootSession {
+				return true, true
+			}
+		}
+	}
+	if err != nil || count < allowed {
+		return false, false
+	}
+	if scope.ID == currentScope {
+		after, err := currentScopeTransportAlive(scope)
+		if err != nil || transport != after {
+			return false, false
+		}
+	}
+	return count == allowed, true
+}
+
 // Kernel membership is the durable authority, even after all original parents
 // exit, an exec clears the environment, or a child starts a new session.
-func discoverScopedProcesses(ctx launchContext, state instanceState, scopes []executionScope) ([]ownedProcess, error) {
+func discoverScopedProcesses(ctx launchContext, state instanceState, scopes []executionScope, witnesses ...executionWitnesses) ([]ownedProcess, error) {
 	boot, err := executionBootSession()
 	if err != nil {
 		return nil, err
@@ -442,11 +530,25 @@ func discoverScopedProcesses(ctx launchContext, state instanceState, scopes []ex
 		return nil, err
 	}
 	var previousEmpty map[int]executionProcessObservation
+	var inspectionErr error
 	for attempt := 0; attempt < 32; attempt++ {
-		members, inventory, complete, err := executionProcessInventory(scopedProcessIDs, processCoalitionIDs)
-		if err != nil {
-			return nil, err
+		allZero, knownNonzero := true, false
+		for _, scope := range wanted {
+			zero, known := scopedTaskZero(ctx, scope, currentScope, witnesses...)
+			if known && zero && scope.ID != currentScope && len(witnesses) > 0 && witnesses[0] != nil {
+				witnesses[0][scope] = struct{}{}
+			}
+			if !known || !zero {
+				allZero = false
+			}
+			if known && !zero {
+				knownNonzero = true
+			}
 		}
+		if allZero {
+			return nil, nil
+		}
+		members, inventory, complete, err := executionProcessInventory(scopedProcessIDs, processCoalitionIDs)
 		result := make([]ownedProcess, 0)
 		for _, member := range members {
 			scope, owned := wanted[member.CoalitionIDs]
@@ -460,10 +562,27 @@ func discoverScopedProcesses(ctx launchContext, state instanceState, scopes []ex
 			}
 			result = append(result, member)
 		}
-		if len(result) > 0 {
+		if len(result) > 0 && (err == nil || knownNonzero) {
+			// Each selected member is checked again before signalling. A
+			// different uninspectable PID must not prevent cleanup, and the
+			// scope counter still prevents an incomplete census proving zero.
+			if len(witnesses) > 0 && witnesses[0] != nil {
+				for _, member := range result {
+					witnesses[0][wanted[member.CoalitionIDs]] = struct{}{}
+				}
+			}
 			return result, nil
 		}
-		if complete {
+		if err != nil && !knownNonzero {
+			return nil, err
+		}
+		if knownNonzero {
+			if err != nil {
+				inspectionErr = err
+			}
+			previousEmpty = nil
+			time.Sleep(25 * time.Millisecond)
+		} else if complete {
 			if previousEmpty != nil && maps.Equal(previousEmpty, inventory) {
 				return result, nil
 			}
@@ -472,7 +591,7 @@ func discoverScopedProcesses(ctx launchContext, state instanceState, scopes []ex
 			previousEmpty = nil
 		}
 	}
-	return nil, errors.New("process census changed repeatedly during cleanup; retry jobctrl stop")
+	return nil, errors.Join(errors.New("process census changed repeatedly during cleanup; retry jobctrl stop"), inspectionErr)
 }
 
 // An empty PID sample is insufficient: an enumerated parent may fork and
@@ -495,6 +614,13 @@ func executionProcessInventory(listPIDs func() ([]int, error), readCoalitions fu
 	inventory := make(map[int]executionProcessObservation, len(pids))
 	members := make([]ownedProcess, 0)
 	complete := true
+	var inspectionErr error
+	recordInspectionError := func(err error) {
+		complete = false
+		if inspectionErr == nil {
+			inspectionErr = err
+		}
+	}
 	for _, pid := range pids {
 		pidSet[pid] = true
 		if pid == os.Getpid() {
@@ -506,7 +632,8 @@ func executionProcessInventory(listPIDs func() ([]int, error), readCoalitions fu
 			continue
 		}
 		if err != nil {
-			return nil, nil, false, fmt.Errorf("inspect process identity for PID %d: %w", pid, err)
+			recordInspectionError(fmt.Errorf("inspect process identity for PID %d: %w", pid, err))
+			continue
 		}
 		observation := executionProcessObservation{Identity: processIdentityFromBSD(before), UID: binary.LittleEndian.Uint32(before[20:]), State: binary.LittleEndian.Uint32(before[4:]), ParentPID: int(binary.LittleEndian.Uint32(before[16:]))}
 		if observation.State != 5 {
@@ -523,7 +650,8 @@ func executionProcessInventory(listPIDs func() ([]int, error), readCoalitions fu
 			continue
 		}
 		if err != nil {
-			return nil, nil, false, err
+			recordInspectionError(fmt.Errorf("reinspect process identity for PID %d: %w", pid, err))
+			continue
 		}
 		if processIdentityFromBSD(after) != observation.Identity || binary.LittleEndian.Uint32(after[4:]) == 5 || binary.LittleEndian.Uint32(after[20:]) != observation.UID {
 			complete = false
@@ -534,7 +662,8 @@ func executionProcessInventory(listPIDs func() ([]int, error), readCoalitions fu
 			continue
 		}
 		if coalitionErr != nil {
-			return nil, nil, false, fmt.Errorf("inspect execution ownership for PID %d: %w", pid, coalitionErr)
+			recordInspectionError(fmt.Errorf("inspect execution ownership for PID %d: %w", pid, coalitionErr))
+			continue
 		}
 		observation.State = 0
 		observation.ParentPID = int(binary.LittleEndian.Uint32(after[16:]))
@@ -544,13 +673,13 @@ func executionProcessInventory(listPIDs func() ([]int, error), readCoalitions fu
 	}
 	afterPIDs, err := listPIDs()
 	if err != nil {
-		return nil, nil, false, err
+		return members, inventory, false, err
 	}
 	afterSet := make(map[int]bool, len(afterPIDs))
 	for _, pid := range afterPIDs {
 		afterSet[pid] = true
 	}
-	return members, inventory, complete && maps.Equal(pidSet, afterSet), nil
+	return members, inventory, complete && maps.Equal(pidSet, afterSet), inspectionErr
 }
 
 // arg=1 asks Darwin's BSD-info flavor to include zombies. They can remain
@@ -570,7 +699,7 @@ func processBSDInfoIncludingZombies(pid int) ([]byte, error) {
 // A standalone Python command has no supervisor registry. Its private launchd
 // helper is only a transport; give the actual command root first chance to
 // drain SDK children, just as a native supervisor does for API and worker.
-func drainScopedCommandRoots(ctx launchContext, state instanceState) error {
+func drainScopedCommandRoots(ctx launchContext, state instanceState, witnesses executionWitnesses) error {
 	scopes, err := readOwnedExecutionScopes(ctx)
 	if err != nil {
 		return err
@@ -582,7 +711,7 @@ func drainScopedCommandRoots(ctx launchContext, state instanceState) error {
 	if err != nil {
 		return err
 	}
-	members, err := inspectOwnedProcesses(ctx, state)
+	members, err := inspectOwnedProcesses(ctx, state, witnesses)
 	if err != nil {
 		return err
 	}

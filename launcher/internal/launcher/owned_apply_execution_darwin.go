@@ -32,9 +32,9 @@ func authenticatedApplyExecution(ctx launchContext) (bool, error) {
 	return false, errors.New("Apply execution receipt is missing")
 }
 
-// The private Apply command has finished and its helper drained this one
-// coalition. Join that helper and independently verify stable zero before
-// publishing the exact receipt proof. Other scopes may remain live.
+// The private Apply command has finished. Join its helper and retire only its
+// exact receipt after either its durable completion proof or a zero census.
+// Other scopes may remain live.
 func completeApplyExecution(ctx launchContext, scope executionScope) error {
 	if exited, err := waitExecutionRoot(scope.RootPID, scope.RootIdentity, shutdownTimeout); err != nil {
 		return err
@@ -57,10 +57,25 @@ func completeApplyExecution(ctx launchContext, scope executionScope) error {
 	if err != nil || boot != scope.BootSession {
 		return errors.Join(errors.New("Apply scope boot identity changed"), err)
 	}
-	if zero, err := waitExecutionMembers(scope.CoalitionIDs, shutdownTimeout); err != nil {
+	raw, err := json.Marshal(scope)
+	if err != nil {
 		return err
-	} else if !zero {
-		return errors.New("Apply execution retained owned descendants")
+	}
+	expected := executionCompletionForReceipt(scope, append(raw, '\n'), boot)
+	completion, completionErr := readExecutionCompletion(ctx, scope.ID)
+	proved := completionErr == nil && scope.Purpose == "apply"
+	if completionErr != nil && !errors.Is(completionErr, os.ErrNotExist) {
+		return completionErr
+	}
+	if proved && (completion.Scope != scope || completion.ReceiptSHA256 != expected.ReceiptSHA256 || completion.VerificationBootSession != boot) {
+		return errors.New("Apply execution completion does not match its exact receipt and boot")
+	}
+	if !proved {
+		if zero, err := waitExecutionMembers(scope.CoalitionIDs, shutdownTimeout); err != nil {
+			return err
+		} else if !zero {
+			return errors.New("Apply execution retained owned descendants")
+		}
 	}
 	scopes, err := readOwnedExecutionScopes(ctx)
 	if err != nil {
@@ -73,19 +88,13 @@ func completeApplyExecution(ctx launchContext, scope executionScope) error {
 		if active != scope {
 			return errors.New("Apply execution receipt changed before completion")
 		}
-		return retireExecutionScopes(ctx, []executionScope{scope}, false)
+		return retireExecutionScopes(ctx, []executionScope{scope}, false, false)
 	}
 	// A concurrent ordinary Stop may have completed and retired this exact
 	// receipt while the controller was joining its helper. Absence alone is
 	// never completion; require the exact original bytes' durable proof.
-	raw, err := json.Marshal(scope)
-	if err != nil {
-		return err
-	}
-	expected := executionCompletionForReceipt(scope, append(raw, '\n'), boot)
-	completion, err := readExecutionCompletion(ctx, scope.ID)
-	if err != nil || completion.Scope != scope || completion.ReceiptSHA256 != expected.ReceiptSHA256 {
-		return errors.Join(errors.New("Apply execution receipt disappeared without its exact completion"), err)
+	if !proved {
+		return errors.Join(errors.New("Apply execution receipt disappeared without its exact completion"), completionErr)
 	}
 	return nil
 }

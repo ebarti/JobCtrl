@@ -55,6 +55,23 @@ def capture_native_custody(app_dir: Path) -> dict | None:
     return binding
 
 
+def matches_active_native_receipt(binding: dict | None, app_dir: Path) -> bool:
+    """Check a retained Apply receipt for reporting only, never as exit proof."""
+    if binding is None:
+        return False
+    try:
+        validate_native_binding(binding, app_dir)
+        scope = binding["scope"]
+        if scope.get("purpose") != "apply" or scope["bootSession"] != boot_identity():
+            return False
+        directory = Path(scope["runtimeHome"]) / "instances" / scope["instanceId"] / "executions"
+        _directory(directory)
+        current, original_bytes = _read(directory / f"{scope['id']}.json", with_bytes=True)
+        return current == scope and sha256(original_bytes).hexdigest() == binding["receipt_sha256"]
+    except (CustodyUnverified, OSError, ValueError, TypeError, KeyError):
+        return False
+
+
 def verify_native_completion(binding: dict | None, app_dir: Path) -> None:
     if binding is None:
         raise CustodyUnverified(

@@ -69,9 +69,10 @@ type executionControl struct {
 }
 
 type executionResult struct {
-	Code         int    `json:"code"`
-	Failed       bool   `json:"failed"`
-	CleanupError string `json:"cleanupError,omitempty"`
+	Code            int    `json:"code"`
+	Failed          bool   `json:"failed"`
+	CleanupError    string `json:"cleanupError,omitempty"`
+	CleanupCategory string `json:"cleanupCategory,omitempty"`
 }
 type ownedExecutionExitError struct{ code int }
 
@@ -79,6 +80,26 @@ func (e ownedExecutionExitError) Error() string {
 	return fmt.Sprintf("owned execution exited with status %d", e.code)
 }
 func (e ownedExecutionExitError) ExitCode() int { return e.code }
+
+// This error never grants cleanup authority. Its closed category carries only
+// an operator-facing reason from the authenticated helper to the controller.
+type executionCensusError struct{ cause error }
+
+func (e executionCensusError) Error() string { return e.cause.Error() }
+func (e executionCensusError) Unwrap() error { return e.cause }
+
+type ownedExecutionCleanupError struct{ detail, category string }
+
+func (e ownedExecutionCleanupError) Error() string                { return e.detail }
+func (e ownedExecutionCleanupError) ApplyCleanupCategory() string { return e.category }
+
+func executionCleanupCategory(err error) string {
+	var census executionCensusError
+	if errors.As(err, &census) && (errors.Is(census, syscall.EPERM) || errors.Is(census, syscall.EACCES)) {
+		return "inspection_denied"
+	}
+	return ""
+}
 
 // PROC_PIDCOALITIONINFO (Darwin sys/proc_info.h) is five uint64 slots;
 // resource and jetsam are the first two. IDs survive reparenting and setsid.
@@ -303,26 +324,80 @@ func decodeExecutionReceipt(raw []byte, scope *executionScope) error {
 var executionProcessIDs = userProcessIDs
 var executionProcessCoalitions = processCoalitionIDs
 
+// The first two fields of XNU's coalition_resource_usage are monotonic task
+// starts and exits, read together under the coalition lock. Unlike a system
+// PID inventory, their difference is an atomic scope-local liveness count.
+// The caller still needs an authenticated scope and, before signalling any
+// member, the existing PID/start/coalition identity checks.
+func coalitionActiveTaskCount(id uint64) (uint64, error) {
+	if id == 0 {
+		return 0, errors.New("missing resource coalition identity")
+	}
+	var counts [2]uint64
+	size := uintptr(unsafe.Sizeof(counts))
+	_, _, errno := syscall.Syscall6(459, 1, uintptr(unsafe.Pointer(&id)), uintptr(unsafe.Pointer(&counts[0])), uintptr(unsafe.Pointer(&size)), 0, 0) // SYS_coalition_info, COALITION_INFO_RESOURCE_USAGE
+	if errno != 0 {
+		return 0, errno
+	}
+	if size < unsafe.Sizeof(counts) || counts[0] == 0 || counts[1] > counts[0] {
+		return 0, errors.New("invalid resource coalition task counts")
+	}
+	return counts[0] - counts[1], nil
+}
+
+var readCoalitionActiveTaskCount = coalitionActiveTaskCount
+
 func executionMembers(ids [2]uint64) ([]ownedProcess, error) {
 	// An enumerated parent can fork and disappear before inspection, and a
 	// live exec can temporarily have no inspectable coalition. Neither case
 	// certifies zero: require another complete pass before reporting cleanup.
 	var previousEmpty map[int]executionProcessObservation
+	var inspectionErr error
 	for attempt := 0; attempt < 32; attempt++ {
-		observed, inventory, complete, err := executionProcessInventory(executionProcessIDs, executionProcessCoalitions)
-		if err != nil {
-			return nil, err
+		// The only scope member omitted by executionProcessInventory is this
+		// very process. A zero count, or one counting only this authenticated
+		// helper, is a direct kernel zero proof and cannot hide a fork handoff.
+		count, countErr := readCoalitionActiveTaskCount(ids[0])
+		self, selfErr := processCoalitionIDs(os.Getpid())
+		known := countErr == nil && selfErr == nil
+		if known {
+			allowed := uint64(0)
+			if self == ids {
+				allowed = 1
+			}
+			if count < allowed {
+				return nil, errors.New("resource coalition count omitted the current helper")
+			}
+			if count == allowed {
+				return nil, nil
+			}
 		}
+		observed, inventory, complete, err := executionProcessInventory(executionProcessIDs, executionProcessCoalitions)
 		var members []ownedProcess
 		for _, member := range observed {
 			if member.CoalitionIDs == ids {
 				members = append(members, member)
 			}
 		}
-		if len(members) > 0 {
+		if len(members) > 0 && (err == nil || known) {
+			// A partial census can identify safe signal targets, but it can
+			// never establish zero: the scope counter must still reach zero.
 			return members, nil
 		}
-		if complete {
+		if err != nil && !known {
+			return nil, executionCensusError{err}
+		}
+		if known {
+			// The scope still contains an unobserved task. Retry; neither an
+			// empty sampled inventory nor unrelated PID changes retire it. A
+			// just-signalled task may disappear from the PID list before its
+			// kernel task count falls, even if another PID cannot be inspected.
+			if err != nil {
+				inspectionErr = err
+			}
+			previousEmpty = nil
+			time.Sleep(25 * time.Millisecond)
+		} else if complete {
 			if previousEmpty != nil && maps.Equal(previousEmpty, inventory) {
 				return members, nil
 			}
@@ -331,7 +406,11 @@ func executionMembers(ids [2]uint64) ([]ownedProcess, error) {
 			previousEmpty = nil
 		}
 	}
-	return nil, errors.New("execution member census remained uncertain; cleanup could not verify zero")
+	uncertain := errors.New("execution member census remained uncertain; cleanup could not verify zero")
+	if inspectionErr != nil {
+		return nil, executionCensusError{errors.Join(uncertain, inspectionErr)}
+	}
+	return nil, uncertain
 }
 
 func signalExecutionRoot(ids [2]uint64, pid int, identity string, requested syscall.Signal) error {
@@ -507,7 +586,7 @@ func authenticatedOwnedExecution(ctx launchContext) (bool, error) {
 
 // The helper admits no work until it receives both stdio and the authorized
 // command over its parent's private socket. EOF before that point is inert.
-func ownedExecutionHelper(args []string) (bool, error) {
+func ownedExecutionHelper(args []string) (handled bool, resultErr error) {
 	if len(args) == 0 || args[0] != executionHelperArgument {
 		return false, nil
 	}
@@ -555,6 +634,15 @@ func ownedExecutionHelper(args []string) (bool, error) {
 		return true, errors.New("invalid authorized command")
 	}
 	_ = connection.SetDeadline(time.Time{})
+	reported := false
+	defer func() {
+		// Once authorized, report the actual helper failure over the private
+		// connection whenever the controller is still listening. EOF alone
+		// cannot explain which part of cleanup failed.
+		if resultErr != nil && !reported {
+			_ = json.NewEncoder(connection).Encode(executionResult{Code: 1, CleanupError: resultErr.Error(), CleanupCategory: executionCleanupCategory(resultErr)})
+		}
+	}()
 	child := exec.Command(command.Executable, command.Arguments...)
 	child.Env = command.Environment
 	child.Dir = command.Directory
@@ -574,7 +662,7 @@ func ownedExecutionHelper(args []string) (bool, error) {
 		return true, err
 	}
 	if err = child.Start(); err != nil {
-		_ = json.NewEncoder(connection).Encode(executionResult{Code: 1, Failed: true})
+		reported = json.NewEncoder(connection).Encode(executionResult{Code: 1, Failed: true}) == nil
 		return true, errors.New("authorized command could not start")
 	}
 	rootIdentity, identityErr := processStartIdentity(child.Process.Pid)
@@ -678,7 +766,6 @@ waiting:
 		// The drained native helper is the sole remaining trusted member and
 		// returns without spawning further work after publishing its proof.
 		if err := attestApplyHelperCompletion(command.Environment, ids); err != nil {
-			_ = json.NewEncoder(connection).Encode(executionResult{Code: 1, CleanupError: err.Error()})
 			return true, errors.Join(errors.New("could not attest completed Apply execution"), err)
 		}
 	}
@@ -699,6 +786,7 @@ waiting:
 		cleanupErr := cleanup()
 		return true, errors.Join(err, cleanupErr)
 	}
+	reported = true
 	if result.Code != 0 {
 		return true, ownedExecutionExitError{result.Code}
 	}
@@ -960,7 +1048,11 @@ func runInOwnedExecution(ctx launchContext, args []string, stdout, stderr io.Wri
 		return errors.New("authorized command could not start")
 	}
 	if result.CleanupError != "" {
-		return fmt.Errorf("Apply execution cleanup incomplete: %s", result.CleanupError)
+		detail := fmt.Sprintf("owned execution cleanup incomplete: %s", result.CleanupError)
+		if isApplyExecution(args) && result.CleanupCategory == "inspection_denied" {
+			return ownedExecutionCleanupError{detail, result.CleanupCategory}
+		}
+		return errors.New(detail)
 	}
 	if result.Code < 0 || result.Code > 255 {
 		return errors.New("invalid execution result")
@@ -969,11 +1061,73 @@ func runInOwnedExecution(ctx launchContext, args []string, stdout, stderr io.Wri
 		if err := completeApplyExecution(ctx, scope); err != nil {
 			return fmt.Errorf("verify Apply execution completion: %w", err)
 		}
+	} else if result.Code == 0 {
+		if err := attestFinishedOrdinaryExecution(ctx, scope); err != nil {
+			return fmt.Errorf("attest finished execution: %w", err)
+		}
 	}
 	if result.Code != 0 {
 		return ownedExecutionExitError{result.Code}
 	}
 	return nil
+}
+
+// Only the controller that authenticated this scope at birth may use this
+// witness. A reaped same-boot coalition cannot contain a live or detached task;
+// a bare absent ID from a later receipt read is not this proof.
+func attestFinishedOrdinaryExecution(ctx launchContext, scope executionScope) error {
+	exited, err := waitExecutionRoot(scope.RootPID, scope.RootIdentity, shutdownTimeout)
+	if err != nil {
+		return err
+	}
+	if !exited {
+		return errors.New("ordinary execution helper did not exit before its deadline")
+	}
+	boot, err := executionBootSession()
+	if err != nil || boot != scope.BootSession {
+		return errors.Join(errors.New("execution scope boot identity changed"), err)
+	}
+	zero := func() bool {
+		count, err := readCoalitionActiveTaskCount(scope.CoalitionIDs[0])
+		return errors.Is(err, syscall.ESRCH) || (err == nil && count == 0)
+	}
+	if !zero() {
+		return nil // Live or unavailable: leave the receipt for ordinary Stop.
+	}
+	controlPath := ctx.Instance.ControlPath
+	if controlPath == "" {
+		controlPath = filepath.Join(filepath.Dir(ctx.Instance.StatePath), "control.lock")
+	}
+	lock, err := acquireLock(controlPath, false)
+	if err != nil {
+		return err
+	}
+	defer releaseLock(lock)
+	bootAfter, err := executionBootSession()
+	if err != nil || bootAfter != boot {
+		return errors.Join(errors.New("execution scope boot identity changed"), err)
+	}
+	scopes, err := readOwnedExecutionScopes(ctx)
+	if err != nil {
+		return err
+	}
+	for _, active := range scopes {
+		if active.ID != scope.ID {
+			continue
+		}
+		if active != scope {
+			return errors.New("execution receipt changed before completion")
+		}
+		if zero() {
+			raw, err := json.Marshal(scope)
+			if err != nil {
+				return err
+			}
+			return publishExecutionCompletion(ctx, executionCompletionForReceipt(scope, append(raw, '\n'), boot))
+		}
+		return nil
+	}
+	return nil // A concurrent Stop already retired the scope.
 }
 
 // Called only after an all-instance zero census, with the stop control lock
@@ -984,10 +1138,18 @@ func retireOwnedExecutionScopes(ctx launchContext) error {
 	if err != nil || len(scopes) == 0 {
 		return err
 	}
-	return retireExecutionScopes(ctx, scopes, true)
+	return retireExecutionScopes(ctx, scopes, true, false)
 }
 
-func retireExecutionScopes(ctx launchContext, scopes []executionScope, entireInstance bool) error {
+func attestStoppedExecutionScopes(ctx launchContext) error {
+	scopes, err := readOwnedExecutionScopes(ctx)
+	if err != nil || len(scopes) == 0 {
+		return err
+	}
+	return retireExecutionScopes(ctx, scopes, true, true)
+}
+
+func retireExecutionScopes(ctx launchContext, scopes []executionScope, entireInstance, proofOnly bool) error {
 	dir, err := executionScopeDirectory(ctx, false)
 	if err != nil {
 		return err
@@ -1046,6 +1208,9 @@ func retireExecutionScopes(ctx launchContext, scopes []executionScope, entireIns
 		if err := publishExecutionCompletion(ctx, completion); err != nil {
 			return fmt.Errorf("persist verified execution completion: %w", err)
 		}
+	}
+	if proofOnly {
+		return nil
 	}
 	if stopCompletionCheckpoint != nil {
 		if err := stopCompletionCheckpoint("execution-completions-durable"); err != nil {

@@ -555,6 +555,23 @@ func ExitCode(err error) int {
 	}
 	return 1
 }
+
+// The internal Apply controller reserves one status for an authenticated
+// helper's bounded inspection failure. Ordinary child and startup failures
+// all use a different status, so they cannot impersonate that category.
+func ExitCodeForCommand(err error, args []string) int {
+	if err == nil {
+		return 0
+	}
+	if len(args) == 1 && args[0] == "__apply-execution" {
+		var reason interface{ ApplyCleanupCategory() string }
+		if errors.As(err, &reason) && reason.ApplyCleanupCategory() == "inspection_denied" {
+			return 211
+		}
+		return 1
+	}
+	return ExitCode(err)
+}
 func printHelp(out io.Writer) {
 	fmt.Fprint(out, "JobCtrl bundled launcher\n\nUsage:\n  jobctrl start [--no-open] [--foreground]\n  jobctrl dev [--no-open] [--foreground]  (deprecated alias for start)\n  jobctrl stop\n  jobctrl status [--pipeline] [--json]\n  jobctrl logs [temporal|worker|api]\n  jobctrl open\n  jobctrl version [--json]\n  jobctrl update\n  jobctrl rollback [--to BUILD_ID]\n  jobctrl backup [--output DIRECTORY]\n  jobctrl uninstall [--remove-data]\n  jobctrl pipeline-status\n  jobctrl <Python domain command>\n")
 }
@@ -2423,7 +2440,8 @@ func stop(ctx launchContext) error {
 	if err := requireExecutionReceipt(ctx, state); err != nil {
 		return err
 	}
-	ownedBeforeShutdown, err := inspectOwnedProcesses(ctx, state)
+	witnesses := make(executionWitnesses)
+	ownedBeforeShutdown, err := inspectOwnedProcesses(ctx, state, witnesses)
 	if err != nil {
 		return err
 	}
@@ -2443,7 +2461,7 @@ func stop(ctx launchContext) error {
 			return fmt.Errorf("signal verified supervisor: %w", err)
 		}
 		if !waitForOwnedRecordExit(state.Supervisor, supervisorShutdownTimeout) {
-			if err := drainOwnedProcesses(ctx, state, ownedBeforeShutdown); err != nil {
+			if err := drainOwnedProcesses(ctx, state, ownedBeforeShutdown, witnesses); err != nil {
 				return fmt.Errorf("supervisor cleanup exceeded its deadline: %w", err)
 			}
 		}
@@ -2487,7 +2505,7 @@ func stop(ctx launchContext) error {
 			}
 		}
 	}
-	if err := drainOwnedProcesses(ctx, state, ownedBeforeShutdown); err != nil {
+	if err := drainOwnedProcesses(ctx, state, ownedBeforeShutdown, witnesses); err != nil {
 		return fmt.Errorf("verify instance-wide shutdown: %w", err)
 	}
 	// A verified child cleanup can resolve an earlier group-drain failure.
@@ -2523,6 +2541,11 @@ func requireExecutionReceipt(ctx launchContext, state instanceState) error {
 func completeStoppedState(ctx launchContext, state instanceState) error {
 	if state.ExecutionScopeID == "" && !state.OwnershipVerified && (len(state.Components) > 0 || state.Supervisor != (componentRecord{})) {
 		return errUntrackedOwnership
+	}
+	// Preserve an exact proof for every verified scope before recording the
+	// stopped registry, so an interrupted Stop can recover after kernel reap.
+	if err := attestStoppedExecutionScopes(ctx); err != nil {
+		return fmt.Errorf("persist stopped execution proofs: %w", err)
 	}
 	// Publish the verified stopped proof before retiring its receipt. A
 	// process interruption must never leave an active-looking registry with

@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -92,7 +94,11 @@ func runActualNativeApplyModuleFixture(t *testing.T, temporal bool) {
 	writeLocalEnvelope(t, payload, manifest)
 	home, evidence := t.TempDir(), t.TempDir()
 	environment := []string{"HOME=" + home, "PATH=/usr/bin:/bin", "JOBCTRL_DIR=" + filepath.Join(home, "data"), "JOBCTRL_RUNTIME_HOME=" + filepath.Join(home, "runtime"), executionQASandboxVariable + "=" + executionQASandboxSelector, "LANGFUSE_DISABLE=1", "OTEL_SDK_DISABLED=true"}
+	var churnCount *atomic.Int64
+	var churnDir string
 	if temporal {
+		churnDir, churnCount = startApplyCensusChurn(t)
+		environment = append(environment, "JOBCTRL_TEST_CENSUS_CHURN_DIR="+churnDir)
 		temporalCLI := os.Getenv("JOBCTRL_TEMPORAL_CLI_PATH")
 		if temporalCLI == "" {
 			temporalCLI, err = exec.LookPath("temporal")
@@ -283,6 +289,17 @@ func runActualNativeApplyModuleFixture(t *testing.T, temporal bool) {
 				t.Fatal(diagnostic)
 			}
 		}
+		if churnCount.Load() < int64(len(observations)) {
+			t.Fatal("real Apply censuses did not exercise the unrelated owned churn")
+		}
+		var handoff struct {
+			Relays             int `json:"relays"`
+			FencedEmptySamples int `json:"fenced_empty_samples"`
+		}
+		raw, err := os.ReadFile(filepath.Join(churnDir, "handoff-proof.json"))
+		if err != nil || json.Unmarshal(raw, &handoff) != nil || handoff.Relays != 2 || handoff.FencedEmptySamples != 2 {
+			t.Fatal("actual authenticated Apply scope did not reject both real fork handoffs")
+		}
 		t.Logf("observed %d real owned-session cleanup censuses", len(observations))
 	}
 	if current, err := processStartIdentity(peerPID); err != nil || current != peerIdentity {
@@ -298,6 +315,63 @@ func runActualNativeApplyModuleFixture(t *testing.T, temporal bool) {
 	if !waitForOwnedRecordExit(componentRecord{PID: peerPID, StartIdentity: peerIdentity}, time.Second) {
 		t.Fatal("final cleanup left the control alive")
 	}
+}
+
+// Hold each unrelated child long enough to change the next PID inventory.
+// These commands belong to the test runner's coalition, not an Apply scope.
+func startApplyCensusChurn(t *testing.T) (string, *atomic.Int64) {
+	t.Helper()
+	dir := t.TempDir()
+	var count atomic.Int64
+	var children sync.WaitGroup
+	stop, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			requests, _ := filepath.Glob(filepath.Join(dir, "request-*"))
+			for _, request := range requests {
+				token := strings.TrimPrefix(filepath.Base(request), "request-")
+				if err := os.Remove(request); err != nil {
+					continue
+				}
+				response := map[string]any{}
+				child := exec.Command("/bin/sleep", "2")
+				if err := child.Start(); err != nil {
+					response["error"] = err.Error()
+				} else {
+					children.Add(1)
+					go func() { defer children.Done(); _ = child.Wait() }()
+					ids, err := processCoalitionIDs(child.Process.Pid)
+					if err != nil {
+						response["error"] = err.Error()
+					} else {
+						identity, err := processStartIdentity(child.Process.Pid)
+						if err != nil {
+							response["error"] = err.Error()
+						} else {
+							response["coalitions"] = ids
+							response["pid"] = child.Process.Pid
+							response["identity"] = identity
+							count.Add(1)
+						}
+					}
+				}
+				_ = writeJSONAtomic(filepath.Join(dir, "ack-"+token+".json"), response)
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
+	t.Cleanup(func() {
+		close(stop)
+		<-done
+		children.Wait()
+	})
+	return dir, &count
 }
 
 // Report only bounded aggregate counts. Session IDs, PIDs, paths and raw

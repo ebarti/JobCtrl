@@ -18,6 +18,34 @@ import (
 	"time"
 )
 
+func registerVerifiedScopeChildCleanup(t *testing.T, ctx launchContext, pid int) {
+	t.Helper()
+	identity, err := processStartIdentity(pid)
+	if err != nil {
+		t.Fatalf("owned synthetic child identity unavailable: %v", err)
+	}
+	ids, err := processCoalitionIDs(pid)
+	if err != nil {
+		t.Fatalf("owned synthetic child scope unavailable: %v", err)
+	}
+	scopes, err := readOwnedExecutionScopes(ctx)
+	if err != nil {
+		t.Fatalf("owned synthetic scope receipt unavailable: %v", err)
+	}
+	verified := false
+	for _, scope := range scopes {
+		verified = verified || scope.CoalitionIDs == ids
+	}
+	if !verified {
+		t.Fatal("synthetic child does not match the test's owned scope")
+	}
+	t.Cleanup(func() {
+		if err := signalExecutionRoot(ids, pid, identity, syscall.SIGKILL); err != nil {
+			t.Errorf("cleanup verified synthetic child: %v", err)
+		}
+	})
+}
+
 func TestNativeOwnedProcessCensusIsInstanceBound(t *testing.T) {
 	ctx, _ := issue1275State(t, componentRecord{})
 	python := migrationIntegrationPython(t)
@@ -100,7 +128,7 @@ while True:
 			if pid == 0 {
 				t.Fatal("owned detached writer did not start")
 			}
-			defer syscall.Kill(pid, syscall.SIGKILL)
+			registerVerifiedScopeChildCleanup(t, ctx, pid)
 			if processGroupAlive(state.Components["worker"].PGID) {
 				t.Fatal("fixture did not escape its recorded process group")
 			}
@@ -142,7 +170,7 @@ func TestStopReportsActualInspectionFailureWithoutChangingRegistry(t *testing.T)
 	}
 	prior := inspectOwnedProcesses
 	t.Cleanup(func() { inspectOwnedProcesses = prior })
-	inspectOwnedProcesses = func(launchContext, instanceState) ([]ownedProcess, error) {
+	inspectOwnedProcesses = func(launchContext, instanceState, ...executionWitnesses) ([]ownedProcess, error) {
 		return nil, errors.New("synthetic permission failure")
 	}
 	if err := stop(ctx); err == nil || !strings.Contains(err.Error(), "synthetic permission failure") {
@@ -196,11 +224,6 @@ func TestOwnershipRetryCannotAdoptReusedProcessIdentity(t *testing.T) {
 func TestActualStopFindsDetachedPlatformExecutionAndPreservesOtherInstance(t *testing.T) {
 	contexts := []launchContext{executionTestContext(t), executionTestContext(t)}
 	pids := make([]int, 0, 2)
-	defer func() {
-		for _, pid := range pids {
-			_ = syscall.Kill(pid, syscall.SIGKILL)
-		}
-	}()
 	for i := range contexts {
 		ctx := &contexts[i]
 		root := filepath.Dir(ctx.Instance.StatePath)
@@ -219,6 +242,7 @@ func TestActualStopFindsDetachedPlatformExecutionAndPreservesOtherInstance(t *te
 			t.Fatal(err)
 		}
 		pids = append(pids, pid)
+		registerVerifiedScopeChildCleanup(t, *ctx, pid)
 		for deadline := time.Now().Add(3 * time.Second); ; {
 			p, err := readProcessScope(pid)
 			if err == nil && p.ParentPID == 1 && p.owner == "" {
@@ -293,7 +317,7 @@ func TestStopFinalizationRecoversAfterActualProcessInterruption(t *testing.T) {
 				t.Fatal(err)
 			}
 			pid, _ := strconv.Atoi(string(raw))
-			defer syscall.Kill(pid, syscall.SIGKILL)
+			registerVerifiedScopeChildCleanup(t, ctx, pid)
 			scopes, err := readOwnedExecutionScopes(ctx)
 			if err != nil || len(scopes) != 1 {
 				t.Fatalf("missing scope: %v", err)
@@ -315,6 +339,10 @@ func TestStopFinalizationRecoversAfterActualProcessInterruption(t *testing.T) {
 			stopped, err := readState(ctx.Instance.StatePath)
 			if err != nil || !stopped.OwnershipVerified || stopped.StoppedAt == nil {
 				t.Fatalf("durable stop proof missing: %v", err)
+			}
+			completion, err := readExecutionCompletion(ctx, scopes[0].ID)
+			if err != nil || completion.Scope != scopes[0] {
+				t.Fatalf("interrupted stop lost its exact scope proof: %v", err)
 			}
 			if err := stop(ctx); err != nil {
 				t.Fatalf("interrupted cleanup was not recoverable: %v", err)
@@ -437,7 +465,7 @@ func TestDirectBackupCleansScopedPlatformOrphanAndReopensPair(t *testing.T) {
 		t.Fatal(err)
 	}
 	pid, _ := strconv.Atoi(string(raw))
-	defer syscall.Kill(pid, syscall.SIGKILL)
+	registerVerifiedScopeChildCleanup(t, fixture.ctx, pid)
 	for deadline := time.Now().Add(3 * time.Second); ; {
 		p, err := readProcessScope(pid)
 		if err == nil && p.ParentPID == 1 && p.owner == "" {

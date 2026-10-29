@@ -52,20 +52,32 @@ separate Windows credential adapter.
 
 Root exit alone does not prove POSIX session exit. After waiting for the root,
 cleanup uses a read-only kernel process census (`libproc` on macOS and `/proc`
-on Linux) to observe the old session, including members in other groups. Each
-scan fences PID enumeration before and after inspection. macOS kernel unique
-IDs/PID versions and Linux kernel start ticks bind process generations; macOS
-also verifies identity around its separate session/status reads. Retirement
-requires two complete observations with identical PID/generation/membership
-inventories and no live session members. A fork followed by a session handoff,
-PID reuse, changed membership or unavailable/incomplete census keeps cleanup unresolved;
-an exited leader never authorizes another signal. Zombies count as exited.
+on Linux) to observe the old session, including members in other groups. For
+an installed Apply child, the authenticated native scope is checked around its
+birth. A read-only scan can then use the scope's kernel task-start counter as
+its fork fence: task-start and exit counts must remain unchanged throughout the
+scan, every active task in the resource coalition must be accounted for, and
+no live session member may be observed. An uninspectable owned task keeps the
+proof unresolved. Other scopes may start and stop without invalidating it. If
+the binding or counter is unavailable, PID enumeration is fenced before and
+after inspection and retirement requires two
+complete identical global PID/generation/membership inventories with no live
+session members. macOS kernel unique IDs/PID versions and Linux kernel start
+ticks bind process generations; macOS also verifies identity around separate
+session/status reads. A fork followed by a session handoff, PID reuse, changed
+membership or unavailable/incomplete evidence keeps cleanup unresolved; a
+leader already exited before cleanup never starts new signal authority. Zombies
+count as exited.
 The observation does not recover authority over descendants that escape the
 launch session.
 
 Scoped browser and agent cleanup attempt each selected worker and preserve
-failed ownership records while reporting incomplete cleanup. The agent adapter
-also verifies cleanup after a naturally exited root, before removing its record.
+failed ownership records while reporting incomplete cleanup. Their original
+child receives TERM first and has a bounded grace to drain. Only a still-owned,
+unreaped launch group is eligible for KILL after that grace, with its original
+PID pinned even if the leader exits during the wait. A leader already exited
+before cleanup cannot authorize a new signal. The agent
+adapter also verifies cleanup after a naturally exited root, before removing its record.
 The exit handler logs failures and does not sweep ports or adopt leftovers.
 These rules complement the native instance shutdown boundary described below.
 
@@ -191,9 +203,21 @@ worker handlers close HTTP/RPC/provider work and drain admitted blocking activit
 threads. Foreground cancellation reaches the command root first; it does not
 signal its cooperative children concurrently. After the configured grace,
 verified leftovers receive TERM, then KILL after their timeout, followed by an
-actual zero-member census. Detached descendants remain identifiable even when
+actual zero-member proof. The kernel's atomic resource-coalition task count
+proves zero without requiring other applications' PID inventories to remain
+stable. A currently executing control command and its exact live transport are
+excluded only after their scope and process identities are verified. If the
+counter is unavailable, the existing complete inventory proof remains. Detached descendants remain identifiable even when
 all original parents and groups are gone. Other instances stay outside that
-ownership boundary. Successful cleanup permits normal restart.
+ownership boundary. When a normal command finishes with no remaining tasks,
+its original controller can attest its own exact receipt after joining the
+helper. Stop may use that proof if the kernel later reports the same-boot
+coalition reaped. The controller authenticated that scope at birth; an absent
+ID from a later receipt read alone is not completion proof. A Stop may also
+remember an exact scope it directly observed while draining, then use kernel
+reaping as zero proof for that same scope and boot. It persists exact per-scope
+completions before the stopped registry checkpoint, so interruption leaves the
+same evidence available to recovery. Successful cleanup permits normal restart.
 
 Stop's control lock also serializes new execution admission. After cleanup,
 the launcher durably publishes the stopped proof before retiring exact owned
@@ -803,7 +827,13 @@ preflight. It creates a fresh existing launchd execution scope with durable
 The fixed `jobctrl.apply.execution` module runs the launcher there. Normal
 completion, error, cancellation and controller loss drain only that scope,
 including detached descendants, before publishing exact native completion.
-The parent consumes counts only after controller exit and proof verification.
+After joining the helper, the controller can retire its exact same-boot receipt
+using that durable completion; a missing or mismatched proof cannot substitute
+for a zero census. The parent consumes counts only after controller exit and
+proof verification. A known inspection permission denial is carried as a
+bounded error category and reported only against the exact retained Apply
+receipt. It is diagnostic only and never proves exit or authorizes cleanup;
+other failures stay unclassified.
 Ordinary same-job retries therefore need no whole-app stop. Other scopes remain
 active. This uses the existing native execution machinery and shared activity
 capacity, not another scheduler or containment service.

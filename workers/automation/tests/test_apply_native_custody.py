@@ -14,7 +14,9 @@ import uuid
 
 import pytest
 
-from jobctrl.apply.native_custody import capture_native_custody, verify_native_completion, _current_coalitions
+from jobctrl.apply.native_custody import (
+    _current_coalitions, capture_native_custody, matches_active_native_receipt, verify_native_completion,
+)
 from jobctrl.apply.process_birth import CustodyUnverified, boot_identity
 
 
@@ -25,6 +27,38 @@ def _scope(app, runtime):
             "runtimeHome": str(runtime), "bootSession": boot_identity(),
             "jobLabel": f"dev.jobctrl.exec.{instance}.{scope_id}", "domain": f"gui/{os.getuid()}",
             "rootPid": 123, "rootIdentity": "synthetic-negative-metadata-only", "coalitionIds": [11, 22]}
+
+
+@pytest.mark.skipif(platform.system() == "Windows", reason="native Apply is not qualified on Windows")
+@pytest.mark.parametrize("fault", ["none", "missing", "digest", "scope", "boot", "linked"])
+def test_retained_receipt_only_selects_a_bounded_error_message(tmp_path, fault):
+    app = tmp_path / "app"
+    app.mkdir()
+    runtime = tmp_path / "runtime"
+    scope = _scope(app, runtime) | {"purpose": "apply"}
+    if fault == "boot":
+        scope["bootSession"] = str(uuid.uuid4())
+    directory = runtime / "instances" / scope["instanceId"] / "executions"
+    directory.mkdir(mode=0o700, parents=True)
+    receipt = directory / f"{scope['id']}.json"
+    raw = json.dumps(scope).encode()
+    receipt.write_bytes(raw)
+    receipt.chmod(0o600)
+    binding = {"scope": scope, "receipt_sha256": sha256(raw).hexdigest()}
+    if fault == "missing":
+        receipt.unlink()
+    elif fault == "digest":
+        receipt.write_bytes(raw + b" ")
+    elif fault == "scope":
+        binding["scope"] = scope | {"rootPid": scope["rootPid"] + 1}
+    elif fault == "linked":
+        foreign = tmp_path / "foreign"
+        receipt.rename(foreign)
+        receipt.symlink_to(foreign)
+    assert matches_active_native_receipt(binding, app) is (fault == "none")
+    # Even a byte-matching receipt grants no cleanup, success or retry proof.
+    with pytest.raises(CustodyUnverified):
+        verify_native_completion(binding, app)
 
 
 @pytest.mark.skipif(platform.system() == "Windows", reason="native Apply completion is not qualified on Windows")
