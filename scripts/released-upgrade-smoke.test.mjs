@@ -29,7 +29,8 @@ test("released upgrade qualification distinguishes the forward schema transition
   const protocol = (minimum, maximum) => ({ launcherCompatibility: { minimum, maximum } });
   assert.equal(selectUpgradeMode(protocol(1, 1), protocol(2, 2), 14), "forward-schema-15");
   assert.equal(selectUpgradeMode(protocol(2, 2), protocol(2, 2), 15), "compatible");
-  assert.equal(selectUpgradeMode(protocol(1, 2), protocol(1, 2), 14), "compatible");
+  assert.equal(selectUpgradeMode(protocol(1, 1), protocol(1, 2), 14), "compatible");
+  assert.throws(() => selectUpgradeMode(protocol(1, 2), protocol(1, 2), 14), /unsupported released upgrade/);
   assert.throws(() => selectUpgradeMode(protocol(1, 1), protocol(2, 2), 13), /unsupported released upgrade/);
   assert.throws(() => selectUpgradeMode(protocol(1, 1), protocol(3, 3), 14), /unsupported released upgrade/);
   assert.throws(() => selectUpgradeMode(protocol(1, 1), protocol(2, 1), 14), /invalid launcher compatibility/);

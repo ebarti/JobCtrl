@@ -38,7 +38,7 @@ export function selectUpgradeMode(oldManifest, targetManifest, sourceSchema) {
   if (source.minimum === 1 && source.maximum === 1 && target.minimum === 2 && target.maximum === 2 && sourceSchema === 14) {
     return "forward-schema-15";
   }
-  if (target.minimum <= source.maximum && source.maximum <= target.maximum) return "compatible";
+  if (source.minimum === source.maximum && target.minimum <= source.minimum && source.minimum <= target.maximum) return "compatible";
   throw new Error(`unsupported released upgrade: launcher ${source.minimum}-${source.maximum} to ${target.minimum}-${target.maximum}, schema ${sourceSchema}`);
 }
 
@@ -211,7 +211,7 @@ async function scenario(old, candidate, root) {
       const temporalHash = await hash(path.join(state, "temporal.db"));
       console.log(`${old.descriptor.appVersion}: verifying archived controller refuses protocol-2 promotion`);
       const rejected = await command(selector, ["update"], env, { allowFailure: true });
-      assert.notEqual(rejected.code, 0, "archived protocol-1 update unexpectedly accepted protocol 2");
+      assert.ok(Number.isInteger(rejected.code) && rejected.code !== 0, "archived protocol-1 update must exit with a refusal");
       assert.match(rejected.output, /protocol/i, "archived controller must reject the incompatible protocol");
       assert.deepEqual(await readFile(path.join(runtime, "active.json")), activeBefore);
       assert.deepEqual(await readBytesOrMissing(path.join(runtime, "transition.json")), journalBefore);
@@ -284,7 +284,7 @@ print(json.dumps([app.execute("SELECT personal_full_name FROM candidate_profiles
       const active = await readFile(path.join(runtime, "active.json"));
       const beforeRollback = await readFile(path.join(runtime, "transition.json"));
       const rollback = await command(selector, ["rollback", "--to", old.descriptor.buildId], env, { allowFailure: true });
-      assert.notEqual(rollback.code, 0, "cross-protocol rollback must be refused");
+      assert.ok(Number.isInteger(rollback.code) && rollback.code !== 0, "cross-protocol rollback must exit with a refusal");
       assert.match(rollback.output, /protocol/i);
       assert.deepEqual(await readFile(path.join(runtime, "active.json")), active);
       assert.deepEqual(await readFile(path.join(runtime, "transition.json")), beforeRollback);
