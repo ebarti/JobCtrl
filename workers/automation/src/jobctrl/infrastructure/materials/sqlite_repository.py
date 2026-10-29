@@ -21,6 +21,8 @@ import hashlib
 import json
 import math
 import sqlite3
+import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
 
@@ -32,6 +34,7 @@ from jobctrl.domain.materials.policy import (
     TailoringPolicy,
     TailoringPolicyChangedError,
     TailoringPolicyRollbackReason,
+    TailoringPolicyRollbackResult,
     fingerprint_profile_snapshot,
 )
 from jobctrl.domain.operations.learning import (
@@ -81,6 +84,43 @@ class LearningRecommendationReviewError(ValueError):
 
 class TailoringPolicyRevisionError(ValueError):
     """Raised when a requested policy history operation is not valid."""
+
+
+class TailoringPolicyStaleReviewError(TailoringPolicyRevisionError):
+    """The current policy no longer matches the reviewed predecessor."""
+
+
+class TailoringPolicyCommandConflictError(TailoringPolicyRevisionError):
+    """A command identity is already bound to a different reviewed intent."""
+
+
+_RESTORE_RECEIPT_PREFIX = "jobctrl:policy-restore:v1:"
+
+
+def _restore_receipt_prefix(command_id: str) -> str:
+    return f"{_RESTORE_RECEIPT_PREFIX}{command_id}:"
+
+
+def _restore_reason(raw: str) -> str:
+    """Expose only the reason for a recognized receipt, preserving old history."""
+    if raw.startswith(_RESTORE_RECEIPT_PREFIX):
+        try:
+            _, payload = raw[len(_RESTORE_RECEIPT_PREFIX):].split(":", 1)
+            if json.loads(payload).get("reason") == "user_requested":
+                return "user_requested"
+        except (AttributeError, ValueError, TypeError):
+            pass
+    return raw
+
+
+def _valid_restore_command_id(command_id: object) -> bool:
+    if not isinstance(command_id, str):
+        return False
+    try:
+        parsed = uuid.UUID(command_id)
+        return parsed.version == 4 and str(parsed) == command_id
+    except (ValueError, AttributeError):
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -1298,31 +1338,93 @@ class SqliteTailoringPolicyRepository:
         tenant_id: TenantId,
         *,
         target_version: int,
+        expected_current_version: int,
+        command_id: str,
         reason: TailoringPolicyRollbackReason,
         rolled_back_at: str,
-    ) -> TailoringPolicy:
+    ) -> TailoringPolicyRollbackResult:
+        for name, value in (("target version", target_version), ("expected current version", expected_current_version)):
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1 or value > 9007199254740991:
+                raise TailoringPolicyRevisionError(f"{name} must be a positive safe integer")
+        if not _valid_restore_command_id(command_id):
+            raise TailoringPolicyRevisionError("command ID must be a canonical UUIDv4")
         if reason != "user_requested":
             raise TailoringPolicyRevisionError("unsupported tailoring policy rollback reason")
-        if not str(rolled_back_at or "").strip():
+        if not isinstance(rolled_back_at, str) or not rolled_back_at.strip():
             raise TailoringPolicyRevisionError("rolled_back_at must not be empty")
 
+        # A receipt is stored in the revision's provenance, so neither half can
+        # commit without the other and the exact-v15 schema remains unchanged.
+        prefix = _restore_receipt_prefix(command_id)
+        payload = {
+            "commandId": command_id,
+            "targetVersion": target_version,
+            "expectedCurrentVersion": expected_current_version,
+            "reason": reason,
+        }
+        encoded_reason = prefix + json.dumps(payload, sort_keys=True, separators=(",", ":"))
         self._conn.execute("BEGIN IMMEDIATE")
         try:
+            receipts = self._conn.execute(
+                """SELECT version, rollback_of_version, rollback_reason
+                     FROM tailoring_policies
+                    WHERE tenant_id = ? AND substr(rollback_reason, 1, ?) = ?""",
+                (str(tenant_id), len(prefix), prefix),
+            ).fetchall()
+            if receipts:
+                if len(receipts) != 1:
+                    raise TailoringPolicyCommandConflictError("restore command receipt is inconsistent")
+                receipt = receipts[0]
+                receipt_version = int(_row_value(receipt, "version", 0))
+                receipt_target = _row_value(receipt, "rollback_of_version", 1)
+                receipt_raw = str(_row_value(receipt, "rollback_reason", 2))
+                if receipt_raw != encoded_reason:
+                    raise TailoringPolicyCommandConflictError("restore command identity already used")
+                if receipt_target != target_version or receipt_version != expected_current_version + 1:
+                    raise TailoringPolicyCommandConflictError("restore command receipt is inconsistent")
+                accepted = self.get_version(tenant_id, receipt_version)
+                current = self.get_current(tenant_id)
+                if accepted is None or current is None:
+                    raise TailoringPolicyCommandConflictError("restore command receipt is inconsistent")
+                self._conn.commit()
+                return TailoringPolicyRollbackResult(accepted, current.version, True)
+
             current = self.get_current(tenant_id)
             if current is None:
                 raise TailoringPolicyRevisionError("tailoring policy is not initialized")
             target = self.get_version(tenant_id, target_version)
             if target is None:
                 raise TailoringPolicyRevisionError("target tailoring policy version does not exist for tenant")
-            if (
-                current.rollback_of_version == target.version
-                and current.rollback_reason == reason
-                and current.same_config_as(target)
-            ):
-                self._conn.commit()
-                return current
+            if current.version != expected_current_version:
+                raise TailoringPolicyStaleReviewError("tailoring_policy_stale_review")
             if target.version >= current.version:
                 raise TailoringPolicyRevisionError("rollback target must precede the current tailoring policy")
+            # The general policy reader tolerates damaged JSON for legacy reads.
+            # A restore must copy the actual historical configuration, never a
+            # reader's empty fallback, and its response must be valid before commit.
+            raw_settings = self._conn.execute(
+                """SELECT generator_settings_json, judge_settings_json, runtime_settings_json
+                     FROM tailoring_policies WHERE tenant_id = ? AND version = ?""",
+                (str(tenant_id), target_version),
+            ).fetchone()
+            try:
+                if raw_settings is None:
+                    raise ValueError("invalid historical settings")
+                settings = [json.loads(raw_settings[index]) for index in range(3)]
+                if any(not isinstance(value, dict) for value in settings):
+                    raise ValueError("invalid historical settings")
+                # Python's JSON reader accepts NaN and infinities, including
+                # finite-looking exponents that overflow a float. They cannot
+                # be emitted as interoperable JSON in the restored revision.
+                for value in settings:
+                    json.dumps(value, allow_nan=False)
+                # The domain reader normalizes rule whitespace for legacy
+                # reads; the history contract requires exact allowlisted pairs.
+                rules = target.learned_tailoring_rules.to_dict()
+                if settings[2].get("learned_tailoring_rules", {}) != rules:
+                    raise ValueError("noncanonical learned tailoring rules")
+            except (TypeError, ValueError):
+                raise TailoringPolicyRevisionError("target tailoring policy configuration is invalid") from None
 
             rollback = TailoringPolicy(
                 tenant_id=tenant_id,
@@ -1338,14 +1440,14 @@ class SqliteTailoringPolicyRepository:
                 judge_settings=target.judge_settings,
                 runtime_settings=target.runtime_settings,
                 rollback_of_version=target.version,
-                rollback_reason=reason,
+                rollback_reason=encoded_reason,
                 created_at=rolled_back_at,
                 created_from_event_id=None,
             )
             self._insert(rollback)
             self._conn.commit()
-            return rollback
-        except Exception:
+            return TailoringPolicyRollbackResult(replace(rollback, rollback_reason=reason), rollback.version, False)
+        except BaseException:
             self._conn.rollback()
             raise
 
@@ -1365,7 +1467,7 @@ class SqliteTailoringPolicyRepository:
             judge_settings=_loads(_row_value(row, "judge_settings_json", 10)) or {},
             runtime_settings=_loads(_row_value(row, "runtime_settings_json", 11)) or {},
             rollback_of_version=_row_value(row, "rollback_of_version", 12),
-            rollback_reason=str(_row_value(row, "rollback_reason", 13) or ""),
+            rollback_reason=_restore_reason(str(_row_value(row, "rollback_reason", 13) or "")),
             created_at=str(_row_value(row, "created_at", 14)),
             created_from_event_id=_row_value(row, "created_from_event_id", 15),
         )

@@ -573,11 +573,29 @@ applying behavior twice.
 `GET /v1/learning/policies/materials?page=<n>&pageSize=<1..100>` returns
 allowlisted current/superseded revision summaries: version, learned rules,
 recommendation/review provenance when present, rollback provenance when
-present, and creation time. `POST /v1/learning/policies/materials/rollbacks`
-accepts `{ targetVersion: <positive integer> }` and appends a new current
-revision with `rollbackOfVersion` and `rollbackReasonCode: "user_requested"`.
-The exact structured replay is idempotent. Neither review nor rollback starts
-scoring, tailoring, Apply, workflow, or artifact work.
+present, and creation time. For new restores, history also exposes
+`restoreCommandId` and `restoredFromCurrentVersion`.
+
+`POST /v1/learning/policies/materials/rollbacks` accepts exactly
+`{ targetVersion, expectedCurrentVersion, commandId, reasonCode: "user_requested" }`.
+Versions are positive integers, and `commandId` is a canonical lowercase UUIDv4.
+The tenant-scoped target must exist and precede the reviewed current revision.
+A new command appends one revision only if the current version still equals
+`expectedCurrentVersion`. A changed head returns `409` with
+`tailoring_policy_stale_review`; refresh and review history before sending a new
+command ID. Reusing an accepted ID with a different payload returns `409` with
+`tailoring_policy_command_conflict`. Invalid bodies return `400`, while invalid
+or foreign targets are refused without exposing another tenant.
+
+The success response contains the accepted `version`, `rollbackOfVersion`,
+`rollbackReasonCode`, `expectedCurrentVersion`, `commandId`, `createdAt`,
+`learnedRules`, `replayed`, and `currentVersion`, plus the existing context and
+provenance fields. `status` is `current` only when the accepted version matched
+`currentVersion` at the transaction; otherwise it is `superseded`. The same
+command and reviewed payload return the original accepted revision and timestamp
+after response loss, restart, or intervening writes, with the head observed by
+that retry. The receipt and revision are committed atomically. Neither review
+nor rollback starts scoring, tailoring, Apply, workflow, or artifact work.
 
 ## Dashboard, analytics, and operational metrics
 

@@ -2469,6 +2469,10 @@ export const TailoringPolicyLearnedRuleSchema = z.discriminatedUnion("ruleKey", 
 ]);
 export type TailoringPolicyLearnedRule = z.infer<typeof TailoringPolicyLearnedRuleSchema>;
 
+export const TailoringPolicyRestoreCommandIdSchema = z.string().regex(
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+);
+
 export const TailoringPolicyRevisionSummarySchema = z
   .object({
     context: z.literal("materials"),
@@ -2480,6 +2484,8 @@ export const TailoringPolicyRevisionSummarySchema = z
     sourceRecommendationId: LearningRecommendationIdSchema.nullable(),
     rollbackOfVersion: z.number().int().positive().nullable(),
     rollbackReasonCode: z.enum(["user_requested", "historical_or_unspecified"]).nullable(),
+    restoreCommandId: TailoringPolicyRestoreCommandIdSchema.optional(),
+    restoredFromCurrentVersion: z.number().int().positive().optional(),
     createdAt: IsoTimestampSchema,
   })
   .strict()
@@ -2490,6 +2496,10 @@ export const TailoringPolicyRevisionSummarySchema = z
   .refine(
     (value) => (value.rollbackOfVersion === null) === (value.rollbackReasonCode === null),
     "Policy rollback version and reason must be present together.",
+  )
+  .refine(
+    (value) => (value.restoreCommandId === undefined) === (value.restoredFromCurrentVersion === undefined),
+    "Restore command and reviewed predecessor must be present together.",
   );
 export type TailoringPolicyRevisionSummary = z.infer<
   typeof TailoringPolicyRevisionSummarySchema

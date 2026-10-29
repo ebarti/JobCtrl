@@ -6664,10 +6664,26 @@
             "type": "integer",
             "exclusiveMinimum": 0,
             "maximum": 9007199254740991
+          },
+          "expectedCurrentVersion": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "commandId": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "reasonCode": {
+            "type": "string",
+            "const": "user_requested"
           }
         },
         "required": [
-          "targetVersion"
+          "targetVersion",
+          "expectedCurrentVersion",
+          "commandId",
+          "reasonCode"
         ],
         "additionalProperties": false
       },
@@ -6694,7 +6710,27 @@
           },
           "status": {
             "type": "string",
-            "const": "current"
+            "enum": [
+              "current",
+              "superseded"
+            ]
+          },
+          "currentVersion": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "expectedCurrentVersion": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "commandId": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
           },
           "learnedRules": {
             "maxItems": 5,
@@ -6822,6 +6858,10 @@
           "policyKind",
           "version",
           "status",
+          "currentVersion",
+          "replayed",
+          "expectedCurrentVersion",
+          "commandId",
           "learnedRules",
           "sourceReviewId",
           "sourceRecommendationId",

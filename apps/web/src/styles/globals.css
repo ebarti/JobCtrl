@@ -3943,6 +3943,21 @@ input[type="radio"] {
   padding-left: 18px;
 }
 
+.tailoring-policy-restore-review {
+  display: grid;
+  gap: 8px;
+  padding: 0 16px 12px;
+}
+
+.tailoring-policy-restore-review p,
+.tailoring-policy-restore-status {
+  margin: 0;
+}
+
+.tailoring-policy-restore-status {
+  padding: 12px 16px 0;
+}
+
 .tailoring-policy-pagination {
   display: flex;
   align-items: center;

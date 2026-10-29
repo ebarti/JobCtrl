@@ -3413,6 +3413,7 @@ describe("local TypeScript API", () => {
         context: "materials",
         policyKind: "tailoring_rule",
         policyVersion: 3,
+        currentVersion: 3, replayed: false, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111",
         rollbackOfVersion: 1,
         rollbackReasonCode: "user_requested",
         learnedRules: [],
@@ -3427,7 +3428,7 @@ describe("local TypeScript API", () => {
     const response = await app.inject({
       method: "POST",
       url: "/v1/learning/policies/materials/rollbacks",
-      payload: { targetVersion: 1 },
+      payload: { targetVersion: 1, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111", reasonCode: "user_requested" },
     });
 
     expect(response.statusCode, response.body).toBe(200);
@@ -3438,6 +3439,7 @@ describe("local TypeScript API", () => {
       policyKind: "tailoring_rule",
       version: 3,
       status: "current",
+      currentVersion: 3, replayed: false, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111",
       learnedRules: [],
       sourceReviewId: null,
       sourceRecommendationId: null,
@@ -3448,6 +3450,7 @@ describe("local TypeScript API", () => {
     expect(call).toHaveBeenCalledWith(RpcMethods.RollbackTailoringPolicy, {
       tenantId: "local",
       targetVersion: 1,
+      expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111", reasonCode: "user_requested",
       expectedAppDir: tempDir,
       expectedDbPath: options.dbPath,
     });
@@ -3465,13 +3468,13 @@ describe("local TypeScript API", () => {
       new Response(response.body, { status: 200, statusText: "OK" }),
     );
     await expect(
-      createJobCtrlApiClient().rollbackTailoringPolicy({ targetVersion: 1 }),
+      createJobCtrlApiClient().rollbackTailoringPolicy({ targetVersion: 1, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111", reasonCode: "user_requested" }),
     ).resolves.toEqual(parsed);
     expect(fetchMock).toHaveBeenCalledWith(
       "http://127.0.0.1:8766/v1/learning/policies/materials/rollbacks",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ targetVersion: 1 }),
+        body: JSON.stringify({ targetVersion: 1, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111", reasonCode: "user_requested" }),
       }),
     );
     fetchMock.mockRestore();
@@ -3484,6 +3487,7 @@ describe("local TypeScript API", () => {
         context: "materials",
         policyKind: "tailoring_rule",
         policyVersion: 3,
+        currentVersion: 3, replayed: false, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111",
         rollbackOfVersion: 1,
         rollbackReasonCode: "private rollback narrative",
         learnedRules: [],
@@ -3497,7 +3501,7 @@ describe("local TypeScript API", () => {
     const badResponse = await badApp.inject({
       method: "POST",
       url: "/v1/learning/policies/materials/rollbacks",
-      payload: { targetVersion: 1 },
+      payload: { targetVersion: 1, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111", reasonCode: "user_requested" },
     });
     expect(badResponse.statusCode, badResponse.body).toBe(502);
     expect(badResponse.json()).toEqual({
@@ -3507,6 +3511,26 @@ describe("local TypeScript API", () => {
     });
     expect(badResponse.body).not.toContain("private rollback narrative");
     await badApp.close();
+  });
+
+  it("returns a typed stale-review conflict and marks a delayed receipt superseded", async () => {
+    const command = { targetVersion: 1, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111", reasonCode: "user_requested" };
+    const call = vi.fn<JsonRpcDispatcher["call"]>()
+      .mockResolvedValueOnce({ jsonrpc: "2.0", id: 1, error: { code: -32602, message: "tailoring_policy_stale_review" } })
+      .mockResolvedValueOnce({ jsonrpc: "2.0", id: 2, result: {
+        status: "succeeded", context: "materials", policyKind: "tailoring_rule",
+        policyVersion: 3, currentVersion: 4, replayed: true, expectedCurrentVersion: 2,
+        commandId: command.commandId, rollbackOfVersion: 1, rollbackReasonCode: "user_requested",
+        learnedRules: [], rolledBackAt: "2026-08-01T12:34:56Z",
+      } });
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const stale = await app.inject({ method: "POST", url: "/v1/learning/policies/materials/rollbacks", payload: command });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json()).toMatchObject({ error: "tailoring_policy_stale_review" });
+    const replay = await app.inject({ method: "POST", url: "/v1/learning/policies/materials/rollbacks", payload: command });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json()).toMatchObject({ version: 3, currentVersion: 4, status: "superseded", replayed: true });
+    await app.close();
   });
 
   it("serves paginated recommendation evidence links without source content", async () => {
