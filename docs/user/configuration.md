@@ -401,6 +401,11 @@ Settings separates pipeline parallelism from the worker capacity that executes
 it. Increasing either value does not create provider quota or bypass the daily
 budget.
 
+In **Settings → General → Cost and capacity**, an edited draft is autosaved
+after five seconds without an edit. If saving fails, the unsaved values and
+error remain visible. JobCtrl does not automatically repeat the unchanged
+draft; choose **Save changes** to retry, or edit it to schedule another attempt.
+
 ### Concurrent applications {#runtime-setting-concurrent-applications}
 
 **Concurrent applications** (`applyConcurrency`, default `1`) limits how many
