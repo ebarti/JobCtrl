@@ -805,9 +805,15 @@ def _ensure_posted_compensation_fact(
     conn.commit()
     row = conn.execute(
         """
-        SELECT job_id, salary, full_description, description
+        SELECT jobs.job_id, jobs.salary,
+               enrichments.full_description AS enrichment_description,
+               jobs.full_description, jobs.description
         FROM jobs
-        WHERE tenant_id = ? AND job_id = ?
+        LEFT JOIN job_enrichments AS enrichments
+          ON enrichments.tenant_id = jobs.tenant_id
+         AND enrichments.job_id = jobs.job_id
+         AND enrichments.current_status = 'enriched'
+        WHERE jobs.tenant_id = ? AND jobs.job_id = ?
         """,
         (str(tenant_id), str(job_id)),
     ).fetchone()

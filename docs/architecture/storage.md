@@ -346,6 +346,12 @@ source text such as `jobs.salary`, records explicit parse states and warnings,
 and keeps `jobs.salary` unchanged as a compatibility/raw fallback. It does not
 store full descriptions, provider raw payloads, credentials, local paths, or
 licensed-source salary data.
+The selected input is the first nonempty salary, current enriched description,
+full description, or short description. Discovery commits its intake before
+model extraction; before binding the result and emitting its update event, the fact writer
+reselects that source under a short write reservation. A changed source field or
+normalized text, including an enrichment status transition that changes the
+preferred source, rejects publication and retains the last accepted fact and event.
 Market compensation estimates live in the canonical
 `job_market_compensation_estimates` table. The estimator consumes deterministic
 local compensation observations keyed by company, role, location, and trimodal

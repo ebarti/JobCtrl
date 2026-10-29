@@ -131,6 +131,47 @@ def test_jobspy_posted_compensation_producer_resolves_the_tenant_scoped_job_id(m
     assert posted.get_fact("other", other_job_id) is None
 
 
+@pytest.mark.parametrize("producer", ["jobspy", "url_import"])
+def test_discovery_posted_pay_selects_current_enriched_description(monkeypatch, producer: str) -> None:
+    conn = _connection()
+    job_id = JobId("66666666-6666-4666-8666-666666666666")
+    url = "https://example.test/jobs/enriched"
+    _insert_job(conn, tenant_id="local", job_id=job_id, url=url, salary="EUR 70000/year")
+    _insert_job(conn, tenant_id="other", job_id=job_id, url=url, salary="EUR 120000/year")
+    conn.execute(
+        "UPDATE jobs SET salary=NULL, full_description='EUR 70000/year' WHERE tenant_id='local' AND job_id=?",
+        (job_id,),
+    )
+    conn.execute(
+        "INSERT INTO job_enrichments (tenant_id,job_id,current_status,full_description,updated_at) "
+        "VALUES ('local',?,'enriched','EUR 90000/year','2026-01-01')",
+        (job_id,),
+    )
+    conn.execute(
+        "INSERT INTO job_enrichments (tenant_id,job_id,current_status,full_description,updated_at) "
+        "VALUES ('other',?,'enriched','EUR 120000/year','2026-01-01')",
+        (job_id,),
+    )
+    conn.commit()
+    original = SqlitePostedCompensationRepository
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.compensation.SqlitePostedCompensationRepository",
+        lambda connection: original(connection, extractor=pay_extractor(connection, minimum=90000, maximum=90000)),
+    )
+
+    if producer == "jobspy":
+        _upsert_posted_compensation_fact(conn, tenant_id="local", job_url=url, parsed_at="2026-10-19T20:00:00Z")
+    else:
+        _ensure_posted_compensation_fact(
+            conn, tenant_id="local", job_id=job_id, source_native_id="synthetic-enriched",
+        )
+
+    fact = original(conn).get_fact("local", job_id)
+    assert fact is not None
+    assert (fact.source_field, fact.minimum_amount) == ("job_enrichments.full_description", 90000)
+    conn.close()
+
+
 def test_compensation_repositories_reject_url_shaped_job_ids() -> None:
     conn = _connection()
     url_shaped_id = JobId("https://example.test/jobs/not-an-id")
