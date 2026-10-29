@@ -1884,6 +1884,13 @@ the production-mode browser lane. Verify direct SPA deep links, Pages security
 headers, the same-origin `/api/*` route, D1 migration state, and one Pages
 rollback before calling the public deployment healthy.
 
+The consented funnel report regression executes the checked-in SQL against
+migrated synthetic D1 data produced by the telemetry handler. Every accepted
+route must count an install click as an install, while session starts and the
+five route views keep their own stages. Require correct release grouping,
+distinct visitor/session counts, expired-event exclusion and separation from
+denied and operational traffic.
+
 ### Provider setup gate
 
 For the isolated Codex SDK environment, merge hostile ambient credential and

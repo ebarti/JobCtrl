@@ -2,6 +2,7 @@ import { applyD1Migrations, env } from "cloudflare:test";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { migrations } from "virtual:demo-edge-migrations";
 
+import consentedFunnel from "../reports/consented-funnel.sql?raw";
 import { classifyDemoApiRoute, dispatchDemoApi, ingressRateLimitKey } from "../workers/api.js";
 import {
   CONSENT_MAX_AGE_SECONDS,
@@ -170,6 +171,104 @@ beforeEach(async () => {
     testEnv.DEMO_TELEMETRY_DB.prepare("DELETE FROM operational_rate_windows"),
     testEnv.DEMO_TELEMETRY_DB.prepare("DELETE FROM active_demo_identities"),
   ]);
+});
+
+describe("consented funnel report", () => {
+  it("classifies install clicks by event across every accepted route without mixing populations or releases", async () => {
+    const now = new Date();
+    const secondSession = "t".repeat(32);
+    const otherVisitor = "w".repeat(32);
+    const otherSession = "u".repeat(32);
+    const otherRelease = "synthetic-other-release";
+    const acceptedEnv = envWithLimiters(async () => ({ success: true }));
+    const otherReleaseEnv = { ...acceptedEnv, DEMO_RELEASE: otherRelease } as DemoEdgeEnv;
+
+    await activateTelemetryIdentity(acceptedEnv, visitorId, sessionId, now);
+    await activateTelemetryIdentity(acceptedEnv, visitorId, secondSession, now);
+    await activateTelemetryIdentity(otherReleaseEnv, otherVisitor, otherSession, now);
+
+    async function send(
+      targetEnv: DemoEdgeEnv,
+      visitor: string,
+      session: string,
+      name: string,
+      attributes: Record<string, string>,
+      choice: "granted" | "denied" = "granted",
+    ): Promise<void> {
+      const response = await handleTelemetryPost(jsonContext(
+        "/api/demo-telemetry", { name, attributes }, cookieHeader(choice, visitor, session), "POST", targetEnv,
+      ), now);
+      expect(response.status, `${name} ${attributes.route ?? "no route"}`).toBe(204);
+    }
+
+    await send(acceptedEnv, visitorId, sessionId, "demo_session_started", { route: "job_detail" });
+    for (const route of routeNames) {
+      await send(acceptedEnv, visitorId, sessionId, "demo_install_cta_clicked", { route });
+    }
+    await send(acceptedEnv, visitorId, sessionId, "demo_install_cta_clicked", {});
+    for (const route of ["job_detail", "evidence", "tailor", "apply_review", "apply_dry_run"]) {
+      await send(acceptedEnv, visitorId, sessionId, "demo_route_viewed", { route });
+    }
+    await send(acceptedEnv, visitorId, sessionId, "demo_route_viewed", { route: "jobs" });
+    await send(acceptedEnv, visitorId, sessionId, "demo_docs_cta_clicked", { route: "job_detail" });
+
+    await send(acceptedEnv, visitorId, secondSession, "demo_session_started", { route: "evidence" });
+    await send(acceptedEnv, visitorId, secondSession, "demo_install_cta_clicked", { route: "job_detail" });
+    await send(acceptedEnv, visitorId, secondSession, "demo_route_viewed", { route: "job_detail" });
+    await send(acceptedEnv, otherVisitor, otherSession, "demo_install_cta_clicked", { route: "evidence" });
+    await send(acceptedEnv, otherVisitor, otherSession, "demo_route_viewed", { route: "job_detail" });
+    await send(otherReleaseEnv, otherVisitor, otherSession, "demo_session_started", { route: "tailor" });
+    await send(otherReleaseEnv, otherVisitor, otherSession, "demo_install_cta_clicked", { route: "tailor" });
+    await send(otherReleaseEnv, otherVisitor, otherSession, "demo_route_viewed", { route: "evidence" });
+    await send(acceptedEnv, visitorId, sessionId, "demo_install_cta_clicked", { route: "job_detail" }, "denied");
+
+    await recordOperationalCounter(acceptedEnv, operationKey("funnel-denied"), {
+      metric: "consent_choice", consentChoice: "denied", initializationResult: "not_applicable", storageMode: "not_applicable",
+    }, now);
+    await testEnv.DEMO_TELEMETRY_DB.batch([
+      testEnv.DEMO_TELEMETRY_DB.prepare(
+        `INSERT INTO consented_product_events
+         (id, occurred_at, expires_at, visitor_hash, session_hash, release, consent_contract_version, event_name, route_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind("expired-install", "2000-01-01T00:00:00.000Z", "2000-01-02T00:00:00.000Z", "expired-visitor", "expired-session", testEnv.DEMO_RELEASE, CONSENT_CONTRACT_VERSION, "demo_install_cta_clicked", "job_detail"),
+      testEnv.DEMO_TELEMETRY_DB.prepare(
+        `INSERT INTO consented_product_events
+         (id, occurred_at, expires_at, visitor_hash, session_hash, release, consent_contract_version, event_name, route_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind("expired-release", "2000-01-01T00:00:00.000Z", "2000-01-02T00:00:00.000Z", "expired-visitor", "expired-session", "expired-only-release", CONSENT_CONTRACT_VERSION, "demo_session_started", "job_detail"),
+    ]);
+
+    // Successful telemetry responses can also mean a safe drop; inspect persisted rows.
+    expect(await eventCount()).toBe(routeNames.length + 19);
+    expect(await operationalStateCounts()).toMatchObject({ counters: 1 });
+
+    const report = await testEnv.DEMO_TELEMETRY_DB.prepare(consentedFunnel).all<{
+      population: string;
+      release: string;
+      metric: string;
+      dimension_1: string;
+      dimension_2: string;
+      events: number;
+      unique_visitors: number;
+      unique_sessions: number;
+    }>();
+    const row = (release: string, dimension: string, events: number, visitors: number, sessions: number) => ({
+      population: "consented traffic", release, metric: "core_funnel", dimension_1: dimension, dimension_2: "",
+      events, unique_visitors: visitors, unique_sessions: sessions,
+    });
+    expect(report.results).toEqual([
+      row(otherRelease, "01_session", 1, 1, 1),
+      row(otherRelease, "03_evidence", 1, 1, 1),
+      row(otherRelease, "07_install_cta", 1, 1, 1),
+      row(testEnv.DEMO_RELEASE, "01_session", 2, 1, 2),
+      row(testEnv.DEMO_RELEASE, "02_job_detail", 3, 2, 3),
+      row(testEnv.DEMO_RELEASE, "03_evidence", 1, 1, 1),
+      row(testEnv.DEMO_RELEASE, "04_tailor", 1, 1, 1),
+      row(testEnv.DEMO_RELEASE, "05_apply_review", 1, 1, 1),
+      row(testEnv.DEMO_RELEASE, "06_apply_dry_run", 1, 1, 1),
+      row(testEnv.DEMO_RELEASE, "07_install_cta", routeNames.length + 3, 2, 3),
+    ]);
+  });
 });
 
 describe("API Worker consent and telemetry boundaries", () => {
