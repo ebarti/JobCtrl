@@ -7046,6 +7046,11 @@ export interface OutreachThreadResponse {
   thread: OutreachThreadDetail | null;
 }
 
+/** Revision acknowledgement identifying the draft published by this request. */
+export interface ReviseOutreachDraftResponse extends OutreachThreadResponse {
+  publication: { threadId: string; draftId: string; generation: number };
+}
+
 // ---------------------------------------------------------------------------
 // Contact & Outreach (R6 Phase 4 — user-attested send log + follow-ups)
 //

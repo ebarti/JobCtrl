@@ -102,10 +102,15 @@ while another target is displayed. Generation proposals also retain their offer
 purpose and offer revision context. Switching tenant or leaving the panel ends
 these private sessions; there is no persistent recovery store.
 
-If an acknowledgement is lost, read the thread and its generation history
-before issuing another command. A completed write can already be present;
-this conflict protocol does not make repeated commands idempotent and never
-replays a send action.
+If a revision's acknowledgement times out, is lost, does not confirm the
+submitted draft, or reports a server error, the editor retains
+each submitted version alongside your current text. The revision may already
+have been saved or may still finish later. Check the current thread and its
+generation history, then confirm that review before deliberately retrying.
+These retained texts last only while the panel remains open. The conflict and
+timeout handling do not make repeated commands idempotent and never replay a
+send action. For other Outreach commands, also inspect the current thread
+before issuing another command after a lost acknowledgement.
 
 ## Contact Import
 

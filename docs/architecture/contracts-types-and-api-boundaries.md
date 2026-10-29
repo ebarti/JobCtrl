@@ -110,6 +110,16 @@ flowchart TD
 | Python JSON-RPC mirror | `workers/automation/src/jobctrl/domain/rpc/messages.py` | Python validation/types for the methods crossing the TypeScript-to-Python boundary | Browser-facing REST contracts |
 | Physical persistence | Owning SQLite repository/write module and schema initialization | Tables, columns, indexes, migration compatibility, and row serialization | Domain meaning merely because a column exists |
 
+The typed HTTP client's request deadline covers response headers and the full
+JSON body, including error bodies. A timeout aborts the client transport and
+settles the request; it does not establish that a server-side write failed or
+stopped. `JobCtrlApiTimeoutError` and `JobCtrlApiUnconfirmedWriteError` identify
+an unknown write outcome after a timeout or an unreadable acknowledgement, so
+the owning editor can retain submitted text and avoid automatic replay. A
+completed HTTP 5xx on a write remains a `JobCtrlApiError` with its status and
+response body, and sets `writeOutcomeUnknown`: response construction can fail
+after commit. Read errors and explicit 4xx conflicts keep their existing meaning.
+
 `packages/contracts` depends on `packages/domain-types` and re-exports selected
 projection types. That is a dependency, not duplicate ownership: shared
 TypeScript vocabulary stays in `domain-types`, while Python aggregates remain

@@ -3954,7 +3954,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       }
       const threadId = decodeRouteParam(request.params.threadId);
       return withWritableDb(reply, options.dbPath, async (db) => {
-        await outreachDraftGenerator(
+        const publication = await outreachDraftGenerator(
           {
             threadId,
             editedBodyText: body.editedBodyText,
@@ -3965,7 +3965,15 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           },
           actionContext,
         );
-        return { ok: true, thread: getOutreachThreadDetail(db, threadId) };
+        return {
+          ok: true,
+          thread: getOutreachThreadDetail(db, threadId),
+          publication: {
+            threadId: publication.threadId,
+            draftId: publication.draftId,
+            generation: publication.generation,
+          },
+        };
       });
     },
   );

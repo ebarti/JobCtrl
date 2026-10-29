@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import type { OutreachThreadResponse } from "@jobctrl/contracts";
 import Database from "better-sqlite3";
 
 import { loadE2eDbPath, QA_PLATFORM_JOB_ID } from "../fixtures/e2e-state.js";
@@ -13,6 +14,12 @@ const CANDIDATE_ID = "candidate-e2e-outreach";
 const NOW = "2026-07-06T09:00:00.000Z";
 const PAST_DUE_AT = "2020-01-02T10:00:00.000Z";
 const FUTURE_DUE_AT = "2099-01-02T10:00:00.000Z";
+
+function publishedRevision(response: OutreachThreadResponse, draftId: string) {
+  const draft = response.thread?.drafts.find((item) => item.draftId === draftId);
+  if (!draft) throw new Error(`Missing synthetic published draft: ${draftId}`);
+  return { ...response, publication: { threadId: draft.threadId, draftId: draft.draftId, generation: draft.generation } };
+}
 
 const SENSITIVE_VALUES = [
   "Casey Recruiter",
@@ -682,7 +689,7 @@ test("Later typing remains available after the submitted revision succeeds", asy
     } finally { db.close(); }
     const current = await page.request.get(`/v1/contacts/${CONTACT_ID}/outreach`);
     expect(current.ok()).toBe(true);
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(await current.json()) });
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(publishedRevision(await current.json(), `draft-e2e-published-${requests.length}`)) });
   });
   await page.goto(`/outreach/${CONTACT_ID}`);
   const panel = page.getByRole("article", { name: "Contact details" });
@@ -709,3 +716,155 @@ test("Later typing remains available after the submitted revision succeeds", asy
     expect(after.prepare("SELECT follow_up_due_at, follow_up_basis, follow_up_state FROM outreach_threads WHERE tenant_id='local' AND thread_id=?").get(CONTACT_THREAD_ID)).toEqual(followUp);
   } finally { after.close(); }
 });
+
+// Synthetic publication and a withheld response body exercise the real editor,
+// HTTP client and read API without running a model or sending a message.
+test("An unconfirmed revision retains submitted and newer text until reviewed", async ({ page }, testInfo) => {
+  const dbPath = loadE2eDbPath();
+  seedOutreachPlanner(dbPath);
+  const requests: string[] = [];
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error" || message.type() === "warning") errors.push(message.text());
+  });
+  await page.addInitScript((threadId) => {
+    const originalTimeout = window.setTimeout.bind(window);
+    window.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) =>
+      originalTimeout(handler, timeout === 120_000 ? 2_000 : timeout, ...args)) as typeof window.setTimeout;
+    const originalFetch = window.fetch.bind(window);
+    let held = false;
+    window.fetch = async (input, init) => {
+      const response = await originalFetch(input, init);
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (!held && init?.method === "POST" && url.endsWith(`/v1/outreach/threads/${threadId}/drafts`)) {
+        held = true;
+        await response.text();
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"thread":'));
+            init.signal?.addEventListener("abort", () => controller.error(new DOMException("Aborted", "AbortError")), { once: true });
+          },
+        });
+        return new Response(body, { status: response.status, headers: response.headers });
+      }
+      return response;
+    };
+  }, CONTACT_THREAD_ID);
+  let release = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route(`**/v1/outreach/threads/${CONTACT_THREAD_ID}/drafts`, async (route) => {
+    const body = route.request().postDataJSON() as { editedBodyText: string };
+    requests.push(body.editedBodyText);
+    if (requests.length === 1) await held;
+    const db = new Database(dbPath);
+    try {
+      db.transaction(() => {
+        db.prepare("UPDATE outreach_drafts SET status='superseded' WHERE tenant_id='local' AND thread_id=? AND status='candidate'").run(CONTACT_THREAD_ID);
+        db.prepare(`INSERT INTO outreach_drafts
+          (tenant_id,draft_id,thread_id,generation,kind,status,body_text,gate_results_json,provenance_json,created_at,approved_at,rejected_at,reason)
+          SELECT 'local',?,thread_id,(SELECT MAX(generation)+1 FROM outreach_drafts WHERE tenant_id='local' AND thread_id=?),
+            kind,'candidate',?,gate_results_json,provenance_json,?,NULL,NULL,''
+          FROM outreach_drafts WHERE tenant_id='local' AND draft_id='draft-e2e-approved'`)
+          .run(`draft-e2e-timeout-${requests.length}`, CONTACT_THREAD_ID, body.editedBodyText, NOW);
+      })();
+    } finally { db.close(); }
+    const current = await page.request.get(`/v1/contacts/${CONTACT_ID}/outreach`);
+    expect(current.ok()).toBe(true);
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(publishedRevision(await current.json(), `draft-e2e-timeout-${requests.length}`)) });
+  });
+  try {
+    await page.goto(`/outreach/${CONTACT_ID}`);
+    await expect(page).toHaveTitle(/JobCtrl/);
+    const panel = page.getByRole("article", { name: "Contact details" });
+    await panel.getByRole("button", { name: "Revise draft", exact: true }).click();
+    const input = panel.getByRole("textbox", { name: "Edit message" });
+    await input.fill("Synthetic submitted A");
+    await panel.getByRole("button", { name: "Revise draft", exact: true }).click();
+    await expect.poll(() => requests).toEqual(["Synthetic submitted A"]);
+    await input.fill("Synthetic later B");
+    release();
+    const unconfirmed = panel.getByRole("group", { name: "Unconfirmed revision" });
+    await expect(unconfirmed).toContainText("Synthetic submitted A");
+    await expect(unconfirmed).toContainText("may have been saved");
+    await expect(input).toHaveValue("Synthetic later B");
+    await expect(panel.getByRole("button", { name: "Revise draft", exact: true })).toBeDisabled();
+    expect(requests).toEqual(["Synthetic submitted A"]);
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      expect(db.prepare("SELECT body_text FROM outreach_drafts WHERE tenant_id='local' AND draft_id='draft-e2e-timeout-1'").get())
+        .toEqual({ body_text: "Synthetic submitted A" });
+      expect(db.prepare("SELECT status FROM outreach_drafts WHERE tenant_id='local' AND draft_id='draft-e2e-approved'").get())
+        .toEqual({ status: "approved" });
+    } finally { db.close(); }
+    await expect(page.locator("vite-error-overlay")).toHaveCount(0);
+    expect(errors).toEqual([]);
+    await page.screenshot({ path: testInfo.outputPath("outreach-unconfirmed-synthetic.png") });
+    await unconfirmed.getByRole("checkbox", { name: /I checked the current thread/ }).check();
+    await panel.getByRole("button", { name: "Revise draft", exact: true }).click();
+    await expect.poll(() => requests).toEqual(["Synthetic submitted A", "Synthetic later B"]);
+    await expect(input).toHaveCount(0);
+  } finally { release(); }
+});
+
+for (const responseKind of ["invalid success", "server error"] as const) {
+  test(`A ${responseKind} after a revision keeps both edits until review`, async ({ page }, testInfo) => {
+    const dbPath = loadE2eDbPath();
+    seedOutreachPlanner(dbPath);
+    const requests: string[] = [];
+    let release = () => {};
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    await page.route(`**/v1/outreach/threads/${CONTACT_THREAD_ID}/drafts`, async (route) => {
+      const body = route.request().postDataJSON() as { editedBodyText: string };
+      requests.push(body.editedBodyText);
+      if (requests.length === 1) await held;
+      const db = new Database(dbPath);
+      try {
+        db.transaction(() => {
+          db.prepare("UPDATE outreach_drafts SET status='superseded' WHERE tenant_id='local' AND thread_id=? AND status='candidate'").run(CONTACT_THREAD_ID);
+          db.prepare(`INSERT INTO outreach_drafts
+            (tenant_id,draft_id,thread_id,generation,kind,status,body_text,gate_results_json,provenance_json,created_at,approved_at,rejected_at,reason)
+            SELECT 'local',?,thread_id,(SELECT MAX(generation)+1 FROM outreach_drafts WHERE tenant_id='local' AND thread_id=?),
+              kind,'candidate',?,gate_results_json,provenance_json,?,NULL,NULL,''
+            FROM outreach_drafts WHERE tenant_id='local' AND draft_id='draft-e2e-approved'`)
+            .run(`draft-e2e-unconfirmed-${requests.length}`, CONTACT_THREAD_ID, body.editedBodyText, NOW);
+        })();
+      } finally { db.close(); }
+      if (requests.length === 1) {
+        await route.fulfill(responseKind === "invalid success"
+          ? { status: 200, contentType: "application/json", body: "null" }
+          : { status: 500, contentType: "application/json", body: JSON.stringify({ error: "db_write_failed", message: "Synthetic post-commit failure" }) });
+        return;
+      }
+      const current = await page.request.get(`/v1/contacts/${CONTACT_ID}/outreach`);
+      expect(current.ok()).toBe(true);
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(publishedRevision(await current.json(), `draft-e2e-unconfirmed-${requests.length}`)) });
+    });
+    try {
+      await page.goto(`/outreach/${CONTACT_ID}`);
+      const panel = page.getByRole("article", { name: "Contact details" });
+      await panel.getByRole("button", { name: "Revise draft", exact: true }).click();
+      const input = panel.getByRole("textbox", { name: "Edit message" });
+      await input.fill("Synthetic submitted A");
+      await panel.getByRole("button", { name: "Revise draft", exact: true }).click();
+      await expect.poll(() => requests).toEqual(["Synthetic submitted A"]);
+      await input.fill("Synthetic later B");
+      release();
+      const unconfirmed = panel.getByRole("group", { name: "Unconfirmed revision" });
+      await expect(unconfirmed).toContainText("Synthetic submitted A");
+      await expect(input).toHaveValue("Synthetic later B");
+      await expect(panel.getByRole("button", { name: "Revise draft", exact: true })).toBeDisabled();
+      expect(requests).toEqual(["Synthetic submitted A"]);
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        expect(db.prepare("SELECT body_text FROM outreach_drafts WHERE tenant_id='local' AND draft_id='draft-e2e-unconfirmed-1'").get())
+          .toEqual({ body_text: "Synthetic submitted A" });
+      } finally { db.close(); }
+      await page.screenshot({ path: testInfo.outputPath(`outreach-${responseKind.replace(" ", "-")}.png`) });
+      await unconfirmed.getByRole("checkbox", { name: /I checked the current thread/ }).check();
+      await panel.getByRole("button", { name: "Revise draft", exact: true }).click();
+      await expect.poll(() => requests).toEqual(["Synthetic submitted A", "Synthetic later B"]);
+      await expect(input).toHaveCount(0);
+    } finally { release(); }
+  });
+}

@@ -1670,7 +1670,11 @@ timestamps.
 - `POST /v1/outreach/threads/:threadId/drafts` **revises** the thread
   (`ReviseOutreachDraftRequest`: `editedBodyText`, optional `kind`,
   `applicationRole`, `llmModel`). The edited body becomes a new generation and
-  re-runs the identical gates; returns `{ ok, thread }`.
+  re-runs the identical gates. The response returns `{ ok, thread, publication }`;
+  `publication` contains the worker's `threadId`, `draftId`, and `generation`
+  for this operation. The thread readback can be null or fail to contain that
+  exact draft; callers must treat an absent or mismatched acknowledgement as
+  unconfirmed and inspect the current history before retrying.
 - `POST /v1/outreach/threads/:threadId/drafts/:draftId/approve` approves a
   candidate draft. It returns `409 { error: "draft_gates_not_passed" }` when the
   persisted gates did not pass (INV-5), `404 { error: "outreach_draft_not_found" }`

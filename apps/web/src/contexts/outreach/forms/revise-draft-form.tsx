@@ -6,6 +6,7 @@ import {
   getApiCapabilityAvailability,
   LOCAL_INSTALL_GUIDE_URL,
 } from "../../../shared/lib/apiCapabilityAvailability.js";
+import { isUnconfirmedWrite } from "../../../shared/lib/unconfirmed-write.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { Button } from "../../../shared/ui/button.js";
 import { Field, FieldLabel } from "../../../shared/ui/field.js";
@@ -52,11 +53,15 @@ function ReviseDraftSession({
   );
   const [retainedConflict, setRetainedConflict] = useState<OutreachPublicationConflict | null>(null);
   const [reconciled, setReconciled] = useState(false);
+  const [unconfirmedSubmissions, setUnconfirmedSubmissions] = useState<string[]>([]);
+  const [reviewedUnconfirmed, setReviewedUnconfirmed] = useState(false);
   const [newerEditAfterSuccess, setNewerEditAfterSuccess] = useState(false);
   const formId = useId();
   const unavailableReasonId = useId();
   const mutation = useReviseDraftMutation(threadId, contactId, jobId);
-  const mutationError = mutation.error instanceof Error ? mutation.error.message : "";
+  const mutationError = mutation.error instanceof Error && !isUnconfirmedWrite(mutation.error)
+    ? mutation.error.message : "";
+  const awaitingReview = unconfirmedSubmissions.length > 0 && !reviewedUnconfirmed;
   const form = useForm({
     defaultValues: { editedBodyText: initialBodyText },
     validators: {
@@ -68,7 +73,7 @@ function ReviseDraftSession({
       },
     },
     onSubmit: async ({ value, formApi }) => {
-      if (!availability.available || (retainedConflict !== null && !reconciled)) {
+      if (!availability.available || awaitingReview || (retainedConflict !== null && !reconciled)) {
         return;
       }
       const result = ReviseOutreachDraftRequestSchema.safeParse({
@@ -84,6 +89,10 @@ function ReviseDraftSession({
       try {
         await mutation.mutateAsync(result.data);
       } catch (error) {
+        if (isUnconfirmedWrite(error)) {
+          setUnconfirmedSubmissions((previous) => [...previous, result.data.editedBodyText]);
+          setReviewedUnconfirmed(false);
+        }
         const conflict = readPublicationConflict(error);
         if (conflict && conflict.threadId === threadId) {
           setRetainedConflict(conflict);
@@ -109,7 +118,7 @@ function ReviseDraftSession({
       onSubmit={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        if (!availability.available || (retainedConflict !== null && !reconciled)) {
+        if (!availability.available || awaitingReview || (retainedConflict !== null && !reconciled)) {
           return;
         }
         void form.handleSubmit();
@@ -139,6 +148,22 @@ function ReviseDraftSession({
         </span>
       ) : null}
       {mutationError ? <div role="alert" className="banner inline">{mutationError}</div> : null}
+      {unconfirmedSubmissions.length ? (
+        <div role="group" aria-label="Unconfirmed revision">
+          <p role="status">The submitted revision may have been saved, but the response did not confirm it. Check the current thread and its history before retrying; the earlier request may still complete later. Your current text remains in the editor.</p>
+          {unconfirmedSubmissions.map((text, index) => (
+            <div key={index}>
+              <p>Submitted revision {index + 1}</p>
+              <pre className="whitespace-pre-wrap break-words">{text}</pre>
+            </div>
+          ))}
+          <label>
+            <input type="checkbox" checked={reviewedUnconfirmed} disabled={mutation.isPending}
+              onChange={(event) => setReviewedUnconfirmed(event.target.checked)} />
+            I checked the current thread and understand the earlier revision may still appear
+          </label>
+        </div>
+      ) : null}
       {newerEditAfterSuccess ? (
         <p role="status">Your submitted revision was saved for review. Your newer edits remain here and have not been verified.</p>
       ) : null}
@@ -160,7 +185,7 @@ function ReviseDraftSession({
             <Button
               aria-describedby={availability.available ? undefined : unavailableReasonId}
               type="submit"
-              disabled={mutation.isPending || isSubmitting || !availability.available || (retainedConflict !== null && !reconciled)}
+              disabled={mutation.isPending || isSubmitting || !availability.available || awaitingReview || (retainedConflict !== null && !reconciled)}
             >
               {mutation.isPending || isSubmitting ? "Revising…" : "Revise draft"}
             </Button>

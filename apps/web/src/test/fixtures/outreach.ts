@@ -8,6 +8,7 @@ import type {
   OutreachSendLogDto,
   OutreachThreadDetail,
   OutreachThreadResponse,
+  ReviseOutreachDraftResponse,
 } from "@jobctrl/contracts";
 
 export function makeGateResultsPassing(
@@ -204,6 +205,18 @@ export function makeOutreachThreadResponse(
   thread: OutreachThreadDetail | null = makeOutreachThreadDetail(),
 ): OutreachThreadResponse {
   return { ok: true, thread };
+}
+
+export function acknowledgeOutreachRevision(
+  response: OutreachThreadResponse,
+  draftId: string,
+): ReviseOutreachDraftResponse {
+  const draft = response.thread?.drafts.find((candidate) => candidate.draftId === draftId);
+  if (!draft) throw new Error(`Missing synthetic published draft: ${draftId}`);
+  return {
+    ...response,
+    publication: { threadId: draft.threadId, draftId: draft.draftId, generation: draft.generation },
+  };
 }
 
 export const sampleOutreachThreadDetail = makeOutreachThreadDetail();

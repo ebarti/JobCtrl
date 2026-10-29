@@ -4,6 +4,7 @@ import { fireEvent, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import {
+  acknowledgeOutreachRevision,
   makeOutreachDraft,
   makeOutreachThreadDetail,
   makeBlockedCandidateThread,
@@ -67,7 +68,11 @@ describe("<OutreachThreadPanel>", () => {
       http.post("*/v1/outreach/threads/:threadId/drafts", async ({ request }) => {
         const body = (await request.json()) as { editedBodyText?: string };
         submittedBody = body.editedBodyText ?? "";
-        return HttpResponse.json(makeOutreachThreadResponse(approvedOnlyThread));
+        const revised = makeOutreachThreadResponse(makeOutreachThreadDetail({ ...approvedOnlyThread, drafts: [
+          ...approvedOnlyThread.drafts,
+          makeOutreachDraft({ draftId: "approved-revision", generation: 2, bodyText: submittedBody }),
+        ] }));
+        return HttpResponse.json(acknowledgeOutreachRevision(revised, "approved-revision"));
       }),
     );
     const view = renderWithProviders(<OutreachThreadPanel contactId="contact-1" />);
@@ -200,7 +205,11 @@ describe("<OutreachThreadPanel>", () => {
     await waitFor(() => expect(revisionRequests).toBe(1));
     expect(view.getByRole("button", { name: "Cancel revision" })).toBeDisabled();
 
-    resolveRevision(HttpResponse.json(makeOutreachThreadResponse(candidateThread)));
+    const revised = makeOutreachThreadResponse(makeOutreachThreadDetail({ ...candidateThread, drafts: [
+      ...candidateThread.drafts,
+      makeOutreachDraft({ draftId: "published", generation: 2, bodyText: candidateThread.drafts[0]!.bodyText }),
+    ] }));
+    resolveRevision(HttpResponse.json(acknowledgeOutreachRevision(revised, "published")));
     await waitFor(() =>
       expect(view.queryByRole("textbox", { name: "Edit message" })).toBeNull(),
     );
@@ -382,7 +391,7 @@ it.each(["delayed generation", "competing first creation"])("recovers %s through
 
 it.each(["success", "conflict"])("keeps a revision's late %s bound to its original recipient after switching away", async (outcome) => {
   const { makeOutreachPublicationConflict } = await import("../../../test/fixtures/outreach.js");
-  const a = makeOutreachThreadResponse({ ...makeCandidateThread(), threadId: "thread-A", contactId: "contact-A" });
+  let a = makeOutreachThreadResponse({ ...makeCandidateThread(), threadId: "thread-A", contactId: "contact-A" });
   const b = makeOutreachThreadResponse({ ...makeCandidateThread(), threadId: "thread-B", contactId: "contact-B" });
   let finish: (response: Response) => void = () => {};
   const requests: string[] = [];
@@ -402,7 +411,13 @@ it.each(["success", "conflict"])("keeps a revision's late %s bound to its origin
   await waitFor(() => expect(requests).toEqual(["thread-A"]));
   view.rerender(<OutreachThreadPanel contactId="contact-B" />);
   expect(view.queryByRole("textbox")).not.toBeInTheDocument();
-  finish(outcome === "success" ? HttpResponse.json(a) : HttpResponse.json({ ...makeOutreachPublicationConflict("Pending edit for A"), threadId: "thread-A" }, { status: 409 }));
+  if (outcome === "success") {
+    a = makeOutreachThreadResponse({ ...a.thread!, drafts: [
+      ...a.thread!.drafts,
+      makeOutreachDraft({ draftId: "saved-A", threadId: "thread-A", generation: 4, bodyText: "Pending edit for A" }),
+    ] });
+  }
+  finish(outcome === "success" ? HttpResponse.json(acknowledgeOutreachRevision(a, "saved-A")) : HttpResponse.json({ ...makeOutreachPublicationConflict("Pending edit for A"), threadId: "thread-A" }, { status: 409 }));
   await waitFor(() => expect(view.queryClient.isMutating()).toBe(0));
   expect(view.queryByRole("textbox")).not.toBeInTheDocument();
   expect(view.queryByRole("group", { name: "Unpublished revision" })).not.toBeInTheDocument();
@@ -431,7 +446,7 @@ it.each(["success", "failure", "conflict"])("retains and can deliberately submit
       makeOutreachDraft({ draftId: `published-${requests.length}`, generation: previous.latestGeneration + 1, bodyText }),
     ];
     current = makeOutreachThreadResponse(makeOutreachThreadDetail({ drafts, sendLogs: previous.sendLogs, followUp: previous.followUp }));
-    return current;
+    return acknowledgeOutreachRevision(current, `published-${requests.length}`);
   }
   server.use(
     http.get("*/v1/contacts/:contactId/outreach", () => HttpResponse.json(current)),
@@ -467,7 +482,10 @@ it.each(["success", "failure", "conflict"])("retains and can deliberately submit
     expect(view.getByRole("button", { name: "Revise draft" })).toBeDisabled();
     fireEvent.click(within(proposal).getByRole("checkbox", { name: /I compared the current thread/ }));
   } else {
-    expect(await view.findByText("Synthetic provider failure")).toBeInTheDocument();
+    const unconfirmed = await view.findByRole("group", { name: "Unconfirmed revision" });
+    expect(unconfirmed).toHaveTextContent(submitted);
+    expect(view.getByRole("button", { name: "Revise draft" })).toBeDisabled();
+    fireEvent.click(within(unconfirmed).getByRole("checkbox", { name: /I checked the current thread/ }));
   }
   await waitFor(() => expect(view.getByRole("button", { name: "Revise draft" })).toBeEnabled());
   fireEvent.click(view.getByRole("button", { name: "Revise draft" }));
@@ -483,7 +501,10 @@ it.each(["success", "failure", "conflict"])("retains and can deliberately submit
 it("lets the user discard newer typing after the submitted revision succeeds", async () => {
   let finish: (response: Response) => void = () => {};
   const requests: string[] = [];
-  const accepted = makeOutreachThreadResponse(makeCandidateThread());
+  const accepted = makeOutreachThreadResponse(makeOutreachThreadDetail({ drafts: [
+    ...makeCandidateThread().drafts,
+    makeOutreachDraft({ draftId: "saved-A", generation: 4, bodyText: "Submitted A" }),
+  ] }));
   server.use(
     http.get("*/v1/contacts/:contactId/outreach", () => HttpResponse.json(accepted)),
     http.post("*/v1/outreach/threads/:threadId/drafts", async ({ request }) => {
@@ -498,7 +519,7 @@ it("lets the user discard newer typing after the submitted revision succeeds", a
   fireEvent.click(view.getByRole("button", { name: "Revise draft" }));
   await waitFor(() => expect(requests).toEqual(["Submitted A"]));
   fireEvent.change(input, { target: { value: "Discardable later edit B" } });
-  finish(HttpResponse.json(accepted));
+  finish(HttpResponse.json(acknowledgeOutreachRevision(accepted, "saved-A")));
   expect(await view.findByText(/newer edits remain here/i)).toBeInTheDocument();
   fireEvent.click(view.getByRole("button", { name: "Discard revision" }));
   expect(view.queryByRole("textbox", { name: "Edit message" })).not.toBeInTheDocument();
@@ -510,14 +531,21 @@ it("clears a resolved conflict when its retry succeeds but preserves an edit mad
   const { makeOutreachPublicationConflict } = await import("../../../test/fixtures/outreach.js");
   const requests: string[] = [];
   let finishRetry: (response: Response) => void = () => {};
-  const thread = makeOutreachThreadResponse(makeCandidateThread());
+  let thread = makeOutreachThreadResponse(makeCandidateThread());
+  function publish(bodyText: string) {
+    thread = makeOutreachThreadResponse(makeOutreachThreadDetail({ drafts: [
+      ...thread.thread!.drafts,
+      makeOutreachDraft({ draftId: `saved-${requests.length}`, generation: requests.length + 1, bodyText }),
+    ] }));
+    return acknowledgeOutreachRevision(thread, `saved-${requests.length}`);
+  }
   server.use(
     http.get("*/v1/contacts/:contactId/outreach", () => HttpResponse.json(thread)),
     http.post("*/v1/outreach/threads/:threadId/drafts", async ({ request }) => {
       requests.push(((await request.json()) as { editedBodyText: string }).editedBodyText);
       if (requests.length === 1) return HttpResponse.json(makeOutreachPublicationConflict("Conflicted A"), { status: 409 });
       if (requests.length === 2) return new Promise<Response>((resolve) => { finishRetry = resolve; });
-      return HttpResponse.json(thread);
+      return HttpResponse.json(publish("Later edit C"));
     }),
   );
   const view = renderWithProviders(<OutreachThreadPanel contactId="contact-1" />);
@@ -531,7 +559,7 @@ it("clears a resolved conflict when its retry succeeds but preserves an edit mad
   fireEvent.click(view.getByRole("button", { name: "Revise draft" }));
   await waitFor(() => expect(requests).toEqual(["Conflicted A", "Retried B"]));
   fireEvent.change(input, { target: { value: "Later edit C" } });
-  finishRetry(HttpResponse.json(thread));
+  finishRetry(HttpResponse.json(publish("Retried B")));
   expect(await view.findByText(/newer edits remain here/i)).toBeInTheDocument();
   expect(view.getByRole("textbox", { name: "Edit message" })).toHaveValue("Later edit C");
   expect(view.queryByRole("group", { name: "Unpublished revision" })).not.toBeInTheDocument();

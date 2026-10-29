@@ -55,6 +55,7 @@ import type {
   OutreachThreadResponse,
   GenerateOutreachDraftRequest,
   ReviseOutreachDraftRequest,
+  ReviseOutreachDraftResponse,
   RejectOutreachDraftRequest,
   LogOutreachSendRequest,
   LlmLane,
@@ -440,7 +441,7 @@ export interface ApiClientPort extends EndpointClientMethods {
   reviseOutreachDraft(
     threadId: string,
     body: ReviseOutreachDraftRequest,
-  ): Promise<OutreachThreadResponse>;
+  ): Promise<ReviseOutreachDraftResponse>;
   approveOutreachDraft(threadId: string, draftId: string): Promise<OutreachThreadResponse>;
   rejectOutreachDraft(
     threadId: string,

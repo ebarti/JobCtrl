@@ -458,11 +458,35 @@ describe("outreach API", () => {
       payload: { editedBodyText: "A tightened, user-edited draft body." },
     });
     expect(res.statusCode).toBe(200);
+    expect(res.json().publication).toEqual({ threadId: "thread-e", draftId: "draft-rev", generation: 2 });
     const thread = (res.json() as ThreadResponse).thread!;
     expect(thread.draftCount).toBe(2);
     expect(thread.latestGeneration).toBe(2);
     expect(generator).toHaveBeenCalledTimes(1);
     expect(generator.mock.calls[0]![0].editedBodyText).toBe("A tightened, user-edited draft body.");
+  });
+
+  it("returns the worker's publication identity when a newer draft is already in the readback", async () => {
+    const dbPathRef = { current: "" };
+    const generator = vi.fn<OutreachDraftGenerator>(async (input) => {
+      if (input.editedBodyText === undefined) throw new Error("Expected revision text");
+      seedDraft(dbPathRef.current, { draftId: "published-by-request", threadId: input.threadId,
+        generation: 2, status: "superseded", bodyText: input.editedBodyText, gate: PASSING_GATE });
+      seedDraft(dbPathRef.current, { draftId: "later-draft", threadId: input.threadId,
+        generation: 3, status: "candidate", bodyText: "A later synthetic edit", gate: PASSING_GATE });
+      return { threadId: input.threadId, contactId: "contact-e", jobId: null, draftId: "published-by-request",
+        generation: 2, kind: "intro_request", status: "candidate", gatePassed: true };
+    });
+    const { app, dbPath } = withTempApp(generator);
+    dbPathRef.current = dbPath;
+    seedThread(dbPath, { threadId: "thread-e", contactId: "contact-e", jobId: null });
+    seedDraft(dbPath, { draftId: "draft-e1", threadId: "thread-e", generation: 1, gate: PASSING_GATE });
+    const res = await app.inject({ method: "POST", url: "/v1/outreach/threads/thread-e/drafts",
+      payload: { editedBodyText: "The submitted revision" } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().publication).toEqual({ threadId: "thread-e", draftId: "published-by-request", generation: 2 });
+    expect(res.json().thread.drafts.at(-1)).toMatchObject({ draftId: "later-draft", generation: 3 });
+    expect(generator).toHaveBeenCalledTimes(1);
   });
 
   it("exposes no send transport on any outreach route (INV-1)", async () => {
@@ -715,6 +739,14 @@ describe("Outreach canonical publication across HTTP and Python", () => {
         if (mutation === "complete" || mutation === "dismiss") { url = `${prefix}/follow-up/${mutation}`; payload = {}; }
         const late = await app.inject({ method: "POST", url, payload });
         expect(late.statusCode, late.body).toBe(200);
+        if (mutation === "draft") {
+          const response = late.json();
+          expect(response.publication).toEqual({
+            threadId: thread.threadId, draftId: response.thread.drafts.at(-1).draftId,
+            generation: response.thread.drafts.at(-1).generation,
+          });
+          expect(response.thread.drafts.at(-1).bodyText).toBe("Newer completed draft");
+        }
         const expected = canonicalFacts(dbPath);
         held.release();
         const stale = await held.pending;
@@ -756,6 +788,11 @@ describe("Outreach canonical publication across HTTP and Python", () => {
       first.release(); second.release();
       const responses = await Promise.all([first.pending, second.pending]);
       expect(responses.map((response) => response.statusCode).sort()).toEqual([200, 409]);
+      const published = responses.find((response) => response.statusCode === 200)!.json();
+      expect(published.publication).toEqual({
+        threadId: thread.threadId, draftId: published.thread.drafts.at(-1).draftId,
+        generation: published.thread.drafts.at(-1).generation,
+      });
       console.info(JSON.stringify({ scenario: "concurrent revisions", responses: responses.map((response) => response.json()), facts: canonicalFacts(dbPath) }));
       const facts = canonicalFacts(dbPath);
       expect(facts.outreach_drafts).toHaveLength(2);

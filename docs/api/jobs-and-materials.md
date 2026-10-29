@@ -352,6 +352,9 @@ refetches and deliberately reconciles before retrying; see the
 [conflict response](complete-contract.md#outreach-drafts). The open editor
 retains those results across refresh, including disappearance of the review
 card. This does not add command idempotency or automatic sending.
+The revision response identifies the draft published by that operation; clients
+check its thread, draft ID, generation and submitted text against the returned
+readback before treating it as confirmed. A matching older draft is insufficient.
 
 ## Reviewed Locale Variants
 
