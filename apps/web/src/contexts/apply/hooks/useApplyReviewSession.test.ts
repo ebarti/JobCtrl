@@ -637,6 +637,8 @@ describe("Apply review session", () => {
       .mockResolvedValueOnce({ ok: true, draft, commentThreads: [thread], seededCount: 0, updatedCount: 1 });
     const hook = mount({ createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft })), replyToResumeReviewComment: reply, seedResumeReviewCommentThreads: seed });
     await ready(hook);
+    const unsaved = document("Unsaved synthetic edit");
+    act(() => hook.result.current.edit(unsaved));
     act(() => hook.result.current.seed([{ commentBody: "Question" }]));
     await waitFor(() => expect(hook.result.current.errors.seed).toBe("seed offline"));
     await act(async () => { expect(await hook.result.current.reply(thread, { body: "Clarification", decision: "clarified" })).toBe(false); });
@@ -644,6 +646,11 @@ describe("Apply review session", () => {
     expect(hook.result.current.draft?.feedbackSignals).toEqual(draft.feedbackSignals);
     act(() => hook.result.current.retrySeed());
     await waitFor(() => expect(hook.result.current.errors.seed).toBeUndefined());
+    expect(seed).toHaveBeenCalledTimes(2);
+    expect(seed.mock.calls[1]).toEqual(seed.mock.calls[0]);
+    expect(hook.result.current.document).toBe(unsaved);
+    expect(hook.result.current.dirty).toBe(true);
+    expect(hook.result.current.draft?.commentThreads).toEqual([thread]);
     await act(async () => { expect(await hook.result.current.reply(thread, { body: "Clarification", decision: "clarified" })).toBe(true); });
     expect(hook.result.current.errors.reply).toBeUndefined();
     expect(hook.result.current.draft?.commentThreads[0]?.replies).toHaveLength(1);

@@ -363,6 +363,11 @@ Older accepted and superseded prep remains inspectable. A pending or failed
 refresh, including provider or gate rejection, leaves the last accepted prep
 visible.
 
+If preparation history or saved note revision history cannot be loaded, use
+the corresponding **Retry loading** button to retry that page. Your selected
+questions, context, unsaved note and last accepted preparation remain available;
+loading history does not generate new preparation.
+
 Save your editable notes/outlines separately for each job and question. A note
 keeps an independent revision, optional source generation, and its own factual
 support label. New recollections default to unverified user statements, and a
