@@ -411,6 +411,13 @@ rejecting it leaves the current revision unchanged. Recommendations whose
 source evidence was tombstoned are inactive and cannot be accepted until they
 are deterministically re-derived.
 
+The recommendation list and each recommendation's evidence have separate page
+controls. They show the current page, the number displayed, and the total
+recorded items. Open evidence to see its source identifiers, revisions, jobs,
+and roles. If another page cannot be read, the last displayed page remains
+available and its failed read can be retried. Reviewing a recommendation does
+not regenerate the recorded list or its evidence.
+
 **Tailoring policy history** lists every current and superseded revision,
 allowlisted learned rule, safe recommendation/review reference, restore
 provenance, and creation time. Restoring a superseded version appends the next
