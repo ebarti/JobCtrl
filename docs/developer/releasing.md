@@ -187,9 +187,9 @@ protocol case upgrades from
 **the latest published stable version before the candidate**, rolls back to that
 version with its paired data backup, then explicitly upgrades again. For the
 protocol-1/schema-14 to protocol-2/schema-15 transition, it verifies the old
-controller's refusal, interrupts the signed new installer after selector
-handoff, preserves later application and Temporal WAL writes through forward
-recovery, and checks that cross-protocol rollback is refused. Both cases check
+controller's refusal, interrupts the signed new installer both before and after
+selector handoff, preserves later application and Temporal WAL writes through
+forward recovery, and checks that cross-protocol rollback is refused. Both cases check
 real service readiness, retained job data and Temporal history.
 
 The harness resolves that source from GitHub's published stable releases, so the

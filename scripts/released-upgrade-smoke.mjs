@@ -221,29 +221,43 @@ async function scenario(old, candidate, root) {
       checked.push("archived-controller-refuses-before-backup-and-journal", "signed-schema-14-to-15-contract");
 
       const inode = (await stat(path.join(state, "jobctrl.db"))).ino;
-      let boundarySeen = false;
-      console.log(`${old.descriptor.appVersion}: interrupting the signed installer after selector handoff`);
-      const interrupted = await command(candidate.installer, installArgs(candidate, runtime), env, {
-        allowFailure: true,
-        processGroup: true,
-        onStarted: async (child) => {
-          const deadline = Date.now() + 120_000;
-          while (Date.now() < deadline) {
-            if (child.exitCode !== null || child.signalCode !== null) break;
-            const journal = await json(path.join(runtime, "transition.json")).catch(() => null);
-            if (journal?.state === "selector_replaced" && journal?.candidate?.buildId === candidate.descriptor.buildId) {
-              boundarySeen = true;
-              try { process.kill(-child.pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; }
-              return;
+      const interruptInstaller = async (boundary) => {
+        let boundarySeen = false;
+        const interrupted = await command(candidate.installer, installArgs(candidate, runtime), env, {
+          allowFailure: true,
+          processGroup: true,
+          onStarted: async (child) => {
+            const deadline = Date.now() + 180_000;
+            while (Date.now() < deadline) {
+              if (child.exitCode !== null || child.signalCode !== null) break;
+              const journal = await json(path.join(runtime, "transition.json")).catch(() => null);
+              if (journal?.state === boundary && journal?.candidate?.buildId === candidate.descriptor.buildId) {
+                boundarySeen = true;
+                try { process.kill(-child.pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; }
+                return;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 10));
             }
-            await new Promise((resolve) => setTimeout(resolve, 10));
-          }
-          throw new Error("did not observe selector_replaced in the live signed-installer process");
-        },
-      });
-      assert.ok(boundarySeen && interrupted.signal === "SIGKILL", "signed installer must actually be interrupted");
-      const interruptedJournal = await json(path.join(runtime, "transition.json"));
-      assert.equal(interruptedJournal.state, "selector_replaced", "installer advanced past the observed interruption boundary");
+            throw new Error(`did not observe ${boundary} in the live signed-installer process`);
+          },
+        });
+        assert.ok(boundarySeen && interrupted.signal === "SIGKILL", "signed installer must actually be interrupted");
+        const journal = await json(path.join(runtime, "transition.json"));
+        assert.equal(journal.state, boundary, "installer advanced past the observed interruption boundary");
+        return journal;
+      };
+      console.log(`${old.descriptor.appVersion}: interrupting the signed installer before selector handoff`);
+      await interruptInstaller("metadata_verified");
+      const preHandoffJournal = await readFile(path.join(runtime, "transition.json"));
+      const preHandoffActive = await readFile(path.join(runtime, "active.json"));
+      const oldRecovery = await command(selector, ["update"], env, { allowFailure: true });
+      assert.ok(Number.isInteger(oldRecovery.code) && oldRecovery.code !== 0, "the archived controller must refuse a new-protocol journal");
+      assert.match(oldRecovery.output, /transition journal/i, "the archived controller must identify the unreadable transition");
+      assert.deepEqual(await readFile(path.join(runtime, "transition.json")), preHandoffJournal);
+      assert.deepEqual(await readFile(path.join(runtime, "active.json")), preHandoffActive);
+      checked.push("signed-installer-interruption-before-selector-handoff", "archived-controller-preserves-new-journal");
+      console.log(`${old.descriptor.appVersion}: retrying the signed installer and interrupting after selector handoff`);
+      const interruptedJournal = await interruptInstaller("selector_replaced");
       await assertPair(interruptedJournal.backupId);
       await command(selector, ["stop"], env);
       // Keep acknowledged writes in both WALs after the interrupted attempt.
