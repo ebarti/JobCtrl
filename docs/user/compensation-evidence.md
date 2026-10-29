@@ -13,6 +13,11 @@ market evidence or an extrapolated range as a direct observation.
 
 A configured model extracts what the posting states: amounts, currency, period and base/OTE/bonus/equity component, with verbatim citations and a rationale. Code checks exact numbers and quotes, then performs explicit annualization arithmetic. Missing or ambiguous pay remains visible; a nearby salary word or an annual-pay threshold cannot invent a period. The accepted fact cites its extraction determination.
 
+JobCtrl chooses the salary field first, then a current enriched description,
+the full posting description, and finally the short description. If that
+preferred source changes while extraction is running, the refresh is rejected
+and the previously accepted posted fact remains available.
+
 An explicitly stated annual amount stays unchanged; monthly amounts use 12
 months and hourly amounts use 2,080 work hours. An unknown period remains
 unknown. Unpriced bonus and equity remain separate from the cash amount.

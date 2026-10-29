@@ -602,6 +602,17 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For posted compensation source fencing, run locked
+`pytest tests/test_posted_compensation_source_fence.py tests/test_compensation_v7_job_id.py tests/test_posted_compensation_repository.py`.
+Use owned synthetic SQLite and fake model ports. Hold extraction while an
+independent writer adds or removes salary, changes the selected text, or adds,
+removes, or changes the status of an enrichment. Reject a changed preferred
+source and preserve the accepted fact, determination binding, and event; permit
+one publication when only lower-priority or another tenant's data changes.
+Exercise both discovery producers and the per-job refresh core, and confirm
+the writer can commit while inference is active. These are source and
+transaction checks, not semantic evaluation or live-provider tests.
+
 For legacy evidence preservation (#1281), run locked
 `pytest tests/test_legacy_evidence_preservation.py tests/test_legacy_evidence_recovery.py tests/test_semantic_storage.py tests/test_v12_activation.py`
 and the full worker and native launcher suites with this checkout's locked
