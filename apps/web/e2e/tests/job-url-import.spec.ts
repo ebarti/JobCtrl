@@ -116,7 +116,7 @@ test("a second browser tab can import while the first import is still running", 
   );
   await firstDialog.getByRole("button", { name: "Import job" }).click();
   await firstStarted;
-  await expect(firstDialog.getByRole("button", { name: "Importing…" })).toBeDisabled();
+  await expect(firstDialog.getByRole("button", { name: "Starting…" })).toBeDisabled();
 
   await secondPage.getByRole("button", { name: "Import job" }).click();
   const secondDialog = secondPage.getByRole("dialog", { name: "Import a job posting" });
@@ -127,7 +127,7 @@ test("a second browser tab can import while the first import is still running", 
   await expect(secondPage).toHaveURL(new RegExp(`/jobs/${existingJobKey}(?:\\?|$)`));
 
   await expect(firstDialog).toBeVisible();
-  await expect(firstDialog.getByRole("button", { name: "Importing…" })).toBeDisabled();
+  await expect(firstDialog.getByRole("button", { name: "Starting…" })).toBeDisabled();
   releaseFirst?.();
   await expect(page).toHaveURL(new RegExp(`/jobs/${existingJobKey}(?:\\?|$)`));
 });
