@@ -5,7 +5,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { selectLatestReleasedVersion } from "./released-upgrade-smoke.mjs";
+import { selectLatestReleasedVersion, selectUpgradeMode } from "./released-upgrade-smoke.mjs";
 
 const published = (version, day, extra = {}) => ({ tag_name: `v${version}`, published_at: `2026-10-${day}T10:00:00Z`, draft: false, prerelease: false, ...extra });
 
@@ -23,6 +23,18 @@ test("missing or malformed stable release metadata fails instead of using a hist
     assert.throws(() => selectLatestReleasedVersion([published(tag, "19")], "0.3.2"), /stable release tag/);
   }
   assert.throws(() => selectLatestReleasedVersion([published("0.3.1", "invalid")], "0.3.2"), /publication date/);
+});
+
+test("released upgrade qualification distinguishes the forward schema transition from compatible rollback", () => {
+  const protocol = (minimum, maximum) => ({ launcherCompatibility: { minimum, maximum } });
+  assert.equal(selectUpgradeMode(protocol(1, 1), protocol(2, 2), 14), "forward-schema-15");
+  assert.equal(selectUpgradeMode(protocol(2, 2), protocol(2, 2), 15), "compatible");
+  assert.equal(selectUpgradeMode(protocol(1, 1), protocol(1, 2), 14), "compatible");
+  assert.throws(() => selectUpgradeMode(protocol(1, 2), protocol(1, 2), 14), /unsupported released upgrade/);
+  assert.throws(() => selectUpgradeMode(protocol(1, 1), protocol(2, 2), 13), /unsupported released upgrade/);
+  assert.throws(() => selectUpgradeMode(protocol(1, 1), protocol(3, 3), 14), /unsupported released upgrade/);
+  assert.throws(() => selectUpgradeMode(protocol(1, 1), protocol(2, 1), 14), /invalid launcher compatibility/);
+  assert.throws(() => selectUpgradeMode(protocol(1, 1), protocol(1, 1), 0), /invalid source schema/);
 });
 
 test("verification modules load without installing application development dependencies", async (context) => {
