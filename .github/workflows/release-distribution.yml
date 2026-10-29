@@ -608,7 +608,7 @@ jobs:
           cd "$RUNNER_TEMP/release"
           shasum -a 256 -c SHA256SUMS
 
-      - name: Verify the latest stable upgrade and paired rollback
+      - name: Verify the latest stable upgrade and its supported recovery path
         if: ${{ inputs.channel == 'stable' }}
         env:
           JOBCTRL_RELEASE_PUBLIC_KEY: ${{ needs.resolve.outputs.release_public_key }}

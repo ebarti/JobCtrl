@@ -181,8 +181,12 @@ The protected release workflow runs `scripts/released-upgrade-smoke.mjs` against
 actual released executables before immutable publication. Its ordinary compatible
 protocol case upgrades from
 **the latest published stable version before the candidate**, rolls back to that
-version with its paired data backup, then explicitly upgrades again. It checks
-real service readiness, retained job data and Temporal history throughout.
+version with its paired data backup, then explicitly upgrades again. For the
+protocol-1/schema-14 to protocol-2/schema-15 transition, it verifies the old
+controller's refusal, interrupts the signed new installer after selector
+handoff, preserves later application and Temporal WAL writes through forward
+recovery, and checks that cross-protocol rollback is refused. Both cases check
+real service readiness, retained job data and Temporal history.
 
 The harness resolves that source from GitHub's published stable releases, so the
 source advances automatically after each release. Drafts, prereleases and the
@@ -195,7 +199,7 @@ transitions, never-started installations, partial pairs and orphaned sidecars
 remain covered by the native suite. Do not repeat that compatibility matrix in
 every release's publication gate.
 
-The single case retains its report and elapsed time, with a 20-minute limit.
+The selected case retains its report and elapsed time, with a 20-minute limit.
 Publication depends directly on its success. It uses the existing self-contained
 verification bundle and actual bundled runtimes without installing application
 development dependencies. The signed formula-cache adapter replaces only
