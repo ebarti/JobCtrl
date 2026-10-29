@@ -139,6 +139,22 @@ across both otherwise-empty observations: changing PID/generation inventories
 must retain the owner while the successor remains in the original session.
 Only enumeration/timing seams may be controlled; PID, session and generation
 metadata must come from the actual owned processes.
+For the installed native fence, repeat the real Apply/Temporal peer and
+same-job retry while a separately owned coalition creates processes during the
+session census. Verify the unrelated coalition survives and no false refusal
+occurs. Fork a real successor during an otherwise-empty session observation and
+require the native task-start count to detect the handoff. Verify a detached
+child keeps the native scope's active-task count nonzero until actual exit;
+an unavailable or invalid counter must fall back to conservative verification.
+Inject a process-inspection permission failure and verify the activity reports
+only its bounded cause without paths or process details. Unknown failures, a
+colliding worker exit status, and missing or changed receipt evidence must not
+be classified as that cause or certify cleanup.
+For browser and agent handles, exercise cooperative TERM, TERM-ignoring group
+escalation after the grace period, including a leader that exits during grace,
+and a leader already exited before cleanup with a surviving child. Keep an
+independent peer alive and require the last case to retain custody without
+signalling an unverified group.
 Inject an agent cleanup timeout through the real registry entry point and prove
 retention, selected-peer cleanup, unselected-owner preservation and exact retry.
 Model Windows kernel-handle termination followed by explicit unverified

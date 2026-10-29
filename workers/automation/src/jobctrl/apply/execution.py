@@ -23,11 +23,15 @@ import uuid
 
 from jobctrl import config
 from jobctrl.apply.batch_outcome import ApplyBatchCleanupIncomplete, ApplyBatchCounts, ApplyBatchWorkersCrashed
-from jobctrl.apply.native_custody import capture_native_custody, verify_native_completion
+from jobctrl.apply.native_custody import capture_native_custody, matches_active_native_receipt, verify_native_completion
 from jobctrl.apply.ownership import ApplyLauncherBusy, ApplyLauncherCleanupIncomplete, ApplyLauncherRun
 from jobctrl.apply.process_birth import ApplyCustodyJournal, CustodyUnverified, _directory, _id, _read, _write
 
 logger = logging.getLogger(__name__)
+
+# Reserved by the native private Apply controller only for an authenticated
+# helper's process-inspection denial. Other private command failures use 1.
+_NATIVE_INSPECTION_DENIED_EXIT = 211
 
 
 _OPTION_TYPES = {
@@ -255,6 +259,7 @@ class ScopedApplyExecution:
         # journal is still sufficient to select the exact native completion.
         binding = result.get("native_custody") if result is not None else None
         journal = ApplyCustodyJournal(config.APP_DIR, self.identity)
+        value = None
         if journal.directory.exists():
             value = journal.load()
             if value is not None:
@@ -270,6 +275,11 @@ class ScopedApplyExecution:
             if result is not None and result.get("native_custody") == binding:
                 metric_state.verified_binding = binding
         except (CustodyUnverified, OSError, ValueError) as exc:
+            if (process.returncode == _NATIVE_INSPECTION_DENIED_EXIT and value is not None
+                    and matches_active_native_receipt(value["native_custody"], config.APP_DIR)):
+                raise ApplyLauncherCleanupIncomplete(
+                    "The system denied a process inspection during Apply cleanup; native custody is retained."
+                ) from exc
             raise ApplyLauncherCleanupIncomplete("Apply native execution cleanup remains unverified; its custody is retained") from exc
         finally:
             with self._guard:

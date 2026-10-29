@@ -80,7 +80,8 @@ def _kill_process_tree(pid: int, *, process: subprocess.Popen | None = None) -> 
     A PID, port, process name or current group alone is never kill authority.
     POSIX Popen's reaping lock keeps the unreaped child PID from being reused
     between verification and the signal. Its launch-created session establishes
-    group ownership; an exited leader cannot authorize cleanup of leftovers.
+    group ownership; a leader already exited before cleanup cannot authorize
+    cleanup of leftovers.
     Windows uses the original kernel process handle, never taskkill's PID tree.
     """
     with _chrome_lock:

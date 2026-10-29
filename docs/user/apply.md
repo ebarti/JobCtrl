@@ -97,10 +97,13 @@ worker cannot reset an earlier attempt's files. A worker whose process cleanup
 cannot verify exit stops claiming further jobs and retains the prior files.
 If a batch worker crashes, the batch fails and reports worker crashes separately
 from completed job counts. A cleanup refusal means exit could not be verified;
-it does not establish that an owned process is still running. Other process
-activity can prevent the required verification even when no member of the owned
-session appears in the observations. Rebooting is not a prerequisite and does
-not replace the required cleanup proof.
+it does not establish that an owned process is still running. Installed macOS
+Apply uses its own native execution scope to verify cleanup despite unrelated
+process activity. When that scoped evidence is unavailable, cleanup remains
+conservative. Rebooting is not a prerequisite and does not replace the required
+cleanup proof. If the system denies a required process inspection, Apply reports
+that failure while retaining the affected custody; other unverified failures
+remain reported as unverified.
 
 Installed macOS Apply runs verify cleanup of their own execution before
 returning, so a normal rehearsal or retry does not require stopping the app.

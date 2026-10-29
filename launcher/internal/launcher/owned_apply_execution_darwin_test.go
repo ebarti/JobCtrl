@@ -259,7 +259,9 @@ func TestApplyCompletionInspectionFailureRetainsExactReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = child.Process.Kill(); _ = child.Wait() }()
-	previousIDs, previousCoalitions := executionProcessIDs, executionProcessCoalitions
+	previousIDs, previousCoalitions, previousCount := executionProcessIDs, executionProcessCoalitions, readCoalitionActiveTaskCount
+	// A failed direct count falls back to the existing independent census.
+	readCoalitionActiveTaskCount = func(uint64) (uint64, error) { return 0, syscall.EPERM }
 	executionProcessIDs = func() ([]int, error) { return []int{child.Process.Pid}, nil }
 	executionProcessCoalitions = func(pid int) ([2]uint64, error) {
 		if pid != child.Process.Pid {
@@ -267,7 +269,9 @@ func TestApplyCompletionInspectionFailureRetainsExactReceipt(t *testing.T) {
 		}
 		return [2]uint64{}, syscall.EPERM
 	}
-	defer func() { executionProcessIDs, executionProcessCoalitions = previousIDs, previousCoalitions }()
+	defer func() {
+		executionProcessIDs, executionProcessCoalitions, readCoalitionActiveTaskCount = previousIDs, previousCoalitions, previousCount
+	}()
 	if err := completeApplyExecution(ctx, scope); !errors.Is(err, syscall.EPERM) {
 		t.Fatalf("failed kernel census certified completion: %v", err)
 	}

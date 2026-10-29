@@ -422,7 +422,8 @@ def test_native_result_decodes_legacy_and_structured_failures_after_completion(
     assert verified == [(None, app.resolve())]
 
 
-def test_structured_counts_cannot_bypass_missing_native_completion(tmp_path, monkeypatch):
+@pytest.mark.parametrize("exit_code", [1, 211])
+def test_structured_counts_cannot_bypass_missing_native_completion(tmp_path, monkeypatch, exit_code):
     app = tmp_path / "app"
     app.mkdir()
     monkeypatch.setattr(config, "APP_DIR", app)
@@ -438,12 +439,13 @@ def test_structured_counts_cannot_bypass_missing_native_completion(tmp_path, mon
         "path=Path(os.environ['JOBCTRL_DIR'])/'apply-invocations'/request['request_id']/'result.json'\n"
         "path.write_text(json.dumps(result))\n"
         "path.chmod(0o600)\n"
-        "sys.exit(1)\n"
+        f"sys.exit({exit_code})\n"
     )
     monkeypatch.setattr(execution, "_native_command", lambda: [sys.executable, str(script)])
     with pytest.raises(ApplyLauncherCleanupIncomplete) as caught:
         execution.ScopedApplyExecution().run(_options())
     assert not hasattr(caught.value, "counts")
+    assert "cleanup remains unverified" in str(caught.value)
 
 
 @pytest.mark.parametrize("kind", ["crash", "cleanup"])

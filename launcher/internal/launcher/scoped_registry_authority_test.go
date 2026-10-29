@@ -20,12 +20,8 @@ func TestScopedStopRejectsForeignRegistrySignalAuthority(t *testing.T) {
 	var receipts []executionScope
 	defer func() {
 		for i, member := range members {
-			identity, err := processStartIdentity(member.PID)
-			ids, idErr := processCoalitionIDs(member.PID)
-			if err == nil && idErr == nil && identity == member.Identity && ids == receipts[i].CoalitionIDs {
-				_ = syscall.Kill(member.PID, syscall.SIGKILL)
-				_ = waitForPIDExit(member.PID, shutdownTimeout)
-			}
+			_ = signalExecutionRoot(receipts[i].CoalitionIDs, member.PID, member.Identity, syscall.SIGKILL)
+			_ = waitForOwnedRecordExit(componentRecord{PID: member.PID, StartIdentity: member.Identity}, shutdownTimeout)
 			cleanupExecutionTestArtifacts(receipts[i])
 		}
 	}()

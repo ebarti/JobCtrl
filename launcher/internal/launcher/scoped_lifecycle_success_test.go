@@ -74,13 +74,8 @@ func TestScopedCleanupAllowsRealUpdateAndRollback(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer func() {
-				if current, err := processStartIdentity(pid); err == nil && current == identity {
-					ids, err := processCoalitionIDs(pid)
-					if err == nil && ids == scopes[0].CoalitionIDs {
-						_ = syscall.Kill(pid, syscall.SIGKILL)
-						_ = waitForPIDExit(pid, shutdownTimeout)
-					}
-				}
+				_ = signalExecutionRoot(scopes[0].CoalitionIDs, pid, identity, syscall.SIGKILL)
+				_ = waitForOwnedRecordExit(componentRecord{PID: pid, StartIdentity: identity}, shutdownTimeout)
 				cleanupExecutionTestArtifacts(scopes[0])
 			}()
 			deadline := time.Now().Add(3 * time.Second)

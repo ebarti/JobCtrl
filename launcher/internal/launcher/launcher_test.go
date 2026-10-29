@@ -952,7 +952,7 @@ func TestProcessRecordMatchesOwnedChildAfterSeparateExec(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_ = syscall.Kill(-child.Process.Pid, syscall.SIGTERM)
+		_ = child.Process.Signal(syscall.SIGTERM)
 		_, _ = child.Process.Wait()
 	})
 	executable, err := processExecutable(child.Process.Pid)
@@ -992,9 +992,7 @@ func startOwnedSleep(t *testing.T) (*exec.Cmd, componentRecord, <-chan error) {
 	reaped := make(chan error, 1)
 	go func() { reaped <- child.Wait() }()
 	t.Cleanup(func() {
-		if processPIDAlive(child.Process.Pid) {
-			_ = syscall.Kill(-record.PGID, syscall.SIGKILL)
-		}
+		_ = child.Process.Kill()
 		select {
 		case <-reaped:
 		case <-time.After(time.Second):
@@ -1036,9 +1034,7 @@ func TestTerminateRecordProvesOwnedProcessGroupIsEmpty(t *testing.T) {
 	reaped := make(chan error, 1)
 	go func() { reaped <- child.Wait() }()
 	t.Cleanup(func() {
-		if processGroupAlive(record.PGID) {
-			_ = syscall.Kill(-record.PGID, syscall.SIGKILL)
-		}
+		_ = child.Process.Kill()
 		select {
 		case <-reaped:
 		case <-time.After(time.Second):

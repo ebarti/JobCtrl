@@ -46,12 +46,37 @@ def install() -> None:
     # aggregate inventory differences and the exact owned session are saved.
     original_read = process_ownership._read_process_inventory
     original_wait = process_ownership._wait_for_session_exit
+    original_ids = process_ownership._darwin_process_ids
     census_context = threading.local()
+    churn = os.environ.get("JOBCTRL_TEST_CENSUS_CHURN_DIR")
 
-    def observed_read():
+    def observed_ids(library):
+        pids = original_ids(library)
+        if churn and getattr(census_context, "trace", None) is not None:
+            # The native Go test starts a real child in an unrelated coalition
+            # after enumeration and before the session rows are inspected.
+            from jobctrl.apply.native_custody import _current_coalitions
+            directory = Path(churn)
+            token = uuid.uuid4().hex
+            (directory / f"request-{token}").touch()
+            ack = directory / f"ack-{token}.json"
+            deadline = time.monotonic() + 5
+            while not ack.exists():
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("owned unrelated census-churn fixture did not respond")
+                time.sleep(.002)
+            response = json.loads(ack.read_text())
+            foreign = response.get("coalitions")
+            if (response.get("error") or not isinstance(foreign, list) or len(foreign) != 2
+                    or any(type(value) is not int or value <= 0 for value in foreign)
+                    or foreign == _current_coalitions()):
+                raise RuntimeError("census-churn fixture did not create an independent process")
+        return pids
+
+    def observed_read(**kwargs):
         trace = getattr(census_context, "trace", None)
         try:
-            inventory, complete = original_read()
+            inventory, complete = original_read(**kwargs)
         except Exception as exc:
             if trace is not None:
                 trace["samples"].append({"error": type(exc).__name__})
@@ -68,12 +93,12 @@ def install() -> None:
             trace["previous"] = inventory
         return inventory, complete
 
-    def observed_wait(session_id):
+    def observed_wait(session_id, **kwargs):
         prior = getattr(census_context, "trace", None)
         trace = {"session_id": session_id, "samples": [], "previous": None, "outcome": "refused"}
         census_context.trace = trace
         try:
-            original_wait(session_id)
+            original_wait(session_id, **kwargs)
             trace["outcome"] = "verified"
         finally:
             census_context.trace = prior
@@ -84,8 +109,13 @@ def install() -> None:
             path.write_text(json.dumps(trace))
             path.chmod(0o600)
 
+    if churn:
+        from tests.helpers.apply_session_fence_native import exercise_once
+        exercise_once(Path(churn))
+
     process_ownership._read_process_inventory = observed_read
     process_ownership._wait_for_session_exit = observed_wait
+    process_ownership._darwin_process_ids = observed_ids
 
     class Ports:
         def __init__(self):

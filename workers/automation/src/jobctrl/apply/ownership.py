@@ -132,6 +132,17 @@ class ApplyLauncherRun:
         with self._lock:
             if self._journal is None or not self._admitted or self.stop_event.is_set():
                 raise CustodyUnverified("Apply process birth has no active run custody")
+            binding = self._journal.native_custody
+            coalitions = None
+            if (binding is not None and binding["scope"].get("purpose") == "apply"
+                    and kwargs.get("start_new_session") is True and kwargs.get("preexec_fn") is None):
+                from jobctrl.apply.native_custody import _current_coalitions
+                expected = tuple(binding["scope"]["coalitionIds"])
+                try:
+                    if tuple(_current_coalitions()) == expected:
+                        coalitions = expected
+                except (CustodyUnverified, OSError):
+                    pass  # The original full-inventory proof remains available.
             birth_id = self._journal.reserve(worker_id, kind)
             try:
                 process = subprocess.Popen(command, **kwargs)
@@ -139,6 +150,16 @@ class ApplyLauncherRun:
                 self._journal.abort_unspawned(birth_id)
                 raise
             self._birth_processes[birth_id] = (worker_id, process, process.pid)
+            if coalitions is not None:
+                try:
+                    if tuple(_current_coalitions()) == coalitions:
+                        # The native receipt and both sides of Popen bind this
+                        # child birth to its inherited coalition. This is only
+                        # a census fence, never authority to signal or proof
+                        # that escaped descendants have exited.
+                        process._jobctrl_birth_coalitions = coalitions
+                except (CustodyUnverified, OSError):
+                    pass
             return process
 
     def _cleanup_workers(self, workers: tuple[int, ...]) -> list[str]:

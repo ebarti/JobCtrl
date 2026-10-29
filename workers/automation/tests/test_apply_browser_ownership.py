@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import os
 from pathlib import Path
+import signal
 import socket
 import subprocess
 import sys
@@ -378,10 +379,40 @@ def test_owned_session_descendants_exit_while_unrelated_group_survives(browser_s
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX Popen reaping fence")
-def test_concurrent_poll_cannot_reap_leader_during_group_signal(browser_seam, monkeypatch):
+def test_concurrent_poll_cannot_reap_leader_during_group_signal(browser_seam, tmp_path, monkeypatch):
     import threading
+    import time
 
+    ready = tmp_path / "ignoring-term"
+    script = (
+        "import signal,sys,time; from pathlib import Path; "
+        "signal.signal(signal.SIGTERM,signal.SIG_IGN); Path(sys.argv[1]).write_text('ready'); "
+        "time.sleep(120)"
+    )
+
+    def spawn(command, **kwargs):
+        child = browser_seam.popen([sys.executable, "-c", script, str(ready)], **kwargs)
+        browser_seam.append(child)
+        _publish_synthetic_endpoint(command)
+        return child
+
+    monkeypatch.setattr(chrome.subprocess, "Popen", spawn)
     process = launch(101)
+    deadline = time.monotonic() + 5
+    while not ready.exists() and time.monotonic() < deadline:
+        time.sleep(.01)
+    assert ready.exists(), "synthetic child did not install its TERM handler"
+    # Keep the original child alive through its TERM grace, so the test
+    # observes the later verified group signal while a concurrent poll runs.
+    from jobctrl.infrastructure.process_ownership import _waitid_nowait
+
+    process.send_signal(signal.SIGSTOP)
+    deadline = time.monotonic() + 5
+    event = _waitid_nowait(process.pid, stopped=True)
+    while event is None and time.monotonic() < deadline:
+        time.sleep(.01)
+        event = _waitid_nowait(process.pid, stopped=True)
+    assert event is not None and event.si_pid == process.pid and event.si_code == os.CLD_STOPPED
     actual_killpg = os.killpg
     observed = []
 
@@ -490,7 +521,9 @@ def test_live_session_child_blocks_cleanup_after_root_exit_then_retry_settles(
             actual_killpg(pid, sig)
 
         monkeypatch.setattr(os, "killpg", signal_group)
-        expected_signals = ([(root.pid, 9)] if not root_reaped else []) + [(selected_peer.pid, 9)]
+        # The surviving child is either unanchored or in a different group.
+        # Neither case permits a signal to an empty/unverified launch group.
+        expected_signals = []
         with pytest.raises(chrome.BrowserCapabilityError, match=r"workers \[202\]"):
             chrome.cleanup_workers([202, 203])
         assert chrome._chrome_procs[202] is root
@@ -499,6 +532,9 @@ def test_live_session_child_blocks_cleanup_after_root_exit_then_retry_settles(
         assert selected_peer.returncode != 0
         assert signals == expected_signals
         assert control.poll() is None
+        if not root_reaped:
+            from jobctrl.infrastructure.process_ownership import _waitid_nowait
+            assert _waitid_nowait(root.pid) is not None
         # The child is still live after its original root has exited/reaped.
         # Request its own controlled exit; do not signal an unanchored old PID.
         with socket.create_connection(("127.0.0.1", port), timeout=3) as client:

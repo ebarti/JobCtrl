@@ -60,9 +60,7 @@ os.execve('/bin/sleep',['sleep','60'],{})
 		scopedProcessIDs = userProcessIDs
 		stopCompletionCheckpoint = nil
 		if childPID > 0 {
-			if current, err := processStartIdentity(childPID); err == nil && current == childIdentity {
-				_ = syscall.Kill(childPID, syscall.SIGKILL)
-			}
+			_ = signalExecutionRoot(scope.CoalitionIDs, childPID, childIdentity, syscall.SIGKILL)
 		}
 		_ = parent.Process.Kill()
 		_ = parent.Wait()

@@ -84,7 +84,7 @@ c=sqlite3.connect(sys.argv[2]);c.execute('CREATE TABLE t(v TEXT)');c.execute("IN
 func TestForwardUpdateRefusesBeforeSelectionOrDatabaseMutation(t *testing.T) {
 	priorInspect := inspectOwnedProcesses
 	t.Cleanup(func() { inspectOwnedProcesses = priorInspect })
-	inspectOwnedProcesses = func(launchContext, instanceState) ([]ownedProcess, error) {
+	inspectOwnedProcesses = func(launchContext, instanceState, ...executionWitnesses) ([]ownedProcess, error) {
 		return nil, errors.New("synthetic inspection failure")
 	}
 

@@ -199,14 +199,6 @@ func TestOwnedExecutionLaunchdIsolation(t *testing.T) {
 	contexts := []launchContext{executionTestContext(t), executionTestContext(t)}
 	var scopes []executionScope
 	var pids []int
-	defer func() {
-		for i, pid := range pids {
-			ids, err := processCoalitionIDs(pid)
-			if err == nil && ids == scopes[i].CoalitionIDs {
-				_ = syscall.Kill(pid, syscall.SIGKILL)
-			}
-		}
-	}()
 	for _, ctx := range contexts {
 		pidfile := filepath.Join(filepath.Dir(ctx.Instance.StatePath), "child.pid")
 		var out, stderr bytes.Buffer
@@ -238,6 +230,7 @@ func TestOwnedExecutionLaunchdIsolation(t *testing.T) {
 			t.Fatal(err)
 		}
 		pids = append(pids, pid)
+		registerVerifiedScopeChildCleanup(t, ctx, pid)
 		deadline := time.Now().Add(3 * time.Second)
 		for {
 			path, _ := processExecutable(pid)
@@ -277,7 +270,7 @@ func TestOwnedExecutionLaunchdIsolation(t *testing.T) {
 	if err != nil || after != identity {
 		t.Fatal("cleanup PID identity changed")
 	}
-	if err = syscall.Kill(pids[0], syscall.SIGKILL); err != nil {
+	if err = signalExecutionRoot(ids, pids[0], identity, syscall.SIGKILL); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(3 * time.Second)
@@ -407,6 +400,8 @@ func TestOwnedExecutionRejectsUnsafeReceipts(t *testing.T) {
 
 func TestOwnedExecutionStdin(t *testing.T) {
 	ctx := executionTestContext(t)
+	root := filepath.Dir(ctx.Instance.StatePath)
+	ctx.Instance.ControlPath, ctx.Instance.LockPath = filepath.Join(root, "control.lock"), filepath.Join(root, "instance.lock")
 	reader, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -423,6 +418,64 @@ func TestOwnedExecutionStdin(t *testing.T) {
 	}
 	if output.String() != "scope authenticated\nsynthetic stdin\n" {
 		t.Fatalf("stdin was not forwarded: %q", output.String())
+	}
+	scopes, err := readOwnedExecutionScopes(ctx)
+	if err != nil || len(scopes) != 1 {
+		t.Fatalf("finished empty execution lost its active receipt: %v", err)
+	}
+	completion, err := readExecutionCompletion(ctx, scopes[0].ID)
+	if err != nil || completion.Scope != scopes[0] || completion.Scope.Purpose != "" || completion.VerificationBootSession != completion.Scope.BootSession {
+		t.Fatalf("finished execution completion does not match its scope: %v", err)
+	}
+	proofPath := filepath.Join(root, "completed-executions", scopes[0].ID+".json")
+	proof, err := os.ReadFile(proofPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCount, oldPIDs := readCoalitionActiveTaskCount, scopedProcessIDs
+	defer func() { readCoalitionActiveTaskCount, scopedProcessIDs = oldCount, oldPIDs }()
+	readCoalitionActiveTaskCount = func(uint64) (uint64, error) { return 0, syscall.ESRCH }
+	scopedProcessIDs = func() ([]int, error) { return nil, syscall.EPERM }
+	changed := completion
+	changed.ReceiptSHA256 = strings.Repeat("0", 64)
+	if err := writeJSONAtomic(proofPath, changed); err != nil {
+		t.Fatal(err)
+	}
+	if err := stop(ctx); !errors.Is(err, syscall.EPERM) {
+		t.Fatalf("mismatched proof retired an unverified scope: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "executions", scopes[0].ID+".json")); err != nil {
+		t.Fatalf("unverified scope receipt was not retained: %v", err)
+	}
+	if err := os.WriteFile(proofPath, proof, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := stop(ctx); err != nil {
+		t.Fatalf("exact same-boot proof did not permit normal stop: %v", err)
+	}
+}
+
+func TestFinishedOrdinaryExecutionRetainsReceiptWhenScopeCountUnavailable(t *testing.T) {
+	ctx := executionTestContext(t)
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	writer.Close()
+	stdin, count := os.Stdin, readCoalitionActiveTaskCount
+	os.Stdin = reader
+	readCoalitionActiveTaskCount = func(uint64) (uint64, error) { return 0, syscall.EPERM }
+	defer func() { os.Stdin, readCoalitionActiveTaskCount = stdin, count }()
+	if err := runInOwnedExecution(ctx, []string{"__scope-test-command", ctx.Instance.StatePath, ctx.Instance.ID, "stdin", "unused"}, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	scopes, err := readOwnedExecutionScopes(ctx)
+	if err != nil || len(scopes) != 1 {
+		t.Fatalf("unavailable native scope count retired the receipt: %v", err)
+	}
+	if _, err := readExecutionCompletion(ctx, scopes[0].ID); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unavailable native scope count published a proof: %v", err)
 	}
 }
 
@@ -480,9 +533,7 @@ func TestOwnedExecutionForwardsSignalsAndControllerEOF(t *testing.T) {
 				t.Fatal("signal target authority mismatch")
 			}
 			defer func() {
-				if after, err := processStartIdentity(pid); err == nil && after == identity {
-					syscall.Kill(pid, syscall.SIGKILL)
-				}
+				_ = signalExecutionRoot(ids, pid, identity, syscall.SIGKILL)
 			}()
 			if err = outer.Process.Signal(scenario.signal); err != nil {
 				t.Fatal(err)
@@ -586,7 +637,7 @@ func TestExecutionMembersRetriesUncertainZero(t *testing.T) {
 			}
 			members, err := executionMembers(ids)
 			if scenario == "permission-failure" {
-				if !errors.Is(err, syscall.EPERM) || passes != 1 {
+				if !errors.Is(err, syscall.EPERM) || passes < 2 {
 					t.Fatalf("permission failure became cleanup success: %v passes=%d", err, passes)
 				}
 				return
@@ -641,9 +692,7 @@ func TestOwnedExecutionCancellationEscalatesIgnoringRoot(t *testing.T) {
 	}
 	defer cleanupExecutionTestArtifacts(scopes[0])
 	defer func() {
-		if current, err := processStartIdentity(pid); err == nil && current == identity {
-			_ = syscall.Kill(pid, syscall.SIGKILL)
-		}
+		_ = signalExecutionRoot(scopes[0].CoalitionIDs, pid, identity, syscall.SIGKILL)
 	}()
 	started := time.Now()
 	if err := outer.Process.Signal(syscall.SIGTERM); err != nil {

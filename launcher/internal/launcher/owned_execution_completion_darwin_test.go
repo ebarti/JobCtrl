@@ -145,9 +145,7 @@ func TestNativeCompletionRecoversApplyCustodyAfterEscapedWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() {
-		if current, err := processStartIdentity(writer.PID); err == nil && current == writerIdentity {
-			_ = syscall.Kill(writer.PID, syscall.SIGKILL)
-		}
+		_ = signalExecutionRoot(binding.Scope.CoalitionIDs, writer.PID, writerIdentity, syscall.SIGKILL)
 	}()
 	if ids, err := processCoalitionIDs(writer.PID); err != nil || ids != binding.Scope.CoalitionIDs || writer.SID != writer.PID {
 		t.Fatalf("writer did not retain native custody while escaping its Apply session: %v", err)
@@ -375,7 +373,7 @@ func TestFailedNativeCleanupCannotPublishExecutionCompletion(t *testing.T) {
 	ctx, scope, original := completedExecutionTestScope(t)
 	prior := inspectOwnedProcesses
 	t.Cleanup(func() { inspectOwnedProcesses = prior })
-	inspectOwnedProcesses = func(launchContext, instanceState) ([]ownedProcess, error) {
+	inspectOwnedProcesses = func(launchContext, instanceState, ...executionWitnesses) ([]ownedProcess, error) {
 		return nil, errors.New("synthetic kernel inspection failure")
 	}
 	if err := stop(ctx); err == nil || !strings.Contains(err.Error(), "synthetic kernel inspection failure") {
