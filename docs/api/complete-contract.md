@@ -2052,6 +2052,14 @@ gated by the same check and return
 heartbeat is missing, stale, or mismatched. Action routes share dispatch
 semantics: a queued Temporal workflow start returns `202` with the workflow
 ID, while synchronous local results return `200`.
+
+When exact-schema admission fails at startup, `/v1/health` returns `503` with
+`{ ok: false, error: "database_migration_required" | "database_schema_incompatible",
+currentVersion: number | null, expectedVersion: number, message: string }`.
+The first code is reserved for supported older version numbers; a newer, unknown,
+or malformed schema uses the second. All product `/v1/*` requests fail with
+the same diagnostic while the API remains in this mode. Its response contains
+no workspace path, and reopening the workspace after repair requires a restart.
 Non-apply pipeline runs also emit pipeline-level
 `StageStarted` / `StageCompleted` / `StageFailed` rows, and Discover emits
 the same lifecycle rows plus `DiscoveryRunStarted`,

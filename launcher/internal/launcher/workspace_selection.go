@@ -16,6 +16,12 @@ func CheckWorkspaceSelection(home, payloadRoot string, env []string, initial boo
 		return err
 	}
 	ctx := launchContext{PayloadRoot: payloadRoot, Instance: inst, Environment: env}
+	if err := refusePendingSourceMigration(ctx); err != nil {
+		return err
+	}
+	if err := requireLegacySourceOwnership(ctx); err != nil {
+		return err
+	}
 	target, err := loadRuntimeManifest(filepath.Join(payloadRoot, "launcher", "runtime-manifest.json"))
 	if err != nil {
 		return err

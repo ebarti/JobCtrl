@@ -793,8 +793,18 @@ func rollbackExisting(ctx launchContext, store *release.Store, active release.Ac
 	if err := refusePendingBridgeHandoff(store.Home); err != nil {
 		return err
 	}
+	if err := refusePendingSourceMigration(ctx); err != nil {
+		return err
+	}
 	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
 		return err
+	}
+	temporal, err := temporalHistoryPath(ctx.Instance.StateDir)
+	if err != nil {
+		return err
+	}
+	if temporal != filepath.Join(ctx.Instance.StateDir, "temporal.db") {
+		return errors.New("paired rollback is unavailable for a legacy source Temporal history; preserve the workspace and backup")
 	}
 	// A transition can be created while this rollback waits for the locks.
 	// Never replace a live preservation fence with a new rollback journal.
@@ -1118,6 +1128,9 @@ func parseBuildTarget(args []string, command string) (string, error) {
 // rollback. Candidate code starts while active.json still names old, then the
 // only selection pointer changes after the real launcher readiness probe.
 func promoteExisting(ctx launchContext, store *release.Store, active release.Active, build, operation string, output io.Writer) (result error) {
+	if err := refusePendingSourceMigration(ctx); err != nil {
+		return err
+	}
 	if operation == "update" {
 		if handled, err := promoteForwardUpdate(ctx, build, environmentMap(ctx.Environment)["JOBCTRL_ACQUISITION_SOURCE"], output); handled {
 			return err
@@ -1136,8 +1149,18 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 	if err := refusePendingBridgeHandoff(store.Home); err != nil {
 		return err
 	}
+	if err := refusePendingSourceMigration(ctx); err != nil {
+		return err
+	}
 	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
 		return err
+	}
+	temporal, err := temporalHistoryPath(ctx.Instance.StateDir)
+	if err != nil {
+		return err
+	}
+	if temporal != filepath.Join(ctx.Instance.StateDir, "temporal.db") {
+		return errors.New("legacy source history requires an authenticated forward update; paired rollback is unavailable")
 	}
 	if existing, journalErr := store.ReadJournal(); journalErr == nil && existing.Resumable() {
 		return fmt.Errorf("unfinished %s transition at %s must be recovered before another promotion", existing.Operation, existing.State)
@@ -1419,6 +1442,9 @@ func startRelease(ctx launchContext, receipt release.Receipt, journalID string) 
 }
 
 func backup(ctx launchContext, args []string, output io.Writer) error {
+	if err := refusePendingSourceMigration(ctx); err != nil {
+		return err
+	}
 	releaseSelection(&ctx)
 	directory := ""
 	if len(args) == 2 && args[0] == "--output" {
@@ -1452,6 +1478,12 @@ func backup(ctx launchContext, args []string, output io.Writer) error {
 	if err := refusePendingBridgeHandoff(store.Home); err != nil {
 		return err
 	}
+	if err := refusePendingSourceMigration(ctx); err != nil {
+		return err
+	}
+	if err := refuseBackupOfRunningSource(ctx); err != nil {
+		return err
+	}
 	if existing, journalErr := store.ReadJournal(); journalErr == nil && existing.Resumable() {
 		return fmt.Errorf("unfinished %s transition at %s must be recovered before backup", existing.Operation, existing.State)
 	} else if journalErr != nil && !errors.Is(journalErr, os.ErrNotExist) {
@@ -1466,6 +1498,9 @@ func backup(ctx launchContext, args []string, output io.Writer) error {
 	}
 	ctx, err = rebindActiveContext(ctx, active.Receipt.BuildID)
 	if err != nil {
+		return err
+	}
+	if err := requireLegacySourceOwnership(ctx); err != nil {
 		return err
 	}
 	defer func() { _ = ctx.selection.Close() }()
@@ -1525,6 +1560,16 @@ func snapshotPair(ctx launchContext, receipt release.Receipt) (databasePair, err
 	return snapshotPairTo(ctx, receipt, filepath.Join(ctx.Instance.StateDir, "backups"))
 }
 func snapshotPairTo(ctx launchContext, receipt release.Receipt, parent string) (databasePair, error) {
+	temporal, err := temporalHistoryPath(ctx.Instance.StateDir)
+	if err != nil {
+		return databasePair{}, err
+	}
+	if err := requireLegacySourceOwnership(ctx); err != nil {
+		return databasePair{}, err
+	}
+	if err := refuseOpenWorkspaceDatabases(filepath.Join(ctx.Instance.StateDir, "jobctrl.db"), temporal); err != nil {
+		return databasePair{}, err
+	}
 	if err := ensureSafeDirectory(parent); err != nil {
 		return databasePair{}, err
 	}
@@ -1540,6 +1585,9 @@ func snapshotPairTo(ctx launchContext, receipt release.Receipt, parent string) (
 	pair := databasePair{SchemaVersion: 1, ID: id, ReleaseReceipt: receipt, CreatedAt: time.Now().UTC()}
 	for _, name := range []string{"jobctrl.db", "temporal.db"} {
 		source := filepath.Join(ctx.Instance.StateDir, name)
+		if name == "temporal.db" {
+			source = temporal
+		}
 		destination := filepath.Join(dir, name)
 		version, err := sqliteOnlineBackup(filepath.Join(ctx.PayloadRoot, "python", "bin", "python3"), source, destination)
 		if err != nil {
@@ -1550,6 +1598,9 @@ func snapshotPairTo(ctx launchContext, receipt release.Receipt, parent string) (
 			return databasePair{}, err
 		}
 		pair.Files = append(pair.Files, file)
+	}
+	if selected, err := temporalHistoryPath(ctx.Instance.StateDir); err != nil || selected != temporal {
+		return databasePair{}, errors.New("Temporal history identity changed during backup; preserve the workspace")
 	}
 	if err := writeJSONAtomic(filepath.Join(dir, "pair.json"), pair); err != nil {
 		return databasePair{}, err
@@ -1629,8 +1680,18 @@ func describeDatabase(path, name string, version int64) (databaseFile, error) {
 }
 
 func restorePair(ctx launchContext, pair databasePair) error {
+	if err := refusePendingSourceMigration(ctx); err != nil {
+		return err
+	}
 	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
 		return fmt.Errorf("refuse paired restore: %w", err)
+	}
+	temporal, err := temporalHistoryPath(ctx.Instance.StateDir)
+	if err != nil {
+		return err
+	}
+	if temporal != filepath.Join(ctx.Instance.StateDir, "temporal.db") {
+		return errors.New("automatic paired restore is unavailable for a legacy source Temporal history; preserve the workspace and backup")
 	}
 	if pair.SchemaVersion != 1 || !pair.ReleaseReceipt.Valid() || len(pair.Files) != 2 {
 		return errors.New("backup is not a complete database pair")

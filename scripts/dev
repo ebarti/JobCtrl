@@ -163,6 +163,10 @@ stop_pid_tree() {
 ensure_not_running() {
   local name="$1"
   if is_running "$name"; then
+    if [[ "${JOBCTRL_DEV_INNER:-}" == "1" ]]; then
+      echo "dev: an unverified previous $name process is still tracked; stop the earlier development stack before starting." >&2
+      return 1
+    fi
     echo "$name: stopping previous process tree (pid $(read_pid "$name"))"
     stop_one "$name" >/dev/null
   else
@@ -185,6 +189,7 @@ load_env_file() {
   done
 }
 
+temporal_path_conflict=0
 set_default_env() {
   export JOBCTRL_DIR="${JOBCTRL_DIR:-$HOME/.jobctrl}"
   export JOBCTRL_API_HOST="${JOBCTRL_API_HOST:-127.0.0.1}"
@@ -195,11 +200,32 @@ set_default_env() {
   export JOBCTRL_DEMO_API_PORT="${JOBCTRL_DEMO_API_PORT:-8787}"
   export JOBCTRL_DEMO_WEB_PORT="${JOBCTRL_DEMO_WEB_PORT:-5174}"
   export JOBCTRL_DEMO_STATE_DIR="${JOBCTRL_DEMO_STATE_DIR:-$DEV_DIR/demo/wrangler}"
-  # Temporal history and the JobCtrl projection database form one runtime
-  # identity. Keep both under JOBCTRL_DIR so launching the same local app from
-  # another Git worktree cannot silently switch workflow-history stores while
-  # continuing to read the shared JobCtrl database.
-  export JOBCTRL_TEMPORAL_DB="${JOBCTRL_TEMPORAL_DB:-$JOBCTRL_DIR/temporal/temporal.db}"
+  # New workspaces use the installed launcher's history path. Preserve the
+  # earlier source-only location when it is the sole existing history; never
+  # silently choose between two histories belonging to the same app database.
+  temporal_path_conflict=0
+  if [[ -z "${JOBCTRL_TEMPORAL_DB:-}" ]]; then
+    local native_temporal="$JOBCTRL_DIR/temporal.db"
+    local legacy_temporal="$JOBCTRL_DIR/temporal/temporal.db"
+    local db_path suffix
+    for db_path in "$native_temporal" "$legacy_temporal"; do
+      if [[ ! -e "$db_path" && ! -L "$db_path" ]]; then
+        for suffix in -wal -shm -journal; do
+          if [[ -e "$db_path$suffix" || -L "$db_path$suffix" ]]; then
+            temporal_path_conflict=1
+          fi
+        done
+      fi
+    done
+    if [[ ( -e "$native_temporal" || -L "$native_temporal" ) && ( -e "$legacy_temporal" || -L "$legacy_temporal" ) ]]; then
+      temporal_path_conflict=1
+      export JOBCTRL_TEMPORAL_DB="$native_temporal"
+    elif [[ -e "$legacy_temporal" || -L "$legacy_temporal" ]]; then
+      export JOBCTRL_TEMPORAL_DB="$legacy_temporal"
+    else
+      export JOBCTRL_TEMPORAL_DB="$native_temporal"
+    fi
+  fi
   mkdir -p "$(dirname "$JOBCTRL_TEMPORAL_DB")" "$JOBCTRL_DEMO_STATE_DIR"
 }
 
@@ -436,6 +462,20 @@ prepare_runtime() {
   load_env_file
   set_default_env
   local name
+  if [[ "$temporal_path_conflict" -eq 1 ]]; then
+    for name in "$@"; do
+      case "$name" in
+        temporal|api|worker)
+          echo "dev: conflicting Temporal histories or orphaned SQLite companions exist for this workspace; preserve them and resolve their ownership before starting." >&2
+          return 1
+          ;;
+      esac
+    done
+  fi
+  # When switching a managed workspace, probe after its verified owner stops.
+  if [[ "${JOBCTRL_DEV_DEFER_API_PROBE:-}" != "1" ]]; then
+    check_api_collision "$@"
+  fi
   for name in "$@"; do
     [[ "$name" == "web" ]] || continue
     echo "dev: building browser extension"
@@ -450,14 +490,73 @@ prepare_runtime() {
   done
 }
 
+check_api_collision() {
+  local name
+  # A different checkout or installed app can serve the same port. Never
+  # silently connect the web app to that unrelated API.
+  for name in "$@"; do
+    if [[ "$name" == "api" ]] && ! is_running api && command -v curl >/dev/null 2>&1; then
+      if curl -sS --max-time 1 -o /dev/null "http://${JOBCTRL_API_HOST}:${JOBCTRL_API_PORT}/v1/health" 2>/dev/null; then
+        echo "dev: another API is responding on ${JOBCTRL_API_HOST}:${JOBCTRL_API_PORT}; stop that runtime or select separate bindings before starting." >&2
+        return 1
+      fi
+    fi
+  done
+}
+
+schema_is_incompatible() {
+  local database="${JOBCTRL_DB_PATH:-$JOBCTRL_DIR/jobctrl.db}" result
+  [[ -f "$database" && -f "$ROOT/scripts/dev-schema-check.py" ]] || return 1
+  result=$(PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/dev-schema-check.py" "$database" 2>/dev/null) || return 1
+  [[ "$result" == "incompatible" ]]
+}
+
+# Keep the diagnostic API and web UI available without starting a worker or
+# Temporal against a database that the runtime refuses to open.
+select_default_targets() {
+  if schema_is_incompatible; then
+    echo "dev: incompatible workspace database; starting the diagnostic API and web interface only."
+    if [[ "${JOBCTRL_DEV_INNER:-}" == "1" ]]; then
+      if is_running worker || is_running temporal; then
+        echo "dev: stop the unverified earlier development stack before starting diagnostics." >&2
+        return 1
+      fi
+    else
+      stop_one worker
+      stop_one temporal
+    fi
+    targets=(api web)
+  fi
+}
+
+reject_incompatible_worker_targets() {
+  schema_is_incompatible || return 0
+  local name
+  for name in "$@"; do
+    case "$name" in
+      temporal|worker)
+        echo "dev: this workspace database needs a compatible upgrade; start the default fleet for diagnostics instead of starting $name." >&2
+        return 1
+        ;;
+    esac
+  done
+}
+
 cmd_start() {
   local mode="$1"
   shift
   local targets=("$@")
+  local default_fleet=0
   if [[ ${#targets[@]} -eq 0 ]]; then
+    default_fleet=1
     for n in $(process_names); do targets+=("$n"); done
   fi
   prepare_runtime "${targets[@]}"
+  if [[ "$default_fleet" -eq 0 ]]; then
+    reject_incompatible_worker_targets "${targets[@]}"
+  else
+    select_default_targets
+  fi
   if [[ "$mode" == "restart" ]]; then
     cmd_stop "${targets[@]}"
   fi
@@ -467,10 +566,19 @@ cmd_start() {
 
 cmd_run() {
   local targets=("$@")
+  local default_fleet=0
   if [[ ${#targets[@]} -eq 0 ]]; then
+    default_fleet=1
     for n in $(process_names); do targets+=("$n"); done
   fi
-  prepare_runtime "${targets[@]}"
+  if [[ "${JOBCTRL_DEV_PREPARED:-}" != "1" ]]; then
+    prepare_runtime "${targets[@]}"
+  fi
+  if [[ "$default_fleet" -eq 0 ]]; then
+    reject_incompatible_worker_targets "${targets[@]}"
+  else
+    select_default_targets
+  fi
 
   trap 'run_cleanup; exit 130' INT
   trap 'run_cleanup; exit 143' TERM
@@ -480,6 +588,13 @@ cmd_run() {
   for n in "${targets[@]}"; do start_run_one "$n"; done
 
   echo "dev: foreground run active; press Ctrl-C to stop ($(IFS=,; echo "${targets[*]}"))"
+
+  # The native source controller provides this private readiness pipe only
+  # inside its authenticated workspace scope.
+  if [[ "${JOBCTRL_DEV_READY_FD:-}" == "3" ]]; then
+    printf 'source-ready\n' >&3
+    exec 3>&-
+  fi
 
   local i name pid status
   while true; do
@@ -496,6 +611,75 @@ cmd_run() {
     done
     sleep 1
   done
+}
+
+# The macOS source fleet uses the same native workspace scope as an installed
+# release. Detached starts keep that controller alive instead of daemonizing
+# each database writer independently.
+source_control() {
+  if ! command -v go >/dev/null 2>&1; then
+    echo "dev: Go 1.24 or newer is required for shared workspace ownership; run scripts/install." >&2
+    return 1
+  fi
+  go -C "$ROOT/launcher" run ./cmd/jobctrl-source "$1" "$ROOT"
+}
+
+workspace_targets() {
+  [[ $# -gt 0 ]] || return 0
+  local name
+  for name in "$@"; do
+    case "$name" in temporal|api|worker) return 0 ;; esac
+  done
+  return 1
+}
+
+prepare_source_run() {
+  local targets=("$@") name
+  if [[ ${#targets[@]} -eq 0 ]]; then
+    for name in $(process_names); do targets+=("$name"); done
+  fi
+  JOBCTRL_DEV_DEFER_API_PROBE=1
+  prepare_runtime "${targets[@]}"
+  unset JOBCTRL_DEV_DEFER_API_PROBE
+  source_control switch
+  check_api_collision "${targets[@]}"
+  export JOBCTRL_DEV_PREPARED=1
+}
+
+cmd_start_source() {
+  local targets=("$@") name command log pid i
+  if [[ ${#targets[@]} -eq 0 ]]; then
+    for name in $(process_names); do targets+=("$name"); done
+  fi
+  prepare_source_run "$@"
+  log="$LOG_DIR/source-supervisor.log"
+  rotate_log "$log"
+  printf -v command 'exec %q run' "$ROOT/scripts/dev"
+  for name in "$@"; do
+    printf -v command '%s %q' "$command" "$name"
+  done
+  pid=$(start_detached_command "$command" "$log")
+  for i in $(seq 1 600); do
+    if [[ -f "$log" ]] && grep -Fq 'dev: foreground run active;' "$log"; then
+      echo "dev: detached source stack started (logs $log)"
+      if grep -Fq 'dev: incompatible workspace database;' "$log"; then
+        echo "dev: incompatible workspace database; the diagnostic API and web interface are running without the worker and Temporal."
+      fi
+      local running=()
+      for name in "${targets[@]}"; do
+        if is_running "$name"; then running+=("$name"); fi
+      done
+      print_binding_summary "${running[@]}"
+      return 0
+    fi
+    if ! is_alive_pid "$pid"; then
+      echo "dev: source stack failed to start; see $log" >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+  echo "dev: source stack has not reported startup; see $log" >&2
+  return 1
 }
 
 cmd_stop() {
@@ -529,6 +713,18 @@ worker_health_status() {
   echo "${status:-unknown}"
 }
 
+api_health_status() {
+  if ! command -v curl >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+    echo "unknown"
+    return 0
+  fi
+  local payload status
+  payload=$(curl -sS --max-time 1 "http://${JOBCTRL_API_HOST}:${JOBCTRL_API_PORT}/v1/health" 2>/dev/null || true)
+  [[ -n "$payload" ]] || { echo "unknown"; return 0; }
+  status=$(python3 -c 'import json,sys; d=json.load(sys.stdin); e=d.get("error"); print("migration" if e=="database_migration_required" else "incompatible" if e=="database_schema_incompatible" else "healthy" if d.get("ok") is True else "unknown")' <<< "$payload" 2>/dev/null || true)
+  echo "${status:-unknown}"
+}
+
 cmd_status() {
   load_env_file
   set_default_env
@@ -551,7 +747,9 @@ cmd_status() {
       pid="-"
     fi
     health="-"
-    if [[ "$n" == "worker" && "$state" == "up" ]]; then
+    if [[ "$n" == "api" && "$state" == "up" ]]; then
+      health=$(api_health_status)
+    elif [[ "$n" == "worker" && "$state" == "up" ]]; then
       health=$(worker_health_status)
     fi
     log=$(log_file "$n")
@@ -607,6 +805,30 @@ main() {
   local sub="${1:-help}"
   shift || true
   [[ "${1:-}" == "--" ]] && shift
+  if [[ "$sub" != "run" ]]; then
+    unset JOBCTRL_DEV_INNER JOBCTRL_DEV_PREPARED
+  fi
+  if [[ "$sub" == "run" && "${JOBCTRL_DEV_INNER:-}" == "1" && "$(uname -s)" == "Darwin" ]] && workspace_targets "$@"; then
+    # An inherited flag alone cannot authorize an untracked database writer.
+    source_control verify
+  fi
+  if [[ "${JOBCTRL_DEV_INNER:-}" != "1" && "$(uname -s)" == "Darwin" ]] && workspace_targets "$@"; then
+    case "$sub" in
+      run)
+        if [[ "${JOBCTRL_DEV_PREPARED:-}" != "1" ]]; then prepare_source_run "$@"; fi
+        exec go -C "$ROOT/launcher" run ./cmd/jobctrl-source run "$ROOT" "$@"
+        ;;
+      start|restart)
+        cmd_start_source "$@"
+        return
+        ;;
+      stop)
+        load_env_file
+        set_default_env
+        source_control stop
+        ;;
+    esac
+  fi
   case "$sub" in
     run)     cmd_run "$@" ;;
     start|restart) cmd_start "$sub" "$@" ;;

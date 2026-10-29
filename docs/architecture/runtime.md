@@ -299,6 +299,15 @@ never created either database, initialize and stop the original version before
 retrying the new installer; the forward controller does not execute it. A partial
 pair, unsafe file or orphaned SQLite sidecar is refused before the update changes
 release selection.
+The macOS source controller shares the installed workspace selection and
+instance locks and uses an authenticated per-user process scope for foreground
+and detached source fleets. For an owned schema-14 pair, source startup stops
+the owned fleet, creates a WAL-aware paired backup, builds and binds an exact-v15
+candidate, and activates it in place. A source journal fences installed writers
+until recovery finishes; retries take a fresh stopped-pair backup instead of
+restoring old data. A locally trusted checkout does not impersonate a signed
+release. Unverified older source processes are not migration authority.
+
 The current runtime admits only exact schema v15. A stopped v6 database retains
 the Temporal quiescence proof and private v7/v8/v9 intermediates; exact v7 and v8
 start at their next intermediate. Exact v9 transfers application URL authority
@@ -894,8 +903,11 @@ stops further claims while peers settle already-owned work. See
 
 A local Temporal dev server (`temporal server start-dev --db-filename
 "$JOBCTRL_TEMPORAL_DB"`) is the workflow engine for the Python worker. The dev
-launcher defaults `JOBCTRL_TEMPORAL_DB` to
-`$JOBCTRL_DIR/temporal/temporal.db`. The JobCtrl event/projection database and
+launcher uses `$JOBCTRL_DIR/temporal.db` for a new workspace, matching the
+installed launcher. A sole existing source history under
+`$JOBCTRL_DIR/temporal/temporal.db` remains in place; conflicting histories or
+orphaned companions refuse startup. The updated installed launcher also uses the
+sole legacy source path after source ownership has been verified. The JobCtrl event/projection database and
 Temporal history are one runtime identity, so both remain stable when the same
 local app is relaunched from another source worktree. An isolated development
 stack uses a distinct `JOBCTRL_DIR`, rather than combining the shared

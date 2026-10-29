@@ -215,6 +215,10 @@ type gatedTemporalProcess struct {
 }
 
 func startGatedTemporal(ctx launchContext) (*gatedTemporalProcess, error) {
+	ctx, err := withTemporalHistory(ctx)
+	if err != nil {
+		return nil, err
+	}
 	spec, err := componentByName(ctx.Manifest, "temporal")
 	if err != nil {
 		return nil, err
@@ -225,7 +229,10 @@ func startGatedTemporal(ctx launchContext) (*gatedTemporalProcess, error) {
 	}
 	arguments := make([]string, len(spec.Arguments))
 	for index, argument := range spec.Arguments {
-		arguments[index] = substitute(argument, ctx)
+		arguments[index], err = substitute(argument, ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 	logPath := filepath.Join(ctx.Instance.LogDir, "temporal.log")
 	if info, err := os.Stat(logPath); err == nil && info.Size() > 0 {

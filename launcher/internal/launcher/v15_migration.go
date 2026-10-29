@@ -39,11 +39,22 @@ func buildSealedV15Candidate(candidate launchContext, pair databasePair, journal
 	if err != nil {
 		return "", err
 	}
+	return buildV15CandidateFromSource(candidate, source, sourceVersion, journalID)
+}
+
+func migrationPython(ctx launchContext) string {
+	if ctx.SourcePython != "" {
+		return ctx.SourcePython
+	}
+	return filepath.Join(ctx.PayloadRoot, "python", "bin", "python3")
+}
+
+func buildV15CandidateFromSource(candidate launchContext, source string, sourceVersion int64, journalID string) (string, error) {
 	path := v15CandidatePath(candidate.Instance.StateDir, journalID)
 	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 		return "", errors.New("v15 migration candidate path already exists")
 	}
-	python := filepath.Join(candidate.PayloadRoot, "python", "bin", "python3")
+	python := migrationPython(candidate)
 	arguments := []string{
 		"-I", "-B", "-m", "jobctrl.infrastructure.migrations.legacy_to_v15_execute",
 		"--source", source,
@@ -124,7 +135,7 @@ func installSealedV15Candidate(candidate launchContext, candidatePath string) er
 	if err != nil || !liveInfo.Mode().IsRegular() || liveInfo.Mode()&os.ModeSymlink != 0 {
 		return errors.New("live database is not a regular file")
 	}
-	python := filepath.Join(candidate.PayloadRoot, "python", "bin", "python3")
+	python := migrationPython(candidate)
 	command := exec.Command(python, "-I", "-B", "-m", "jobctrl.infrastructure.migrations.v15_activation",
 		"--mode", "activate", "--live", live, "--candidate", candidatePath, "--receipt", candidatePath+".source-binding.json")
 	command.Env = candidate.Environment
@@ -181,7 +192,7 @@ func bindV15Source(candidate launchContext, source, path string) error {
 	if err := checkDatabasePublication(filepath.Join(candidate.Instance.StateDir, "jobctrl.db")); err != nil {
 		return err
 	}
-	python := filepath.Join(candidate.PayloadRoot, "python", "bin", "python3")
+	python := migrationPython(candidate)
 	command := exec.Command(python, "-I", "-B", "-m", "jobctrl.infrastructure.migrations.v15_activation",
 		"--mode", "bind", "--source", source, "--live", filepath.Join(candidate.Instance.StateDir, "jobctrl.db"),
 		"--candidate", path, "--receipt", path+".source-binding.json")

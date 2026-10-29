@@ -34,6 +34,9 @@ docs to describe the delivered behavior. Delivery history lives in the git log
 
 ## Active Plans
 
+The [shared workspace upgrade plan](2026-10-29-shared-workspace-upgrades.md)
+records shared-workspace upgrade behavior and remaining qualification work.
+
 Current accepted scope and dependencies live in [GitHub Issues](https://github.com/ebarti/JobCtrl/issues).
 The [profile evidence and selective resume composition program](https://github.com/ebarti/JobCtrl/issues/883)
 has a [reviewable integrated proposal](2026-09-21-profile-evidence-selective-tailoring.md)
