@@ -67,8 +67,9 @@ Edits autosave, and **Save draft** also lets you retry a failed save. Saving
 keeps later edits in the editor; it does not render a replacement. Use **Render
 replacement** to validate the saved revision. A failed render keeps the last
 accepted materials and comparison available while you correct the draft or retry.
-Failed comment replies retain your text, and **Retry comment review** retries a
-failed comment refresh.
+Failed comment replies retain your text. If storing review comments fails,
+**Retry saving review comments** saves the existing findings again; it does not
+run a new model review.
 
 When a clean saved draft needs rendering, an authorization request prepares it
 first and then reads the current application bindings. Editing, switching jobs,

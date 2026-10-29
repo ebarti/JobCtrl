@@ -602,6 +602,17 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For interview-history and Apply Review comment recovery, run the focused
+Interviews view, note-form, interview-query and Apply Review session/view tests.
+In an owned synthetic workspace, fail preparation and note history reads,
+including a later page, and retry the same job, question and page after editing
+context, question selection and a note. Repeated failures must retain the last
+accepted preparation and leave retry available; successful reads must preserve
+the edits without generating preparation. Fail comment persistence after findings
+exist, then use the visible recovery action and verify that it replays those
+findings without starting a model review or replacing existing comments and edits.
+Verify the visible flow in a Linux-isolated browser.
+
 For posted compensation source fencing, run locked
 `pytest tests/test_posted_compensation_source_fence.py tests/test_compensation_v7_job_id.py tests/test_posted_compensation_repository.py`.
 Use owned synthetic SQLite and fake model ports. Hold extraction while an
