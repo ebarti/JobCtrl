@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import select
 import signal
 import subprocess
 import sys
+import threading
 import time
 from types import SimpleNamespace
 
@@ -40,6 +42,195 @@ def _limit_fixture_enumeration(monkeypatch, pids: set[int]) -> None:
     elif sys.platform.startswith("linux"):
         original = process_ownership._linux_process_ids
         monkeypatch.setattr(process_ownership, "_linux_process_ids", lambda: original() & pids)
+
+
+def test_cleanup_budget_expiring_during_grace_never_forces_owned_child(monkeypatch, tmp_path):
+    """A deadline shorter than grace retains the live child without SIGKILL."""
+    program = (
+        "import signal, sys, time; from pathlib import Path; "
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        "Path(sys.argv[1]).write_text('ready'); time.sleep(30)"
+    )
+    ready = tmp_path / "ready"
+    owner = subprocess.Popen(
+        [sys.executable, "-I", "-B", "-c", program, str(ready)], stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL, env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
+        start_new_session=True,
+    )
+    original_kill, original_killpg = os.kill, os.killpg
+    signals = []
+    try:
+        assert _wait_file(ready) == "ready"
+        _limit_fixture_enumeration(monkeypatch, {owner.pid})
+        monkeypatch.setattr(process_ownership, "_PROCESS_TERMINATION_GRACE_SECONDS", 0.5)
+
+        def term(pid, sig):
+            assert pid == owner.pid and sig == signal.SIGTERM
+            signals.append(sig)
+            return original_kill(pid, sig)
+
+        def force(pgid, sig):
+            assert pgid == owner.pid
+            signals.append(sig)
+            return original_killpg(pgid, sig)
+
+        monkeypatch.setattr(process_ownership.os, "kill", term)
+        monkeypatch.setattr(process_ownership.os, "killpg", force)
+        started = time.monotonic()
+        with process_ownership.cleanup_budget(0.15):
+            with pytest.raises(process_ownership.ProcessOwnershipError, match="deadline"):
+                process_ownership.terminate_owned_process(owner, launched_pid=owner.pid)
+        assert time.monotonic() - started < 0.5
+        assert signals == [signal.SIGTERM]
+        assert owner.poll() is None
+    finally:
+        if owner.poll() is None:
+            original_kill(owner.pid, signal.SIGKILL)
+        owner.wait(timeout=5)
+
+
+def _guard_owned_signals(monkeypatch, owner_pid: int) -> None:
+    class GuardedOS:
+        def __getattr__(self, name):
+            return getattr(os, name)
+
+        def kill(self, pid, sig):
+            assert pid == owner_pid and sig == signal.SIGTERM
+            return os.kill(pid, sig)
+
+        def killpg(self, pgid, sig):
+            assert pgid == owner_pid and sig == signal.SIGKILL
+            return os.killpg(pgid, sig)
+
+    monkeypatch.setattr(process_ownership, "os", GuardedOS())
+
+
+def test_real_interrupt_cleans_only_selected_owned_process(monkeypatch, tmp_path):
+    from jobctrl.apply import chrome, ownership
+    from jobctrl.infrastructure.apply import claude_code_cli
+
+    command = [sys.executable, "-I", "-B", "-c", "import time; time.sleep(30)"]
+    env = {"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"}
+    owner = subprocess.Popen(command, start_new_session=True, env=env)
+    peer = subprocess.Popen(command, start_new_session=True, env=env)
+    try:
+        _guard_owned_signals(monkeypatch, owner.pid)
+        _limit_fixture_enumeration(monkeypatch, {os.getpid(), owner.pid, peer.pid})
+        monkeypatch.setattr(chrome, "_chrome_procs", {1: owner, 2: peer})
+        monkeypatch.setattr(chrome, "_chrome_identities", {1: (owner, owner.pid), 2: (peer, peer.pid)})
+        monkeypatch.setattr(chrome, "_chrome_endpoints", {})
+        monkeypatch.setattr(claude_code_cli, "_ACTIVE_CLAUDE_PROCS", {})
+        monkeypatch.setattr(claude_code_cli, "_ACTIVE_CLAUDE_IDENTITIES", {})
+        run = ownership.ApplyLauncherRun(worker_ids=(1,))
+        assert run.interrupt()
+        assert owner.returncode is not None
+        assert peer.poll() is None
+        assert chrome._chrome_procs == {2: peer}
+        assert not run.stop_event.is_set()
+    finally:
+        for process in (owner, peer):
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)
+
+
+def test_real_late_birth_retains_both_handles_and_fences_worker(monkeypatch, tmp_path):
+    from jobctrl import runtime
+    from jobctrl.apply import chrome, ownership
+    from jobctrl.infrastructure.apply import claude_code_cli
+
+    command = [sys.executable, "-I", "-B", "-c", "import time; time.sleep(30)"]
+    env = {"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"}
+    owner = subprocess.Popen(command, start_new_session=True, env=env)
+    late = subprocess.Popen(command, start_new_session=True, env=env)
+    try:
+        _guard_owned_signals(monkeypatch, owner.pid)
+        _limit_fixture_enumeration(monkeypatch, {os.getpid(), owner.pid, late.pid})
+        monkeypatch.setattr(chrome, "_chrome_procs", {})
+        monkeypatch.setattr(chrome, "_chrome_identities", {})
+        monkeypatch.setattr(claude_code_cli, "_ACTIVE_CLAUDE_PROCS", {})
+        monkeypatch.setattr(claude_code_cli, "_ACTIVE_CLAUDE_IDENTITIES", {})
+        monkeypatch.setattr(runtime, "is_bundled_runtime", lambda: True)
+        run = ownership.ApplyLauncherRun(worker_ids=(1,))
+        run._birth_processes["first"] = (1, owner, owner.pid)
+        actual_terminate = process_ownership.terminate_owned_process
+
+        def register_after_snapshot(process, *, launched_pid):
+            assert process is owner and launched_pid == owner.pid
+            with run._lock:
+                run._birth_processes["late"] = (1, late, late.pid)
+            actual_terminate(process, launched_pid=launched_pid)
+
+        monkeypatch.setattr(process_ownership, "terminate_owned_process", register_after_snapshot)
+        with pytest.raises(ownership.ApplyLauncherCleanupIncomplete):
+            run.verify_worker_cleanup(1)
+        assert owner.returncode is not None and late.poll() is None
+        assert run.stop_event.is_set() and run._cleanup_error
+        assert run._birth_processes == {"first": (1, owner, owner.pid), "late": (1, late, late.pid)}
+    finally:
+        for process in (owner, late):
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)
+
+
+def test_interrupt_retains_blocked_pipe_and_reuses_close_worker(monkeypatch, tmp_path):
+    from jobctrl import runtime
+    from jobctrl.apply import chrome, ownership
+    from jobctrl.infrastructure.apply import claude_code_cli
+
+    read_fd, write_fd = os.pipe()
+    owner = subprocess.Popen(
+        [sys.executable, "-I", "-B", "-c", "pass"], stdout=write_fd, start_new_session=True,
+        env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
+    )
+    owner.wait(timeout=5)
+    stream = os.fdopen(read_fd, "r")
+    owner.stdout = stream
+    reader_started = threading.Event()
+    reader = threading.Thread(target=lambda: (reader_started.set(), stream.readline()))
+    writer_open = True
+    try:
+        os.write(write_fd, b"x")
+        reader.start()
+        assert reader_started.wait(1)
+        deadline = time.monotonic() + 2
+        while select.select([read_fd], [], [], 0)[0] and time.monotonic() < deadline:
+            time.sleep(.005)
+        assert not select.select([read_fd], [], [], 0)[0]
+        assert reader.is_alive()
+
+        monkeypatch.setattr(ownership, "_CLEANUP_PASS_TIMEOUT_SECONDS", 0.15)
+        monkeypatch.setattr(runtime, "is_bundled_runtime", lambda: False)
+        monkeypatch.setattr(chrome, "_chrome_procs", {})
+        monkeypatch.setattr(chrome, "_chrome_identities", {})
+        monkeypatch.setattr(claude_code_cli, "_ACTIVE_CLAUDE_PROCS", {})
+        monkeypatch.setattr(claude_code_cli, "_ACTIVE_CLAUDE_IDENTITIES", {})
+        run = ownership.ApplyLauncherRun(worker_ids=(1,))
+        run._birth_processes["owner"] = (1, owner, owner.pid)
+        started = time.monotonic()
+        assert not run.interrupt()
+        assert time.monotonic() - started < 0.5
+        assert run.stop_event.is_set() and run._cleanup_error
+        assert run._birth_processes == {"owner": (1, owner, owner.pid)}
+        closing = run._stream_closures[("owner", "stdout")]
+        assert not closing.done.is_set()
+
+        assert not run.interrupt()
+        assert run._stream_closures == {("owner", "stdout"): closing}
+        os.close(write_fd)
+        writer_open = False
+        reader.join(timeout=2)
+        assert not reader.is_alive() and closing.done.wait(2)
+        assert run.interrupt()
+        assert stream.closed and not run._birth_processes and not run._stream_closures
+    finally:
+        if writer_open:
+            os.close(write_fd)
+        if reader.ident is not None:
+            reader.join(timeout=2)
+        if not reader.is_alive() and not stream.closed:
+            stream.close()
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="Darwin libSystem fallback")
@@ -177,6 +368,7 @@ while time.monotonic()<deadline: time.sleep(.01)
     original_killpg = os.killpg
 
     def kill_owned_group(pgid, requested):
+        assert pgid == owner.pid and requested == signal.SIGKILL
         calls.append((pgid, requested, time.monotonic()))
         return original_killpg(pgid, requested)
 
@@ -575,11 +767,14 @@ def test_concurrent_poll_with_owned_churn_retries_an_incomplete_grace_census(mon
             return inventory, complete
 
         def signal_child(pid, requested):
+            allowed = {owner.pid, peer.pid, *(child.pid for child in churners)}
+            assert pid in allowed and requested in (signal.SIGTERM, signal.SIGSTOP, signal.SIGKILL)
             if pid == owner.pid and requested == signal.SIGTERM:
                 term_at.append(time.monotonic())
             return actual_kill(pid, requested)
 
         def kill_group(pid, requested):
+            assert pid == owner.pid and requested == signal.SIGKILL
             signals.append((pid, requested, time.monotonic(), samples[-1]))
             actual_killpg(pid, requested)
             poller = threading.Thread(target=lambda: observed.append(owner.poll()))

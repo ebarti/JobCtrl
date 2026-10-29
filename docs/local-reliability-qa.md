@@ -645,6 +645,29 @@ A prior attempt's namespace is never reset. Scope reset, totals, rendering and
 events to exact resource IDs, including the empty selection; event floods and
 startup cannot evict a peer's history. Cleanup failure must fence the next claim,
 preserve the real listener/registry/files and settle other selected workers.
+Overlap two worker cleanups and prove the independent worker can claim, finish,
+and retain its result before the other's refusal. Exercise both dry-run modes.
+Block one selected worker's cleanup guard during an interrupt and verify an
+available peer is still cleaned under the same deadline. Concurrent cleanup of
+the same handle remains serialized. Race adapter publication against interrupt
+and reject stale/replacement handles; retain a standalone unpublished child for
+retry if its own cleanup fails. Reject a concurrent agent attempt before it can
+write or remove the active owner's MCP configuration; keep that file reservation
+until the owner's final unlink and verify the next attempt can then start.
+Exercise transient incomplete or changing unscoped session censuses beyond the
+former one-second window, and require the same two complete matching empty
+inventories before continuing. With many selected browser and agent handles,
+persistent uncertainty and blocked ownership locks must share a bounded cleanup
+pass rather than multiply a per-handle wait. Bound per-process census reads and
+exercise the real interrupt entry with its run lock blocked before the snapshot
+and before recording the result. If the pass deadline expires during TERM grace,
+retain the handle without early force. Hold an owned pipe open during cleanup,
+then release it and verify a bounded retry retires the handle. Distinguish
+confirmed process-inspection denial from signal denial without exposing paths.
+Include real Temporal cancellation with the production drain bound, a progressing
+peer, stale/reused identities and births registered after an earlier worker was
+checked or for a newly added worker; no unverified handle may be signalled or
+retired.
 
 For installed native mode, kill a real owner before spawn, between spawn and
 local handle publication, after publication and after root exit. The selected

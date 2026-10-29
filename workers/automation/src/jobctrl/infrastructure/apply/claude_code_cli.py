@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping
+from weakref import WeakValueDictionary
 
 from jobctrl import config
 from jobctrl.domain.apply.value_objects import (
@@ -134,7 +135,79 @@ _ENV_ALLOWLIST = {
 _DEFAULT_MODEL_SENTINELS = {"", "default"}
 _ACTIVE_CLAUDE_PROCS: dict[int, subprocess.Popen] = {}
 _ACTIVE_CLAUDE_IDENTITIES: dict[int, tuple[subprocess.Popen, int]] = {}
+_ACTIVE_CLAUDE_UNPUBLISHED: dict[int, list[tuple[subprocess.Popen, int]]] = {}
+_ACTIVE_CLAUDE_LAUNCHING: dict[int, object] = {}
+_ACTIVE_CLAUDE_RESERVATIONS: dict[int, object] = {}
 _ACTIVE_CLAUDE_LOCK = threading.Lock()
+_ACTIVE_CLAUDE_WORKER_GUARDS: WeakValueDictionary = WeakValueDictionary()
+
+
+def _agent_worker_guard_locked(worker_id: int) -> threading.RLock:
+    guard = _ACTIVE_CLAUDE_WORKER_GUARDS.get(worker_id)
+    if guard is None:
+        guard = threading.RLock()
+        _ACTIVE_CLAUDE_WORKER_GUARDS[worker_id] = guard
+    return guard
+
+
+def _agent_worker_guard(worker_id: int) -> threading.RLock:
+    from jobctrl.infrastructure.process_ownership import cleanup_lock
+
+    with cleanup_lock(_ACTIVE_CLAUDE_LOCK):
+        return _agent_worker_guard_locked(worker_id)
+
+
+def _reserve_agent_launch(worker_id: int) -> object:
+    from jobctrl.infrastructure.process_ownership import ProcessOwnershipError
+
+    with _agent_worker_guard(worker_id):
+        with _ACTIVE_CLAUDE_LOCK:
+            if (worker_id in _ACTIVE_CLAUDE_PROCS or worker_id in _ACTIVE_CLAUDE_UNPUBLISHED
+                    or worker_id in _ACTIVE_CLAUDE_RESERVATIONS or worker_id in _ACTIVE_CLAUDE_LAUNCHING):
+                raise ProcessOwnershipError("Apply agent worker already has an owner")
+            token = object()
+            _ACTIVE_CLAUDE_RESERVATIONS[worker_id] = token
+            _ACTIVE_CLAUDE_LAUNCHING[worker_id] = token
+            return token
+
+
+def _release_agent_launch(worker_id: int, token: object) -> None:
+    with _agent_worker_guard(worker_id):
+        with _ACTIVE_CLAUDE_LOCK:
+            if _ACTIVE_CLAUDE_LAUNCHING.get(worker_id) is token:
+                _ACTIVE_CLAUDE_LAUNCHING.pop(worker_id, None)
+            if _ACTIVE_CLAUDE_RESERVATIONS.get(worker_id) is token:
+                _ACTIVE_CLAUDE_RESERVATIONS.pop(worker_id, None)
+
+
+def _retain_unpublished_agent(worker_id: int, process: subprocess.Popen, launched_pid: int) -> None:
+    with _ACTIVE_CLAUDE_LOCK:
+        pending = _ACTIVE_CLAUDE_UNPUBLISHED.setdefault(worker_id, [])
+        if not any(owned is process and pid == launched_pid for owned, pid in pending):
+            pending.append((process, launched_pid))
+
+
+def _cleanup_unpublished_agent(worker_id: int) -> list[Exception]:
+    from jobctrl.infrastructure.process_ownership import cleanup_lock, terminate_owned_process
+
+    failures = []
+    with cleanup_lock(_agent_worker_guard(worker_id)):
+        with cleanup_lock(_ACTIVE_CLAUDE_LOCK):
+            pending = tuple(_ACTIVE_CLAUDE_UNPUBLISHED.get(worker_id, ()))
+        for process, launched_pid in pending:
+            try:
+                terminate_owned_process(process, launched_pid=launched_pid)
+            except Exception as exc:
+                failures.append(exc)
+            else:
+                with cleanup_lock(_ACTIVE_CLAUDE_LOCK):
+                    remaining = [(owned, pid) for owned, pid in _ACTIVE_CLAUDE_UNPUBLISHED.get(worker_id, ())
+                                 if owned is not process or pid != launched_pid]
+                    if remaining:
+                        _ACTIVE_CLAUDE_UNPUBLISHED[worker_id] = remaining
+                    else:
+                        _ACTIVE_CLAUDE_UNPUBLISHED.pop(worker_id, None)
+    return failures
 
 
 def _utc_now() -> str:
@@ -151,19 +224,62 @@ def _enqueue_stdout_lines(stream: Any, out: "queue.Queue[str | None]") -> None:
 
 def kill_active_claude_processes(*, worker_ids: tuple[int, ...] | None = None) -> None:
     """Clean selected launch-owned agents, retaining any unverified handles."""
-    with _ACTIVE_CLAUDE_LOCK:
+    from jobctrl.infrastructure.process_ownership import (
+        INSPECTION_AND_SIGNAL_DENIED_MESSAGE, INSPECTION_DENIED_MESSAGE, SIGNAL_DENIED_MESSAGE,
+        ProcessInspectionAndSignalDenied, ProcessInspectionDenied, ProcessOwnershipError, ProcessSignalDenied,
+        cleanup_lock, is_process_inspection_denied, is_process_signal_denied,
+    )
+
+    with cleanup_lock(_ACTIVE_CLAUDE_LOCK):
         procs = tuple(_ACTIVE_CLAUDE_PROCS.items())
+        pending_workers = tuple(worker_id for worker_id in _ACTIVE_CLAUDE_UNPUBLISHED
+                                if worker_ids is None or worker_id in worker_ids)
 
     failures = []
+    inspection_denied = False
+    signal_denied = False
     for worker_id, proc in procs:
         if worker_ids is not None and worker_id not in worker_ids:
             continue
         try:
-            _kill_process_tree_if_alive(proc)
-            _unregister_active_claude_process(worker_id, proc)
-        except Exception:
+            with cleanup_lock(_agent_worker_guard(worker_id)):
+                with cleanup_lock(_ACTIVE_CLAUDE_LOCK):
+                    current = _ACTIVE_CLAUDE_PROCS.get(worker_id)
+                    if current is None:
+                        continue
+                    if current is not proc:
+                        raise ProcessOwnershipError("Cannot verify Apply agent process ownership")
+                _kill_process_tree_if_alive(proc)
+                _unregister_active_claude_process(worker_id, proc)
+        except Exception as exc:
             log.exception("Apply agent cleanup incomplete for worker %s", worker_id)
             failures.append(worker_id)
+            inspection_denied = inspection_denied or is_process_inspection_denied(exc)
+            signal_denied = signal_denied or is_process_signal_denied(exc)
+    for worker_id in pending_workers:
+        try:
+            pending_failures = _cleanup_unpublished_agent(worker_id)
+        except Exception as exc:
+            pending_failures = [exc]
+        for exc in pending_failures:
+            failures.append(worker_id)
+            inspection_denied = inspection_denied or is_process_inspection_denied(exc)
+            signal_denied = signal_denied or is_process_signal_denied(exc)
+    try:
+        with cleanup_lock(_ACTIVE_CLAUDE_LOCK):
+            # The longer reservation protects the MCP file after the child
+            # is joined; only an unpublished launch is process uncertainty.
+            outstanding = set(_ACTIVE_CLAUDE_LAUNCHING) | set(_ACTIVE_CLAUDE_UNPUBLISHED)
+            failures.extend(worker_id for worker_id in outstanding if worker_ids is None or worker_id in worker_ids)
+    except Exception:
+        if not (inspection_denied or signal_denied):
+            raise
+    if inspection_denied and signal_denied:
+        raise ProcessInspectionAndSignalDenied(INSPECTION_AND_SIGNAL_DENIED_MESSAGE)
+    if inspection_denied:
+        raise ProcessInspectionDenied(INSPECTION_DENIED_MESSAGE)
+    if signal_denied:
+        raise ProcessSignalDenied(SIGNAL_DENIED_MESSAGE)
     if failures:
         raise RuntimeError(f"Apply agent cleanup could not verify exit for workers {failures}")
 
@@ -230,6 +346,20 @@ class ClaudeCodeCliAdapter:
             )
 
         worker_id = browser.worker_id
+        reservation = _reserve_agent_launch(worker_id)
+        try:
+            return self._submit_application_reserved(
+                prompt=prompt, browser=browser, model=model, dry_run=dry_run, timeout_seconds=timeout_seconds,
+                reservation=reservation,
+            )
+        finally:
+            _release_agent_launch(worker_id, reservation)
+
+    def _submit_application_reserved(
+        self, *, prompt: ApplyPrompt, browser: BrowserSession, model: str, dry_run: bool,
+        timeout_seconds: int | None, reservation: object,
+    ) -> AgentResult:
+        worker_id = browser.worker_id
         worker_dir = browser.worker_dir or str(config.APPLY_WORKER_DIR / f"worker-{worker_id}")
         Path(worker_dir).mkdir(parents=True, exist_ok=True)
 
@@ -295,7 +425,18 @@ class ClaudeCodeCliAdapter:
                 worker_id, "agent", cmd,
                 **_popen_kwargs(env=env, cwd=str(worker_dir)),
             )
-            _register_active_claude_process(worker_id, proc)
+            try:
+                _register_active_claude_process(worker_id, proc, reservation=reservation)
+            except BaseException:
+                unpublished = proc
+                proc = None
+                if getattr(unpublished, "_jobctrl_apply_birth", None) is None:
+                    _retain_unpublished_agent(worker_id, unpublished, unpublished.pid)
+                    failures = _cleanup_unpublished_agent(worker_id)
+                    if failures:
+                        raise failures[0]
+                # An active run retains (or has already joined) its birth.
+                raise
             events.append(
                 {
                     "event_type": "ClaudeLaunched",
@@ -624,31 +765,63 @@ def _popen_kwargs(*, env: dict[str, str], cwd: str) -> dict[str, Any]:
     return kwargs
 
 
-def _register_active_claude_process(worker_id: int, proc: subprocess.Popen) -> None:
-    with _ACTIVE_CLAUDE_LOCK:
-        _ACTIVE_CLAUDE_PROCS[int(worker_id)] = proc
-        _ACTIVE_CLAUDE_IDENTITIES[int(worker_id)] = (proc, proc.pid)
+def _register_active_claude_process(worker_id: int, proc: subprocess.Popen, *, reservation: object | None = None) -> None:
+    from jobctrl.apply.ownership import publish_owned_apply_process
+    from jobctrl.infrastructure.process_ownership import ProcessOwnershipError
+
+    worker_id = int(worker_id)
+
+    def publish() -> None:
+        with _agent_worker_guard(worker_id):
+            with _ACTIVE_CLAUDE_LOCK:
+                current = _ACTIVE_CLAUDE_PROCS.get(worker_id)
+                pending = _ACTIVE_CLAUDE_RESERVATIONS.get(worker_id)
+                if (current is not None and current is not proc) or (pending is not None and pending is not reservation):
+                    raise ProcessOwnershipError("Cannot replace an owned Apply agent process")
+                _ACTIVE_CLAUDE_PROCS[worker_id] = proc
+                _ACTIVE_CLAUDE_IDENTITIES[worker_id] = (proc, proc.pid)
+                if _ACTIVE_CLAUDE_LAUNCHING.get(worker_id) is reservation:
+                    _ACTIVE_CLAUDE_LAUNCHING.pop(worker_id, None)
+
+    publish_owned_apply_process(worker_id, proc, publish)
 
 
 def _unregister_active_claude_process(worker_id: int, proc: subprocess.Popen) -> None:
-    with _ACTIVE_CLAUDE_LOCK:
-        active = _ACTIVE_CLAUDE_PROCS.get(int(worker_id))
-        if active is proc:
-            _ACTIVE_CLAUDE_PROCS.pop(int(worker_id), None)
-            _ACTIVE_CLAUDE_IDENTITIES.pop(int(worker_id), None)
+    from jobctrl.infrastructure.process_ownership import cleanup_lock
+
+    worker_id = int(worker_id)
+    with cleanup_lock(_agent_worker_guard(worker_id)):
+        with cleanup_lock(_ACTIVE_CLAUDE_LOCK):
+            active = _ACTIVE_CLAUDE_PROCS.get(worker_id)
+            if active is proc:
+                _ACTIVE_CLAUDE_PROCS.pop(worker_id, None)
+                _ACTIVE_CLAUDE_IDENTITIES.pop(worker_id, None)
 
 
 def _kill_process_tree_if_alive(proc: subprocess.Popen) -> None:
-    from jobctrl.infrastructure.process_ownership import ProcessOwnershipError, terminate_owned_process
+    from jobctrl.infrastructure.process_ownership import ProcessOwnershipError, cleanup_lock, terminate_owned_process
 
-    with _ACTIVE_CLAUDE_LOCK:
+    with cleanup_lock(_ACTIVE_CLAUDE_LOCK):
         identities = [
-            launched_pid for worker_id, (owned, launched_pid) in _ACTIVE_CLAUDE_IDENTITIES.items()
+            (worker_id, launched_pid) for worker_id, (owned, launched_pid) in _ACTIVE_CLAUDE_IDENTITIES.items()
             if owned is proc and _ACTIVE_CLAUDE_PROCS.get(worker_id) is proc
         ]
         if len(identities) != 1:
+            if not identities and getattr(proc, "_jobctrl_agent_cleanup_verified", False) is True:
+                return
             raise ProcessOwnershipError("Cannot verify Apply agent process ownership")
-        terminate_owned_process(proc, launched_pid=identities[0])
+        worker_id, launched_pid = identities[0]
+        guard = _agent_worker_guard_locked(worker_id)
+    with cleanup_lock(guard):
+        with cleanup_lock(_ACTIVE_CLAUDE_LOCK):
+            identity = _ACTIVE_CLAUDE_IDENTITIES.get(worker_id)
+            if (_ACTIVE_CLAUDE_PROCS.get(worker_id) is not proc or identity is None
+                    or identity[0] is not proc or identity[1] != launched_pid or proc.pid != launched_pid):
+                if getattr(proc, "_jobctrl_agent_cleanup_verified", False) is True:
+                    return
+                raise ProcessOwnershipError("Cannot verify Apply agent process ownership")
+        terminate_owned_process(proc, launched_pid=launched_pid)
+        proc._jobctrl_agent_cleanup_verified = True
 
 
 __all__ = ["ClaudeCodeCliAdapter", "kill_active_claude_processes"]

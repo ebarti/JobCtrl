@@ -2,22 +2,67 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import platform
 import signal
 import subprocess
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
+from typing import Iterator
 
 
-_SESSION_EXIT_TIMEOUT_SECONDS = 1.0
+_SESSION_EXIT_TIMEOUT_SECONDS = 2.0
 _SESSION_EXIT_POLL_SECONDS = 0.02
 _PROCESS_TERMINATION_GRACE_SECONDS = 2.0
 _UNSCOPED_CENSUS_RETRY_SECONDS = 1.0
+_CLEANUP_DEADLINE: ContextVar[float | None] = ContextVar("apply_cleanup_deadline", default=None)
+INSPECTION_DENIED_MESSAGE = "The system denied a process inspection during Apply cleanup; custody is retained."
+SIGNAL_DENIED_MESSAGE = "The system denied a process signal during Apply cleanup; custody is retained."
+INSPECTION_AND_SIGNAL_DENIED_MESSAGE = (
+    "The system denied process inspection and signaling during Apply cleanup; custody is retained."
+)
 
 
 class ProcessOwnershipError(RuntimeError):
     """The original child can no longer authorize a process/session signal."""
+
+
+class CleanupDeadlineExceeded(ProcessOwnershipError):
+    """The current cleanup pass has no time left to verify ownership."""
+
+
+class ProcessInspectionDenied(ProcessOwnershipError):
+    """A required operating-system process inspection was explicitly denied."""
+
+
+class ProcessSignalDenied(ProcessOwnershipError):
+    """A signal to the originally owned process was explicitly denied."""
+
+
+class ProcessInspectionAndSignalDenied(ProcessInspectionDenied, ProcessSignalDenied):
+    """Separate selected processes encountered both kinds of denial."""
+
+
+def _caused_by(exc: BaseException, kind: type[BaseException]) -> bool:
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, kind):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def is_process_inspection_denied(exc: BaseException) -> bool:
+    return _caused_by(exc, ProcessInspectionDenied)
+
+
+def is_process_signal_denied(exc: BaseException) -> bool:
+    return _caused_by(exc, ProcessSignalDenied)
 
 
 class _VerifiedLaunchGroupOccupied(ProcessOwnershipError):
@@ -74,6 +119,47 @@ def _darwin_waitid(pid: int, options: int):
     return info
 
 
+@contextmanager
+def cleanup_budget(seconds: float) -> Iterator[None]:
+    """Share a deadline across the selected handles in one cleanup pass."""
+    deadline = time.monotonic() + seconds
+    previous = _CLEANUP_DEADLINE.get()
+    if previous is not None:
+        deadline = min(deadline, previous)
+    token = _CLEANUP_DEADLINE.set(deadline)
+    try:
+        yield
+    finally:
+        _CLEANUP_DEADLINE.reset(token)
+
+
+def _within_cleanup_budget(seconds: float) -> float:
+    deadline = _CLEANUP_DEADLINE.get()
+    if deadline is None:
+        return seconds
+    return max(0.0, min(seconds, deadline - time.monotonic()))
+
+
+def _require_cleanup_budget() -> None:
+    if _CLEANUP_DEADLINE.get() is not None and _within_cleanup_budget(float("inf")) <= 0:
+        raise CleanupDeadlineExceeded("Apply cleanup deadline expired; ownership retained")
+
+
+@contextmanager
+def cleanup_lock(lock) -> Iterator[None]:
+    """Acquire an ownership lock within the current cleanup pass, if any."""
+    _require_cleanup_budget()
+    deadline = _CLEANUP_DEADLINE.get()
+    acquired = lock.acquire() if deadline is None else lock.acquire(timeout=_within_cleanup_budget(float("inf")))
+    if not acquired:
+        raise ProcessOwnershipError("Apply cleanup ownership lock was unavailable; ownership retained")
+    try:
+        _require_cleanup_budget()
+        yield
+    finally:
+        lock.release()
+
+
 def terminate_owned_process(process: subprocess.Popen, *, launched_pid: int) -> None:
     """Verify and terminate an adapter's original launched child, then await exit.
 
@@ -83,12 +169,20 @@ def terminate_owned_process(process: subprocess.Popen, *, launched_pid: int) -> 
     """
     if process.pid != launched_pid:
         raise ProcessOwnershipError("Cannot verify Apply process ownership")
+    _require_cleanup_budget()
     force_denied = None
     if platform.system() == "Windows":
         # Popen.kill uses the launch-time kernel handle, not the numeric PID.
         # Descendants are not independently selected with taskkill /T.
-        if process.poll() is None:
-            process.kill()
+        try:
+            live = process.poll() is None
+        except PermissionError as exc:
+            raise ProcessInspectionDenied(INSPECTION_DENIED_MESSAGE) from exc
+        if live:
+            try:
+                process.kill()
+            except PermissionError as exc:
+                raise ProcessSignalDenied(SIGNAL_DENIED_MESSAGE) from exc
     else:
         # CPython uses this lock for every waitpid/reap. Holding it keeps the
         # original child PID allocated across session verification and signal,
@@ -96,7 +190,7 @@ def terminate_owned_process(process: subprocess.Popen, *, launched_pid: int) -> 
         reap_lock = getattr(process, "_waitpid_lock", None)
         if reap_lock is None:
             raise ProcessOwnershipError("Cannot verify Apply process ownership")
-        with reap_lock:
+        with cleanup_lock(reap_lock):
             if process.returncode is None:
                 try:
                     # Do not start signal authority from an already-exited
@@ -116,18 +210,30 @@ def terminate_owned_process(process: subprocess.Popen, *, launched_pid: int) -> 
                         exited = False
                     else:
                         raise ProcessOwnershipError("Cannot determine Apply child exit state")
+                except PermissionError as exc:
+                    raise ProcessInspectionDenied(INSPECTION_DENIED_MESSAGE) from exc
                 except (AttributeError, ChildProcessError, OSError) as exc:
                     raise ProcessOwnershipError("Cannot verify Apply process ownership for cleanup") from exc
                 if not exited:
                     try:
-                        if os.getpgid(launched_pid) != launched_pid or os.getsid(launched_pid) != launched_pid:
+                        try:
+                            group = os.getpgid(launched_pid)
+                            session = os.getsid(launched_pid)
+                        except PermissionError as exc:
+                            raise ProcessInspectionDenied(INSPECTION_DENIED_MESSAGE) from exc
+                        if group != launched_pid or session != launched_pid:
                             raise ProcessOwnershipError("Apply process no longer owns its launch session")
                         # Give the original child the first opportunity to drain
                         # its own resources before signalling its launch group.
-                        os.kill(launched_pid, signal.SIGTERM)
+                        _require_cleanup_budget()
+                        try:
+                            os.kill(launched_pid, signal.SIGTERM)
+                        except PermissionError as exc:
+                            raise ProcessSignalDenied(SIGNAL_DENIED_MESSAGE) from exc
                         grace_deadline = time.monotonic() + _PROCESS_TERMINATION_GRACE_SECONDS
                         coalitions = getattr(process, "_jobctrl_birth_coalitions", None)
                         while True:
+                            _require_cleanup_budget()
                             try:
                                 _wait_for_session_exit(
                                     launched_pid,
@@ -136,12 +242,19 @@ def terminate_owned_process(process: subprocess.Popen, *, launched_pid: int) -> 
                                 )
                                 break
                             except _VerifiedLaunchGroupOccupied:
+                                _require_cleanup_budget()
                                 if time.monotonic() < grace_deadline:
-                                    time.sleep(min(_SESSION_EXIT_POLL_SECONDS, max(0, grace_deadline - time.monotonic())))
+                                    time.sleep(_within_cleanup_budget(min(_SESSION_EXIT_POLL_SECONDS, max(0, grace_deadline - time.monotonic()))))
                                     continue
-                            except ProcessOwnershipError:
+                            except ProcessOwnershipError as exc:
+                                try:
+                                    _require_cleanup_budget()
+                                except ProcessOwnershipError:
+                                    if isinstance(exc, ProcessInspectionDenied):
+                                        raise exc
+                                    raise
                                 if time.monotonic() < grace_deadline:
-                                    time.sleep(min(_SESSION_EXIT_POLL_SECONDS, max(0, grace_deadline - time.monotonic())))
+                                    time.sleep(_within_cleanup_budget(min(_SESSION_EXIT_POLL_SECONDS, max(0, grace_deadline - time.monotonic()))))
                                     continue
                                 if coalitions is not None:
                                     raise
@@ -160,6 +273,7 @@ def terminate_owned_process(process: subprocess.Popen, *, launched_pid: int) -> 
                                     break
                             # The unreaped PID pins the verified launch group
                             # even if its leader exited during grace or retry.
+                            _require_cleanup_budget()
                             try:
                                 os.killpg(launched_pid, signal.SIGKILL)
                             except PermissionError as exc:
@@ -171,7 +285,7 @@ def terminate_owned_process(process: subprocess.Popen, *, launched_pid: int) -> 
                         # Still verify the original child and the session below.
                         pass
     try:
-        process.wait(timeout=10)
+        process.wait(timeout=_within_cleanup_budget(10))
         if platform.system() == "Windows":
             raise ProcessOwnershipError(
                 "Windows Apply descendant exit verification is unavailable; "
@@ -182,9 +296,13 @@ def terminate_owned_process(process: subprocess.Popen, *, launched_pid: int) -> 
             verify_session_exit(launched_pid)
         else:
             _wait_for_session_exit(launched_pid, native_coalitions=coalitions)
+    except (PermissionError, ProcessInspectionDenied) as exc:
+        if force_denied is not None:
+            raise ProcessInspectionAndSignalDenied(INSPECTION_AND_SIGNAL_DENIED_MESSAGE) from exc
+        raise ProcessInspectionDenied(INSPECTION_DENIED_MESSAGE) from exc
     except (ProcessOwnershipError, subprocess.TimeoutExpired):
         if force_denied is not None:
-            raise ProcessOwnershipError("The system denied a verified Apply group signal; cleanup remains unverified") from force_denied
+            raise ProcessSignalDenied(SIGNAL_DENIED_MESSAGE) from force_denied
         raise
 
 
@@ -249,8 +367,11 @@ def _wait_for_session_exit(session_id: int, *, native_coalitions: tuple[int, int
     A caller past its grace deadline may request an early occupied-group
     result during a bounded retry; it still needs a complete observation.
     """
-    deadline = time.monotonic() + (_SESSION_EXIT_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds)
+    _require_cleanup_budget()
+    timeout = _SESSION_EXIT_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+    deadline = time.monotonic() + _within_cleanup_budget(timeout)
     previous_empty_inventory = None
+    inspection_denied = None
     while True:
         try:
             before = _native_coalition_counts(native_coalitions)
@@ -265,10 +386,20 @@ def _wait_for_session_exit(session_id: int, *, native_coalitions: tuple[int, int
             after = _native_coalition_counts(native_coalitions)
         except ProcessOwnershipError as exc:
             previous_empty_inventory = None
+            if isinstance(exc, ProcessInspectionDenied):
+                inspection_denied = exc
             if time.monotonic() >= deadline:
+                if inspection_denied is not None:
+                    raise ProcessInspectionDenied(INSPECTION_DENIED_MESSAGE) from inspection_denied
                 raise ProcessOwnershipError(f"Cannot verify Apply process session exit: {exc}; ownership retained") from exc
             time.sleep(min(_SESSION_EXIT_POLL_SECONDS, max(0, deadline - time.monotonic())))
             continue
+        try:
+            _require_cleanup_budget()
+        except CleanupDeadlineExceeded:
+            if inspection_denied is not None:
+                raise ProcessInspectionDenied(INSPECTION_DENIED_MESSAGE) from inspection_denied
+            raise
         members = {pid for pid, (_, sid, active, _) in inventory.items() if active and sid == session_id}
         if before is not None:
             if complete and not members and before == after:
@@ -296,7 +427,7 @@ def _wait_for_session_exit(session_id: int, *, native_coalitions: tuple[int, int
                 "Apply process root exited but its launch session is still occupied "
                 "or exit cannot be verified; ownership retained without further signals"
             )
-        time.sleep(_SESSION_EXIT_POLL_SECONDS)
+        time.sleep(min(_SESSION_EXIT_POLL_SECONDS, max(0, deadline - time.monotonic())))
 
 
 def _active_session_members(session_id: int) -> tuple[set[int], bool]:
@@ -316,8 +447,10 @@ def _read_process_inventory(*, native_scope: tuple[int, int] | None = None) -> t
         if system == "Linux":
             inventory = {}
             complete = True
+            _require_cleanup_budget()
             pids = _linux_process_ids()
             for pid in pids:
+                _require_cleanup_budget()
                 try:
                     # proc(5): after the final ')' are state (3), parent,
                     # group (5), session (6), ... kernel start ticks (22).
@@ -328,7 +461,10 @@ def _read_process_inventory(*, native_scope: tuple[int, int] | None = None) -> t
                 if len(fields) < 20:
                     raise ProcessOwnershipError("Incomplete Apply process session census")
                 inventory[pid] = ((int(fields[19]),), int(fields[3]), fields[0] not in {b"Z", b"X"}, int(fields[2]))
+            _require_cleanup_budget()
             return inventory, complete and pids == _linux_process_ids()
+    except PermissionError as exc:
+        raise ProcessInspectionDenied(INSPECTION_DENIED_MESSAGE) from exc
     except (OSError, ValueError, IndexError) as exc:
         raise ProcessOwnershipError("Cannot verify Apply process session exit") from exc
     raise ProcessOwnershipError(f"Apply process session exit verification is unavailable on {system}")
@@ -337,12 +473,20 @@ def _read_process_inventory(*, native_scope: tuple[int, int] | None = None) -> t
 def _darwin_process_ids(library) -> set[int]:
     import ctypes
 
+    _require_cleanup_budget()
+    ctypes.set_errno(0)
     needed = library.proc_listpids(1, 0, None, 0)  # PROC_ALL_PIDS
     if needed <= 0:
+        if ctypes.get_errno() in (errno.EACCES, errno.EPERM):
+            raise ProcessInspectionDenied(INSPECTION_DENIED_MESSAGE)
         raise ProcessOwnershipError("Cannot enumerate Apply process session")
     pids = (ctypes.c_int * (needed // ctypes.sizeof(ctypes.c_int) + 256))()
+    _require_cleanup_budget()
+    ctypes.set_errno(0)
     used = library.proc_listpids(1, 0, pids, ctypes.sizeof(pids))
     if used <= 0 or used >= ctypes.sizeof(pids) or used % ctypes.sizeof(ctypes.c_int):
+        if used <= 0 and ctypes.get_errno() in (errno.EACCES, errno.EPERM):
+            raise ProcessInspectionDenied(INSPECTION_DENIED_MESSAGE)
         raise ProcessOwnershipError("Incomplete Apply process session census")
     return {pid for pid in pids[:used // ctypes.sizeof(ctypes.c_int)] if pid > 0}
 
@@ -357,8 +501,6 @@ def _darwin_process_inventory(*, native_scope: tuple[int, int] | None = None) ->
     An unavailable ABI is an uncertain census, never proof of process death.
     """
     import ctypes
-    import errno
-
     class BsdShortInfo(ctypes.Structure):
         _fields_ = [
             ("pid", ctypes.c_uint32), ("ppid", ctypes.c_uint32),
@@ -384,26 +526,37 @@ def _darwin_process_inventory(*, native_scope: tuple[int, int] | None = None) ->
     library.proc_pidinfo.restype = ctypes.c_int
 
     def read(pid, flavor, info_type, arg=1):
+        _require_cleanup_budget()
         info = info_type()
         # arg=1 permits zombie inspection; an already exited process cannot run.
+        ctypes.set_errno(0)
         size = library.proc_pidinfo(pid, flavor, arg, ctypes.byref(info), ctypes.sizeof(info))
         if size != ctypes.sizeof(info):
-            if size == 0 and ctypes.get_errno() == errno.ESRCH:
-                raise ProcessLookupError(pid)
+            if size == 0:
+                error = ctypes.get_errno()
+                if error == errno.ESRCH:
+                    raise ProcessLookupError(pid)
+                if error in (errno.EACCES, errno.EPERM):
+                    raise ProcessInspectionDenied(INSPECTION_DENIED_MESSAGE)
             raise ProcessOwnershipError("Cannot inspect Apply process session generation")
         return info
 
     inventory = {}
     complete = True
     observed_scope_tasks = 0
+    inspection_denied = None
+    _require_cleanup_budget()
     pids = _darwin_process_ids(library)
     for pid in pids:
+        _require_cleanup_budget()
         try:
             first_identity = read(pid, 17, UniqueInfo)
             first = read(pid, 13, BsdShortInfo)
+            _require_cleanup_budget()
             sid = None if first.state == 5 else os.getsid(pid)
             coalition = read(pid, 20, CoalitionInfo, arg=0) if native_scope is not None and first.state != 5 else None
             second = read(pid, 13, BsdShortInfo)
+            _require_cleanup_budget()
             second_sid = None if second.state == 5 else os.getsid(pid)
             second_identity = read(pid, 17, UniqueInfo)
         except (ProcessLookupError, ProcessOwnershipError, OSError) as exc:
@@ -411,10 +564,14 @@ def _darwin_process_inventory(*, native_scope: tuple[int, int] | None = None) ->
             # mode it may be skipped only if every task in the resource
             # coalition is independently accounted for below. The strict
             # fallback retains its original failure handling.
+            if isinstance(exc, CleanupDeadlineExceeded):
+                raise
             if native_scope is None and isinstance(exc, ProcessLookupError):
                 complete = False
             elif native_scope is None:
                 raise
+            elif isinstance(exc, (ProcessInspectionDenied, PermissionError)):
+                inspection_denied = exc
             continue
         birth = (first_identity.unique_id, first_identity.pid_version)
         if first_identity.unique_id == 0 or second_identity.unique_id == 0:
@@ -432,5 +589,9 @@ def _darwin_process_inventory(*, native_scope: tuple[int, int] | None = None) ->
         if coalition is not None and second.state != 5 and coalition.ids[0] == native_scope[0]:
             observed_scope_tasks += 1
     if native_scope is not None:
-        return inventory, complete and observed_scope_tasks == native_scope[1]
+        scoped_complete = complete and observed_scope_tasks == native_scope[1]
+        if not scoped_complete and inspection_denied is not None:
+            raise ProcessInspectionDenied(INSPECTION_DENIED_MESSAGE) from inspection_denied
+        return inventory, scoped_complete
+    _require_cleanup_budget()
     return inventory, complete and pids == _darwin_process_ids(library)
