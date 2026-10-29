@@ -108,8 +108,19 @@ def test_transparent_control_cannot_hide_the_actual_dismiss_control(page):
 
 def delayed_navigation_html():
     return _HTML.replace('window.dismisses++;',
-        "window.dismisses++;setTimeout(()=>{history.replaceState({},'', '/jobs/view/other');"
-        "document.querySelector('main').innerHTML='<p>Changed posting.</p>';},100);")
+        "window.dismisses++;window.changePostingDuringCapture=()=>{"
+        "history.replaceState({},'', '/jobs/view/other');"
+        "document.querySelector('main').innerHTML='<p>Changed posting.</p>';};")
+
+
+def _change_posting_during_capture(page, collect):
+    # Release the synthetic navigation only after dismissal and its own URL
+    # guard have completed. A wall-clock timer can fire in that earlier guard
+    # on a busy runner and exercise a different rejection path.
+    assert page.url == "https://www.linkedin.com/jobs/view/owned"
+    assert page.evaluate("window.dismisses") == 1
+    page.evaluate("window.changePostingDuringCapture()")
+    return collect(page)
 
 
 def test_batch_capture_rejects_delayed_post_dismissal_identity_change(page, monkeypatch):
@@ -118,8 +129,7 @@ def test_batch_capture_rejects_delayed_post_dismissal_identity_change(page, monk
     collect = detail._collect_main_content
 
     def delayed_collect(owner):
-        owner.wait_for_timeout(150)
-        return collect(owner)
+        return _change_posting_during_capture(owner, collect)
 
     monkeypatch.setattr(detail, "_collect_main_content", delayed_collect)
     with pytest.raises(DetailPageFetchUnavailable, match="capture was being collected"):
@@ -168,8 +178,7 @@ def test_direct_capture_rejects_delayed_post_dismissal_identity_change(browser, 
     collect = fetcher._collect_main_content
 
     def delayed_collect(owner):
-        owner.wait_for_timeout(150)
-        return collect(owner)
+        return _change_posting_during_capture(owner, collect)
 
     monkeypatch.setattr(fetcher, "_collect_main_content", delayed_collect)
     with pytest.raises(DetailPageFetchUnavailable, match="capture was being collected"):
