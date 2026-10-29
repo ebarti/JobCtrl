@@ -420,9 +420,14 @@ not regenerate the recorded list or its evidence.
 
 **Tailoring policy history** lists every current and superseded revision,
 allowlisted learned rule, safe recommendation/review reference, restore
-provenance, and creation time. Restoring a superseded version appends the next
-version with `user_requested` provenance; it never edits or deletes the target
-or current row. Acceptance and restore affect future tailoring-policy
+provenance, and creation time. Choose a superseded version to review the
+transition from the displayed current version, then confirm the user-requested
+restore. It appends a revision without editing or deleting earlier history. If
+another session changes the policy before confirmation, the restore is refused;
+review the refreshed history and start a new restore. Retrying an unconfirmed
+request uses the same command and returns its recorded revision if it already
+committed. A later revision can be current even when the receipt reports an
+earlier successful restore. Acceptance and restore affect future tailoring-policy
 resolution only. They do not re-score jobs, re-tailor existing materials,
 replace accepted artifacts, alter the Candidate Profile, or change Apply
 decisions. Use the normal explicit re-tailor action when you want existing work

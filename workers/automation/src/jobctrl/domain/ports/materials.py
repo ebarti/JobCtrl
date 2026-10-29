@@ -26,7 +26,9 @@ from jobctrl.domain.materials.analysis import (
     JobAnalysisDraft,
 )
 from jobctrl.domain.materials.entities import Artifact
-from jobctrl.domain.materials.policy import TailoringPolicy, TailoringPolicyRollbackReason
+from jobctrl.domain.materials.policy import (
+    TailoringPolicy, TailoringPolicyRollbackReason, TailoringPolicyRollbackResult,
+)
 from jobctrl.domain.materials.provenance import BulletProvenanceSet
 from jobctrl.domain.ports.artifact_review import ArtifactStatus
 from jobctrl.domain.materials.value_objects import ArtifactType, RenderFormat
@@ -247,10 +249,12 @@ class TailoringPolicyRepository(Protocol):
         tenant_id: TenantId,
         *,
         target_version: int,
+        expected_current_version: int,
+        command_id: str,
         reason: TailoringPolicyRollbackReason,
         rolled_back_at: str,
-    ) -> TailoringPolicy:
-        """Append a current revision that restores a prior effective policy."""
+    ) -> TailoringPolicyRollbackResult:
+        """Restore the reviewed transition once, or replay its durable receipt."""
         ...
 
 

@@ -124,6 +124,8 @@ test("Dashboard learning review keeps evidence, terminal decisions, and policy r
   await policyHistory
     .getByRole("button", { name: "Restore version 1 of tailoring policy" })
     .click();
+  await expect(policyHistory.getByText(/current version 2 → configuration from version 1/i)).toBeVisible();
+  await policyHistory.getByRole("button", { name: "Confirm restore" }).click();
   expect((await rollbackHistory).status()).toBe(200);
   const rolledBackPolicy = policyHistory.getByRole("article", { name: "Version 3" });
   await expect(rolledBackPolicy).toBeVisible();
@@ -180,8 +182,8 @@ async function installDeterministicLearningWrites(page: Page, dbPath: string): P
   });
 
   await page.route("**/v1/learning/policies/materials/rollbacks", async (route) => {
-    const body = route.request().postDataJSON() as { targetVersion?: number };
-    if (body.targetVersion !== 1) {
+    const body = route.request().postDataJSON() as { targetVersion?: number; expectedCurrentVersion?: number; commandId?: string; reasonCode?: string };
+    if (body.targetVersion !== 1 || body.expectedCurrentVersion !== 2 || !body.commandId || body.reasonCode !== "user_requested") {
       throw new Error(`Unexpected tailoring policy rollback target ${body.targetVersion}.`);
     }
     appendRollback(dbPath);
@@ -192,6 +194,7 @@ async function installDeterministicLearningWrites(page: Page, dbPath: string): P
         policyKind: "tailoring_rule",
         version: 3,
         status: "current",
+        currentVersion: 3, replayed: false, expectedCurrentVersion: 2, commandId: body.commandId,
         learnedRules: [],
         sourceReviewId: null,
         sourceRecommendationId: null,

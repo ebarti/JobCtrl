@@ -51,6 +51,18 @@ overrides into the frozen `TailoringLlmPolicy` before constructing
 configuration. Saved profile controls and versioned policy history remain
 canonical inputs, with the existing profile/policy fence at generation commit.
 
+Policy restore is a separate reviewed command. Its tenant, target, expected
+current version, UUIDv4 command identity and user-requested reason bind the
+intent. The SQLite writer checks for a matching receipt before comparing the
+current head under `BEGIN IMMEDIATE`. A stale new intent refuses; an identical
+accepted command returns its original revision and the head observed on retry.
+The new revision stores its versioned command receipt in its rollback provenance
+field together with the selected target and reviewed predecessor. This keeps
+receipt and revision atomic within the existing exact-v15 manifest and leaves
+historical rows and configuration copies intact. History readers decode only
+recognized structured receipts and preserve legacy provenance. A different
+payload for the same tenant and command ID is a conflict.
+
 An explicit manual materials request carries its existing low-fit exception
 through both Tailor and Cover activity payloads to their canonical per-job
 admission checks. Default and legacy payloads keep the ordinary score floor.

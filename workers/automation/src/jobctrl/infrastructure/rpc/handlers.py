@@ -38,6 +38,8 @@ from jobctrl.infrastructure.materials import (
     SqliteLearningRecommendationReviewRepository,
     SqliteTailoringPolicyRepository,
     TailoringPolicyRevisionError,
+    TailoringPolicyStaleReviewError,
+    TailoringPolicyCommandConflictError,
 )
 from jobctrl.infrastructure.rpc.server import JsonRpcServer, invalid_params
 from jobctrl.infrastructure.rpc.enrichment_retry import reset_enrichment
@@ -1266,30 +1268,47 @@ def review_learning_recommendation(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def rollback_tailoring_policy(params: dict[str, Any]) -> dict[str, Any]:
-    """Append a Materials policy revision that restores a prior version."""
+    """Append a reviewed restore or return the same command's receipt."""
 
-    tenant_id = TenantId(_tenant_id(params))
+    if set(params) - {"tenantId", "targetVersion", "expectedCurrentVersion", "commandId", "reasonCode", "expectedAppDir", "expectedDbPath"}:
+        raise invalid_params("unsupported tailoring policy restore parameter")
+    raw_tenant = _require(params, "tenantId")
+    if not isinstance(raw_tenant, str) or not raw_tenant.strip() or raw_tenant != raw_tenant.strip():
+        raise invalid_params("invalid tenantId")
+    tenant_id = TenantId(raw_tenant)
     target_version = _require(params, "targetVersion")
-    if not isinstance(target_version, int) or isinstance(target_version, bool) or target_version < 1:
-        raise invalid_params("targetVersion must be a positive integer")
+    expected_current_version = _require(params, "expectedCurrentVersion")
+    command_id = _require(params, "commandId")
+    reason = _require(params, "reasonCode")
     assert_expected_runtime(
         expected_app_dir=params.get("expectedAppDir"),
         expected_db_path=params.get("expectedDbPath"),
     )
     try:
-        policy = SqliteTailoringPolicyRepository(get_connection()).rollback_to(
+        result = SqliteTailoringPolicyRepository(get_connection()).rollback_to(
             tenant_id,
             target_version=target_version,
-            reason="user_requested",
+            expected_current_version=expected_current_version,
+            command_id=command_id,
+            reason=reason,
             rolled_back_at=datetime.now(UTC).isoformat(),
         )
+    except TailoringPolicyStaleReviewError as exc:
+        raise invalid_params("tailoring_policy_stale_review") from exc
+    except TailoringPolicyCommandConflictError as exc:
+        raise invalid_params("tailoring_policy_command_conflict") from exc
     except TailoringPolicyRevisionError as exc:
         raise invalid_params(str(exc)) from exc
+    policy = result.policy
     return {
         "status": "succeeded",
         "context": "materials",
         "policyKind": "tailoring_rule",
         "policyVersion": policy.version,
+        "currentVersion": result.current_version,
+        "replayed": result.replayed,
+        "expectedCurrentVersion": expected_current_version,
+        "commandId": command_id,
         "rollbackOfVersion": policy.rollback_of_version,
         "rollbackReasonCode": policy.rollback_reason,
         "learnedRules": [

@@ -213,11 +213,14 @@ owns cadence, bounds, anonymous access and costly-work freshness gates.
 | `GET /v1/learning/recommendations/:recommendationId/evidence` | Bounded structured supporting and contradicting references without source free text. |
 | `POST /v1/learning/recommendations/:recommendationId/reviews` | Explicitly accept or reject one current recommendation. |
 | `GET /v1/learning/policies/materials` | Paginated current and superseded tailoring-policy revisions with allowlisted provenance. |
-| `POST /v1/learning/policies/materials/rollbacks` | Append a `user_requested` revision restoring one earlier version. |
+| `POST /v1/learning/policies/materials/rollbacks` | Restore a reviewed earlier version against an expected current version, or replay its command receipt. |
 
 Acceptance creates one versioned Materials policy revision; rejection writes a
-review but does not change policy. Rollback is append-only and idempotent for
-the same structured request. None of these routes starts scoring, tailoring,
+review but does not change policy. A restore compares the reviewed current
+version inside the append transaction; a stale review requires a fresh review
+and new command. An identical command returns its original receipt even if a
+later revision is current. See the [complete contract](complete-contract.md#feedback-learning-and-policy-history)
+for fields and conflicts. None of these routes starts scoring, tailoring,
 Apply, or artifact work. Errors and historical metadata are sanitized before
 they cross the browser boundary.
 

@@ -25,6 +25,7 @@ import {
   MANUAL_CAPTURE_MODE_VALUES,
   STAGES,
   TailoringPolicyLearnedRuleSchema,
+  TailoringPolicyRestoreCommandIdSchema,
   MaterialLocaleHistorySchema,
   TargetRoleSuggestionResultSchema,
 } from "./schemas.js";
@@ -766,10 +767,13 @@ export type ReviewLearningRecommendationResult = z.infer<
 
 export const RollbackTailoringPolicyParamsSchema = z
   .object({
-    tenantId: TenantParam,
+    tenantId: z.string().min(1).refine((value) => value.trim() === value),
     expectedAppDir: z.string().trim().min(1).optional(),
     expectedDbPath: z.string().trim().min(1).optional(),
     targetVersion: z.number().int().positive(),
+    expectedCurrentVersion: z.number().int().positive(),
+    commandId: TailoringPolicyRestoreCommandIdSchema,
+    reasonCode: z.literal("user_requested"),
   })
   .strict();
 export type RollbackTailoringPolicyParams = z.infer<
@@ -782,6 +786,10 @@ export const RollbackTailoringPolicyResultSchema = z
     context: z.literal("materials"),
     policyKind: z.literal("tailoring_rule"),
     policyVersion: z.number().int().positive(),
+    currentVersion: z.number().int().positive(),
+    replayed: z.boolean(),
+    expectedCurrentVersion: z.number().int().positive(),
+    commandId: TailoringPolicyRestoreCommandIdSchema,
     rollbackOfVersion: z.number().int().positive(),
     rollbackReasonCode: z.literal("user_requested"),
     learnedRules: z.array(TailoringPolicyLearnedRuleSchema).max(5),

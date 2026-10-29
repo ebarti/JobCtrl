@@ -180,7 +180,8 @@ privacy-safe derived evidence. The review route requires an explicit accepted
 or rejected decision. Acceptance creates a versioned Materials policy revision;
 rejection changes no policy. `GET /v1/learning/policies/materials` exposes the
 allowlisted current/superseded history, while the rollback route appends a new
-user-requested revision that restores an earlier version. These routes never
+user-requested revision only against the reviewed current version and returns
+the recorded receipt on a matching retry, even after later changes. These routes never
 start scoring, tailoring, Apply, or artifact work. See
 [Jobs & Materials](api/jobs-and-materials.md#feedback-learning-and-materials-policy).
 

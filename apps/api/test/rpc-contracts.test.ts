@@ -438,7 +438,7 @@ describe("learning recommendation review RPC contract", () => {
 describe("tailoring policy rollback RPC contract", () => {
   it("registers a runtime-scoped rollback with closed policy metadata", () => {
     const endpoint = ENDPOINTS.rollbackTailoringPolicy;
-    const request = endpoint.request.parse({ targetVersion: 1 });
+    const request = endpoint.request.parse({ targetVersion: 1, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111", reasonCode: "user_requested" });
     const params = endpoint.dispatch.params(
       { request, pathParam: undefined },
       ENDPOINT_DISPATCH_CONTEXT,
@@ -453,6 +453,7 @@ describe("tailoring policy rollback RPC contract", () => {
       context: "materials",
       policyKind: "tailoring_rule",
       policyVersion: 3,
+      currentVersion: 3, replayed: false, expectedCurrentVersion: 2, commandId: "11111111-1111-4111-8111-111111111111",
       rollbackOfVersion: 1,
       rollbackReasonCode: "user_requested",
       learnedRules: [],
@@ -471,9 +472,18 @@ describe("tailoring policy rollback RPC contract", () => {
       rollbackOfVersion: 1,
       createdAt: "2026-08-01T12:34:56.000Z",
     });
-    expect(() =>
-      endpoint.request.parse({ targetVersion: 0 }),
-    ).toThrow();
+    for (const invalid of [
+      { targetVersion: 1 },
+      { ...request, targetVersion: 0 },
+      { ...request, expectedCurrentVersion: 0 },
+      { ...request, commandId: "not-a-command-id" },
+      { ...request, reasonCode: "other" },
+    ]) {
+      expect(endpoint.request.safeParse(invalid).success).toBe(false);
+    }
+    expect(endpoint.dispatch.response({ request, pathParam: undefined, result: {
+      ...result, commandId: "22222222-2222-4222-8222-222222222222",
+    } })).toBeNull();
     expect(() =>
       endpoint.dispatch.result.parse({
         status: "succeeded",
