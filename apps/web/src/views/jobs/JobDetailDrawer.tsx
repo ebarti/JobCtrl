@@ -6,7 +6,7 @@ import { JobCtrlApiError } from "@jobctrl/api-client";
 import type { JobAuditEntry, StageSummary } from "@jobctrl/contracts";
 import { IconArrowLeft, IconChevronDown } from "@tabler/icons-react";
 import { Link } from "@tanstack/react-router";
-import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { ApplyHistory } from "../../contexts/apply/components/ApplyHistory.js";
 import {
@@ -199,6 +199,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
   const [sectionsOpen, setSectionsOpen] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   const jumpTarget = useRef<string | null>(null);
+  const pendingJumpFocus = useRef<string | null>(null);
   const { data: detail, error: detailError } = useJobDetailQuery(jobId);
   const offer = useOfferQuery(jobId);
   const evidenceMap = useEvidenceMapQuery();
@@ -359,14 +360,12 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
 
   function jumpToSection(id: string) {
     jumpTarget.current = id;
+    pendingJumpFocus.current = id;
     setExpandedSections((current) => ({ ...current, [id]: true }));
     setSectionsOpen(false);
   }
 
-  function focusJumpTarget() {
-    const id = jumpTarget.current;
-    if (!id) return;
-    jumpTarget.current = null;
+  function focusJumpTarget(id: string) {
     const section = document.getElementById(`job-detail-${id}`);
     const trigger = section?.querySelector<HTMLButtonElement>("[data-slot='collapsible-trigger']");
     if (!section || !trigger) return;
@@ -375,6 +374,15 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
     section.scrollIntoView?.({ block: "start" });
     trigger.focus({ preventScroll: true });
   }
+
+  useLayoutEffect(() => {
+    const id = pendingJumpFocus.current;
+    if (sectionsOpen || !id || !expandedSections[id]) return;
+    pendingJumpFocus.current = null;
+    // Move focus as soon as the section has expanded. The popover's closing
+    // animation may finish after the user has already moved to another control.
+    focusJumpTarget(id);
+  }, [expandedSections, sectionsOpen]);
 
   return (
     <div className="route-page route-page--job-detail" aria-label="Job details">
@@ -464,7 +472,10 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                 </Popover>
               </div>
               <JobOverview detail={detail} />
-              <Popover open={sectionsOpen} onOpenChange={setSectionsOpen}>
+              <Popover open={sectionsOpen} onOpenChange={(open) => {
+                if (open) jumpTarget.current = null;
+                setSectionsOpen(open);
+              }}>
                 <PopoverTrigger asChild>
                   <Button className="job-detail-sections-trigger" size="sm" type="button" variant="outline">
                     Sections
@@ -478,7 +489,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                   onCloseAutoFocus={(event) => {
                     if (jumpTarget.current) {
                       event.preventDefault();
-                      focusJumpTarget();
+                      jumpTarget.current = null;
                     }
                   }}
                   side="top"
