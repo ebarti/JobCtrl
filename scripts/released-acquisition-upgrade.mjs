@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { verifyReleaseDescriptorSignature } from "./distribution-homebrew.render.bundle.mjs";
-import { selectLatestReleasedVersion } from "./released-upgrade-smoke.mjs";
+import { selectLatestReleasedVersion, selectUpgradeMode } from "./released-upgrade-smoke.mjs";
 
 const readJson = async (file) => JSON.parse(await readFile(file, "utf8"));
 const hash = async (file) => {
@@ -119,8 +119,7 @@ async function curlScenario(old, candidate, root, baseEnv) {
     const context = await prepareWorkspace(old, runtime, state, env, selector);
     console.log(`${old.descriptor.appVersion}: upgrading through the released curl bootstrap`);
     const upgrade = [path.join(candidate.directory, "install.sh"), "--home", runtime, "--bin-dir", bin, "--no-modify-path", "--release-url", pointer(candidate)];
-    const forward = old.manifest.launcherCompatibility.minimum === 1 && old.manifest.launcherCompatibility.maximum === 1
-      && candidate.manifest.launcherCompatibility.minimum === 2 && candidate.manifest.launcherCompatibility.maximum === 2 && context.schema === 14;
+    const forward = selectUpgradeMode(old.manifest, candidate.manifest, context.schema) === "forward-schema-15";
     const checks = ["released-bootstrap", "real-services", "paired-backup", "job-and-resume-preserved", "temporal-history-preserved", "stop-and-restart"];
     let title = "Preserved acquisition QA job";
     if (forward) {
@@ -210,7 +209,7 @@ async function brewScenario(old, candidate, root, baseEnv) {
     await copyFile(path.join(candidate.directory, "jobctrl.rb"), formulaPath);
     await run(brew, ["upgrade", "--formula", formula], env);
     await run(frontend, ["start", "--no-open"], env);
-    const expectedSchema = old.manifest.launcherCompatibility.maximum === 1 && candidate.manifest.launcherCompatibility.minimum === 2 ? 15 : context.schema;
+    const expectedSchema = selectUpgradeMode(old.manifest, candidate.manifest, context.schema) === "forward-schema-15" ? 15 : context.schema;
     await verifyWorkspace(context, candidate, runtime, state, env, expectedSchema);
     await run(context.selector, ["stop"], env);
     await run(frontend, ["start", "--no-open"], env);
