@@ -9,6 +9,12 @@ import { useReviseDraftMutation } from "./useReviseDraftMutation.js";
 
 describe("useReviseDraftMutation", () => {
   it("revises the draft from edited text and returns the re-gated thread", async () => {
+    const { acknowledgeOutreachRevision, makeOutreachDraft, makeOutreachThreadDetail, makeOutreachThreadResponse } = await import("../../../test/fixtures/outreach.js");
+    server.use(http.post("*/v1/outreach/threads/:threadId/drafts", () => HttpResponse.json(
+      acknowledgeOutreachRevision(makeOutreachThreadResponse(makeOutreachThreadDetail({ drafts: [
+        makeOutreachDraft({ bodyText: "Hi Dana, an edited intro message." }),
+      ] })), "draft-1"),
+    )));
     const { result } = renderHookWithProviders(() =>
       useReviseDraftMutation("thread-1", "contact-1"),
     );
@@ -32,6 +38,31 @@ describe("useReviseDraftMutation", () => {
       result.current.mutate({ editedBodyText: "Hi Dana, an edited intro message." });
     });
     await waitFor(() => expect(result.current.isError).toBe(true));
+  });
+
+  it("accepts the worker's canonical whitespace normalization", async () => {
+    const { acknowledgeOutreachRevision, makeOutreachDraft, makeOutreachThreadDetail, makeOutreachThreadResponse } = await import("../../../test/fixtures/outreach.js");
+    server.use(http.post("*/v1/outreach/threads/:threadId/drafts", () => HttpResponse.json(
+      acknowledgeOutreachRevision(makeOutreachThreadResponse(makeOutreachThreadDetail({ drafts: [makeOutreachDraft({ bodyText: "Synthetic revision" })] })), "draft-1"),
+    )));
+    const { result } = renderHookWithProviders(() => useReviseDraftMutation("thread-1", "contact-1"));
+    act(() => result.current.mutate({ editedBodyText: "\u0085\u001cSynthetic revision\u001f\u0085" }));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+
+  it("accepts the identified publication even when a later generation supersedes it", async () => {
+    const { acknowledgeOutreachRevision, makeOutreachDraft, makeOutreachThreadDetail, makeOutreachThreadResponse } = await import("../../../test/fixtures/outreach.js");
+    const response = makeOutreachThreadResponse(makeOutreachThreadDetail({ drafts: [
+      makeOutreachDraft({ draftId: "published-by-request", generation: 2, status: "superseded", bodyText: "Submitted revision" }),
+      makeOutreachDraft({ draftId: "later-draft", generation: 3, status: "candidate", bodyText: "Later revision" }),
+    ] }));
+    server.use(http.post("*/v1/outreach/threads/:threadId/drafts", () =>
+      HttpResponse.json(acknowledgeOutreachRevision(response, "published-by-request")),
+    ));
+    const { result } = renderHookWithProviders(() => useReviseDraftMutation("thread-1", "contact-1"));
+    act(() => result.current.mutate({ editedBodyText: "Submitted revision" }));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.publication.draftId).toBe("published-by-request");
   });
 });
 
