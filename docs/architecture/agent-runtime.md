@@ -65,10 +65,20 @@ cancellation or process shutdown. Each client retains an independent temporary
 store; a new owner reclaims only unlocked private stores with the same recorded
 credential-home identity and recognized layout. Unfamiliar, linked or redirected
 ownership paths are preserved. Stable authentication and existing provider
-files remain unchanged. Process creation is shielded and joined before cleanup;
-the subsequent initialize handshake remains cancellable. Repeated cancellation
-waits for shutdown before storage removal. Catalog clients use the same temporary
-storage without enrolling ambient auth. Completed raw output still reaches
+files remain unchanged. Process creation is protected from cancellation and
+joined before cleanup; the subsequent initialize handshake remains cancellable.
+Repeated cancellation waits for shutdown before storage removal. A startup or
+cleanup failure while cancellation is being joined emits a content-free warning.
+SDK cleanup exceptions cross the kit boundary with content-free messages and
+without rendered cause chains; cancellation and process-control exception types
+remain intact, including within exception groups.
+Managed startup exceptions are classified at that boundary into the existing
+bounded provider failure envelope before reaching the kit, without chaining
+their SDK messages into normal tracebacks. Mixed exception groups retain their
+cancellation and fatal control-flow members; ordinary failures carry the same
+bounded provider classification.
+Catalog clients use the same temporary storage without enrolling ambient auth.
+Completed raw output still reaches
 JobCtrl's strict parser, preserving its distinct schema/citation repair paths.
 A kit schema failure is never treated as an accepted artifact.
 
