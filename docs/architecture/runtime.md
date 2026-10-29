@@ -72,12 +72,27 @@ The observation does not recover authority over descendants that escape the
 launch session.
 
 Scoped browser and agent cleanup attempt each selected worker and preserve
-failed ownership records while reporting incomplete cleanup. Their original
-child receives TERM first and has a bounded grace to drain. Only a still-owned,
-unreaped launch group is eligible for KILL after that grace, with its original
+failed ownership records while reporting incomplete cleanup. Worker-specific
+verification and adapter termination use per-worker guards, so one waiting
+handle does not serialize an unrelated worker. Publication of a tracked birth
+uses the same worker guard and checks its exact run and epoch; a standalone
+child whose publication and cleanup both fail remains separately retryable.
+The agent reserves its worker's MCP configuration before writing and releases
+that reservation after its own final unlink. A remaining file reservation alone
+does not imply a live or unverified process.
+The original child receives TERM first and has a bounded grace to drain. Only a
+still-owned, unreaped launch group is eligible for KILL after that grace, with its original
 PID pinned even if the leader exits during the wait. A leader already exited
-before cleanup cannot authorize a new signal. The agent
-adapter also verifies cleanup after a naturally exited root, before removing its record.
+before cleanup cannot authorize a new signal. The agent adapter verifies cleanup
+after a naturally exited root before removing its record. A launcher cleanup pass
+shares a deadline across selected handles and ownership-lock waits. A full-run
+interrupt attempts available workers before waiting on contended worker guards.
+It fences concurrent birth attempts until the pass finishes, then permits later
+births if the run remains active. Handles registered during a pass remain owned
+and prevent that pass from declaring completion. Stream closure runs outside the
+run lock and remains tracked if a reader holds the pipe open. Expiry or an
+unavailable lock retains custody; neither extends signal authority to a reaped
+or newly discovered PID.
 The exit handler logs failures and does not sweep ports or adopt leftovers.
 These rules complement the native instance shutdown boundary described below.
 

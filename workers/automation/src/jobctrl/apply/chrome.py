@@ -21,6 +21,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import urlopen
+from weakref import WeakValueDictionary
 
 from jobctrl import config
 from jobctrl.browser_capabilities import (
@@ -30,7 +31,11 @@ from jobctrl.browser_capabilities import (
 )
 from jobctrl.apply.origins import canonical_http_origin, canonical_http_url
 from jobctrl.infrastructure.network import validate_public_http_url
-from jobctrl.infrastructure.process_ownership import ProcessOwnershipError, terminate_owned_process
+from jobctrl.infrastructure.process_ownership import (
+    INSPECTION_AND_SIGNAL_DENIED_MESSAGE, INSPECTION_DENIED_MESSAGE, SIGNAL_DENIED_MESSAGE,
+    ProcessInspectionAndSignalDenied, ProcessInspectionDenied, ProcessOwnershipError, ProcessSignalDenied,
+    cleanup_lock, is_process_inspection_denied, is_process_signal_denied, terminate_owned_process,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +48,11 @@ _CDP_READY_STABLE_PROBES = 10
 # Track Chrome processes per worker for cleanup
 _chrome_procs: dict[int, subprocess.Popen] = {}
 _chrome_identities: dict[int, tuple[subprocess.Popen, int]] = {}
+_chrome_unpublished: dict[int, list[tuple[subprocess.Popen, int]]] = {}
 _launching_workers: set[int] = set()
 _launching_ports: set[int] = set()
 _chrome_lock = threading.RLock()
+_chrome_worker_guards: WeakValueDictionary = WeakValueDictionary()
 
 
 @dataclass(frozen=True)
@@ -74,6 +81,58 @@ _BLOCKED_WORKER_TARGET_TYPES = frozenset(
 # Cross-platform process helpers
 # ---------------------------------------------------------------------------
 
+def _chrome_worker_guard(worker_id: int) -> threading.RLock:
+    with cleanup_lock(_chrome_lock):
+        guard = _chrome_worker_guards.get(worker_id)
+        if guard is None:
+            guard = threading.RLock()
+            _chrome_worker_guards[worker_id] = guard
+        return guard
+
+
+def _register_owned_browser(worker_id: int, process: subprocess.Popen) -> None:
+    from jobctrl.apply.ownership import publish_owned_apply_process
+
+    def publish() -> None:
+        with _chrome_worker_guard(worker_id):
+            with _chrome_lock:
+                current = _chrome_procs.get(worker_id)
+                if current is not None and current is not process:
+                    raise BrowserCapabilityError("Cannot replace an owned Apply browser process")
+                _chrome_procs[worker_id] = process
+                _chrome_identities[worker_id] = (process, process.pid)
+
+    publish_owned_apply_process(worker_id, process, publish)
+
+
+def _retain_unpublished_browser(worker_id: int, process: subprocess.Popen, launched_pid: int) -> None:
+    with cleanup_lock(_chrome_lock):
+        pending = _chrome_unpublished.setdefault(worker_id, [])
+        if not any(owned is process and pid == launched_pid for owned, pid in pending):
+            pending.append((process, launched_pid))
+
+
+def _cleanup_unpublished_browser(worker_id: int) -> list[Exception]:
+    failures = []
+    with cleanup_lock(_chrome_worker_guard(worker_id)):
+        with cleanup_lock(_chrome_lock):
+            pending = tuple(_chrome_unpublished.get(worker_id, ()))
+        for process, launched_pid in pending:
+            try:
+                terminate_owned_process(process, launched_pid=launched_pid)
+            except Exception as exc:
+                failures.append(exc)
+            else:
+                with cleanup_lock(_chrome_lock):
+                    remaining = [(owned, pid) for owned, pid in _chrome_unpublished.get(worker_id, ())
+                                 if owned is not process or pid != launched_pid]
+                    if remaining:
+                        _chrome_unpublished[worker_id] = remaining
+                    else:
+                        _chrome_unpublished.pop(worker_id, None)
+    return failures
+
+
 def _kill_process_tree(pid: int, *, process: subprocess.Popen | None = None) -> None:
     """Terminate only a browser still bound to its original launch handle.
 
@@ -84,18 +143,29 @@ def _kill_process_tree(pid: int, *, process: subprocess.Popen | None = None) -> 
     cleanup of leftovers.
     Windows uses the original kernel process handle, never taskkill's PID tree.
     """
-    with _chrome_lock:
-        if process is None:
-            return
+    if process is None:
+        return
+    with cleanup_lock(_chrome_lock):
         owners = [
-            owned for worker_id, (owned, launched_pid) in _chrome_identities.items()
+            worker_id for worker_id, (owned, launched_pid) in _chrome_identities.items()
             if owned is process and launched_pid == pid and process.pid == pid
             and _chrome_procs.get(worker_id) is owned
         ]
         if len(owners) != 1:
             raise BrowserCapabilityError("Cannot verify Apply browser process ownership")
+        worker_id = owners[0]
+        guard = _chrome_worker_guard(worker_id)
+    with cleanup_lock(guard):
+        with cleanup_lock(_chrome_lock):
+            identity = _chrome_identities.get(worker_id)
+            if (_chrome_procs.get(worker_id) is not process or identity is None
+                    or identity[0] is not process or identity[1] != pid or process.pid != pid):
+                raise BrowserCapabilityError("Cannot verify Apply browser process ownership")
+            # Other workers may use the registry while this handle drains,
+            # but this browser must not be reused during termination.
+            process._jobctrl_browser_terminating = True
         try:
-            terminate_owned_process(owners[0], launched_pid=pid)
+            terminate_owned_process(process, launched_pid=pid)
         except ProcessOwnershipError as exc:
             raise BrowserCapabilityError(str(exc)) from exc
 
@@ -197,7 +267,7 @@ def launch_chrome(
         raise BrowserCapabilityError("Apply browser CDP port hint must be between 0 and 65535")
 
     with _chrome_lock:
-        if worker_id in _chrome_procs or worker_id in _launching_workers:
+        if worker_id in _chrome_procs or worker_id in _chrome_unpublished or worker_id in _launching_workers:
             raise BrowserCapabilityError(f"Apply browser worker {worker_id} already has an owner")
         _launching_workers.add(worker_id)
 
@@ -257,11 +327,10 @@ def _launch_chrome_owned(
     from jobctrl.apply.ownership import spawn_owned_apply_process
 
     proc = spawn_owned_apply_process(worker_id, "browser", cmd, **kwargs)
-    with _chrome_lock:
-        _chrome_procs[worker_id] = proc
-        _chrome_identities[worker_id] = (proc, proc.pid)
-
+    registered = False
     try:
+        _register_owned_browser(worker_id, proc)
+        registered = True
         # Readiness is condition-based because a cold browser can take longer
         # than a fixed delay. The synchronous guard startup below does not
         # return until every initial page acknowledges Fetch.enable and
@@ -288,7 +357,15 @@ def _launch_chrome_owned(
                 process=proc,
             )
     except BaseException:
-        cleanup_worker(worker_id, proc)
+        if registered:
+            cleanup_worker(worker_id, proc)
+        elif getattr(proc, "_jobctrl_apply_birth", None) is None:
+            # Retain the exact standalone child before attempting cleanup; a
+            # refusal must not discard custody or replace another browser.
+            _retain_unpublished_browser(worker_id, proc, proc.pid)
+            failures = _cleanup_unpublished_browser(worker_id)
+            if failures:
+                raise failures[0]
         raise
     logger.info("[worker-%d] Chrome started on port %d (pid %d)",
                 worker_id, port, proc.pid)
@@ -300,7 +377,9 @@ def _require_live_browser(worker_id: int, process: subprocess.Popen) -> None:
     if (
         _chrome_procs.get(worker_id) is not process
         or identity is None or identity[0] is not process
-        or identity[1] != process.pid or process.poll() is not None
+        or identity[1] != process.pid
+        or getattr(process, "_jobctrl_browser_terminating", False) is True
+        or process.poll() is not None
     ):
         raise BrowserCapabilityError("Cannot verify live Apply browser launch ownership")
 
@@ -671,7 +750,7 @@ class _ApplyCdpGuard:
             tracked = _chrome_procs.get(self._worker_id)
             if tracked is not self._process or self._process.poll() is not None:
                 return
-            _kill_process_tree(self._process.pid, process=self._process)
+        _kill_process_tree(self._process.pid, process=self._process)
 
     def record_protected_target(self, target_id: str) -> None:
         if not target_id:
@@ -1461,34 +1540,67 @@ def cleanup_worker(worker_id: int, process: subprocess.Popen | None) -> None:
         worker_id: Numeric worker identifier.
         process: The Popen handle returned by launch_chrome.
     """
-    with _chrome_lock:
-        if process is None or _chrome_procs.get(worker_id) is not process:
-            return
+    if process is None:
+        return
+    with cleanup_lock(_chrome_worker_guard(worker_id)):
+        with cleanup_lock(_chrome_lock):
+            if _chrome_procs.get(worker_id) is not process:
+                return
         _kill_process_tree(process.pid, process=process)
-        _chrome_procs.pop(worker_id, None)
-        _chrome_identities.pop(worker_id, None)
-        _chrome_endpoints.pop(worker_id, None)
+        with cleanup_lock(_chrome_lock):
+            if _chrome_procs.get(worker_id) is process:
+                _chrome_procs.pop(worker_id, None)
+                _chrome_identities.pop(worker_id, None)
+                _chrome_endpoints.pop(worker_id, None)
     logger.info("[worker-%d] Chrome cleaned up", worker_id)
 
 
 def kill_all_chrome() -> None:
     """Clean up browsers owned by this Python process without port sweeps."""
     with _chrome_lock:
-        worker_ids = tuple(_chrome_procs)
+        worker_ids = tuple(dict.fromkeys((*_chrome_procs, *_chrome_unpublished, *_launching_workers)))
     cleanup_workers(worker_ids)
 
 
 def cleanup_workers(worker_ids: Iterable[int]) -> None:
     """Clean only the exact browser handles currently owned by these workers."""
-    with _chrome_lock:
+    worker_ids = tuple(worker_ids)
+    with cleanup_lock(_chrome_lock):
         procs = {wid: _chrome_procs[wid] for wid in worker_ids if wid in _chrome_procs}
+        pending_workers = tuple(wid for wid in worker_ids if _chrome_unpublished.get(wid))
     failures = []
+    inspection_denied = False
+    signal_denied = False
     for wid, process in procs.items():
         try:
             cleanup_worker(wid, process)
         except Exception as exc:
             logger.error("[worker-%d] Apply browser cleanup failed: %s", wid, exc)
             failures.append(wid)
+            inspection_denied = inspection_denied or is_process_inspection_denied(exc)
+            signal_denied = signal_denied or is_process_signal_denied(exc)
+    for wid in pending_workers:
+        try:
+            pending_failures = _cleanup_unpublished_browser(wid)
+        except Exception as exc:
+            pending_failures = [exc]
+        for exc in pending_failures:
+            failures.append(wid)
+            inspection_denied = inspection_denied or is_process_inspection_denied(exc)
+            signal_denied = signal_denied or is_process_signal_denied(exc)
+    try:
+        with cleanup_lock(_chrome_lock):
+            failures.extend(wid for wid in worker_ids
+                            if wid in _launching_workers or _chrome_unpublished.get(wid))
+    except Exception:
+        if not (inspection_denied or signal_denied):
+            raise
+    if inspection_denied and signal_denied:
+        raise ProcessInspectionAndSignalDenied(INSPECTION_AND_SIGNAL_DENIED_MESSAGE)
+    if inspection_denied:
+        raise ProcessInspectionDenied(INSPECTION_DENIED_MESSAGE)
+    if signal_denied:
+        raise ProcessSignalDenied(SIGNAL_DENIED_MESSAGE)
     if failures:
         raise BrowserCapabilityError(f"Apply browser cleanup could not verify exit for workers {failures}")
 
