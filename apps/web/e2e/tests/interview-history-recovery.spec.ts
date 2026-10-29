@@ -1,33 +1,66 @@
-import { expect, test } from "@playwright/test";
+import { expect, test as base } from "@playwright/test";
 import Database from "better-sqlite3";
 
 import { loadE2eDbPath, QA_PLATFORM_JOB_ID } from "../fixtures/e2e-state.js";
 
-function seedAcceptedPreparation(): void {
+type OwnedPreparation = { generation: number; total: number; noteRevisions: number };
+
+function seedAcceptedPreparation(): OwnedPreparation {
   const db = new Database(loadE2eDbPath());
   try {
-    db.prepare(`INSERT INTO job_interview_prep (
-      tenant_id, job_id, generation, status, model, generated_at, gate_status,
-      fabrication_findings_json, grounding_findings_json, judge_verdict, warnings_json, failure_reason
-    ) VALUES ('local', ?, 1, 'accepted', 'synthetic', '2026-10-01T12:00:00Z', 'passed', '[]', '[]', 'grounded', '[]', '')
-    ON CONFLICT(tenant_id, job_id, generation) DO UPDATE SET status = 'accepted'`)
-      .run(QA_PLATFORM_JOB_ID);
-    db.prepare(`INSERT INTO job_interview_prep_items (
-      tenant_id, job_id, generation, item_id, kind, title, generated_text,
-      evidence_ids_json, requirement_ids_json, source_text_json, transform_type,
-      control, grounding_audit_json, warnings_json, position
-    ) VALUES ('local', ?, 1, 'synthetic-prep', 'star_draft', 'Retained synthetic preparation',
-      'Synthetic preparation remains visible.', '[]', '[]', '[]', 'grounded_prep',
-      'never_fabricate', '[]', '[]', 0)
-    ON CONFLICT(tenant_id, job_id, generation, item_id) DO NOTHING`).run(QA_PLATFORM_JOB_ID);
+    return db.transaction(() => {
+      const prior = db.prepare("SELECT COALESCE(MAX(generation), 0) AS latest, COUNT(*) AS total FROM job_interview_prep WHERE tenant_id='local' AND job_id=?")
+        .get(QA_PLATFORM_JOB_ID) as { latest: number; total: number };
+      const notes = db.prepare("SELECT COUNT(*) AS total FROM job_interview_note_revisions WHERE tenant_id='local' AND job_id=? AND question_id='B11'")
+        .get(QA_PLATFORM_JOB_ID) as { total: number };
+      const generation = prior.latest + 1;
+      db.prepare(`INSERT INTO job_interview_prep (
+        tenant_id, job_id, generation, status, model, generated_at, gate_status,
+        fabrication_findings_json, grounding_findings_json, judge_verdict, warnings_json, failure_reason
+      ) VALUES ('local', ?, ?, 'accepted', 'synthetic-recovery-fixture', '2026-10-01T12:00:00Z', 'passed', '[]', '[]', 'grounded', '[]', '')`)
+        .run(QA_PLATFORM_JOB_ID, generation);
+      db.prepare(`INSERT INTO job_interview_prep_items (
+        tenant_id, job_id, generation, item_id, kind, title, generated_text,
+        evidence_ids_json, requirement_ids_json, source_text_json, transform_type,
+        control, grounding_audit_json, warnings_json, position
+      ) VALUES ('local', ?, ?, 'synthetic-prep', 'star_draft', 'Retained synthetic preparation',
+        'Synthetic preparation remains visible.', '[]', '[]', '[]', 'grounded_prep',
+        'never_fabricate', '[]', '[]', 0)`).run(QA_PLATFORM_JOB_ID, generation);
+      return { generation, total: prior.total + 1, noteRevisions: notes.total };
+    }).immediate();
   } finally {
     db.close();
   }
 }
 
+function removeOwnedPreparation(generation: number): void {
+  const db = new Database(loadE2eDbPath());
+  try {
+    db.pragma("foreign_keys = ON");
+    db.transaction(() => {
+      const count = db.prepare("SELECT COUNT(*) AS total FROM job_interview_prep_items WHERE tenant_id='local' AND job_id=? AND generation=?")
+        .get(QA_PLATFORM_JOB_ID, generation) as { total: number };
+      if (count.total !== 1) throw new Error("Synthetic preparation contains unexpected items; preserving it.");
+      const item = db.prepare("DELETE FROM job_interview_prep_items WHERE tenant_id='local' AND job_id=? AND generation=? AND item_id='synthetic-prep' AND title='Retained synthetic preparation'")
+        .run(QA_PLATFORM_JOB_ID, generation);
+      const prep = db.prepare("DELETE FROM job_interview_prep WHERE tenant_id='local' AND job_id=? AND generation=? AND model='synthetic-recovery-fixture' AND status='accepted'")
+        .run(QA_PLATFORM_JOB_ID, generation);
+      if (item.changes !== 1 || prep.changes !== 1) throw new Error("Synthetic preparation identity changed; preserving it.");
+    }).immediate();
+  } finally {
+    db.close();
+  }
+}
+
+const test = base.extend<{ preparation: OwnedPreparation }>({
+  preparation: async ({}, use) => {
+    const owned = seedAcceptedPreparation();
+    try { await use(owned); } finally { removeOwnedPreparation(owned.generation); }
+  },
+});
+
 for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
-  test(`history recovery retains drafts at ${viewport.width}px`, async ({ page }, testInfo) => {
-    seedAcceptedPreparation();
+  test(`history recovery retains drafts at ${viewport.width}px`, async ({ page, preparation }, testInfo) => {
     await page.setViewportSize(viewport);
     let allowPrep = false;
     let allowNotes = false;
@@ -96,10 +129,10 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
 
     allowPrep = true;
     await prepRetry.click();
-    await expect(page.getByText("Page 1; 1 generations")).toBeVisible();
+    await expect(page.getByText(`Page 1; ${preparation.total} generations`)).toBeVisible();
     allowNotes = true;
     await noteRetry.click();
-    await expect(page.getByText("Page 1; 0 revisions")).toBeVisible();
+    await expect(page.getByText(`Page 1; ${preparation.noteRevisions} revisions`)).toBeVisible();
     await expect(criteria).toHaveValue("Synthetic retained context");
     await expect(note).toHaveValue("Synthetic retained draft");
     await expect(page.getByRole("button", { name: "Remove question from preparation" })).toBeVisible();
