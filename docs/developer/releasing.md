@@ -165,6 +165,10 @@ Wait for the complete workflow, including PyPI, to succeed. Independently read b
 - The stable channel pointer resolves to that build with the intended new
   sequence, safety floor, and retained revocations.
 - The public Homebrew formula names the same version and artifact digest.
+- `https://jobctrl.dev/install.sh` resolves to the same release-pinned install
+  script published with the latest stable GitHub Release. Compare its bytes to
+  the signed candidate’s retained `install.sh`; a stale bootstrap cannot own a
+  future launcher-protocol migration.
 - PyPI exposes the same package version and expected wheel/source distributions.
   Remove an inherited `UV_EXCLUDE_NEWER` cutoff when checking fresh availability.
 - Workflow evidence confirms notarization, immutable public download, native

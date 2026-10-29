@@ -52,6 +52,7 @@ yet a supported public installation path.
 curl -fsSL https://jobctrl.dev/install.sh | sh
 ```
 
+The public install link follows the latest stable release’s pinned bootstrap.
 The installer selects the current stable Apple-silicon build, verifies it,
 places the versioned runtime under your user account, and adds `jobctrl` to
 your shell path. Open a new terminal if the command is not available in the
