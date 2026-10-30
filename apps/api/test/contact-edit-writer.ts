@@ -4,10 +4,12 @@ import { ContactRevisionConflictError, updateContact } from "../src/contacts.js"
 import { openDatabase } from "../src/db.js";
 import type { ContactUpdateRequest } from "../src/contracts.js";
 
-const [dbPath, contactId, encoded, releaseFile] = process.argv.slice(2);
+const [dbPath, contactId, encoded, releaseFile, waitMode] = process.argv.slice(2);
 if (!dbPath || !contactId || !encoded) throw new Error("Missing writer inputs");
 const db = openDatabase(dbPath);
-db.pragma("busy_timeout = 100");
+// Ordinary competing writers use production admission. Only the deliberately
+// blocked barrier contender needs to expire before the parent releases its peer.
+if (waitMode === "short-lock-wait") db.pragma("busy_timeout = 100");
 if (releaseFile) {
   // Pause after the fingerprint read, before any mutation. This observes the
   // production boundary without adding a synchronization hook to product code.
@@ -30,7 +32,7 @@ if (releaseFile) {
     return statement;
   }) as typeof db.prepare;
 }
-process.send?.({ kind: "ready" });
+process.send?.({ kind: "ready", busyTimeoutMs: db.pragma("busy_timeout", { simple: true }) });
 process.once("message", () => {
   try {
     const contact = updateContact(db, contactId, JSON.parse(encoded) as ContactUpdateRequest);

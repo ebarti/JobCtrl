@@ -77,11 +77,17 @@ function retainEditObservation(scenario: string, observation: unknown) {
   }, null, 2));
 }
 
-function writer(dbPath: string, contact: ContactDetail, role: "referrer" | "warm_intro", releaseFile?: string) {
+interface WriterOptions {
+  readonly releaseFile?: string;
+  readonly shortLockWait?: boolean;
+}
+
+function writer(dbPath: string, contact: ContactDetail, role: "referrer" | "warm_intro", options: WriterOptions = {}) {
   const child: ChildProcess = fork(fileURLToPath(new URL("./contact-edit-writer.ts", import.meta.url)),
-    [dbPath, contact.contactId, JSON.stringify({ expectedFingerprint: contact.fingerprint, role }), ...(releaseFile ? [releaseFile] : [])],
+    [dbPath, contact.contactId, JSON.stringify({ expectedFingerprint: contact.fingerprint, role }),
+      options.releaseFile ?? "", ...(options.shortLockWait ? ["short-lock-wait"] : [])],
     { execArgv: ["--import", "tsx"], stdio: ["ignore", "pipe", "pipe", "ipc"] });
-  const messages: Array<{ kind: string; outcome?: string }> = [];
+  const messages: Array<{ kind: string; outcome?: string; busyTimeoutMs?: number }> = [];
   const listeners = new Set<() => void>();
   let diagnostic = "";
   child.stderr?.on("data", (data) => { diagnostic += String(data); });
@@ -380,7 +386,8 @@ describe("contact edit authority", () => {
     const { app, dbPath } = withTempApp();
     const contact = (await createContact(app, { employer: "Acme", attributes: [{ kind: "name", value: "Accepted" }] })).contact!;
     const writers = [writer(dbPath, contact, "referrer"), writer(dbPath, contact, "warm_intro")];
-    await Promise.all(writers.map((entry) => entry.wait("ready")));
+    const ready = await Promise.all(writers.map((entry) => entry.wait("ready")));
+    expect(ready.map((entry) => entry.busyTimeoutMs)).toEqual([5_000, 5_000]);
     writers.forEach((entry) => entry.child.send("start"));
     const outcomes = await Promise.all(writers.map((entry) => entry.wait("result")));
     expect(outcomes.map((result) => result.outcome).sort()).toEqual(["committed", "conflict"]);
@@ -398,12 +405,12 @@ describe("contact edit authority", () => {
     const { app, dbPath } = withTempApp();
     const contact = (await createContact(app, { employer: "Acme" })).contact!;
     const release = `${dbPath}.release`;
-    const first = writer(dbPath, contact, "referrer", release);
+    const first = writer(dbPath, contact, "referrer", { releaseFile: release });
     await first.wait("ready");
     first.child.send("start");
     await first.wait("compared");
-    const blocked = writer(dbPath, contact, "warm_intro");
-    await blocked.wait("ready");
+    const blocked = writer(dbPath, contact, "warm_intro", { shortLockWait: true });
+    expect((await blocked.wait("ready")).busyTimeoutMs).toBe(100);
     blocked.child.send("start");
     const blockedResult = await blocked.wait("result");
     expect(blockedResult.outcome).toBe("SQLITE_BUSY");
