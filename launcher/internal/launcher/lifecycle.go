@@ -502,6 +502,9 @@ func advance(store *release.Store, journal *release.Journal, state release.State
 	if err := store.Advance(journal, state, nil); err != nil {
 		return err
 	}
+	if err := releaseQACheckpoint(store, state); err != nil {
+		return err
+	}
 	if transitionFailure != nil {
 		if err := transitionFailure(state); err != nil {
 			// An abrupt interruption models SIGKILL/power loss after the journal

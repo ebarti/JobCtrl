@@ -6,13 +6,12 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash, createPublicKey } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { copyFile, mkdir, mkdtemp, readFile, realpath, stat, writeFile } from "node:fs/promises";
-import net from "node:net";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { verifyReleaseDescriptorSignature } from "./distribution-homebrew.render.bundle.mjs";
-import { selectLatestReleasedVersion, selectUpgradeMode } from "./released-upgrade-smoke.mjs";
+import { runForwardInterruptionMatrix, selectLatestReleasedVersion, selectUpgradeMode } from "./released-upgrade-smoke.mjs";
 
 const readJson = async (file) => JSON.parse(await readFile(file, "utf8"));
 const hash = async (file) => {
@@ -75,7 +74,7 @@ async function prepareWorkspace(old, runtime, state, env, frontend) {
   assert.equal(JSON.parse((await run(selector, ["status", "--json"], env)).output).status, "running");
   const oldPayload = path.join(runtime, "releases", old.descriptor.buildId, "payload");
   const python = path.join(oldPayload, "python", "bin", "python3");
-  const temporal = path.join(oldPayload, "temporal", "temporal");
+  let temporal = path.join(oldPayload, "temporal", "temporal");
   const workflowId = `jobctrl-acquisition-qa-${path.basename(path.dirname(state))}`;
   const temporalCommand = (args) => run(temporal, [...args, "--address", "127.0.0.1:7233", "--disable-config-file", "--disable-config-env"], env);
   await temporalCommand(["workflow", "start", "--workflow-id", workflowId, "--type", "JobCtrlUpgradeSmoke", "--task-queue", "jobctrl-upgrade-unused", "--input", "{}"]);
@@ -86,7 +85,13 @@ async function prepareWorkspace(old, runtime, state, env, frontend) {
 c=sqlite3.connect(sys.argv[1]); c.execute("INSERT INTO jobs(tenant_id,job_id,url,title) VALUES('local','019ed290-3340-7000-8000-000000000892','https://jobs.example/acquisition-qa','Preserved acquisition QA job')"); c.commit(); print(c.execute('PRAGMA user_version').fetchone()[0]); c.close()`;
   const schema = Number((await run(python, ["-I", "-B", "-c", seed, path.join(state, "jobctrl.db")], env)).output.trim());
   await writeFile(path.join(state, "qa-external-resume.txt"), "Synthetic external resume\n", { mode: 0o600 });
-  return { selector, python, temporalCommand, workflowId, history, schema };
+  const context = { selector, python, temporalCommand, workflowId, history, schema };
+  context.useCandidate = (candidate) => {
+    const payload = path.join(runtime, "releases", candidate.descriptor.buildId, "payload");
+    context.python = path.join(payload, "python", "bin", "python3");
+    temporal = path.join(payload, "temporal", "temporal");
+  };
+  return context;
 }
 
 async function verifyWorkspace(context, candidate, runtime, state, env, expectedSchema, expectedTitle = "Preserved acquisition QA job") {
@@ -123,47 +128,18 @@ async function curlScenario(old, candidate, root, baseEnv) {
     const checks = ["released-bootstrap", "real-services", "paired-backup", "job-and-resume-preserved", "temporal-history-preserved", "stop-and-restart"];
     let title = "Preserved acquisition QA job";
     if (forward) {
-      // A real occupied API port makes readiness fail after activation. No
-      // application or installer behavior is replaced or bypassed.
-      const blocker = net.createServer((socket) => socket.destroy());
-      await new Promise((resolve, reject) => { blocker.once("error", reject); blocker.listen(8766, "127.0.0.1", resolve); });
-      let failed;
-      try { failed = await run("/bin/bash", upgrade, env, { allowFailure: true }); }
-      finally { await new Promise((resolve) => blocker.close(resolve)); }
-      assert.ok(Number.isInteger(failed.code) && failed.code !== 0, "the occupied API port must fail signed-candidate readiness");
-      const before = await readJson(path.join(runtime, "transition.json"));
-      assert.equal(before.state, "candidate_starting", "the real installer must have reached the readiness boundary");
-      assert.equal(before.candidate.buildId, candidate.descriptor.buildId);
-      await run(selector, ["stop"], env);
-      const seed = `import os,sqlite3,sys
-app=sqlite3.connect(sys.argv[1]); app.execute("PRAGMA journal_mode=WAL"); app.execute("PRAGMA wal_autocheckpoint=0")
-assert app.execute("PRAGMA user_version").fetchone()[0] == 15
-app.execute("UPDATE jobs SET title='Acknowledged after failed readiness' WHERE url='https://jobs.example/acquisition-qa'")
-app.execute("INSERT INTO candidate_profiles(tenant_id,profile_id,personal_full_name,updated_at) VALUES('local','acquisition-qa','Later synthetic profile','2026-01-01')")
-app.execute("INSERT INTO resume_templates(tenant_id,template_id,display_name,created_at,updated_at) VALUES('local','acquisition-qa','Later synthetic resume','2026-01-01','2026-01-01')")
-app.commit()
-history=sqlite3.connect(sys.argv[2]); history.execute("PRAGMA journal_mode=WAL"); history.execute("PRAGMA wal_autocheckpoint=0")
-history.execute("CREATE TABLE jobctrl_acquisition_qa (value TEXT NOT NULL)"); history.execute("INSERT INTO jobctrl_acquisition_qa VALUES ('Later synthetic history')"); history.commit()
-os._exit(0)`;
-      await run(context.python, ["-I", "-B", "-c", seed, path.join(state, "jobctrl.db"), path.join(state, "temporal.db")], env);
-      assert.ok((await stat(path.join(state, "jobctrl.db-wal"))).size > 0);
-      assert.ok((await stat(path.join(state, "temporal.db-wal"))).size > 0);
-      await run(selector, ["update"], env);
-      const after = await readJson(path.join(runtime, "transition.json"));
-      assert.equal(after.state, "promoted");
-      assert.ok(after.recoveryBackupId && after.recoveryBackupId !== before.backupId);
-      const verify = `import json,sqlite3,sys
-app=sqlite3.connect(sys.argv[1]); history=sqlite3.connect(sys.argv[2])
-print(json.dumps([app.execute("SELECT personal_full_name FROM candidate_profiles WHERE profile_id='acquisition-qa'").fetchone()[0],app.execute("SELECT display_name FROM resume_templates WHERE template_id='acquisition-qa'").fetchone()[0],history.execute("SELECT value FROM jobctrl_acquisition_qa").fetchone()[0]]))`;
-      const values = ["Later synthetic profile", "Later synthetic resume", "Later synthetic history"];
-      const checkPair = async (app, history) => assert.deepEqual(JSON.parse((await run(context.python, ["-I", "-B", "-c", verify, app, history], env)).output), values);
-      await checkPair(path.join(state, "jobctrl.db"), path.join(state, "temporal.db"));
-      await checkPair(path.join(state, "backups", after.recoveryBackupId, "jobctrl.db"), path.join(state, "backups", after.recoveryBackupId, "temporal.db"));
-      title = "Acknowledged after failed readiness";
-      checks.push("real-readiness-failure", "public-forward-recovery", "later-application-and-temporal-wal-preserved");
+      const matrix = await runForwardInterruptionMatrix({
+        old, candidate, root, runtime, state, env, selector, acquisition: "curl", readinessFailure: true,
+        jobUrl: "https://jobs.example/acquisition-qa",
+        payload: path.join(runtime, "releases", candidate.descriptor.buildId, "payload"),
+        initial: { executable: "/bin/bash", args: upgrade },
+      });
+      title = matrix.title;
+      checks.push(...matrix.checks);
     } else {
       await run("/bin/bash", upgrade, env);
     }
+    context.useCandidate(candidate);
     const expectedSchema = forward ? 15 : context.schema;
     await verifyWorkspace(context, candidate, runtime, state, env, expectedSchema, title);
     await run(selector, ["stop"], env);
@@ -208,13 +184,28 @@ async function brewScenario(old, candidate, root, baseEnv) {
     console.log(`${old.descriptor.appVersion}: upgrading through unmodified Homebrew`);
     await copyFile(path.join(candidate.directory, "jobctrl.rb"), formulaPath);
     await run(brew, ["upgrade", "--formula", formula], env);
-    await run(frontend, ["start", "--no-open"], env);
-    const expectedSchema = selectUpgradeMode(old.manifest, candidate.manifest, context.schema) === "forward-schema-15" ? 15 : context.schema;
-    await verifyWorkspace(context, candidate, runtime, state, env, expectedSchema);
+    const forward = selectUpgradeMode(old.manifest, candidate.manifest, context.schema) === "forward-schema-15";
+    const checks = ["real-formula-upgrade", "real-services", "paired-backup", "job-and-resume-preserved", "temporal-history-preserved", "stop-and-restart"];
+    let title = "Preserved acquisition QA job";
+    if (forward) {
+      const matrix = await runForwardInterruptionMatrix({
+        old, candidate, root, runtime, state, env, selector: context.selector, acquisition: "homebrew", readinessFailure: true,
+        jobUrl: "https://jobs.example/acquisition-qa",
+        payload: path.join(runtime, "releases", candidate.descriptor.buildId, "payload"),
+        initial: { executable: frontend, args: ["start", "--no-open"] },
+      });
+      title = matrix.title;
+      checks.push(...matrix.checks);
+    } else {
+      await run(frontend, ["start", "--no-open"], env);
+    }
+    context.useCandidate(candidate);
+    const expectedSchema = forward ? 15 : context.schema;
+    await verifyWorkspace(context, candidate, runtime, state, env, expectedSchema, title);
     await run(context.selector, ["stop"], env);
     await run(frontend, ["start", "--no-open"], env);
-    await verifyWorkspace(context, candidate, runtime, state, env, expectedSchema);
-    return { acquisition: "unmodified-homebrew", sourceSchema: context.schema, targetSchema: expectedSchema, checks: ["real-formula-upgrade", "real-services", "paired-backup", "job-and-resume-preserved", "temporal-history-preserved", "stop-and-restart"] };
+    await verifyWorkspace(context, candidate, runtime, state, env, expectedSchema, title);
+    return { acquisition: "unmodified-homebrew", sourceSchema: context.schema, targetSchema: expectedSchema, checks };
   } finally {
     await run(path.join(runtime, "bin", "jobctrl"), ["stop"], env, { allowFailure: true }).catch(() => {});
     if (installed) await run(brew, ["uninstall", "--formula", formula], env, { allowFailure: true });
@@ -229,6 +220,11 @@ export async function runPublishedAcquisitionUpgrades({ releaseDirectory, output
   const publicKey = createPublicKey({ key: Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), raw]), format: "der", type: "spki" });
   const trust = new Map([[keyId, publicKey]]);
   const candidate = await releaseIdentity(releaseDirectory, trust);
+  candidate.installer = path.join(releaseDirectory, "jobctrl-installer");
+  candidate.archive = path.join(releaseDirectory, `jobctrl-${candidate.descriptor.appVersion}-darwin-arm64.zip`);
+  assert.equal(await hash(candidate.installer), candidate.manifest.files.find((file) => file.path === "launcher/jobctrl-installer").sha256);
+  assert.equal(await hash(candidate.archive), candidate.descriptor.artifact.sha256);
+  await chmod(candidate.installer, 0o700);
   const response = await fetch("https://api.github.com/repos/ebarti/JobCtrl/releases?per_page=100", { signal: AbortSignal.timeout(30_000) });
   assert.ok(response.ok, `cannot resolve the latest stable release: HTTP ${response.status}`);
   const version = selectLatestReleasedVersion(await response.json(), candidate.descriptor.appVersion);

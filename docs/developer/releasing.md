@@ -214,10 +214,12 @@ Before channel promotion, the public-asset smoke also upgrades disposable
 workspaces from the latest stable release using the actual curl bootstrap and
 unmodified Homebrew with the signer-rendered formula. It verifies service
 readiness, a retained job and external resume, paired backup hashes, Temporal
-workflow history, and stop/restart. The curl path also verifies real readiness
-failure and forward recovery with later application and Temporal WAL commits for
-the schema-15 transition. Its retained report is additional evidence; it does
-not replace the full schema-15 interruption and policy matrix below.
+workflow history, and stop/restart. For the schema-15 transition, each path
+also exercises the nine durable interruption boundaries, real readiness failure,
+forward recovery with later application and Temporal WAL commits, modeled
+revocation policy, and cross-protocol rollback refusal. The signed binary's
+opt-in test checkpoint can only pause its own process in a marked temporary
+fixture; it never changes migration or release admission decisions.
 
 Verify the Homebrew formula with unmodified Homebrew: strict Developer ID checks
 must accept the actual released executables and reject an ad-hoc control inside

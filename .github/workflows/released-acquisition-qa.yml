@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "scripts/released-acquisition-upgrade.mjs"
+      - "scripts/released-upgrade-smoke.mjs"
       - ".github/workflows/released-acquisition-qa.yml"
   workflow_dispatch:
 
@@ -34,7 +35,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/published-candidate"
           gh release download v0.3.1 --repo ebarti/JobCtrl --dir "$RUNNER_TEMP/published-candidate" \
             --pattern release-descriptor.json --pattern release-descriptor.json.sig \
-            --pattern manifest.json --pattern release-keys.json --pattern install.sh --pattern SHA256SUMS
+            --pattern manifest.json --pattern release-keys.json --pattern install.sh --pattern SHA256SUMS \
+            --pattern jobctrl-installer --pattern jobctrl-0.3.1-darwin-arm64.zip
           curl --fail --silent --show-error --location --proto '=https' \
             https://raw.githubusercontent.com/ebarti/homebrew-tap/ea5190ea7179925e07cbe68649659d44aee3d6ba/Formula/jobctrl.rb \
             --output "$RUNNER_TEMP/published-candidate/jobctrl.rb"

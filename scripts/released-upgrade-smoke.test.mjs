@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { cp, mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { selectLatestReleasedVersion, selectUpgradeMode } from "./released-upgrade-smoke.mjs";
+import { interruptReleaseAtCheckpoint, runForwardInterruptionMatrix, selectLatestReleasedVersion, selectUpgradeMode } from "./released-upgrade-smoke.mjs";
 
 const published = (version, day, extra = {}) => ({ tag_name: `v${version}`, published_at: `2026-10-${day}T10:00:00Z`, draft: false, prerelease: false, ...extra });
 
@@ -42,4 +42,21 @@ test("verification modules load without installing application development depen
   context.after(() => rm(directory, { recursive: true, force: true }));
   await cp(new URL(".", import.meta.url), path.join(directory, "scripts"), { recursive: true });
   execFileSync(process.execPath, ["--input-type=module", "-e", `await import(${JSON.stringify(pathToFileURL(path.join(directory, "scripts/released-upgrade-smoke.mjs")).href)});`], { cwd: directory, env: { PATH: process.env.PATH } });
+});
+
+test("release checkpoint interrupts its owned process group and rejects an absent marker", { skip: process.platform === "win32" }, async () => {
+  const script = `process.stderr.write("jobctrl-release-qa-checkpoint:pair_"); setTimeout(() => { process.stderr.write("backed_up\\n"); setInterval(() => {}, 1000); }, 10)`;
+  const result = await interruptReleaseAtCheckpoint(process.execPath, ["-e", script], process.env, "pair_backed_up");
+  assert.equal(result.signal, "SIGKILL");
+  await assert.rejects(interruptReleaseAtCheckpoint(process.execPath, ["-e", "process.exit(0)"], process.env, "metadata_verified"), /exited before metadata_verified/);
+});
+
+test("forward release matrix refuses a workspace outside its fixture before writing", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-matrix-safety-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const fixture = path.join(root, "fixture"), runtime = path.join(fixture, "runtime"), state = path.join(fixture, "state"), other = path.join(root, "other");
+  await Promise.all([mkdir(runtime, { recursive: true }), mkdir(state, { recursive: true }), mkdir(other)]);
+  const candidate = { descriptor: { buildId: "synthetic" } };
+  await assert.rejects(runForwardInterruptionMatrix({ candidate, root: fixture, runtime, state, env: { JOBCTRL_RUNTIME_HOME: runtime, JOBCTRL_DIR: other }, selector: path.join(runtime, "bin/jobctrl"), payload: path.join(runtime, "releases/synthetic/payload") }), /fixture workspace/);
+  await assert.rejects(stat(path.join(fixture, ".jobctrl-release-qa")), { code: "ENOENT" });
 });

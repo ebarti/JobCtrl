@@ -581,7 +581,7 @@ jobs:
     name: Verify upgrade from the latest stable release
     needs: [resolve, sign, package-signed-candidate]
     runs-on: macos-15
-    timeout-minutes: 20
+    timeout-minutes: 40
     permissions:
       actions: read
       contents: read
@@ -840,6 +840,7 @@ jobs:
     name: Smoke public assets and verify the native and Homebrew lifecycles
     needs: [resolve, sign, package-signed-candidate, publish-immutable]
     runs-on: macos-15
+    timeout-minutes: 90
     permissions:
       actions: read
       contents: read
