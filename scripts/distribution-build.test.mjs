@@ -14,6 +14,7 @@ import {
   assertNodeAttributionClosure,
   assertHeadlessChromiumPayload,
   buildFixturePayload,
+  collectMcpNodeContributors,
   collectNodeLicenseInventory,
   collectPayloadNpmContributors,
   compareMacOsVersions,
@@ -530,6 +531,44 @@ test("physical npm payload traversal rejects pnpm virtual-store content", async 
     collectPayloadNpmContributors(root, nodeModules),
     /pnpm virtual-store content is forbidden in the payload/,
   );
+});
+
+test("Playwright MCP attribution follows its exact core dependency and rejects closure drift", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-mcp-closure-"));
+  context.after(async () => rm(root, { recursive: true, force: true }));
+  const modules = path.join(root, "playwright-mcp", "node_modules");
+  const mcp = path.join(modules, "@playwright", "mcp");
+  const core = path.join(modules, "playwright-core");
+  await mkdir(mcp, { recursive: true });
+  await mkdir(core, { recursive: true });
+  const contracts = {
+    componentPaths: new Map([["playwright-mcp", "playwright-mcp"]]),
+    versions: { "playwright-mcp": "0.0.83" },
+  };
+  const writeMcp = (dependency) => writeFile(path.join(mcp, "package.json"), JSON.stringify({
+    name: "@playwright/mcp", version: "0.0.83", license: "Apache-2.0",
+    dependencies: { "playwright-core": dependency },
+  }));
+  const writeCore = (version) => writeFile(path.join(core, "package.json"), JSON.stringify({
+    name: "playwright-core", version, license: "Apache-2.0",
+  }));
+
+  await writeMcp("1.64.0-alpha-1790635538000");
+  await writeCore("1.64.0-alpha-1790635538000");
+  assert.deepEqual((await collectMcpNodeContributors(root, contracts)).map((entry) => entry.key), [
+    "@playwright/mcp@0.0.83", "playwright-core@1.64.0-alpha-1790635538000",
+  ]);
+  await writeCore("1.65.0");
+  await assert.rejects(collectMcpNodeContributors(root, contracts), /payload npm package closure drifted/);
+  await writeMcp("1.65.0");
+  assert.equal((await collectMcpNodeContributors(root, contracts)).length, 2);
+  await writeMcp("^1.65.0");
+  await assert.rejects(collectMcpNodeContributors(root, contracts), /exact.*playwright-core/i);
+  await writeMcp("1.65.0");
+  const unexpected = path.join(modules, "unexpected");
+  await mkdir(unexpected);
+  await writeFile(path.join(unexpected, "package.json"), JSON.stringify({ name: "unexpected", version: "1.0.0", license: "MIT" }));
+  await assert.rejects(collectMcpNodeContributors(root, contracts), /payload npm package closure drifted/);
 });
 
 test("child termination retains one exit promise across timeout and stale exitCode observation", async () => {
