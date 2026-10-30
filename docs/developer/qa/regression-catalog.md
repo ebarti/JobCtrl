@@ -866,6 +866,9 @@ Overlap direct and Temporal material calls in both orders, including failures;
 the displaced direct call returns its stale/skipped result and cannot settle
 or publish over the successor. Also delay direct calls before their stage claim
 and request already-approved artifacts while a workflow-owned stage is running.
+Also reuse approved material through the direct entry points while another
+direct start token is running; preserve its complete stage/event rows, accepted
+bytes and ability to pass the real publication guard.
 Replay an older workflow's Tailor and Cover activity against approved materials
 while a different workflow, another activity of the same run, or a direct
 attempt owns the running replacement. Preserve the complete stage row, start

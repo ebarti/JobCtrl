@@ -119,6 +119,7 @@ def material_activity_may_recover(
         (tenant_id, job_id, stage),
     ).fetchone()
     running = row is not None and row["state"] == "running"
+    owner = None
     if running:
         try:
             metadata = json.loads(row["metadata_json"] or "{}")
@@ -129,14 +130,16 @@ def material_activity_may_recover(
         owner = metadata.get("activityOwner")
         if owner and owner != workflow_id:
             return False
-    if attempt is None:
-        return True
     latest = conn.execute(
         "SELECT payload_json FROM job_events WHERE tenant_id = ? AND job_id = ? "
         "AND stage = ? AND event_type = 'StageStarted' ORDER BY event_id DESC LIMIT 1",
         (tenant_id, job_id, stage),
     ).fetchone()
     payload = _metadata(latest["payload_json"]) if latest is not None else {}
+    if attempt is None:
+        # An unrelated direct read observes the active start token; it does
+        # not acquire that token's authority to settle the running stage.
+        return not (running and not owner and payload.get("materialAttemptId"))
     event_run = payload.get("temporalRunId")
     event_activity = payload.get("temporalActivityId")
     if running and payload.get("materialAttemptId") and not (event_run and event_activity):

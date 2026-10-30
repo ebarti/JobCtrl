@@ -215,7 +215,23 @@ async def test_mixed_cover_attempts_preserve_successor(
 def test_direct_already_done_preserves_an_active_workflow_stage(
     batch_runtime, monkeypatch, tmp_path, stage,  # noqa: F811
 ):
+    _assert_direct_reuse_preserves_active_stage(
+        batch_runtime, monkeypatch, tmp_path, stage, workflow_id="active-workflow",
+    )
+
+
+@pytest.mark.parametrize("stage", ["tailor", "cover"])
+def test_direct_already_done_preserves_an_active_direct_stage(
+    batch_runtime, monkeypatch, tmp_path, stage,  # noqa: F811
+):
+    _assert_direct_reuse_preserves_active_stage(
+        batch_runtime, monkeypatch, tmp_path, stage, workflow_id=None,
+    )
+
+
+def _assert_direct_reuse_preserves_active_stage(batch_runtime, monkeypatch, tmp_path, stage, *, workflow_id):
     from jobctrl import database
+    from jobctrl.infrastructure.preparation_recovery import assert_material_activity_commit_allowed
     from jobctrl.scoring import cover_letter
     from .test_v7_cover_runtime import (
         _JOB_ID, _TENANT_A, _seed_approved_resume, _seed_eligible_score,
@@ -237,12 +253,27 @@ def test_direct_already_done_preserves_an_active_workflow_stage(
         )
     conn.execute(
         "UPDATE job_stage_states SET state='running',metadata_json=? WHERE tenant_id=? AND job_id=? AND stage=?",
-        (json.dumps({"activityOwner": "active-workflow"}), str(_TENANT_A), str(_JOB_ID), stage),
+        (json.dumps({"activityOwner": workflow_id} if workflow_id else {}), str(_TENANT_A), str(_JOB_ID), stage),
     )
     record_job_event(conn, _JOB_ID, stage, "StageStarted", tenant_id=_TENANT_A, payload={"materialAttemptId": "active"})
     conn.commit()
-    stage_before = tuple(conn.execute("SELECT state,attempt_count,metadata_json FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage=?", (str(_TENANT_A), str(_JOB_ID), stage)).fetchone())
-    events_before = conn.execute("SELECT COUNT(*) FROM job_events WHERE tenant_id=? AND job_id=? AND stage=? AND event_type='StageCompleted'", (str(_TENANT_A), str(_JOB_ID), stage)).fetchone()[0]
+    scope = (str(_TENANT_A), str(_JOB_ID), stage)
+    stage_sql = "SELECT * FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage=?"
+    event_sql = "SELECT * FROM job_events WHERE tenant_id=? AND job_id=? AND stage=? ORDER BY event_id"
+    stage_before = tuple(conn.execute(stage_sql, scope).fetchone())
+    events_before = [tuple(row) for row in conn.execute(event_sql, scope)]
+    materials_sql = "SELECT * FROM job_materials_artifacts WHERE tenant_id=? AND job_id=? ORDER BY generation,artifact_type"
+    materials_before = [tuple(row) for row in conn.execute(materials_sql, scope[:2])]
+    paths = [Path(row[0]) for row in conn.execute(
+        "SELECT path FROM job_materials_artifacts WHERE tenant_id=? AND job_id=?", scope[:2],
+    )]
+    for path in paths:
+        if not path.exists():
+            path.write_bytes(b"Synthetic accepted PDF bytes")
+    bytes_before = {path: path.read_bytes() for path in paths}
+    guard = dict(tenant_id=str(_TENANT_A), job_id=str(_JOB_ID), stage=stage,
+                 workflow_id=workflow_id, attempt_id="active")
+    assert_material_activity_commit_allowed(conn, **guard)
     config_path = tmp_path / "cover-config.json"
     config_path.write_text('{"cover_letter_generation":true}')
     monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(config_path))
@@ -253,8 +284,11 @@ def test_direct_already_done_preserves_an_active_workflow_stage(
     else:
         result = cover_letter.cover_letter_by_id(_JOB_ID, snapshot=_snapshot(_TENANT_A), tenant_id=_TENANT_A)
     assert result["status"] == "already_done"
-    assert tuple(conn.execute("SELECT state,attempt_count,metadata_json FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage=?", (str(_TENANT_A), str(_JOB_ID), stage)).fetchone()) == stage_before
-    assert conn.execute("SELECT COUNT(*) FROM job_events WHERE tenant_id=? AND job_id=? AND stage=? AND event_type='StageCompleted'", (str(_TENANT_A), str(_JOB_ID), stage)).fetchone()[0] == events_before
+    assert tuple(conn.execute(stage_sql, scope).fetchone()) == stage_before
+    assert [tuple(row) for row in conn.execute(event_sql, scope)] == events_before
+    assert [tuple(row) for row in conn.execute(materials_sql, scope[:2])] == materials_before
+    assert {path: path.read_bytes() for path in paths} == bytes_before
+    assert_material_activity_commit_allowed(conn, **guard)
 
 
 def test_direct_tailor_keeps_legacy_caller_transaction_compatibility(batch_runtime, monkeypatch, tmp_path):  # noqa: F811
