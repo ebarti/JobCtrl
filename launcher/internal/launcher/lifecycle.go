@@ -2216,6 +2216,11 @@ func collectRetentionWorkspaceReferences(authority *retentionReferenceAuthority,
 		var state instanceState
 		if err := authority.readJSON(instanceRoot, entry.Name(), "state.json", &state); err != nil {
 			if errors.Is(err, os.ErrNotExist) && entry.Name() == currentID {
+				// An independent Apply can have an execution receipt before the
+				// workspace has ever published a supervisor registry.
+				if err := verifyRetentionInstalledApplyAuthority(authority, instanceRoot, entry.Name(), runtimeHome, current); err != nil {
+					return fmt.Errorf("instance %s Apply authority cannot be verified: %w", entry.Name(), err)
+				}
 				continue // The resolved current workspace is already authoritative.
 			}
 			return fmt.Errorf("read instance authority %s for release retention: %w", entry.Name(), err)
@@ -2235,11 +2240,16 @@ func collectRetentionWorkspaceReferences(authority *retentionReferenceAuthority,
 			if err := verifyRetentionSourceAuthority(authority, instanceRoot, entry.Name(), runtimeHome, state); err != nil {
 				return fmt.Errorf("source instance %s authority cannot be verified: %w", entry.Name(), err)
 			}
-		} else if stateHasLiveProcesses(state) {
-			if err := validateRetentionLiveRelease(root, runtimeHome, state); err != nil {
-				return fmt.Errorf("live instance %s release authority cannot be verified: %w", entry.Name(), err)
+		} else {
+			if err := verifyRetentionInstalledApplyAuthority(authority, instanceRoot, entry.Name(), runtimeHome, state.CanonicalStateDir); err != nil {
+				return fmt.Errorf("instance %s Apply authority cannot be verified: %w", entry.Name(), err)
 			}
-			keep[state.BuildID] = true
+			if stateHasLiveProcesses(state) {
+				if err := validateRetentionLiveRelease(root, runtimeHome, state); err != nil {
+					return fmt.Errorf("live instance %s release authority cannot be verified: %w", entry.Name(), err)
+				}
+				keep[state.BuildID] = true
+			}
 		}
 		if state.CanonicalStateDir != current {
 			if err := collectBackupReleaseReferences(authority, state.CanonicalStateDir, keep); err != nil {

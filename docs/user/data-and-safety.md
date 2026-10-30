@@ -198,7 +198,9 @@ When a release promotion performs automatic release cleanup, JobCtrl keeps
 releases referenced by paired backups in the current workspace `backups/` and
 other workspaces recorded by the runtime, including a custom `JOBCTRL_DIR`.
 A source workspace is included when its checkout and runtime ownership can be
-verified; otherwise cleanup stops and preserves releases.
+verified; otherwise cleanup stops and preserves releases. Cleanup also preserves
+releases if an independent Apply run lacks verified completion, even after its
+launcher exits. It does not stop the run or prevent an ordinary restart.
 Paired backup metadata in differently named folders is still considered;
 unrelated folders without `pair.json` are left alone. If workspace ownership,
 pair metadata, or the release store's directory identity
