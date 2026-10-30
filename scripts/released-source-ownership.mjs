@@ -66,9 +66,9 @@ elif sys.argv[1]=='api':
 `;
 
 const fixtureDev = `#!/bin/bash
-"$TEST_PYTHON" "$TEST_SOURCE_ROOT/fleet.py" worker & worker=$!
-"$TEST_PYTHON" "$TEST_SOURCE_ROOT/fleet.py" api & api=$!
-"$TEST_PYTHON" "$TEST_SOURCE_ROOT/fleet.py" history & temporal=$!
+"$TEST_PYTHON" -B "$TEST_SOURCE_ROOT/fleet.py" worker & worker=$!
+"$TEST_PYTHON" -B "$TEST_SOURCE_ROOT/fleet.py" api & api=$!
+"$TEST_PYTHON" -B "$TEST_SOURCE_ROOT/fleet.py" history & temporal=$!
 printf 'source-ready\\n' >&3
 exec 3>&-
 trap 'kill "$worker" "$api" "$temporal" 2>/dev/null || :; wait; exit 0' TERM INT
@@ -92,7 +92,7 @@ export async function establishSourceOwnership({ sourceBinary, root, runtime, st
   await mkdir(path.join(sourceRoot, "workers", "automation", ".venv", "bin"), { recursive: true, mode: 0o700 });
   await writeFile(path.join(sourceRoot, "fleet.py"), fixturePython, { mode: 0o600 });
   await writeFile(path.join(sourceRoot, "scripts", "dev"), fixtureDev, { mode: 0o700 });
-  await writeFile(path.join(sourceRoot, "workers", "automation", ".venv", "bin", "python"), '#!/bin/sh\nexec "$TEST_PYTHON" "$@"\n', { mode: 0o700 });
+  await writeFile(path.join(sourceRoot, "workers", "automation", ".venv", "bin", "python"), '#!/bin/sh\nexec "$TEST_PYTHON" -B "$@"\n', { mode: 0o700 });
   const sourceEnv = { ...env, JOBCTRL_API_HOST: "127.0.0.1", JOBCTRL_API_PORT: String(await freePort()),
     TEST_SOURCE_ROOT: sourceRoot, TEST_PYTHON: python, TEST_HISTORY_PATH: historyReal };
   const id = createHash("sha256").update(stateReal).digest("hex");
