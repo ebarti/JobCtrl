@@ -56,6 +56,10 @@ employer or job and may opt into a permitted public source. No public page is
 fetched by default, and login-walled or protected sources stay manual. Source
 outcomes and candidate provenance remain visible even when nothing can be
 fetched. A proposal becomes a contact only after you explicitly confirm it.
+If a page is too large, takes too long, cannot be reached, or has a broken
+redirect, the source attempt explains the failure and suggests a next step.
+Those failures do not mean that the page contains no contacts. Previously
+recorded proposals remain available.
 
 For a confirmed contact, you can generate or revise an outreach draft, inspect
 its claim verification, quality verdict and recorded source bindings, then approve

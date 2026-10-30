@@ -354,6 +354,9 @@ authorization at its authoritative claim boundary.
 
 Research candidates remain proposals until a user confirms them. Outreach drafts
 remain drafts until their review gate is satisfied.
+Research detail includes distinct source outcomes for a response that is too
+large, a timeout, a failed redirect, a transport failure, or an HTTP error.
+These do not claim that a successfully read page contains no candidates.
 
 <a id="contact-research"></a>
 <a id="outreach-drafts"></a>

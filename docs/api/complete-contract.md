@@ -1681,6 +1681,9 @@ require an explicit confirm command before becoming stored contact facts (INV-4)
   summary plus `sourceAttempts[]` (the per-source outcome audit) and
   `candidates[]`, each with its proposed `attributes[]` (value + provenance).
   An unknown id returns `{ ok: false, error: "research_task_not_found" }`.
+  Acquisition failures use the distinct outcomes `response_too_large`,
+  `acquisition_timeout`, `redirect_failed`, `transport_failed`, and
+  `http_error`, with an actionable `detail`. They are not `no_candidates`.
 - `POST /v1/contacts/research` (`RunContactResearchRequest`: optional `employer` /
   `jobId` — at least one required — plus opted-in `sources[]`) mints a `taskId`,
   pre-creates a `queued` task, dispatches `run_contact_research`, and returns

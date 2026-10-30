@@ -2,6 +2,10 @@ import type { LogOutreachSendResponse } from "@jobctrl/contracts";
 import { expect, test } from "@playwright/test";
 import type { OutreachThreadResponse } from "@jobctrl/contracts";
 import Database from "better-sqlite3";
+import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { loadE2eDbPath, QA_PLATFORM_JOB_ID } from "../fixtures/e2e-state.js";
 
@@ -11,6 +15,28 @@ const DUE_THREAD_ID = "thread-e2e-due";
 const FUTURE_THREAD_ID = "thread-e2e-future";
 const TASK_ID = "task-e2e-outreach";
 const CANDIDATE_ID = "candidate-e2e-outreach";
+const ACQUISITION_TASK_ID = "contact-research-e2e-oversize";
+const ACQUISITION_SOURCE_URL = "https://contact-research-e2e.example/team";
+const repoRoot = path.resolve(fileURLToPath(new URL("../../../..", import.meta.url)));
+type DbIdentity = { dev: bigint; ino: bigint };
+type OwnedResearchDb = { db: Database.Database; identity: DbIdentity; verify(): void; close(): void };
+type AcquisitionCleanup = { seedCommitted(identity: DbIdentity): void; taskCommitted(): void; cleanup(): void };
+const { createAcquisitionCleanup, openOwnedResearchDb } = createRequire(import.meta.url)("../fixtures/owned-research-db.cjs") as {
+  createAcquisitionCleanup(open: (expected: DbIdentity) => OwnedResearchDb, taskId: string, jobId: string): AcquisitionCleanup;
+  openOwnedResearchDb(
+    dbPath: string,
+    open: (filename: string) => Database.Database,
+    env: NodeJS.ProcessEnv,
+    expected?: DbIdentity | null,
+  ): OwnedResearchDb;
+};
+let acquisitionCleanup: AcquisitionCleanup | null = null;
+let acquisitionCase = false;
+let acquisitionIdentity: DbIdentity | null = null;
+
+function openOwnedAcquisitionDb(dbPath: string, expected: DbIdentity | null = null) {
+  return openOwnedResearchDb(dbPath, (filename) => new Database(filename, { fileMustExist: true }), process.env, expected);
+}
 
 const NOW = "2026-07-06T09:00:00.000Z";
 const PAST_DUE_AT = "2020-01-02T10:00:00.000Z";
@@ -31,6 +57,16 @@ const SENSITIVE_VALUES = [
 ];
 
 test.afterEach(() => {
+  if (acquisitionCase) {
+    try {
+      acquisitionCleanup?.cleanup();
+    } finally {
+      acquisitionCase = false;
+      acquisitionIdentity = null;
+      acquisitionCleanup = null;
+    }
+    return;
+  }
   const db = new Database(loadE2eDbPath());
   try {
     db.transaction(() => {
@@ -96,8 +132,8 @@ function resetOutreachSeed(db: Database.Database): void {
   ).run("outcome-e2e-outreach");
 }
 
-function seedOutreachPlanner(dbPath: string): void {
-  const db = new Database(dbPath);
+function seedOutreachPlanner(dbPath: string, existing?: Database.Database): void {
+  const db = existing ?? new Database(dbPath);
   try {
     resetOutreachSeed(db);
 
@@ -350,7 +386,7 @@ function seedOutreachPlanner(dbPath: string): void {
       }
     }
   } finally {
-    db.close();
+    if (!existing) db.close();
   }
 }
 
@@ -394,6 +430,139 @@ function assertSensitiveValuesStayOutOfEventsAndProjections(
     db.close();
   }
 }
+
+test("contact research shows an activity's oversized-page failure through the API", async ({ page }, testInfo) => {
+  acquisitionCase = true;
+  acquisitionCleanup = createAcquisitionCleanup(
+    (identity) => openOwnedAcquisitionDb(loadE2eDbPath(), identity), ACQUISITION_TASK_ID, QA_PLATFORM_JOB_ID,
+  );
+  const dbPath = loadE2eDbPath();
+  let priorCandidate: unknown;
+  const initial = openOwnedAcquisitionDb(dbPath);
+  acquisitionIdentity = initial.identity;
+  try {
+    initial.db.transaction(() => {
+      initial.verify();
+      expect(initial.db.prepare("SELECT 1 FROM contact_research_tasks WHERE tenant_id = 'local' AND task_id = ?")
+        .get(ACQUISITION_TASK_ID)).toBeUndefined();
+      expect(initial.db.prepare("SELECT 1 FROM contact_research_task_projections WHERE tenant_id = 'local' AND task_id = ?")
+        .get(ACQUISITION_TASK_ID)).toBeUndefined();
+      expect(initial.db.prepare("SELECT 1 FROM job_events WHERE tenant_id = 'local' AND entity_kind = 'contact_research' AND entity_ref = ?")
+        .get(ACQUISITION_TASK_ID)).toBeUndefined();
+      seedOutreachPlanner(dbPath, initial.db);
+      priorCandidate = initial.db.prepare("SELECT * FROM contact_candidates WHERE tenant_id = 'local' AND candidate_id = ?")
+        .get(CANDIDATE_ID);
+      expect(priorCandidate).toBeDefined();
+      initial.verify();
+    })();
+    acquisitionCleanup.seedCommitted(initial.identity);
+  } finally {
+    initial.close();
+  }
+
+  const worker = spawnSync(
+    path.join(repoRoot, "workers/automation/.venv/bin/python"),
+    [path.join(repoRoot, "apps/web/e2e/fixtures/contact-research-acquisition.py"), dbPath],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+      timeout: 30_000,
+      env: {
+        PATH: process.env["PATH"]!,
+        HOME: process.env["JOBCTRL_E2E_SERVICE_HOME"]!,
+        TMPDIR: process.env["TMPDIR"]!,
+        JOBCTRL_DIR: process.env["JOBCTRL_E2E_APP_DIR"]!,
+        JOBCTRL_E2E_APP_DIR: process.env["JOBCTRL_E2E_APP_DIR"]!,
+        JOBCTRL_E2E_DB_PATH: dbPath,
+        JOBCTRL_E2E_WORKSPACE: process.env["JOBCTRL_E2E_WORKSPACE"]!,
+        JOBCTRL_RUNTIME_MODE: "source",
+        LANGFUSE_DISABLE: "1",
+        PYTHONDONTWRITEBYTECODE: "1",
+        PYTHONPATH: path.join(repoRoot, "workers/automation/src"),
+      },
+    },
+  );
+  expect(worker.status, worker.stderr).toBe(0);
+  const workerResult = JSON.parse(worker.stdout) as {
+    persistedTask: {
+      tenant_id: string; task_id: string; employer: string; job_id: string; status: string;
+      source_attempts_json: string; started_at: string; updated_at: string; needs_review_at: string;
+      completed_at: string | null; failed_at: string | null; error_class: string | null;
+    };
+  };
+  expect(workerResult).toMatchObject({
+    output: { taskId: ACQUISITION_TASK_ID, status: "needs_review", candidateCount: 0, attemptCount: 1 },
+    responseClosed: true, responseRead: false, requests: 1, modelCalls: 0,
+  });
+  const produced = workerResult.persistedTask;
+  expect(produced).toMatchObject({
+    tenant_id: "local", task_id: ACQUISITION_TASK_ID, job_id: QA_PLATFORM_JOB_ID, status: "needs_review",
+  });
+  expect(JSON.parse(produced.source_attempts_json)).toMatchObject([{
+    sourceRef: ACQUISITION_SOURCE_URL, outcome: "response_too_large",
+    detail: "The page is too large; choose a smaller public page.",
+  }]);
+  const saved = openOwnedAcquisitionDb(dbPath, acquisitionIdentity);
+  try {
+    saved.db.transaction(() => {
+      saved.verify();
+      // Copy the exact canonical row emitted by the in-memory activity into the
+      // existing owned API fixture; the worker never opens the workspace DB.
+      saved.db.prepare(`INSERT INTO contact_research_tasks (
+        tenant_id, task_id, employer, job_id, status, source_attempts_json,
+        started_at, updated_at, needs_review_at, completed_at, failed_at, error_class
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        produced.tenant_id, produced.task_id, produced.employer, produced.job_id, produced.status,
+        produced.source_attempts_json, produced.started_at, produced.updated_at, produced.needs_review_at,
+        produced.completed_at, produced.failed_at, produced.error_class,
+      );
+      saved.verify();
+    })();
+    acquisitionCleanup.taskCommitted();
+    const task = saved.db.prepare("SELECT status, source_attempts_json FROM contact_research_tasks WHERE tenant_id = 'local' AND task_id = ?")
+      .get(ACQUISITION_TASK_ID) as { status: string; source_attempts_json: string };
+    expect(task.status).toBe("needs_review");
+    expect(JSON.parse(task.source_attempts_json)).toMatchObject([{
+      sourceRef: ACQUISITION_SOURCE_URL, outcome: "response_too_large",
+      detail: "The page is too large; choose a smaller public page.",
+    }]);
+    expect(saved.db.prepare("SELECT * FROM contact_candidates WHERE tenant_id = 'local' AND candidate_id = ?")
+      .get(CANDIDATE_ID)).toEqual(priorCandidate);
+    saved.verify();
+  } finally {
+    saved.close();
+  }
+
+  await page.goto("/jobs");
+  await expect(page).toHaveTitle(/JobCtrl/);
+  await expect(page.locator("vite-error-overlay")).toHaveCount(0);
+  const row = page.locator("table.jobs-data-grid-table tbody tr").filter({ hasText: "Director of Platform Engineering" });
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  const apiRead = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === `/v1/contacts/research/${ACQUISITION_TASK_ID}` &&
+    response.request().method() === "GET" && response.status() === 200,
+  );
+  await row.getByRole("rowheader").click();
+  const jobDrawer = page.getByRole("article", { name: "Job details" });
+  await expect(jobDrawer).toBeVisible();
+  await jobDrawer.getByRole("button", { name: /· Contacts/ }).click();
+  expect(await (await apiRead).json()).toMatchObject({
+    ok: true,
+    task: {
+      taskId: ACQUISITION_TASK_ID, candidateCount: 0,
+      sourceAttempts: [{ sourceRef: ACQUISITION_SOURCE_URL, outcome: "response_too_large" }],
+    },
+  });
+  const research = jobDrawer.locator(".job-research-section");
+  await expect(research.getByText("Dana Lee").first()).toBeVisible();
+  const failedTask = research.locator(".research-task-row").filter({ hasText: ACQUISITION_SOURCE_URL });
+  await expect(failedTask).toHaveCount(1);
+  await failedTask.locator("summary", { hasText: "Sources attempted" }).click();
+  await expect(failedTask.getByText("Page too large", { exact: true })).toBeVisible();
+  await expect(failedTask.getByText("The page is too large; choose a smaller public page.")).toBeVisible();
+  await expect(failedTask.getByText("No contacts found", { exact: true })).toHaveCount(0);
+  await testInfo.attach("contact-research-oversize", { body: await page.screenshot(), contentType: "image/png" });
+});
 
 test("Outreach planner: seeded contacts, supervised research, draft review, send log, and follow-up reminders", async ({
   page,
