@@ -118,6 +118,17 @@ printing secrets. **Status unknown** (`inspection_failed`) is distinct from
 **not configured**: it means JobCtrl could not inspect the native store. Provider-mode
 replacement is all-or-nothing from the web contract; a failed change preserves
 the previous configuration or reports an explicit sanitized recovery failure.
+Credential updates from JobCtrl API processes for the same OS user are
+serialized. If another update or its native helper is still active, retry
+after it finishes. A timed-out update whose helper has not stopped reports an
+incomplete recovery; inspect the credential status before retrying.
+If JobCtrl cannot verify a previous helper's process identity, it reports
+`ownership_unverified` and preserves its coordination record. Restore the
+packaged Python runtime, or the prepared worker virtual environment in a source
+checkout, and retry. If inspection remains unavailable, stop all JobCtrl API
+processes, verify that the recorded helper has exited, and only then remove
+the `.jobctrl-credential-mutations.sqlite3.inflight` record in the OS user's
+home. Do not signal a process solely because its PID matches the record.
 
 Linux requires `/usr/bin/secret-tool` and an accessible Secret Service in the
 current user's D-Bus session, with its collection unlocked. Windows requires

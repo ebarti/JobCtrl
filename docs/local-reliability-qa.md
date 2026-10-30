@@ -404,6 +404,16 @@ application artifacts or databases. Confirm worker health for worker-backed
 paths. Browser launch failure and inaccessible required runtime are nonpassing.
 No application submission is implied by a QA request.
 
+For credential mutation ownership, use only injected fake native runners and
+owned temporary lock paths and workspaces. Exercise overlapping batches and
+single-key updates through the API and independent processes, including exact
+rollback, incomplete recovery, bounded contention, timed-out helpers, and an
+owner killed both before helper registration and while its helper is alive.
+Exercise PID reuse, exact live birth identity, verified exit and denied process
+inspection; never signal an unrelated process. Verify responses and lock
+records contain no submitted values. Never probe a
+real native credential store for this regression.
+
 ## Saved Posting Availability Product QA
 
 This is risk 3 work: evidence freshness, durable claims and reviewed submission

@@ -40,6 +40,7 @@ import {
   CredentialStoreUnavailableError,
   CredentialValueUnsupportedError,
   KeychainCredentialStore,
+  type SecurityCommandRunner,
 } from "../src/credentials.js";
 import type { NativeCredentialCommandRunner } from "../src/native-credential-store.js";
 import { callRpc, SubprocessJsonRpcAdapter, type JsonRpcDispatcher } from "../src/json-rpc-adapter.js";
@@ -58,6 +59,13 @@ import {
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
 import { initializeExactDatabase } from "./exact-schema.js";
+
+const syntheticIdentity = process.platform === "linux"
+  ? "linux:00000000-0000-0000-0000-000000000000:1"
+  : process.platform === "win32" ? "windows:1:1" : "darwin:1:1";
+const syntheticCredentialProcessIdentity = async () => ({
+  state: "alive" as const, identity: syntheticIdentity,
+});
 
 let tempDir = "";
 let options: BuildAppOptions;
@@ -11991,6 +11999,135 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("keeps overlapping credential API responses consistent with the committed fake store", async () => {
+    const marker = "synthetic-api-credential-marker";
+    const state = new Map<CredentialKey, string>([
+      ["ANTHROPIC_API_KEY", `${marker}-original`],
+      ["GEMINI_API_KEY", `${marker}-untouched`],
+    ]);
+    const blocked = deferred<void>();
+    const release = deferred<void>();
+    const runSecurity = vi.fn<SecurityCommandRunner>(async (args, commandOptions) => {
+      const key = args[args.indexOf("-a") + 1] as CredentialKey;
+      if (args[0] === "find-generic-password") {
+        if (!state.has(key)) return { code: 44, stderr: "", stdout: "" };
+        return { code: 0, stderr: args.includes("-g") ? `password: ${JSON.stringify(state.get(key))}` : "", stdout: "" };
+      }
+      if (args[0] === "delete-generic-password" && key === "GEMINI_API_KEY") {
+        blocked.resolve();
+        await release.promise;
+        return { code: 1, stderr: marker, stdout: marker };
+      }
+      if (args[0] === "add-generic-password") state.set(key, commandOptions.sensitiveInput ?? "");
+      else state.delete(key);
+      return { code: 0, stderr: "", stdout: "" };
+    });
+    const credentialStore = new KeychainCredentialStore({
+      platform: "darwin", runSecurity, env: {}, configPath: options.configPath,
+      mutationLockPath: path.join(tempDir, "credential-mutations.sqlite3"), processIdentityReader: syntheticCredentialProcessIdentity,
+    });
+    const app = buildApp({ ...options, credentialStore });
+    const logError = vi.spyOn(app.log, "error");
+    try {
+      const older = app.inject({
+        method: "PATCH", url: "/v1/credentials/batch",
+        payload: { operations: [
+          { operation: "set", key: "ANTHROPIC_API_KEY", value: `${marker}-older` },
+          { operation: "delete", key: "GEMINI_API_KEY" },
+        ] },
+      });
+      await blocked.promise;
+      let newerFinished = false;
+      const newer = app.inject({
+        method: "PATCH", url: "/v1/credentials/batch",
+        payload: { operations: [{ operation: "set", key: "ANTHROPIC_API_KEY", value: `${marker}-newer` }] },
+      }).then((response) => { newerFinished = true; return response; });
+      await new Promise<void>((resolve) => setTimeout(resolve, 80));
+      expect(newerFinished).toBe(false);
+      release.resolve();
+      const [failed, saved] = await Promise.all([older, newer]);
+      expect(failed.statusCode).toBe(503);
+      expect(failed.json()).toMatchObject({ error: "credential_store_unavailable", reason: "operational_failure" });
+      expect(saved.statusCode).toBe(200);
+      expect(saved.json().credentials.find((entry: { key: string }) => entry.key === "ANTHROPIC_API_KEY")).toMatchObject({
+        configured: true, effectiveSource: "native_store",
+      });
+      expect(state.get("ANTHROPIC_API_KEY") === `${marker}-newer`).toBe(true);
+      expect(state.get("GEMINI_API_KEY") === `${marker}-untouched`).toBe(true);
+      expect(`${failed.body}${saved.body}`).not.toContain(marker);
+      expect(JSON.stringify(runSecurity.mock.calls.map(([args]) => args))).not.toContain(marker);
+      expect(logError).not.toHaveBeenCalled();
+    } finally {
+      release.resolve();
+      await app.close();
+    }
+  });
+
+  it("returns a sanitized busy response when credential ownership cannot be acquired", async () => {
+    const marker = "synthetic-api-busy-marker";
+    const blocked = deferred<void>();
+    const release = deferred<void>();
+    const state = new Set<string>();
+    const runSecurity = vi.fn<SecurityCommandRunner>(async (args) => {
+      const key = args[args.indexOf("-a") + 1] ?? "";
+      if (args[0] === "add-generic-password") {
+        blocked.resolve();
+        await release.promise;
+        state.add(key);
+        return { code: 0, stderr: "", stdout: "" };
+      }
+      return { code: state.has(key) ? 0 : 44, stderr: "", stdout: "" };
+    });
+    const credentialStore = new KeychainCredentialStore({
+      platform: "darwin", runSecurity, env: {}, configPath: options.configPath,
+      mutationLockPath: path.join(tempDir, "credential-mutations.sqlite3"), processIdentityReader: syntheticCredentialProcessIdentity, mutationLockTimeoutMs: 60,
+    });
+    const app = buildApp({ ...options, credentialStore });
+    try {
+      const first = app.inject({
+        method: "PATCH", url: "/v1/credentials",
+        payload: { key: "ANTHROPIC_API_KEY", value: `${marker}-first` },
+      });
+      await blocked.promise;
+      const busy = await app.inject({
+        method: "PATCH", url: "/v1/credentials",
+        payload: { key: "ANTHROPIC_API_KEY", value: `${marker}-second` },
+      });
+      expect(busy.statusCode).toBe(503);
+      expect(busy.json()).toMatchObject({
+        error: "credential_store_unavailable", reason: "busy",
+        message: "Another credential update is in progress. Retry after it finishes.",
+      });
+      expect(busy.body).not.toContain(marker);
+      release.resolve();
+      expect((await first).statusCode).toBe(200);
+    } finally {
+      release.resolve();
+      await app.close();
+    }
+  });
+
+  it("returns a sanitized ownership failure when process identity cannot be verified", async () => {
+    const marker = "synthetic-api-unverified-marker";
+    const runSecurity = vi.fn<SecurityCommandRunner>();
+    const credentialStore = new KeychainCredentialStore({
+      platform: "darwin", runSecurity, env: {}, configPath: options.configPath,
+      mutationLockPath: path.join(tempDir, "credential-mutations.sqlite3"),
+      processIdentityReader: async () => ({ state: "unverified" }),
+    });
+    const app = buildApp({ ...options, credentialStore });
+    try {
+      const response = await app.inject({
+        method: "PATCH", url: "/v1/credentials",
+        payload: { key: "ANTHROPIC_API_KEY", value: marker },
+      });
+      expect(response.statusCode).toBe(503);
+      expect(response.json()).toMatchObject({ error: "credential_store_unavailable", reason: "ownership_unverified" });
+      expect(response.body).not.toContain(marker);
+      expect(runSecurity).not.toHaveBeenCalled();
+    } finally { await app.close(); }
+  });
+
   it("applies an allowlisted credential batch without returning values", async () => {
     const values = new Map<CredentialKey, string>([
       ["CLAUDE_CODE_USE_VERTEX", "1"],
@@ -12905,6 +13042,7 @@ describe("local TypeScript API", () => {
       const credentialStore = new KeychainCredentialStore({
         platform: "darwin",
         runSecurity,
+        mutationLockPath: path.join(tempDir, "credential-mutations.sqlite3"), processIdentityReader: syntheticCredentialProcessIdentity,
       });
       const setCredential = vi.spyOn(credentialStore, "set");
       const app = buildApp({ ...options, credentialStore });
@@ -13000,6 +13138,7 @@ describe("local TypeScript API", () => {
         runNative,
         runSecurity,
         configPath: options.configPath,
+        mutationLockPath: path.join(tempDir, "credential-mutations.sqlite3"), processIdentityReader: syntheticCredentialProcessIdentity,
       });
       const app = buildApp({ ...options, credentialStore });
 
@@ -13071,6 +13210,7 @@ describe("local TypeScript API", () => {
       platform: "darwin",
       runSecurity,
       configPath: options.configPath,
+      mutationLockPath: path.join(tempDir, "credential-mutations.sqlite3"), processIdentityReader: syntheticCredentialProcessIdentity,
     });
     const app = buildApp({ ...options, credentialStore });
     const logError = vi.spyOn(app.log, "error");

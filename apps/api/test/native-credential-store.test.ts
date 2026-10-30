@@ -1,6 +1,9 @@
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { KeychainCredentialStore } from "../src/credentials.js";
 import {
@@ -14,6 +17,8 @@ import {
 } from "../src/native-credential-store.js";
 
 const SECRET = "  synthetic-native-secret-☃  ";
+
+afterEach(() => vi.useRealTimers());
 
 interface ScriptedResult {
   code: number;
@@ -61,11 +66,10 @@ describe("Linux Secret Service command contract", () => {
     await expect(runner({ operation: "set", key: "GEMINI_API_KEY", service: "JobCtrl", value: SECRET }, 100)).resolves.toMatchObject({ code: 0 });
     await expect(runner({ operation: "read", key: "GEMINI_API_KEY", service: "JobCtrl" }, 100)).resolves.toMatchObject({ code: 44 });
 
-    expect(calls[0]).toMatchObject({
-      binary: LINUX_SECRET_TOOL_BINARY,
-      args: ["store", "--label=JobCtrl GEMINI_API_KEY", "service", "JobCtrl", "key", "GEMINI_API_KEY"],
-      input: SECRET,
-    });
+    expect(calls[0]?.binary).toBe("/bin/sh");
+    expect(calls[0]?.args.includes(LINUX_SECRET_TOOL_BINARY)).toBe(true);
+    expect(calls[0]?.args.slice(-6).join(" ") === "store --label=JobCtrl GEMINI_API_KEY service JobCtrl key GEMINI_API_KEY").toBe(true);
+    expect(calls[0]?.input === `1${SECRET}`).toBe(true);
     expect(JSON.stringify(calls.map((call) => call.args))).not.toContain(SECRET);
     expect(calls.slice(1).map((call) => call.args[0])).toEqual(["lookup", "search"]);
   });
@@ -136,12 +140,45 @@ describe("native helper byte limits", () => {
     ["linux", "é".repeat(4_096)],
     ["win32", "é".repeat(1_281)],
   ] as const)("rejects values the %s helper cannot store before spawning", async (platform, value) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-native-credential-test-"));
     const runNative = vi.fn();
-    const store = new KeychainCredentialStore({ platform, runNative });
-    await expect(store.set("ANTHROPIC_API_KEY", value)).rejects.toMatchObject({
-      name: "CredentialValueUnsupportedError",
-      key: "ANTHROPIC_API_KEY",
-    });
-    expect(runNative).not.toHaveBeenCalled();
+    const runSecurity = vi.fn();
+    try {
+      const store = new KeychainCredentialStore({
+        platform, runNative, runSecurity, env: {},
+        configPath: path.join(directory, "config.json"),
+        mutationLockPath: path.join(directory, "credential-mutations.sqlite3"),
+      });
+      await expect(store.set("ANTHROPIC_API_KEY", value)).rejects.toMatchObject({
+        name: "CredentialValueUnsupportedError",
+        key: "ANTHROPIC_API_KEY",
+      });
+      expect(runNative).not.toHaveBeenCalled();
+      expect(runSecurity).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("native helper termination", () => {
+  it.each(["linux", "win32"] as const)("waits for the %s helper to exit after a timeout", async (platform) => {
+    vi.useFakeTimers();
+    const stdin = Object.assign(new EventEmitter(), { destroy: vi.fn(), end: vi.fn() });
+    const stdout = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
+    const stderr = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
+    const child = Object.assign(new EventEmitter(), { stdin, stdout, stderr, kill: vi.fn(() => true) });
+    const spawner = vi.fn<NativeCredentialProcessSpawner>(() => child as NativeCredentialChildProcess);
+    const runner = platform === "linux"
+      ? createLinuxSecretServiceRunner(spawner)
+      : createWindowsCredentialManagerRunner({ SystemRoot: String.raw`C:\Windows` }, spawner);
+    let settled = false;
+    const pending = runner({ operation: "set", key: "ANTHROPIC_API_KEY", service: "JobCtrl", value: SECRET }, 25);
+    void pending.then(() => { settled = true; }, () => { settled = true; });
+    await vi.advanceTimersByTimeAsync(25);
+    expect(child.kill).toHaveBeenCalledExactlyOnceWith("SIGKILL");
+    expect(settled).toBe(false);
+    child.emit("close", 1);
+    await expect(pending).rejects.toThrow("credential helper timed out");
   });
 });

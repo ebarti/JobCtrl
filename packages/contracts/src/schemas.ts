@@ -5418,7 +5418,7 @@ export interface CredentialValueUnsupportedResponse {
 export interface CredentialStoreErrorResponse {
   ok: false;
   error: "credential_store_unavailable";
-  reason: "operational_failure" | "partial_failure" | "unsupported_platform";
+  reason: "busy" | "ownership_unverified" | "operational_failure" | "partial_failure" | "unsupported_platform";
   message: string;
 }
 
