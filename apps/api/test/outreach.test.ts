@@ -517,10 +517,12 @@ describe("outreach API", () => {
     const res = await app.inject({
       method: "POST",
       url: "/v1/outreach/threads/thread-send/send-logs",
-      payload: { draftId: "draft-send", channel: "email", sentAt: "2026-07-07" },
+      payload: { requestId: "11720000-0000-4000-8000-000000000001", draftId: "draft-send", channel: "email", sentAt: "2026-07-07" },
     });
     expect(res.statusCode).toBe(200);
-    const thread = (res.json() as ThreadResponse).thread!;
+    const current = await app.inject({ method: "GET", url: `/v1/contacts/contact-send/outreach?jobId=${JOB_ID}` });
+    const thread = (current.json() as ThreadResponse).thread!;
+    expect(res.json().sendLog).toEqual(thread.sendLogs[0]);
     expect(thread.isSent).toBe(true);
     expect(thread.sendLogs).toHaveLength(1);
     expect(thread.sendLogs[0]!.channel).toBe("email");
@@ -552,7 +554,7 @@ describe("outreach API", () => {
     const res = await app.inject({
       method: "POST",
       url: "/v1/outreach/threads/thread-channel/send-logs",
-      payload: { draftId: "draft-channel", channel: "dana.lee@example.test", sentAt: "2026-07-07" },
+      payload: { requestId: "11720000-0000-4000-8000-000000000001", draftId: "draft-channel", channel: "dana.lee@example.test", sentAt: "2026-07-07" },
     });
     expect(res.statusCode).toBe(400);
     expect((res.json() as ThreadResponse).error).toBe("invalid_outreach_send_log");
@@ -571,7 +573,7 @@ describe("outreach API", () => {
     const res = await app.inject({
       method: "POST",
       url: "/v1/outreach/threads/thread-c/send-logs",
-      payload: { draftId: "draft-c1", channel: "email", sentAt: "2026-07-07" },
+      payload: { requestId: "11720000-0000-4000-8000-000000000001", draftId: "draft-c1", channel: "email", sentAt: "2026-07-07" },
     });
     expect(res.statusCode).toBe(400);
     expect((res.json() as ThreadResponse).error).toBe("invalid_outreach_transition");
@@ -733,7 +735,7 @@ describe("Outreach canonical publication across HTTP and Python", () => {
         const held = await heldRevision(app, dir, thread.threadId, `Retained user edit for ${mutation}`);
         let url = `${prefix}/follow-up/schedule`;
         let payload: Record<string, unknown> = { dueAt: "2026-12-01T00:00:00Z", basis: "manual" };
-        if (mutation === "send") { url = `${prefix}/send-logs`; payload = { draftId, channel: "email", sentAt: "2026-10-24T00:00:00Z" }; }
+        if (mutation === "send") { url = `${prefix}/send-logs`; payload = { requestId: "11720000-0000-4000-8000-000000000001", draftId, channel: "email", sentAt: "2026-10-24T00:00:00Z" }; }
         if (mutation === "approve" || mutation === "reject") { url = `${prefix}/drafts/${draftId}/${mutation}`; payload = mutation === "reject" ? { reason: "Synthetic review reason" } : {}; }
         if (mutation === "draft") { url = `${prefix}/drafts`; payload = { editedBodyText: "Newer completed draft" }; }
         if (mutation === "complete" || mutation === "dismiss") { url = `${prefix}/follow-up/${mutation}`; payload = {}; }
@@ -747,6 +749,9 @@ describe("Outreach canonical publication across HTTP and Python", () => {
           });
           expect(response.thread.drafts.at(-1).bodyText).toBe("Newer completed draft");
         }
+        const acceptedThread = mutation === "send"
+          ? (await app.inject({ method: "GET", url: `/v1/contacts/${contactId}/outreach` })).json().thread
+          : late.json().thread;
         const expected = canonicalFacts(dbPath);
         held.release();
         const stale = await held.pending;
@@ -770,7 +775,7 @@ describe("Outreach canonical publication across HTTP and Python", () => {
         try {
           const read = await restarted.inject({ method: "GET", url: `/v1/contacts/${contactId}/outreach` });
           expect(read.statusCode).toBe(200);
-          expect(read.json().thread).toEqual(late.json().thread);
+          expect(read.json().thread).toEqual(acceptedThread);
           expect(canonicalFacts(dbPath)).toEqual(expected);
         } finally { await restarted.close(); }
       } finally {

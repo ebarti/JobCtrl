@@ -82,7 +82,7 @@ function OutreachThreadBody({
   jobId?: string;
 }): JSX.Element {
   const revisionTarget = revision?.target ?? null;
-  const [loggingSend, setLoggingSend] = useState(false);
+  const [loggingSend, setLoggingSend] = useState<string | null>(null);
   const [pendingDecision, setPendingDecision] = useState<DraftDecision | null>(null);
   const decisionLock = useRef<DraftDecision | null>(null);
   const decisionMutationObserved = useRef(false);
@@ -181,13 +181,13 @@ function OutreachThreadBody({
           here so the thread reflects it.
         </p>
         <OutreachSendLogList thread={thread} />
-        {approved ? (
+        {approved || loggingSend ? (
           <div className="outreach-send-log-actions">
             <Button
               type="button"
               variant="outline"
-              aria-expanded={loggingSend}
-              onClick={() => setLoggingSend((value) => !value)}
+              aria-expanded={Boolean(loggingSend)}
+              onClick={() => setLoggingSend((value) => value ? null : approved?.draftId ?? null)}
             >
               {loggingSend ? "Cancel" : "Log a send"}
             </Button>
@@ -195,8 +195,8 @@ function OutreachThreadBody({
               <SendLogForm
                 threadId={thread.threadId}
                 contactId={contactId}
-                draftId={approved.draftId}
-                onLogged={() => setLoggingSend(false)}
+                draftId={loggingSend}
+                onLogged={() => setLoggingSend(null)}
                 {...(jobId ? { jobId } : {})}
               />
             ) : null}
@@ -323,7 +323,7 @@ function OutreachThreadPanelSession({ contactId, jobId, draftKind, offerRevision
         </div>
       ) : null}
       {thread ? (
-        <OutreachThreadBody revision={revision} onRevisionChange={setRevision} thread={thread} contactId={contactId} {...(jobId ? { jobId } : {})} />
+        <OutreachThreadBody key={thread.threadId} revision={revision} onRevisionChange={setRevision} thread={thread} contactId={contactId} {...(jobId ? { jobId } : {})} />
       ) : null}
     </section>
   );

@@ -102,6 +102,39 @@ Interview reflections may link to the prep generation they followed. Notes stay
 in that local table; events carry presence flags and safe references, not note
 text.
 
+Manual outcomes, prep-linked reflections and user-attested Outreach send logs
+use required UUID request identities. An immediate SQLite writer transaction
+resolves canonical target authority, checks the existing receipt, and only then
+performs fresh-action validation. The event's internal `idempotency_key` has a
+versioned tenant/operation/target/request prefix and a digest binding the
+validated request, accepted fact and event fields. This SQLite metadata is not
+part of the streamed event payload; the payload carries only the safe scope and
+fact reference. The digest may reflect private notes and belongs to the same
+private database boundary as those notes. No schema extension or separate
+receipt table is needed in exact v15.
+
+Fact, event and receipt commit together. Independent writers serialize before
+prefix lookup; rollback removes all three. A malformed or duplicate prefix
+fails closed. Nested calls retain the outer transaction's
+ownership, including the internal first-offer milestone. Equal replay joins the
+recorded fact ID and returns its original IDs/timestamps before mutable gates.
+Changed payloads, accepted facts or event bindings fail closed with a safe
+conflict. The receipt fact ID must agree with the outcomeId or sendLogId recorded
+on that same domain event; an equal-payload fact from another action cannot
+substitute for the original result. An omitted occurrence timestamp remains distinct from an explicitly
+supplied one in the fingerprint.
+
+Outreach send-log responses contain the immutable send log only. Current thread,
+review and reminder state comes from the existing read path. Web mutations
+reconcile only the optimistic log associated with that request and invalidate
+current reads; they never install a historical thread response. Both optimistic
+insertion and settlement check the initiating thread ID against the current
+cached thread. A replacement thread under the same contact key stays unchanged,
+including when it replaces the cache while query cancellation is pending. Form retry
+payloads live only in component memory, with explicit new-action identity after
+acknowledgement or a deliberate user choice. No external send or suggestion
+terminal-decision authority is introduced.
+
 The Gmail feedback scanner searches bounded post-application windows using
 known application anchors. It reads a body only after metadata reaches the
 link-confidence threshold, then stores evidence locally and proposes a

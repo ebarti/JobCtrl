@@ -1,3 +1,4 @@
+import { ManualApplicationOutcomeRequestSchema } from "@jobctrl/contracts";
 import type { ApplyReviewApprovalGateReason } from "@jobctrl/contracts";
 import { JobCtrlApiError } from "@jobctrl/api-client";
 import {
@@ -968,7 +969,18 @@ export class DemoLocalCommandExecutor {
       case "recordManualApplicationOutcome": {
         const jobKey = requiredString(args[0], "jobKey");
         requireMapValue(draft.state.readModel.jobs.details, jobKey);
-        const body = record(args[1]);
+        const body = ManualApplicationOutcomeRequestSchema.parse(args[1]);
+        const key = JSON.stringify([jobKey, body.interviewPrepGeneration === undefined ? "manual-outcome" : "interview-reflection", body.requestId]);
+        const receipts = draft.state.actionReceipts ??= {};
+        const receipt = receipts[key];
+        if (receipt) {
+          const outcome = draft.state.readModel.analytics.outcomes.outcomes.find((outcome) => outcome.outcomeId === receipt.outcomeId && outcome.jobKey === jobKey);
+          if (!outcome || receipt.occurredAtOmitted !== (body.occurredAt === undefined)
+            || outcome.kind !== body.kind || outcome.note !== (body.note ?? null)
+            || outcome.interviewPrepGeneration !== (body.interviewPrepGeneration ?? null)
+            || (body.occurredAt !== undefined && outcome.occurredAt !== body.occurredAt)) throw new Error("This request identity conflicts with a recorded action. Start a new action.");
+          return { ok: true, outcome };
+        }
         const kind = requiredOneOf(
           body.kind,
           [
@@ -982,7 +994,7 @@ export class DemoLocalCommandExecutor {
           jobKey,
           kind,
           source: "manual" as const,
-          note: stringValue(body.note),
+          note: body.note ?? null,
           occurredAt: stringValue(body.occurredAt) ?? now,
           recordedAt: now,
           suggestionId: null,
@@ -991,6 +1003,7 @@ export class DemoLocalCommandExecutor {
         };
         draft.state.readModel.analytics.outcomes.outcomes.push(outcome as never);
         requireMapValue(draft.state.readModel.analytics.jobOutcomes, jobKey).outcomes.push(outcome as never);
+        receipts[key] = { occurredAtOmitted: body.occurredAt === undefined, outcomeId: outcome.outcomeId };
         recomputeDemoOutcomeProjections(draft);
         context.appendDomainEvent(atTime(createApplicationOutcomeRecorded(LOCAL_TENANT, {
           jobKey,

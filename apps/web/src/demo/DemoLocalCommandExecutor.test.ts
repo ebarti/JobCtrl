@@ -195,7 +195,7 @@ const LOCAL_CASES = [
   }],
   ["setDefaultResumeTemplate", (api) => api.setDefaultResumeTemplate({ templateId: "demo-template" })],
   ["setJobResumeTemplate", (api) => api.setJobResumeTemplate(JOB, { templateId: "demo-template" })],
-  ["recordManualApplicationOutcome", (api) => api.recordManualApplicationOutcome(JOB, { kind: "interview", occurredAt: NOW, note: "Synthetic outcome", interviewPrepGeneration: 1 })],
+  ["recordManualApplicationOutcome", (api) => api.recordManualApplicationOutcome(JOB, { requestId: "11720000-0000-4000-8000-000000000001", kind: "interview", occurredAt: NOW, note: "Synthetic outcome", interviewPrepGeneration: 1 })],
   ["decideOutcomeSuggestion", async (api, repository) => {
     await repository.mutate((draft) => {
       const suggestion = {
@@ -246,6 +246,20 @@ const LOCAL_CASES = [
 ] as const satisfies readonly LocalCase[];
 
 describe("DemoLocalCommandExecutor", () => {
+  it("retains manual action receipts across demo reopen, conflicts on changed payload, and permits a new identity", async () => {
+    const store = new InMemoryDemoWorkspaceStore();
+    const first = await harness(store);
+    const body = { requestId: "11720000-0000-4000-8000-000000000003", kind: "interview" as const, note: "" };
+    const original = await first.adapter.recordManualApplicationOutcome(JOB, body);
+    expect(await first.adapter.recordManualApplicationOutcome(JOB, { ...body, note: "  " })).toEqual(original);
+    await expect(first.adapter.recordManualApplicationOutcome(JOB, { ...body, note: "A different note" })).rejects.toThrow(/identity conflicts/);
+    const next = await first.adapter.recordManualApplicationOutcome(JOB, { ...body, requestId: "11720000-0000-4000-8000-000000000004" });
+    expect(next.outcome.outcomeId).not.toBe(original.outcome.outcomeId);
+    const reopened = await harness(store);
+    expect(await reopened.adapter.recordManualApplicationOutcome(JOB, body)).toEqual(original);
+    expect(reopened.repository.snapshotNow().eventLog.filter((entry) => entry.event.eventType === "ApplicationOutcomeRecorded" && entry.event.payload.outcomeId === original.outcome.outcomeId)).toHaveLength(1);
+  });
+
 
   it("preserves the reviewed profile, Required pin and event history when accepting cleanup cannot persist", async () => {
     const store = new QuotaOnNextTransactionStore();
@@ -1123,8 +1137,8 @@ describe("DemoLocalCommandExecutor", () => {
 
   it("synchronizes manual and suggested outcomes globally and per job without replay duplication", async () => {
     const { adapter, repository } = await harness();
-    const manual = await adapter.recordManualApplicationOutcome(JOB, {
-      kind: "recruiter_reply",
+    const manual = await adapter.recordManualApplicationOutcome(JOB, { requestId: "11720000-0000-4000-8000-000000000001",
+      kind: "interview",
       occurredAt: NOW,
       note: "Synthetic reply",
       interviewPrepGeneration: 2,
