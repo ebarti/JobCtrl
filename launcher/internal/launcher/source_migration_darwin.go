@@ -360,7 +360,7 @@ func automaticSourceMigration(ctx launchContext, output io.Writer) error {
 		if journalErr == nil {
 			return errors.New("unfinished source migration has unverified process ownership; preserve the workspace and journal")
 		}
-		_, _ = fmt.Fprintln(output, "dev: the workspace needs migration but its earlier runtime ownership is unverified; opening diagnostics without modifying data.")
+		_, _ = fmt.Fprintln(output, "dev: the workspace needs migration but its earlier runtime ownership is unverified; migration was not performed.")
 		return nil
 	}
 	if err := stop(ctx); err != nil {
