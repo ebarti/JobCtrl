@@ -62,8 +62,11 @@ and workflow-owned calls require their own start event to remain current for
 publication and terminal stage writes. Direct callers receive the existing
 stale/skipped result if another attempt takes ownership. Before claiming, a
 direct call also checks that the latest start has not changed since its initial
-database observation; returning an already-approved artifact does not settle
-an actively workflow-owned stage. Once a higher numbered attempt of the same
+database observation. Approved-artifact recovery checks the current running
+owner and recorded activity identity under the same SQLite writer lock as its
+stage transition. Reusing an approved artifact leaves another execution's
+running stage, start token and publication authority intact, including a direct
+attempt with its own start token. Once a higher numbered attempt of the same
 workflow activity records its
 start, a delayed retry cannot recover or claim over it. The same ownership
 check fences the PDF produced by Cover. Selected, current-policy and unscoped

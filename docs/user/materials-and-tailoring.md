@@ -23,6 +23,8 @@ change before an older attempt finishes, that attempt cannot replace the newer
 accepted material; JobCtrl marks it stale when it still owns the work so it can
 be retried with the current sources. A PDF whose save acknowledgement is
 uncertain is kept for inspection rather than deleted.
+If another preparation is still running, reusing the earlier approved material
+leaves that work running and able to save its replacement.
 
 Tailoring keeps as many applicable baseline accomplishments as possible in each
 selected role, up to **Max bullets per role**. The configured maximum is a hard

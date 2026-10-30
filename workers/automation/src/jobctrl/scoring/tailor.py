@@ -85,6 +85,7 @@ from jobctrl.infrastructure.preparation_recovery import (
     claim_preparation_reservation,
     owns_preparation_reservation,
     material_admission_write,
+    material_activity_may_recover,
     material_start_event_id,
     stage_completed_by_activity_owner,
 )
@@ -798,6 +799,7 @@ def tailor_job_by_id(
         workflow_id=workflow_id,
         commit_guard=attempt_start_guard if guarded_admission else None,
         preserve_running_owner=direct_start is not None,
+        temporal_attempt=temporal_attempt,
     )
     if existing_materials is not None:
         return {
@@ -1064,6 +1066,7 @@ def tailor_job_by_id(
             retailor=retailor,
             workflow_id=workflow_id,
             commit_guard=commit_guard,
+            temporal_attempt=temporal_attempt,
         )
         if committed is not None:
             return {
@@ -1241,6 +1244,7 @@ def _reconcile_existing_approved_resume(
     workflow_id: str | None,
     commit_guard=None,
     preserve_running_owner: bool = False,
+    temporal_attempt: MaterialActivityAttempt | None = None,
 ):
     """Treat the committed resume as authoritative after activity replay."""
     materials = SqliteMaterialsRepository(conn).load_current_approved(
@@ -1281,17 +1285,12 @@ def _reconcile_existing_approved_resume(
         with SqliteUnitOfWork(conn):
             if commit_guard is not None:
                 commit_guard()
-            current = conn.execute(
-                "SELECT state, metadata_json FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage='tailor'",
-                (str(tenant_id), str(job_id)),
-            ).fetchone()
-            if preserve_running_owner and current is not None and current["state"] == "running":
-                try:
-                    current_metadata = json.loads(current["metadata_json"] or "{}")
-                except (TypeError, ValueError):
-                    current_metadata = None
-                if not isinstance(current_metadata, dict) or current_metadata.get("activityOwner"):
-                    return materials
+            guarded_recovery = preserve_running_owner or workflow_id or temporal_attempt is not None
+            if guarded_recovery and not material_activity_may_recover(
+                conn, tenant_id=str(tenant_id), job_id=str(job_id), stage="tailor",
+                workflow_id=workflow_id, attempt=temporal_attempt,
+            ):
+                return materials
             set_stage_state(
                 conn,
                 job_id,

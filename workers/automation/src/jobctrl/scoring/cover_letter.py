@@ -16,7 +16,6 @@ module is a thin adapter around :class:`GenerateCoverLetterUseCase`
 
 from __future__ import annotations
 
-import json
 import logging
 import threading
 import time
@@ -67,6 +66,7 @@ from jobctrl.infrastructure.preparation_recovery import (
     claim_preparation_reservation,
     owns_preparation_reservation,
     material_admission_write,
+    material_activity_may_recover,
     material_start_event_id,
 )
 from jobctrl.infrastructure.preparation.sqlite_repository import SqlitePreparationTargetReader
@@ -302,6 +302,8 @@ def cover_letter_by_id(
             job_id=stable_job_id,
             commit_guard=attempt_start_guard if guarded_admission else None,
             preserve_running_owner=direct_start is not None,
+            workflow_id=workflow_id,
+            temporal_attempt=temporal_attempt,
         )
         return _skipped_result(
             stable_job_id,
@@ -611,11 +613,11 @@ def _reconcile_existing_approved_cover(
     job_id: JobId,
     commit_guard=None,
     preserve_running_owner: bool = False,
+    workflow_id: str | None = None,
+    temporal_attempt: MaterialActivityAttempt | None = None,
 ) -> None:
     """Close a replayed running row when its cover artifact already committed."""
-    boundary = (material_admission_write(conn) if preserve_running_owner
-                else SqliteUnitOfWork(conn) if commit_guard is not None else nullcontext())
-    with boundary:
+    with material_admission_write(conn):
         if commit_guard is not None:
             commit_guard()
         row = conn.execute(
@@ -628,13 +630,12 @@ def _reconcile_existing_approved_cover(
         ).fetchone()
         if row is not None and str(row["state"]) == "succeeded":
             return
-        if preserve_running_owner and row is not None and str(row["state"]) == "running":
-            try:
-                metadata = json.loads(row["metadata_json"] or "{}")
-            except (TypeError, ValueError):
-                metadata = None
-            if not isinstance(metadata, dict) or metadata.get("activityOwner"):
-                return
+        guarded_recovery = preserve_running_owner or workflow_id or temporal_attempt is not None
+        if guarded_recovery and not material_activity_may_recover(
+            conn, tenant_id=str(tenant_id), job_id=str(job_id), stage="cover",
+            workflow_id=workflow_id, attempt=temporal_attempt,
+        ):
+            return
         set_stage_state(
             conn,
             job_id,
@@ -653,8 +654,6 @@ def _reconcile_existing_approved_cover(
             message="Cover generation recovered from the committed approved artifact.",
             payload={"recoveredAfterActivityReplay": True},
         )
-        if commit_guard is None or preserve_running_owner:
-            conn.commit()
 
 
 def cover_letter_by_url(

@@ -105,10 +105,32 @@ def material_activity_may_recover(
     tenant_id: str,
     job_id: str,
     stage: str,
-    workflow_id: str,
-    attempt: MaterialActivityAttempt,
+    workflow_id: str | None,
+    attempt: MaterialActivityAttempt | None,
 ) -> bool:
-    """Limit batch recovery to this activity and never settle a newer retry."""
+    """Reuse approved material without settling another running execution.
+
+    Callers hold the material writer boundary through the recovery transition.
+    An approved artifact is not authority over a different stage owner.
+    """
+    row = conn.execute(
+        "SELECT state, metadata_json FROM job_stage_states "
+        "WHERE tenant_id = ? AND job_id = ? AND stage = ?",
+        (tenant_id, job_id, stage),
+    ).fetchone()
+    running = row is not None and row["state"] == "running"
+    if running:
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+        except (TypeError, ValueError):
+            return False
+        if not isinstance(metadata, dict):
+            return False
+        owner = metadata.get("activityOwner")
+        if owner and owner != workflow_id:
+            return False
+    if attempt is None:
+        return True
     latest = conn.execute(
         "SELECT payload_json FROM job_events WHERE tenant_id = ? AND job_id = ? "
         "AND stage = ? AND event_type = 'StageStarted' ORDER BY event_id DESC LIMIT 1",
@@ -117,6 +139,9 @@ def material_activity_may_recover(
     payload = _metadata(latest["payload_json"]) if latest is not None else {}
     event_run = payload.get("temporalRunId")
     event_activity = payload.get("temporalActivityId")
+    if running and payload.get("materialAttemptId") and not (event_run and event_activity):
+        # A current direct attempt has a start token but no Temporal identity.
+        return False
     if event_run and event_activity and (event_run != (attempt.run_id or workflow_id) or event_activity != attempt.activity_id):
         return False
     try:

@@ -845,7 +845,8 @@ preview through the actual API and carries that approval through worker claim
 and intent, with unchanged and late-defer cases and a fake sender.
 Run locked `pytest tests/test_material_render_publication.py
 tests/test_tailoring_ownership_race.py tests/test_tailoring_artifact_boundary.py
-tests/test_material_batch_attempt_fencing.py tests/test_direct_material_attempt_fencing.py`.
+tests/test_material_batch_attempt_fencing.py tests/test_direct_material_attempt_fencing.py
+tests/test_approved_material_recovery_ownership.py`.
 Drive competing PDF and Cover activity paths and overlapping tailoring activities
 against one synthetic SQLite workspace. Require distinct attempt paths, preserved
 accepted bytes and source IDs, a writer lock through revalidation/publication,
@@ -865,6 +866,12 @@ Overlap direct and Temporal material calls in both orders, including failures;
 the displaced direct call returns its stale/skipped result and cannot settle
 or publish over the successor. Also delay direct calls before their stage claim
 and request already-approved artifacts while a workflow-owned stage is running.
+Replay an older workflow's Tailor and Cover activity against approved materials
+while a different workflow, another activity of the same run, or a direct
+attempt owns the running replacement. Preserve the complete stage row, start
+events, accepted files, material rows and provenance, and verify the current
+owner still passes the real publication guard. Retain current-owner recovery as
+a positive control.
 Use a second real SQLite connection before and after repository save to prove
 neither writer admission nor intent visibility can cross validation-to-commit.
 Pause repository save containing intent after final authorization, both before
