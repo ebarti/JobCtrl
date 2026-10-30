@@ -66,6 +66,19 @@ failures. The global stage wrapper propagates its failed-job count and safe
 semantic failure codes through the normal activity error boundary; accepted
 peer results stay saved when that activity fails.
 
+Resetting stale score work changes only eligible, distinct jobs to pending under
+a writer transaction without resolving any marker. Already-pending, queued and
+running stages retain their owners; responses identify work already pending and
+active work to retry after completion. Before inference, scoring captures the accepted score identity and
+unresolved marker identities. The score, determination binding, requirement-fit
+report and resolution of captured, source-matching policy markers commit in one
+transaction. A changed policy or ownership fails the publication fence. A
+marker introduced after capture is left unresolved for a later replacement,
+even when it targets the policy used by the in-flight assessment. Reused scores,
+failed or canceled work, and uncommitted publications resolve no markers. A
+still-stale score does not reconcile downstream eligibility or threshold states,
+and preparation does not suppress an accepted artifact based on that score.
+
 ## Profile Edits And Explicit Refresh
 
 Profile persistence records the new version and ProfileUpdated event atomically.

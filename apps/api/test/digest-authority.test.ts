@@ -40,6 +40,30 @@ function outcome(db: Database.Database, id: string, key: string, kind: string, w
 }
 
 describe("digest canonical ownership and acknowledgement", () => {
+  it("counts a corrected score while its stale marker remains unresolved", async () => {
+    const s = workspace();
+    const when = "2020-05-01T00:00:00Z";
+    const stale = seedJob(s.db, "local", 1, when, 8);
+    const hidden = seedJob(s.db, "local", 2, when, 7);
+    for (const id of [stale, hidden]) {
+      s.db.prepare("INSERT INTO job_scores (tenant_id,job_id,version,fit_score,breakdown_json,keywords_json,scored_at,correction_json,criteria_json,trace_json) VALUES ('local',?,1,8,'{}','[]',?,'{}','{}','{}')").run(id, when);
+      s.db.prepare("INSERT INTO job_score_staleness (tenant_id,job_id,stale_reason,old_policy_version,new_policy_version,marked_at,resolved) VALUES ('local',?,'scoring_policy_changed',1,2,?,0)").run(id, when);
+    }
+    s.db.prepare("INSERT INTO jobctrl_hidden_jobs (tenant_id,job_id,hidden_at) VALUES ('local',?,?)").run(hidden, when);
+    const app = buildApp({ dbPath: s.dbPath, configPath: path.join(s.root, "config.json"), appDir: s.root });
+    try {
+      const digest = await app.inject({ method: "GET", url: "/v1/digest" });
+      const summary = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+      expect(digest.statusCode, digest.body).toBe(200);
+      expect(summary.statusCode, summary.body).toBe(200);
+      expect(digest.json().staleScores.count).toBe(1);
+      expect(summary.json().preparation.outdatedScoreCount).toBe(1);
+    } finally {
+      await app.close();
+      s.cleanup();
+    }
+  });
+
   it("excludes a foreign-only job from actual API match and follow-up counts", async () => {
     const s = workspace();
     const id = seedJob(s.db, "other", 1, "2020-01-01T00:00:00Z", null);

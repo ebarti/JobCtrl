@@ -25,6 +25,7 @@ Existing accepted materials remain available.
 | `POST /v1/jobs/import-url` | Start one public posting import and follow completion or its typed Manual Capture fallback. |
 | `GET /v1/jobs/import-url/:workflowId/:executionId` | Read the acknowledged import execution without starting or waiting for more work. |
 | `GET /v1/scoring/keywords` | Current projected score-version keyword aggregation with canonical normalized keys. |
+| `POST /v1/scoring/stale-scores/actions/reset-for-rescore` | Reset distinct inactive stale scores while retaining their markers until a matching replacement; report active and already-pending jobs separately. |
 | `GET /v1/evidence-map` | Canonical career evidence used by scoring and materials. |
 | `GET/POST /v1/evidence-map/learning` | Read retained selected-job comparisons; preview sources, compare an explicit dated cohort, choose proposals and record milestone activity. |
 | `POST /v1/jobs/:key/score-correction` | A new score version plus explicit correction rationale. |

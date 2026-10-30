@@ -105,7 +105,7 @@ const EXPECTED_RESPONSE_KEYS = {
   unhideJob: ["count", "jobKeys", "ok"],
   unhideJobs: ["count", "jobKeys", "ok"],
   correctScore: JOB_DETAIL_RESPONSE_KEYS,
-  resetStaleScoresForRescore: ["count", "jobKeys", "nextAction", "ok"],
+  resetStaleScoresForRescore: ["alreadyPendingJobKeys", "count", "jobKeys", "nextAction", "ok", "skippedActiveJobKeys"],
   cancelWorkflowRun: ACTION_RESPONSE_KEYS,
   updateProfile: ["ok", "profile", "profileVersion", "style", "templateText"],
   updateSettings: ["effectiveSettings", "ok", "paths", "settings"],
@@ -1184,7 +1184,7 @@ describe("DemoLocalCommandExecutor", () => {
     const snapshot = repository.snapshotNow();
     const corrected = snapshot.state.readModel.jobs.details[JOB]!.job;
     const comparable = snapshot.state.readModel.jobs.list.items.filter(
-      (job) => job.jobKey !== JOB && job.scoreVersion !== null,
+      (job) => job.jobKey !== JOB && job.scoreVersion !== null && job.scoreCorrection === null,
     );
     expect(corrected).toMatchObject({
       fitScore: 9,
@@ -1196,16 +1196,11 @@ describe("DemoLocalCommandExecutor", () => {
         rationale: "Reviewed synthetic evidence",
         correctedAt: NOW,
       },
-      scoreStaleness: {
-        isStale: false,
-        currentPolicyVersion: 4,
-        targetPolicyVersion: 4,
-        pendingExplicitRescore: false,
-      },
+      scoreStaleness: previous.scoreStaleness,
     });
     expect(corrected.scoreTrace).toMatchObject({
-      scoringPolicyId: "demo:scoring-policy-4",
-      scoringPolicyVersion: 4,
+      scoringPolicyId: previous.scoreTrace?.scoringPolicyId,
+      scoringPolicyVersion: previous.scoreTrace?.scoringPolicyVersion,
     });
     expect(corrected.scoreTrace?.correctionHistory.at(-1)).toMatchObject({ correctedScore: 9, correctedAt: NOW });
     expect(comparable.length).toBeGreaterThan(0);
@@ -1223,13 +1218,135 @@ describe("DemoLocalCommandExecutor", () => {
       fitScore: 9,
       scoreVersion: previousVersion + 1,
       scoredAt: NOW,
-      scoreTrace: { scoringPolicyVersion: 4 },
+      scoreTrace: { scoringPolicyVersion: previous.scoreTrace?.scoringPolicyVersion },
     });
     expect(snapshot.state.readModel.dashboard.summary.preparation).toMatchObject({
       currentScoringPolicyVersion: 4,
       outdatedScoreCount: comparable.length,
     });
     expect(snapshot.state.readModel.dashboard.digest.staleScores.count).toBe(comparable.length);
+  });
+
+  it("keeps existing staleness and score source when correcting an already-stale score", async () => {
+    const { adapter, repository } = await harness();
+    await adapter.correctScore(JOB, { correctedScore: 9, reason: "Synthetic first correction" });
+    const before = repository.snapshotNow();
+    const stale = before.state.readModel.jobs.list.items.find((job) =>
+      job.jobKey !== JOB && job.scoreVersion !== null && job.scoreStaleness.isStale,
+    )!;
+    expect(stale).toBeDefined();
+    await adapter.correctScore(stale.jobKey, { correctedScore: 8, reason: "Synthetic second correction" });
+    const after = repository.snapshotNow();
+    const corrected = after.state.readModel.jobs.details[stale.jobKey]!.job;
+    expect(corrected.scoreStaleness).toEqual(stale.scoreStaleness);
+    expect(corrected.scoreTrace?.scoringPolicyId).toBe(stale.scoreTrace?.scoringPolicyId);
+    expect(corrected.scoreTrace?.scoringPolicyVersion).toBe(stale.scoreTrace?.scoringPolicyVersion);
+    expect(corrected.scoreCriteria).toEqual(stale.scoreCriteria);
+    expect(after.state.readModel.dashboard.digest.staleScores.count).toBe(
+      after.state.readModel.jobs.list.items.filter((job) => job.scoreStaleness.isStale).length,
+    );
+  });
+
+  it("does not reset an active score and reports when to retry", async () => {
+    const { adapter, repository } = await harness();
+    const jobKey = "job-fabrikam-systems";
+    await repository.mutate((draft) => {
+      const detail = draft.state.readModel.jobs.details[jobKey]!;
+      detail.job.currentState = "running";
+      detail.stages.find((stage) => stage.stage === "score")!.state = "running";
+      draft.state.readModel.jobs.list.items.find((job) => job.jobKey === jobKey)!.currentState = "running";
+    });
+    const before = repository.snapshotNow();
+    const response = await adapter.resetStaleScoresForRescore({ jobKeys: [jobKey], limit: 0 });
+    expect(response).toMatchObject({ count: 0, jobKeys: [], skippedActiveJobKeys: [jobKey] });
+    const after = repository.snapshotNow();
+    expect(after.state.readModel.jobs.details[jobKey]).toEqual(before.state.readModel.jobs.details[jobKey]);
+    expect(after.state.readModel.jobs.details[jobKey]!.job.scoreStaleness.isStale).toBe(true);
+  });
+
+  it("keeps hidden and deleted stale jobs out of bounded and explicit resets", async () => {
+    const { adapter, repository } = await harness();
+    const hidden = JOB;
+    const deleted = "job-contoso-reliability";
+    const active = "job-fabrikam-systems";
+    await repository.mutate((draft) => {
+      const template = draft.state.readModel.jobs.details[active]!;
+      for (const [jobKey, deletedAt, hiddenAt, scoreState] of [
+        [hidden, null, NOW, "running"],
+        [deleted, NOW, null, "stale"],
+      ] as const) {
+        const summary = draft.state.readModel.jobs.list.items.find((job) => job.jobKey === jobKey)!;
+        const detail = draft.state.readModel.jobs.details[jobKey]!;
+        for (const job of [summary, detail.job]) {
+          job.deletedAt = deletedAt;
+          job.hiddenAt = hiddenAt;
+          job.scoreStaleness = structuredClone(template.job.scoreStaleness);
+        }
+        const stage = detail.stages.find((item) => item.stage === "score");
+        if (stage) stage.state = scoreState;
+        else detail.stages.push({ ...structuredClone(template.stages.find((item) => item.stage === "score")!), state: scoreState });
+      }
+    });
+    const before = repository.snapshotNow();
+    expect(await adapter.resetStaleScoresForRescore({ jobKeys: [], limit: 1 })).toMatchObject({
+      count: 1, jobKeys: [active], skippedActiveJobKeys: [], alreadyPendingJobKeys: [],
+    });
+    expect(await adapter.resetStaleScoresForRescore({ jobKeys: [hidden, deleted], limit: 1 })).toMatchObject({
+      count: 0, jobKeys: [], skippedActiveJobKeys: [], alreadyPendingJobKeys: [],
+    });
+    const after = repository.snapshotNow();
+    expect(after.state.readModel.jobs.details[hidden]).toEqual(before.state.readModel.jobs.details[hidden]);
+    expect(after.state.readModel.jobs.details[deleted]).toEqual(before.state.readModel.jobs.details[deleted]);
+    expect(after.eventLog.filter((entry) => entry.event.eventType === "ScoreRescoreRequested")).toHaveLength(1);
+
+    await repository.mutate((draft) => {
+      for (const [jobKey, property] of [[hidden, "hiddenAt"], [deleted, "deletedAt"]] as const) {
+        draft.state.readModel.jobs.list.items.find((job) => job.jobKey === jobKey)![property] = null;
+        draft.state.readModel.jobs.details[jobKey]!.job[property] = null;
+      }
+    });
+    expect(await adapter.resetStaleScoresForRescore({ jobKeys: [hidden, deleted], limit: 1 })).toMatchObject({
+      count: 1, jobKeys: [deleted], skippedActiveJobKeys: [hidden],
+    });
+  });
+
+  it.each(["closed", "expired", "removed", "location_incompatible"] as const)(
+    "excludes a %s posting from the active stale-score cohort", async (activeState) => {
+      const { adapter, repository } = await harness();
+      const active = "job-fabrikam-systems";
+      await repository.mutate((draft) => {
+        const template = draft.state.readModel.jobs.details[active]!;
+        const summary = draft.state.readModel.jobs.list.items.find((job) => job.jobKey === JOB)!;
+        const detail = draft.state.readModel.jobs.details[JOB]!;
+        for (const job of [summary, detail.job]) {
+          job.activeState = activeState;
+          job.scoreStaleness = structuredClone(template.job.scoreStaleness);
+        }
+        const stage = detail.stages.find((item) => item.stage === "score");
+        if (stage) stage.state = "stale";
+        else detail.stages.push({ ...structuredClone(template.stages.find((item) => item.stage === "score")!), state: "stale" });
+      });
+      const before = repository.snapshotNow().state.readModel.jobs.details[JOB];
+      expect(await adapter.resetStaleScoresForRescore({ jobKeys: [], limit: 1 })).toMatchObject({ count: 1, jobKeys: [active] });
+      expect(await adapter.resetStaleScoresForRescore({ jobKeys: [JOB], limit: 1 })).toMatchObject({ count: 0, jobKeys: [] });
+      expect(repository.snapshotNow().state.readModel.jobs.details[JOB]).toEqual(before);
+    },
+  );
+
+  it("reports an already pending stale score on a repeated reset", async () => {
+    const { adapter, repository } = await harness();
+    const jobKey = "job-fabrikam-systems";
+    const first = await adapter.resetStaleScoresForRescore({ jobKeys: [jobKey], limit: 1 });
+    expect(first).toMatchObject({ count: 1, jobKeys: [jobKey] });
+    const afterFirst = repository.snapshotNow();
+    expect(afterFirst.state.readModel.jobs.details[jobKey]!.stages.find((stage) => stage.stage === "score")?.state)
+      .toBe("pending");
+    expect(afterFirst.state.readModel.jobs.details[jobKey]!.job.scoreStaleness.isStale).toBe(true);
+    const second = await adapter.resetStaleScoresForRescore({ jobKeys: [jobKey], limit: 1 });
+    expect(second).toMatchObject({ count: 0, jobKeys: [], alreadyPendingJobKeys: [jobKey] });
+    const afterSecond = repository.snapshotNow();
+    expect(afterSecond.state.readModel.jobs.details[jobKey]).toEqual(afterFirst.state.readModel.jobs.details[jobKey]);
+    expect(afterSecond.eventLog.filter((entry) => entry.event.eventType === "ScoreRescoreRequested")).toHaveLength(1);
   });
 
   it("cancels a workflow atomically and replays without duplicate terminal evidence", async () => {

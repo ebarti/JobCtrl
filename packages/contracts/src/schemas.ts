@@ -305,6 +305,8 @@ export interface ResetStaleScoresForRescoreResponse {
   count: number;
   jobKeys: string[];
   nextAction: string;
+  skippedActiveJobKeys?: string[];
+  alreadyPendingJobKeys?: string[];
 }
 
 export const RescoreJobRequestSchema = z

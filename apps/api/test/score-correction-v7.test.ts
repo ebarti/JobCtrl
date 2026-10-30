@@ -126,7 +126,7 @@ describe("score correction exact-current identity", () => {
       try {
         expect(resetDb.prepare(
           "SELECT resolved FROM job_score_staleness WHERE tenant_id = 'local' AND job_id = ?",
-        ).get(COMPARABLE_JOB_ID)).toEqual({ resolved: 1 });
+        ).get(COMPARABLE_JOB_ID)).toEqual({ resolved: 0 });
         expect(resetDb.prepare(
           "SELECT state, attempt_count FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'score'",
         ).get(COMPARABLE_JOB_ID)).toEqual({ state: "pending", attempt_count: 0 });
