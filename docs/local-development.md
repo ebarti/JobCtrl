@@ -201,10 +201,12 @@ current pair and does not restore an older backup over later writes. Keep the
 recovery journal and all databases and SQLite companions in place.
 
 If the earlier runtime's ownership cannot be verified, the automatic upgrade
-does not modify the workspace. The default source command starts only the
-diagnostic API and web interface, which report that an upgrade is needed;
-the worker and Temporal stay stopped. If a legacy runtime lacks complete
-ownership records, there is currently no documented self-service recovery.
+does not modify the workspace. With an untracked legacy registry, the source
+command can stop before opening the diagnostic interface and report the
+ownership problem in the terminal instead. If a diagnostic API does start for
+an incompatible schema, it reports that an upgrade is needed without starting
+the worker or Temporal. If a legacy runtime lacks complete ownership records,
+there is currently no documented self-service recovery.
 Preserve the registry, workspace and journal and seek support; a computer
 restart alone does not clear the refusal. Schemas older than 14, newer than this
 build, ambiguous histories, and non-macOS source starts do not take this
