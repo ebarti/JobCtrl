@@ -6,12 +6,12 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash, createPublicKey } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, realpath, rename, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { verifyReleaseDescriptorSignature } from "./distribution-homebrew.render.bundle.mjs";
-import { runForwardInterruptionMatrix, selectLatestReleasedVersion, selectUpgradeMode } from "./released-upgrade-smoke.mjs";
+import { installArgs, runForwardInterruptionMatrix, selectLatestReleasedVersion, selectUpgradeMode } from "./released-upgrade-smoke.mjs";
 
 const readJson = async (file) => JSON.parse(await readFile(file, "utf8"));
 const hash = async (file) => {
@@ -114,6 +114,16 @@ async function verifyWorkspace(context, candidate, runtime, state, env, expected
   for (const file of pair.files) assert.equal(await hash(path.join(pairDir, file.name)), file.sha256);
 }
 
+async function useLegacyHistory(state) {
+  const directory = path.join(state, "temporal");
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  for (const suffix of ["", "-wal", "-shm"]) {
+    try { await rename(path.join(state, `temporal.db${suffix}`), path.join(directory, `temporal.db${suffix}`)); }
+    catch (error) { if (!suffix || error.code !== "ENOENT") throw error; }
+  }
+  return path.join(directory, "temporal.db");
+}
+
 async function curlScenario(old, candidate, root, baseEnv) {
   const home = path.join(root, "home"), runtime = path.join(root, "runtime"), state = path.join(root, "state"), bin = path.join(root, "bin");
   for (const directory of [home, state, bin]) await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -130,15 +140,10 @@ async function curlScenario(old, candidate, root, baseEnv) {
     if (forward) {
       // Earlier source checkouts stored the same history one level deeper.
       // Recreate that owned, stopped layout to qualify its real upgrade path.
-      const historyDir = path.join(state, "temporal");
-      await mkdir(historyDir, { recursive: true, mode: 0o700 });
-      for (const suffix of ["", "-wal", "-shm"]) {
-        try { await rename(path.join(state, `temporal.db${suffix}`), path.join(historyDir, `temporal.db${suffix}`)); }
-        catch (error) { if (!suffix || error.code !== "ENOENT") throw error; }
-      }
+      const historyPath = await useLegacyHistory(state);
       const matrix = await runForwardInterruptionMatrix({
         old, candidate, root, runtime, state, env, selector, acquisition: "curl", readinessFailure: true,
-        historyPath: path.join(historyDir, "temporal.db"), jobUrl: "https://jobs.example/acquisition-qa",
+        historyPath, jobUrl: "https://jobs.example/acquisition-qa",
         payload: path.join(runtime, "releases", candidate.descriptor.buildId, "payload"),
         initial: { executable: "/bin/bash", args: upgrade },
       });
@@ -154,6 +159,43 @@ async function curlScenario(old, candidate, root, baseEnv) {
     await run(selector, ["start", "--no-open"], env);
     await verifyWorkspace(context, candidate, runtime, state, env, expectedSchema, title);
     return { acquisition: "curl", sourceSchema: context.schema, targetSchema: expectedSchema, checks };
+  } finally { await run(selector, ["stop"], env, { allowFailure: true }).catch(() => {}); }
+}
+
+// A checkout may already have migrated the shared workspace before the user
+// acquires the new installed release. Qualify that distinct stopped-state path.
+async function curlAlreadyMigratedScenario(old, candidate, root, baseEnv) {
+  const source = old.manifest.launcherCompatibility, target = candidate.manifest.launcherCompatibility;
+  if (source?.minimum !== 1 || source?.maximum !== 1 || target?.minimum !== 2 || target?.maximum !== 2) {
+    return { acquisition: "curl-already-migrated", status: "not-applicable" };
+  }
+  const home = path.join(root, "home"), runtime = path.join(root, "runtime"), state = path.join(root, "state"), bin = path.join(root, "bin");
+  for (const directory of [home, state, bin]) await mkdir(directory, { recursive: true, mode: 0o700 });
+  const env = { ...baseEnv, HOME: home, JOBCTRL_RUNTIME_HOME: runtime, JOBCTRL_DIR: state };
+  const selector = path.join(runtime, "bin", "jobctrl");
+  try {
+    await run("/bin/bash", [path.join(old.directory, "install.sh"), "--home", runtime, "--bin-dir", bin, "--no-modify-path", "--release-url", pointer(old)], env);
+    const context = await prepareWorkspace(old, runtime, state, env, selector);
+    if (selectUpgradeMode(old.manifest, candidate.manifest, context.schema) !== "forward-schema-15") {
+      return { acquisition: "curl-already-migrated", status: "not-applicable" };
+    }
+    const history = await useLegacyHistory(state);
+    await run(candidate.installer, installArgs(candidate, runtime, true, "curl"), env);
+    const payload = path.join(runtime, "releases", candidate.descriptor.buildId, "payload");
+    const python = path.join(payload, "python", "bin", "python3");
+    const app = path.join(state, "jobctrl.db");
+    const appInode = (await stat(app)).ino, historyInode = (await stat(history)).ino;
+    const migrate = "import sqlite3,sys; from jobctrl.infrastructure.migrations.schema_v15 import upgrade_exact_v14_schema_to_v15; c=sqlite3.connect(sys.argv[1]); upgrade_exact_v14_schema_to_v15(c); c.close()";
+    await run(python, ["-I", "-B", "-c", migrate, app], env);
+    await run("/bin/bash", [path.join(candidate.directory, "install.sh"), "--home", runtime, "--bin-dir", bin, "--no-modify-path", "--release-url", pointer(candidate)], env);
+    context.useCandidate(candidate);
+    await verifyWorkspace(context, candidate, runtime, state, env, 15);
+    assert.equal((await stat(app)).ino, appInode);
+    assert.equal((await stat(history)).ino, historyInode);
+    await run(selector, ["stop"], env);
+    await run(selector, ["start", "--no-open"], env);
+    await verifyWorkspace(context, candidate, runtime, state, env, 15);
+    return { acquisition: "curl-already-migrated", sourceSchema: 15, targetSchema: 15, checks: ["real-installer-accepts-already-migrated-workspace", "legacy-history-path-and-inode-preserved", "job-resume-and-workflow-preserved", "paired-backup", "stop-and-restart"] };
   } finally { await run(selector, ["stop"], env, { allowFailure: true }).catch(() => {}); }
 }
 
@@ -241,7 +283,11 @@ export async function runPublishedAcquisitionUpgrades({ releaseDirectory, output
   const old = await publishedSource(version, root, trust, env);
   assert.ok(old.descriptor.sequence < candidate.descriptor.sequence);
   const started = performance.now();
-  const results = [await curlScenario(old, candidate, path.join(root, "curl"), env), await brewScenario(old, candidate, path.join(root, "homebrew"), env)];
+  const results = [
+    await curlScenario(old, candidate, path.join(root, "curl"), env),
+    await brewScenario(old, candidate, path.join(root, "homebrew"), env),
+    await curlAlreadyMigratedScenario(old, candidate, path.join(root, "curl-already-migrated"), env),
+  ];
   const report = { schemaVersion: 1, status: "passed", sourceBuildId: old.descriptor.buildId, candidateBuildId: candidate.descriptor.buildId, elapsedMs: Math.round(performance.now() - started), results };
   await writeFile(output, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
   return report;

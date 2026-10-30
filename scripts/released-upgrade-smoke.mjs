@@ -153,7 +153,7 @@ async function releasedVersion(version, cache, trust, env) {
   return release;
 }
 
-function installArgs(release, runtime, stage = false, source = "homebrew") {
+export function installArgs(release, runtime, stage = false, source = "homebrew") {
   return ["--source", source, ...(stage ? ["--stage-only"] : []), "--home", runtime,
     "--descriptor-url", `https://releases.jobctrl.dev/v1/artifacts/${release.descriptor.buildId}/release-descriptor.json`,
     "--descriptor-file", path.join(release.directory, "release-descriptor.json"),
