@@ -217,7 +217,8 @@ readiness, a retained job and external resume, paired backup hashes, Temporal
 workflow history, and stop/restart. For the schema-15 transition, each path
 also exercises the nine durable interruption boundaries, real readiness failure,
 forward recovery with later application and Temporal WAL commits, modeled
-revocation policy, and cross-protocol rollback refusal. The signed binary's
+revocation policy, and rollback refusal. The curl case uses the legacy Temporal
+history location; the Homebrew case uses the current location. The signed binary's
 opt-in test checkpoint can only pause its own process in a marked temporary
 fixture; it never changes migration or release admission decisions.
 

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash, createPublicKey } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, realpath, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -128,9 +128,17 @@ async function curlScenario(old, candidate, root, baseEnv) {
     const checks = ["released-bootstrap", "real-services", "paired-backup", "job-and-resume-preserved", "temporal-history-preserved", "stop-and-restart"];
     let title = "Preserved acquisition QA job";
     if (forward) {
+      // Earlier source checkouts stored the same history one level deeper.
+      // Recreate that owned, stopped layout to qualify its real upgrade path.
+      const historyDir = path.join(state, "temporal");
+      await mkdir(historyDir, { recursive: true, mode: 0o700 });
+      for (const suffix of ["", "-wal", "-shm"]) {
+        try { await rename(path.join(state, `temporal.db${suffix}`), path.join(historyDir, `temporal.db${suffix}`)); }
+        catch (error) { if (!suffix || error.code !== "ENOENT") throw error; }
+      }
       const matrix = await runForwardInterruptionMatrix({
         old, candidate, root, runtime, state, env, selector, acquisition: "curl", readinessFailure: true,
-        jobUrl: "https://jobs.example/acquisition-qa",
+        historyPath: path.join(historyDir, "temporal.db"), jobUrl: "https://jobs.example/acquisition-qa",
         payload: path.join(runtime, "releases", candidate.descriptor.buildId, "payload"),
         initial: { executable: "/bin/bash", args: upgrade },
       });

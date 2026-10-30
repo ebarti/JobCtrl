@@ -182,7 +182,7 @@ async function formulaCache(release, prefix, payload) {
 
 // Run the same signed-controller interruption matrix after either a real
 // acquisition entry or the pre-publication signed-cache adapter.
-export async function runForwardInterruptionMatrix({ old, candidate, root, runtime, state, env, selector, payload, initial = null, acquisition = "homebrew", jobUrl = "https://jobs.example/upgrade-qa", readinessFailure = false, checked = [] }) {
+export async function runForwardInterruptionMatrix({ old, candidate, root, runtime, state, env, selector, payload, initial = null, acquisition = "homebrew", jobUrl = "https://jobs.example/upgrade-qa", historyPath = path.join(state, "temporal.db"), readinessFailure = false, checked = [] }) {
   const temp = await realpath(os.tmpdir());
   const fixture = await realpath(root);
   const within = (parent, child) => {
@@ -196,6 +196,7 @@ export async function runForwardInterruptionMatrix({ old, candidate, root, runti
   assert.equal(await realpath(env.JOBCTRL_DIR), stateReal, "release command must use the fixture workspace");
   assert.equal(path.resolve(selector), path.join(path.resolve(runtime), "bin", "jobctrl"));
   assert.equal(path.resolve(payload), path.join(path.resolve(runtime), "releases", candidate.descriptor.buildId, "payload"));
+  assert.ok(within(stateReal, await realpath(historyPath)), "release QA history must belong to the fixture workspace");
   const assertPair = async (id) => {
     assert.ok(id, "transition must record its paired backup");
     const pair = await json(path.join(state, "backups", id, "pair.json"));
@@ -204,6 +205,7 @@ export async function runForwardInterruptionMatrix({ old, candidate, root, runti
     for (const file of pair.files) assert.equal(await hash(path.join(state, "backups", id, file.name)), file.sha256);
   };
   const inode = (await stat(path.join(state, "jobctrl.db"))).ino;
+  const historyInode = (await stat(historyPath)).ino;
   await writeFile(path.join(root, ".jobctrl-release-qa"), "jobctrl-release-qa-v1\n", { mode: 0o600 });
   // The old release is historical evidence once the target is staged. Use
   // the candidate's own bundled runtimes for all subsequent fixture writes.
@@ -236,7 +238,7 @@ print(json.dumps([app.execute("SELECT title FROM jobs WHERE url=?",(sys.argv[3],
     const actual = JSON.parse((await command(python, ["-I", "-B", "-c", verifyLater, app, history, jobUrl], env)).output);
     assert.deepEqual(actual, ["job", "profile", "resume"].map((name) => `later-${name}-${n}`).concat(JSON.stringify({ search: `later-search-${n}` }), `later-history-${n}`));
   };
-  const app = path.join(state, "jobctrl.db"), history = path.join(state, "temporal.db");
+  const app = path.join(state, "jobctrl.db"), history = historyPath;
   const external = path.join(state, "upgrade-qa-external-resume.txt");
   let previous = null;
   for (let index = 0; index < checkpoints.length; index++) {
@@ -350,6 +352,7 @@ print(json.dumps([app.execute("SELECT title FROM jobs WHERE url=?",(sys.argv[3],
   await verifyPair(path.join(pair, "jobctrl.db"), path.join(pair, "temporal.db"), last);
   assert.equal(await readFile(external, "utf8"), `later-external-resume-${last}\n`);
   assert.equal((await stat(app)).ino, inode);
+  assert.equal((await stat(history)).ino, historyInode, "the selected Temporal history must remain in place");
   assert.equal((await json(path.join(runtime, "active.json"))).receipt.buildId, candidate.descriptor.buildId);
   assert.equal(JSON.parse((await command(selector, ["status", "--json"], env)).output).status, "running");
   const selectedBeforeRollback = await readFile(path.join(runtime, "active.json"));
@@ -364,14 +367,18 @@ print(json.dumps([app.execute("SELECT title FROM jobs WHERE url=?",(sys.argv[3],
   try {
     const rollback = await command(selector, ["rollback", "--to", old.descriptor.buildId], env, { allowFailure: true });
     assert.ok(Number.isInteger(rollback.code) && rollback.code !== 0, "cross-protocol rollback must be refused");
-    assert.match(rollback.output, /protocol/i);
+    assert.match(rollback.output, historyPath === path.join(state, "temporal.db") ? /protocol/i : /legacy source Temporal history/i);
     assert.deepEqual(await readFile(path.join(runtime, "active.json")), selectedBeforeRollback);
     assert.deepEqual(await readFile(path.join(runtime, "transition.json")), journalBeforeRollback);
     await verifyPair(app, history, last);
   } finally {
     await writeFile(policyPath, modeledPolicy, { mode: 0o600 });
   }
-  checked.push("cross-protocol-rollback-refused-without-data-mutation");
+  if (historyPath === path.join(state, "temporal.db")) {
+    checked.push("cross-protocol-rollback-refused-without-data-mutation");
+  } else {
+    checked.push("legacy-history-rollback-refused-without-data-mutation", "legacy-temporal-history-path-and-inode-preserved");
+  }
   checked.push("signed-installer-and-public-selector-interrupted-at-all-nine-durable-boundaries", "archived-controller-preserves-every-pre-handoff-journal", "fresh-paired-backup-preserves-every-later-app-and-temporal-wal", "profile-resume-search-and-external-file-preserved", "database-inode-preserved", "source-job-preserved", "real-services-ready", "selection-finalized-without-restarting-healthy-candidate");
   return { last, title: `later-job-${last}`, checks: checked };
 }
