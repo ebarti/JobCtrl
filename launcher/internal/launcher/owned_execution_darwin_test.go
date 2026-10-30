@@ -445,7 +445,7 @@ func TestOwnedExecutionStdin(t *testing.T) {
 		completion, err = readExecutionCompletion(ctx, scopes[0].ID)
 		raw, marshalErr := json.Marshal(scopes[0])
 		expected := executionCompletionForReceipt(scopes[0], append(raw, '\n'), scopes[0].BootSession)
-		if err != nil || marshalErr != nil || completion.Scope != scopes[0] || completion.ReceiptSHA256 != expected.ReceiptSHA256 || completion.VerificationBootSession != scopes[0].BootSession {
+		if err != nil || marshalErr != nil || completion.Scope != scopes[0] || completion.Scope.Purpose != "" || completion.ReceiptSHA256 != expected.ReceiptSHA256 || completion.VerificationBootSession != scopes[0].BootSession {
 			t.Fatalf("stop did not preserve the exact finished scope: %v", err)
 		}
 		if _, err := os.Stat(filepath.Join(root, "executions", scopes[0].ID+".json")); !errors.Is(err, os.ErrNotExist) {
@@ -525,8 +525,11 @@ func TestFinishedOrdinaryExecutionRecoversFromTransientScopeCount(t *testing.T) 
 	completion, err := readExecutionCompletion(ctx, scopes[0].ID)
 	raw, marshalErr := json.Marshal(scopes[0])
 	expected := executionCompletionForReceipt(scopes[0], append(raw, '\n'), scopes[0].BootSession)
-	if err != nil || marshalErr != nil || completion.Scope != scopes[0] || completion.ReceiptSHA256 != expected.ReceiptSHA256 || completion.VerificationBootSession != scopes[0].BootSession {
+	if err != nil || marshalErr != nil || completion.Scope != scopes[0] || completion.Scope.Purpose != "" || completion.ReceiptSHA256 != expected.ReceiptSHA256 || completion.VerificationBootSession != scopes[0].BootSession {
 		t.Fatalf("stop did not preserve the exact finished scope: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "executions", scopes[0].ID+".json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("verified stop retained the active receipt: %v", err)
 	}
 	if err := runInOwnedExecution(ctx, command, io.Discard, io.Discard); err != nil {
 		t.Fatalf("restart after verified stop failed: %v", err)
