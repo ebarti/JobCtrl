@@ -730,6 +730,10 @@ func TestInterruptedTransitionWithRevokedPredecessorFailsClosed(t *testing.T) {
 
 func TestRetentionPreservesReferencedAndNonStableEvidence(t *testing.T) {
 	runtime := t.TempDir()
+	state := t.TempDir()
+	if _, err := resolveInstance([]string{"HOME=" + t.TempDir(), "JOBCTRL_RUNTIME_HOME=" + runtime, "JOBCTRL_DIR=" + state}); err != nil {
+		t.Fatal(err)
+	}
 	store, err := release.Open(runtime)
 	if err != nil {
 		t.Fatal(err)
@@ -756,17 +760,26 @@ func TestRetentionPreservesReferencedAndNonStableEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	public, private, python := retentionSigningKey(t)
+	if err := os.RemoveAll(filepath.Join(runtime, "releases", prunable.BuildID)); err != nil {
+		t.Fatal(err)
+	}
+	prunable = stageSignedRetentionRelease(t, runtime, prunable.BuildID, prunable.Sequence, public, private, python)
+	if err := os.RemoveAll(filepath.Join(runtime, "releases", prior.BuildID)); err != nil {
+		t.Fatal(err)
+	}
+	prior = stageSignedRetentionRelease(t, runtime, prior.BuildID, prior.Sequence, public, private, python)
 	if _, err := store.WriteSelectedActive(active, 0, active.BuildID, "curl"); err != nil {
 		t.Fatal(err)
 	}
-	backupDirectory := filepath.Join(runtime, "instances", "fixture", "backups", "pair-reference")
+	backupDirectory := filepath.Join(state, "backups", "pair-reference")
 	if err := os.MkdirAll(backupDirectory, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeJSONAtomic(filepath.Join(backupDirectory, "pair.json"), databasePair{SchemaVersion: 1, ID: "pair-reference", ReleaseReceipt: referenced, CreatedAt: time.Now(), Files: []databaseFile{{Name: "jobctrl.db"}, {Name: "temporal.db"}}}); err != nil {
+	if err := writeJSONAtomic(filepath.Join(backupDirectory, "pair.json"), databasePair{SchemaVersion: 1, ID: "pair-reference", ReleaseReceipt: referenced, CreatedAt: time.Now(), Files: []databaseFile{{Name: "jobctrl.db", SHA256: strings.Repeat("a", 64), SizeBytes: 1}, {Name: "temporal.db", SHA256: strings.Repeat("b", 64), SizeBytes: 1}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := retainReleases(store, runtime); err != nil {
+	if err := retainReleases(store, state); err != nil {
 		t.Fatal(err)
 	}
 	for _, build := range []string{active.BuildID, prior.BuildID, referenced.BuildID, local.BuildID, pre.BuildID} {
@@ -787,6 +800,9 @@ func TestRealTwoReleasePromotionRollbackRestoresPairedSQLiteState(t *testing.T) 
 		t.Skip("python3 unavailable")
 	}
 	runtime, state := t.TempDir(), t.TempDir()
+	if _, err := resolveInstance([]string{"HOME=" + t.TempDir(), "JOBCTRL_RUNTIME_HOME=" + runtime, "JOBCTRL_DIR=" + state}); err != nil {
+		t.Fatal(err)
+	}
 	store, err := release.Open(runtime)
 	if err != nil {
 		t.Fatal(err)
