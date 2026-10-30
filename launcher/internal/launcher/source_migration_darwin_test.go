@@ -229,6 +229,114 @@ c=sqlite3.connect(r/'temporal.db'); assert c.execute('select value from history'
 	}
 }
 
+func TestSourceMigrationRefusesOpenWorkspaceHandles(t *testing.T) {
+	python := migrationIntegrationPython(t)
+	for _, target := range []string{"jobctrl.db", "temporal.db"} {
+		t.Run(target, func(t *testing.T) {
+			root, err := os.MkdirTemp("", "jobctrl-open-workspace-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			safeToRemove := true
+			t.Cleanup(func() {
+				if !safeToRemove {
+					t.Errorf("preserving synthetic workspace with an unverified reader: %s", root)
+					return
+				}
+				if err := os.RemoveAll(root); err != nil {
+					t.Errorf("remove synthetic workspace: %v", err)
+				}
+			})
+			database, temporal := filepath.Join(root, "jobctrl.db"), filepath.Join(root, "temporal.db")
+			init := `import sqlite3,sys
+for path in sys.argv[1:]:
+ c=sqlite3.connect(path); c.execute('create table synthetic(value text)'); c.close()`
+			if output, err := exec.Command(python, "-I", "-B", "-c", init, database, temporal).CombinedOutput(); err != nil {
+				t.Fatalf("create synthetic workspace pair: %v %s", err, output)
+			}
+			if err := refuseOpenWorkspaceDatabases(database, temporal); err != nil {
+				t.Fatalf("closed synthetic workspace was refused: %v", err)
+			}
+			ready := filepath.Join(root, "ready")
+			readerCode := `import pathlib,sqlite3,sys
+c=sqlite3.connect(pathlib.Path(sys.argv[1]).resolve().as_uri()+'?mode=ro',uri=True)
+c.execute('pragma user_version').fetchone()
+pathlib.Path(sys.argv[2]).write_text('ready')
+sys.stdin.buffer.read(1)
+c.close()`
+			reader := exec.Command(python, "-I", "-B", "-c", readerCode, filepath.Join(root, target), ready)
+			input, err := reader.StdinPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := reader.Start(); err != nil {
+				t.Fatal(err)
+			}
+			safeToRemove = false
+			done := make(chan error, 1)
+			go func() { done <- reader.Wait() }()
+			waited := false
+			t.Cleanup(func() {
+				if waited {
+					return
+				}
+				_ = input.Close()
+				select {
+				case err := <-done:
+					waited = true
+					safeToRemove = reader.ProcessState != nil
+					if !safeToRemove {
+						t.Errorf("could not verify synthetic reader exit: %v", err)
+					}
+				case <-time.After(5 * time.Second):
+					t.Error("synthetic reader did not exit after its control pipe closed")
+				}
+			})
+			for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+				if _, err := os.Stat(ready); err == nil {
+					break
+				}
+				select {
+				case err := <-done:
+					waited = true
+					safeToRemove = reader.ProcessState != nil
+					t.Fatalf("synthetic reader exited before opening the database: %v", err)
+				default:
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("synthetic reader did not open the database")
+				}
+			}
+			output, err := exec.Command("/usr/sbin/lsof", "-nP", "-Fp", filepath.Join(root, target)).CombinedOutput()
+			if err != nil || !strings.Contains("\n"+string(output), fmt.Sprintf("\np%d\n", reader.Process.Pid)) {
+				t.Fatalf("real lsof did not find the owned reader: %v %s", err, output)
+			}
+			if err := refuseOpenWorkspaceDatabases(database, temporal); err == nil || !strings.Contains(err.Error(), "databases may be open") {
+				t.Fatalf("open synthetic database was not refused: %v", err)
+			}
+			if err := input.Close(); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case err := <-done:
+				waited = true
+				safeToRemove = reader.ProcessState != nil
+				if !safeToRemove {
+					t.Fatalf("could not verify synthetic reader exit: %v", err)
+				}
+				if err != nil {
+					t.Fatalf("synthetic reader exited unexpectedly: %v", err)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("synthetic reader did not exit after release")
+			}
+			if err := refuseOpenWorkspaceDatabases(database, temporal); err != nil {
+				t.Fatalf("closed synthetic workspace was refused after release: %v", err)
+			}
+		})
+	}
+}
+
 func TestSourceMigrationPreservesLaterWritesAcrossEveryDurableBoundary(t *testing.T) {
 	python, binary := migrationIntegrationPython(t), buildSourceFixture(t)
 	for _, stage := range []string{"starting", "backed_up", "candidate_ready", "activating", "activated"} {

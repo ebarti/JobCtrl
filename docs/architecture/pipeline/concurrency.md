@@ -53,14 +53,19 @@ worker startup in
   They bypass the remote queue, so these controls do not wait for a model slot.
   Each control attempt has a 30-second limit and its scheduling plus retries has
   a three-minute limit. Existing retry policies and cancellation ownership checks
-  still apply. The two reserve executor threads serve this pool; remote
-  activity-slot telemetry excludes it.
+  still apply. A separate two-thread blocking-control pool serves spend checks,
+  owner-scoped cancellation, and workflow lifecycle writes. It accepts at most
+  two unfinished calls; a full or draining pool refuses further controls until
+  calls return. Remote activity-slot telemetry excludes this pool.
 - **Executor threads** — separate worker-owned Temporal-sync and blocking-stage
   `ThreadPoolExecutor` pools, each sized `slots + 2`, so blocking stage work
   never spills into the process default executor or starves Temporal's own
   synchronous activities. Cancellation retires the affected blocking pool
-  generation before its grace wait, so a fresh bounded generation accepts an
-  immediate retry even when the old provider call ignores cancellation.
+  generation before its grace wait. Up to three generations, including the
+  current one, may remain outstanding; beyond that the helper refuses new
+  submissions until an entire retired generation returns. This limits the
+  blocking-pool threads to at most three times the configured pool width per
+  process, without treating a cancellation as a stopped thread.
 
 Cover-letter factual and quality reviews use a third, separate executor. Its
 running-leaf limit is the startup activity setting `N`; each pair submits exactly
@@ -228,7 +233,7 @@ Two knobs that look like Temporal concurrency but are not:
 
 | Bound | Mechanism | Where |
 | --- | --- | --- |
-| Activity slots and executor pools | Settings `worker_activity_slots`; Temporal-sync and blocking-stage executors each `slots + 2`; canceled blocking generations retire before grace | `config.json`, `infrastructure/temporal/worker.py`, `infrastructure/temporal/run_in_activity.py` |
+| Activity slots and executor pools | Settings `worker_activity_slots`; Temporal-sync and blocking-stage executors each `slots + 2`; at most three outstanding blocking generations per process | `config.json`, `infrastructure/temporal/worker.py`, `infrastructure/temporal/run_in_activity.py` |
 | Parallel discovery families | Discovery Runtime `max_parallel_families` (default `1`) | SQLite, `infrastructure/temporal/concurrency.py`, `discovery/workflow.py` |
 | LLM spend | `check_spend_budget` preflight stops spendful workflows at the daily ceiling | [Spend Ceiling](operations.md#spend-ceiling) |
 | Retries | per-activity retry policies from the error taxonomy | [Envelope & Activities](envelope.md) |

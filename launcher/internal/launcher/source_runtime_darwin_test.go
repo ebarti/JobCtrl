@@ -203,7 +203,24 @@ while True: time.sleep(1)`
 
 func TestDevelopmentEntryAutomaticallyMigratesOwnedWorkspace(t *testing.T) {
 	python := migrationIntegrationPython(t)
-	root, home := t.TempDir(), t.TempDir()
+	ownedRoot, err := os.MkdirTemp("", "jobctrl-development-migration-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	safeToRemove := true
+	t.Cleanup(func() {
+		if !safeToRemove {
+			t.Errorf("preserving synthetic workspace after unverified cleanup: %s", ownedRoot)
+			return
+		}
+		if err := os.RemoveAll(ownedRoot); err != nil {
+			t.Errorf("remove synthetic workspace: %v", err)
+		}
+	})
+	root, home := filepath.Join(ownedRoot, "source"), filepath.Join(ownedRoot, "home")
+	if err := os.MkdirAll(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Join(root, "scripts"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -314,12 +331,40 @@ Server(('127.0.0.1',int(os.environ['JOBCTRL_API_PORT'])),H).serve_forever()`
 	}
 	first, firstDone := start()
 	var second *exec.Cmd
+	var secondDone <-chan error
+	firstWaited, secondWaited := false, false
+	firstExited, secondExited := false, false
+	safeToRemove = false
 	t.Cleanup(func() {
-		_ = stop(ctx)
-		_ = first.Process.Kill()
-		if second != nil {
-			_ = second.Process.Kill()
+		if err := stop(ctx); err != nil {
+			t.Errorf("could not verify synthetic source cleanup: %v", err)
+			return
 		}
+		if !firstWaited {
+			select {
+			case <-firstDone:
+				firstWaited = true
+				firstExited = first.ProcessState != nil
+			case <-time.After(15 * time.Second):
+				t.Error("first synthetic source command did not exit")
+			}
+		}
+		if second != nil && !secondWaited {
+			select {
+			case <-secondDone:
+				secondWaited = true
+				secondExited = second.ProcessState != nil
+			case <-time.After(15 * time.Second):
+				t.Error("second synthetic source command did not exit")
+			}
+		}
+		if firstWaited && !firstExited {
+			t.Error("first synthetic source command exit could not be verified")
+		}
+		if secondWaited && !secondExited {
+			t.Error("second synthetic source command exit could not be verified")
+		}
+		safeToRemove = firstExited && (second == nil || secondExited)
 	})
 	markerPattern := filepath.Join(inst.Dir, "source-runs", "*.json")
 	deadline := time.Now().Add(30 * time.Second)
@@ -330,6 +375,8 @@ Server(('127.0.0.1',int(os.environ['JOBCTRL_API_PORT'])),H).serve_forever()`
 		}
 		select {
 		case err := <-firstDone:
+			firstWaited = true
+			firstExited = first.ProcessState != nil
 			t.Fatalf("first source runtime exited: %v", err)
 		default:
 		}
@@ -343,26 +390,86 @@ Server(('127.0.0.1',int(os.environ['JOBCTRL_API_PORT'])),H).serve_forever()`
 			filepath.Join(root, "dev", "logs", "temporal.log"))
 		t.Fatal("source did not establish its own healthy worker receipt")
 	}
+	firstMarker := markers[0]
 	if version, err := sqliteUserVersion(python, filepath.Join(state, "jobctrl.db")); err != nil || version != 14 {
 		t.Fatalf("synthetic source schema = %d, %v", version, err)
 	}
-	second, secondDone := start()
+	second, secondDone = start()
 	select {
 	case <-firstDone:
+		firstWaited = true
+		firstExited = first.ProcessState != nil
+		if !firstExited {
+			t.Fatal("old synthetic source command exit could not be verified")
+		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("migration did not stop the old scoped source runtime")
 	}
-	deadline = time.Now().Add(40 * time.Second)
+	// A schema read opens the same SQLite file guarded by migration's lsof
+	// check. Wait for the new authenticated source fleet before inspecting it.
+	deadline = time.Now().Add(70 * time.Second)
+	var migratedMarker string
 	for time.Now().Before(deadline) {
-		if version, err := sqliteUserVersion(python, filepath.Join(state, "jobctrl.db")); err == nil && version == 15 {
-			break
+		markers, err = filepath.Glob(markerPattern)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(markers) == 2 {
+			seenFirst := false
+			for _, marker := range markers {
+				if marker == firstMarker {
+					seenFirst = true
+				} else {
+					migratedMarker = marker
+				}
+			}
+			if seenFirst && migratedMarker != "" {
+				break
+			}
+			migratedMarker = ""
 		}
 		select {
 		case err := <-secondDone:
+			secondWaited = true
+			secondExited = second.ProcessState != nil
 			t.Fatalf("migration runtime exited: %v", err)
 		default:
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+	if migratedMarker == "" {
+		t.Fatal("migrated source did not become healthy")
+	}
+	select {
+	case err := <-secondDone:
+		secondWaited = true
+		secondExited = second.ProcessState != nil
+		t.Fatalf("migrated source exited before readiness: %v", err)
+	default:
+	}
+	var witness sourceExecutionMarker
+	if err := decodeStrictRegular(migratedMarker, &witness); err != nil ||
+		witness.SchemaVersion != 1 || witness.InstanceID != inst.ID ||
+		!executionIDValid(witness.ScopeID) || filepath.Base(migratedMarker) != witness.ScopeID+".json" {
+		t.Fatalf("invalid migrated source readiness marker: %+v, %v", witness, err)
+	}
+	sourceState, err := readState(inst.StatePath)
+	if err != nil || validateStateIdentity(ctx, sourceState) != nil || sourceState.BuildID != "source" ||
+		sourceState.StoppedAt != nil || sourceState.ExecutionScopeID != witness.ScopeID {
+		t.Fatalf("migrated source readiness is not bound to its running instance: %+v, %v", sourceState, err)
+	}
+	scopes, err := readOwnedExecutionScopes(ctx)
+	if err != nil {
+		t.Fatalf("read migrated source execution receipts: %v", err)
+	}
+	var matched bool
+	for _, scope := range scopes {
+		if scope.ID == witness.ScopeID && scope.InstanceID == inst.ID && scope.Purpose == "source" {
+			matched = true
+		}
+	}
+	if !matched {
+		t.Fatal("migrated source readiness has no matching authenticated execution receipt")
 	}
 	if version, err := sqliteUserVersion(python, filepath.Join(state, "jobctrl.db")); err != nil || version != 15 {
 		t.Fatalf("automatic source migration schema = %d, %v", version, err)
@@ -382,27 +489,16 @@ c=sqlite3.connect(b/'temporal.db'); assert c.execute('select value from history'
 	if output, err := exec.Command(python, "-I", "-B", "-c", check, state, backups[0]).CombinedOutput(); err != nil {
 		t.Fatalf("source migration did not preserve synthetic data: %v\n%s", err, output)
 	}
-	deadline = time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		markers, _ = filepath.Glob(markerPattern)
-		if len(markers) >= 2 {
-			break
-		}
-		select {
-		case err := <-secondDone:
-			t.Fatalf("migrated source exited before readiness: %v", err)
-		default:
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	if len(markers) < 2 {
-		t.Fatal("migrated source did not become healthy")
-	}
 	if err := stop(ctx); err != nil {
 		t.Fatalf("stop migrated source: %v", err)
 	}
 	select {
 	case <-secondDone:
+		secondWaited = true
+		secondExited = second.ProcessState != nil
+		if !secondExited {
+			t.Fatal("migrated synthetic source command exit could not be verified")
+		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("migrated source remained alive")
 	}

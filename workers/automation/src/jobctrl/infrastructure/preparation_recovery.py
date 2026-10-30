@@ -133,6 +133,7 @@ async def cancel_preparation_state_activity(
     return await run_blocking_with_heartbeat(
         lambda: _cancel_preparation_state(payload),
         starting_message="canceling owned preparation state",
+        control=True,
     )
 
 

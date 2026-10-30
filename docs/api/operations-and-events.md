@@ -161,7 +161,14 @@ configured database path, filters heartbeats to that resolved database/app-dir
 identity, selects the Temporal task queue named by the newest matching
 heartbeat, and aggregates fresh schema-valid rows from that queue.
 `configuredSlots`, `activeSlots`, and `availableSlots` count every activity
-slot. The active-item inventory is a separate, bounded diagnostic view: only
+slot. `blockingExecutor` separately aggregates fresh workers accepting,
+refusing, or reporting unknown blocking-work admission and the reported
+unfinished retired generations and calls. Old or malformed worker reports are
+unknown; the reported totals cover known workers only. Free Temporal slots do
+not guarantee stage admission, and unfinished calls are not confirmed stopped.
+Short controls report their own accepting, refusing, unknown and unfinished-call
+counts, independent of stage admission.
+The active-item inventory is a separate, bounded diagnostic view: only
 allowlisted activity kinds are displayed, the oldest 20 items are returned, and
 `activeItemsTotal` / `activeItemsTruncated` distinguish exact allowlisted
 cardinality from the bounded list. A worker may therefore have more active

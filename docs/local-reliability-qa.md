@@ -667,6 +667,24 @@ histories. Check that control database work runs off the worker event loop and
 closes thread-local connections on success and failure. No provider calls or
 personal workspace data belong in this regression.
 
+## Blocking activity generation capacity
+
+Use synthetic events and fake providers to hold three retired blocking-pool
+generations. Verify the next submission receives the retryable capacity refusal,
+each cancellation remains owned by its original call, and accepted results are
+preserved. Releasing one call must not free a generation while a peer in that
+pool still runs; releasing the last call must permit a healthy next submission.
+Check the actual worker heartbeat, Operations aggregation and view for refusing,
+accepting, old/malformed/unknown and stale-worker states. Free Temporal slots
+must not imply blocking admission, and no status may claim an unfinished thread
+or its child processes stopped. Use no live provider or personal workspace.
+While all three stage generations remain held, exercise the real short budget,
+owner-scoped cancellation and workflow lifecycle activities in a synthetic
+workspace. They must finish before any stage call is released, preserve a
+successor owner, and close thread-local connections. Separately fill both
+control calls, prove excess work is refused without rotating or releasing
+either call, then release one and prove admission and shutdown recover.
+
 ## Explicit Profile Score Refresh
 
 Run locked `pytest tests/test_score_profile_impact.py tests/test_score_batch_ownership.py tests/test_scorer.py`
