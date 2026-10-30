@@ -5528,7 +5528,7 @@ describe("local TypeScript API", () => {
     }
   });
 
-  it("resets stale score markers for explicit rescore through the API", async () => {
+  it("retains the stale accepted score when resetting for explicit rescore through the API", async () => {
     const staleUrl = "https://example.com/jobs/stale-score";
     const seedDb = new Database(options.dbPath);
     insertJob(seedDb, {
@@ -5571,8 +5571,8 @@ describe("local TypeScript API", () => {
       const marker = db
         .prepare("SELECT resolved, resolved_at FROM job_score_staleness WHERE tenant_id = 'local' AND job_id = ?")
         .get(jobIdFor(staleUrl)) as { resolved: number; resolved_at: string | null };
-      expect(marker.resolved).toBe(1);
-      expect(marker.resolved_at).toBeTruthy();
+      expect(marker.resolved).toBe(0);
+      expect(marker.resolved_at).toBeNull();
       const stage = db
         .prepare("SELECT state, attempt_count FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'score'")
         .get(jobIdFor(staleUrl)) as { state: string; attempt_count: number };
@@ -5584,6 +5584,19 @@ describe("local TypeScript API", () => {
       expect(JSON.parse(event.payload_json)).toMatchObject({
         nextAction: "jobctrl run score --rescore",
         newPolicyVersion: 2,
+      });
+      const list = await app.inject({ method: "GET", url: "/v1/jobs?pageSize=200" });
+      const detail = await app.inject({ method: "GET", url: `/v1/jobs/${encodeURIComponent(staleUrl)}` });
+      const listJob = list.json().items.find((job: { jobKey: string }) => job.jobKey === jobIdFor(staleUrl));
+      expect(listJob).toMatchObject({
+        fitScore: 7,
+        scoreVersion: 1,
+        scoreStaleness: { isStale: true, staleReason: "scoring_policy_changed", targetPolicyVersion: 2 },
+      });
+      expect(detail.json().job).toMatchObject({
+        fitScore: 7,
+        scoreVersion: 1,
+        scoreStaleness: listJob.scoreStaleness,
       });
     } finally {
       db.close();
@@ -6782,7 +6795,10 @@ describe("local TypeScript API", () => {
     }
   });
 
-  it("does not count corrected latest scores as outdated when stale markers remain unresolved", async () => {
+  it("counts and exposes corrected scores while their stale markers remain unresolved", async () => {
+    const staleUrl = "https://example.com/jobs/stale-but-corrected";
+    const jobId = jobIdFor(staleUrl);
+    const correctedAt = "2026-05-26T10:07:00+00:00";
     const seedDb = new Database(options.dbPath);
     createScoreStalenessTable(seedDb);
     seedDb
@@ -6791,14 +6807,15 @@ describe("local TypeScript API", () => {
       )
       .run("local", 3, "{}", "[]", "2026-05-26T10:00:00+00:00");
     insertJob(seedDb, {
-      url: "https://example.com/jobs/stale-but-corrected",
+      url: staleUrl,
       title: "Corrected Stale Score",
       site: "ExampleCo",
       fitScore: 9,
     });
-    insertScore(seedDb, "https://example.com/jobs/stale-but-corrected", 1, 7, { policyVersion: 1 });
-    insertScore(seedDb, "https://example.com/jobs/stale-but-corrected", 2, 9, {
-      correction: { fit_score: 9, reason: "user corrected score" },
+    insertScore(seedDb, staleUrl, 1, 7, { policyVersion: 1 });
+    insertScore(seedDb, staleUrl, 2, 9, {
+      correction: { corrected_fit_score: 9, rationale: "user corrected score", corrected_by: "local", corrected_at: correctedAt },
+      correctionHistory: [{ original_score: 7, corrected_score: 9, rationale: "user corrected score", corrected_by: "local", corrected_at: correctedAt }],
       policyVersion: 1,
     });
     seedDb
@@ -6809,14 +6826,43 @@ describe("local TypeScript API", () => {
          ) VALUES ('local', ?, 'scoring_policy_changed', 'local:scoring-policy-v1', 1,
            'local:scoring-policy-v3', 3, '2026-05-26T10:06:00+00:00', 0)`,
       )
-      .run(jobIdFor("https://example.com/jobs/stale-but-corrected"));
+      .run(jobId);
     seedDb.close();
 
     const app = buildApp(options);
     try {
       const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
       expect(response.statusCode, response.body).toBe(200);
-      expect(response.json().preparation.outdatedScoreCount).toBe(0);
+      expect(response.json().preparation.outdatedScoreCount).toBe(1);
+      const detail = await app.inject({ method: "GET", url: `/v1/jobs/${jobId}` });
+      expect(detail.statusCode, detail.body).toBe(200);
+      const expected = {
+        jobKey: jobId,
+        fitScore: 9,
+        scoreVersion: 2,
+        scoreCorrection: { correctedScore: 9, rationale: "user corrected score", correctedBy: "local", correctedAt },
+        scoreTrace: { correctionHistory: [{ originalScore: 7, correctedScore: 9,
+          rationale: "user corrected score", correctedBy: "local", correctedAt }] },
+        scoreStaleness: { isStale: true, staleReason: "scoring_policy_changed", currentPolicyVersion: 1, targetPolicyVersion: 3 },
+      };
+      expect(detail.json().job).toMatchObject(expected);
+      expect(detail.json().job.scoreCorrection).not.toHaveProperty("originalScore");
+      const list = await app.inject({ method: "GET", url: "/v1/jobs?pageSize=200" });
+      expect(list.statusCode, list.body).toBe(200);
+      expect(list.json().items.find((job: { jobKey: string }) => job.jobKey === jobId)).toMatchObject(expected);
+      const db = new Database(options.dbPath);
+      try {
+        const persisted = db.prepare("SELECT correction_json, trace_json FROM job_scores WHERE tenant_id='local' AND job_id=? AND version=2")
+          .get(jobId) as { correction_json: string; trace_json: string };
+        expect(JSON.parse(persisted.correction_json)).toEqual({ corrected_fit_score: 9,
+          rationale: "user corrected score", corrected_by: "local", corrected_at: correctedAt });
+        expect(JSON.parse(persisted.trace_json).correction_history).toEqual([{ original_score: 7, corrected_score: 9,
+          rationale: "user corrected score", corrected_by: "local", corrected_at: correctedAt }]);
+        expect(db.prepare("SELECT resolved, resolved_by_score_version FROM job_score_staleness WHERE tenant_id='local' AND job_id=?").get(jobId))
+          .toEqual({ resolved: 0, resolved_by_score_version: null });
+      } finally {
+        db.close();
+      }
     } finally {
       await app.close();
     }
@@ -13820,6 +13866,7 @@ function insertScore(
   fitScore: number,
   options: {
     correction?: Record<string, unknown> | null;
+    correctionHistory?: Record<string, unknown>[];
     policyVersion?: number;
     policyId?: string;
     keywords?: string[];
@@ -13876,7 +13923,7 @@ function insertScore(
             scoring_policy_version: options.policyVersion,
           }),
       parser_warnings: [],
-      correction_history: [],
+      correction_history: options.correctionHistory ?? [],
     }),
   );
 }

@@ -1,5 +1,6 @@
 import type { OutcomeAnalyticsSummary } from "@jobctrl/contracts";
 
+import { isActiveDemoJob } from "./job-filter.js";
 import type { DemoWorkspaceSnapshot } from "./workspace/index.js";
 
 type Mutable<TValue> = TValue extends (...args: never[]) => unknown
@@ -587,15 +588,7 @@ function recomputeAnalytics(draft: MutableSnapshot): void {
 }
 
 function activeDemoJobs(draft: MutableSnapshot): DemoJob[] {
-  return draft.state.readModel.jobs.list.items.filter(
-    (job) =>
-      !job.deletedAt &&
-      !job.hiddenAt &&
-      job.activeState !== "closed" &&
-      job.activeState !== "expired" &&
-      job.activeState !== "removed" &&
-      job.activeState !== "location_incompatible",
-  );
+  return draft.state.readModel.jobs.list.items.filter(isActiveDemoJob);
 }
 
 function buildAnalyticsFunnel(

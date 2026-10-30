@@ -932,8 +932,7 @@ function countOutdatedScores(
         AND s.job_id = stale.job_id
         AND s.version = latest.max_version
       WHERE stale.tenant_id = ?
-        AND stale.resolved = 0
-        AND (s.correction_json IS NULL OR TRIM(s.correction_json) = '')`,
+        AND stale.resolved = 0`,
     [tenantId, tenantId],
   );
   return rows.filter((row) => activeJobs.has(row.job_id)).length;

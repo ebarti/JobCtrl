@@ -433,10 +433,21 @@ table with a correction-derived calibration anchor. It mirrors the Python
 directly to SQLite instead of crossing the Python JSON-RPC boundary. When the
 policy version changes, the API also marks comparable latest uncorrected scores
 stale in `job_score_staleness`; corrected score versions are not marked stale.
-`POST /v1/scoring/stale-scores/actions/reset-for-rescore` clears active stale
-markers and resets their score stage to `pending` for an explicit rescore. The
+`POST /v1/scoring/stale-scores/actions/reset-for-rescore` resets the score
+stage to `pending` for an explicit rescore while retaining the prior score and
+its unresolved stale markers. A completed replacement resolves only the
+source-matching policy markers observed before its inference, in the same
+transaction as the score, determination binding and requirement-fit report.
+Failed or canceled work and score reuse leave the markers unresolved; a later
+invalidation is not resolved by an earlier in-flight assessment. The
 body accepts `jobKeys` for selected stale scores or an empty list for all active
-stale scores, plus optional `limit` for bounded resets. The backend command
+stale scores, plus optional `limit` for bounded resets of distinct eligible
+jobs. Hidden, deleted, closed, expired, removed, and location-incompatible jobs
+are excluded, including when explicitly selected; they do not consume the limit.
+`jobKeys` and `count` report only jobs actually reset. Queued, running,
+and pending work stays untouched; `skippedActiveJobKeys` identifies jobs owned
+by ongoing work, while `alreadyPendingJobKeys` identifies work already waiting.
+After active work finishes, retry the reset only if the score remains stale. The backend command
 that consumes those reset jobs is `jobctrl score --rescore` or the batch
 API action with `stage: "score"` and `rescore: true`.
 The jobs list and all-matching bulk filters accept optional `jobStates` values

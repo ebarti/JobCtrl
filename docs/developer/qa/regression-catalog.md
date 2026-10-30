@@ -602,6 +602,23 @@ results. Skipping this production gate is not passing browser evidence.
 
 ## Auditability Checks
 
+For stale score reset and replacement (#1189), run the focused score
+staleness, score atomic-publication and repository tests with the API reset and
+web mutation tests. Use owned synthetic SQLite and fake model authority. Reset
+and read the prior score through list and detail; retain its stale marker during
+pending, failure, cancellation and reuse. Exercise publication and commit
+failure, source/tenant mismatches and unrelated markers. Add a marker through an
+independent writer during inference: the earlier completion must not resolve
+it or reconcile downstream eligibility, while a later matching replacement can.
+A newer policy during inference
+must preserve the accepted score, report and both invalidations.
+Exercise correction of an already-stale score in the API, dashboard, CLI and
+browser-local demo. Repeat bounded resets with duplicate markers, an already
+pending job and independent queued/running owners; limits apply to distinct
+eligible jobs, skipped work is reported, and an event or competing-writer
+failure cannot partially reset the cohort. Repeated preparation sweeps preserve
+approved artifact identity, status and bytes while score authority is stale.
+
 For interview-history and Apply Review comment recovery, run the focused
 Interviews view, note-form, interview-query and Apply Review session/view tests.
 In an owned synthetic workspace, fail preparation and note history reads,

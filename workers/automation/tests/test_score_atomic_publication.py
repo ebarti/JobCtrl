@@ -14,6 +14,7 @@ from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
 from jobctrl.infrastructure.scoring import (
     SqliteRequirementFitReportRepository,
     SqliteScoreRepository,
+    SqliteScoringPolicyRepository,
 )
 from tests.test_score_repository import _seed_job
 from tests.test_score_profile_impact import conn as conn
@@ -46,6 +47,24 @@ def _published_state(db_path: Path, job_id: str) -> dict[str, list[tuple]]:
         db.close()
 
 
+def _mark_policy_change(conn, job_id):
+    SqliteScoringPolicyRepository(conn).get_current(LOCAL_TENANT)
+    conn.execute(
+        "INSERT INTO scoring_policies (tenant_id, version, rubric_json, anchors_json, created_at) "
+        "SELECT tenant_id, 2, rubric_json, anchors_json, '2026-01-01T00:00:00Z' "
+        "FROM scoring_policies WHERE tenant_id='local' AND version=1"
+    )
+    conn.execute(
+        """INSERT INTO job_score_staleness (
+            tenant_id, job_id, stale_reason, old_policy_id, old_policy_version,
+            new_policy_id, new_policy_version, marked_at, resolved
+        ) VALUES ('local', ?, 'scoring_policy_changed', 'local:scoring-policy-v1', 1,
+                  'local:scoring-policy-v2', 2, '2026-01-01T00:00:00Z', 0)""",
+        (str(job_id),),
+    )
+    conn.commit()
+
+
 @pytest.mark.parametrize(
     ("trigger", "table", "when"),
     [
@@ -75,6 +94,7 @@ def test_failed_refresh_keeps_the_accepted_score_report_and_binding(tmp_path: Pa
                 llm=llm,
                 requirements=analysis.canonical.requirements,
                 requirement_fit_repository=reports,
+                policy_repository=SqliteScoringPolicyRepository(conn),
             )
             # Use the production durable binding repository, not a fake port.
             use_case._determination_dependencies["repository"] = determination_repository
@@ -85,15 +105,7 @@ def test_failed_refresh_keeps_the_accepted_score_report_and_binding(tmp_path: Pa
         assert reports.load(LOCAL_TENANT, job_id).score_version == 1
         # A replacement must not clear an unresolved stale marker until its
         # matching score and fit report have both been published.
-        conn.execute(
-            """INSERT INTO job_score_staleness (
-                tenant_id, job_id, stale_reason, old_policy_id, old_policy_version,
-                new_policy_id, new_policy_version, marked_at, resolved
-            ) VALUES ('local', ?, 'synthetic-policy-change', 'old', 0, 'new', 1,
-                      '2026-01-01T00:00:00Z', 0)""",
-            (str(job_id),),
-        )
-        conn.commit()
+        _mark_policy_change(conn, job_id)
         accepted = _published_state(db_path, str(job_id))
         assert len(accepted["scores"]) == len(accepted["reports"]) == len(accepted["bindings"]) == 1
         assert accepted["items"] and len(accepted["staleness"]) == 1
@@ -232,19 +244,13 @@ def test_staleness_notification_is_not_emitted_until_complete_score_is_committed
                 llm=llm,
                 requirements=analysis.canonical.requirements,
                 requirement_fit_repository=reports,
+                policy_repository=SqliteScoringPolicyRepository(conn),
             )
             case._determination_dependencies["repository"] = determination_repository
             return case.score(job=job, profile_snapshot=snapshot, employer_analysis=analysis)
 
         assert score().ok
-        conn.execute(
-            """INSERT INTO job_score_staleness (
-                tenant_id, job_id, stale_reason, old_policy_id, old_policy_version,
-                new_policy_id, new_policy_version, marked_at, resolved
-            ) VALUES ('local', ?, 'synthetic-policy-change', 'old', 0, 'new', 1,
-                      '2026-01-01T00:00:00Z', 0)""",
-            (str(job_id),),
-        )
+        _mark_policy_change(conn, job_id)
         conn.execute(
             "CREATE TRIGGER fail_score_notification_report BEFORE INSERT ON job_requirement_fit_reports "
             "WHEN NEW.score_version = 2 BEGIN SELECT RAISE(ABORT, 'synthetic report failure'); END"
@@ -321,6 +327,7 @@ def _owned_fixture(conn, tmp_path):
             llm=llm,
             requirements=analysis.canonical.requirements,
             requirement_fit_repository=reports,
+            policy_repository=SqliteScoringPolicyRepository(conn),
         )
         case._determination_dependencies["repository"] = determinations
         publication_job = {**job, "_score_publication_inputs": owned.capture_scoring_inputs(job)} if use_owner else job
@@ -342,6 +349,7 @@ def test_commit_failure_rolls_back_complete_score_publication(tmp_path: Path, us
     try:
         job_id, _, _, score = _owned_fixture(conn, tmp_path)
         assert score(use_owner=False).ok
+        _mark_policy_change(conn, job_id)
         accepted = _published_state(db_path, str(job_id))
         assert len(accepted["scores"]) == len(accepted["reports"]) == len(accepted["bindings"]) == 1
         conn.fail_next_commit = True
@@ -363,15 +371,7 @@ def test_cancel_during_report_publication_rolls_back_owner_and_suppresses_notifi
     try:
         job_id, reports, canceled, score = _owned_fixture(conn, tmp_path)
         assert score(use_owner=False).ok
-        conn.execute(
-            """INSERT INTO job_score_staleness (
-                tenant_id, job_id, stale_reason, old_policy_id, old_policy_version,
-                new_policy_id, new_policy_version, marked_at, resolved
-            ) VALUES ('local', ?, 'synthetic-policy-change', 'old', 0, 'new', 1,
-                      '2026-01-01T00:00:00Z', 0)""",
-            (str(job_id),),
-        )
-        conn.commit()
+        _mark_policy_change(conn, job_id)
         accepted = _published_state(db_path, str(job_id))
         notifications = []
         subscription = get_default_publisher().subscribe("ScoreStalenessResolved", notifications.append)

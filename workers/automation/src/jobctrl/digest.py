@@ -686,7 +686,6 @@ def _count_stale_scores(conn: sqlite3.Connection) -> int:
          AND scores.version = latest.max_version
         WHERE stale.tenant_id = ?
           AND stale.resolved = 0
-          AND (scores.correction_json IS NULL OR TRIM(scores.correction_json) = '')
         """,
         [TENANT_ID, TENANT_ID],
     ).fetchall()

@@ -50,8 +50,13 @@ export function ResetStaleScoresButton({
     if (!window.confirm(`Reset ${scope} for rescore?`)) {
       return;
     }
-    const options = onSuccess ? { onSuccess } : undefined;
-    mutation.mutate({ jobKeys }, options);
+    mutation.mutate({ jobKeys }, {
+      onSuccess: (result) => {
+        if (result.count > 0 && !result.skippedActiveJobKeys?.length && !result.alreadyPendingJobKeys?.length) {
+          onSuccess?.();
+        }
+      },
+    });
   };
   const buttonContent = (
     <>

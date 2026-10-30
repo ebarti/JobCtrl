@@ -139,7 +139,8 @@ and the [field contract](api/complete-contract.md#saved-posting-availability).
 
 The jobs list and detail routes read stable projections. Lifecycle changes—hide,
 restore, delete, score correction, stage retry, and per-job actions—are explicit
-commands. See [Jobs & Materials](api/jobs-and-materials.md).
+commands. A stale-score reset leaves the accepted score visibly stale while
+replacement work is pending. See [Jobs & Materials](api/jobs-and-materials.md).
 
 On job detail, Enrich stage summaries can carry a separate, allow-listed
 `applyUrlOutcome` (`code`, `message`, `retryable`, and `method`). It reports

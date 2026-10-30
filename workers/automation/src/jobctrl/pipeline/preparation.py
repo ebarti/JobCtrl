@@ -1103,6 +1103,10 @@ def _jobs_needing_artifact_suppression(
         LEFT JOIN latest_scores score
           ON score.tenant_id = jobs.tenant_id
          AND score.job_id = jobs.job_id
+        LEFT JOIN job_stage_states score_stage
+          ON score_stage.tenant_id = jobs.tenant_id
+         AND score_stage.job_id = jobs.job_id
+         AND score_stage.stage = 'score'
         LEFT JOIN latest_active_materials materials
           ON materials.tenant_id = jobs.tenant_id
          AND materials.job_id = jobs.job_id
@@ -1114,6 +1118,16 @@ def _jobs_needing_artifact_suppression(
          AND tailored_resume.status = 'approved'
         WHERE jobs.tenant_id = ?
           AND tailored_resume.artifact_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM job_score_staleness stale
+             WHERE stale.tenant_id = jobs.tenant_id
+               AND stale.job_id = jobs.job_id
+               AND stale.resolved = 0
+          )
+          AND (
+            score_stage.state IS NULL
+            OR score_stage.state = 'succeeded'
+          )
           AND (
             score.fit_score IS NULL
             OR (

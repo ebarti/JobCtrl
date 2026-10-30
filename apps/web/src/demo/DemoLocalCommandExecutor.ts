@@ -44,7 +44,7 @@ import {
 
 import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
 import type { ApiClientResponse } from "./contracts.js";
-import { matchingDemoJobKeys } from "./job-filter.js";
+import { isActiveDemoJob, matchingDemoJobKeys } from "./job-filter.js";
 import {
   purgeDemoJobProjections,
   recomputeDemoOperationalProjections,
@@ -1163,28 +1163,15 @@ export class DemoLocalCommandExecutor {
           job.scoreVersion = (job.scoreVersion ?? 0) + 1;
           job.scoredAt = now;
           job.scoreCorrection = correction;
-          job.scoreCriteria = job.scoreCriteria
-            ? { ...job.scoreCriteria, criteriaVersion: `demo-policy-${newPolicyVersion}` }
-            : job.scoreCriteria;
           job.scoreTrace = job.scoreTrace
             ? {
                 ...job.scoreTrace,
-                scoringPolicyId: `demo:scoring-policy-${newPolicyVersion}`,
-                scoringPolicyVersion: newPolicyVersion,
                 correctionHistory: [...job.scoreTrace.correctionHistory, correction],
               }
             : job.scoreTrace;
-          job.scoreStaleness = {
-            isStale: false,
-            staleReason: null,
-            currentPolicyVersion: newPolicyVersion,
-            targetPolicyVersion: newPolicyVersion,
-            markedAt: null,
-            pendingExplicitRescore: false,
-          };
         });
         for (const comparable of draft.state.readModel.jobs.list.items) {
-          if (comparable.jobKey === jobKey || comparable.scoreVersion === null) continue;
+          if (comparable.jobKey === jobKey || comparable.scoreVersion === null || comparable.scoreCorrection !== null) continue;
           updateJobCopies(draft, comparable.jobKey, (job) => {
             job.scoreStaleness = {
               isStale: true,
@@ -1230,16 +1217,36 @@ export class DemoLocalCommandExecutor {
       case "resetStaleScoresForRescore": {
         const body = record(args[0]);
         const requested = arrayValue(body.jobKeys).map(String);
-        const candidates = draft.state.readModel.jobs.list.items.filter((job) =>
-          job.scoreStaleness.isStale && (requested.length === 0 || requested.includes(job.jobKey)),
-        );
+        const candidates: typeof draft.state.readModel.jobs.list.items = [];
+        const skippedActiveJobKeys: string[] = [];
+        const alreadyPendingJobKeys: string[] = [];
+        for (const job of draft.state.readModel.jobs.list.items) {
+          if (!isActiveDemoJob(job) || !job.scoreStaleness.isStale || (requested.length && !requested.includes(job.jobKey))) continue;
+          const detail = requireMapValue(draft.state.readModel.jobs.details, job.jobKey);
+          const state = detail.stages.find((stage) => stage.stage === "score")?.state ??
+            (job.currentStage === "score" ? job.currentState : null);
+          if (state === "running" || state === "queued") skippedActiveJobKeys.push(job.jobKey);
+          else if (state === "pending") alreadyPendingJobKeys.push(job.jobKey);
+          else candidates.push(job);
+        }
         const limit = numberValue(body.limit) ?? 0;
         const selected = limit > 0 ? candidates.slice(0, limit) : candidates;
         for (const job of selected) {
           const staleness = structuredClone(job.scoreStaleness);
           updateJobCopies(draft, job.jobKey, (candidate) => {
-            candidate.currentState = "pending";
+            if (candidate.currentStage === "score") candidate.currentState = "pending";
             candidate.nextAction = "Run an explicit browser-local rescore rehearsal.";
+          });
+          const stages = requireMapValue(draft.state.readModel.jobs.details, job.jobKey).stages;
+          const scoreStage = stages.find((stage) => stage.stage === "score");
+          if (scoreStage) Object.assign(scoreStage, {
+            state: "pending", attemptCount: 0, startedAt: null, finishedAt: null, durationMs: null,
+            errorCode: null, errorMessage: null, retryable: true, blockedBy: [], nextAction: null, updatedAt: now,
+          });
+          else stages.push({
+            stage: "score", state: "pending", attemptCount: 0, maxAttempts: 5,
+            startedAt: null, updatedAt: now, finishedAt: null, durationMs: null,
+            errorCode: null, errorMessage: null, retryable: true, blockedBy: [], nextAction: null,
           });
           context.appendDomainEvent(atTime(createScoreRescoreRequested(LOCAL_TENANT, {
             jobId: job.jobKey,
@@ -1254,6 +1261,8 @@ export class DemoLocalCommandExecutor {
           count: selected.length,
           jobKeys: selected.map((job) => job.jobKey),
           nextAction: "jobctrl run score --rescore",
+          skippedActiveJobKeys,
+          alreadyPendingJobKeys,
         };
       }
       case "cancelWorkflowRun": {

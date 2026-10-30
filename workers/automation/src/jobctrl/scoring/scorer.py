@@ -549,8 +549,12 @@ def run_scoring(
         for job in jobs_to_compute
     } if rescore else {}
     current_policy = policy_repository.get_current(tenant_id)
+    capture_staleness = getattr(repository, "capture_staleness_for_score", None)
     jobs_to_compute = [
-        {**job, "_score_publication_inputs": repository.capture_scoring_inputs(job)}
+        {**job, "_score_publication_inputs": repository.capture_scoring_inputs(job),
+         **({"_score_staleness_snapshot": capture_staleness(
+             tenant_id, canonical_job_id(str(job["job_id"])),
+         )} if callable(capture_staleness) else {})}
         for job in jobs_to_compute
     ]
     previous_scores = {key: score for key, score in previous_scores.items() if score is not None
@@ -1357,7 +1361,7 @@ def _record_score_stage_succeeded(
         payload={"keywords": list(score.matched_keywords), "retained": retained},
         occurred_at=finished_at,
     )
-    if not retained:
+    if not retained and not _has_unresolved_score_staleness(conn, tenant_id=tenant_id, job_id=job_id):
         _sync_score_eligibility_stage_state(
             conn, tenant_id=tenant_id, job_id=score.job_id, score=score, now=finished_at,
         )
