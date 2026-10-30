@@ -135,6 +135,8 @@ const PYTHON_RUNTIME_NON_RUNTIME_PATHS = new Set([
   "opentelemetry/sdk/metrics/_internal/exponential_histogram/mapping/ieee_754.md",
   "playwright/driver/README.md",
   "playwright/driver/package/README.md",
+  "playwright/driver/package/lib/tools/skills",
+  "typer/.agents",
 ]);
 
 function invariant(condition, message) {

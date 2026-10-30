@@ -849,6 +849,11 @@ test("installed Python pruning removes proven build sources, docs, examples, and
     ["google/protobuf/testdata/__init__.py", ""],
     ["numpy/random/_examples/example.pyx", "source\n"],
     ["playwright/driver/README.md", "docs\n"],
+    ["playwright/driver/package/lib/tools/skills/playwright-cli/SKILL.md", "developer instructions\n"],
+    ["playwright/driver/package/lib/tools/skills/playwright-cli/references/tracing.md", "developer reference\n"],
+    ["playwright/driver/package/lib/tools/cli-client/program.js", "runtime\n"],
+    ["typer/.agents/skills/typer/SKILL.md", "developer instructions\n"],
+    ["typer/main.py", "runtime\n"],
     ["temporalio/contrib/openai_agents/README.md", "docs\n"],
     ["runtime-package/.gitattributes", "*.py text\n"],
     ["runtime-package/.gitmodules", "[submodule]\n"],
@@ -871,8 +876,25 @@ test("installed Python pruning removes proven build sources, docs, examples, and
   ]);
   assert.deepEqual((await buildFileInventory(root)).map((file) => file.path), [
     "httpx-1.0.dist-info/licenses/LICENSE.md",
+    "playwright/driver/package/lib/tools/cli-client/program.js",
     "temporalio/bridge/temporal_sdk_bridge.abi3.so",
+    "typer/main.py",
   ]);
+});
+
+test("forbidden scan rejects shipped Python developer-skill assets", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-python-skill-scan-"));
+  context.after(async () => rm(root, { recursive: true, force: true }));
+  for (const relativePath of [
+    "playwright-python/site-packages/playwright/driver/package/lib/tools/skills/playwright-cli/asset.txt",
+    "worker/site-packages/typer/.agents/skills/typer/asset.txt",
+  ]) {
+    const target = path.join(root, ...relativePath.split("/"));
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, "developer asset\n");
+    await assert.rejects(scanForbiddenPayload(root), /known non-runtime Python source\/docs\/fixture closure/);
+    await rm(path.join(root, relativePath.split("/")[0]), { recursive: true, force: true });
+  }
 });
 
 test("forbidden scan rejects provider packs, dev tools, caches, and build-path leaks", async (context) => {

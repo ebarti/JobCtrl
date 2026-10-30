@@ -9222,7 +9222,9 @@ var PYTHON_RUNTIME_NON_RUNTIME_PATHS = /* @__PURE__ */ new Set([
   "opentelemetry/sdk/_configuration/README.md",
   "opentelemetry/sdk/metrics/_internal/exponential_histogram/mapping/ieee_754.md",
   "playwright/driver/README.md",
-  "playwright/driver/package/README.md"
+  "playwright/driver/package/README.md",
+  "playwright/driver/package/lib/tools/skills",
+  "typer/.agents"
 ]);
 function invariant3(condition, message) {
   if (!condition) throw new Error(message);
@@ -10423,10 +10425,14 @@ async function collectPayloadNpmContributors(payloadRoot, nodeModules, { expecte
 }
 async function collectMcpNodeContributors(payloadRoot, contracts) {
   const mcpRoot = componentRoot(payloadRoot, contracts, "playwright-mcp");
+  const mcpPackage = JSON.parse(await readFile3(path3.join(mcpRoot, "node_modules", "@playwright", "mcp", "package.json"), "utf8"));
+  invariant3(mcpPackage.name === "@playwright/mcp" && mcpPackage.version === contracts.versions["playwright-mcp"], "Playwright MCP package identity does not match inventory");
+  const coreVersion = mcpPackage.dependencies?.["playwright-core"];
+  invariant3(typeof coreVersion === "string" && /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/.test(coreVersion), "Playwright MCP must pin an exact playwright-core version");
   return collectPayloadNpmContributors(payloadRoot, path3.join(mcpRoot, "node_modules"), {
     expectedKeys: /* @__PURE__ */ new Set([
       `@playwright/mcp@${contracts.versions["playwright-mcp"]}`,
-      "playwright-core@1.62.0-alpha-2026-06-29"
+      `playwright-core@${coreVersion}`
     ])
   });
 }
