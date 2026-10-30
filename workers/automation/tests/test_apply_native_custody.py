@@ -26,7 +26,7 @@ def _scope(app, runtime):
     return {"schemaVersion": 1, "id": scope_id, "instanceId": instance, "stateDir": str(app.resolve()),
             "runtimeHome": str(runtime), "bootSession": boot_identity(),
             "jobLabel": f"dev.jobctrl.exec.{instance}.{scope_id}", "domain": f"gui/{os.getuid()}",
-            "rootPid": 123, "rootIdentity": "synthetic-negative-metadata-only", "coalitionIds": [11, 22]}
+            "rootPid": 123, "rootIdentity": "123:1700000000:123", "coalitionIds": [11, 22]}
 
 
 @pytest.mark.skipif(platform.system() == "Windows", reason="native Apply is not qualified on Windows")

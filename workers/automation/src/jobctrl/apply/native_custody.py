@@ -18,26 +18,33 @@ import uuid
 
 from jobctrl.apply.process_birth import (
     CustodyUnverified, _directory, _id, _read, boot_identity, validate_native_binding,
+    validate_source_runtime_binding,
 )
 
 
-def _current_coalitions() -> list[int]:
+def _process_coalitions(pid: int) -> list[int]:
     if platform.system() != "Darwin":
         raise CustodyUnverified("Native Apply execution custody is unavailable on this platform")
+    if type(pid) is not int or pid <= 0:
+        raise CustodyUnverified("Cannot authenticate native Apply process identity")
     library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
     library.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
     library.proc_pidinfo.restype = ctypes.c_int
     values = (ctypes.c_uint64 * 5)()
-    size = library.proc_pidinfo(os.getpid(), 20, 0, ctypes.byref(values), ctypes.sizeof(values))
+    size = library.proc_pidinfo(pid, 20, 0, ctypes.byref(values), ctypes.sizeof(values))
     if size != ctypes.sizeof(values) or not values[0] or not values[1]:
         raise CustodyUnverified("Cannot authenticate current native Apply coalition identity")
     return [values[0], values[1]]
 
 
-def capture_native_custody(app_dir: Path) -> dict | None:
+def _current_coalitions() -> list[int]:
+    return _process_coalitions(os.getpid())
+
+
+def _capture_execution_scope(app_dir: Path) -> tuple[dict | None, bool]:
     scope_id = os.environ.get("JOBCTRL_EXECUTION_SCOPE")
     if not scope_id:
-        return None
+        return None, False
     runtime_home = os.environ.get("JOBCTRL_RUNTIME_HOME")
     if not _id(scope_id) or not runtime_home or not os.path.isabs(runtime_home) or os.path.abspath(runtime_home) != runtime_home:
         raise CustodyUnverified("Native Apply custody requires a normalized authenticated runtime home")
@@ -47,12 +54,61 @@ def capture_native_custody(app_dir: Path) -> dict | None:
     _directory(directory)
     scope, original_bytes = _read(directory / f"{scope_id}.json", with_bytes=True)
     binding = {"scope": scope, "receipt_sha256": sha256(original_bytes).hexdigest()}
-    validate_native_binding(binding, app_dir)
+    source_scope = scope.get("purpose") == "source"
+    if source_scope:
+        from jobctrl.runtime import is_bundled_runtime
+
+        if is_bundled_runtime() or os.environ.get("JOBCTRL_APPLY_EXECUTION_SCOPE"):
+            raise CustodyUnverified("A source fleet scope cannot authorize native Apply custody")
+        validate_source_runtime_binding(binding, app_dir)
+    else:
+        validate_native_binding(binding, app_dir)
     if scope["id"] != scope_id or scope["runtimeHome"] != runtime_home:
         raise CustodyUnverified("Native Apply scope does not match its authenticated context")
     if scope["bootSession"] != boot_identity() or scope["coalitionIds"] != _current_coalitions():
         raise CustodyUnverified("Native Apply scope does not match this kernel process")
-    return binding
+    return binding, source_scope
+
+
+def capture_native_custody(app_dir: Path) -> dict | None:
+    binding, source_scope = _capture_execution_scope(app_dir)
+    # A source fleet spans multiple attempts and is never per-Apply custody.
+    return None if source_scope else binding
+
+
+def capture_source_census_coalitions(app_dir: Path) -> tuple[int, int] | None:
+    """Return authenticated source context only for a live session census."""
+    binding, source_scope = _capture_execution_scope(app_dir)
+    if not source_scope:
+        return None
+    return tuple(binding["scope"]["coalitionIds"])
+
+
+def _child_session_group(pid: int) -> tuple[int, int]:
+    return os.getsid(pid), os.getpgid(pid)
+
+
+def _source_child_in_scope(process, expected: tuple[int, int]) -> bool:
+    """Bind observation context to the original live, unreaped Popen child."""
+    from jobctrl.infrastructure.process_ownership import ProcessOwnershipError, _waitid_nowait
+
+    lock = getattr(process, "_waitpid_lock", None)
+    if platform.system() != "Darwin" or lock is None:
+        return False
+    try:
+        with lock:
+            pid = process.pid
+            if process.returncode is not None or _waitid_nowait(pid) is not None:
+                return False
+            if tuple(_current_coalitions()) != expected or tuple(_process_coalitions(pid)) != expected:
+                return False
+            if _child_session_group(pid) != (pid, pid):
+                return False
+            if _waitid_nowait(pid) is not None:
+                return False
+            return tuple(_current_coalitions()) == expected and tuple(_process_coalitions(pid)) == expected
+    except (AttributeError, OSError, ProcessOwnershipError, CustodyUnverified):
+        return False
 
 
 def matches_active_native_receipt(binding: dict | None, app_dir: Path) -> bool:
