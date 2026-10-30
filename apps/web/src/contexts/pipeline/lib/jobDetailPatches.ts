@@ -66,3 +66,16 @@ export function patchStageState(
     ),
   };
 }
+
+export function patchRetryStageState(
+  current: unknown,
+  stage: Stage,
+  state: StageState,
+): unknown {
+  const patched = patchStageState(current, stage, state);
+  if (!isJobDetail(patched) || patched.job.currentSubstage !== stage ||
+      !patched.stages.some((entry) => entry.stage === stage)) {
+    return patched;
+  }
+  return { ...patched, job: { ...patched.job, currentState: state } };
+}

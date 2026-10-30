@@ -139,7 +139,7 @@ describe("canonical public demo seed", () => {
 
   it("is deterministic, immutable by type, and covers the required lifecycle arms", () => {
     expect(() => assertDemoSeedInvariants(DEMO_SEED)).not.toThrow();
-    expect(demoSeedDigest(DEMO_SEED)).toBe("fnv1a-7134281b");
+    expect(demoSeedDigest(DEMO_SEED)).toBe("fnv1a-f2c8b2e5");
     expect(demoSeedDigest({ b: 2, a: ["seed", true] })).toBe(demoSeedDigest({ a: ["seed", true], b: 2 }));
   });
 
@@ -245,7 +245,7 @@ describe("canonical public demo seed", () => {
         stage: "score",
         state: "failed",
         errorCode: "demo_rescore_gate",
-        retryable: true,
+        retryable: false,
       }),
     );
   });

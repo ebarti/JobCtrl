@@ -310,6 +310,10 @@ The Jobs view supports filters, sorting, pagination, deep links, job-state and
 fit-score filters, stage state, source provenance, compensation evidence, and
 route-level job workspaces.
 
+In Job Detail, retrying a failed Discover stage resets it to pending without
+starting another run. Retrying a supported preparation stage also requests the
+remaining preparation work; its progress is reconciled with the recorded state.
+
 </WorkflowSurfacePanel>
 
 <WorkflowSurfacePanel surface="cli">
@@ -844,7 +848,7 @@ Cross-protocol rollback is refused. See
 | `run [stages]` | Start pipeline workflows (default `all`, which maps to `discover`). |
 | `legacy-evidence list` / `recover` / `decide` | Inspect unknown legacy confirmation provenance; inventory a validated pre-cutover paired backup or explicitly missing authority, then make one current-state-bound human decision with the runtime stopped. Preserves source cells and history; see [Review legacy confirmations](candidate-profile.md#review-legacy-confirmations). |
 | `source-proposals from-history` / `list` / `reset CANDIDATE_ID` | Explicitly propose sources from saved canonical posting/application URLs, read retained evidence and review history, or reset one rejected coordinate. Review and promotion use the existing Source locator; see [Discovery](discovery.md#propose-sources-from-saved-posting-history). |
-| `discover` / `enrich` / `score` / `tailor` / `cover` | Start one stage; `score --rescore` re-scores jobs that already have a score. |
+| `discover` / `enrich` / `score` / `tailor` / `cover` | Start one stage; `score --rescore` includes eligible jobs that already have a score, across the scoring queue. |
 | `job <url>` | Tailor and/or apply one job (`--tailor`, `--apply`, `--dry-run`). |
 | `apply` | Start apply automation (`--dry-run`, `--url`, `--limit` for a maximum number of claimed jobs, `--continuous` to keep polling for new jobs). Utility modes: `--mark-applied`, `--mark-failed`, `--reset-failed`, and `--gen` (inspection-only dry-run prompt). |
 | `retry <stage> <url>` | Reset one failed stage for one job (`--reset-attempts`, `--run`). Enrich retains accepted content and automatically renews an exhausted stage budget; see [Enrichment](enrichment-and-extraction.md). |

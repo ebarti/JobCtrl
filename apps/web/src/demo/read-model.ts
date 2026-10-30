@@ -1,6 +1,7 @@
 import { ProfileSchema } from "@jobctrl/contracts";
 
 import { DEMO_ARTIFACTS } from "./artifacts.js";
+import { DEMO_RESCORE_UNAVAILABLE_MESSAGE } from "./capabilities.js";
 import type { DemoReadModel } from "./contracts.js";
 import { demoTimestamp } from "./clock.js";
 
@@ -133,8 +134,8 @@ const staleJob = {
   currentSubstage: "score",
   currentState: "failed",
   errorCode: "demo_rescore_gate",
-  errorMessage: "The synthetic rescore quality gate requested a retry.",
-  nextAction: "Retry the rescore against the current synthetic policy.",
+  errorMessage: "The synthetic rescore quality gate failed.",
+  nextAction: DEMO_RESCORE_UNAVAILABLE_MESSAGE,
   artifactCount: 0,
 } satisfies DemoReadModel["jobs"]["list"]["items"][number];
 
@@ -197,7 +198,7 @@ const workflowActivities = [
     company: staleJob.company,
     stage: "score",
     level: "error",
-    message: "The synthetic rescore quality gate requested a retry.",
+    message: "The synthetic rescore quality gate failed.",
     at: at("2026-07-11T08:22:00.000Z"),
   },
   {
@@ -736,10 +737,10 @@ export const DEMO_READ_MODEL = {
             finishedAt: at("2026-07-11T08:22:00.000Z"),
             durationMs: 120_000,
             errorCode: "demo_rescore_gate",
-            errorMessage: "The synthetic rescore quality gate requested a retry.",
-            retryable: true,
+            errorMessage: "The synthetic rescore quality gate failed.",
+            retryable: false,
             blockedBy: [],
-            nextAction: "Retry the rescore with the current policy.",
+            nextAction: DEMO_RESCORE_UNAVAILABLE_MESSAGE,
           },
         ],
         artifacts: [],
@@ -1323,7 +1324,7 @@ export const DEMO_READ_MODEL = {
         model: "simulated",
         result: null,
         errorCode: "demo_rescore_gate",
-        errorMessage: "The synthetic rescore quality gate requested a retry.",
+        errorMessage: "The synthetic rescore quality gate failed.",
         retryable: true,
         inputSummary: { simulated: true, operation: "rescoreJob" },
         temporalRunId: null,
@@ -1332,7 +1333,7 @@ export const DEMO_READ_MODEL = {
         durationMs: 120_000,
         events: [
           { eventType: "WorkflowStarted", occurredAt: at("2026-07-11T08:20:00.000Z"), status: "in_progress", message: "Synthetic run started." },
-          { eventType: "WorkflowFailed", occurredAt: at("2026-07-11T08:22:00.000Z"), status: "failed", message: "Retry is available." },
+          { eventType: "WorkflowFailed", occurredAt: at("2026-07-11T08:22:00.000Z"), status: "failed", message: DEMO_RESCORE_UNAVAILABLE_MESSAGE },
         ],
       },
       "run-score-succeeded": {

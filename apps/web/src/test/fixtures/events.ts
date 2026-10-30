@@ -329,7 +329,7 @@ export const eventByType = {
     staleReason: "scoring_policy_changed",
     oldPolicyVersion: 1,
     newPolicyVersion: 2,
-    nextAction: "jobctrl run score --rescore",
+    nextAction: "jobctrl score --rescore",
   }),
   ResumeApproved: createResumeApproved(LOCAL_TENANT, {
     jobId: JOB_ID,

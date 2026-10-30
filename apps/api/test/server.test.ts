@@ -5571,7 +5571,7 @@ describe("local TypeScript API", () => {
       ok: true,
       count: 1,
       jobKeys: [jobIdFor(staleUrl)],
-      nextAction: "jobctrl run score --rescore",
+      nextAction: "jobctrl score --rescore",
     });
 
     const db = new Database(options.dbPath);
@@ -5590,7 +5590,7 @@ describe("local TypeScript API", () => {
         .get(jobIdFor(staleUrl)) as { event_type: string; payload_json: string };
       expect(event.event_type).toBe("ScoreRescoreRequested");
       expect(JSON.parse(event.payload_json)).toMatchObject({
-        nextAction: "jobctrl run score --rescore",
+        nextAction: "jobctrl score --rescore",
         newPolicyVersion: 2,
       });
       const list = await app.inject({ method: "GET", url: "/v1/jobs?pageSize=200" });
@@ -5606,6 +5606,52 @@ describe("local TypeScript API", () => {
         scoreVersion: 1,
         scoreStaleness: listJob.scoreStaleness,
       });
+    } finally {
+      db.close();
+      await app.close();
+    }
+  });
+
+  it.skipIf(!SOURCE_PYTHON_RPC_AVAILABLE)("routes returned and persisted stale-score advice through the registered CLI without spending", async () => {
+    const staleUrl = "https://example.com/jobs/stale-cli-advice";
+    const seedDb = new Database(options.dbPath);
+    insertJob(seedDb, { url: staleUrl, title: "Synthetic role", site: "ExampleCo", fitScore: 7 });
+    insertScore(seedDb, staleUrl, 1, 7, { policyVersion: 1 });
+    insertStage(seedDb, staleUrl, "score", "stale");
+    createScoreStalenessTable(seedDb);
+    seedDb.prepare(
+      `INSERT INTO job_score_staleness (
+         tenant_id, job_id, stale_reason, old_policy_id, old_policy_version,
+         new_policy_id, new_policy_version, marked_at, resolved
+       ) VALUES ('local', ?, 'scoring_policy_changed', 'local:scoring-policy-v1', 1,
+         'local:scoring-policy-v2', 2, '2026-04-29T10:07:00+00:00', 0)`,
+    ).run(jobIdFor(staleUrl));
+    seedDb.close();
+
+    const app = buildApp(options);
+    const db = new Database(options.dbPath);
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/scoring/stale-scores/actions/reset-for-rescore",
+        payload: { jobKeys: [staleUrl] },
+      });
+      expect(response.statusCode, response.body).toBe(200);
+      const event = db.prepare(
+        "SELECT payload_json FROM job_events WHERE tenant_id = 'local' AND job_id = ? AND event_type = 'ScoreRescoreRequested' ORDER BY event_id DESC LIMIT 1",
+      ).get(jobIdFor(staleUrl)) as { payload_json: string };
+      const probe = spawnSync("uv", [
+        "--project", AUTOMATION_PROJECT_DIR, "run", "--no-sync", "python",
+        path.join(AUTOMATION_PROJECT_DIR, "tests/fixtures/rescore_advice_probe.py"),
+      ], {
+        cwd: tempDir,
+        env: { PATH: process.env.PATH, HOME: tempDir, JOBCTRL_DIR: tempDir, UV_FROZEN: "1" },
+        input: JSON.stringify([response.json().nextAction, JSON.parse(event.payload_json).nextAction]),
+        encoding: "utf8",
+        timeout: 30_000,
+      });
+      expect(probe.status, probe.stderr).toBe(0);
+      expect(probe.stdout).toContain("rescore advice reached the no-spend workflow seam");
     } finally {
       db.close();
       await app.close();
@@ -8112,6 +8158,77 @@ describe("local TypeScript API", () => {
     expect(event).toMatchObject({ stage: "score", level: "info", message: "Retry reset requested for score" });
 
     await app.close();
+  });
+
+  it("resets Discover to pending without dispatching or replacing an accepted score", async () => {
+    const jobUrl = "https://example.com/jobs/discover-reset-only";
+    const db = new Database(options.dbPath);
+    insertJob(db, { url: jobUrl, title: "Synthetic role", site: "ExampleCo", fitScore: 7 });
+    insertScore(db, jobUrl, 1, 7, { policyVersion: 1 });
+    insertStage(db, jobUrl, "discover", "failed", "SYNTHETIC_FAILURE");
+    const accepted = db.prepare("SELECT * FROM job_scores WHERE tenant_id = 'local' AND job_id = ?")
+      .all(jobIdFor(jobUrl));
+    const dispatch = vi.fn(async (): Promise<ActionDispatchResult> => ({ status: "queued" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: `/v1/jobs/${encodeURIComponent(jobUrl)}/actions/retry-stage`,
+        payload: { stage: "discover", runAfter: false },
+      });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json()).toMatchObject({ status: "reset", stage: { stage: "discover", state: "pending" } });
+      expect(dispatch).not.toHaveBeenCalled();
+      const readback = await app.inject({ method: "GET", url: `/v1/jobs/${encodeURIComponent(jobUrl)}` });
+      expect(readback.statusCode, readback.body).toBe(200);
+      expect(readback.json().stages).toContainEqual(expect.objectContaining({ stage: "discover", state: "pending" }));
+      expect(readback.json().job).toMatchObject({ currentSubstage: "discover", currentState: "pending" });
+      expect(db.prepare("SELECT * FROM job_scores WHERE tenant_id = 'local' AND job_id = ?")
+        .all(jobIdFor(jobUrl))).toEqual(accepted);
+    } finally {
+      db.close();
+      await app.close();
+    }
+  });
+
+  it("returns the committed reset when the retry dispatch RPC fails", async () => {
+    const jobUrl = "https://example.com/jobs/retry-dispatch-failure";
+    const db = new Database(options.dbPath);
+    insertJob(db, { url: jobUrl, title: "Synthetic role", site: "ExampleCo", fitScore: 7 });
+    insertScore(db, jobUrl, 1, 7, { policyVersion: 1 });
+    insertStage(db, jobUrl, "score", "failed", "SYNTHETIC_FAILURE");
+    const accepted = db.prepare("SELECT * FROM job_scores WHERE tenant_id = 'local' AND job_id = ?")
+      .all(jobIdFor(jobUrl));
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({
+      jsonrpc: "2.0",
+      id: 1,
+      error: { code: JsonRpcErrorCodes.InternalError, message: "Synthetic dispatch failure." },
+    }));
+    const actionDispatcher = createActionDispatcher({ call, close: async () => {} });
+    const app = buildApp({ ...options, actionDispatcher });
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: `/v1/jobs/${encodeURIComponent(jobUrl)}/actions/retry-stage`,
+        payload: { stage: "score", runAfter: true },
+      });
+      expect(response.statusCode, response.body).toBe(202);
+      expect(response.json()).toMatchObject({
+        ok: true,
+        status: "failed",
+        message: "Synthetic dispatch failure.",
+        stage: { stage: "score", state: "pending" },
+      });
+      expect(call).toHaveBeenCalledOnce();
+      expect(call.mock.calls[0]?.[0]).toBe("run_stage");
+      expect(db.prepare("SELECT state FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'score'")
+        .get(jobIdFor(jobUrl))).toEqual({ state: "pending" });
+      expect(db.prepare("SELECT * FROM job_scores WHERE tenant_id = 'local' AND job_id = ?")
+        .all(jobIdFor(jobUrl))).toEqual(accepted);
+    } finally {
+      db.close();
+      await app.close();
+    }
   });
 
   it("does not reset a retry stage when run-after requires an unavailable worker", async () => {

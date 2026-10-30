@@ -44,6 +44,7 @@ import {
 } from "@jobctrl/domain-types";
 
 import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
+import { DEMO_RESCORE_UNAVAILABLE_MESSAGE } from "./capabilities.js";
 import type { ApiClientResponse } from "./contracts.js";
 import { isActiveDemoJob, matchingDemoJobKeys } from "./job-filter.js";
 import {
@@ -1228,6 +1229,7 @@ export class DemoLocalCommandExecutor {
         return requireMapValue(draft.state.readModel.jobs.details, jobKey);
       }
       case "resetStaleScoresForRescore": {
+        const nextAction = DEMO_RESCORE_UNAVAILABLE_MESSAGE;
         const body = record(args[0]);
         const requested = arrayValue(body.jobKeys).map(String);
         const candidates: typeof draft.state.readModel.jobs.list.items = [];
@@ -1248,7 +1250,7 @@ export class DemoLocalCommandExecutor {
           const staleness = structuredClone(job.scoreStaleness);
           updateJobCopies(draft, job.jobKey, (candidate) => {
             if (candidate.currentStage === "score") candidate.currentState = "pending";
-            candidate.nextAction = "Run an explicit browser-local rescore rehearsal.";
+            candidate.nextAction = nextAction;
           });
           const stages = requireMapValue(draft.state.readModel.jobs.details, job.jobKey).stages;
           const scoreStage = stages.find((stage) => stage.stage === "score");
@@ -1266,14 +1268,14 @@ export class DemoLocalCommandExecutor {
             staleReason: staleness.staleReason ?? "scoring_policy_changed",
             oldPolicyVersion: staleness.currentPolicyVersion ?? 0,
             newPolicyVersion: staleness.targetPolicyVersion ?? 0,
-            nextAction: "jobctrl run score --rescore",
+            nextAction,
           }), now));
         }
         return {
           ok: true,
           count: selected.length,
           jobKeys: selected.map((job) => job.jobKey),
-          nextAction: "jobctrl run score --rescore",
+          nextAction,
           skippedActiveJobKeys,
           alreadyPendingJobKeys,
         };

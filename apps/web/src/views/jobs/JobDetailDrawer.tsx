@@ -31,6 +31,7 @@ import { useJobDetailQuery } from "../../contexts/operations/hooks/useJobDetailQ
 import type { ArtifactSummary, EvidenceMapEntry } from "@jobctrl/contracts";
 import { JobActions } from "../../contexts/pipeline/components/JobActions.js";
 import { RetryStageButton } from "../../contexts/pipeline/components/RetryStageButton.js";
+import { RetryStatusNotice } from "../../contexts/pipeline/components/RetryStatusNotice.js";
 import { StageTimeline } from "../../contexts/pipeline/components/StageTimeline.js";
 import { RescoreJobButton } from "../../contexts/scoring/components/RescoreCurrentPolicyButton.js";
 import { Button, buttonVariants } from "../../shared/ui/button.js";
@@ -268,7 +269,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
       content: <>
         <PostingAvailability jobId={detail.job.jobKey} postingUrl={detail.job.url} availability={detail.job.availability} />
         <Section title="Preparation diagnostics" help="Saved preparation stage states and diagnostic messages. A failed, blocked, or exhausted stage calls for review; these stages do not by themselves submit an application.">
-          <StageTimeline jobId={detail.job.jobKey} postingUrl={detail.job.url} stages={preparationStages(detail.stages)} />
+          <StageTimeline jobId={detail.job.jobKey} detailQueryId={jobId} postingUrl={detail.job.url} stages={preparationStages(detail.stages)} />
         </Section>
         {!detail.job.applicationUrl && isLinkedInPosting(detail.job.url)
           && detail.stages.some((stage) => stage.stage === "enrich" && stage.state === "succeeded") ? (
@@ -280,7 +281,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                 <p className="muted">{detail.stages.find((stage) => stage.stage === "enrich")?.applyUrlOutcome?.message}</p>
               ) : null}
             </div>
-            <RetryStageButton jobId={detail.job.jobKey} stage="enrich" runAfter refreshApplyUrl label="Refresh application target" />
+            <RetryStageButton jobId={detail.job.jobKey} detailQueryId={jobId} stage="enrich" runAfter refreshApplyUrl label="Refresh application target" />
           </section>
         ) : null}
       </>,
@@ -386,6 +387,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
 
   return (
     <div className="route-page route-page--job-detail" aria-label="Job details">
+      <RetryStatusNotice jobId={detail?.job.jobKey ?? jobId} detailQueryId={jobId} />
       {errorMessage ? <Empty title={errorMessage} /> : null}
       {!detail && !errorMessage ? <Empty title="Loading job." /> : null}
       {detail ? (
@@ -458,6 +460,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                   >
                     <JobActions
                       jobId={detail.job.jobKey}
+                      detailQueryId={jobId}
                       currentStage={detail.job.currentSubstage}
                       canRetryStage={canRetryStage(currentSubstage)}
                       canRunCurrentStage={canRunCurrentStage(currentSubstage)}

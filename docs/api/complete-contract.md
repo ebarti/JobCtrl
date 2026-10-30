@@ -449,7 +449,10 @@ and pending work stays untouched; `skippedActiveJobKeys` identifies jobs owned
 by ongoing work, while `alreadyPendingJobKeys` identifies work already waiting.
 After active work finishes, retry the reset only if the score remains stale. The backend command
 that consumes those reset jobs is `jobctrl score --rescore` or the batch
-API action with `stage: "score"` and `rescore: true`.
+API action with `stage: "score"` and `rescore: true`. The reset response and
+new `ScoreRescoreRequested` events expose the CLI command in `nextAction`;
+the CLI operates on the eligible scoring queue rather than limiting itself to
+the reset selection.
 The jobs list and all-matching bulk filters accept optional `jobStates` values
 `active`, `deleted`, and `hidden`. Multiple values have OR semantics and are
 applied before count and pagination. The displayed Job state is derived from

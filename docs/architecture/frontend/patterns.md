@@ -326,9 +326,45 @@ dispatch automation. Defer, decline and reset do not require rendering.
 |---|---|
 | Routes | None (component + mutation context). |
 | Queries | `usePipelineOperationsQuery()` is owned by Operations and keyed by Pipeline's `pipelineKeys.operations(tenantId)`. It reads the current `PipelineOperationsSnapshot`; per-job stage data remains in `JobDetailProjection.stages`. The query has a 10-second stale time, polls every 15 seconds while phase is `discovering`/`draining` and every 60 seconds otherwise, and never polls in the background. |
-| Mutations | `useRunPipelineStagesMutation({ stages, limit, workers, minScore, validationMode, dryRun, ... })` for global/batch stage starts, `useRetryStageMutation({ jobId, stage, resetAttempts?, runAfter? })`, `useCancelStageMutation({ jobId, stage })`, `useMarkAppliedMutation({ jobId })` (`MarkAppliedUseCase` per backend §5.7), `useMarkSkippedMutation({ jobId })` (`SkipJobUseCase` per backend §5.7). Per-job stage mutations optimistically patch the `JobDetailProjection.stages` array; SSE event reconciles. `useRetryStageMutation` with `runAfter: true` follows the async (202) pattern; the job-detail action toolbar uses it for failed preparation stages so a retry resumes the selected job through the remaining preparation pipeline. Global/batch stage starts are hybrid: non-apply-only requests return synchronously with worker action results, while requests that queue apply return 202 and finish through SSE-driven invalidation. |
+| Mutations | `useRunPipelineStagesMutation({ stages, limit, workers, minScore, validationMode, dryRun, ... })` for global/batch stage starts, `useRetryStageMutation({ jobId, stage, resetAttempts?, runAfter? })`, `useCancelStageMutation({ jobId, stage })`, `useMarkAppliedMutation({ jobId })` (`MarkAppliedUseCase` per backend §5.7), `useMarkSkippedMutation({ jobId })` (`SkipJobUseCase` per backend §5.7). Per-job stage mutations optimistically patch the `JobDetailProjection.stages` array and reconcile on invalidation or SSE. A reset-only retry optimistically shows `pending` and rolls back on failure; `runAfter: true` shows `running` while dispatch is requested. The retry patch also updates the detail's workflow summary when the retried stage is its current substage, leaving another current substage alone. The job-detail action toolbar resets failed Discover without dispatch and uses `runAfter: true` for supported preparation stages so a retry resumes the selected job through the remaining preparation pipeline. Global/batch stage starts are hybrid: non-apply-only requests return synchronously with worker action results, while requests that queue apply return 202 and finish through SSE-driven invalidation. |
 | SSE keys consumed | All `Stage*`, `PreparationWorkItem*`, `PipelineStep*`, and `Workflow*` lifecycle events invalidate `pipelineKeys.operations`; the owning handlers also retain their existing jobs/dashboard/workflow-run targets. Runtime heartbeat and task-queue changes have no domain event, so polling is the correctness complement. |
 | Components | `<StageTriggerPanel />` for global starts with per-stage persisted tab config, stage-specific controls, the user-facing **Internal concurrency** label, and immediate start feedback (`starting`, `queued`, `succeeded`, `dry_run`, `failed`; run/action id when returned), `<StageBadge state={...} />` (exhaustive `switch` on `state.kind` per §2.4 data-orientation; covered by the `STAGE_STATE_KINDS` parity test in §10.2), `<StageTimeline stages={...} />`, `<RetryStageButton jobId={...} stage={...} />`, `<CancelStageButton jobId={...} stage={...} />`, `<MarkAppliedButton jobId={...} />`, `<MarkSkippedButton jobId={...} />`, `<JobActions jobId={...} />` (toolbar composer). `PipelinesView` itself renders the operations ledger because it composes an Operations read hook with Pipeline's control component. |
+
+Retry controls and timeline diagnostics consult the demo's `retryStage`
+capability, including when a retained synthetic failure has `retryable: true`.
+The presentation does not rewrite that saved history; local retry remains
+available under its normal stage rules.
+
+When retry dispatch fails after a reset commits, the retry mutation applies the
+returned reset stage and reports the dispatch failure separately. A queued
+dispatch keeps optimistic progress until the next authoritative read. A later
+cache publication fences both response settlement and rollback, so a delayed
+retry response cannot replace a newer Job Detail state. Since the current stage
+and retry response do not expose a shared ordering revision, an intervening
+publication or recreated query leaves the displayed stage uncertain; a notice
+scoped to that tenant, canonical job, and detail locator offers **Refresh stage
+status**. A distinct successful post-response detail read for the same
+canonical job clears only that locator's notice, regardless of which component
+subscribed to the query. Failed
+reads leave it available for retry, and reopening an inactive Job Detail starts
+confirmation again. An earlier in-flight read must settle before a distinct
+confirmation read starts. If a matching later read has already confirmed the
+notice, the waiting operation stops without another read; leaving the detail
+also cancels its waiting operation without canceling shared queries.
+When Job Detail was opened by an alias, retry keeps the canonical job ID for
+the action and notice, and uses the route identifier for its detail-cache patch,
+ownership fence, and readback. Other cached detail locators in the same tenant
+whose returned job key matches are invalidated without an optimistic data patch.
+Active alternates refetch and retain their own notice until confirmed. An
+older in-flight read is checked again on completion, even if its cache was
+empty at settlement; only the same query instance returning the same canonical
+job is invalidated, so an active view starts a later read. Inactive alternates
+remain stale and display their notice on reopening.
+Overlapping retries that capture the same in-flight read for one locator share
+one deferred confirmation; retries separated by another in-flight read retain
+separate confirmation boundaries.
+Application-target refreshes share the action endpoint but do not create
+stage-retry uncertainty notices, including when eligibility is rejected.
 
 ## 4.5 View Composition
 

@@ -23,7 +23,7 @@ function ToastStoreBridge() {
   useEffect(() => {
     const managerIds = new Set(toasts.map((toast) => toast.id));
 
-    for (const entry of entries) {
+    for (const entry of entries.filter((candidate) => candidate.scope === undefined)) {
       if (managerIds.has(entry.id)) {
         continue;
       }
@@ -42,7 +42,7 @@ function ToastStoreBridge() {
       });
     }
 
-    const entryIds = new Set(entries.map((entry) => entry.id));
+    const entryIds = new Set(entries.filter((entry) => entry.scope === undefined).map((entry) => entry.id));
     for (const toast of toasts) {
       if (
         toast.data?.source === "jobctrl-store" &&
