@@ -88,10 +88,14 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  launcher:
-    name: Darwin launcher (vet + race)
+  launcher-shard:
+    name: Darwin launcher shard ${{ matrix.shard }}
     runs-on: macos-15
-    timeout-minutes: 20
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -155,37 +159,36 @@ jobs:
           set -euo pipefail
           echo "JOBCTRL_MIGRATION_TEST_NODE=$(command -v node)" >> "$GITHUB_ENV"
       - name: Test native fixture publication
+        if: ${{ matrix.shard == 0 }}
         working-directory: workers/automation
         run: |
           "$JOBCTRL_MIGRATION_TEST_PYTHON" -m unittest tests.test_native_apply_readiness
       - name: Vet native launcher
+        if: ${{ matrix.shard == 0 }}
         working-directory: launcher
         run: go vet ./...
-      - name: Diagnose loopback reverse DNS
+      - name: Test native launcher shard
+        working-directory: launcher
         shell: bash
+        env:
+          TEST_SHARD: ${{ matrix.shard }}
         run: |
-          "$JOBCTRL_MIGRATION_TEST_PYTHON" - <<'PYTHON'
-          import subprocess, sys
-          script = "import faulthandler,signal,socket; faulthandler.register(signal.SIGUSR1); print('reverse lookup start',flush=True); print(socket.getfqdn('127.0.0.1'),flush=True)"
-          child = subprocess.Popen([sys.executable, '-c', script], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-          try:
-              output, _ = child.communicate(timeout=3)
-              print('loopback reverse lookup completed:', output)
-          except subprocess.TimeoutExpired:
-              import signal
-              child.send_signal(signal.SIGUSR1)
-              try:
-                  output, _ = child.communicate(timeout=2)
-              except subprocess.TimeoutExpired:
-                  child.kill()
-                  output, _ = child.communicate()
-              print('loopback reverse lookup timed out:', output)
-          PYTHON
-      - name: Test source workspace ownership
-        working-directory: launcher
-        run: go test -race -timeout 3m -count=1 ./internal/launcher -run 'TestSourceMigrationPreservesLaterWritesAcrossEveryDurableBoundary/starting|TestDevelopmentEntryAutomaticallyMigratesOwnedWorkspace' -v
-      - name: Test native launcher
-        working-directory: launcher
-        # The package takes over nine minutes on hosted runners; keep a bounded
-        # package deadline with room for ordinary runner variation.
-        run: go test -race -timeout 15m ./...
+          set -euo pipefail
+          # Separate runners own their fixed test ports. Each top-level test is
+          # assigned exactly once; selecting a parent includes all its subtests.
+          tests="$(go test ./internal/launcher -list '^Test' | awk -v shard="$TEST_SHARD" '/^Test[[:alnum:]_]+$/ { if (count++ % 2 == shard) print }')"
+          [[ -n "$tests" ]]
+          printf '%s\n' "$tests"
+          pattern="$(printf '%s\n' "$tests" | paste -sd '|' -)"
+          go test -race -timeout 18m -count=1 ./internal/launcher -run "^($pattern)$"
+          if [[ "$TEST_SHARD" = 0 ]]; then
+            go list ./... | grep -v '/internal/launcher$' | xargs go test -race -timeout 18m -count=1
+          fi
+
+  launcher:
+    name: Darwin launcher (vet + race)
+    needs: launcher-shard
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Confirm both native shards passed
+        run: echo "Both native launcher test shards passed."
