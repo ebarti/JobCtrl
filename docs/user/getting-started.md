@@ -260,15 +260,24 @@ beyond what an older installed release understands; update the installed app whe
 a compatible release is published. Source upgrade and recovery details are in
 [Local Development](../local-development.md#schema-migrations-and-source-updates).
 
-A release that moves to schema 15 uses its new authenticated installer to
-upgrade the original installation. Direct installed upgrades require an initialized
-schema-14 or schema-15 workspace and its original installation metadata. Older
-schemas must first reach schema 14 through a supported predecessor; preserve the
-workspace and see the [v0.3.1 upgrade notes](https://github.com/ebarti/JobCtrl/releases/tag/v0.3.1). Keep the original installation metadata and
-databases: the installer verifies them, stops instance-owned processes, backs up
-the current application and Temporal databases together, and applies the additive
-migration before checking startup health. Normal cleanup and restart do not
-require rebooting. If cleanup fails, preserve the reported evidence.
+**v0.3.1 upgrade limitation:** v0.4.0 cannot automatically upgrade a normally
+used v0.3.1 workspace because the older runtime did not record enough information
+to verify that all of its child processes stopped. The installer refuses before
+migration and preserves the workspace and installation records. There is no
+documented self-service recovery yet. Stay on v0.3.1 until a compatible upgrade
+is available. Avoid upgrading its Homebrew formula in the meantime: the new
+formula's `jobctrl` command attempts the same blocked transition and cannot
+start that workspace. Preserve the registry and both databases; do not delete
+them to bypass the refusal.
+
+For supported schema-15 transitions with verified runtime ownership, the new
+authenticated installer upgrades the original installation. It requires an
+initialized schema-14 or schema-15 workspace and its original installation
+metadata. Older schemas must first reach schema 14 through a supported predecessor;
+preserve the workspace and see the [v0.3.1 upgrade notes](https://github.com/ebarti/JobCtrl/releases/tag/v0.3.1).
+The installer stops owned processes, backs up the application and Temporal
+databases together, and applies the additive migration before checking startup
+health. If cleanup fails, preserve the reported evidence.
 
 If startup fails or the upgrade is interrupted, JobCtrl preserves the live
 databases and recovery journal. Rerun the trusted new installer that began the
