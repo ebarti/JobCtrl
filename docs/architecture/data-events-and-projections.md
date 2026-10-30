@@ -66,6 +66,12 @@ mail retrieval, that transaction rechecks the tenant-scoped job and provider
 message so concurrent deletion or scanning cannot leave orphaned or duplicate
 evidence. Raw message bodies stay out of event payloads and scan summaries.
 
+Manual outcomes, interview reflections and user-attested send logs commit their
+canonical fact and a durable event carrying the retry receipt in one transaction.
+Equal retries return the original fact without a second event. The private
+binding stays in SQLite rather than streamed event payloads; see the
+[read-model retry contract](read-model.md).
+
 Apply ownership is established by `ApplyClaimAcquired` for the exact tenant,
 job and RunId in the claim writer transaction. Replayed `ApplyRunStarted` saga
 records do not change that authority. Result, saga, determination, artifact and

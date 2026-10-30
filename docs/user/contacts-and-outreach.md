@@ -108,9 +108,28 @@ each submitted version alongside your current text. The revision may already
 have been saved or may still finish later. Check the current thread and its
 generation history, then confirm that review before deliberately retrying.
 These retained texts last only while the panel remains open. The conflict and
-timeout handling do not make repeated commands idempotent and never replay a
-send action. For other Outreach commands, also inspect the current thread
-before issuing another command after a lost acknowledgement.
+timeout handling do not make repeated revision commands idempotent. For other
+Outreach commands, also inspect the current thread before issuing another
+command after a lost acknowledgement.
+
+## Retrying A Send Log
+
+An open form stays bound to the approved draft it was opened for. If a newer
+approval replaces that draft before its first submission, recording is refused;
+close the form. Reopen it for the newer draft only if you sent that draft yourself.
+
+If **Record send** loses its acknowledgement, retry in the same mounted form.
+The form retains its original draft, channel, date and request identity, and the
+API returns the original send-log record without a second event. The current
+thread is read separately, so replaying a log does not restore an older approval
+or reminder. A retry remains valid if that draft's review has since changed.
+
+Input stays visible and locked until acknowledgement or **Start a new action**.
+That choice creates a distinct identity and can record another attestation; the
+previous action may already exist. Reloading or leaving the form discards its
+in-memory retry state. Inspect sent history before adding a new attestation.
+Fresh actions still require a currently approved draft and current offer sources
+where applicable. None of these actions sends a message.
 
 ## Contact Import
 

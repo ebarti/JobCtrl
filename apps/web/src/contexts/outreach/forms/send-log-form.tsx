@@ -1,3 +1,5 @@
+import { useRetryableAction } from "../../../shared/lib/useRetryableAction.js";
+import type { LogOutreachSendRequest } from "@jobctrl/contracts";
 import {
   LogOutreachSendRequestSchema,
   OUTREACH_SEND_CHANNELS,
@@ -64,6 +66,7 @@ export function SendLogForm({
   const formId = useId();
   const unavailableReasonId = useId();
   const mutation = useLogSendMutation(threadId, contactId, jobId);
+  const action = useRetryableAction<LogOutreachSendRequest>(threadId);
   const mutationError =
     mutation.error instanceof Error ? mutation.error.message : "";
   const form = useForm({
@@ -74,6 +77,7 @@ export function SendLogForm({
     validators: {
       onSubmit: ({ value }) => {
         const result = LogOutreachSendRequestSchema.safeParse({
+          requestId: action.requestId,
           draftId,
           channel: value.channel,
           sentAt: value.sentAt,
@@ -88,6 +92,7 @@ export function SendLogForm({
         return;
       }
       const result = LogOutreachSendRequestSchema.safeParse({
+          requestId: action.requestId,
         draftId,
         channel: value.channel,
         sentAt: value.sentAt,
@@ -95,7 +100,12 @@ export function SendLogForm({
       if (!result.success) {
         return;
       }
-      await mutation.mutateAsync(result.data);
+      try {
+        await mutation.mutateAsync(action.prepare(result.data));
+      } catch {
+        return;
+      }
+      action.newAction();
       onLogged?.();
     },
   });
@@ -116,6 +126,13 @@ export function SendLogForm({
         You send this yourself through your own channel; JobCtrl only records
         that you sent it.
       </p>
+      {action.pending ? (
+        <div role="status">
+          Retry keeps the original submitted values; the send may already be recorded.
+          <Button type="button" disabled={mutation.isPending} onClick={() => { action.newAction(); mutation.reset(); }}>Start a new action</Button>
+        </div>
+      ) : null}
+      <fieldset disabled={action.pending}>
       <form.Field name="channel">
         {(field) => (
           <Field className="field">
@@ -172,6 +189,7 @@ export function SendLogForm({
           </Field>
         )}
       </form.Field>
+      </fieldset>
       {!availability.available ? (
         <span className="meta" id={unavailableReasonId}>
           Send logging is available in the local app. JobCtrl never sends
@@ -181,7 +199,7 @@ export function SendLogForm({
         </span>
       ) : null}
       {mutationError ? (
-        <div className="banner inline">{mutationError}</div>
+        <div className="banner inline" role="alert">{mutationError}</div>
       ) : null}
       <form.Subscribe selector={(state) => state.errors}>
         {(errors) => {

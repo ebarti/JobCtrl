@@ -58,6 +58,7 @@ import type {
   ReviseOutreachDraftResponse,
   RejectOutreachDraftRequest,
   LogOutreachSendRequest,
+  LogOutreachSendResponse,
   LlmLane,
   ScheduleFollowUpRequest,
   DueFollowUpsResponse,
@@ -451,7 +452,7 @@ export interface ApiClientPort extends EndpointClientMethods {
   logOutreachSend(
     threadId: string,
     body: LogOutreachSendRequest,
-  ): Promise<OutreachThreadResponse>;
+  ): Promise<LogOutreachSendResponse>;
   scheduleOutreachFollowUp(
     threadId: string,
     body?: ScheduleFollowUpRequest,

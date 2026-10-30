@@ -49,6 +49,7 @@ is the canonical decision matrix.
 | Interviews Questions/Sources perspective, author drill-down, graph pan/zoom, and inspector tab | **Component** (`useState` / tabs) | Transient exploration controls; they do not shadow URL-owned card/job/filters, accepted evidence selections, or private drafts. |
 | Installed interview catalog and job prep/history/notes | **Server** (Query) | Public Operations read hooks use the API port; catalog browsing does not require a job/worker/provider. |
 | Unsaved interview question selection/order, context, and note text | **Materials session store + Form library state** | TanStack Form validates mutations; a tenant/job/question-keyed in-memory Zustand store preserves drafts through navigation. Dirty edits survive delayed responses, save failures, and revision conflicts; a newer query result cannot overwrite them. Personal text is not persisted in browser storage or URL state. |
+| Manual outcome, reflection and send-log retry | **Mounted form session** | Each form retains the submitted payload and request identity in memory until acknowledgement or an explicit new action. Send-log reconciliation updates only the initiating thread; current thread reads remain authoritative. See the [retry contract](../../api/complete-contract.md#manual-action-retry-contract). |
 | Artifacts list / detail | **Server** (Query) | Same. |
 | Apply run live timeline | **Server** (Query) — appended via `setQueryData` from SSE | High-frequency; see §7.5. |
 | Resume import wizard selection and options | **Client** (Zustand + browser storage) | The filename and PDF are accepted together only after a successful storage write; pending reads and failed replacements cannot publish a stale choice. Current-version tabs compare and update the versioned record in a single IndexedDB read-write transaction, including a tombstone for cleanup. A stale snapshot or unavailable transaction fails closed and offers recovery. The earlier v1 key is read-only and separately recoverable; older tabs cannot erase the v2 record, but still need reloading because they cannot coordinate v1 writes with each other. Selection and options survive navigation, refresh, and Cancel, until explicit removal or successful import cleanup. In-flight and completed imports within a tab are matched by exact source and options; successful removal retires completed-request authority without bypassing an in-flight request. Request identity and returned drafts stay in session memory and are not staged into Profile. The URL identifies the step, not its data. |
@@ -160,6 +161,7 @@ hitting the network and gives a clear seam for cloud evolution.
 | Port | Purpose | Local-mode adapter | Hosted-mode adapter (named, not built) |
 |---|---|---|---|
 | `ApiClientPort` | HTTP requests against `apps/api` | `JobCtrlApiClient` from `@jobctrl/api-client` | Transport with hosted authentication when implemented |
+| `RequestIdentityPort` | Create an identity for each deliberate manual action | `BrowserRequestIdentityAdapter` (UUID) | Same adapter |
 | `EventStreamPort` | Subscribe to a stream of `DomainEvent`s | `SseEventStreamAdapter` (`new EventSource(...)`) | `WebSocketEventStreamAdapter` (if SSE proves limiting at scale) or same SSE adapter behind CDN with edge buffering |
 | `StoragePort` | Persist client preferences and wizard drafts | `LocalStorageAdapter` (browser `localStorage`) | `IndexedDbAdapter` (when client-side cache exceeds 5 MB) |
 | `SessionPort` | Resolve `TenantId` and `UserId` for the current request | `LocalSessionAdapter` (returns `LOCAL_TENANT` + a stub user) | `JwtSessionAdapter` (Auth0 / Cognito; reads JWT, exposes `useSession()`) |
@@ -183,6 +185,7 @@ React context:
 // shared/providers/ports.tsx
 const PortsContext = createContext<{
   api: ApiClientPort;
+  requestIdentity: RequestIdentityPort;
   eventStream: EventStreamPort;
   storage: StoragePort;
   session: SessionPort;

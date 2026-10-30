@@ -324,6 +324,10 @@ bounded Gmail suggestion flow are summarized in
 and feedback events carry canonical `jobId` values; the wire fields are defined
 in the [complete contract](api/complete-contract.md).
 
+Manual outcomes, interview reflections and user-attested send logs use a
+client-provided request identity to return the original result after a retry.
+See the [manual action retry contract](api/complete-contract.md#manual-action-retry-contract).
+
 The queue and job-detail read models include `repeatApplication`: its current
 status, summary, evaluation time, evidence fingerprint, related confirmed prior
 applications, matching reason and identity evidence, matching one-attempt

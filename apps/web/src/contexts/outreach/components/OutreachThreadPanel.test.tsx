@@ -1,7 +1,8 @@
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
+import { buildTestPorts } from "../../../test/testPorts.js";
 import { http, HttpResponse } from "msw";
-import { fireEvent, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { act, fireEvent, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   acknowledgeOutreachRevision,
@@ -19,6 +20,73 @@ import { outreachKeys } from "../queryKeys.js";
 import { OutreachThreadPanel } from "./OutreachThreadPanel.js";
 
 describe("<OutreachThreadPanel>", () => {
+  it("keeps a send form bound to its opened draft when a newer approval arrives", async () => {
+    const logOutreachSend = vi.fn(async (_threadId: string, _body: import("@jobctrl/contracts").LogOutreachSendRequest) => ({ ok: true as const, sendLog: makeOutreachSendLog({ draftId: "draft-4" }) }));
+    logOutreachSend.mockRejectedValueOnce(new Error("The original draft is no longer approved"));
+    const view = renderWithProviders(<OutreachThreadPanel contactId="contact-1" />, { ports: buildTestPorts({ api: { logOutreachSend } }) });
+    fireEvent.click(await view.findByRole("button", { name: "Log a send" }));
+    const newer = makeOutreachThreadResponse(makeOutreachThreadDetail({ drafts: [
+      makeOutreachDraft({ draftId: "draft-2", generation: 2, status: "superseded" }),
+      makeOutreachDraft({ draftId: "draft-4", generation: 4, status: "approved", bodyText: "Newer approved synthetic message" }),
+    ] }));
+    server.use(http.get("*/v1/contacts/:contactId/outreach", () => HttpResponse.json(newer)));
+    await act(async () => { view.queryClient.setQueryData(outreachKeys.threadForContact(LOCAL_TENANT, "contact-1", null), newer); });
+    expect((await view.findAllByText("Newer approved synthetic message")).length).toBeGreaterThan(0);
+    fireEvent.click(view.getByRole("button", { name: "Record send" }));
+    await view.findByRole("alert");
+    expect(logOutreachSend.mock.calls[0]![1].draftId).toBe("draft-2");
+    expect(view.getByRole("alert")).toHaveTextContent("The original draft is no longer approved");
+
+    fireEvent.click(view.getByRole("button", { name: /^Cancel$/ }));
+    fireEvent.click(view.getByRole("button", { name: "Log a send" }));
+    fireEvent.click(view.getByRole("button", { name: "Record send" }));
+    await waitFor(() => expect(logOutreachSend).toHaveBeenCalledTimes(2));
+    expect(logOutreachSend.mock.calls[1]![1].draftId).toBe("draft-4");
+    expect(logOutreachSend.mock.calls[1]![1].requestId).not.toBe(logOutreachSend.mock.calls[0]![1].requestId);
+  });
+
+  it("keeps the uncertain send form and original draft binding when a later read has no approved draft", async () => {
+    const logOutreachSend = vi.fn(async (_threadId: string, _body: import("@jobctrl/contracts").LogOutreachSendRequest) => ({ ok: true as const, sendLog: makeOutreachSendLog() }));
+    logOutreachSend.mockRejectedValueOnce(new Error("Lost acknowledgement"));
+    const view = renderWithProviders(<OutreachThreadPanel contactId="contact-1" />, { ports: buildTestPorts({ api: { logOutreachSend } }) });
+    fireEvent.click(await view.findByRole("button", { name: "Log a send" }));
+    fireEvent.click(view.getByRole("button", { name: "Record send" }));
+    await view.findByRole("alert");
+    const original = logOutreachSend.mock.calls[0]![1];
+    const newer = makeOutreachThreadResponse(makeCandidateThread());
+    server.use(http.get("*/v1/contacts/:contactId/outreach", () => HttpResponse.json(newer)));
+    await act(async () => { view.queryClient.setQueryData(outreachKeys.threadForContact(LOCAL_TENANT, "contact-1", null), newer); });
+    expect(view.getByRole("button", { name: "Record send" })).toBeInTheDocument();
+    fireEvent.click(view.getByRole("button", { name: "Record send" }));
+    await waitFor(() => expect(logOutreachSend).toHaveBeenCalledTimes(2));
+    expect(logOutreachSend.mock.calls[1]![1]).toEqual(original);
+  });
+
+  it("retries the original send after an approval changes without losing a retained revision", async () => {
+    const logOutreachSend = vi.fn(async (_threadId: string, _body: import("@jobctrl/contracts").LogOutreachSendRequest) => ({ ok: true as const, sendLog: makeOutreachSendLog() }));
+    logOutreachSend.mockRejectedValueOnce(new Error("Lost acknowledgement"));
+    const view = renderWithProviders(<OutreachThreadPanel contactId="contact-1" />, { ports: buildTestPorts({ api: { logOutreachSend } }) });
+    fireEvent.click(await view.findByRole("button", { name: "Log a send" }));
+    fireEvent.click(view.getByRole("button", { name: "Record send" }));
+    await view.findByRole("alert");
+    const original = logOutreachSend.mock.calls[0]![1];
+    expect(original.draftId).toBe("draft-2");
+    fireEvent.click(view.getByRole("button", { name: "Revise approved message" }));
+    fireEvent.change(view.getByRole("textbox", { name: "Edit message" }), { target: { value: "Retained synthetic revision" } });
+
+    const newer = makeOutreachThreadResponse(makeOutreachThreadDetail({ drafts: [
+      makeOutreachDraft({ draftId: "draft-2", generation: 2, status: "superseded" }),
+      makeOutreachDraft({ draftId: "draft-4", generation: 4, status: "approved", bodyText: "Newer approved message" }),
+    ] }));
+    server.use(http.get("*/v1/contacts/:contactId/outreach", () => HttpResponse.json(newer)));
+    await act(async () => { view.queryClient.setQueryData(outreachKeys.threadForContact(LOCAL_TENANT, "contact-1", null), newer); });
+    expect(view.getByRole("textbox", { name: "Edit message" })).toHaveValue("Retained synthetic revision");
+    fireEvent.click(view.getByRole("button", { name: "Record send" }));
+    await waitFor(() => expect(logOutreachSend).toHaveBeenCalledTimes(2));
+    expect(logOutreachSend.mock.calls[1]![1]).toEqual(original);
+    expect(view.getByRole("textbox", { name: "Edit message" })).toHaveValue("Retained synthetic revision");
+  });
+
   it("shows the approved draft, the candidate under review, and the full generation history (INV-5)", async () => {
     const view = renderWithProviders(<OutreachThreadPanel contactId="contact-1" />);
     await waitFor(() =>

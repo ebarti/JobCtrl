@@ -80,6 +80,7 @@ export interface DemoWorkspaceSnapshot {
    */
   readonly blobIds: readonly string[];
   readonly state: {
+    actionReceipts?: Record<string, { occurredAtOmitted: boolean; outcomeId: string }>;
     readonly title: string;
     readonly generatedAt: string;
     readonly artifacts: MaterializedDemoSeed["artifacts"];
