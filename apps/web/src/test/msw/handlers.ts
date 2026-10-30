@@ -800,7 +800,7 @@ export const handlers = [
       ok: true,
       count: body.jobKeys?.length ?? 0,
       jobKeys: body.jobKeys ?? [],
-      nextAction: "jobctrl run score --rescore",
+      nextAction: "jobctrl score --rescore",
     });
   }),
   http.post("*/v1/jobs/:jobKey/actions/rescore-current-policy", ({ params }) =>

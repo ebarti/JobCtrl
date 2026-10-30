@@ -619,7 +619,7 @@ export function resetStaleScoresForRescore(
           staleReason: String(row.stale_reason ?? ""),
           oldPolicyVersion: Number(row.old_policy_version ?? 0),
           newPolicyVersion: Number(row.new_policy_version ?? 0),
-          nextAction: "jobctrl run score --rescore",
+          nextAction: "jobctrl score --rescore",
         },
       });
     }
@@ -627,7 +627,7 @@ export function resetStaleScoresForRescore(
       ok: true,
       count: jobKeys.length,
       jobKeys,
-      nextAction: "jobctrl run score --rescore",
+      nextAction: "jobctrl score --rescore",
       skippedActiveJobKeys,
       alreadyPendingJobKeys,
     };

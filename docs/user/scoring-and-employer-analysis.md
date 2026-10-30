@@ -185,6 +185,10 @@ offers bounded current-policy maintenance for selected or outdated scores.
 A correction and a re-score are different: correction records your reviewed
 decision; re-score runs the current scoring pipeline and creates a new model-
 derived version.
+Resetting stale scores prepares their stages for another run; it does not run
+scoring. The suggested `jobctrl score --rescore` command starts the scoring
+queue for eligible enriched jobs, including jobs with existing scores; it is not
+limited to the selected reset jobs. It uses the normal provider and budget checks.
 If employer analysis changes after the last assessment, Job Detail labels the
 requirement fit outdated and offers a per-job re-score. The earlier score and
 accepted materials stay available while the new assessment runs. Jobs with an

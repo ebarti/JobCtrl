@@ -1935,7 +1935,7 @@ describe("<JobsView> bulk delete integration", () => {
             ok: true,
             count: body.jobKeys?.length ?? 0,
             jobKeys: body.jobKeys ?? [],
-            nextAction: "jobctrl run score --rescore",
+            nextAction: "jobctrl score --rescore",
           });
         },
       ),

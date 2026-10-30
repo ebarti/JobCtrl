@@ -322,7 +322,7 @@ class SqliteScoreStalenessRepository:
                     "pending",
                     tenant_id=marker.tenant_id,
                     attempt_count=0,
-                    next_action="jobctrl run score --rescore",
+                    next_action="jobctrl score --rescore",
                     metadata=metadata,
                     validate_transition=False,
                 )
@@ -337,7 +337,7 @@ class SqliteScoreStalenessRepository:
                         "staleReason": marker.stale_reason,
                         "oldPolicyVersion": marker.old_policy_version,
                         "newPolicyVersion": marker.new_policy_version,
-                        "nextAction": "jobctrl run score --rescore",
+                        "nextAction": "jobctrl score --rescore",
                     },
                     publisher=BufferedPublisher(),
                 )

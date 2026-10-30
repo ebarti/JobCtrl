@@ -30,7 +30,7 @@ describe("useResetStaleScoresForRescoreMutation", () => {
       ok: true as const,
       count: 1,
       jobKeys: ["job-stale"],
-      nextAction: "jobctrl run score --rescore",
+      nextAction: "jobctrl score --rescore",
     };
     const resetStaleScoresForRescore = vi.fn(async () => response);
     const { result } = renderHookWithProviders(() => useResetStaleScoresForRescoreMutation(), {
@@ -86,7 +86,7 @@ describe("useResetStaleScoresForRescoreMutation", () => {
       ok: true as const,
       count: 1,
       jobKeys: ["job-stale"],
-      nextAction: "jobctrl run score --rescore",
+      nextAction: "jobctrl score --rescore",
     };
     const resetStaleScoresForRescore = vi.fn(async () => response);
     const { result, queryClient } = renderHookWithProviders(() => useResetStaleScoresForRescoreMutation(), {

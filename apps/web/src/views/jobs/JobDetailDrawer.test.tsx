@@ -9,8 +9,10 @@ import {
   useSearch,
 } from "@tanstack/react-router";
 import { http, HttpResponse } from "msw";
+import type { QueryClient } from "@tanstack/react-query";
 import {
   fireEvent,
+  act,
   render,
   screen,
   waitFor,
@@ -18,10 +20,15 @@ import {
 } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
+import { LOCAL_TENANT, createTenantId, type TenantId } from "@jobctrl/domain-types";
 
+import { jobsKeys } from "../../contexts/operations/jobsKeys.js";
 import { jobsSearchSchema } from "../../routes/-jobs.search.js";
+import { useToastStore } from "../../shared/stores/toasts.js";
 import { server } from "../../test/msw/server.js";
-import { buildProviderHarness } from "../../test/render.js";
+import { buildProviderHarness, createTestQueryClient } from "../../test/render.js";
+import { FakeEventStreamPort, FakeSessionPort, buildTestPorts } from "../../test/testPorts.js";
+import { observeRetryDetailConfirmation, retryStatusScope } from "../../contexts/pipeline/lib/retryStatusConfirmation.js";
 import {
   blockedRequirementFitReport,
   populatedEmployerAnalysis,
@@ -54,8 +61,14 @@ function RoutedJobDetailDrawer({ jobId }: { readonly jobId: string }) {
   );
 }
 
-function renderJobDetailDrawer(jobId: string) {
-  const harness = buildProviderHarness();
+function renderJobDetailDrawer(jobId: string, eventStream?: FakeEventStreamPort, queryClient?: QueryClient, tenantId?: TenantId) {
+  const ports = buildTestPorts(eventStream ? { eventStream } : {});
+  if (tenantId) ports.session = new FakeSessionPort({ tenantId, userId: null });
+  const harness = buildProviderHarness({
+    ports,
+    ...(eventStream ? { withEventStream: true } : {}),
+    ...(queryClient ? { queryClient } : {}),
+  });
   const rootRoute = createRootRoute({ component: () => <Outlet /> });
   const jobsRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -1444,6 +1457,56 @@ describe("<JobDetailDrawer>", () => {
     ]));
   });
 
+  it("does not report stage retry uncertainty when application-target refresh is rejected", async () => {
+    const alias = "https://www.linkedin.com/jobs/view/synthetic-rejected-target";
+    const canonical = "88888888-8888-4888-8888-888888888888";
+    const queryClient = createTestQueryClient();
+    queryClient.setDefaultOptions({
+      queries: { retry: false, staleTime: 30_000, gcTime: Infinity, refetchOnMount: true,
+        refetchOnReconnect: false, refetchOnWindowFocus: false },
+      mutations: { retry: false },
+    });
+    const detail = makeJobDetail({ ...sampleJob, jobKey: canonical, url: alias, applicationUrl: null });
+    const enriched = { ...detail, stages: [...detail.stages,
+      { ...detail.stages[0]!, stage: "enrich" as const, state: "succeeded" as const }] };
+    const aliasKey = jobsKeys.detail(LOCAL_TENANT, alias);
+    const canonicalKey = jobsKeys.detail(LOCAL_TENANT, canonical);
+    queryClient.setQueryData(aliasKey, enriched);
+    queryClient.setQueryData(canonicalKey, enriched);
+    let requested = false;
+    server.use(
+      http.get("*/v1/jobs/:jobKey", () => HttpResponse.json(enriched)),
+      http.post("*/v1/jobs/:jobKey/actions/retry-stage", async ({ params, request }) => {
+        expect(String(params.jobKey)).toBe(canonical);
+        expect(await request.json()).toMatchObject({ stage: "enrich", runAfter: true, refreshApplyUrl: true });
+        requested = true;
+        return HttpResponse.json({ ok: false, error: "apply_url_refresh_not_eligible" }, { status: 409 });
+      }),
+    );
+    const user = userEvent.setup();
+    try {
+      const first = renderJobDetailDrawer(alias, undefined, queryClient);
+      await expandDetailSections();
+      const callout = await screen.findByRole("region", { name: "Application target refresh" });
+      await user.click(within(callout).getByRole("button", { name: "Refresh application target" }));
+      await waitFor(() => expect(requested).toBe(true));
+      await waitFor(() => expect(queryClient.getQueryState(canonicalKey)?.isInvalidated).toBe(true));
+      expect(queryClient.getQueryData(canonicalKey)).toBe(enriched);
+      expect(useToastStore.getState().toasts).not.toContainEqual(expect.objectContaining({
+        scope: retryStatusScope(LOCAL_TENANT, canonical, canonical),
+      }));
+      expect(useToastStore.getState().toasts).not.toContainEqual(expect.objectContaining({
+        scope: retryStatusScope(LOCAL_TENANT, canonical, alias),
+      }));
+      first.unmount();
+      renderJobDetailDrawer(canonical, undefined, queryClient);
+      await screen.findByRole("article", { name: "Job details" });
+      expect(screen.queryByText(/stage status may be out of date after this retry/i)).not.toBeInTheDocument();
+    } finally {
+      act(() => useToastStore.getState().clear());
+    }
+  });
+
   it("does not offer target refresh for a LinkedIn locator the worker cannot inspect", async () => {
     server.use(
       http.get("*/v1/jobs/:jobKey", ({ params }) => {
@@ -1627,5 +1690,1226 @@ describe("<JobDetailDrawer>", () => {
         expect.objectContaining({ stage: "enrich", runAfter: true }),
       ]),
     );
+  });
+
+  it("does not start another read after a held sibling read confirms the retry", async () => {
+    const alias = "https://example.com/jobs/confirmed-sibling";
+    const canonical = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const queryClient = createTestQueryClient();
+    queryClient.setDefaultOptions({
+      queries: { retry: false, staleTime: 30_000, gcTime: Infinity, refetchOnMount: true,
+        refetchOnReconnect: false, refetchOnWindowFocus: false },
+      mutations: { retry: false },
+    });
+    const detail = makeJobDetail({ ...sampleJob, jobKey: canonical,
+      currentStage: "discover", currentSubstage: "discover", currentState: "failed" });
+    const stage = { ...detail.stages[0]!, stage: "discover" as const, state: "failed" as const, retryable: true };
+    const failedDetail = { ...detail, stages: [stage] };
+    const pendingDetail = { ...failedDetail, job: { ...detail.job, currentState: "pending" as const },
+      stages: [{ ...stage, state: "pending" as const }] };
+    const aliasKey = jobsKeys.detail(LOCAL_TENANT, alias);
+    const canonicalKey = jobsKeys.detail(LOCAL_TENANT, canonical);
+    queryClient.setQueryData(aliasKey, failedDetail);
+    queryClient.setQueryData(canonicalKey, failedDetail);
+    let releaseResponse!: () => void;
+    let releaseRead!: () => void;
+    const responseHeld = new Promise<void>((resolve) => { releaseResponse = resolve; });
+    const readHeld = new Promise<void>((resolve) => { releaseRead = resolve; });
+    let requested = false;
+    let canonicalReads = 0;
+    server.use(
+      http.post("*/v1/jobs/:jobKey/material-locales", () => HttpResponse.json({
+        supportedLocales: [], variants: [], profileVersion: null, sources: [],
+      })),
+      http.get("*/v1/jobs/:jobKey", async ({ params }) => {
+        if (String(params.jobKey) !== canonical) return HttpResponse.json(pendingDetail);
+        canonicalReads += 1;
+        if (canonicalReads > 1) return HttpResponse.json({ ok: false, error: "unexpected_extra_read" }, { status: 503 });
+        await readHeld;
+        return HttpResponse.json(pendingDetail);
+      }),
+      http.post("*/v1/jobs/:jobKey/actions/retry-stage", async ({ params, request }) => {
+        expect(String(params.jobKey)).toBe(canonical);
+        expect(await request.json()).toMatchObject({ stage: "discover", runAfter: false });
+        requested = true;
+        await responseHeld;
+        return HttpResponse.json({ ok: true, action: "retry_stage", status: "reset",
+          command: { action: "retry_stage", jobKey: canonical }, stage: { ...stage, state: "pending" } });
+      }),
+    );
+    const user = userEvent.setup();
+    try {
+      renderJobDetailDrawer(alias, undefined, queryClient);
+      await expandDetailSections();
+      await user.click(await screen.findByRole("button", { name: "More job actions" }));
+      await user.click(await screen.findByRole("button", { name: "Retry" }));
+      await waitFor(() => expect(requested).toBe(true));
+      const alternate = renderJobDetailDrawer(canonical, undefined, queryClient);
+      releaseResponse();
+      await waitFor(() => expect(canonicalReads).toBe(1));
+      expect(await within(alternate.container).findByRole("button", { name: "Refreshing stage status" })).toBeDisabled();
+      const pending = queryClient.getQueryCache().find({ queryKey: canonicalKey, exact: true })?.promise;
+      expect(pending).toBeDefined();
+      await act(async () => {
+        releaseRead();
+        await pending;
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      const scope = retryStatusScope(LOCAL_TENANT, canonical, canonical);
+      await waitFor(() => expect(useToastStore.getState().toasts).not.toContainEqual(expect.objectContaining({ scope })));
+      expect(canonicalReads).toBe(1);
+      expect(queryClient.getQueryState(canonicalKey)?.status).toBe("success");
+      expect(within(alternate.container).getByRole("group", { name: "Workflow state" })).toHaveTextContent("Pending");
+    } finally {
+      releaseResponse();
+      releaseRead();
+      act(() => useToastStore.getState().clear());
+    }
+  });
+
+  it("does not continue a closed drawer's confirmation while Screening Answers stays subscribed", async () => {
+    const alias = "https://example.com/jobs/closed-confirmation";
+    const canonical = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const queryClient = createTestQueryClient();
+    queryClient.setDefaultOptions({
+      queries: { retry: false, staleTime: 30_000, gcTime: Infinity, refetchOnMount: true,
+        refetchOnReconnect: false, refetchOnWindowFocus: false },
+      mutations: { retry: false },
+    });
+    const detail = makeJobDetail({ ...sampleJob, jobKey: canonical, title: "Synthetic closed drawer",
+      currentStage: "discover", currentSubstage: "discover", currentState: "failed" });
+    const stage = { ...detail.stages[0]!, stage: "discover" as const, state: "failed" as const, retryable: true };
+    const failedDetail = { ...detail, stages: [stage] };
+    const pendingDetail = { ...failedDetail, job: { ...detail.job, currentState: "pending" as const },
+      stages: [{ ...stage, state: "pending" as const }] };
+    const canonicalKey = jobsKeys.detail(LOCAL_TENANT, canonical);
+    queryClient.setQueryData(jobsKeys.detail(LOCAL_TENANT, alias), failedDetail);
+    queryClient.setQueryData(canonicalKey, failedDetail);
+    let releaseOldRead!: () => void;
+    const oldReadHeld = new Promise<void>((resolve) => { releaseOldRead = resolve; });
+    let canonicalReads = 0;
+    server.use(
+      http.post("*/v1/jobs/:jobKey/material-locales", () => HttpResponse.json({
+        supportedLocales: [], variants: [], profileVersion: null, sources: [],
+      })),
+      http.get("*/v1/jobs/:jobKey/screening-answers", () => HttpResponse.json({
+        ok: true, jobId: canonical, questions: [], history: [], library: [], facts: [], sourceBinding: null,
+        sourceFailure: null, determinations: [], failures: [],
+      })),
+      http.get("*/v1/jobs/:jobKey", async ({ params }) => {
+        if (String(params.jobKey) !== canonical) return HttpResponse.json(failedDetail);
+        canonicalReads += 1;
+        if (canonicalReads === 1) {
+          await oldReadHeld;
+          return HttpResponse.json(failedDetail);
+        }
+        if (canonicalReads === 2) return HttpResponse.json(pendingDetail);
+        return HttpResponse.json({ ok: false, error: "unexpected_extra_read" }, { status: 503 });
+      }),
+    );
+    const user = userEvent.setup();
+    let oldRead: Promise<void> | undefined;
+    try {
+      renderJobDetailDrawer(alias, undefined, queryClient);
+      await expandDetailSections();
+      await user.click(await screen.findByRole("button", { name: "Open screening answers" }));
+      expect(await screen.findByText("Application: Synthetic closed drawer")).toBeVisible();
+      oldRead = queryClient.invalidateQueries({ queryKey: canonicalKey, exact: true });
+      await waitFor(() => expect(canonicalReads).toBe(1));
+      const scope = retryStatusScope(LOCAL_TENANT, canonical, canonical);
+      const noticeId = useToastStore.getState().toast({
+        variant: "warning", message: "Synthetic retry needs confirmation.", durationMs: 0, scope,
+      });
+      observeRetryDetailConfirmation(queryClient, canonicalKey, noticeId, canonical);
+      const closed = renderJobDetailDrawer(canonical, undefined, queryClient);
+      expect(await within(closed.container).findByRole("button", { name: "Refreshing stage status" })).toBeDisabled();
+      closed.unmount();
+      expect(queryClient.getQueryCache().find({ queryKey: canonicalKey, exact: true })?.isActive()).toBe(true);
+      await act(async () => {
+        releaseOldRead();
+        await oldRead;
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(canonicalReads).toBe(1);
+      expect(useToastStore.getState().toasts.some((entry) => entry.id === noticeId)).toBe(true);
+      const reopened = renderJobDetailDrawer(canonical, undefined, queryClient);
+      await waitFor(() => expect(useToastStore.getState().toasts.some((entry) => entry.id === noticeId)).toBe(false));
+      expect(canonicalReads).toBe(2);
+      expect(within(reopened.container).getByRole("group", { name: "Workflow state" })).toHaveTextContent("Pending");
+    } finally {
+      releaseOldRead();
+      await oldRead?.catch(() => {});
+      act(() => useToastStore.getState().clear());
+    }
+  });
+
+  it.each([
+    { stage: "discover", runAfter: false, expectedState: "pending", acceptedState: "pending", status: "reset", readbackFails: false, message: null },
+    { stage: "tailor", runAfter: true, expectedState: "running", acceptedState: "running", status: "queued", readbackFails: false, message: null },
+    { stage: "tailor", runAfter: true, expectedState: "running", acceptedState: "pending", status: "reset", readbackFails: false, message: null },
+    { stage: "tailor", runAfter: true, expectedState: "running", acceptedState: "pending", status: "failed", readbackFails: true, message: "Synthetic dispatch failure." },
+    { stage: "tailor", runAfter: true, expectedState: "running", acceptedState: "pending", status: "unsupported", readbackFails: true, message: null },
+  ] as const)(
+    "shows $expectedState while retrying $stage and accepts $acceptedState after a $status response",
+    async ({ stage, runAfter, expectedState, acceptedState, status, readbackFails, message }) => {
+      useToastStore.getState().clear();
+      const user = userEvent.setup();
+      const calls: Array<{ stage?: string; runAfter?: boolean }> = [];
+      let releaseResponse!: () => void;
+      let releaseReadback!: () => void;
+      const responseHeld = new Promise<void>((resolve) => { releaseResponse = resolve; });
+      const readbackHeld = new Promise<void>((resolve) => { releaseReadback = resolve; });
+      let reads = 0;
+      const jobId = `job-retry-${stage}`;
+      const detail = makeJobDetail({
+        ...sampleJob,
+        jobKey: jobId,
+        currentStage: stage,
+        currentSubstage: stage,
+        currentState: "failed",
+      });
+      const failedStage = {
+        ...detail.stages[0]!,
+        stage,
+        state: "failed" as const,
+        retryable: true,
+      };
+      server.use(
+        http.post("*/v1/jobs/:jobKey/material-locales", () => HttpResponse.json({
+          supportedLocales: [], variants: [], profileVersion: null, sources: [],
+        })),
+        http.get("*/v1/jobs/:jobKey", async () => {
+          reads += 1;
+          if (reads > 1) await readbackHeld;
+          if (reads > 1 && readbackFails) {
+            return HttpResponse.json({ ok: false, error: "synthetic_readback_failure" }, { status: 503 });
+          }
+          return HttpResponse.json({
+            ...detail,
+            job: { ...detail.job, currentState: reads === 1 ? "failed" : acceptedState },
+            stages: [{
+              ...failedStage,
+              state: reads === 1 ? "failed" : acceptedState,
+              updatedAt: reads === 1 ? failedStage.updatedAt : "2026-05-02T12:00:00Z",
+            }],
+          });
+        }),
+        http.post("*/v1/jobs/:jobKey/actions/retry-stage", async ({ request }) => {
+          calls.push((await request.json()) as { stage?: string; runAfter?: boolean });
+          await responseHeld;
+          return HttpResponse.json({
+            ok: true,
+            action: "retry_stage",
+            status,
+            command: { action: "retry_stage", jobKey: jobId },
+            stage: { ...failedStage, state: status === "queued" ? "pending" : acceptedState },
+            ...(message ? { message } : {}),
+          }, { status: status === "reset" ? 200 : 202 });
+        }),
+      );
+
+      try {
+        const { queryClient } = renderJobDetailDrawer(jobId);
+        await expandDetailSections();
+        await user.click(await screen.findByRole("button", { name: "More job actions" }));
+        await user.click(await screen.findByRole("button", { name: "Retry" }));
+        await waitFor(() => expect(calls).toEqual([expect.objectContaining({ stage, runAfter })]));
+
+        const timeline = screen.getByRole("list", { name: "Preparation stages" });
+        const row = within(timeline).getByText(stage === "discover" ? "Discover" : "Tailor").closest("li");
+        expect(row).toHaveAttribute("data-stage-state", expectedState);
+        const workflowState = screen.getByRole("group", { name: "Workflow state" });
+        expect(workflowState).toHaveTextContent(new RegExp(`\\b${expectedState}\\b`, "i"));
+
+        releaseResponse();
+        await waitFor(() => expect(reads).toBeGreaterThan(1));
+        expect(row).toHaveAttribute("data-stage-state", acceptedState);
+        expect(workflowState).toHaveTextContent(new RegExp(`\\b${acceptedState}\\b`, "i"));
+        if (readbackFails) {
+          const text = `The stage was reset, but the retry could not start.${message ? ` ${message}` : ""}`;
+          expect(await screen.findByText(text)).toBeVisible();
+        }
+        releaseReadback();
+        if (readbackFails) {
+          await waitFor(() => expect(queryClient.getQueryState(jobsKeys.detail(LOCAL_TENANT, jobId))?.status).toBe("error"));
+          expect(queryClient.getQueryData(jobsKeys.detail(LOCAL_TENANT, jobId))).toMatchObject({
+            job: { currentState: "pending" },
+            stages: [{ state: "pending" }],
+          });
+        } else {
+          await waitFor(() => expect(queryClient.getQueryData(jobsKeys.detail(LOCAL_TENANT, jobId))).toMatchObject({
+            stages: [{ state: acceptedState, updatedAt: "2026-05-02T12:00:00Z" }],
+          }));
+        }
+        expect(row).toHaveAttribute("data-stage-state", acceptedState);
+        expect(workflowState).toHaveTextContent(new RegExp(`\\b${acceptedState}\\b`, "i"));
+      } finally {
+        releaseResponse();
+        releaseReadback();
+        act(() => useToastStore.getState().clear());
+      }
+    },
+  );
+
+  it("patches the mounted URL-alias detail while retrying the canonical job", async () => {
+    const alias = "https://example.com/jobs/alias-discover";
+    const canonical = "11111111-1111-4111-8111-111111111111";
+    const unrelated = "22222222-2222-4222-8222-222222222222";
+    const user = userEvent.setup();
+    let releaseResponse!: () => void;
+    let releaseReadback!: () => void;
+    const responseHeld = new Promise<void>((resolve) => { releaseResponse = resolve; });
+    const readbackHeld = new Promise<void>((resolve) => { releaseReadback = resolve; });
+    let reads = 0;
+    const requests: Array<{ jobKey: string; body: unknown }> = [];
+    const detail = makeJobDetail({
+      ...sampleJob, jobKey: canonical, currentStage: "discover", currentSubstage: "discover", currentState: "failed",
+    });
+    const failed = { ...detail.stages[0]!, stage: "discover" as const, state: "failed" as const, retryable: true };
+    server.use(
+      http.post("*/v1/jobs/:jobKey/material-locales", () => HttpResponse.json({
+        supportedLocales: [], variants: [], profileVersion: null, sources: [],
+      })),
+      http.get("*/v1/jobs/:jobKey", async ({ params }) => {
+        expect(String(params.jobKey)).toBe(alias);
+        reads += 1;
+        if (reads > 1) await readbackHeld;
+        return HttpResponse.json({
+          ...detail, job: { ...detail.job, currentState: reads === 1 ? "failed" : "pending" },
+          stages: [{ ...failed, state: reads === 1 ? "failed" : "pending",
+            updatedAt: reads === 1 ? failed.updatedAt : "2026-05-02T12:00:00Z" }],
+        });
+      }),
+      http.post("*/v1/jobs/:jobKey/actions/retry-stage", async ({ params, request }) => {
+        requests.push({ jobKey: String(params.jobKey), body: await request.json() });
+        await responseHeld;
+        return HttpResponse.json({ ok: true, action: "retry_stage", status: "reset",
+          command: { action: "retry_stage", jobKey: canonical }, stage: { ...failed, state: "pending" } });
+      }),
+    );
+    try {
+      const { queryClient } = renderJobDetailDrawer(alias);
+      const otherDetail = makeJobDetail({ ...sampleJob, jobKey: unrelated });
+      queryClient.setQueryData(jobsKeys.detail(LOCAL_TENANT, unrelated), otherDetail);
+      await expandDetailSections();
+      await user.click(await screen.findByRole("button", { name: "More job actions" }));
+      await user.click(await screen.findByRole("button", { name: "Retry" }));
+      await waitFor(() => expect(requests).toEqual([{
+        jobKey: canonical, body: expect.objectContaining({ stage: "discover", runAfter: false }),
+      }]));
+      const timeline = screen.getByRole("list", { name: "Preparation stages" });
+      expect(within(timeline).getByText("Discover").closest("li")).toHaveAttribute("data-stage-state", "pending");
+      expect(screen.getByRole("group", { name: "Workflow state" })).toHaveTextContent(/pending/i);
+      expect(queryClient.getQueryData(jobsKeys.detail(LOCAL_TENANT, unrelated))).toBe(otherDetail);
+      releaseResponse();
+      await waitFor(() => expect(reads).toBeGreaterThan(1));
+      expect(within(timeline).getByText("Discover").closest("li")).toHaveAttribute("data-stage-state", "pending");
+      expect(screen.getByRole("group", { name: "Workflow state" })).toHaveTextContent(/pending/i);
+      releaseReadback();
+      await waitFor(() => expect(queryClient.getQueryData(jobsKeys.detail(LOCAL_TENANT, alias))).toMatchObject({
+        job: { currentState: "pending" }, stages: [{ state: "pending", updatedAt: "2026-05-02T12:00:00Z" }],
+      }));
+      expect(queryClient.getQueryData(jobsKeys.detail(LOCAL_TENANT, unrelated))).toBe(otherDetail);
+    } finally {
+      releaseResponse();
+      releaseReadback();
+    }
+  });
+
+  it("keeps a newer alias detail and its scoped recovery after a delayed reset", async () => {
+    useToastStore.getState().clear();
+    const alias = "https://example.com/jobs/alias-race";
+    const canonical = "33333333-3333-4333-8333-333333333333";
+    const user = userEvent.setup();
+    let releaseResponse!: () => void;
+    const responseHeld = new Promise<void>((resolve) => { releaseResponse = resolve; });
+    let requested = false;
+    let mode: "failed" | "running" | "read-failed" = "failed";
+    const detail = makeJobDetail({
+      ...sampleJob, jobKey: canonical, currentStage: "discover", currentSubstage: "discover", currentState: "failed",
+    });
+    const stage = { ...detail.stages[0]!, stage: "discover" as const, state: "failed" as const, retryable: true };
+    server.use(
+      http.post("*/v1/jobs/:jobKey/material-locales", () => HttpResponse.json({
+        supportedLocales: [], variants: [], profileVersion: null, sources: [],
+      })),
+      http.get("*/v1/jobs/:jobKey", () => mode === "read-failed"
+        ? HttpResponse.json({ ok: false, error: "synthetic_readback_failure" }, { status: 503 })
+        : HttpResponse.json({ ...detail,
+          job: { ...detail.job, currentState: mode },
+          stages: [{ ...stage, state: mode, updatedAt: mode === "running" ? "2026-05-03T12:00:00Z" : stage.updatedAt }],
+        })),
+      http.post("*/v1/jobs/:jobKey/actions/retry-stage", async ({ params, request }) => {
+        expect(String(params.jobKey)).toBe(canonical);
+        expect(await request.json()).toMatchObject({ stage: "discover", runAfter: false });
+        requested = true;
+        await responseHeld;
+        return HttpResponse.json({ ok: true, action: "retry_stage", status: "reset",
+          command: { action: "retry_stage", jobKey: canonical }, stage: { ...stage, state: "pending" } });
+      }),
+    );
+    try {
+      const { queryClient } = renderJobDetailDrawer(alias);
+      const key = jobsKeys.detail(LOCAL_TENANT, alias);
+      await expandDetailSections();
+      await user.click(await screen.findByRole("button", { name: "More job actions" }));
+      await user.click(await screen.findByRole("button", { name: "Retry" }));
+      await waitFor(() => expect(requested).toBe(true));
+      mode = "running";
+      await act(async () => { await queryClient.invalidateQueries({ queryKey: key, exact: true }); });
+      expect(queryClient.getQueryData(key)).toMatchObject({
+        job: { currentState: "running" }, stages: [{ state: "running", updatedAt: "2026-05-03T12:00:00Z" }],
+      });
+      mode = "read-failed";
+      releaseResponse();
+      const warning = "The displayed stage status may be out of date after this retry. Refresh Job Detail to confirm the current state.";
+      expect(await screen.findByText(warning)).toBeVisible();
+      await waitFor(() => expect(queryClient.getQueryState(key)?.status).toBe("error"));
+      expect(queryClient.getQueryData(key)).toMatchObject({
+        job: { currentState: "running" }, stages: [{ state: "running" }],
+      });
+      expect(useToastStore.getState().toasts).toContainEqual(expect.objectContaining({
+        scope: retryStatusScope(LOCAL_TENANT, canonical, alias), message: warning,
+      }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Refresh stage status" })).toBeEnabled());
+      mode = "running";
+      await user.click(screen.getByRole("button", { name: "Refresh stage status" }));
+      await waitFor(() => expect(useToastStore.getState().toasts).not.toContainEqual(expect.objectContaining({ message: warning })));
+    } finally {
+      releaseResponse();
+      act(() => useToastStore.getState().clear());
+    }
+  });
+
+  it.each([
+    { direction: "alias-first", active: false },
+    { direction: "canonical-first", active: false },
+    { direction: "alias-first", active: true },
+    { direction: "canonical-first", active: true },
+  ] as const)(
+    "keeps an alternate locator uncertain until its own read succeeds ($direction, active=$active)",
+    async ({ direction, active }) => {
+      const alias = "https://example.com/jobs/navigation-alias";
+      const canonical = "44444444-4444-4444-8444-444444444444";
+      const unrelated = "55555555-5555-4555-8555-555555555555";
+      const otherTenant = createTenantId("synthetic-other-tenant");
+      const routeId = direction === "alias-first" ? alias : canonical;
+      const nextId = direction === "alias-first" ? canonical : alias;
+      const queryClient = createTestQueryClient();
+      queryClient.setDefaultOptions({
+        queries: { retry: false, staleTime: 30_000, gcTime: Infinity, refetchOnMount: true,
+          refetchOnReconnect: false, refetchOnWindowFocus: false },
+        mutations: { retry: false },
+      });
+      const detail = makeJobDetail({
+        ...sampleJob, jobKey: canonical, currentStage: "discover", currentSubstage: "discover", currentState: "failed",
+      });
+      const stage = { ...detail.stages[0]!, stage: "discover" as const, state: "failed" as const, retryable: true };
+      const failedDetail = { ...detail, stages: [stage] };
+      const newerDetail = { ...detail, job: { ...detail.job, currentState: "running" as const },
+        stages: [{ ...stage, state: "running" as const, updatedAt: "2026-05-03T12:00:00Z" }] };
+      const otherDetail = makeJobDetail({ ...sampleJob, jobKey: unrelated });
+      const routeKey = jobsKeys.detail(LOCAL_TENANT, routeId);
+      const nextKey = jobsKeys.detail(LOCAL_TENANT, nextId);
+      const otherKey = jobsKeys.detail(LOCAL_TENANT, unrelated);
+      const foreignKey = jobsKeys.detail(otherTenant, nextId);
+      queryClient.setQueryData(routeKey, failedDetail);
+      queryClient.setQueryData(nextKey, newerDetail);
+      queryClient.setQueryData(otherKey, otherDetail);
+      queryClient.setQueryData(foreignKey, failedDetail);
+      const reads: string[] = [];
+      let releaseResponse!: () => void;
+      const responseHeld = new Promise<void>((resolve) => { releaseResponse = resolve; });
+      let releaseNextRead!: () => void;
+      const nextReadHeld = new Promise<void>((resolve) => { releaseNextRead = resolve; });
+      let nextMode: "held-failure" | "failure" | "success" = "held-failure";
+      let requested = false;
+      server.use(
+        http.post("*/v1/jobs/:jobKey/material-locales", () => HttpResponse.json({
+          supportedLocales: [], variants: [], profileVersion: null, sources: [],
+        })),
+        http.get("*/v1/jobs/:jobKey", async ({ params }) => {
+          const key = String(params.jobKey);
+          reads.push(key);
+          if (key === nextId) {
+            if (nextMode === "held-failure") await nextReadHeld;
+            if (nextMode !== "success") {
+              return HttpResponse.json({ ok: false, error: "synthetic_readback_failure" }, { status: 503 });
+            }
+            return HttpResponse.json({ ...newerDetail,
+              stages: [{ ...newerDetail.stages[0]!, updatedAt: "2026-05-04T12:00:00Z" }] });
+          }
+          return HttpResponse.json({ ...failedDetail, job: { ...detail.job, currentState: "pending" },
+            stages: [{ ...stage, state: "pending" }] });
+        }),
+        http.post("*/v1/jobs/:jobKey/actions/retry-stage", async ({ params, request }) => {
+          expect(String(params.jobKey)).toBe(canonical);
+          expect(await request.json()).toMatchObject({ stage: "discover", runAfter: false });
+          requested = true;
+          await responseHeld;
+          return HttpResponse.json({ ok: true, action: "retry_stage", status: "reset",
+            command: { action: "retry_stage", jobKey: canonical }, stage: { ...stage, state: "pending" } });
+        }),
+      );
+      const user = userEvent.setup();
+      try {
+        const first = renderJobDetailDrawer(routeId, undefined, queryClient);
+        await expandDetailSections();
+        await user.click(await screen.findByRole("button", { name: "More job actions" }));
+        await user.click(await screen.findByRole("button", { name: "Retry" }));
+        await waitFor(() => expect(requested).toBe(true));
+        let alternate = active ? renderJobDetailDrawer(nextId, undefined, queryClient) : undefined;
+        releaseResponse();
+        await waitFor(() => expect(queryClient.getQueryState(nextKey)?.isInvalidated).toBe(true));
+        expect(queryClient.getQueryData(nextKey)).toBe(newerDetail);
+        expect(queryClient.getQueryData(otherKey)).toBe(otherDetail);
+        expect(queryClient.getQueryState(otherKey)?.isInvalidated).toBe(false);
+        expect(queryClient.getQueryData(foreignKey)).toBe(failedDetail);
+        expect(queryClient.getQueryState(foreignKey)?.isInvalidated).toBe(false);
+        await waitFor(() => expect(reads).toContain(routeId));
+        const scope = retryStatusScope(LOCAL_TENANT, canonical, nextId);
+        expect(useToastStore.getState().toasts).toContainEqual(expect.objectContaining({ scope }));
+        if (!alternate) {
+          first.unmount();
+          alternate = renderJobDetailDrawer(nextId, undefined, queryClient);
+        }
+        await waitFor(() => expect(reads).toContain(nextId));
+        const warning = "The displayed stage status may be out of date after this retry. Refresh Job Detail to confirm the current state.";
+        expect(await within(alternate.container).findByText(warning)).toBeVisible();
+        expect(within(alternate.container).getByRole("group", { name: "Workflow state" })).toHaveTextContent("Running");
+        if (active) expect(within(first.container).queryByText(warning)).not.toBeInTheDocument();
+        expect(queryClient.getQueryData(nextKey)).toBe(newerDetail);
+        nextMode = "failure";
+        releaseNextRead();
+        await waitFor(() => expect(queryClient.getQueryState(nextKey)?.status).toBe("error"));
+        expect(within(alternate.container).getByText(warning)).toBeVisible();
+        await waitFor(() => expect(within(alternate!.container).getByRole("button", { name: "Refresh stage status" })).toBeEnabled());
+        nextMode = "success";
+        await user.click(within(alternate.container).getByRole("button", { name: "Refresh stage status" }));
+        await waitFor(() => expect(queryClient.getQueryData(nextKey)).toMatchObject({
+          job: { currentState: "running" }, stages: [{ state: "running", updatedAt: "2026-05-04T12:00:00Z" }],
+        }));
+        await waitFor(() => expect(useToastStore.getState().toasts).not.toContainEqual(expect.objectContaining({ scope })));
+        expect(queryClient.getQueryState(otherKey)?.isInvalidated).toBe(false);
+        expect(queryClient.getQueryState(foreignKey)?.isInvalidated).toBe(false);
+      } finally {
+        releaseResponse();
+        releaseNextRead();
+        act(() => useToastStore.getState().clear());
+      }
+    },
+  );
+
+  it("confirms a canonical sibling through Screening Answers before opening its detail", async () => {
+    const alias = "https://example.com/jobs/screening-alias";
+    const canonical = "99999999-9999-4999-8999-999999999999";
+    const queryClient = createTestQueryClient();
+    queryClient.setDefaultOptions({
+      queries: { retry: false, staleTime: 30_000, gcTime: Infinity, refetchOnMount: true,
+        refetchOnReconnect: false, refetchOnWindowFocus: false },
+      mutations: { retry: false },
+    });
+    const detail = makeJobDetail({
+      ...sampleJob, jobKey: canonical, title: "Synthetic screening role",
+      currentStage: "discover", currentSubstage: "discover", currentState: "failed",
+    });
+    const stage = { ...detail.stages[0]!, stage: "discover" as const, state: "failed" as const, retryable: true };
+    const failedDetail = { ...detail, stages: [stage] };
+    const pendingDetail = { ...failedDetail, job: { ...detail.job, currentState: "pending" as const },
+      stages: [{ ...stage, state: "pending" as const }] };
+    const aliasKey = jobsKeys.detail(LOCAL_TENANT, alias);
+    const canonicalKey = jobsKeys.detail(LOCAL_TENANT, canonical);
+    queryClient.setQueryData(aliasKey, failedDetail);
+    queryClient.setQueryData(canonicalKey, failedDetail);
+    let releaseResponse!: () => void;
+    let releaseOldRead!: () => void;
+    let releaseConfirmation!: () => void;
+    const responseHeld = new Promise<void>((resolve) => { releaseResponse = resolve; });
+    const oldReadHeld = new Promise<void>((resolve) => { releaseOldRead = resolve; });
+    const confirmationHeld = new Promise<void>((resolve) => { releaseConfirmation = resolve; });
+    let requested = false;
+    let canonicalReads = 0;
+    server.use(
+      http.post("*/v1/jobs/:jobKey/material-locales", () => HttpResponse.json({
+        supportedLocales: [], variants: [], profileVersion: null, sources: [],
+      })),
+      http.get("*/v1/jobs/:jobKey/screening-answers", () => HttpResponse.json({
+        ok: true, jobId: canonical, questions: [], history: [], library: [], facts: [], sourceBinding: null,
+        sourceFailure: null, determinations: [], failures: [],
+      })),
+      http.get("*/v1/jobs/:jobKey", async ({ params }) => {
+        if (String(params.jobKey) !== canonical) return HttpResponse.json(pendingDetail);
+        canonicalReads += 1;
+        if (canonicalReads === 1) {
+          await oldReadHeld;
+          return HttpResponse.json(failedDetail);
+        }
+        await confirmationHeld;
+        return HttpResponse.json(pendingDetail);
+      }),
+      http.post("*/v1/jobs/:jobKey/actions/retry-stage", async ({ params, request }) => {
+        expect(String(params.jobKey)).toBe(canonical);
+        expect(await request.json()).toMatchObject({ stage: "discover", runAfter: false });
+        requested = true;
+        await responseHeld;
+        return HttpResponse.json({ ok: true, action: "retry_stage", status: "reset",
+          command: { action: "retry_stage", jobKey: canonical }, stage: { ...stage, state: "pending" } });
+      }),
+    );
+    const user = userEvent.setup();
+    let oldRead: Promise<void> | undefined;
+    try {
+      const first = renderJobDetailDrawer(alias, undefined, queryClient);
+      await expandDetailSections();
+      await user.click(await screen.findByRole("button", { name: "Open screening answers" }));
+      expect(await screen.findByText("Application: Synthetic screening role")).toBeVisible();
+      expect(queryClient.getQueryCache().find({ queryKey: canonicalKey, exact: true })?.isActive()).toBe(true);
+      oldRead = queryClient.invalidateQueries({ queryKey: canonicalKey, exact: true });
+      await waitFor(() => expect(canonicalReads).toBe(1));
+      await user.click(await screen.findByRole("button", { name: "More job actions" }));
+      await user.click(await screen.findByRole("button", { name: "Retry" }));
+      await waitFor(() => expect(requested).toBe(true));
+      releaseResponse();
+      const scope = retryStatusScope(LOCAL_TENANT, canonical, canonical);
+      await waitFor(() => expect(useToastStore.getState().toasts).toContainEqual(expect.objectContaining({ scope })));
+      releaseOldRead();
+      await oldRead;
+      await waitFor(() => expect(canonicalReads).toBeGreaterThan(1));
+      expect(useToastStore.getState().toasts).toContainEqual(expect.objectContaining({ scope }));
+      expect(queryClient.getQueryData(canonicalKey)).toMatchObject({ job: { currentState: "failed" } });
+      releaseConfirmation();
+      await waitFor(() => expect(queryClient.getQueryData(canonicalKey)).toMatchObject({ job: { currentState: "pending" } }));
+      await waitFor(() => expect(useToastStore.getState().toasts).not.toContainEqual(expect.objectContaining({ scope })));
+      first.unmount();
+      renderJobDetailDrawer(canonical, undefined, queryClient);
+      expect(await screen.findByRole("group", { name: "Workflow state" })).toHaveTextContent("Pending");
+      expect(screen.queryByText(/stage status may be out of date after this retry/i)).not.toBeInTheDocument();
+    } finally {
+      releaseResponse();
+      releaseOldRead();
+      releaseConfirmation();
+      await oldRead?.catch(() => {});
+      act(() => useToastStore.getState().clear());
+    }
+  });
+
+  it.each(["same-earlier-read", "different-earlier-reads"] as const)(
+    "confirms overlapping retries through the Screening Answers subscriber (%s)",
+    async (ordering) => {
+      const firstAlias = "https://example.com/jobs/overlap-first";
+      const secondAlias = "https://example.com/jobs/overlap-second";
+      const canonical = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+      const queryClient = createTestQueryClient();
+      queryClient.setDefaultOptions({
+        queries: { retry: false, staleTime: 30_000, gcTime: Infinity, refetchOnMount: true,
+          refetchOnReconnect: false, refetchOnWindowFocus: false },
+        mutations: { retry: false },
+      });
+      const detail = makeJobDetail({ ...sampleJob, jobKey: canonical, title: "Synthetic overlap role",
+        currentStage: "discover", currentSubstage: "discover", currentState: "failed" });
+      const stage = { ...detail.stages[0]!, stage: "discover" as const, state: "failed" as const, retryable: true };
+      const failedDetail = { ...detail, stages: [stage] };
+      const pendingDetail = { ...failedDetail, job: { ...detail.job, currentState: "pending" as const },
+        stages: [{ ...stage, state: "pending" as const }] };
+      const canonicalKey = jobsKeys.detail(LOCAL_TENANT, canonical);
+      queryClient.setQueryData(jobsKeys.detail(LOCAL_TENANT, firstAlias), failedDetail);
+      queryClient.setQueryData(jobsKeys.detail(LOCAL_TENANT, secondAlias), failedDetail);
+      let releaseFirstRetry!: () => void;
+      let releaseSecondRetry!: () => void;
+      let releaseOldRead!: () => void;
+      let releaseFirstConfirmation!: () => void;
+      let releaseSecondConfirmation!: () => void;
+      const firstRetryHeld = new Promise<void>((resolve) => { releaseFirstRetry = resolve; });
+      const secondRetryHeld = new Promise<void>((resolve) => { releaseSecondRetry = resolve; });
+      const oldReadHeld = new Promise<void>((resolve) => { releaseOldRead = resolve; });
+      const firstConfirmationHeld = new Promise<void>((resolve) => { releaseFirstConfirmation = resolve; });
+      const secondConfirmationHeld = new Promise<void>((resolve) => { releaseSecondConfirmation = resolve; });
+      let retryRequests = 0;
+      let canonicalReads = 0;
+      server.use(
+        http.post("*/v1/jobs/:jobKey/material-locales", () => HttpResponse.json({
+          supportedLocales: [], variants: [], profileVersion: null, sources: [],
+        })),
+        http.get("*/v1/jobs/:jobKey/screening-answers", () => HttpResponse.json({
+          ok: true, jobId: canonical, questions: [], history: [], library: [], facts: [], sourceBinding: null,
+          sourceFailure: null, determinations: [], failures: [],
+        })),
+        http.get("*/v1/jobs/:jobKey", async ({ params }) => {
+          if (String(params.jobKey) !== canonical) return HttpResponse.json(pendingDetail);
+          const read = ++canonicalReads;
+          if (read === 1) {
+            await oldReadHeld;
+            return HttpResponse.json(failedDetail);
+          }
+          if (read === 2) await firstConfirmationHeld;
+          if (read >= 3) await secondConfirmationHeld;
+          return HttpResponse.json(pendingDetail);
+        }),
+        http.post("*/v1/jobs/:jobKey/actions/retry-stage", async ({ params, request }) => {
+          expect(String(params.jobKey)).toBe(canonical);
+          expect(await request.json()).toMatchObject({ stage: "discover", runAfter: false });
+          const retry = ++retryRequests;
+          await (retry === 1 ? firstRetryHeld : secondRetryHeld);
+          return HttpResponse.json({ ok: true, action: "retry_stage", status: "reset",
+            command: { action: "retry_stage", jobKey: canonical }, stage: { ...stage, state: "pending" } });
+        }),
+      );
+      const user = userEvent.setup();
+      const scope = retryStatusScope(LOCAL_TENANT, canonical, canonical);
+      const notices = () => useToastStore.getState().toasts.filter((entry) => entry.scope === scope);
+      const settledRetries = () => queryClient.getMutationCache().getAll().filter((mutation) => mutation.state.status === "success").length;
+      const retryFrom = async (container: HTMLElement) => {
+        await user.click(await within(container).findByRole("button", { name: "More job actions" }));
+        const toolbar = await screen.findByRole("toolbar", { name: "Job actions" });
+        await user.click(within(toolbar).getByRole("button", { name: "Retry" }));
+      };
+      try {
+        const first = renderJobDetailDrawer(firstAlias, undefined, queryClient);
+        await expandDetailSections();
+        await user.click(await screen.findByRole("button", { name: "Open screening answers" }));
+        await screen.findByRole("region", { name: "Private screening answer library" });
+        await waitFor(() => expect(canonicalReads).toBe(1));
+        expect(queryClient.getQueryData(canonicalKey)).toBeUndefined();
+        const second = renderJobDetailDrawer(secondAlias, undefined, queryClient);
+        await retryFrom(first.container);
+        await retryFrom(second.container);
+        await waitFor(() => expect(retryRequests).toBe(2));
+        releaseFirstRetry();
+        await waitFor(() => expect(settledRetries()).toBe(1));
+        if (ordering === "same-earlier-read") {
+          releaseSecondRetry();
+          await waitFor(() => expect(settledRetries()).toBe(2));
+          expect(queryClient.getQueryData(canonicalKey)).toBeUndefined();
+        }
+        releaseOldRead();
+        await waitFor(() => expect(canonicalReads).toBe(2));
+        await waitFor(() => expect(notices()).toHaveLength(1));
+        if (ordering === "different-earlier-reads") {
+          releaseSecondRetry();
+          await waitFor(() => expect(settledRetries()).toBe(2));
+          await waitFor(() => expect(notices()).toHaveLength(2));
+        }
+        releaseFirstConfirmation();
+        if (ordering === "different-earlier-reads") {
+          await waitFor(() => expect(canonicalReads).toBe(3));
+          expect(notices()).toHaveLength(1);
+          releaseSecondConfirmation();
+        }
+        await waitFor(() => expect(notices()).toHaveLength(0));
+        first.unmount();
+        second.unmount();
+        renderJobDetailDrawer(canonical, undefined, queryClient);
+        expect(await screen.findByRole("group", { name: "Workflow state" })).toHaveTextContent("Pending");
+        expect(screen.queryByText(/stage status may be out of date after this retry/i)).not.toBeInTheDocument();
+      } finally {
+        releaseFirstRetry();
+        releaseSecondRetry();
+        releaseOldRead();
+        releaseFirstConfirmation();
+        releaseSecondConfirmation();
+        act(() => useToastStore.getState().clear());
+      }
+    },
+  );
+
+  it.each(["alias-first", "canonical-first"] as const)(
+    "rechecks an initially empty active alternate after its earlier read (%s)",
+    async (direction) => {
+      const alias = "https://example.com/jobs/inflight-alias";
+      const canonical = "66666666-6666-4666-8666-666666666666";
+      const unrelated = "77777777-7777-4777-8777-777777777777";
+      const otherTenant = createTenantId("synthetic-inflight-other-tenant");
+      const routeId = direction === "alias-first" ? alias : canonical;
+      const nextId = direction === "alias-first" ? canonical : alias;
+      const queryClient = createTestQueryClient();
+      queryClient.setDefaultOptions({
+        queries: { retry: false, staleTime: 30_000, gcTime: Infinity, refetchOnMount: true,
+          refetchOnReconnect: false, refetchOnWindowFocus: false },
+        mutations: { retry: false },
+      });
+      const detail = makeJobDetail({
+        ...sampleJob, jobKey: canonical, currentStage: "discover", currentSubstage: "discover", currentState: "failed",
+      });
+      const stage = { ...detail.stages[0]!, stage: "discover" as const, state: "failed" as const, retryable: true };
+      const failedDetail = { ...detail, stages: [stage] };
+      const pendingDetail = { ...failedDetail, job: { ...detail.job, currentState: "pending" as const },
+        stages: [{ ...stage, state: "pending" as const }] };
+      const otherDetail = makeJobDetail({ ...sampleJob, jobKey: unrelated });
+      const routeKey = jobsKeys.detail(LOCAL_TENANT, routeId);
+      const nextKey = jobsKeys.detail(LOCAL_TENANT, nextId);
+      const otherKey = jobsKeys.detail(LOCAL_TENANT, unrelated);
+      const foreignKey = jobsKeys.detail(otherTenant, nextId);
+      queryClient.setQueryData(routeKey, failedDetail);
+      queryClient.setQueryData(otherKey, otherDetail);
+      queryClient.setQueryData(foreignKey, failedDetail);
+      let releaseResponse!: () => void;
+      let releaseOldRead!: () => void;
+      let releaseConfirmation!: () => void;
+      const responseHeld = new Promise<void>((resolve) => { releaseResponse = resolve; });
+      const oldReadHeld = new Promise<void>((resolve) => { releaseOldRead = resolve; });
+      const confirmationHeld = new Promise<void>((resolve) => { releaseConfirmation = resolve; });
+      let requested = false;
+      let siblingReads = 0;
+      let routeReads = 0;
+      let confirmationMode: "held-failure" | "failure" | "success" = "held-failure";
+      server.use(
+        http.post("*/v1/jobs/:jobKey/material-locales", () => HttpResponse.json({
+          supportedLocales: [], variants: [], profileVersion: null, sources: [],
+        })),
+        http.get("*/v1/jobs/:jobKey", async ({ params }) => {
+          if (String(params.jobKey) !== nextId) {
+            routeReads += 1;
+            return HttpResponse.json(pendingDetail);
+          }
+          siblingReads += 1;
+          if (siblingReads === 1) {
+            await oldReadHeld;
+            return HttpResponse.json(failedDetail);
+          }
+          if (confirmationMode === "held-failure") await confirmationHeld;
+          return confirmationMode === "success"
+            ? HttpResponse.json(pendingDetail)
+            : HttpResponse.json({ ok: false, error: "synthetic_readback_failure" }, { status: 503 });
+        }),
+        http.post("*/v1/jobs/:jobKey/actions/retry-stage", async ({ params, request }) => {
+          expect(String(params.jobKey)).toBe(canonical);
+          expect(await request.json()).toMatchObject({ stage: "discover", runAfter: false });
+          requested = true;
+          await responseHeld;
+          return HttpResponse.json({ ok: true, action: "retry_stage", status: "reset",
+            command: { action: "retry_stage", jobKey: canonical }, stage: { ...stage, state: "pending" } });
+        }),
+      );
+      const user = userEvent.setup();
+      try {
+        renderJobDetailDrawer(routeId, undefined, queryClient);
+        await expandDetailSections();
+        await user.click(await screen.findByRole("button", { name: "More job actions" }));
+        await user.click(await screen.findByRole("button", { name: "Retry" }));
+        await waitFor(() => expect(requested).toBe(true));
+        const alternate = renderJobDetailDrawer(nextId, undefined, queryClient);
+        await waitFor(() => expect(siblingReads).toBe(1));
+        expect(queryClient.getQueryData(nextKey)).toBeUndefined();
+        expect(queryClient.getQueryState(nextKey)?.fetchStatus).toBe("fetching");
+        releaseResponse();
+        await waitFor(() => expect(routeReads).toBeGreaterThan(0));
+        releaseOldRead();
+        const warning = "The displayed stage status may be out of date after this retry. Refresh Job Detail to confirm the current state.";
+        expect(await within(alternate.container).findByText(warning)).toBeVisible();
+        await waitFor(() => expect(siblingReads).toBeGreaterThan(1));
+        const scope = retryStatusScope(LOCAL_TENANT, canonical, nextId);
+        expect(useToastStore.getState().toasts).toContainEqual(expect.objectContaining({ scope }));
+        expect(queryClient.getQueryData(nextKey)).toMatchObject({ job: { currentState: "failed" } });
+        expect(within(alternate.container).getByRole("group", { name: "Workflow state" })).toHaveTextContent("Failed");
+        confirmationMode = "failure";
+        releaseConfirmation();
+        await waitFor(() => expect(queryClient.getQueryState(nextKey)?.status).toBe("error"));
+        expect(within(alternate.container).getByText(warning)).toBeVisible();
+        await waitFor(() => expect(within(alternate.container).getByRole("button", { name: "Refresh stage status" })).toBeEnabled());
+        confirmationMode = "success";
+        await user.click(within(alternate.container).getByRole("button", { name: "Refresh stage status" }));
+        await waitFor(() => expect(queryClient.getQueryData(nextKey)).toMatchObject({ job: { currentState: "pending" } }));
+        await waitFor(() => expect(useToastStore.getState().toasts).not.toContainEqual(expect.objectContaining({ scope })));
+        expect(queryClient.getQueryData(otherKey)).toBe(otherDetail);
+        expect(queryClient.getQueryState(otherKey)?.isInvalidated).toBe(false);
+        expect(queryClient.getQueryData(foreignKey)).toBe(failedDetail);
+        expect(queryClient.getQueryState(foreignKey)?.isInvalidated).toBe(false);
+      } finally {
+        releaseResponse();
+        releaseOldRead();
+        releaseConfirmation();
+        act(() => useToastStore.getState().clear());
+      }
+    },
+  );
+
+  it.each([
+    { status: "reset", samePublication: false },
+    { status: "failed", samePublication: false },
+    { status: "unsupported", samePublication: false },
+    { status: "failed", samePublication: true },
+    { status: "http-error", samePublication: false },
+  ] as const)(
+    "preserves newer StageStarted state after $status and failed readback (same=$samePublication)",
+    async ({ status, samePublication }) => {
+      useToastStore.getState().clear();
+      const jobId = `job-newer-retry-${status}`;
+      const eventStream = new FakeEventStreamPort();
+      const user = userEvent.setup();
+      let releaseResponse!: () => void;
+      const responseHeld = new Promise<void>((resolve) => { releaseResponse = resolve; });
+      let mode: "initial" | "newer" | "failed" = "initial";
+      let retryRequests = 0;
+      const detail = makeJobDetail({
+        ...sampleJob,
+        jobKey: jobId,
+        currentStage: "tailor",
+        currentSubstage: "tailor",
+        currentState: "failed",
+      });
+      const stage = { ...detail.stages[0]!, stage: "tailor" as const, state: "failed" as const, retryable: true };
+      const newerAttempt = samePublication ? 1 : 4;
+      const newerUpdatedAt = samePublication ? stage.updatedAt : "2026-05-03T12:00:00Z";
+      server.use(
+        http.post("*/v1/jobs/:jobKey/material-locales", () => HttpResponse.json({
+          supportedLocales: [], variants: [], profileVersion: null, sources: [],
+        })),
+        http.get("*/v1/jobs/:jobKey", () => {
+          if (mode === "failed") {
+            return HttpResponse.json({ ok: false, error: "synthetic_readback_failure" }, { status: 503 });
+          }
+          const running = mode === "newer";
+          return HttpResponse.json({
+            ...detail,
+            job: { ...detail.job, currentState: running ? "running" : "failed" },
+            stages: [{ ...stage, state: running ? "running" : "failed", attemptCount: running ? newerAttempt : 1,
+              updatedAt: running ? newerUpdatedAt : stage.updatedAt }],
+          });
+        }),
+        http.post("*/v1/jobs/:jobKey/actions/retry-stage", async ({ request }) => {
+          const body = await request.json() as { stage?: string; runAfter?: boolean };
+          expect(body).toMatchObject({ stage: "tailor", runAfter: true });
+          retryRequests += 1;
+          await responseHeld;
+          if (status === "http-error") {
+            return HttpResponse.json({ ok: false, error: "synthetic_retry_failure" }, { status: 500 });
+          }
+          return HttpResponse.json({
+            ok: true, action: "retry_stage", status,
+            command: { action: "retry_stage", jobKey: jobId },
+            stage: { ...stage, state: "pending", updatedAt: "2026-05-02T12:00:00Z" },
+            ...(status === "reset" ? {} : { message: "Synthetic dispatch failure." }),
+          }, { status: status === "reset" ? 200 : 202 });
+        }),
+      );
+
+      try {
+        const { queryClient } = renderJobDetailDrawer(jobId, eventStream);
+        await waitFor(() => expect(eventStream.subscriptions).toHaveLength(1));
+        await expandDetailSections();
+        await user.click(await screen.findByRole("button", { name: "More job actions" }));
+        await user.click(await screen.findByRole("button", { name: "Retry" }));
+        await waitFor(() => expect(retryRequests).toBe(1));
+
+        const key = jobsKeys.detail(LOCAL_TENANT, jobId);
+        const optimistic = queryClient.getQueryData(key);
+        const optimisticRevision = queryClient.getQueryState(key)!.dataUpdateCount;
+        mode = "newer";
+        act(() => eventStream.emit({
+          eventType: "StageStarted", tenantId: LOCAL_TENANT,
+          payload: { jobId, stage: "tailor", attemptNumber: newerAttempt, startedAt: "2026-05-03T12:00:00Z" },
+        }));
+        await waitFor(() => expect(queryClient.getQueryState(key)!.dataUpdateCount).toBeGreaterThan(optimisticRevision));
+        expect(queryClient.getQueryData(key)).toMatchObject({
+          job: { currentState: "running" },
+          stages: [{ state: "running", attemptCount: newerAttempt, updatedAt: newerUpdatedAt }],
+        });
+        if (samePublication) expect(queryClient.getQueryData(key)).toBe(optimistic);
+        mode = "failed";
+        releaseResponse();
+        await waitFor(() => expect(queryClient.getQueryState(key)?.status).toBe("error"));
+        expect(queryClient.getQueryData(key)).toMatchObject({
+          job: { currentState: "running" },
+          stages: [{ state: "running", attemptCount: newerAttempt, updatedAt: newerUpdatedAt }],
+        });
+        const timeline = screen.getByRole("list", { name: "Preparation stages" });
+        expect(within(timeline).getByText("Tailor").closest("li")).toHaveAttribute("data-stage-state", "running");
+        expect(screen.getByRole("group", { name: "Workflow state" })).toHaveTextContent(/running/i);
+        expect(await screen.findByText("The displayed stage status may be out of date after this retry. Refresh Job Detail to confirm the current state."))
+          .toBeVisible();
+        if (status === "failed" || status === "unsupported") {
+          expect(await screen.findByText("The stage was reset, but the retry could not start. Synthetic dispatch failure."))
+            .toBeVisible();
+        }
+      } finally {
+        releaseResponse();
+        act(() => useToastStore.getState().clear());
+      }
+    },
+  );
+
+  it.each([
+    { recreateQuery: false, finalReadFails: true, precommitInFlight: false },
+    { recreateQuery: true, finalReadFails: true, precommitInFlight: false },
+    { recreateQuery: false, finalReadFails: false, precommitInFlight: false },
+    { recreateQuery: false, finalReadFails: true, precommitInFlight: true },
+  ])(
+    "shows uncertainty after a pre-commit read (recreated=$recreateQuery, final failure=$finalReadFails, in flight=$precommitInFlight)",
+    async ({ recreateQuery, finalReadFails, precommitInFlight }) => {
+      useToastStore.getState().clear();
+      const jobId = `job-pre-commit-${recreateQuery}`;
+      const eventStream = new FakeEventStreamPort();
+      const user = userEvent.setup();
+      let releaseResponse!: () => void;
+      const responseHeld = new Promise<void>((resolve) => { releaseResponse = resolve; });
+      let releaseFinalRead!: () => void;
+      const finalReadHeld = new Promise<void>((resolve) => { releaseFinalRead = resolve; });
+      let releaseOldRead!: () => void;
+      const oldReadHeld = new Promise<void>((resolve) => { releaseOldRead = resolve; });
+      let mode: "old" | "held-old" | "failed" | "pending" = "old";
+      let oldReadStarts = 0;
+      let finalReadStarts = 0;
+      let retryRequests = 0;
+      const detail = makeJobDetail({
+        ...sampleJob, jobKey: jobId, currentStage: "discover", currentSubstage: "discover", currentState: "failed",
+      });
+      const failed = { ...detail.stages[0]!, stage: "discover" as const, state: "failed" as const, retryable: true };
+      server.use(
+        http.post("*/v1/jobs/:jobKey/material-locales", () => HttpResponse.json({
+          supportedLocales: [], variants: [], profileVersion: null, sources: [],
+        })),
+        http.get("*/v1/jobs/:jobKey", async () => {
+          if (mode === "held-old") {
+            oldReadStarts += 1;
+            await oldReadHeld;
+            return HttpResponse.json({ ...detail, stages: [failed] });
+          }
+          if (mode === "failed") {
+            finalReadStarts += 1;
+            if (precommitInFlight) await finalReadHeld;
+            return HttpResponse.json({ ok: false, error: "synthetic_readback_failure" }, { status: 503 });
+          }
+          if (mode === "pending") {
+            await finalReadHeld;
+            return HttpResponse.json({
+              ...detail, job: { ...detail.job, currentState: "pending" }, stages: [{ ...failed, state: "pending" }],
+            });
+          }
+          return HttpResponse.json({ ...detail, stages: [failed] });
+        }),
+        http.post("*/v1/jobs/:jobKey/actions/retry-stage", async ({ request }) => {
+          expect(await request.json()).toMatchObject({ stage: "discover", runAfter: false });
+          retryRequests += 1;
+          await responseHeld;
+          return HttpResponse.json({
+            ok: true, action: "retry_stage", status: "reset",
+            command: { action: "retry_stage", jobKey: jobId },
+            stage: { ...failed, state: "pending" },
+          });
+        }),
+      );
+      try {
+        const view = renderJobDetailDrawer(jobId, eventStream);
+        const key = jobsKeys.detail(LOCAL_TENANT, jobId);
+        await waitFor(() => expect(eventStream.subscriptions).toHaveLength(1));
+        await expandDetailSections();
+        await user.click(await screen.findByRole("button", { name: "More job actions" }));
+        await user.click(await screen.findByRole("button", { name: "Retry" }));
+        await waitFor(() => expect(retryRequests).toBe(1));
+        const oldQuery = view.queryClient.getQueryCache().find({ queryKey: key, exact: true });
+        if (recreateQuery) {
+          view.unmount();
+          view.queryClient.removeQueries({ queryKey: key, exact: true });
+          renderJobDetailDrawer(jobId, eventStream, view.queryClient);
+          await expandDetailSections();
+          await waitFor(() => expect(view.queryClient.getQueryCache().find({ queryKey: key, exact: true })).not.toBe(oldQuery));
+        } else {
+          const revision = view.queryClient.getQueryState(key)!.dataUpdateCount;
+          if (precommitInFlight) mode = "held-old";
+          act(() => eventStream.emit({
+            eventType: "StageFailed", tenantId: LOCAL_TENANT,
+            payload: { jobId, stage: "discover", errorCode: "SYNTHETIC", errorMessage: "Old failure", retryable: true, attemptNumber: 1 },
+          }));
+          if (precommitInFlight) {
+            await waitFor(() => expect(oldReadStarts).toBeGreaterThan(0));
+          } else {
+            await waitFor(() => expect(view.queryClient.getQueryState(key)!.dataUpdateCount).toBeGreaterThan(revision));
+          }
+        }
+        if (!precommitInFlight) {
+          await waitFor(() => expect(view.queryClient.getQueryData(key)).toMatchObject({
+            job: { currentState: "failed" }, stages: [{ state: "failed" }],
+          }));
+        }
+        mode = finalReadFails ? "failed" : "pending";
+        releaseResponse();
+        const warning = "The displayed stage status may be out of date after this retry. Refresh Job Detail to confirm the current state.";
+        expect(await screen.findByText(warning)).toBeVisible();
+        expect(useToastStore.getState().toasts).toContainEqual(expect.objectContaining({ message: warning, durationMs: 0 }));
+        if (finalReadFails) {
+          if (precommitInFlight) {
+            releaseOldRead();
+            await waitFor(() => expect(finalReadStarts).toBeGreaterThan(0));
+            expect(screen.getByText(warning)).toBeVisible();
+            releaseFinalRead();
+          }
+          await waitFor(() => expect(view.queryClient.getQueryState(key)?.status).toBe("error"));
+          const timeline = screen.getByRole("list", { name: "Preparation stages" });
+          expect(within(timeline).getByText("Discover").closest("li")).toHaveAttribute("data-stage-state", "failed");
+          expect(screen.getByRole("group", { name: "Workflow state" })).toHaveTextContent(/failed/i);
+          const refresh = screen.getByRole("button", { name: "Refresh stage status" });
+          await waitFor(() => expect(refresh).toBeEnabled());
+          const failedReads = finalReadStarts;
+          await user.click(refresh);
+          await waitFor(() => expect(finalReadStarts).toBeGreaterThan(failedReads));
+          await waitFor(() => expect(screen.getByRole("button", { name: "Refresh stage status" })).toBeEnabled());
+          expect(screen.getByText(warning)).toBeVisible();
+          mode = "pending";
+          releaseFinalRead();
+          await user.click(screen.getByRole("button", { name: "Refresh stage status" }));
+          await waitFor(() => expect(view.queryClient.getQueryData(key)).toMatchObject({
+            job: { currentState: "pending" }, stages: [{ state: "pending" }],
+          }));
+          await waitFor(() => expect(useToastStore.getState().toasts).not.toContainEqual(expect.objectContaining({ message: warning })));
+        } else {
+          releaseFinalRead();
+          await waitFor(() => expect(view.queryClient.getQueryData(key)).toMatchObject({
+            job: { currentState: "pending" }, stages: [{ state: "pending" }],
+          }));
+          await waitFor(() => expect(useToastStore.getState().toasts).not.toContainEqual(expect.objectContaining({ message: warning })));
+        }
+      } finally {
+        releaseResponse();
+        releaseOldRead();
+        releaseFinalRead();
+        act(() => useToastStore.getState().clear());
+      }
+    },
+  );
+
+  it("retains an inactive job's uncertainty until reopening confirms its stage", async () => {
+    useToastStore.getState().clear();
+    const jobId = "job-inactive-retry";
+    const eventStream = new FakeEventStreamPort();
+    const user = userEvent.setup();
+    let releaseResponse!: () => void;
+    const responseHeld = new Promise<void>((resolve) => { releaseResponse = resolve; });
+    let releaseRead!: () => void;
+    const readHeld = new Promise<void>((resolve) => { releaseRead = resolve; });
+    let mode: "old" | "pending" = "old";
+    let requests = 0;
+    const detail = makeJobDetail({
+      ...sampleJob, jobKey: jobId, currentStage: "discover", currentSubstage: "discover", currentState: "failed",
+    });
+    const stage = { ...detail.stages[0]!, stage: "discover" as const, state: "failed" as const, retryable: true };
+    server.use(
+      http.post("*/v1/jobs/:jobKey/material-locales", () => HttpResponse.json({
+        supportedLocales: [], variants: [], profileVersion: null, sources: [],
+      })),
+      http.get("*/v1/jobs/:jobKey", async () => {
+        if (mode === "pending") {
+          await readHeld;
+          return HttpResponse.json({ ...detail, job: { ...detail.job, currentState: "pending" }, stages: [{ ...stage, state: "pending" }] });
+        }
+        return HttpResponse.json({ ...detail, stages: [stage] });
+      }),
+      http.post("*/v1/jobs/:jobKey/actions/retry-stage", async () => {
+        requests += 1;
+        await responseHeld;
+        return HttpResponse.json({ ok: true, action: "retry_stage", status: "reset",
+          command: { action: "retry_stage", jobKey: jobId }, stage: { ...stage, state: "pending" } });
+      }),
+    );
+    try {
+      const view = renderJobDetailDrawer(jobId, eventStream);
+      const key = jobsKeys.detail(LOCAL_TENANT, jobId);
+      await waitFor(() => expect(eventStream.subscriptions).toHaveLength(1));
+      await expandDetailSections();
+      await user.click(await screen.findByRole("button", { name: "More job actions" }));
+      await user.click(await screen.findByRole("button", { name: "Retry" }));
+      await waitFor(() => expect(requests).toBe(1));
+      const revision = view.queryClient.getQueryState(key)!.dataUpdateCount;
+      act(() => eventStream.emit({ eventType: "StageFailed", tenantId: LOCAL_TENANT,
+        payload: { jobId, stage: "discover", errorCode: "SYNTHETIC", errorMessage: "Old failure", retryable: true, attemptNumber: 1 } }));
+      await waitFor(() => expect(view.queryClient.getQueryState(key)!.dataUpdateCount).toBeGreaterThan(revision));
+      view.unmount();
+      releaseResponse();
+      const warning = "The displayed stage status may be out of date after this retry. Refresh Job Detail to confirm the current state.";
+      await waitFor(() => expect(useToastStore.getState().toasts).toContainEqual(expect.objectContaining({ message: warning })));
+      mode = "pending";
+      renderJobDetailDrawer(jobId, eventStream, view.queryClient);
+      expect(await screen.findByText(warning)).toBeVisible();
+      releaseRead();
+      await waitFor(() => expect(view.queryClient.getQueryData(key)).toMatchObject({
+        job: { currentState: "pending" }, stages: [{ state: "pending" }],
+      }));
+      await waitFor(() => expect(useToastStore.getState().toasts).not.toContainEqual(expect.objectContaining({ message: warning })));
+    } finally {
+      releaseResponse();
+      releaseRead();
+      act(() => useToastStore.getState().clear());
+    }
+  });
+
+  it("keeps retry notices scoped to their job and tenant across navigation", async () => {
+    useToastStore.getState().clear();
+    const otherTenant = createTenantId("synthetic-other");
+    const jobA = "job-scope-a";
+    const jobB = "job-scope-b";
+    const queryClient = createTestQueryClient();
+    const user = userEvent.setup();
+    const detailFor = (jobId: string) => makeJobDetail({ ...sampleJob, jobKey: jobId });
+    queryClient.setQueryData(jobsKeys.detail(LOCAL_TENANT, jobA), detailFor(jobA));
+    queryClient.setQueryData(jobsKeys.detail(LOCAL_TENANT, jobB), detailFor(jobB));
+    queryClient.setQueryData(jobsKeys.detail(otherTenant, jobA), detailFor(jobA));
+    const addNotice = (tenantId: TenantId, jobId: string, message: string) => useToastStore.getState().toast({
+      variant: "warning", message, durationMs: 0, scope: retryStatusScope(tenantId, jobId),
+    });
+    const noticeA = addNotice(LOCAL_TENANT, jobA, "Synthetic job A needs confirmation.");
+    const noticeB = addNotice(LOCAL_TENANT, jobB, "Synthetic job B needs confirmation.");
+    const noticeOther = addNotice(otherTenant, jobA, "Synthetic other tenant needs confirmation.");
+    let mode: "fail" | "success" = "fail";
+    server.use(http.get("*/v1/jobs/:jobKey", ({ params }) => mode === "fail"
+      ? HttpResponse.json({ ok: false, error: "synthetic_readback_failure" }, { status: 503 })
+      : HttpResponse.json(detailFor(String(params.jobKey)))));
+    try {
+      const first = renderJobDetailDrawer(jobA, undefined, queryClient);
+      expect(await screen.findByText("Synthetic job A needs confirmation.")).toBeVisible();
+      expect(screen.queryByText("Synthetic job B needs confirmation.")).not.toBeInTheDocument();
+      expect(screen.queryByText("Synthetic other tenant needs confirmation.")).not.toBeInTheDocument();
+      await waitFor(() => expect(screen.getByRole("button", { name: "Refresh stage status" })).toBeEnabled());
+      first.unmount();
+
+      const second = renderJobDetailDrawer(jobB, undefined, queryClient);
+      expect(await screen.findByText("Synthetic job B needs confirmation.")).toBeVisible();
+      expect(screen.queryByText("Synthetic job A needs confirmation.")).not.toBeInTheDocument();
+      await waitFor(() => expect(screen.getByRole("button", { name: "Refresh stage status" })).toBeEnabled());
+      mode = "success";
+      await user.click(screen.getByRole("button", { name: "Refresh stage status" }));
+      await waitFor(() => expect(useToastStore.getState().toasts.some((entry) => entry.id === noticeB)).toBe(false));
+      expect(useToastStore.getState().toasts.map((entry) => entry.id)).toEqual(expect.arrayContaining([noticeA, noticeOther]));
+      second.unmount();
+
+      mode = "fail";
+      const third = renderJobDetailDrawer(jobA, undefined, queryClient, otherTenant);
+      expect(await screen.findByText("Synthetic other tenant needs confirmation.")).toBeVisible();
+      expect(screen.queryByText("Synthetic job A needs confirmation.")).not.toBeInTheDocument();
+      third.unmount();
+      renderJobDetailDrawer(jobA, undefined, queryClient);
+      expect(await screen.findByText("Synthetic job A needs confirmation.")).toBeVisible();
+      expect(useToastStore.getState().toasts.some((entry) => entry.id === noticeOther)).toBe(true);
+    } finally {
+      act(() => useToastStore.getState().clear());
+      queryClient.clear();
+    }
+  });
+
+  it("does not confirm a retry when the locator resolves to a different canonical job", async () => {
+    const alias = "https://example.com/jobs/reassigned-alias";
+    const canonical = "job-original";
+    const otherJob = "job-reassigned";
+    const queryClient = createTestQueryClient();
+    const key = jobsKeys.detail(LOCAL_TENANT, alias);
+    const detailFor = (jobKey: string) => makeJobDetail({ ...sampleJob, jobKey });
+    queryClient.setQueryData(key, detailFor(canonical));
+    const scope = retryStatusScope(LOCAL_TENANT, canonical, alias);
+    const noticeId = useToastStore.getState().toast({
+      variant: "warning", message: "Synthetic retry needs confirmation.", durationMs: 0, scope,
+    });
+    let resolvedJob = otherJob;
+    server.use(http.get("*/v1/jobs/:jobKey", () => HttpResponse.json(detailFor(resolvedJob))));
+    try {
+      renderJobDetailDrawer(alias, undefined, queryClient);
+      await waitFor(() => expect(queryClient.getQueryData(key)).toMatchObject({ job: { jobKey: otherJob } }));
+      expect(useToastStore.getState().toasts.some((entry) => entry.id === noticeId)).toBe(true);
+      resolvedJob = canonical;
+      await act(async () => { await queryClient.invalidateQueries({ queryKey: key, exact: true }); });
+      await waitFor(() => expect(useToastStore.getState().toasts.some((entry) => entry.id === noticeId)).toBe(false));
+    } finally {
+      act(() => useToastStore.getState().clear());
+      queryClient.clear();
+    }
   });
 });
