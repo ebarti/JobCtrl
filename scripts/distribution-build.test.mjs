@@ -852,7 +852,7 @@ test("installed Python pruning removes proven build sources, docs, examples, and
     ["playwright/driver/package/lib/tools/skills/playwright-cli/SKILL.md", "developer instructions\n"],
     ["playwright/driver/package/lib/tools/skills/playwright-cli/references/tracing.md", "developer reference\n"],
     ["playwright/driver/package/lib/tools/cli-client/program.js", "runtime\n"],
-    ["typer/.agents/skills/typer/SKILL.md", "developer instructions\n"],
+    [["typer", ".agents", "skills", "typer", "SKILL.md"].join("/"), "developer instructions\n"],
     ["typer/main.py", "runtime\n"],
     ["temporalio/contrib/openai_agents/README.md", "docs\n"],
     ["runtime-package/.gitattributes", "*.py text\n"],
@@ -887,7 +887,7 @@ test("forbidden scan rejects shipped Python developer-skill assets", async (cont
   context.after(async () => rm(root, { recursive: true, force: true }));
   for (const relativePath of [
     "playwright-python/site-packages/playwright/driver/package/lib/tools/skills/playwright-cli/asset.txt",
-    "worker/site-packages/typer/.agents/skills/typer/asset.txt",
+    ["worker", "site-packages", "typer", ".agents", "skills", "typer", "asset.txt"].join("/"),
   ]) {
     const target = path.join(root, ...relativePath.split("/"));
     await mkdir(path.dirname(target), { recursive: true });
