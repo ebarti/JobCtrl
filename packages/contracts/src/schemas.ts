@@ -6795,6 +6795,11 @@ export const RESEARCH_SOURCE_OUTCOMES = [
   "manual_capture_required",
   "rejected",
   "extraction_failed",
+  "response_too_large",
+  "acquisition_timeout",
+  "redirect_failed",
+  "transport_failed",
+  "http_error",
 ] as const;
 export type ResearchSourceOutcome = (typeof RESEARCH_SOURCE_OUTCOMES)[number];
 

@@ -16,6 +16,7 @@ aggregate. Local-mode adapter is
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -64,6 +65,15 @@ class ContactResearchTaskRepository(Protocol):
 
     def save(self, tenant_id: TenantId, task: ContactResearchTask) -> ContactResearchTask:
         """Persist the aggregate (task + candidates + attempts) and publish events."""
+
+    def save_attempt_if_unproposed(
+        self, tenant_id: TenantId, task: ContactResearchTask, *,
+        check_cancelled: Callable[[], None] | None = None,
+    ) -> tuple[ContactResearchTask, bool]:
+        """Atomically save an activity attempt only until a proposal is published.
+
+        Check cancellation after acquiring the writer fence and before persisting.
+        """
 
     def list_for_tenant(self, tenant_id: TenantId) -> list[ContactResearchTask]:
         """Return all research tasks for the tenant, newest first."""

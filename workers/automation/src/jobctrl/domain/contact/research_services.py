@@ -79,6 +79,14 @@ _EXTRACTION_SYSTEM_PROMPT = (
     "Return an empty list when the page names no relevant contact."
 )
 
+_FETCH_FAILURE_DETAILS = {
+    ResearchSourceOutcome.RESPONSE_TOO_LARGE.value: "The page is too large; choose a smaller public page.",
+    ResearchSourceOutcome.ACQUISITION_TIMEOUT.value: "The page took too long to load; retry or choose another source.",
+    ResearchSourceOutcome.REDIRECT_FAILED.value: "The redirect could not be followed; use a direct public page URL.",
+    ResearchSourceOutcome.TRANSPORT_FAILED.value: "The page could not be reached; check the URL and retry.",
+    ResearchSourceOutcome.HTTP_ERROR.value: "The page returned an HTTP error; check the URL and retry.",
+}
+
 
 @dataclass(frozen=True)
 class ResearchSourceSpec:
@@ -109,10 +117,12 @@ class ContactResearchService:
         clock: Callable[[], str],
         new_id: Callable[[], str],
         model: str | None = None,
+        check_cancelled: Callable[[], None] = lambda: None,
     ) -> ResearchRunResult:
         candidates: list[ContactCandidate] = []
         attempts: list[ResearchSourceAttempt] = []
         for spec in sources:
+            check_cancelled()
             decision = self.policy.authorize(category=spec.category, url=spec.url)
             source_ref = spec.url.strip() or spec.label.strip() or spec.category
             if decision is ResearchSourceDecision.REJECTED:
@@ -152,6 +162,7 @@ class ContactResearchService:
                 model=model,
                 candidates=candidates,
                 attempts=attempts,
+                check_cancelled=check_cancelled,
             )
         return ResearchRunResult(
             candidates=tuple(candidates), source_attempts=tuple(attempts)
@@ -170,8 +181,10 @@ class ContactResearchService:
         model: str | None,
         candidates: list[ContactCandidate],
         attempts: list[ResearchSourceAttempt],
+        check_cancelled: Callable[[], None],
     ) -> None:
         fetched = fetcher.fetch(spec.url)
+        check_cancelled()
         if fetched.outcome != ResearchSourceOutcome.ALLOWED.value:
             # Robots-denial / rate-limit / budget-exhaustion are outcomes, not errors.
             attempts.append(
@@ -180,6 +193,7 @@ class ContactResearchService:
                     source_ref=source_ref,
                     outcome=fetched.outcome,
                     attempted_at=clock(),
+                    detail=_FETCH_FAILURE_DETAILS.get(fetched.outcome, ""),
                 )
             )
             return
@@ -195,6 +209,7 @@ class ContactResearchService:
                 )
             )
             return
+        check_cancelled()
         extracted = self._extract_candidates(
             llm=llm, page_text=page_text, source_ref=source_ref, model=model
         )

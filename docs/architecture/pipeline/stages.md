@@ -668,6 +668,30 @@ Rate-limit, budget-exhaustion, and historical robots-denial are recorded as firs
 errors. No candidate value ever enters an event or projection — only
 `contact_candidates.attributes_json` holds the proposed names/emails.
 
+Each opted-in public page has a 2,000,000-byte response-body limit and a single
+20-second acquisition deadline covering host admission, DNS, redirects, headers
+and streamed body reads. Redirect hops release and reacquire the host slot and
+consume the existing request budget. The public-address checks and socket
+pinning still apply to every hop. A 429 or 503 installs its `Retry-After`
+cooldown before releasing the host slot, so already queued requests cannot
+start ahead of it. Size, deadline, redirect, HTTP and transport
+failures have separate source outcomes; none are interpreted as an empty page.
+Cancellation interrupts the active connection and host wait. The activity also
+checks cancellation after fetching and before model work, and after acquiring
+the SQLite writer fence before publishing an attempt. Resolver calls that
+ignore interruption cannot start a later connection, and a bounded worker pool
+limits how many such calls can remain outstanding. A short SQLite write fence
+prevents overlapping attempts from replacing published candidates or a
+successful no-candidate result; it does not hold a lock during fetch or model
+work. A failure alone does not prevent a concurrent successful attempt.
+The activity requires a clean, activity-owned database connection and buffers
+gateway outcomes until research has finished, so recording a rate limit does
+not hold a writer transaction during a later fetch or model call. Buffered
+outcomes flush only outside another transaction; other gateway consumers keep
+their existing explicit commit ownership.
+Company briefing uses the same acquisition boundary with its existing 1 MiB,
+10-second and one-redirect limits.
+
 ## Availability Preflight
 
 Scoring, tailoring and cover entry points refresh active evidence older than six

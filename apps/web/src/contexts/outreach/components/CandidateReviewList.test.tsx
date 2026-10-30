@@ -29,6 +29,33 @@ describe("<CandidateReviewList>", () => {
     expect(view.getByRole("button", { name: /confirm contact/i })).toBeInTheDocument();
   });
 
+  it("shows actionable acquisition failures alongside any existing proposals", () => {
+    const task = makeResearchTaskDetail({
+      sourceAttempts: [
+        {
+          sourceKind: "public_web_page",
+          sourceRef: "https://acme.example/team",
+          outcome: "response_too_large",
+          attemptedAt: "2026-07-06T00:00:00+00:00",
+          detail: "The page is too large; choose a smaller public page.",
+        },
+        {
+          sourceKind: "public_web_page",
+          sourceRef: "https://acme.example/people",
+          outcome: "acquisition_timeout",
+          attemptedAt: "2026-07-06T00:00:00+00:00",
+          detail: "The page took too long to load; retry or choose another source.",
+        },
+      ],
+    });
+    const view = renderWithProviders(<CandidateReviewList task={task} />);
+    expect(view.getByText("Page too large")).toBeInTheDocument();
+    expect(view.getByText("The page is too large; choose a smaller public page.")).toBeInTheDocument();
+    expect(view.getByText("Page timed out")).toBeInTheDocument();
+    expect(view.getAllByText("Dana Hiring-Manager").length).toBeGreaterThan(0);
+    expect(view.queryByText("No contacts found")).toBeNull();
+  });
+
   it("shows a confirmed note and no confirm action once a candidate is confirmed", () => {
     const confirmed = makeResearchTaskDetail({
       status: "completed",
