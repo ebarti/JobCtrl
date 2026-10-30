@@ -55,6 +55,19 @@ jobs:
             --release-dir "$RUNNER_TEMP/published-candidate" \
             --homebrew-source curl \
             --output "$RUNNER_TEMP/released-acquisition-upgrade.json"
+      - name: Diagnose retained historical notarization failure
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          found=0
+          while IFS= read -r -d '' binary; do
+            found=1
+            echo "Rechecking the retained synthetic 0.3.0 payload with the original notarization requirement"
+            /usr/bin/codesign --verify --strict --check-notarization -R=notarized --verbose=4 "$binary" || echo "Notarization recheck failed (exit $?)"
+          done < <(find "$RUNNER_TEMP" -type f -path '*/jobctrl-acquisition-upgrades-*/curl/runtime/staging/*/payload/api/node_modules/better-sqlite3/build/Release/better_sqlite3.node' -print0)
+          if [[ "$found" = 0 ]]; then echo "No retained 0.3.0 SQLite binary was available for a notarization recheck"; fi
+
       - name: Retain synthetic upgrade evidence
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
