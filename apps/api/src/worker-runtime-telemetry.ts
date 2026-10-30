@@ -113,7 +113,7 @@ export interface WorkerRuntimeTelemetrySnapshot {
   staleWorkerCount: number;
   invalidWorkerCount: number;
   configuredSlots: number;
-  /** Exact occupied remote slots; local lifecycle writes use a separate pool. */
+  /** Exact occupied remote slots among fresh workers; stale workers are unconfirmed. */
   activeSlots: number;
   availableSlots: number;
   executorThreads: number;

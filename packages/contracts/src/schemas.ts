@@ -3567,6 +3567,7 @@ const PipelineAvailableCapacityBaseSchema = z.object({
   staleWorkerCount: z.number().int().nonnegative(),
   invalidWorkerCount: z.number().int().nonnegative(),
   configuredSlots: z.number().int().nonnegative(),
+  /** Fresh workers only; a stale worker makes global occupancy unknown. */
   activeSlots: z.number().int().nonnegative(),
   availableSlots: z.number().int().nonnegative(),
   executorThreads: z.number().int().nonnegative(),
@@ -3863,9 +3864,9 @@ export const PipelineOperationsSnapshotSchema = z
     /** Exact fresh runtime activity totals grouped by known operational stage. */
     activeStageCounts: z.array(PipelineActiveStageCountSchema).nullable(),
     activeItems: z.array(PipelineActiveItemSchema).max(20),
-    /** Null when worker runtime inventory cannot make an exact statement. */
+    /** Exact allowlisted activity count, not total occupancy; null if inventory is unavailable. */
     activeItemsTotal: z.number().int().nonnegative().nullable(),
-    /** Null when the inventory itself is unavailable or stale. */
+    /** True when activity details are omitted or bounded; null when inventory is unavailable or stale. */
     activeItemsTruncated: z.boolean().nullable(),
     overallEta: PipelineEtaSchema,
   })

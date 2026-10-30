@@ -219,11 +219,18 @@ unavailable ETA does not mean that the workflow itself is paused.
 An unknown provider page total prevents a crawl percentage, not necessarily a
 source-family ETA: after at least five recent family completions, Pipelines can
 use whole-family duration history when live capacity and queue observations
-bound the current source lane.
-When a closed run leaves work behind, **Set up a new Discover run** becomes
-available only after the live operations snapshot proves that shared runtime
-capacity is idle. The Discover run control follows the same guard, so selecting
-the tab directly cannot bypass it.
+bound the current source lane. A stale worker on that queue leaves contention
+unconfirmed, so Pipelines withholds numeric estimates. If an operations refresh
+fails, cached overall, stage, and source-family estimates are marked stale until
+a later read succeeds.
+For a failed run, a run completed with issues, a closed workflow still shown as
+draining, or an incomplete historical run, **Set up a new Discover run** may
+become available when reporting workers show zero occupied slots and their
+active-work inventory is complete and empty. If other worker reports are stale,
+background activity remains unknown even though the setup option is available.
+In those replacement cases, freshly reported activity or unavailable inventory
+blocks the Discover run control, including when you select the tab directly. A
+failed operations refresh also blocks Discover until a read succeeds.
 
 ### Workers, Activity Slots, And Queue Backlog
 
@@ -235,14 +242,22 @@ The capacity strip separates worker processes from the concurrency they offer:
   freshness window; they are excluded from online capacity.
 - **Activity slots in use** reports concurrent Temporal activities across all
   online worker processes as `active of configured`. For example, `0 of 4`
-  means no Temporal activity is executing and all four Temporal slots are free.
-  Stage-work and short-control admission are reported separately: a worker may
-  refuse new stage work while canceled calls are still running, even when slots
-  are free. Short cancellation, budget, and lifecycle controls have their own
-  bounded capacity.
-- **Active work** is the bounded, privacy-safe inventory of allowlisted runtime
-  activities. It may be smaller than the number of occupied slots when details
-  are unavailable or intentionally omitted.
+  means the reporting workers have four available slots and report none in use.
+  If other worker reports are stale, their activity remains unknown. Stage-work
+  and short-control admission are reported separately: a worker may refuse new
+  stage work while canceled calls are still running, even when slots are free.
+  Short cancellation, budget, and lifecycle controls have their own bounded
+  capacity. Slot and admission counts describe reporting workers only; stale
+  workers' activity and admission remain unconfirmed. Slots are execution
+  capacity, not workers or jobs.
+- **Active work** counts occupied worker activity slots. Its details are a
+  bounded, privacy-safe inventory and can omit activities or show only part of
+  the list. A count with unavailable details still means work is running; an
+  unavailable inventory means its status is unknown. If a worker report is
+  stale, JobCtrl cannot confirm its activity and shows fresh-worker activity as
+  a minimum rather than a global total. You may review and start Discover when
+  reporting workers are idle; an already-running Discover workflow is reused.
+  This does not confirm that detached activity from an older run has stopped.
 - **Queue backlog** is the combined approximate count of tasks waiting in
   Temporal's workflow and activity queues. Workflow tasks wait for workflow
   pollers, while activity tasks wait for activity workers and their available
@@ -267,22 +282,25 @@ and ETAs until the worker verifies the complete membership and stage-key sets.
 
 Use **Stop discovery** while the selected Discover workflow is actively
 discovering or draining. Cancellation refreshes Pipelines as well as Runs and
-Dashboard. After a failed execution, Pipelines reports the active-work total or
-states that the runtime inventory is unavailable; it never turns missing
-inventory into "no work." If the exact history cannot be read or mapped safely
+Dashboard. After a failed execution, Pipelines reports observed active work or
+states that the runtime inventory is unavailable; stale worker reports leave
+global occupancy unconfirmed. It never turns missing inventory into "no work."
+If the exact history cannot be read or mapped safely
 on one pass, the repair remains in automatic retry instead of becoming a
 permanent tracking mode. Reconnecting to its authoritative history restores that
 run or records its real terminal outcome. The same repair closes native activity
 rows when exact Temporal history proves that a closed workflow timed out or
-failed after its worker stopped reporting, so a closed run cannot remain shown
-as processing. If immutable legacy history ended
+failed after its worker stopped reporting; those proven terminal activities no
+longer appear as processing. If immutable legacy history ended
 before recording every target, the run is labeled **Historical run incomplete**;
 JobCtrl preserves all exact recovered evidence and does not fabricate or
-continuously retry the unknown remainder. **Set up a new Discover run** is
-appropriate only when the prior execution is closed or genuinely absent and
-fresh runtime capacity confirms zero active slots; it selects the Discover
-controls and does not start a run until you submit them. Workflow identifiers
-and bounded reason codes remain
+continuously retry the unknown remainder. When reporting workers show no
+activity and their inventory is complete and empty, you can use **Set up a new
+Discover run** to review the Discover controls, including when stale reports
+leave other background activity unknown.
+The option does not start a run until you submit it. If a Discover workflow is
+already running, JobCtrl reuses it; this does not prove that detached work from
+an older run has stopped. Workflow identifiers and bounded reason codes remain
 under **Technical details**.
 
 Internal stages such as Enrich and Score, and material generation (the `tailor`

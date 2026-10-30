@@ -164,9 +164,10 @@ The operations reader derives the expected application directory from the
 configured database path, filters heartbeats to that resolved database/app-dir
 identity, selects the Temporal task queue named by the newest matching
 heartbeat, and aggregates fresh schema-valid rows from that queue.
-`configuredSlots`, `activeSlots`, and `availableSlots` count every activity
-slot. `blockingExecutor` separately aggregates fresh workers accepting,
-refusing, or reporting unknown blocking-work admission and the reported
+`configuredSlots`, `activeSlots`, and `availableSlots` aggregate activity
+slots for fresh workers. Active slots count every activity, including kinds
+without displayed details. `blockingExecutor` separately aggregates fresh
+workers accepting, refusing, or reporting unknown blocking-work admission and the reported
 unfinished retired generations and calls. Old or malformed worker reports are
 unknown; the reported totals cover known workers only. Free Temporal slots do
 not guarantee stage admission, and unfinished calls are not confirmed stopped.
@@ -176,7 +177,11 @@ The active-item inventory is a separate, bounded diagnostic view: only
 allowlisted activity kinds are displayed, the oldest 20 items are returned, and
 `activeItemsTotal` / `activeItemsTruncated` distinguish exact allowlisted
 cardinality from the bounded list. A worker may therefore have more active
-slots than visible items. The inventory does not require a selected Discover
+slots than visible items. `activeItemsTotal = 0` alone does not prove that the
+shared pool is idle. `capacity.activeSlots` counts fresh workers only; when
+`staleWorkerCount` is positive, that sum is a lower bound and global occupancy
+is unknown. Stale heartbeats alone do not prove a worker exited.
+The inventory does not require a selected Discover
 execution: fresh standalone activity retains its safe operational references,
 and fresh idle inventory returns `0` / `false`. Selected execution projections
 only enrich matching runtime items. Stale or unavailable telemetry keeps the
@@ -203,10 +208,14 @@ The snapshot has explicit freshness/capacity/task-queue variants, so callers
 must render stale, unsupported, and unavailable data honestly. Its estimator
 version is `pipeline-eta-v1`. Every numeric ETA requires fresh capacity, at
 least five successful duration samples for each relevant remaining stage, and
-bounded shared-queue contention. The overall ETA additionally waits for
-execution membership to close; per-stage and source-family ETAs can estimate
-their already-known scoped backlog while membership remains open. A null
-provider total never becomes a synthetic remaining-page count; the
+bounded shared-queue contention. A stale peer on that queue leaves its activity
+and admission unconfirmed, so contention is unbounded even when another worker
+reports fresh capacity. The overall ETA additionally waits for execution
+membership to close; per-stage and source-family ETAs can estimate their
+already-known scoped backlog while membership remains open. The web view marks
+cached overall, stage, and source-family ETAs stale after a failed snapshot
+refresh until a later read succeeds. A null provider total never becomes a
+synthetic remaining-page count; the
 source-family range can instead use recent whole-family projection durations
 and the observed source concurrency when runtime inventory and queue telemetry
 are bounded. Dormant global rows outside the selected execution do not count as

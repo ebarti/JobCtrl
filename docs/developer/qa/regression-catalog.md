@@ -907,6 +907,24 @@ direct fallback evidence. Record each protocol reason in the bounded target
 receipt without retaining response bodies, headers or exception messages. Verify
 the actual Temporal activity result and fresh-history replay for each cause.
 
+For occupied-slot recovery guidance (#1184), exercise a registered synthetic
+Apply activity through the worker inventory and heartbeat, the pipeline
+operations API and the failed-run view. A fresh occupied slot with no
+allowlisted details must remain active without exposing the Apply identity or
+payload. Check mixed allowlisted and omitted activity, bounded/truncated detail,
+unavailable inventory, and the transition to fresh exact zero. Only the last
+state may be called idle. After a failed refetch, retain the cached snapshot but
+do not use its idle values to enable Discover; test recovery on a later read.
+A stale peer makes global occupancy unknown even when a fresh worker is idle.
+Prove that an explicit user start remains available in that case without
+claiming global idle, that an active Discover is reused, and that a fresh
+positive activity blocks replacement. No test may retire a peer by age or PID.
+For a projection-ready selected run with sufficient duration samples, verify
+same-queue stale-peer contention withholds overall, stage, and source-family
+numeric ETAs; fresh-peer recovery restores them. A failed operations refresh
+must also mark a previously available source-family estimate stale without
+mutating the cached snapshot, then show the new estimate after a successful read.
+
 For completed eligibility holds in pipeline operations, run
 `corepack pnpm --filter @jobctrl/api exec vitest run test/pipeline-operations.test.ts`
 and the API type/full-test gates. In owned exact-schema storage, reproduce a

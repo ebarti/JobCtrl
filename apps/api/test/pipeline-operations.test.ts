@@ -135,6 +135,21 @@ describe("pipeline operations read model", () => {
     expect(result.activeItemsTruncated).toBe(false);
   });
 
+  it("keeps unselected scope unconfirmed when a fresh idle worker has a stale peer", () => {
+    const fixture = createFixture();
+    insertHeartbeat(fixture, { workerId: "fresh", activeSlots: 0, counts: {}, details: [] });
+    insertHeartbeat(fixture, { workerId: "stale", activeSlots: 1, counts: {}, details: [] });
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET last_seen_at = ? WHERE worker_id = ?")
+      .run(new Date(NOW.getTime() - 60_000).toISOString(), "stale");
+
+    const result = snapshot(fixture);
+    expect(result.capacity).toMatchObject({ status: "available", activeSlots: 0, staleWorkerCount: 1 });
+    expect(result.activeItemsTotal).toBe(0);
+    expect(result.projectionCoverage).toMatchObject({ status: "recovering" });
+    expect(fixture.db.prepare("SELECT COUNT(*) AS count FROM worker_runtime_heartbeats").get())
+      .toMatchObject({ count: 2 });
+  });
+
   it("reports recovering coverage when no selected execution has unavailable telemetry", () => {
     const fixture = createFixture();
 
@@ -160,6 +175,8 @@ describe("pipeline operations read model", () => {
       persistedStepCount: 0,
     });
     expect(result.activeItems).toEqual([]);
+    expect(result.capacity).toMatchObject({ status: "available", activeSlots: 1 });
+    expect(result.activeStageCounts).toEqual([]);
     expect(result.activeItemsTotal).toBe(0);
     expect(result.activeItemsTruncated).toBe(true);
   });
@@ -1345,6 +1362,49 @@ describe("pipeline operations read model", () => {
     if (eta.status === "available") expect(eta.highSeconds).toBeLessThan(1_000);
   });
 
+  it("withholds selected-run and stage ETAs for a stale same-queue peer until it reports fresh again", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    insertMember(fixture, { key: "eta-stale-peer", requiredSteps: ["score"] });
+    insertStageState(fixture, "eta-stale-peer", "enrich", "succeeded");
+    insertStageState(fixture, "eta-stale-peer", "score", "pending");
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    for (let index = 0; index < 5; index += 1) {
+      insertStageState(fixture, `eta-stale-history-${index}`, "score", "succeeded", 60_000,
+        new Date(NOW.getTime() - index * 60_000).toISOString());
+    }
+    insertHeartbeat(fixture, {
+      workerId: "fresh", activeSlots: 1, counts: { score_job: 1 },
+      details: [activityDetail("score_job", "op_000000000000000000000063", unmatchedWorkflowRef("eta-stale"))],
+    });
+    insertHeartbeat(fixture, { workerId: "peer", activeSlots: 0, counts: {}, details: [] });
+
+    const fresh = snapshot(fixture);
+    expect(fresh.projectionCoverage?.status).toBe("ready");
+    expect(fresh.overallEta.status).toBe("available");
+    expect(stage(fresh, "score", "current_execution").eta.status).toBe("available");
+
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET last_seen_at = ? WHERE worker_id = ?")
+      .run(new Date(NOW.getTime() - 60_000).toISOString(), "peer");
+    const stale = snapshot(fixture);
+    expect(stale.capacity).toMatchObject({ status: "available", freshWorkerCount: 1, staleWorkerCount: 1 });
+    expect(stale.overallEta).toMatchObject({ status: "unavailable", reason: "contention_unbounded" });
+    expect(stage(stale, "score", "current_execution").eta)
+      .toMatchObject({ status: "unavailable", reason: "contention_unbounded" });
+
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET last_seen_at = ? WHERE worker_id = ?")
+      .run(NOW.toISOString(), "peer");
+    const recovered = snapshot(fixture);
+    expect(recovered.overallEta.status).toBe("available");
+    expect(stage(recovered, "score", "current_execution").eta.status).toBe("available");
+
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET task_queue = ?, last_seen_at = ? WHERE worker_id = ?")
+      .run("another-queue", new Date(NOW.getTime() - 60_000).toISOString(), "peer");
+    const otherQueue = snapshot(fixture);
+    expect(otherQueue.capacity).toMatchObject({ status: "available", staleWorkerCount: 0 });
+    expect(otherQueue.overallEta.status).toBe("available");
+  });
+
   it("keeps pooled capacity visible but refuses an ETA when multi-worker slots cannot be fully inventoried", () => {
     const fixture = createFixture();
     insertExecution(fixture, { status: "succeeded" });
@@ -2064,6 +2124,16 @@ describe("pipeline operations read model", () => {
     expect(result.sourceFamilies?.eta).toMatchObject({
       caveat: "Provider total is unavailable; range uses recent whole-family duration and bounded live capacity.",
     });
+
+    insertHeartbeat(fixture, { workerId: "source-peer", activeSlots: 0, counts: {}, details: [] });
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET last_seen_at = ? WHERE worker_id = ?")
+      .run(new Date(NOW.getTime() - 60_000).toISOString(), "source-peer");
+    const stale = snapshot(fixture);
+    expect(stale.sourceFamilies?.eta).toMatchObject({ status: "unavailable", reason: "contention_unbounded" });
+    expect(stage(stale, "source_family", "current_execution").eta).toEqual(stale.sourceFamilies?.eta);
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET last_seen_at = ? WHERE worker_id = ?")
+      .run(NOW.toISOString(), "source-peer");
+    expect(snapshot(fixture).sourceFamilies?.eta.status).toBe("available");
   });
 
   it("withholds source history when global job-stage work is queued before telemetry observes it", () => {

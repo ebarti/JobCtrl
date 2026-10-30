@@ -2145,6 +2145,8 @@ function buildActiveItems(
   const items = all.slice(0, 20);
   return {
     items,
+    // This is the allowlisted detail count, not total slot occupancy. Consumers
+    // must also consider occupied slots and stale peers before declaring idle.
     total: telemetry.activeDetailsTotal,
     truncated:
       telemetry.activeDetailsTruncated ||
@@ -2522,7 +2524,8 @@ function contention(
   globalRetryability: GlobalRetryability,
   telemetry: WorkerRuntimeTelemetrySnapshot,
 ) {
-  if (telemetry.status !== "available" || blockingAdmissionUncertain(telemetry) || hasUnboundedQueueContention(telemetry)) {
+  if (telemetry.status !== "available" || telemetry.staleWorkerCount > 0 ||
+      blockingAdmissionUncertain(telemetry) || hasUnboundedQueueContention(telemetry)) {
     return { kind: "unknown" as const };
   }
   if (telemetry.activeDetailsTruncated || telemetry.activeSlots > telemetry.activeDetailsTotal) {
@@ -2545,7 +2548,8 @@ function contention(
 }
 
 function sharedRuntimeContention(telemetry: WorkerRuntimeTelemetrySnapshot) {
-  if (telemetry.status !== "available" || blockingAdmissionUncertain(telemetry) || hasUnboundedQueueContention(telemetry)) {
+  if (telemetry.status !== "available" || telemetry.staleWorkerCount > 0 ||
+      blockingAdmissionUncertain(telemetry) || hasUnboundedQueueContention(telemetry)) {
     return { kind: "unknown" as const };
   }
   if (telemetry.activeDetailsTruncated || telemetry.activeSlots > telemetry.activeDetailsTotal) {
@@ -2783,7 +2787,7 @@ function unselectedExecutionCoverageRequired(
   // fresh worker telemetry also proves that every activity slot is idle.  A
   // stale/missing heartbeat or occupied non-allowlisted slot is unknown scope,
   // not an empty pipeline.
-  return telemetry.status !== "available" || telemetry.activeSlots > 0;
+  return telemetry.status !== "available" || telemetry.staleWorkerCount > 0 || telemetry.activeSlots > 0;
 }
 
 function runtimeStageActiveWork(
