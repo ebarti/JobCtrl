@@ -302,6 +302,13 @@ an event row never silently replaces the event view with a job redirect.
 `GET /v1/health` distinguishes API process health from worker readiness. A
 command that requires the worker must fail clearly when the JSON-RPC/Temporal
 path is unavailable; the API must not manufacture a successful queued state.
+If startup finds an incompatible database version or schema manifest, a
+diagnostic-only API returns HTTP 503 with `database_migration_required` for
+supported older versions or `database_schema_incompatible` otherwise. It
+includes the observed and expected schema versions without database paths, and
+refuses product API routes. The web topbar distinguishes that response from a
+generic connection failure. The API must be restarted after the workspace is
+upgraded or repaired.
 
 `POST /v1/_internal/rpc` is the internal dispatch boundary. Public browser code
 uses typed product routes rather than calling arbitrary worker methods.

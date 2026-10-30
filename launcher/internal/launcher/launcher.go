@@ -270,6 +270,7 @@ type launchContext struct {
 	Instance     instance
 	Environment  []string
 	selection    *release.Lock
+	SourcePython string
 }
 type readyMessage struct {
 	Error string `json:"error,omitempty"`
@@ -344,6 +345,13 @@ func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Write
 		return err
 	}
 	defer func() { _ = ctx.selection.Close() }()
+	// A source migration is resumed by its source controller. Product commands
+	// must not start another writer while that recovery record is present.
+	if len(args) == 0 || (args[0] != "stop" && args[0] != "status" && args[0] != "logs" && args[0] != "version" && args[0] != "help" && args[0] != "--help") {
+		if err := refusePendingSourceMigration(ctx); err != nil {
+			return err
+		}
+	}
 	if err := refusePendingBridgeHandoff(ctx.Instance.RuntimeHome); err != nil {
 		return err
 	}
@@ -520,11 +528,20 @@ func executeStart(ctx launchContext, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if err := refusePendingSourceMigration(ctx); err != nil {
+		return err
+	}
 	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
+		return err
+	}
+	if err := requireLegacySourceOwnership(ctx); err != nil {
 		return err
 	}
 	if err := migrateHistoricalTransition(ctx); err != nil {
 		return fmt.Errorf("prepare target schema for historical update: %w", err)
+	}
+	if err := checkStartSchemaVersion(ctx); err != nil {
+		return err
 	}
 	if foreground {
 		return supervise(ctx, nil)
@@ -537,6 +554,28 @@ func executeStart(ctx launchContext, args []string, stdout io.Writer) error {
 	}
 	_, err = fmt.Fprintf(stdout, "JobCtrl is ready at http://127.0.0.1:%d\n", ctx.Manifest.Ports.API)
 	return err
+}
+
+// An installed build must explain a version mismatch before a worker exit can
+// hide its cause. Normal release updates perform the migration before start.
+func checkStartSchemaVersion(ctx launchContext) error {
+	database := filepath.Join(ctx.Instance.StateDir, "jobctrl.db")
+	if _, err := os.Lstat(database); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	version, err := jobCtrlSchemaVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("inspect the workspace database before startup: %w", err)
+	}
+	if version > currentJobCtrlSchemaVersion {
+		return errors.New("this workspace was upgraded by a newer JobCtrl build; update the installed app before starting it")
+	}
+	if version < currentJobCtrlSchemaVersion {
+		return errors.New("the workspace database needs an upgrade; use the supported JobCtrl installer or update path before starting")
+	}
+	return nil
 }
 
 func ExitCode(err error) int {
@@ -644,7 +683,7 @@ func prepare(executable string, inheritedEnv []string) (launchContext, error) {
 		return launchContext{}, err
 	}
 	keepSelection = true
-	return launchContext{executable, payloadRoot, manifest, distribution, inst, childEnvironment(inheritedEnv, payloadRoot, inst.StateDir, manifest), selection}, nil
+	return launchContext{Executable: executable, PayloadRoot: payloadRoot, Manifest: manifest, Distribution: distribution, Instance: inst, Environment: childEnvironment(inheritedEnv, payloadRoot, inst.StateDir, manifest), selection: selection}, nil
 }
 
 // Stable and prerelease payload launchers are never a second public command
@@ -1549,8 +1588,16 @@ func childEnvironment(inherited []string, payloadRoot, stateDir string, manifest
 	}
 	return result
 }
-func substitute(argument string, ctx launchContext) string {
-	return strings.NewReplacer("${PAYLOAD_ROOT}", ctx.PayloadRoot, "${TEMPORAL_GRPC_PORT}", strconv.Itoa(ctx.Manifest.Ports.TemporalGRPC), "${TEMPORAL_UI_PORT}", strconv.Itoa(ctx.Manifest.Ports.TemporalUI), "${TEMPORAL_DB}", filepath.Join(ctx.Instance.StateDir, "temporal.db")).Replace(argument)
+func substitute(argument string, ctx launchContext) (string, error) {
+	temporal := ""
+	if strings.Contains(argument, "${TEMPORAL_DB}") {
+		var err error
+		temporal, err = temporalHistoryPath(ctx.Instance.StateDir)
+		if err != nil {
+			return "", err
+		}
+	}
+	return strings.NewReplacer("${PAYLOAD_ROOT}", ctx.PayloadRoot, "${TEMPORAL_GRPC_PORT}", strconv.Itoa(ctx.Manifest.Ports.TemporalGRPC), "${TEMPORAL_UI_PORT}", strconv.Itoa(ctx.Manifest.Ports.TemporalUI), "${TEMPORAL_DB}", temporal).Replace(argument), nil
 }
 func componentByName(manifest runtimeManifest, name string) (commandSpec, error) {
 	for _, component := range manifest.Components {
@@ -1872,6 +1919,13 @@ func supervise(ctx launchContext, ready io.Writer) (result error) {
 		return err
 	}
 	defer releaseLock(lock)
+	// Resolve after claiming the workspace: source and installed releases must
+	// operate on the same existing history, or refuse an ambiguous workspace.
+	ctx, err = withTemporalHistory(ctx)
+	if err != nil {
+		sendReady(ready, err)
+		return err
+	}
 	// startDetached validates before it forks. Repeat under the instance lock so
 	// a supervisor killed between that check and this re-exec cannot have its
 	// still-live component registry overwritten.
@@ -2039,6 +2093,10 @@ builtin exec 3<&-
 builtin exec "$@"`
 
 func startComponent(ctx launchContext, state *instanceState, name string) (*exec.Cmd, error) {
+	ctx, err := withTemporalHistory(ctx)
+	if err != nil {
+		return nil, err
+	}
 	spec, err := componentByName(ctx.Manifest, name)
 	if err != nil {
 		return nil, err
@@ -2049,7 +2107,10 @@ func startComponent(ctx launchContext, state *instanceState, name string) (*exec
 	}
 	arguments := make([]string, len(spec.Arguments))
 	for index, argument := range spec.Arguments {
-		arguments[index] = substitute(argument, ctx)
+		arguments[index], err = substitute(argument, ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 	logPath := filepath.Join(ctx.Instance.LogDir, name+".log")
 	if info, err := os.Stat(logPath); err == nil && info.Size() > 0 {
@@ -2131,6 +2192,10 @@ func waitForTemporal(ctx launchContext, temporal *exec.Cmd, exits <-chan compone
 }
 
 func probeTemporal(ctx launchContext) error {
+	ctx, err := withTemporalHistory(ctx)
+	if err != nil {
+		return err
+	}
 	spec, err := componentByName(ctx.Manifest, ctx.Manifest.Health.Temporal.Component)
 	if err != nil {
 		return err
@@ -2138,7 +2203,10 @@ func probeTemporal(ctx launchContext) error {
 	executable := filepath.Join(ctx.PayloadRoot, spec.Executable)
 	arguments := make([]string, len(ctx.Manifest.Health.Temporal.Arguments))
 	for i, argument := range ctx.Manifest.Health.Temporal.Arguments {
-		arguments[i] = substitute(argument, ctx)
+		arguments[i], err = substitute(argument, ctx)
+		if err != nil {
+			return err
+		}
 	}
 	probe := exec.Command(executable, arguments...)
 	probe.Env, probe.Dir = ctx.Environment, ctx.Instance.StateDir
@@ -2660,6 +2728,12 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 	if differentRelease {
 		overall = "different-release"
 	}
+	if state.BuildID == "source" && supervisorLive {
+		overall = "source-running"
+		// The source supervisor owns its own component records; reporting the
+		// empty native component map as stopped would be misleading.
+		components = map[string]componentStatus{}
+	}
 	if state.StoppedAt != nil && !stateHasLiveProcesses(state) {
 		overall = "stopped"
 	}
@@ -2681,6 +2755,10 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 			SupervisorPID int                        `json:"supervisorPid"`
 			Components    map[string]componentStatus `json:"components"`
 		}{overall, state.InstanceID, state.CanonicalStateDir, state.Supervisor.PID, components})
+	}
+	if overall == "source-running" {
+		_, err := fmt.Fprintf(output, "JobCtrl: source supervisor running (pid=%d). Use corepack pnpm dev:status in its checkout for component health.\n", state.Supervisor.PID)
+		return err
 	}
 	fmt.Fprintf(output, "JobCtrl: %s\n", overall)
 	for _, name := range []string{"temporal", "worker", "api"} {

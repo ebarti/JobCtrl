@@ -15,7 +15,7 @@ export type SqliteValue = string | number | bigint | null;
 export const SUPPORTED_SCHEMA_VERSION = EXACT_V15_SCHEMA_MANIFEST.version;
 
 export class IncompatibleSchemaVersionError extends Error {
-  constructor(current: number) {
+  constructor(readonly current: number) {
     super(
       `JobCtrl database schema version ${current} is incompatible with this API `
         + `build (expected exactly ${SUPPORTED_SCHEMA_VERSION}). Upgrade JobCtrl `

@@ -19,6 +19,7 @@ async function runInstallerWithNode(version, t) {
       path.join(fakeBin, "node"),
       `#!/bin/sh\nprintf '%s\\n' '${version}'\n`,
     ),
+    writeExecutable(path.join(fakeBin, "go"), "#!/bin/sh\nprintf 'go version go1.24.0 darwin/arm64\\n'\n"),
     ...["corepack", "temporal", "uv"].map((name) =>
       writeExecutable(path.join(fakeBin, name), "#!/bin/sh\nexit 0\n")),
   ]);

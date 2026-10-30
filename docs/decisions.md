@@ -91,6 +91,7 @@ the Historical Spec Ledger in `plans/README.md`.
 **Data durability & spend**
 
 - [SQLite Backup Command + Schema-Version Guard](#_2026-07-02-sqlite-backup-command-schema-version-guard) · 2026-07-02
+- [Source Startup Preserves Temporal History Identity](#_2026-10-29-source-startup-preserves-temporal-history-identity) · 2026-10-29
 - [Local LLM Spend Ceiling](#_2026-07-03-local-llm-spend-ceiling) · 2026-07-03
 
 ## 2026-05-01: Local-First Before SaaS Hardening
@@ -3082,3 +3083,20 @@ other-instance preservation, interruption recovery and native Python network
 isolation. Release and genuine signed/notarized first-use qualification remain
 separate gates. See [runtime ownership](architecture/runtime.md) and
 [Reliability & QA](local-reliability-qa.md).
+
+## 2026-10-29: Source Startup Preserves Temporal History Identity
+
+Source development and installed releases share a workspace and select
+`$JOBCTRL_DIR/temporal.db` for new histories. A sole existing source history
+under `$JOBCTRL_DIR/temporal/temporal.db` stays at that path. Multiple histories
+or orphaned SQLite companions block startup rather than selecting either.
+
+On macOS, a source fleet uses the native workspace locks and process scope.
+For a verified owned schema-14 pair, its next startup automatically backs up
+both databases and activates the sealed schema-15 migration. Interrupted
+attempts are resumed forward using a fresh backup, preserving later writes.
+An older untracked runtime does not establish cleanup authority. Unsupported or
+unverified migrations leave the default source diagnostic API and web interface
+available without the worker or Temporal. Older application versions do not
+automatically downgrade the workspace. See
+[Local Development](local-development.md#schema-migrations-and-source-updates).
