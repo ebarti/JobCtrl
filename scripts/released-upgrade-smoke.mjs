@@ -219,8 +219,11 @@ async function releasedVersion(version, cache, trust, env) {
 }
 
 export function installArgs(release, runtime, stage = false, source = "homebrew") {
-  return ["--source", source, ...(stage ? ["--stage-only"] : []), "--home", runtime,
-    "--descriptor-url", `https://releases.jobctrl.dev/v1/artifacts/${release.descriptor.buildId}/release-descriptor.json`,
+  assert.ok(source === "curl" || source === "homebrew", "unsupported acquisition source");
+  const base = `https://releases.jobctrl.dev/v1/artifacts/${release.descriptor.buildId}`;
+  const common = ["--source", source, ...(stage ? ["--stage-only"] : []), "--home", runtime];
+  if (source === "curl") return [...common, "--release-url", `${base}/channel-pointer.json`];
+  return [...common, "--descriptor-url", `${base}/release-descriptor.json`,
     "--descriptor-file", path.join(release.directory, "release-descriptor.json"),
     "--signature-file", path.join(release.directory, "release-descriptor.json.sig"), "--archive-file", release.archive];
 }
