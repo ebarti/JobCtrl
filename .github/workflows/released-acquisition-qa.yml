@@ -43,6 +43,8 @@ jobs:
           test "$(jq -r '.appVersion' "$RUNNER_TEMP/published-candidate/release-descriptor.json")" = 0.3.1
           grep -F 'JOBCTRL_BUILD_ID = "0.3.1-' "$RUNNER_TEMP/published-candidate/jobctrl.rb"
       - name: Exercise both real acquisition paths from the previous stable release
+        env:
+          JOBCTRL_RELEASE_METADATA_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           export JOBCTRL_RELEASE_KEY_ID=jobctrl-release-v1

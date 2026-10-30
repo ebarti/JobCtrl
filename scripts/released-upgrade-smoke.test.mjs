@@ -5,7 +5,9 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { interruptReleaseAtCheckpoint, runForwardInterruptionMatrix, selectLatestReleasedVersion, selectUpgradeMode } from "./released-upgrade-smoke.mjs";
+import { fetchPublishedReleases, interruptReleaseAtCheckpoint, runForwardInterruptionMatrix, selectLatestReleasedVersion, selectUpgradeMode } from "./released-upgrade-smoke.mjs";
+
+import { acquisitionChildEnvironment } from "./released-acquisition-upgrade.mjs";
 
 const published = (version, day, extra = {}) => ({ tag_name: `v${version}`, published_at: `2026-10-${day}T10:00:00Z`, draft: false, prerelease: false, ...extra });
 
@@ -59,4 +61,20 @@ test("forward release matrix refuses a workspace outside its fixture before writ
   const candidate = { descriptor: { buildId: "synthetic" } };
   await assert.rejects(runForwardInterruptionMatrix({ candidate, root: fixture, runtime, state, env: { JOBCTRL_RUNTIME_HOME: runtime, JOBCTRL_DIR: other }, selector: path.join(runtime, "bin/jobctrl"), payload: path.join(runtime, "releases/synthetic/payload") }), /fixture workspace/);
   await assert.rejects(stat(path.join(fixture, ".jobctrl-release-qa")), { code: "ENOENT" });
+});
+
+test("release metadata uses a fixed GitHub API and withholds credentials from child processes", async () => {
+  let request;
+  const releases = await fetchPublishedReleases("synthetic-token", async (url, options) => {
+    request = { url, options };
+    return { ok: true, json: async () => [published("0.3.1", "19")] };
+  });
+  assert.equal(releases[0].tag_name, "v0.3.1");
+  assert.equal(request.url, "https://api.github.com/repos/ebarti/JobCtrl/releases?per_page=100");
+  assert.equal(request.options.redirect, "error");
+  assert.equal(request.options.headers.Authorization, "Bearer synthetic-token");
+  const child = acquisitionChildEnvironment({ HOME: "/synthetic", JOBCTRL_RELEASE_METADATA_TOKEN: "synthetic-token", GH_TOKEN: "synthetic-token", GITHUB_TOKEN: "synthetic-token", ACTIONS_RUNTIME_TOKEN: "synthetic-token", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "synthetic-token" });
+  assert.equal(child.HOME, "/synthetic");
+  assert.equal(Object.values(child).includes("synthetic-token"), false);
+  await assert.rejects(fetchPublishedReleases(undefined, async () => ({ ok: false, status: 403 })), /HTTP 403/);
 });

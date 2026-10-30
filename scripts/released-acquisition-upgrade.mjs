@@ -11,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { verifyReleaseDescriptorSignature } from "./distribution-homebrew.render.bundle.mjs";
-import { installArgs, runForwardInterruptionMatrix, selectLatestReleasedVersion, selectUpgradeMode } from "./released-upgrade-smoke.mjs";
+import { fetchPublishedReleases, installArgs, runForwardInterruptionMatrix, selectLatestReleasedVersion, selectUpgradeMode } from "./released-upgrade-smoke.mjs";
 
 const readJson = async (file) => JSON.parse(await readFile(file, "utf8"));
 const hash = async (file) => {
@@ -263,6 +263,14 @@ async function brewScenario(old, candidate, root, baseEnv) {
   }
 }
 
+// Real installers and Homebrew do not need the metadata API token or the
+// runner's action credentials. Keep them out of every child process.
+export function acquisitionChildEnvironment(inherited) {
+  const env = { ...inherited, PATH: "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin", HOMEBREW_NO_AUTO_UPDATE: "1" };
+  for (const name of ["JOBCTRL_RELEASE_METADATA_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"]) delete env[name];
+  return env;
+}
+
 export async function runPublishedAcquisitionUpgrades({ releaseDirectory, output, publicKeyBase64, keyId }) {
   assert.equal(process.platform, "darwin"); assert.equal(process.arch, "arm64");
   const raw = Buffer.from(publicKeyBase64 ?? "", "base64"); assert.equal(raw.length, 32);
@@ -275,11 +283,10 @@ export async function runPublishedAcquisitionUpgrades({ releaseDirectory, output
   assert.equal(await hash(candidate.installer), candidate.manifest.files.find((file) => file.path === "launcher/jobctrl-installer").sha256);
   assert.equal(await hash(candidate.archive), candidate.descriptor.artifact.sha256);
   await chmod(candidate.installer, 0o700);
-  const response = await fetch("https://api.github.com/repos/ebarti/JobCtrl/releases?per_page=100", { signal: AbortSignal.timeout(30_000) });
-  assert.ok(response.ok, `cannot resolve the latest stable release: HTTP ${response.status}`);
-  const version = selectLatestReleasedVersion(await response.json(), candidate.descriptor.appVersion);
+  const releases = await fetchPublishedReleases(process.env.JOBCTRL_RELEASE_METADATA_TOKEN);
+  const version = selectLatestReleasedVersion(releases, candidate.descriptor.appVersion);
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "jobctrl-acquisition-upgrades-")));
-  const env = { ...process.env, PATH: "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin", HOMEBREW_NO_AUTO_UPDATE: "1" };
+  const env = acquisitionChildEnvironment(process.env);
   const old = await publishedSource(version, root, trust, env);
   assert.ok(old.descriptor.sequence < candidate.descriptor.sequence);
   const started = performance.now();

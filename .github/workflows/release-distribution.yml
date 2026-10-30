@@ -611,6 +611,7 @@ jobs:
       - name: Verify the latest stable upgrade and its supported recovery path
         if: ${{ inputs.channel == 'stable' }}
         env:
+          JOBCTRL_RELEASE_METADATA_TOKEN: ${{ github.token }}
           JOBCTRL_RELEASE_PUBLIC_KEY: ${{ needs.resolve.outputs.release_public_key }}
           JOBCTRL_RELEASE_KEY_ID: ${{ needs.resolve.outputs.release_key_id }}
         run: |
@@ -932,6 +933,7 @@ jobs:
       - name: Qualify upgrades through the released curl and Homebrew acquisition paths
         if: ${{ inputs.channel == 'stable' }}
         env:
+          JOBCTRL_RELEASE_METADATA_TOKEN: ${{ github.token }}
           JOBCTRL_RELEASE_PUBLIC_KEY: ${{ needs.resolve.outputs.release_public_key }}
           JOBCTRL_RELEASE_KEY_ID: ${{ needs.resolve.outputs.release_key_id }}
         run: |

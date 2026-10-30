@@ -25,6 +25,19 @@ export function selectLatestReleasedVersion(releases, candidateVersion) {
   assert.ok(Number.isFinite(Date.parse(previous.published_at)), "stable release publication date is invalid");
   return tag.slice(1);
 }
+// A read-only workflow token avoids GitHub's shared-IP rate limit. The
+// destination is fixed and redirects are refused so credentials cannot follow
+// an unexpected response to another host.
+export async function fetchPublishedReleases(token, fetcher = fetch) {
+  const headers = { Accept: "application/vnd.github+json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetcher("https://api.github.com/repos/ebarti/JobCtrl/releases?per_page=100", {
+    headers, redirect: "error", signal: AbortSignal.timeout(30_000),
+  });
+  assert.ok(response.ok, `cannot resolve the latest stable release: HTTP ${response.status}`);
+  return response.json();
+}
+
 // Only explicitly supported transitions may change the release test's contract.
 // An unknown protocol/schema combination must fail qualification, not silently
 // be treated as a same-schema upgrade.
@@ -502,9 +515,8 @@ export async function runReleasedUpgradeSmoke({ releaseDirectory, cacheDirectory
   const candidate = await releaseFiles(releaseDirectory, trust);
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "jobctrl-released-upgrades-")));
   const cache = cacheDirectory ?? path.join(root, "cache");
-  const response = await fetch("https://api.github.com/repos/ebarti/JobCtrl/releases?per_page=100", { signal: AbortSignal.timeout(30_000) });
-  assert.ok(response.ok, `cannot resolve the latest stable release: HTTP ${response.status}`);
-  const version = selectLatestReleasedVersion(await response.json(), candidate.descriptor.appVersion);
+  const releases = await fetchPublishedReleases(process.env.JOBCTRL_RELEASE_METADATA_TOKEN);
+  const version = selectLatestReleasedVersion(releases, candidate.descriptor.appVersion);
   const old = await releasedVersion(version, cache, trust, { PATH: "/usr/bin:/bin" });
   assert.ok(old.descriptor.sequence < candidate.descriptor.sequence, "upgrade source must precede the signed candidate");
   const result = await scenario(old, candidate, path.join(root, "latest-stable"));
