@@ -17,6 +17,95 @@ afterEach(() => {
 });
 
 describe("worker runtime telemetry", () => {
+  it("distinguishes refused, accepting, unknown and stale blocking admissions", () => {
+    const fixture = createFixture();
+    const now = new Date("2026-07-14T10:00:30.000Z");
+    const base = { configuredSlots: 4, activeSlots: 0, executorThreads: 6, details: [] };
+    insertHeartbeat(fixture, {
+      ...base, workerId: "blocked", lastSeenAt: "2026-07-14T10:00:20.000Z",
+      queueObservation: {
+        ...availableObservation("2026-07-14T10:00:19.000Z", 0, 1),
+        blockingExecutor: {
+          version: 1, unfinishedRetiredGenerations: 3, unfinishedRetiredCalls: 4,
+          generationLimit: 3, nextSubmission: "refusing",
+          controlNextSubmission: "accepting", controlUnfinishedCalls: 0,
+        },
+      },
+    });
+    insertHeartbeat(fixture, {
+      ...base, workerId: "accepting", lastSeenAt: "2026-07-14T10:00:21.000Z",
+      queueObservation: {
+        ...availableObservation("2026-07-14T10:00:19.000Z", 0, 1),
+        blockingExecutor: {
+          version: 1, unfinishedRetiredGenerations: 1, unfinishedRetiredCalls: 1,
+          generationLimit: 3, nextSubmission: "accepting",
+          controlNextSubmission: "refusing", controlUnfinishedCalls: 2,
+        },
+      },
+    });
+    insertHeartbeat(fixture, {
+      ...base, workerId: "old", lastSeenAt: "2026-07-14T10:00:22.000Z",
+      queueObservation: availableObservation("2026-07-14T10:00:19.000Z", 0, 1),
+    });
+    insertHeartbeat(fixture, {
+      ...base, workerId: "stale", lastSeenAt: "2026-07-14T09:50:00.000Z",
+      queueObservation: {
+        ...availableObservation("2026-07-14T09:49:59.000Z", 0, 1),
+        blockingExecutor: {
+          version: 1, unfinishedRetiredGenerations: 3, unfinishedRetiredCalls: 3,
+          generationLimit: 3, nextSubmission: "refusing",
+        },
+      },
+    });
+    const snapshot = readWorkerRuntimeTelemetry(fixture.dbPath, { now });
+    expect(snapshot.availableSlots).toBe(12);
+    expect(snapshot.blockingExecutor).toEqual({
+      acceptingWorkers: 1, refusingWorkers: 1, unknownWorkers: 1,
+      unfinishedRetiredGenerations: 4, unfinishedRetiredCalls: 5,
+      controlAcceptingWorkers: 1, controlRefusingWorkers: 1,
+      controlUnknownWorkers: 1, controlUnfinishedCalls: 2,
+    });
+    expect(snapshot.staleWorkerCount).toBe(1);
+
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET task_queue_observation_json = ? WHERE worker_id = ?")
+      .run(JSON.stringify({
+        ...availableObservation("2026-07-14T10:00:19.000Z", 0, 1),
+        blockingExecutor: {
+          version: 1, unfinishedRetiredGenerations: 2, unfinishedRetiredCalls: 2,
+          generationLimit: 3, nextSubmission: "accepting",
+          controlNextSubmission: "accepting", controlUnfinishedCalls: 0,
+        },
+      }), "blocked");
+    expect(readWorkerRuntimeTelemetry(fixture.dbPath, { now }).blockingExecutor).toEqual({
+      acceptingWorkers: 2, refusingWorkers: 0, unknownWorkers: 1,
+      unfinishedRetiredGenerations: 3, unfinishedRetiredCalls: 3,
+      controlAcceptingWorkers: 1, controlRefusingWorkers: 1,
+      controlUnknownWorkers: 1, controlUnfinishedCalls: 2,
+    });
+  });
+
+  it("does not infer healthy admission from a malformed heartbeat extension", () => {
+    const fixture = createFixture();
+    insertHeartbeat(fixture, {
+      workerId: "malformed", lastSeenAt: "2026-07-14T10:00:20.000Z",
+      configuredSlots: 4, activeSlots: 0, executorThreads: 6, details: [],
+      queueObservation: {
+        ...availableObservation("2026-07-14T10:00:19.000Z", 0, 1),
+        blockingExecutor: {
+          version: 1, unfinishedRetiredGenerations: 4, unfinishedRetiredCalls: 0,
+          generationLimit: 3, nextSubmission: "accepting",
+        },
+      },
+    });
+    expect(readWorkerRuntimeTelemetry(fixture.dbPath, {
+      now: new Date("2026-07-14T10:00:30.000Z"),
+    }).blockingExecutor).toEqual({
+      acceptingWorkers: 0, refusingWorkers: 0, unknownWorkers: 1,
+      unfinishedRetiredGenerations: 0, unfinishedRetiredCalls: 0,
+      controlAcceptingWorkers: 0, controlRefusingWorkers: 0,
+      controlUnknownWorkers: 1, controlUnfinishedCalls: 0,
+    });
+  });
   it.each([
     `prepare-auto-local-apply-${"a".repeat(24)}`,
     `prepare-auto-local-score-${"a".repeat(23)}`,

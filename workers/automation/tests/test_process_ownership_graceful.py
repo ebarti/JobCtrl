@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import os
 from pathlib import Path
 import select
@@ -174,6 +175,63 @@ def test_real_late_birth_retains_both_handles_and_fences_worker(monkeypatch, tmp
             process.wait(timeout=5)
 
 
+def test_empty_pipe_and_live_reader_do_not_prove_buffer_lock():
+    read_fd, write_fd = os.pipe()
+    observed, release = threading.Event(), threading.Event()
+
+    class PausingBufferedReader(io.BufferedReader):
+        def read1(self, size=-1):
+            value = super().read1(size)
+            if value and not observed.is_set():
+                # read1 has returned and released its buffer lock, but the
+                # surrounding TextIOWrapper.readline call is still active.
+                observed.set()
+                assert release.wait(5)
+            return value
+
+    buffer = PausingBufferedReader(io.FileIO(read_fd, "rb", closefd=True))
+    stream = io.TextIOWrapper(buffer, encoding="utf-8")
+    lines, errors, peeked = [], [], []
+    peek_done = threading.Event()
+
+    def read():
+        try:
+            lines.append(stream.readline())
+        except BaseException as exc:
+            errors.append(exc)
+
+    def peek():
+        try:
+            peeked.append(buffer.peek(1))
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            peek_done.set()
+
+    reader = threading.Thread(target=read, daemon=True)
+    observer = threading.Thread(target=peek, daemon=True)
+    try:
+        os.write(write_fd, b"x")
+        reader.start()
+        assert observed.wait(2)
+        assert not select.select([read_fd], [], [], 0)[0] and reader.is_alive()
+        os.write(write_fd, b"\n")
+        observer.start()
+        assert peek_done.wait(2) and peeked == [b"\n"]
+        release.set()
+        reader.join(timeout=2)
+        assert not reader.is_alive() and not errors and lines == ["x\n"]
+    finally:
+        release.set()
+        os.close(write_fd)
+        if reader.ident is not None:
+            reader.join(timeout=2)
+        if observer.ident is not None:
+            observer.join(timeout=2)
+        if not reader.is_alive() and not observer.is_alive():
+            stream.close()
+
+
 def test_interrupt_retains_blocked_pipe_and_reuses_close_worker(monkeypatch, tmp_path):
     from jobctrl import runtime
     from jobctrl.apply import chrome, ownership
@@ -185,18 +243,39 @@ def test_interrupt_retains_blocked_pipe_and_reuses_close_worker(monkeypatch, tmp
         env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
     )
     owner.wait(timeout=5)
-    stream = os.fdopen(read_fd, "r")
+    blocked_read = threading.Event()
+
+    class WitnessRaw(io.FileIO):
+        def __init__(self, fd):
+            super().__init__(fd, "rb", closefd=True)
+            self.reads = 0
+
+        def readinto(self, buffer):
+            self.reads += 1
+            if self.reads == 2:
+                # BufferedReader holds its lock while calling raw.readinto.
+                # The writer remains open, so this real pipe read blocks.
+                blocked_read.set()
+            return super().readinto(buffer)
+
+    stream = io.TextIOWrapper(io.BufferedReader(WitnessRaw(read_fd)), encoding="utf-8")
     owner.stdout = stream
     reader_started = threading.Event()
-    reader = threading.Thread(target=lambda: (reader_started.set(), stream.readline()))
+    lines, errors = [], []
+
+    def read():
+        reader_started.set()
+        try:
+            lines.append(stream.readline())
+        except BaseException as exc:
+            errors.append(exc)
+
+    reader = threading.Thread(target=read)
     writer_open = True
     try:
         os.write(write_fd, b"x")
         reader.start()
-        assert reader_started.wait(1)
-        deadline = time.monotonic() + 2
-        while select.select([read_fd], [], [], 0)[0] and time.monotonic() < deadline:
-            time.sleep(.005)
+        assert reader_started.wait(1) and blocked_read.wait(2)
         assert not select.select([read_fd], [], [], 0)[0]
         assert reader.is_alive()
 
@@ -222,6 +301,7 @@ def test_interrupt_retains_blocked_pipe_and_reuses_close_worker(monkeypatch, tmp
         writer_open = False
         reader.join(timeout=2)
         assert not reader.is_alive() and closing.done.wait(2)
+        assert not errors and lines == ["x"]
         assert run.interrupt()
         assert stream.closed and not run._birth_processes and not run._stream_closures
     finally:

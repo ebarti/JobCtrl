@@ -950,9 +950,13 @@ lives under `workers/automation/src/jobctrl/infrastructure/temporal/`:
   `ThreadPoolExecutor(max_workers = slots + 2)` pools: one for Temporal's
   synchronous activities and one for blocking stage helpers. Cancellation
   retires the affected blocking-pool generation before its grace wait, so an
-  immediate retry uses fresh bounded capacity without affecting Temporal's
-  synchronous pool. The worker heartbeat records the activity slots and
-  configured executor width, exact server-dispatched slot use, bounded active detail,
+  retry can use fresh bounded capacity without affecting Temporal's
+  synchronous pool. At most three blocking generations remain outstanding;
+  at the cap, new blocking submissions are refused until a whole retired
+  generation returns. Short spend, owner-cancellation, and lifecycle controls
+  use a separate pool with at most two unfinished calls. The worker heartbeat
+  records the activity slots and configured executor width, exact
+  server-dispatched slot use, bounded active detail,
   completed-activity duration summaries, and an approximate task-queue
   observation for `GET /v1/health` and `GET /v1/pipeline/operations` (see
   [Concurrency & Fan-out](pipeline/concurrency.md)).
@@ -960,7 +964,10 @@ lives under `workers/automation/src/jobctrl/infrastructure/temporal/`:
   async Temporal activities while heartbeating. Cancellation sets a cooperative
   `threading.Event`, retires that blocking executor generation before waiting up
   to the activity's cancel deadline, and records an `abandoned_thread`
-  operational metric if the old thread ignores cancellation.
+  operational metric if the old thread ignores cancellation. The heartbeat
+  separately reports stage and control admission, unfinished retired stage
+  calls, and unfinished control calls;
+  neither cancellation nor retirement proves a thread or child process stopped.
 - `task_queues.py` — single `JOBCTRL_TASK_QUEUE = "jobctrl-default"`.
 - `registry.py` — single source of truth for `WORKFLOWS` and `ACTIVITIES`.
   The CLI imports both lists and passes them to `build_worker`; new

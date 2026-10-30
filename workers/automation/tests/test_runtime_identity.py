@@ -145,6 +145,13 @@ def test_worker_heartbeat_migrates_legacy_runtime_columns(monkeypatch, tmp_path)
 
 
 def test_worker_heartbeat_persists_only_safe_runtime_snapshot_fields(monkeypatch, tmp_path):
+    from jobctrl.infrastructure.temporal import run_in_activity as ria
+
+    monkeypatch.setattr(
+        ria,
+        "activity_executor_status",
+        lambda: ria.ActivityExecutorStatus(0, 0, 3, "unmanaged"),
+    )
     db_path = tmp_path / "jobctrl.db"
     monkeypatch.setattr(runtime_identity.config, "APP_DIR", tmp_path)
     monkeypatch.setattr(runtime_identity.config, "DB_PATH", db_path)
@@ -217,6 +224,15 @@ def test_worker_heartbeat_persists_only_safe_runtime_snapshot_fields(monkeypatch
         },
         "observedAt": "2026-07-14T10:00:00+00:00",
         "status": "available",
+        "blockingExecutor": {
+            "version": 1,
+            "unfinishedRetiredGenerations": 0,
+            "unfinishedRetiredCalls": 0,
+            "generationLimit": 3,
+            "nextSubmission": "unmanaged",
+            "controlUnfinishedCalls": 0,
+            "controlNextSubmission": "accepting",
+        },
         "workflow": {
             "approximateBacklogAgeSeconds": 12.5,
             "approximateBacklogCount": 9,

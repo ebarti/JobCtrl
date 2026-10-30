@@ -235,8 +235,11 @@ The capacity strip separates worker processes from the concurrency they offer:
   freshness window; they are excluded from online capacity.
 - **Activity slots in use** reports concurrent Temporal activities across all
   online worker processes as `active of configured`. For example, `0 of 4`
-  means the worker pool is healthy and idle: no activity is executing and all
-  four slots are available. Slots are execution capacity, not workers or jobs.
+  means no Temporal activity is executing and all four Temporal slots are free.
+  Stage-work and short-control admission are reported separately: a worker may
+  refuse new stage work while canceled calls are still running, even when slots
+  are free. Short cancellation, budget, and lifecycle controls have their own
+  bounded capacity.
 - **Active work** is the bounded, privacy-safe inventory of allowlisted runtime
   activities. It may be smaller than the number of occupied slots when details
   are unavailable or intentionally omitted.
@@ -251,6 +254,10 @@ slots are configured slots minus active slots. The expanded **Freshness and
 capacity** inspector shows the underlying worker, slot, executor-thread, and
 task-queue observations. For the exact API semantics, see
 [Operations & Events](../api/operations-and-events.md#capacity-active-work-and-task-queue).
+The inspector reports unfinished calls in retired worker pools. Cancellation
+does not prove those calls or their child processes have stopped. If admission
+is refused, capacity returns after a retired pool's calls actually finish;
+already accepted results are not replaced by the refusal.
 
 Selected-run tracking is reconstructed automatically after an upgrade or worker
 restart when an older execution predates native lineage. Pipelines labels that

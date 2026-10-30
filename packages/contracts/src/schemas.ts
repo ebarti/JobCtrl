@@ -3571,6 +3571,17 @@ const PipelineAvailableCapacityBaseSchema = z.object({
   availableSlots: z.number().int().nonnegative(),
   executorThreads: z.number().int().nonnegative(),
   slotSaturation: z.number().min(0).max(1).nullable(),
+  blockingExecutor: z.object({
+    acceptingWorkers: z.number().int().nonnegative(),
+    refusingWorkers: z.number().int().nonnegative(),
+    unknownWorkers: z.number().int().nonnegative(),
+    unfinishedRetiredGenerations: z.number().int().nonnegative(),
+    unfinishedRetiredCalls: z.number().int().nonnegative(),
+    controlAcceptingWorkers: z.number().int().nonnegative().optional(),
+    controlRefusingWorkers: z.number().int().nonnegative().optional(),
+    controlUnknownWorkers: z.number().int().nonnegative().optional(),
+    controlUnfinishedCalls: z.number().int().nonnegative().optional(),
+  }).strict().nullable().optional(),
   approximateTaskQueue: PipelineApproximateTaskQueueSchema,
 });
 
