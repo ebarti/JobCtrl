@@ -803,6 +803,19 @@ retry after their exact tracked children have exited, with fresh files and
 RunIds and `full_tree_verified: false`. Active owners, known cleanup failures and
 ambiguous submit intent must remain protected. This best-effort source behavior
 requires no native helper build, Go toolchain or Linux guardian.
+Exercise a source worker carrying an authenticated fleet scope: an Apply claim
+must use source lifetime recovery, while a forged, mismatched or bundled source
+scope refuses. A fleet receipt must never qualify as per-Apply completion. Keep
+the dedicated installed Apply receipt and completion checks as separate controls.
+On Darwin, the synthetic source-controller composition probe carries its real
+fleet receipt into Python and checks active-owner fencing, peer isolation,
+same-boot retry and exact tracked-child cleanup under the loopback-only QA scope.
+Exercise unrelated host churn while the authenticated source coalition's
+task-start counter fences the owned session; verify exact child identity and
+pre/post-reap session observations. Changed counters, surviving session members,
+PID reuse and incomplete scope scans must refuse cleanup. Unavailable counters
+must retain the strict unscoped fallback rather than treating the fleet receipt
+as per-Apply completion.
 
 Source hard-crash QA uses real owned Python processes and a retained private
 control pipe for every deliberately surviving child. Confirm close-on-exec owner

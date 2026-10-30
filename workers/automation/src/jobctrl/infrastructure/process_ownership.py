@@ -169,6 +169,9 @@ def terminate_owned_process(process: subprocess.Popen, *, launched_pid: int) -> 
     """
     if process.pid != launched_pid:
         raise ProcessOwnershipError("Cannot verify Apply process ownership")
+    native_coalitions = getattr(process, "_jobctrl_birth_coalitions", None)
+    source_coalitions = getattr(process, "_jobctrl_birth_source_coalitions", None)
+    coalitions = native_coalitions or source_coalitions
     _require_cleanup_budget()
     force_denied = None
     if platform.system() == "Windows":
@@ -231,7 +234,6 @@ def terminate_owned_process(process: subprocess.Popen, *, launched_pid: int) -> 
                         except PermissionError as exc:
                             raise ProcessSignalDenied(SIGNAL_DENIED_MESSAGE) from exc
                         grace_deadline = time.monotonic() + _PROCESS_TERMINATION_GRACE_SECONDS
-                        coalitions = getattr(process, "_jobctrl_birth_coalitions", None)
                         while True:
                             _require_cleanup_budget()
                             try:
@@ -256,7 +258,7 @@ def terminate_owned_process(process: subprocess.Popen, *, launched_pid: int) -> 
                                 if time.monotonic() < grace_deadline:
                                     time.sleep(_within_cleanup_budget(min(_SESSION_EXIT_POLL_SECONDS, max(0, grace_deadline - time.monotonic()))))
                                     continue
-                                if coalitions is not None:
+                                if native_coalitions is not None:
                                     raise
                                 # Unrelated host churn can make the single
                                 # grace-deadline census incomplete. Retry only
@@ -291,7 +293,6 @@ def terminate_owned_process(process: subprocess.Popen, *, launched_pid: int) -> 
                 "Windows Apply descendant exit verification is unavailable; "
                 "the original root handle exited but ownership is retained"
             )
-        coalitions = getattr(process, "_jobctrl_birth_coalitions", None)
         if coalitions is None:
             verify_session_exit(launched_pid)
         else:

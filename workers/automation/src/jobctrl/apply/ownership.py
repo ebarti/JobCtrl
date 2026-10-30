@@ -77,19 +77,23 @@ class ApplyLauncherRun:
     _admitted: bool = field(default=False, init=False, repr=False)
     _cleanup_done: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
     _journal: ApplyCustodyJournal | None = field(default=None, init=False, repr=False)
+    _source_census_coalitions: tuple[int, int] | None = field(default=None, init=False, repr=False)
     _birth_processes: dict = field(default_factory=dict, init=False, repr=False)
     _stream_closures: dict = field(default_factory=dict, init=False, repr=False)
 
     @contextmanager
     def lease(self) -> Iterator[None]:
         """Own one fresh manifest; peers are independently admitted."""
-        from jobctrl.apply.native_custody import capture_native_custody
+        from jobctrl.apply.native_custody import capture_native_custody, capture_source_census_coalitions
         config.APP_DIR.mkdir(parents=True, exist_ok=True)
         app_dir = config.APP_DIR.resolve(strict=True)
-        journal = ApplyCustodyJournal(app_dir, self.identity, native_custody=capture_native_custody(app_dir))
+        native_custody = capture_native_custody(app_dir)
+        source_census = capture_source_census_coalitions(app_dir) if native_custody is None else None
+        journal = ApplyCustodyJournal(app_dir, self.identity, native_custody=native_custody)
         journal.create()
         with self._lock:
             self._journal = journal
+            self._source_census_coalitions = source_census
         with self._cancel_guard:
             self._admitted = True
         try:
@@ -99,6 +103,7 @@ class ApplyLauncherRun:
                 journal.record_cleanup_failure(self._cleanup_error)
                 with self._cancel_guard:
                     self._admitted = False
+                    self._source_census_coalitions = None
                 with _WORKER_RUNS_LOCK:
                     for worker_id in self.worker_ids:
                         if _WORKER_RUNS.get(worker_id) is self:
@@ -176,6 +181,7 @@ class ApplyLauncherRun:
                     raise CustodyUnverified("Apply process birth has no active run custody")
                 binding = self._journal.native_custody
                 coalitions = None
+                source_coalitions = None
                 if (binding is not None and binding["scope"].get("purpose") == "apply"
                         and kwargs.get("start_new_session") is True and kwargs.get("preexec_fn") is None):
                     from jobctrl.apply.native_custody import _current_coalitions
@@ -185,6 +191,14 @@ class ApplyLauncherRun:
                             coalitions = expected
                     except (CustodyUnverified, OSError):
                         pass  # The original full-inventory proof remains available.
+                elif (binding is None and self._source_census_coalitions is not None
+                      and kwargs.get("start_new_session") is True and kwargs.get("preexec_fn") is None):
+                    from jobctrl.apply.native_custody import _current_coalitions
+                    try:
+                        if tuple(_current_coalitions()) == self._source_census_coalitions:
+                            source_coalitions = self._source_census_coalitions
+                    except (CustodyUnverified, OSError):
+                        pass  # A missing source fence retains strict verification.
                 birth_id = self._journal.reserve(worker_id, kind)
                 try:
                     process = subprocess.Popen(command, **kwargs)
@@ -203,6 +217,12 @@ class ApplyLauncherRun:
                             process._jobctrl_birth_coalitions = coalitions
                     except (CustodyUnverified, OSError):
                         pass
+                elif source_coalitions is not None:
+                    from jobctrl.apply.native_custody import _source_child_in_scope
+                    if _source_child_in_scope(process, source_coalitions):
+                        # Observation fence only: never native Apply custody,
+                        # completion proof, or authority to signal this child.
+                        process._jobctrl_birth_source_coalitions = source_coalitions
                 return process
 
     def _publish_birth(self, worker_id: int, process: subprocess.Popen, birth_id: str, launched_pid: int,

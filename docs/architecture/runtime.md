@@ -71,6 +71,16 @@ count as exited.
 The observation does not recover authority over descendants that escape the
 launch session.
 
+When Apply runs inside the managed source fleet, it authenticates the inherited
+fleet scope as runtime context. That scope covers more than one Apply attempt
+and is never recorded as an individual attempt's native custody or completion.
+Source Apply retains its own lifetime and best-effort cleanup rules; dedicated
+installed Apply scopes retain their existing completion requirements.
+For an original live child verified in that same source coalition, its task-start
+counter can fence a session census against unrelated host churn. This transient
+observation is not per-Apply completion or authority to signal a recovered PID;
+unavailable or incomplete scope evidence retains the conservative census path.
+
 Scoped browser and agent cleanup attempt each selected worker and preserve
 failed ownership records while reporting incomplete cleanup. Worker-specific
 verification and adapter termination use per-worker guards, so one waiting
