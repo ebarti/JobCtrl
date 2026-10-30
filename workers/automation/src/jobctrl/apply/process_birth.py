@@ -96,8 +96,31 @@ _NATIVE_SCOPE_KEYS = {"schemaVersion", "id", "instanceId", "stateDir", "runtimeH
                       "jobLabel", "domain", "rootPid", "rootIdentity", "coalitionIds"}
 
 
+def _valid_execution_root_identity(pid: object, identity: object) -> bool:
+    """Match the native controller's PID and unsigned start-time contract."""
+    if type(pid) is not int or not 0 < pid < 2**63 or not isinstance(identity, str) or len(identity) > 128:
+        return False
+    parts = identity.split(":")
+    if len(parts) != 3 or parts[0] != str(pid):
+        return False
+    if any(not value.isascii() or not value.isdigit() for value in parts[1:]):
+        return False
+    seconds, micros = int(parts[1]), int(parts[2])
+    return 0 < seconds < 2**64 and 0 <= micros < 1_000_000
+
+
 def validate_native_binding(binding: dict | None, app_dir: Path) -> None:
-    if binding is None:
+    """Validate dedicated Apply custody, including legacy purpose-less receipts."""
+    _validate_execution_binding(binding, app_dir, purpose="apply", allow_legacy=True)
+
+
+def validate_source_runtime_binding(binding: dict, app_dir: Path) -> None:
+    """Validate a source-fleet receipt without granting Apply completion authority."""
+    _validate_execution_binding(binding, app_dir, purpose="source", allow_legacy=False)
+
+
+def _validate_execution_binding(binding: dict | None, app_dir: Path, *, purpose: str, allow_legacy: bool) -> None:
+    if binding is None and allow_legacy:
         return
     if not isinstance(binding, dict) or set(binding) != {"scope", "receipt_sha256"}:
         raise CustodyUnverified("Apply native custody binding is malformed")
@@ -106,18 +129,18 @@ def validate_native_binding(binding: dict | None, app_dir: Path) -> None:
     instance_id = sha256(str(app_dir.resolve(strict=True)).encode("utf-8")).hexdigest()
     if (
         not isinstance(scope, dict) or set(scope) not in (_NATIVE_SCOPE_KEYS, _NATIVE_SCOPE_KEYS | {"purpose"})
-        or ("purpose" in scope and scope["purpose"] != "apply")
+        or ("purpose" in scope and scope["purpose"] != purpose)
+        or (not allow_legacy and scope.get("purpose") != purpose)
         or type(scope["schemaVersion"]) is not int or scope["schemaVersion"] != 1
         or not _id(scope["id"]) or scope["instanceId"] != instance_id
         or scope["stateDir"] != str(app_dir.resolve(strict=True))
         or not isinstance(scope["runtimeHome"], str) or not os.path.isabs(scope["runtimeHome"])
         or scope["runtimeHome"] != os.path.abspath(scope["runtimeHome"])
         or scope["jobLabel"] != f"dev.jobctrl.exec.{instance_id}.{scope['id']}"
-        or scope["domain"] != f"gui/{os.getuid()}"
-        or type(scope["rootPid"]) is not int or scope["rootPid"] <= 0
-        or not isinstance(scope["rootIdentity"], str) or not 0 < len(scope["rootIdentity"]) <= 128
+        or scope["domain"] not in (f"gui/{os.getuid()}", f"user/{os.getuid()}")
+        or not _valid_execution_root_identity(scope["rootPid"], scope["rootIdentity"])
         or not isinstance(scope["coalitionIds"], list) or len(scope["coalitionIds"]) != 2
-        or any(type(value) is not int or value <= 0 for value in scope["coalitionIds"])
+        or any(type(value) is not int or not 0 < value < 2**64 for value in scope["coalitionIds"])
         or not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest)
     ):
         raise CustodyUnverified("Apply native custody binding does not match this workspace")
