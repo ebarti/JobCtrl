@@ -331,6 +331,10 @@ http.server.HTTPServer(('127.0.0.1',int(os.environ['JOBCTRL_API_PORT'])),H).serv
 	}
 	markers, _ := filepath.Glob(markerPattern)
 	if len(markers) != 1 {
+		logSyntheticSourceDiagnostics(t, ctx, root,
+			filepath.Join(root, "dev", "logs", "worker.log"),
+			filepath.Join(root, "dev", "logs", "api.log"),
+			filepath.Join(root, "dev", "logs", "temporal.log"))
 		t.Fatal("source did not establish its own healthy worker receipt")
 	}
 	if version, err := sqliteUserVersion(python, filepath.Join(state, "jobctrl.db")); err != nil || version != 14 {

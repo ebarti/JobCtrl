@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -101,7 +103,14 @@ while :; do sleep 1; done
 		t.Fatal(err)
 	}
 	ctx := launchContext{Instance: inst, Environment: env, SourcePython: python}
+	logPath := filepath.Join(root, "source-fixture.log")
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = logFile.Close() })
 	command := exec.Command(binary, "run", root)
+	command.Stdout, command.Stderr = logFile, logFile
 	command.Env = env
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
@@ -125,8 +134,48 @@ while :; do sleep 1; done
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	logSyntheticSourceDiagnostics(t, ctx, root, logPath)
 	t.Fatal("owned synthetic source did not prove healthy readiness")
 	return sourceMigrationFixture{}
+}
+
+// Log only fixture-owned state when readiness fails; this makes hosted failures
+// actionable without exposing any real workspace or weakening ownership checks.
+func logSyntheticSourceDiagnostics(t *testing.T, ctx launchContext, root string, logs ...string) {
+	t.Helper()
+	for _, path := range logs {
+		contents, err := os.ReadFile(path)
+		t.Logf("synthetic log %s: %s (read: %v)", path, contents, err)
+	}
+	workerData, workerErr := os.ReadFile(filepath.Join(root, "worker.pid"))
+	worker, _ := strconv.Atoi(strings.TrimSpace(string(workerData)))
+	state, stateErr := readState(ctx.Instance.StatePath)
+	t.Logf("synthetic worker PID: %d (read: %v), source supervisor PID: %d (state: %v)", worker, workerErr, state.Supervisor.PID, stateErr)
+	for _, pid := range []int{worker, state.Supervisor.PID} {
+		if pid <= 0 {
+			continue
+		}
+		identity, identityErr := processStartIdentity(pid)
+		coalition, coalitionErr := processCoalitionIDs(pid)
+		t.Logf("synthetic PID %d: identity %s (%v), coalition %v (%v)", pid, identity, identityErr, coalition, coalitionErr)
+	}
+	values := environmentMap(ctx.Environment)
+	client := http.Client{Timeout: time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}}
+	response, err := client.Get("http://" + net.JoinHostPort("127.0.0.1", values["JOBCTRL_API_PORT"]) + "/v1/health")
+	if err == nil {
+		body, bodyErr := io.ReadAll(io.LimitReader(response.Body, 4096))
+		response.Body.Close()
+		t.Logf("synthetic health: status %d, body %s (read: %v)", response.StatusCode, body, bodyErr)
+	} else {
+		t.Logf("synthetic health: %v", err)
+	}
+	path, err := temporalHistoryPath(ctx.Instance.StateDir)
+	if err != nil {
+		t.Logf("synthetic history path: %v", err)
+		return
+	}
+	output, err := exec.Command("/usr/sbin/lsof", "-nP", "-Fp", path).CombinedOutput()
+	t.Logf("synthetic history holders: %s (%v)", output, err)
 }
 
 func buildSourceFixture(t *testing.T) string {

@@ -161,6 +161,9 @@ jobs:
       - name: Vet native launcher
         working-directory: launcher
         run: go vet ./...
+      - name: Test source workspace ownership
+        working-directory: launcher
+        run: go test -race -timeout 3m -count=1 ./internal/launcher -run 'TestSourceMigrationPreservesLaterWritesAcrossEveryDurableBoundary/starting|TestDevelopmentEntryAutomaticallyMigratesOwnedWorkspace' -v
       - name: Test native launcher
         working-directory: launcher
         # The package takes over nine minutes on hosted runners; keep a bounded
