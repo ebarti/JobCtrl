@@ -380,8 +380,12 @@ async function brewScenario(old, candidate, root, baseEnv, sourceAcquisition = "
     return { acquisition: scoped ? "homebrew-scoped-synthetic" : sourceAcquisition === "homebrew" ? "unmodified-homebrew" : "curl-to-unmodified-homebrew", status: "upgraded", sourceSchema: context.schema, targetSchema: expectedSchema, checks };
   } finally {
     await run(path.join(runtime, "bin", "jobctrl"), ["stop"], env, { allowFailure: true }).catch(() => {});
-    if (installed) await run(brew, ["uninstall", "--formula", formula], env, { allowFailure: true });
-    if (tapCreated) await run(brew, ["untap", tap], env, { allowFailure: true });
+    const uninstall = installed ? await run(brew, ["uninstall", "--formula", formula], env, { allowFailure: true }) : null;
+    const untap = tapCreated ? await run(brew, ["untap", tap], env, { allowFailure: true }) : null;
+    console.log(`Diagnostic Homebrew cleanup: uninstall=${uninstall?.code} untap=${untap?.code}`);
+    console.log(`Diagnostic uninstall output: ${uninstall?.output ?? "not attempted"}`);
+    console.log(`Diagnostic untap output: ${untap?.output ?? "not attempted"}`);
+    if ((uninstall && uninstall.code !== 0) || (untap && untap.code !== 0)) throw new Error("diagnostic Homebrew cleanup failed");
   }
 }
 
