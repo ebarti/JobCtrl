@@ -541,6 +541,20 @@ and leave oversized excerpts on the explicit-span path. Use the configured
 provider with synthetic facts, then measure the unchanged model/effort and
 required review policy through the real UI; smaller JSON alone is not speed proof.
 
+For parallel employer-analysis checks, run locked
+`pytest tests/test_parallel_analysis_checks.py` with the analysis, single-provider,
+ensemble, repository, cancellation and shared material-review suites, then the
+full worker suite. Prove actual overlap on frozen sources, parent-thread owner
+checks, separate closed SQLite connections, shared capacity and draining
+cancellation. Sole-draft promotion and unchanged cache hits make no extra model
+calls; changed requirements receive a fresh interpretation. Exercise multiple
+admitted providers, partial failures and custom/in-memory sequential construction.
+Rejected, canceled or failed-publication proposals must never replace current
+analysis or interpretation bindings. Verify typed provider, budget, schema, ID
+and citation failures retain their own repair budgets. Finally measure the same
+configured model, effort and required reviews through the normal UI flow. A
+barrier-controlled synthetic overlap is not a live latency result.
+
 For every determination, exercise provider unavailability, budget denial,
 malformed JSON, forbidden extra fields, unknown enums, foreign IDs, non-verbatim
 quotes and mismatched values. Each failure has a distinct safe status, makes no

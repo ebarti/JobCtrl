@@ -145,6 +145,31 @@ failure, the ensemble retains the first terminal code, or a transient provider
 code if a leg can recover, alongside every leg's safe diagnostic. A healthy peer
 still permits a degraded, fully verified analysis.
 
+### Independent Analysis Checks
+
+The file-backed native composition can run factual verification and posting
+interpretation together after the literal grounding gate. They share the
+existing bounded review-leaf pool with material reviews; coordinators remain
+outside that pool. Each leaf owns and closes its SQLite connection and retains
+its configured model, effort, lane, spend preflight and bounded correction loop.
+The owning thread checks cancellation and drains already admitted siblings.
+
+For a sole admitted draft, the unchanged canonical promotion reuses the exact
+checked proposal. Multiple admitted drafts retain ordinary per-draft reviews;
+only their final canonical receives a parallel interpretation. A changed
+proposal cannot reuse a request-local pair, and durable determination identity
+continues to bind the full source input. Custom and in-memory construction keeps
+the existing sequential path.
+
+A finished interpretation is only a recorded proposal. It gains no current job
+binding until both checks succeed and the analysis repository saves its accepted
+aggregate, anchors and interpretation binding in one transaction. Factual
+rejection, cancellation and failed publication preserve prior accepted state.
+A speculative interpretation cannot supply acceptance authority for its peer.
+
+This orchestration prototype is parked under [issue #1265](https://github.com/ebarti/JobCtrl/issues/1265).
+It requires full candidate checks and normal UI timing validation before adoption.
+
 ### Reuse And Lifecycle
 
 Analysis is cached by posting snapshot, prompt version, and SDK-set version.
