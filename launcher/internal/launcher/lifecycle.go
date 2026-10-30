@@ -8,8 +8,10 @@ package launcher
 import (
 	"bufio"
 	"bytes"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -18,12 +20,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/ebarti/jobctrl/launcher/internal/release"
+	"github.com/ebarti/jobctrl/launcher/internal/retentionfs"
 )
 
 const removeDataPhrase = "REMOVE JOBCTRL DATA"
@@ -1400,8 +1404,8 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 	if err := advance(store, &journal, release.Promoted); err != nil {
 		return err
 	}
-	if err := retainReleases(store, ctx.Instance.RuntimeHome); err != nil {
-		return err
+	if err := retainReleases(store, ctx.Instance.StateDir); err != nil {
+		return fmt.Errorf("JobCtrl %s is active, but release retention did not complete: %w", candidate.BuildID, err)
 	}
 	_, err = fmt.Fprintf(output, "JobCtrl %s is active.\n", candidate.BuildID)
 	return err
@@ -1844,6 +1848,10 @@ func readInstalledReceipt(home, build string) (release.Receipt, error) {
 	if err := decodeStrictRegular(filepath.Join(home, "releases", build, "receipt.json"), &receipt); err != nil {
 		return release.Receipt{}, fmt.Errorf("read candidate release receipt: %w", err)
 	}
+	return releaseFromSelectorReceipt(receipt)
+}
+
+func releaseFromSelectorReceipt(receipt selectorReceipt) (release.Receipt, error) {
 	r := release.Receipt{SchemaVersion: receipt.SchemaVersion, BuildID: receipt.BuildID, Channel: receipt.Channel, Sequence: uint64(receipt.Sequence), ArtifactSHA256: receipt.ArtifactSHA256, ManifestSHA256: receipt.ManifestSHA256, DescriptorSHA256: receipt.DescriptorSHA256, PolicySHA256: receipt.PolicySHA256, DescriptorURL: receipt.DescriptorURL, InstalledAt: receipt.InstalledAt}
 	if !r.Valid() {
 		return release.Receipt{}, errors.New("candidate release receipt is invalid")
@@ -1904,7 +1912,7 @@ func previousRelease(store *release.Store, active release.Receipt) (string, erro
 			continue
 		}
 		r, err := readInstalledReceipt(store.Home, entry.Name())
-		if err == nil && r.Channel == active.Channel && r.BuildID != active.BuildID && r.Sequence <= active.Sequence && store.Permit(r) == nil {
+		if err == nil && r.BuildID == entry.Name() && r.Channel == active.Channel && r.BuildID != active.BuildID && r.Sequence <= active.Sequence && store.Permit(r) == nil {
 			candidates = append(candidates, r)
 		}
 	}
@@ -1915,62 +1923,470 @@ func previousRelease(store *release.Store, active release.Receipt) (string, erro
 	return candidates[0].BuildID, nil
 }
 
-func retainReleases(store *release.Store, runtimeHome string) error {
+// retainReleases runs under the lifecycle transition and exclusive selection
+// locks. Collect every reference before deleting any owned stable release.
+func retainReleases(store *release.Store, stateDir string) error {
+	homeIdentity, releasesIdentity := store.RetentionIdentities()
+	root, err := retentionfs.Open(store.Home, homeIdentity, releasesIdentity)
+	if err != nil {
+		return fmt.Errorf("open release retention authority: %w", err)
+	}
+	defer root.Close()
+	references := &retentionReferenceAuthority{}
+	defer references.close()
+	runtimeRoot, err := references.open(store.Home)
+	if err != nil {
+		return fmt.Errorf("open runtime authority for release retention: %w", err)
+	}
+	var observedActive release.Active
+	if err := references.readRootJSON(runtimeRoot, release.ActiveFile, &observedActive); err != nil {
+		return fmt.Errorf("read active authority for release retention: %w", err)
+	}
 	active, err := store.ReadActive()
 	if err != nil {
 		return err
+	}
+	if active != observedActive {
+		return errors.New("active release authority changed during retention")
+	}
+	if !buildIDPattern.MatchString(active.Receipt.BuildID) || !buildIDPattern.MatchString(active.SelectorBuildID) {
+		return errors.New("invalid active release or controller identity")
 	}
 	keep := map[string]bool{active.Receipt.BuildID: true}
 	if active.SelectorBuildID != "" {
 		keep[active.SelectorBuildID] = true
 	}
+	var observedJournal release.Journal
+	journalErr := references.readRootJSON(runtimeRoot, release.JournalFile, &observedJournal)
+	if journalErr != nil && !errors.Is(journalErr, os.ErrNotExist) {
+		return fmt.Errorf("read transition journal for release retention: %w", journalErr)
+	}
 	if journal, err := store.ReadJournal(); err == nil {
+		if journalErr != nil || !reflect.DeepEqual(journal, observedJournal) {
+			return errors.New("transition journal authority changed during retention")
+		}
 		if journal.Old != nil {
+			if !journal.Old.Valid() || !buildIDPattern.MatchString(journal.Old.BuildID) {
+				return errors.New("invalid prior release in transition journal")
+			}
 			keep[journal.Old.BuildID] = true
 		}
 		if journal.Candidate != nil {
+			if !journal.Candidate.Valid() || !buildIDPattern.MatchString(journal.Candidate.BuildID) {
+				return errors.New("invalid candidate release in transition journal")
+			}
 			keep[journal.Candidate.BuildID] = true
 		}
+	} else if !errors.Is(err, os.ErrNotExist) || journalErr == nil {
+		return fmt.Errorf("read transition journal for release retention: %w", err)
 	}
-	if prior, err := previousRelease(store, active.Receipt); err == nil {
-		keep[prior] = true
+	var observedPolicy release.ChannelState
+	policyPath := filepath.Join(store.Home, "channel-"+active.Receipt.Channel+".json")
+	policyErr := references.readRootJSON(runtimeRoot, "channel-"+active.Receipt.Channel+".json", &observedPolicy)
+	if policyErr != nil && !errors.Is(policyErr, os.ErrNotExist) {
+		return fmt.Errorf("read channel policy for release retention: %w", policyErr)
 	}
-	instances, _ := os.ReadDir(filepath.Join(runtimeHome, "instances"))
-	for _, instance := range instances {
-		backups, _ := os.ReadDir(filepath.Join(runtimeHome, "instances", instance.Name(), "backups"))
-		for _, backup := range backups {
-			var pair databasePair
-			if decodeStrictRegular(filepath.Join(runtimeHome, "instances", instance.Name(), "backups", backup.Name(), "pair.json"), &pair) == nil && pair.ReleaseReceipt.BuildID != "" {
-				keep[pair.ReleaseReceipt.BuildID] = true
-			}
+	policy, err := store.ReadChannelState(active.Receipt.Channel)
+	if err != nil {
+		return fmt.Errorf("read channel policy for release retention: %w", err)
+	}
+	if policyErr == nil && !reflect.DeepEqual(policy, observedPolicy) {
+		return errors.New("channel policy authority changed during retention")
+	}
+	if errors.Is(policyErr, os.ErrNotExist) {
+		if _, err := os.Lstat(policyPath); !errors.Is(err, os.ErrNotExist) {
+			return errors.New("channel policy authority changed during retention")
 		}
-		var state instanceState
-		if decodeStrictRegular(filepath.Join(runtimeHome, "instances", instance.Name(), "state.json"), &state) == nil && stateHasLiveProcesses(state) {
-			keep[state.BuildID] = true
-		}
 	}
-	entries, err := os.ReadDir(filepath.Join(store.Home, "releases"))
+	if err := collectRetentionWorkspaceReferences(references, root, runtimeRoot, store.Home, stateDir, keep); err != nil {
+		return err
+	}
+	if afterRetentionReferenceCollection != nil {
+		afterRetentionReferenceCollection()
+	}
+	if err := references.validate(); err != nil {
+		return err
+	}
+	entries, err := root.Entries()
 	if err != nil {
 		return err
 	}
-	deleted := false
+	type retentionCandidate struct {
+		entry     retentionfs.Entry
+		receipt   release.Receipt
+		raw       []byte
+		inventory retentionfs.Inventory
+	}
+	var candidates []retentionCandidate
 	for _, entry := range entries {
-		if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || keep[entry.Name()] {
+		if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || !buildIDPattern.MatchString(entry.Name()) {
 			continue
 		}
-		receipt, err := readInstalledReceipt(store.Home, entry.Name())
-		if err != nil || receipt.Channel != "stable" {
-			continue
-		}
-		if err := os.RemoveAll(filepath.Join(store.Home, "releases", entry.Name())); err != nil {
+		raw, observed, err := root.ReadReceipt(entry.Name())
+		if errors.Is(err, retentionfs.ErrChanged) {
 			return err
 		}
-		deleted = true
+		if err != nil {
+			continue
+		}
+		var encoded selectorReceipt
+		if err := decodeRetentionJSON(raw, &encoded); err != nil {
+			continue
+		}
+		receipt, err := releaseFromSelectorReceipt(encoded)
+		if err != nil || receipt.BuildID != entry.Name() {
+			continue
+		}
+		candidates = append(candidates, retentionCandidate{entry: observed, receipt: receipt, raw: raw})
 	}
-	if deleted {
-		return syncDirectory(filepath.Join(store.Home, "releases"))
+	if err := root.Validate(); err != nil {
+		return err
+	}
+	// A parseable receipt alone must not displace an intact signed prior
+	// release. Authenticate candidate trees before selecting that prior.
+	var prior *release.Receipt
+	for i := range candidates {
+		candidate := &candidates[i]
+		if candidate.receipt.Channel != "stable" || candidate.entry.Name == active.Receipt.BuildID {
+			continue
+		}
+		// The manifest signs the build, but not the local receipt's sequence.
+		// Only a sequence already bound by channel state can order candidates
+		// or authorize pruning. Preserve releases without that history.
+		key := fmt.Sprintf("%d", candidate.receipt.Sequence)
+		if policy.Channel != candidate.receipt.Channel || policy.SequenceBuildIDs[key] != candidate.receipt.BuildID || policy.SequenceDescriptors[key] != candidate.receipt.DescriptorSHA256 {
+			continue
+		}
+		inventory, err := retentionReleaseInventory(root, candidate.entry, candidate.receipt, candidate.raw)
+		if err != nil {
+			if errors.Is(err, retentionfs.ErrChanged) {
+				return err
+			}
+			continue
+		}
+		if err := root.VerifyEntry(candidate.entry, inventory); err != nil {
+			if errors.Is(err, retentionfs.ErrChanged) {
+				return err
+			}
+			// Preserve unfamiliar or modified files, including empty directories.
+			continue
+		}
+		candidate.inventory = inventory
+		receipt := candidate.receipt
+		if receipt.Channel == active.Receipt.Channel && receipt.Sequence <= active.Receipt.Sequence && policy.Permit(receipt) == nil && (prior == nil || receipt.Sequence > prior.Sequence || (receipt.Sequence == prior.Sequence && receipt.BuildID < prior.BuildID)) {
+			candidateReceipt := receipt
+			prior = &candidateReceipt
+		}
+	}
+	if prior != nil {
+		keep[prior.BuildID] = true
+	}
+	for _, candidate := range candidates {
+		if keep[candidate.entry.Name] || candidate.inventory == nil {
+			continue
+		}
+		if err := references.validate(); err != nil {
+			return err
+		}
+		claim, err := root.Claim(candidate.entry)
+		if err != nil {
+			return err
+		}
+		if err := claim.Remove(candidate.inventory, references.validate); err != nil {
+			return err
+		}
+	}
+	return root.Validate()
+}
+
+func retentionReleaseInventory(root *retentionfs.Root, entry retentionfs.Entry, receipt release.Receipt, receiptRaw []byte) (retentionfs.Inventory, error) {
+	manifestRaw, err := root.ReadFile(entry, "payload/manifest.json", 64<<20)
+	if err != nil {
+		return nil, err
+	}
+	signatureRaw, err := root.ReadFile(entry, "payload/manifest.sig", 1<<20)
+	if err != nil {
+		return nil, err
+	}
+	digest := func(raw []byte) string {
+		sum := sha256.Sum256(raw)
+		return hex.EncodeToString(sum[:])
+	}
+	if digest(manifestRaw) != receipt.ManifestSHA256 {
+		return nil, errors.New("release manifest differs from its receipt")
+	}
+	// Decode the same anchored bytes whose signature is checked below.
+	var distribution distributionManifest
+	if err := decodeRetentionJSON(manifestRaw, &distribution); err != nil {
+		return nil, err
+	}
+	if err := validateDistributionManifestShape(manifestRaw, distribution); err != nil {
+		return nil, err
+	}
+	if distribution.BuildID != receipt.BuildID || distribution.ReleaseChannel != receipt.Channel {
+		return nil, errors.New("release manifest does not match its receipt")
+	}
+	var signature manifestSignature
+	if err := decodeRetentionJSON(signatureRaw, &signature); err != nil {
+		return nil, err
+	}
+	if err := validateManifestSignatureShape(signatureRaw, signature, distribution); err != nil {
+		return nil, err
+	}
+	key, ok := embeddedReleaseTrust()[signature.ManifestKeyID]
+	if !ok || signature.Signature == nil {
+		return nil, errors.New("release signature has no trusted key")
+	}
+	signed, err := base64.StdEncoding.DecodeString(*signature.Signature)
+	if err != nil || !ed25519.Verify(key, signedMessage("jobctrl:manifest:v1\x00", manifestRaw), signed) {
+		return nil, errors.New("release signature does not authenticate the retained manifest")
+	}
+	inventory := retentionfs.Inventory{
+		"receipt.json":          {Type: "file", SHA256: digest(receiptRaw), SizeBytes: int64(len(receiptRaw))},
+		"payload/manifest.json": {Type: "file", SHA256: receipt.ManifestSHA256, SizeBytes: int64(len(manifestRaw))},
+		"payload/manifest.sig":  {Type: "file", SHA256: digest(signatureRaw), SizeBytes: int64(len(signatureRaw))},
+	}
+	if receipt.SchemaVersion == 2 {
+		policyRaw, err := root.ReadFile(entry, "policy.json", 1<<20)
+		if err != nil {
+			return nil, err
+		}
+		var policy release.ChannelMetadata
+		if digest(policyRaw) != receipt.PolicySHA256 || decodeRetentionJSON(policyRaw, &policy) != nil || policy.Channel != receipt.Channel || policy.Sequence != receipt.Sequence || policy.BuildID != receipt.BuildID || policy.DescriptorDigest != receipt.DescriptorSHA256 || policy.Minimum > policy.Sequence {
+			return nil, errors.New("release policy does not match its receipt")
+		}
+		inventory["policy.json"] = retentionfs.Item{Type: "file", SHA256: receipt.PolicySHA256, SizeBytes: int64(len(policyRaw))}
+	}
+	for _, file := range distribution.Files {
+		name := "payload/" + file.Path
+		if _, exists := inventory[name]; exists {
+			return nil, errors.New("release manifest overlaps its evidence envelope")
+		}
+		item := retentionfs.Item{Type: file.Type, SHA256: file.SHA256, SizeBytes: file.SizeBytes, Target: file.Target}
+		if file.Type == "file" {
+			item.CheckMode = true
+			if file.Mode == "0755" {
+				item.Mode = 0o755
+			} else {
+				item.Mode = 0o644
+			}
+		}
+		inventory[name] = item
+	}
+	return inventory, nil
+}
+
+// The current workspace is resolved at command entry. Other managed instance
+// directories can be mapped back only through their own valid runtime state.
+// If that authority is unavailable, no release is safe to prune.
+func collectRetentionWorkspaceReferences(authority *retentionReferenceAuthority, root *retentionfs.Root, runtimeRoot *os.Root, runtimeHome, stateDir string, keep map[string]bool) error {
+	if !filepath.IsAbs(stateDir) {
+		return errors.New("workspace path for release retention is not absolute")
+	}
+	current, err := filepath.EvalSymlinks(stateDir)
+	if err != nil {
+		return fmt.Errorf("resolve workspace for release retention: %w", err)
+	}
+	if err := collectBackupReleaseReferences(authority, current, keep); err != nil {
+		return err
+	}
+	currentHash := sha256.Sum256([]byte(current))
+	currentID := hex.EncodeToString(currentHash[:])
+	instanceRoot, err := authority.openDirectory(runtimeRoot, "instances")
+	if err != nil {
+		return fmt.Errorf("read instance authorities for release retention: %w", err)
+	}
+	authority.hold(instanceRoot)
+	instances, err := authority.entries(instanceRoot, "instances")
+	if err != nil {
+		return fmt.Errorf("list instance authorities for release retention: %w", err)
+	}
+	foundCurrent := false
+	for _, entry := range instances {
+		// Other names are foreign to resolveInstance's SHA-256 namespace.
+		if !sha256Pattern.MatchString(entry.Name()) {
+			continue
+		}
+		if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("instance %s is not a regular directory", entry.Name())
+		}
+		if entry.Name() == currentID {
+			foundCurrent = true
+		}
+		var state instanceState
+		if err := authority.readJSON(instanceRoot, entry.Name(), "state.json", &state); err != nil {
+			if errors.Is(err, os.ErrNotExist) && entry.Name() == currentID {
+				continue // The resolved current workspace is already authoritative.
+			}
+			return fmt.Errorf("read instance authority %s for release retention: %w", entry.Name(), err)
+		}
+		if err := validateRuntimeState(state); err != nil {
+			return fmt.Errorf("validate instance authority %s: %w", entry.Name(), err)
+		}
+		if !filepath.IsAbs(state.CanonicalStateDir) || filepath.Clean(state.CanonicalStateDir) != state.CanonicalStateDir || (state.BuildID != "source" && !buildIDPattern.MatchString(state.BuildID)) {
+			return fmt.Errorf("invalid workspace or release identity for instance %s", entry.Name())
+		}
+		id := sha256.Sum256([]byte(state.CanonicalStateDir))
+		canonical, err := filepath.EvalSymlinks(state.CanonicalStateDir)
+		if err != nil || canonical != state.CanonicalStateDir || state.InstanceID != entry.Name() || hex.EncodeToString(id[:]) != entry.Name() {
+			return fmt.Errorf("workspace authority for instance %s cannot be verified", entry.Name())
+		}
+		if state.BuildID == "source" {
+			if err := verifyRetentionSourceAuthority(authority, instanceRoot, entry.Name(), runtimeHome, state); err != nil {
+				return fmt.Errorf("source instance %s authority cannot be verified: %w", entry.Name(), err)
+			}
+		} else if stateHasLiveProcesses(state) {
+			if err := validateRetentionLiveRelease(root, runtimeHome, state); err != nil {
+				return fmt.Errorf("live instance %s release authority cannot be verified: %w", entry.Name(), err)
+			}
+			keep[state.BuildID] = true
+		}
+		if state.CanonicalStateDir != current {
+			if err := collectBackupReleaseReferences(authority, state.CanonicalStateDir, keep); err != nil {
+				return err
+			}
+		}
+	}
+	if !foundCurrent {
+		return errors.New("resolved workspace instance authority is missing")
 	}
 	return nil
+}
+
+func validateRetentionLiveRelease(root *retentionfs.Root, runtimeHome string, state instanceState) error {
+	expected := filepath.Join(runtimeHome, "releases", state.BuildID, "payload")
+	if !filepath.IsAbs(state.PayloadRoot) || filepath.Clean(state.PayloadRoot) != expected {
+		return errors.New("recorded payload path does not match its build")
+	}
+	raw, _, err := root.ReadReceipt(state.BuildID)
+	if err != nil {
+		return err
+	}
+	var encoded selectorReceipt
+	if err := decodeRetentionJSON(raw, &encoded); err != nil {
+		return err
+	}
+	receipt, err := releaseFromSelectorReceipt(encoded)
+	if err != nil || receipt.BuildID != state.BuildID || receipt.ManifestSHA256 != state.ManifestSHA256 {
+		return errors.New("recorded live release does not match its installed receipt")
+	}
+	return nil
+}
+
+func collectBackupReleaseReferences(authority *retentionReferenceAuthority, stateDir string, keep map[string]bool) error {
+	stateRoot, err := authority.open(stateDir)
+	if err != nil {
+		return fmt.Errorf("open workspace for release retention: %w", err)
+	}
+	backupRoot, err := authority.openDirectory(stateRoot, "backups")
+	if errors.Is(err, os.ErrNotExist) {
+		authority.watchAbsent(stateRoot, "backups")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read workspace backup references for release retention: %w", err)
+	}
+	authority.hold(backupRoot)
+	entries, err := authority.entries(backupRoot, "backups")
+	if err != nil {
+		return fmt.Errorf("list workspace backup references for release retention: %w", err)
+	}
+	for _, entry := range entries {
+		nativeName := strings.HasPrefix(entry.Name(), "pair-")
+		if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			if nativeName {
+				return fmt.Errorf("backup pair %s is not a regular directory", entry.Name())
+			}
+			continue
+		}
+		var pair databasePair
+		if err := authority.readJSON(backupRoot, entry.Name(), "pair.json", &pair); err != nil {
+			if errors.Is(err, os.ErrNotExist) && !nativeName {
+				// A foreign directory is not a reference unless pair.json exists.
+				// readJSON watches both the directory and the absent metadata.
+				continue
+			}
+			return fmt.Errorf("read backup reference %s: %w", entry.Name(), err)
+		}
+		if pair.SchemaVersion != 1 || !filepath.IsLocal(pair.ID) || pair.CreatedAt.IsZero() || !pair.ReleaseReceipt.Valid() || !buildIDPattern.MatchString(pair.ReleaseReceipt.BuildID) || len(pair.Files) != 2 {
+			return fmt.Errorf("invalid backup reference %s", entry.Name())
+		}
+		files := map[string]bool{}
+		for _, file := range pair.Files {
+			if (file.Name != "jobctrl.db" && file.Name != "temporal.db") || files[file.Name] || !sha256Pattern.MatchString(file.SHA256) || file.SizeBytes <= 0 || file.SQLiteUserVer < 0 {
+				return fmt.Errorf("invalid backup reference %s", entry.Name())
+			}
+			files[file.Name] = true
+		}
+		// Rollback reads metadata from any backup directory but restores from
+		// pair.ID, which can identify a different directory. Keep that target
+		// under the same no-symlink, change-detection authority before pruning.
+		if pair.ID != entry.Name() {
+			if err := authority.watchDirectoryPath(backupRoot, pair.ID); err != nil {
+				return fmt.Errorf("backup reference %s target is unverifiable: %w", entry.Name(), err)
+			}
+		}
+		keep[pair.ReleaseReceipt.BuildID] = true
+	}
+	return nil
+}
+
+func decodeRetentionJSON(raw []byte, destination any) error {
+	keys := json.NewDecoder(bytes.NewReader(raw))
+	if err := rejectDuplicateRetentionKeys(keys); err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return errors.New("trailing JSON value")
+	}
+	return nil
+}
+
+func rejectDuplicateRetentionKeys(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		seen := map[string]bool{}
+		for decoder.More() {
+			key, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			name, ok := key.(string)
+			// encoding/json matches struct keys case-insensitively, so differently
+			// cased spellings must not provide competing authorities either.
+			name = strings.ToLower(name)
+			if !ok || seen[name] {
+				return errors.New("duplicate or invalid reference metadata key")
+			}
+			seen[name] = true
+			if err := rejectDuplicateRetentionKeys(decoder); err != nil {
+				return err
+			}
+		}
+	case '[':
+		for decoder.More() {
+			if err := rejectDuplicateRetentionKeys(decoder); err != nil {
+				return err
+			}
+		}
+	default:
+		return errors.New("invalid reference metadata JSON")
+	}
+	_, err = decoder.Token()
+	return err
 }
 
 func uninstall(ctx launchContext, args []string, output io.Writer) error {

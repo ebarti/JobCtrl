@@ -40,6 +40,9 @@ func newV6ActivationFixture(t *testing.T) v6ActivationFixture {
 func newV6ActivationFixtureWithPython(t *testing.T, python string) v6ActivationFixture {
 	t.Helper()
 	runtime, state := t.TempDir(), t.TempDir()
+	if _, err := resolveInstance([]string{"HOME=" + t.TempDir(), "JOBCTRL_RUNTIME_HOME=" + runtime, "JOBCTRL_DIR=" + state}); err != nil {
+		t.Fatal(err)
+	}
 	store, err := release.Open(runtime)
 	if err != nil {
 		t.Fatal(err)
