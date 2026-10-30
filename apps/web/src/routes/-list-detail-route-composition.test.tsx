@@ -31,13 +31,17 @@ import { describe, expect, it, vi } from "vitest";
 
 import { routeTree } from "../routeTree.gen.js";
 import { buildProviderHarness } from "../test/render.js";
+import { buildTestPorts } from "../test/testPorts.js";
 
 vi.mock("../shared/ui/PdfPreviewViewer.js", () => ({
   PdfPreviewViewer: ({ title }: { title: string }) => <div>{title}</div>,
 }));
 
 function renderRoute(initialEntry: string) {
-  const harness = buildProviderHarness({ withEventStream: true });
+  const ports = buildTestPorts({ api: {
+    materialLocaleVariants: vi.fn(async () => ({ supportedLocales: [], variants: [], profileVersion: null, sources: [] })),
+  } });
+  const harness = buildProviderHarness({ withEventStream: true, ports });
   const router = createRouter({
     routeTree,
     history: createMemoryHistory({ initialEntries: [initialEntry] }),

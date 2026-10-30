@@ -632,7 +632,13 @@ database, which also holds the original note.
 
 Web outcome/reflection/send-log form and mutation tests cover frozen payloads,
 identity retention, explicit new actions, accessible errors, input retention and
-optimistic reconciliation without overwriting later thread state. Defer send-log
+optimistic reconciliation without overwriting later thread state. With warm
+outcome caches and colliding job IDs, switch tenants before and after an
+unacknowledged manual outcome or reflection and restore each owner's draft and
+exact retry identity. Exercise the real Jobs routes with keyed drawers and cold
+tenant reads, including A-B-A job navigation, top-level navigation and nested
+run detail; deliver an old acknowledgement after the original form is replaced.
+Neither another owner's draft nor a newer action may be cleared. Defer send-log
 query cancellation, replace the contact's cached thread, and then settle the
 original request with success and failure separately: neither the optimistic
 patch nor settlement may change the replacement's drafts, logs, sent status or

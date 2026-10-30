@@ -1,4 +1,4 @@
-import { useRetryableAction } from "../../../shared/lib/useRetryableAction.js";
+import { useRetryableAction, type RetryableActionRetention } from "../../../shared/lib/useRetryableAction.js";
 import { OfferPanel } from "./OfferPanel.js";
 import {
   APPLICATION_OUTCOME_KINDS,
@@ -11,10 +11,11 @@ import {
   type OutcomeSuggestionDecisionRequest,
 } from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
-import { useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useJobApplicationOutcomesQuery } from "../../operations/hooks/useJobApplicationOutcomesQuery.js";
 import type { JobId } from "../../operations/types.js";
+import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { formatDateTime } from "../../../shared/lib/formatters.js";
 import { Button } from "../../../shared/ui/button.js";
 import { Empty } from "../../../shared/ui/empty.js";
@@ -47,6 +48,36 @@ interface InterviewReflectionFormValues {
   readonly occurredAt: string;
   readonly note: string;
 }
+
+interface OutcomeDraftRetention<T> {
+  drafts: Map<string, T>;
+  actions: RetryableActionRetention<ManualApplicationOutcomeRequest>;
+}
+
+interface OutcomeDraftRetentions {
+  manual: OutcomeDraftRetention<ManualOutcomeFormValues>;
+  reflection: OutcomeDraftRetention<InterviewReflectionFormValues>;
+}
+
+const OutcomeDraftRetentionContext = createContext<OutcomeDraftRetentions | null>(null);
+
+/** Keeps private drafts only in memory for the mounted app session. */
+export function OutcomeDraftRetentionProvider({ children }: { readonly children: ReactNode }) {
+  const [retention] = useState<OutcomeDraftRetentions>(() => ({
+    manual: { drafts: new Map(), actions: new Map() },
+    reflection: { drafts: new Map(), actions: new Map() },
+  }));
+  return <OutcomeDraftRetentionContext.Provider value={retention}>{children}</OutcomeDraftRetentionContext.Provider>;
+}
+
+function useOutcomeDraftRetention<T>(): OutcomeDraftRetention<T> {
+  return useRef<OutcomeDraftRetention<T>>({ drafts: new Map(), actions: new Map() }).current;
+}
+
+const EMPTY_MANUAL_OUTCOME: ManualOutcomeFormValues = {
+  kind: "applied_confirmation", occurredAt: "", note: "",
+};
+const EMPTY_REFLECTION: InterviewReflectionFormValues = { occurredAt: "", note: "" };
 
 interface SuggestionCorrectionFormValues {
   readonly outcomeKind: ApplicationOutcomeKind;
@@ -151,6 +182,9 @@ export interface JobOutcomePanelProps {
 
 export function JobOutcomePanel({ jobId }: JobOutcomePanelProps) {
   const { data, error, isFetching } = useJobApplicationOutcomesQuery(jobId);
+  const localRetention = useOutcomeDraftRetention<ManualOutcomeFormValues>();
+  const sharedRetention = useContext(OutcomeDraftRetentionContext);
+  const manualRetention = sharedRetention?.manual ?? localRetention;
   const message = error instanceof Error ? error.message : null;
   const pendingSuggestions = (data?.suggestions ?? []).filter(
     (suggestion) => suggestion.status === "pending",
@@ -166,7 +200,7 @@ export function JobOutcomePanel({ jobId }: JobOutcomePanelProps) {
         <>
           {data.interpretationStatus?.status === "unavailable" ? <div className="banner inline" role="status">Email outcome interpretation unavailable: {data.interpretationStatus.failureCode}. Retry feedback sync after resolving the model or budget failure.</div> : null}
           <OfferPanel key={`offer:${jobId}`} jobId={jobId} />
-          <ManualOutcomeForm key={`manual-outcome:${jobId}`} jobId={jobId} />
+          <ManualOutcomeForm key={`manual-outcome:${jobId}`} jobId={jobId} retention={manualRetention} />
           <OutcomeTimeline outcomes={data.outcomes} />
           <OutcomeSuggestionsPanel suggestions={pendingSuggestions} />
         </>
@@ -177,20 +211,35 @@ export function JobOutcomePanel({ jobId }: JobOutcomePanelProps) {
 
 export interface ManualOutcomeFormProps {
   readonly jobId: JobId;
+  readonly retention?: OutcomeDraftRetention<ManualOutcomeFormValues>;
 }
 
-export function ManualOutcomeForm({ jobId }: ManualOutcomeFormProps) {
+export function ManualOutcomeForm({ jobId, retention }: ManualOutcomeFormProps) {
+  const tenantId = useTenantId();
+  const localRetention = useOutcomeDraftRetention<ManualOutcomeFormValues>();
+  const retained = retention ?? localRetention;
+  const key = JSON.stringify([tenantId, jobId]);
+  return <ManualOutcomeFormFields key={key} jobId={jobId} initialValues={retained.drafts.get(key)}
+    actions={retained.actions} onValuesChange={(values) => retained.drafts.set(key, values)} />;
+}
+
+function ManualOutcomeFormFields({ jobId, initialValues, actions, onValuesChange }: {
+  readonly jobId: JobId;
+  readonly initialValues: ManualOutcomeFormValues | undefined;
+  readonly actions: RetryableActionRetention<ManualApplicationOutcomeRequest>;
+  readonly onValuesChange: (values: ManualOutcomeFormValues) => void;
+}) {
   const recordOutcome = useRecordManualApplicationOutcomeMutation();
-  const action = useRetryableAction<ManualApplicationOutcomeRequest>(jobId);
+  const action = useRetryableAction<ManualApplicationOutcomeRequest>(jobId, actions);
+  const mounted = useRef(true);
+  const defaults = useRef(initialValues ?? EMPTY_MANUAL_OUTCOME);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [statusMessage, setStatusMessage] = useState<FeedbackMessage | null>(
     null,
   );
   const form = useForm({
-    defaultValues: {
-      kind: "applied_confirmation" as ApplicationOutcomeKind,
-      occurredAt: "",
-      note: "",
-    },
+    defaultValues: defaults.current,
+    listeners: { onChange: ({ formApi }) => onValuesChange({ ...formApi.state.values }) },
     validators: {
       onSubmit: ({ value }) => {
         const result = ManualApplicationOutcomeRequestSchema.safeParse(
@@ -218,12 +267,13 @@ export function ManualOutcomeForm({ jobId }: ManualOutcomeFormProps) {
       } catch {
         return;
       }
+      // An acknowledgement from a form left behind by a tenant/job switch
+      // must not clear a newer mounted draft. Its frozen action remains retryable.
+      if (!mounted.current) return;
       action.newAction();
-      formApi.reset({
-        kind: "applied_confirmation",
-        occurredAt: "",
-        note: "",
-      });
+      defaults.current = EMPTY_MANUAL_OUTCOME;
+      formApi.reset(EMPTY_MANUAL_OUTCOME);
+      onValuesChange({ ...EMPTY_MANUAL_OUTCOME });
       setStatusMessage({ message: "Outcome recorded", role: "status" });
     },
   });
@@ -357,6 +407,9 @@ export function InterviewReflectionPanel({
   prepGeneration,
 }: InterviewReflectionPanelProps) {
   const { data, error, isFetching } = useJobApplicationOutcomesQuery(jobId);
+  const localRetention = useOutcomeDraftRetention<InterviewReflectionFormValues>();
+  const sharedRetention = useContext(OutcomeDraftRetentionContext);
+  const reflectionRetention = sharedRetention?.reflection ?? localRetention;
   const message = error instanceof Error ? error.message : null;
   const reflections = (data?.outcomes ?? []).filter(
     (outcome) =>
@@ -369,7 +422,7 @@ export function InterviewReflectionPanel({
       className="interview-reflection-panel"
       aria-label="Post-interview reflections"
     >
-      <InterviewReflectionForm key={jobId} jobId={jobId} prepGeneration={prepGeneration} />
+      <InterviewReflectionForm key={jobId} jobId={jobId} prepGeneration={prepGeneration} retention={reflectionRetention} />
       {message ? <div className="banner inline">{message}</div> : null}
       {!data && !message ? (
         <Empty
@@ -384,22 +437,41 @@ export function InterviewReflectionPanel({
 export interface InterviewReflectionFormProps {
   readonly jobId: JobId;
   readonly prepGeneration: number;
+  readonly retention?: OutcomeDraftRetention<InterviewReflectionFormValues>;
 }
 
 export function InterviewReflectionForm({
   jobId,
   prepGeneration,
+  retention,
 }: InterviewReflectionFormProps) {
+  const tenantId = useTenantId();
+  const localRetention = useOutcomeDraftRetention<InterviewReflectionFormValues>();
+  const retained = retention ?? localRetention;
+  const key = JSON.stringify([tenantId, jobId]);
+  return <InterviewReflectionFormFields key={key} jobId={jobId} prepGeneration={prepGeneration}
+    initialValues={retained.drafts.get(key)} actions={retained.actions}
+    onValuesChange={(values) => retained.drafts.set(key, values)} />;
+}
+
+function InterviewReflectionFormFields({ jobId, prepGeneration, initialValues, actions, onValuesChange }: {
+  readonly jobId: JobId;
+  readonly prepGeneration: number;
+  readonly initialValues: InterviewReflectionFormValues | undefined;
+  readonly actions: RetryableActionRetention<ManualApplicationOutcomeRequest>;
+  readonly onValuesChange: (values: InterviewReflectionFormValues) => void;
+}) {
   const recordOutcome = useRecordManualApplicationOutcomeMutation();
-  const action = useRetryableAction<ManualApplicationOutcomeRequest>(jobId);
+  const action = useRetryableAction<ManualApplicationOutcomeRequest>(jobId, actions);
+  const mounted = useRef(true);
+  const defaults = useRef(initialValues ?? EMPTY_REFLECTION);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [statusMessage, setStatusMessage] = useState<FeedbackMessage | null>(
     null,
   );
   const form = useForm({
-    defaultValues: {
-      occurredAt: "",
-      note: "",
-    },
+    defaultValues: defaults.current,
+    listeners: { onChange: ({ formApi }) => onValuesChange({ ...formApi.state.values }) },
     validators: {
       onSubmit: ({ value }) => {
         const result = ManualApplicationOutcomeRequestSchema.safeParse(
@@ -427,11 +499,11 @@ export function InterviewReflectionForm({
       } catch {
         return;
       }
+      if (!mounted.current) return;
       action.newAction();
-      formApi.reset({
-        occurredAt: "",
-        note: "",
-      });
+      defaults.current = EMPTY_REFLECTION;
+      formApi.reset(EMPTY_REFLECTION);
+      onValuesChange({ ...EMPTY_REFLECTION });
       setStatusMessage({ message: "Reflection recorded", role: "status" });
     },
   });

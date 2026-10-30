@@ -3,28 +3,39 @@ import { useRef, useState } from "react";
 import { useTenantId } from "../providers/TenantProvider.js";
 import { usePorts } from "../providers/PortsProvider.js";
 
+export type RetryableActionRetention<T extends { requestId: string }> = Map<string, {
+  requestId: string;
+  request: T | null;
+}>;
+
 /** In-memory only: uncertain retries keep the exact submitted private payload. */
-export function useRetryableAction<T extends { requestId: string }>(scope: string) {
+export function useRetryableAction<T extends { requestId: string }>(
+  scope: string,
+  retention?: RetryableActionRetention<T>,
+) {
   const { requestIdentity } = usePorts();
   const tenantId = useTenantId();
-  scope = `${tenantId}:${scope}`;
+  const key = JSON.stringify([tenantId, scope]);
   const [, rerender] = useState(0);
-  const state = useRef<{ scope: string; requestId: string; request: T | null } | null>(null);
-  if (!state.current || state.current.scope !== scope) {
-    state.current = { scope, requestId: requestIdentity.create(), request: null };
+  const local = useRef<RetryableActionRetention<T>>(new Map());
+  const states = retention ?? local.current;
+  let current = states.get(key);
+  if (!current) {
+    current = { requestId: requestIdentity.create(), request: null };
+    states.set(key, current);
   }
-  const current = state.current;
+  const selected = current;
   return {
-    requestId: current.requestId,
-    pending: current.request !== null,
+    requestId: selected.requestId,
+    pending: selected.request !== null,
     prepare(request: T): T {
-      current.request ??= structuredClone(request);
+      selected.request ??= structuredClone(request);
       rerender((value) => value + 1);
-      return current.request;
+      return selected.request;
     },
     newAction() {
-      if (state.current !== current) return;
-      state.current = { scope, requestId: requestIdentity.create(), request: null };
+      if (states.get(key) !== selected) return;
+      states.set(key, { requestId: requestIdentity.create(), request: null });
       rerender((value) => value + 1);
     },
   };
