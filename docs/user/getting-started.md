@@ -252,7 +252,10 @@ release channel. Pulling source changes does not publish an update to installed
 users.
 
 A release that moves to schema 15 uses its new authenticated installer to
-upgrade the original installation. Keep the original installation metadata and
+upgrade the original installation. Direct installed upgrades require an initialized
+schema-14 or schema-15 workspace and its original installation metadata. Older
+schemas must first reach schema 14 through a supported predecessor; preserve the
+workspace and see the [v0.3.1 upgrade notes](https://github.com/ebarti/JobCtrl/releases/tag/v0.3.1). Keep the original installation metadata and
 databases: the installer verifies them, stops instance-owned processes, backs up
 the current application and Temporal databases together, and applies the additive
 migration before checking startup health. Normal cleanup and restart do not
