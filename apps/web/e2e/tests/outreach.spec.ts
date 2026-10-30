@@ -56,6 +56,109 @@ const SENSITIVE_VALUES = [
   "Hi Casey, I saw the platform role and wanted to introduce myself.",
 ];
 
+test("two contact editors retain a stale draft and reconcile explicitly on a narrow viewport", async ({ page }) => {
+  const dbPath = loadE2eDbPath();
+  seedOutreachPlanner(dbPath);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const newer = await page.context().newPage();
+  try {
+    await page.goto(`/outreach/${CONTACT_ID}`);
+    await newer.goto(`/outreach/${CONTACT_ID}`);
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    await newer.getByRole("button", { name: "Edit", exact: true }).click();
+    const staleEditor = page.getByRole("dialog", { name: "Edit contact" });
+    const newerEditor = newer.getByRole("dialog", { name: "Edit contact" });
+    await staleEditor.getByLabel("Employer", { exact: true }).fill("Stale draft employer");
+    await newerEditor.getByRole("combobox", { name: "Role" }).click();
+    await newer.getByRole("option", { name: "Warm intro" }).click();
+    await newerEditor.getByRole("button", { name: "Add fact" }).click();
+    await newerEditor.getByLabel("Value", { exact: true }).last().fill("newer@example.test");
+    const updated = newer.waitForResponse((response) => response.url().endsWith(`/v1/contacts/${CONTACT_ID}`) && response.request().method() === "PATCH");
+    await newerEditor.getByRole("button", { name: "save contact", exact: true }).click();
+    expect((await updated).status()).toBe(200);
+    await expect(newerEditor).toBeHidden();
+    const db = new Database(dbPath);
+    const snapshot = () => ({
+      contact: db.prepare("SELECT * FROM contacts WHERE contact_id = ?").get(CONTACT_ID),
+      facts: db.prepare("SELECT * FROM contact_attributes WHERE contact_id = ? ORDER BY attribute_id").all(CONTACT_ID),
+      events: db.prepare("SELECT * FROM job_events WHERE entity_kind = 'contact' AND entity_ref = ? ORDER BY event_id").all(CONTACT_ID),
+      drafts: db.prepare("SELECT * FROM outreach_drafts WHERE thread_id = ? ORDER BY draft_id").all(CONTACT_THREAD_ID),
+      sends: db.prepare("SELECT * FROM outreach_send_logs WHERE thread_id = ? ORDER BY send_log_id").all(CONTACT_THREAD_ID),
+    });
+    try {
+      const accepted = snapshot();
+      const rejected = page.waitForResponse((response) => response.url().endsWith(`/v1/contacts/${CONTACT_ID}`) && response.request().method() === "PATCH");
+      await staleEditor.getByRole("button", { name: "save contact", exact: true }).click();
+      expect((await rejected).status()).toBe(409);
+      await expect(staleEditor.getByRole("alert")).toContainText("Your draft is retained");
+      await expect(staleEditor.getByLabel("Employer", { exact: true })).toHaveValue("Stale draft employer");
+      expect(snapshot()).toEqual(accepted);
+      await expect(staleEditor.getByRole("button", { name: "save contact", exact: true })).toBeDisabled();
+      const load = staleEditor.getByRole("button", { name: "Load latest contact", exact: true });
+      await load.focus();
+      await page.keyboard.press("Enter");
+      await expect(staleEditor.getByText("newer@example.test", { exact: true })).toBeVisible();
+      const review = staleEditor.getByRole("button", { name: "Reconcile changes", exact: true });
+      await review.focus();
+      await page.keyboard.press("Enter");
+      await expect(staleEditor.getByLabel("Employer", { exact: true })).toHaveValue("Stale draft employer");
+      await expect(staleEditor.getByRole("combobox", { name: "Role" })).toContainText("Warm intro");
+      await expect(staleEditor.getByLabel("Value", { exact: true }).last()).toHaveValue("newer@example.test");
+      expect(await staleEditor.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+      const saved = page.waitForResponse((response) => response.url().endsWith(`/v1/contacts/${CONTACT_ID}`) && response.request().method() === "PATCH");
+      await staleEditor.getByRole("button", { name: "save contact", exact: true }).focus();
+      await page.keyboard.press("Enter");
+      expect((await saved).status()).toBe(200);
+      await expect(staleEditor).toBeHidden();
+      const reconciled = snapshot();
+      expect(reconciled.contact).toMatchObject({ employer: "Stale draft employer", role: "warm_intro" });
+      expect(reconciled.facts).toHaveLength(4);
+      expect(reconciled.facts).toEqual(accepted.facts);
+      expect(reconciled.events).toHaveLength(accepted.events.length + 1);
+      expect(reconciled.drafts).toEqual(accepted.drafts);
+      expect(reconciled.sends).toEqual(accepted.sends);
+      await expect(page.getByRole("heading", { name: "Casey Recruiter", exact: true })).toBeVisible();
+    } finally { db.close(); }
+  } finally { await newer.close(); }
+});
+
+test("reconciliation preserves the newer identity of a duplicate contact fact", async ({ page }) => {
+  const dbPath = loadE2eDbPath();
+  seedOutreachPlanner(dbPath);
+  const newer = await page.context().newPage();
+  try {
+    await page.goto(`/outreach/${CONTACT_ID}`);
+    await newer.goto(`/outreach/${CONTACT_ID}`);
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    await newer.getByRole("button", { name: "Edit", exact: true }).click();
+    const staleEditor = page.getByRole("dialog", { name: "Edit contact" });
+    const newerEditor = newer.getByRole("dialog", { name: "Edit contact" });
+    await staleEditor.getByRole("button", { name: "Remove fact 1" }).click();
+    await newerEditor.getByRole("button", { name: "Add fact" }).click();
+    await newerEditor.getByLabel("Value", { exact: true }).last().fill("casey.recruiter@example.test");
+    const updated = newer.waitForResponse((response) => response.url().endsWith(`/v1/contacts/${CONTACT_ID}`) && response.request().method() === "PATCH");
+    await newerEditor.getByRole("button", { name: "save contact", exact: true }).click();
+    expect((await updated).status()).toBe(200);
+    const db = new Database(dbPath);
+    try {
+      const facts = () => db.prepare("SELECT * FROM contact_attributes WHERE contact_id = ? AND attribute_kind = 'email' ORDER BY attribute_id").all(CONTACT_ID) as Array<{ attribute_id: string }>;
+      const accepted = facts();
+      expect(accepted).toHaveLength(2);
+      const added = accepted.find((fact) => fact.attribute_id !== "attr-e2e-email")!;
+      const rejected = page.waitForResponse((response) => response.url().endsWith(`/v1/contacts/${CONTACT_ID}`) && response.request().method() === "PATCH");
+      await staleEditor.getByRole("button", { name: "save contact", exact: true }).click();
+      expect((await rejected).status()).toBe(409);
+      await staleEditor.getByRole("button", { name: "Load latest contact" }).click();
+      await expect(staleEditor.getByRole("heading", { name: "Latest saved contact" })).toBeVisible();
+      await staleEditor.getByRole("button", { name: "Reconcile changes" }).click();
+      const saved = page.waitForResponse((response) => response.url().endsWith(`/v1/contacts/${CONTACT_ID}`) && response.request().method() === "PATCH");
+      await staleEditor.getByRole("button", { name: "save contact", exact: true }).click();
+      expect((await saved).status()).toBe(200);
+      expect(facts()).toEqual([added]);
+    } finally { db.close(); }
+  } finally { await newer.close(); }
+});
+
 test.afterEach(() => {
   if (acquisitionCase) {
     try {

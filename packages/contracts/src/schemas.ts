@@ -6606,6 +6606,8 @@ export interface ContactSummary {
 }
 
 export interface ContactDetail {
+  /** Opaque canonical edit base; required unchanged on replacement saves. */
+  fingerprint: string;
   contactId: string;
   displayName: string;
   role: ContactRole;
@@ -6656,12 +6658,22 @@ export const ContactCreateRequestSchema = z
   );
 export type ContactCreateRequest = z.infer<typeof ContactCreateRequestSchema>;
 
+// A retained saved fact may predate current input limits or use an unsupported
+// kind. The contact writer validates kind and normalized value if it creates a
+// new fact, after it has checked whether this input retains an existing row.
+const ContactUpdateAttributeInputSchema = z.object({
+  kind: z.string(),
+  value: z.string(),
+  attributeId: z.string().min(1).optional(),
+}).strict();
+
 export const ContactUpdateRequestSchema = z
   .object({
+    expectedFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     role: ContactRoleSchema.optional(),
     employer: contactEmployerField,
     jobId: contactApiJobIdField,
-    attributes: z.array(ContactAttributeInputSchema).max(50).optional(),
+    attributes: z.array(ContactUpdateAttributeInputSchema).max(50).optional(),
   })
   .strict();
 export type ContactUpdateRequest = z.infer<typeof ContactUpdateRequestSchema>;
