@@ -532,6 +532,8 @@ export async function scenario(old, candidate, root) {
         console.log(`${old.descriptor.appVersion}: verifying the documented legacy ownership refusal`);
         await verifyLegacyRefusal({ root, runtime, state, history: path.join(state, "temporal.db"),
           invoke: () => command(candidate.installer, installArgs(candidate, runtime), env, { allowFailure: true }) });
+        await verifyLegacyRefusal({ root, runtime, state, history: path.join(state, "temporal.db"),
+          invoke: () => command(frontend, ["start", "--no-open"], env, { allowFailure: true }) });
         assert.equal(JSON.parse((await command(selector, ["version", "--json"], env)).output).buildId, old.descriptor.buildId);
         await command(selector, ["start", "--no-open"], env);
         assert.equal(JSON.parse((await command(selector, ["status", "--json"], env)).output).status, "running");
@@ -543,7 +545,7 @@ export async function scenario(old, candidate, root) {
         await command(selector, ["stop"], env);
         result.mode = "legacy-ownership-refused";
         result.status = "expected-refusal";
-        checked.push("legacy-ownership-refusal", "data-registry-selector-and-journal-preserved", "released-predecessor-restarts-in-controlled-fixture", "job-and-temporal-history-preserved");
+        checked.push("legacy-ownership-refusal", "signed-homebrew-frontend-refuses-legacy-ownership", "data-registry-selector-and-journal-preserved", "released-predecessor-restarts-in-controlled-fixture", "job-and-temporal-history-preserved");
         return result;
       }
 
