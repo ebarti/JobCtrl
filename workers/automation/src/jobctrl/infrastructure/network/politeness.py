@@ -151,7 +151,8 @@ class PolitenessGateway(PolitenessGatewayPort):
 
     @contextmanager
     def guard(
-        self, url: str, policy: SourcePolicy, budget: RunBudget, *, timeout_seconds: float | None = None
+        self, url: str, policy: SourcePolicy, budget: RunBudget, *, timeout_seconds: float | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> Iterator[PolitenessDecision]:
         if budget.remaining() <= 0:
             yield self._budget_exhausted()
@@ -172,6 +173,7 @@ class PolitenessGateway(PolitenessGatewayPort):
             min_interval_seconds=policy.min_request_interval_seconds,
             max_concurrency=policy.max_concurrent_requests_per_host,
             **({"timeout_seconds": timeout_seconds} if timeout_seconds is not None else {}),
+            **({"cancel_event": cancel_event} if cancel_event is not None else {}),
         ):
             yield PolitenessDecision(True, PolitenessOutcome.ALLOWED, self._ua_header, request_headers=self.request_headers)
 
@@ -278,12 +280,15 @@ class PolitenessSession:
         budget: RunBudget,
         context: PolitenessSourceContext,
         recorder_conn: sqlite3.Connection | None = None,
+        defer_recording: bool = False,
     ) -> None:
         self._gateway = gateway
         self._policy = policy
         self._budget = budget
         self._context = context
         self._recorder_conn = recorder_conn
+        self._defer_recording = defer_recording
+        self._pending_outcomes: list[tuple[PolitenessDecision, str]] = []
 
     @property
     def user_agent(self) -> str:
@@ -312,8 +317,14 @@ class PolitenessSession:
         self._record(decision, url)
 
     @contextmanager
-    def guard(self, url: str) -> Iterator[PolitenessDecision]:
-        with self._gateway.guard(url, self._policy, self._budget) as decision:
+    def guard(
+        self, url: str, *, timeout_seconds: float | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> Iterator[PolitenessDecision]:
+        kwargs = {"timeout_seconds": timeout_seconds} if timeout_seconds is not None else {}
+        if cancel_event is not None:
+            kwargs["cancel_event"] = cancel_event
+        with self._gateway.guard(url, self._policy, self._budget, **kwargs) as decision:
             self._record(decision, url)
             yield decision
 
@@ -331,12 +342,13 @@ class PolitenessSession:
             retry_after_seconds=retry_after_seconds,
             reason="server responded 429/503",
         )
-        record_politeness_outcome(
-            self._recorder_conn, decision=decision, context=self._context, url=url
-        )
+        self._record(decision, url)
 
     def _record(self, decision: PolitenessDecision, url: str) -> None:
         if self._recorder_conn is None or decision.allowed:
+            return
+        if self._defer_recording:
+            self._pending_outcomes.append((decision, url))
             return
         record_politeness_outcome(
             self._recorder_conn,
@@ -344,3 +356,16 @@ class PolitenessSession:
             context=self._context,
             url=url,
         )
+
+    def flush_deferred(self) -> None:
+        """Commit only this session's buffered outcomes, from a clean connection."""
+        if not self._pending_outcomes or self._recorder_conn is None:
+            return
+        if self._recorder_conn.in_transaction:
+            raise RuntimeError("Cannot flush contact outcomes inside another transaction")
+        with self._recorder_conn:
+            for decision, url in self._pending_outcomes:
+                record_politeness_outcome(
+                    self._recorder_conn, decision=decision, context=self._context, url=url,
+                )
+        self._pending_outcomes.clear()

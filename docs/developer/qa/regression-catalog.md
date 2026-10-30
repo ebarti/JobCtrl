@@ -706,6 +706,36 @@ Exercise both discovery producers and the per-job refresh core, and confirm
 the writer can commit while inference is active. These are source and
 transaction checks, not semantic evaluation or live-provider tests.
 
+For contact research acquisition, run locked
+`pytest tests/test_contact_research_workflow.py tests/test_company_briefings.py`
+with the politeness and public-destination suites. Use only fake transports and
+owned synthetic SQLite. Exercise declared and streamed size limits, slowly
+progressing headers and chunked bodies, redirects sharing one deadline,
+admission and active cancellation, cancellation during page parsing and while
+waiting for the result writer, closure, DNS timeouts versus other DNS failures,
+stalled DNS and public-address rebinding.
+Prove failures remain distinguishable from no-candidate results through the
+activity and stored task, do not reach the model, and cannot erase accepted
+proposals. Race two SQLite-backed attempts in both completion orders and confirm
+a candidate while a failed attempt is still in flight. After a rate-limited
+source, allow an independent writer during the next fetch and model call;
+reject an already-open caller transaction, and preserve the shared gateway's
+explicit commit ownership. Inject event-publication failure and verify its
+writer lock is released. Queue a same-host request behind 429 and 503 responses
+for both contact research and company briefings, and prove it cannot start before
+or during the installed `Retry-After` cooldown, but resumes after it expires.
+Verify the contact source outcome labels in the web component.
+In the isolated hosted Linux browser gate, run the oversized-page case in
+`e2e/tests/outreach.spec.ts`. Its owned synthetic fixture executes the actual
+activity in memory with a fake transport and no model call. Its exact persisted
+task row is copied into the browser workspace by a Node seeder that checks the
+independent E2E capability and the actual opened SQLite descriptor. Run
+`test_contact_research_e2e_fixture.py` and `scripts/owned-research-db.test.mjs`
+for missing, mismatched and replaced ownership refusals. The real API must return
+the handed-off failure, and the opened source disclosure must show the actionable
+guidance while the existing proposal remains visible. This handoff is not proof
+that the worker itself wrote the browser workspace database.
+
 For legacy evidence preservation (#1281), run locked
 `pytest tests/test_legacy_evidence_preservation.py tests/test_legacy_evidence_recovery.py tests/test_semantic_storage.py tests/test_v12_activation.py`
 and the full worker and native launcher suites with this checkout's locked

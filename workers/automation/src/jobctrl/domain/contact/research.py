@@ -71,6 +71,11 @@ class ResearchSourceOutcome(str, Enum):
     MANUAL_CAPTURE_REQUIRED = "manual_capture_required"
     REJECTED = "rejected"
     EXTRACTION_FAILED = "extraction_failed"
+    RESPONSE_TOO_LARGE = "response_too_large"
+    ACQUISITION_TIMEOUT = "acquisition_timeout"
+    REDIRECT_FAILED = "redirect_failed"
+    TRANSPORT_FAILED = "transport_failed"
+    HTTP_ERROR = "http_error"
 
 
 @dataclass(frozen=True)
@@ -282,6 +287,16 @@ class ContactResearchTask:
     @property
     def confirmed_count(self) -> int:
         return sum(1 for candidate in self.candidates if candidate.status is CandidateStatus.CONFIRMED)
+
+    @property
+    def has_accepted_result(self) -> bool:
+        """A failed or blocked fetch alone must not claim the result slot."""
+        return bool(self.candidates) or self.status is ResearchTaskStatus.COMPLETED or (
+            self.status is ResearchTaskStatus.NEEDS_REVIEW
+            and any(attempt.outcome in {
+                ResearchSourceOutcome.ALLOWED.value, ResearchSourceOutcome.NO_CANDIDATES.value,
+            } for attempt in self.source_attempts)
+        )
 
     @property
     def needs_review_count(self) -> int:

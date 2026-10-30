@@ -290,6 +290,29 @@ describe("contact research API", () => {
     expect(nameAttr?.provenance.userConfirmed).toBe(false);
   });
 
+  it("returns acquisition failures as source outcomes without hiding existing proposals", async () => {
+    const { app, dbPath } = withTempApp();
+    const { taskId, candidateId } = seedNeedsReviewTask(dbPath);
+    const attempts = ["response_too_large", "acquisition_timeout", "redirect_failed", "transport_failed", "http_error"]
+      .map((outcome) => ({
+        sourceKind: "public_web_page",
+        sourceRef: TEAM_URL,
+        outcome,
+        attemptedAt: "2026-07-06T00:00:00Z",
+        detail: `Recover from ${outcome}`,
+      }));
+    const db = new Database(dbPath);
+    db.prepare("UPDATE contact_research_tasks SET source_attempts_json = ? WHERE tenant_id = 'local' AND task_id = ?")
+      .run(JSON.stringify(attempts), taskId);
+    db.close();
+
+    const detail = (
+      await app.inject({ method: "GET", url: `/v1/contacts/research/${encodeURIComponent(taskId)}` })
+    ).json() as ContactResearchDetailResponse;
+    expect(detail.task.sourceAttempts).toEqual(attempts);
+    expect(detail.task.candidates.map((candidate) => candidate.candidateId)).toEqual([candidateId]);
+  });
+
   it("confirms a candidate into a stored contact (INV-4) preserving provenance", async () => {
     const { app, dbPath } = withTempApp();
     const { taskId, candidateId } = seedNeedsReviewTask(dbPath);

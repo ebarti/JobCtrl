@@ -12,6 +12,8 @@ Heartbeats keep a long run alive.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from concurrent.futures import CancelledError
+import threading
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -76,12 +78,14 @@ async def run_contact_research_activity(
         expected_db_path=payload.expected_db_path,
     )
 
+    cancel_event = threading.Event()
     try:
         return await run_blocking_with_heartbeat(
-            lambda: _run_contact_research(payload),
+            lambda: _run_contact_research(payload, cancel_event=cancel_event),
             starting_message="contact research starting",
             progress_message="contact research still running",
             activity_name="contact:research",
+            on_cancel=cancel_event.set,
         )
     except ApplicationError:
         raise
@@ -93,6 +97,8 @@ async def run_contact_research_activity(
 
 def _run_contact_research(
     payload: RunContactResearchActivityInput,
+    *,
+    cancel_event: threading.Event | None = None,
 ) -> RunContactResearchActivityOutput:
     from jobctrl.database import get_connection
     from jobctrl.domain.contact import (
@@ -110,9 +116,14 @@ def _run_contact_research(
     )
     from jobctrl.infrastructure.events import get_default_publisher
     from jobctrl.infrastructure.llm import LlmAdapter, get_llm_adapter
+    from jobctrl.infrastructure.network import (
+        PolitenessGateway, PolitenessSession, PolitenessSourceContext, RunBudgetCounter,
+    )
     from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
 
     conn = get_connection()
+    if conn.in_transaction:
+        raise RuntimeError("Contact research requires an activity-owned clean connection")
     tenant = TenantId(payload.tenant_id or LOCAL_TENANT)
     job_id = canonical_job_id(str(payload.job_id)) if payload.job_id is not None else None
 
@@ -128,14 +139,25 @@ def _run_contact_research(
     )
     policy = ContactResearchSourcePolicy(domain_allowlist=public_hosts)
     service = ContactResearchService(policy=policy)
-    fetcher = GatewayContactResearchFetcher(policy=policy, recorder_conn=conn)
+    session = PolitenessSession(
+        PolitenessGateway(), policy=policy.source_policy,
+        budget=RunBudgetCounter(policy.source_policy.max_requests_per_run),
+        context=PolitenessSourceContext(stage="contact_research", adapter="contact_research_fetcher"),
+        recorder_conn=conn, defer_recording=True,
+    )
+    fetcher = GatewayContactResearchFetcher(policy=policy, session=session, cancel_event=cancel_event)
     llm = LlmAdapter(default_model=payload.llm_model) if payload.llm_model else get_llm_adapter()
     repository = SqliteContactResearchTaskRepository(conn, publisher=get_default_publisher())
+    def check_cancelled() -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise CancelledError()
+
     use_case = RunContactResearchUseCase(
         repository=repository,
         service=service,
         fetcher=fetcher,
         llm=llm,
+        check_cancelled=check_cancelled,
     )
 
     specs = tuple(
@@ -149,6 +171,7 @@ def _run_contact_research(
         sources=specs,
         model=payload.llm_model,
     )
+    session.flush_deferred()
 
     activity.heartbeat(
         {

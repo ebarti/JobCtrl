@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+from collections.abc import Callable
 
 from jobctrl.domain.contact.research import (
     CandidateStatus,
@@ -130,14 +131,49 @@ class SqliteContactResearchTaskRepository:
     def save(self, tenant_id: TenantId, task: ContactResearchTask) -> ContactResearchTask:
         previous = self.load(tenant_id, task.task_id)
         self._persist_canonical(tenant_id, task)
+        self._publish(tenant_id, task, previous)
+        return task
+
+    def save_attempt_if_unproposed(
+        self, tenant_id: TenantId, task: ContactResearchTask, *,
+        check_cancelled: Callable[[], None] | None = None,
+    ) -> tuple[ContactResearchTask, bool]:
+        """Fence overlapping activity attempts in a short SQLite write transaction."""
+        try:
+            if self._conn.in_transaction:
+                # An earlier gateway outcome may have opened a deferred
+                # transaction. Acquire its writer lock before reading state.
+                self._conn.execute("UPDATE contact_research_tasks SET updated_at = updated_at WHERE 0")
+            else:
+                self._conn.execute("BEGIN IMMEDIATE")
+            if check_cancelled is not None:
+                check_cancelled()
+            previous = self.load(tenant_id, task.task_id)
+            if previous is not None and previous.link != task.link:
+                raise ValueError("Research task already belongs to a different link")
+            if previous is not None and previous.has_accepted_result:
+                self._conn.commit()
+                return previous, False
+            if check_cancelled is not None:
+                check_cancelled()
+            self._persist_canonical(tenant_id, task)
+        except BaseException:
+            self._conn.rollback()
+            raise
+        self._publish(tenant_id, task, previous)
+        return task, True
+
+    def _publish(
+        self, tenant_id: TenantId, task: ContactResearchTask, previous: ContactResearchTask | None,
+    ) -> None:
         try:
             self._emit_events(tenant_id, task, previous)
             self._conn.commit()
         except Exception:  # noqa: BLE001 — event publication must not corrupt the write
+            self._conn.rollback()
             logger.exception(
                 "Failed to emit ContactResearchTask domain events for %s", task.task_id
             )
-        return task
 
     def _persist_canonical(self, tenant_id: TenantId, task: ContactResearchTask) -> None:
         tenant = str(tenant_id)
@@ -235,8 +271,9 @@ class SqliteContactResearchTaskRepository:
                 },
             )
 
-        if task.status is ResearchTaskStatus.NEEDS_REVIEW and previous_status is not (
-            ResearchTaskStatus.NEEDS_REVIEW
+        if task.status is ResearchTaskStatus.NEEDS_REVIEW and (
+            previous_status is not ResearchTaskStatus.NEEDS_REVIEW
+            or (previous is not None and not previous.has_accepted_result and task.has_accepted_result)
         ):
             known = {c.candidate_id for c in previous.candidates} if previous else set()
             for candidate in task.candidates:

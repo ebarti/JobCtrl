@@ -18,6 +18,7 @@ co-locates ``ScrapedJobPosting`` with ``JobBoardScraperPort``).
 from __future__ import annotations
 
 import importlib.metadata
+import threading
 from collections.abc import Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
@@ -177,12 +178,14 @@ class RateLimiterPort(Protocol):
         min_interval_seconds: float,
         max_concurrency: int,
         timeout_seconds: float | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> AbstractContextManager[None]:
         """Acquire a per-host slot, blocking to honor min-interval + concurrency.
 
         The slot is held for the duration of the ``with`` block (one fetch or
         navigation) and released on exit. An optional timeout bounds both
         admission and pacing; expiry raises TimeoutError without outbound work.
+        An optional cancellation event interrupts admission and pacing.
         """
         ...
 
@@ -255,6 +258,9 @@ class PolitenessGatewayPort(Protocol):
         url: str,
         policy: SourcePolicy,
         budget: RunBudget,
+        *,
+        timeout_seconds: float | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> AbstractContextManager[PolitenessDecision]:
         """Context manager wrapping exactly one fetch or navigation.
 
@@ -263,5 +269,6 @@ class PolitenessGatewayPort(Protocol):
         yields the :class:`PolitenessDecision`. On exit it releases the slot. A
         disallowed / budget-exhausted decision yields ``allowed=False`` and
         acquires no slot, so the caller records the outcome and skips.
+        Optional deadline and cancellation parameters bound waiting for the slot.
         """
         ...

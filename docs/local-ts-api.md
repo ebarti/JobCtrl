@@ -344,6 +344,9 @@ dispatch does not require this confirmation because it cannot submit.
 Contact facts, reviewed CSV/vCard import, supervised research, candidate
 confirmation, outreach drafts, send logs, and follow-ups share one route family. See
 [Jobs & Materials](api/jobs-and-materials.md#contacts-and-outreach).
+Research source attempts distinguish acquisition failures from a successful page
+with no candidates; their detailed outcomes and recovery text are returned on
+the research task detail read.
 
 <a id="contact-research"></a>
 <a id="outreach-drafts"></a>

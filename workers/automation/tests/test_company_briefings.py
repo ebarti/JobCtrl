@@ -366,7 +366,7 @@ def test_public_fetch_bounds_and_private_redirects():
         )
 
     oversized = Opener(b"x" * (1024 * 1024 + 2))
-    assert fetcher(oversized).fetch(URL).outcome == "rejected"
+    assert fetcher(oversized).fetch(URL).outcome == "response_too_large"
     assert len(oversized.requests) == 1
     headers = Message()
     headers["Location"] = "http://127.0.0.1/private"
