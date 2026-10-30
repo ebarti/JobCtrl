@@ -243,6 +243,7 @@ test("stable promotion waits for real released curl and Homebrew upgrade evidenc
   assert.ok(names.indexOf(name) < names.indexOf("Seal the smoke-tested formula"));
   assert.match(qualification.run, /node scripts\/released-acquisition-upgrade\.mjs/);
   assert.match(qualification.run, /released-acquisition-upgrade\.json/);
+  assert.doesNotMatch(qualification.run, /--homebrew-source/, "the release must test a genuine Homebrew-to-Homebrew upgrade");
   assert.ok(workflow.jobs["promote-channel-pointer"].needs.includes("smoke-and-verify"));
   assert.match(workflow.jobs["promote-channel-pointer"].if, /needs\['smoke-and-verify'\]\.result == 'success'/);
   assert.match(smoke.steps.find((step) => step.name === "Upload only credential-free smoke and promotion evidence").with.path, /released-acquisition-upgrade\.json/);

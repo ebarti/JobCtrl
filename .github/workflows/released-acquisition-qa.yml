@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   published-upgrade:
-    name: Exercise published curl and Homebrew upgrades
+    name: Exercise published curl and curl-to-Homebrew upgrades
     runs-on: macos-15
     timeout-minutes: 35
     steps:
@@ -51,6 +51,7 @@ jobs:
           export JOBCTRL_RELEASE_PUBLIC_KEY="$(jq -r '.keys["jobctrl-release-v1"]' "$RUNNER_TEMP/published-candidate/release-keys.json")"
           node scripts/released-acquisition-upgrade.mjs \
             --release-dir "$RUNNER_TEMP/published-candidate" \
+            --homebrew-source curl \
             --output "$RUNNER_TEMP/released-acquisition-upgrade.json"
       - name: Retain synthetic upgrade evidence
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

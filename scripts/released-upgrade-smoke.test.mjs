@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { fetchPublishedReleases, interruptReleaseAtCheckpoint, runForwardInterruptionMatrix, selectLatestReleasedVersion, selectUpgradeMode } from "./released-upgrade-smoke.mjs";
 
-import { acquisitionChildEnvironment } from "./released-acquisition-upgrade.mjs";
+import { acquisitionChildEnvironment, runPublishedAcquisitionUpgrades } from "./released-acquisition-upgrade.mjs";
 
 const published = (version, day, extra = {}) => ({ tag_name: `v${version}`, published_at: `2026-10-${day}T10:00:00Z`, draft: false, prerelease: false, ...extra });
 
@@ -77,4 +77,8 @@ test("release metadata uses a fixed GitHub API and withholds credentials from ch
   assert.equal(child.HOME, "/synthetic");
   assert.equal(Object.values(child).includes("synthetic-token"), false);
   await assert.rejects(fetchPublishedReleases(undefined, async () => ({ ok: false, status: 403 })), /HTTP 403/);
+});
+
+test("release acquisition rejects unknown predecessor installation modes", async () => {
+  await assert.rejects(runPublishedAcquisitionUpgrades({ homebrewSource: "unsupported" }), /invalid Homebrew source acquisition/);
 });

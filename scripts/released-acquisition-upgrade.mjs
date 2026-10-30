@@ -214,7 +214,7 @@ async function oldFormula(brew, old, env) {
   throw new Error("cannot find the exact published source formula in the Homebrew tap history");
 }
 
-async function brewScenario(old, candidate, root, baseEnv) {
+async function brewScenario(old, candidate, root, baseEnv, sourceAcquisition = "homebrew") {
   const runtime = path.join(root, "runtime"), state = path.join(root, "state"), cache = path.join(root, "brew-cache");
   for (const directory of [state, cache]) await mkdir(directory, { recursive: true, mode: 0o700 });
   const env = { ...baseEnv, JOBCTRL_RUNTIME_HOME: runtime, JOBCTRL_DIR: state, HOMEBREW_NO_AUTO_UPDATE: "1", HOMEBREW_CACHE: cache };
@@ -224,18 +224,32 @@ async function brewScenario(old, candidate, root, baseEnv) {
   const frontend = "/opt/homebrew/bin/jobctrl";
   let tapCreated = false, installed = false;
   try {
-    const source = await oldFormula(brew, old, env);
+    let context;
+    if (sourceAcquisition === "curl") {
+      // The historical 0.3.0 formula asks Apple's live notarization service
+      // from inside Homebrew's sandbox. Exercise its genuine curl installation
+      // and the genuine newer formula instead; the release gate separately
+      // tests Homebrew-to-Homebrew using the latest stable formula.
+      const bin = path.join(root, "curl-bin");
+      await mkdir(bin, { recursive: true, mode: 0o700 });
+      await run("/bin/bash", [path.join(old.directory, "install.sh"), "--home", runtime, "--bin-dir", bin, "--no-modify-path", "--release-url", pointer(old)], env);
+      context = await prepareWorkspace(old, runtime, state, env, path.join(runtime, "bin", "jobctrl"));
+    }
+    const source = sourceAcquisition === "homebrew" ? await oldFormula(brew, old, env) : null;
     await run(brew, ["tap-new", "--no-git", tap], env); tapCreated = true;
     const repository = (await run(brew, ["--repository", tap], env)).output.trim();
     const formulaPath = path.join(repository, "Formula", "jobctrl.rb");
-    await writeFile(formulaPath, source, { mode: 0o644 });
-    await run(brew, ["install", "--formula", formula], env); installed = true;
-    const context = await prepareWorkspace(old, runtime, state, env, frontend);
+    if (sourceAcquisition === "homebrew") {
+      await writeFile(formulaPath, source, { mode: 0o644 });
+      await run(brew, ["install", "--formula", formula], env); installed = true;
+      context = await prepareWorkspace(old, runtime, state, env, frontend);
+    }
     console.log(`${old.descriptor.appVersion}: upgrading through unmodified Homebrew`);
     await copyFile(path.join(candidate.directory, "jobctrl.rb"), formulaPath);
-    await run(brew, ["upgrade", "--formula", formula], env);
+    await run(brew, [sourceAcquisition === "homebrew" ? "upgrade" : "install", "--formula", formula], env);
+    installed = true;
     const forward = selectUpgradeMode(old.manifest, candidate.manifest, context.schema) === "forward-schema-15";
-    const checks = ["real-formula-upgrade", "real-services", "paired-backup", "job-and-resume-preserved", "temporal-history-preserved", "stop-and-restart"];
+    const checks = [sourceAcquisition === "homebrew" ? "real-formula-upgrade" : "real-formula-install-over-curl-workspace", "real-services", "paired-backup", "job-and-resume-preserved", "temporal-history-preserved", "stop-and-restart"];
     let title = "Preserved acquisition QA job";
     if (forward) {
       const matrix = await runForwardInterruptionMatrix({
@@ -255,7 +269,7 @@ async function brewScenario(old, candidate, root, baseEnv) {
     await run(context.selector, ["stop"], env);
     await run(frontend, ["start", "--no-open"], env);
     await verifyWorkspace(context, candidate, runtime, state, env, expectedSchema, title);
-    return { acquisition: "unmodified-homebrew", sourceSchema: context.schema, targetSchema: expectedSchema, checks };
+    return { acquisition: sourceAcquisition === "homebrew" ? "unmodified-homebrew" : "curl-to-unmodified-homebrew", sourceSchema: context.schema, targetSchema: expectedSchema, checks };
   } finally {
     await run(path.join(runtime, "bin", "jobctrl"), ["stop"], env, { allowFailure: true }).catch(() => {});
     if (installed) await run(brew, ["uninstall", "--formula", formula], env, { allowFailure: true });
@@ -271,7 +285,8 @@ export function acquisitionChildEnvironment(inherited) {
   return env;
 }
 
-export async function runPublishedAcquisitionUpgrades({ releaseDirectory, output, publicKeyBase64, keyId }) {
+export async function runPublishedAcquisitionUpgrades({ releaseDirectory, output, publicKeyBase64, keyId, homebrewSource = "homebrew" }) {
+  assert.ok(homebrewSource === "homebrew" || homebrewSource === "curl", "invalid Homebrew source acquisition");
   assert.equal(process.platform, "darwin"); assert.equal(process.arch, "arm64");
   const raw = Buffer.from(publicKeyBase64 ?? "", "base64"); assert.equal(raw.length, 32);
   assert.match(keyId ?? "", /^[A-Za-z0-9._-]+$/);
@@ -292,7 +307,7 @@ export async function runPublishedAcquisitionUpgrades({ releaseDirectory, output
   const started = performance.now();
   const results = [
     await curlScenario(old, candidate, path.join(root, "curl"), env),
-    await brewScenario(old, candidate, path.join(root, "homebrew"), env),
+    await brewScenario(old, candidate, path.join(root, "homebrew"), env, homebrewSource),
     await curlAlreadyMigratedScenario(old, candidate, path.join(root, "curl-already-migrated"), env),
   ];
   const report = { schemaVersion: 1, status: "passed", sourceBuildId: old.descriptor.buildId, candidateBuildId: candidate.descriptor.buildId, elapsedMs: Math.round(performance.now() - started), results };
@@ -303,8 +318,8 @@ export async function runPublishedAcquisitionUpgrades({ releaseDirectory, output
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const options = new Map();
   for (let index = 2; index < process.argv.length; index += 2) {
-    assert.ok(["--release-dir", "--output"].includes(process.argv[index]) && !options.has(process.argv[index]) && process.argv[index + 1], "invalid or duplicate acquisition-upgrade argument");
+    assert.ok(["--release-dir", "--output", "--homebrew-source"].includes(process.argv[index]) && !options.has(process.argv[index]) && process.argv[index + 1], "invalid or duplicate acquisition-upgrade argument");
     options.set(process.argv[index], process.argv[index + 1]);
   }
-  await runPublishedAcquisitionUpgrades({ releaseDirectory: options.get("--release-dir"), output: options.get("--output"), publicKeyBase64: process.env.JOBCTRL_RELEASE_PUBLIC_KEY, keyId: process.env.JOBCTRL_RELEASE_KEY_ID });
+  await runPublishedAcquisitionUpgrades({ releaseDirectory: options.get("--release-dir"), output: options.get("--output"), publicKeyBase64: process.env.JOBCTRL_RELEASE_PUBLIC_KEY, keyId: process.env.JOBCTRL_RELEASE_KEY_ID, homebrewSource: options.get("--homebrew-source") });
 }
