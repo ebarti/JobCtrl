@@ -9,6 +9,11 @@ on:
       - "scripts/released-upgrade-smoke.mjs"
       - ".github/workflows/released-acquisition-qa.yml"
   workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Optional release workflow run containing an unpublished signed candidate
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -20,6 +25,7 @@ concurrency:
 jobs:
   published-upgrade:
     name: Exercise published curl and curl-to-Homebrew upgrades
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.candidate_run_id == '' }}
     runs-on: macos-15
     timeout-minutes: 35
     steps:
@@ -73,5 +79,57 @@ jobs:
         with:
           name: jobctrl-published-acquisition-qa-${{ github.run_id }}
           path: ${{ runner.temp }}/released-acquisition-upgrade.json
+          if-no-files-found: error
+          retention-days: 14
+
+  signed-candidate-upgrade:
+    name: Qualify an unpublished signed candidate against the latest stable release
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_run_id != '' }}
+    runs-on: macos-15
+    timeout-minutes: 40
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.21.1
+      - name: Validate the candidate run ID
+        env:
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+        run: test -n "$CANDIDATE_RUN_ID" && [[ "$CANDIDATE_RUN_ID" =~ ^[0-9]+$ ]]
+      - name: Download the retained signed candidate
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.candidate_run_id }}
+          name: jobctrl-release-candidate-${{ inputs.candidate_run_id }}
+          path: ${{ runner.temp }}/release
+      - name: Verify the signed candidate checksums
+        run: cd "$RUNNER_TEMP/release" && shasum -a 256 -c SHA256SUMS
+      - name: Obtain the published predecessor's public verification key
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/trust"
+          gh release download --repo "$GITHUB_REPOSITORY" --pattern release-keys.json --dir "$RUNNER_TEMP/trust"
+      - name: Qualify the actual released predecessor and signed candidate
+        env:
+          JOBCTRL_RELEASE_METADATA_TOKEN: ${{ github.token }}
+        run: |
+          export JOBCTRL_RELEASE_KEY_ID="$(jq -r '.manifestSigning.keyId' packaging/distribution/signing-policy.json)"
+          export JOBCTRL_RELEASE_PUBLIC_KEY="$(jq -r --arg id "$JOBCTRL_RELEASE_KEY_ID" '.keys[$id]' "$RUNNER_TEMP/trust/release-keys.json")"
+          test -n "$JOBCTRL_RELEASE_PUBLIC_KEY" && test "$JOBCTRL_RELEASE_PUBLIC_KEY" != null
+          node scripts/released-upgrade-smoke.mjs \
+            --release-dir "$RUNNER_TEMP/release" \
+            --output "$RUNNER_TEMP/released-upgrade-smoke.json"
+      - name: Retain the synthetic qualification report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: jobctrl-signed-candidate-qualification-${{ github.run_id }}
+          path: ${{ runner.temp }}/released-upgrade-smoke.json
           if-no-files-found: error
           retention-days: 14

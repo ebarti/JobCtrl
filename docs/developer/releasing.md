@@ -190,7 +190,12 @@ protocol-1/schema-14 to protocol-2/schema-15 transition, it verifies the old
 controller's refusal, interrupts the signed new installer both before and after
 selector handoff, preserves later application and Temporal WAL writes through
 forward recovery, and checks that cross-protocol rollback is refused. Both cases check
-real service readiness, retained job data and Temporal history.
+real service readiness, retained job data and Temporal history. The explicit
+v0.3.1-to-v0.4.0 exception reports `qualified-with-legacy-refusal`: it verifies
+that the real installer refuses an untracked legacy runtime, preserves the data
+pair, registry, selector and journal, and that the predecessor can restart in the
+controlled fixture. That result does **not** qualify a direct user upgrade.
+Other version pairs still require their positive upgrade qualification.
 
 The harness resolves that source from GitHub's published stable releases, so the
 source advances automatically after each release. Drafts, prereleases and the
@@ -220,6 +225,13 @@ forward recovery with later application and Temporal WAL commits, modeled
 revocation policy, and rollback refusal. The curl case uses the legacy Temporal
 history location; the Homebrew case uses the current location. A separate curl
 case also checks an already-migrated schema-15 workspace with legacy history.
+For the v0.3.1-to-v0.4.0 exception, the real curl and Homebrew paths instead
+first verify the documented refusal and preservation. Separate synthetic
+workspaces, initialized without running an untracked predecessor supervisor and
+given a real source-ownership witness, exercise both signed acquisition paths
+and the interruption matrix. Those fixtures test supported, scoped migrations;
+they are not a recovery method or proof that a normal v0.3.1 installation can
+upgrade. The report records both the refusal and the scoped successes.
 The signed binary's
 opt-in test checkpoint can only pause its own process in a marked temporary
 fixture; it never changes migration or release admission decisions.
@@ -244,8 +256,12 @@ protocol-2/schema-15 transition. Historical controllers, including v0.3.1,
 must reject the protocol-2-only target before backup or journaling. Run the
 new release's verified installer against the original runtime home; retain the
 predecessor receipt and immutable payload as historical authentication evidence.
-The predecessor is never executed during this forward path. No bridge catalog,
-bridge release, or reboot is a migration prerequisite.
+The predecessor is never executed during this forward path. Normally used
+v0.3.1 installations have an untracked runtime registry that prevents the new
+controller from proving process shutdown. The v0.4.0 installer refuses those
+upgrades; no self-service recovery is documented. Reboot alone does not resolve
+the refusal. For a workspace with verified ownership, no bridge catalog, bridge
+release, or reboot is a migration prerequisite.
 
 Before taking a paired, SQLite-online backup, the new controller requests clean
 exit for instance-owned processes and descendants, kills verified leftovers only

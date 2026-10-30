@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
-import { cp, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { fetchPublishedReleases, interruptReleaseAtCheckpoint, runForwardInterruptionMatrix, scenario, selectLatestReleasedVersion, selectUpgradeMode } from "./released-upgrade-smoke.mjs";
+import { fetchPublishedReleases, interruptReleaseAtCheckpoint, isKnownLegacyRefusal, runForwardInterruptionMatrix, scenario, selectLatestReleasedVersion, selectUpgradeMode, verifyLegacyRefusal } from "./released-upgrade-smoke.mjs";
 
-import { acquisitionChildEnvironment, runPublishedAcquisitionUpgrades } from "./released-acquisition-upgrade.mjs";
+import { acquisitionChildEnvironment, prepareScopedWorkspace, runPublishedAcquisitionUpgrades } from "./released-acquisition-upgrade.mjs";
 
 const published = (version, day, extra = {}) => ({ tag_name: `v${version}`, published_at: `2026-10-${day}T10:00:00Z`, draft: false, prerelease: false, ...extra });
 
@@ -52,6 +53,38 @@ test("released upgrade qualification distinguishes the forward schema transition
   assert.throws(() => selectUpgradeMode(protocol(1, 1), protocol(1, 1), 0), /invalid source schema/);
 });
 
+test("legacy refusal is limited to the documented release pair", () => {
+  const release = (appVersion) => ({ descriptor: { appVersion } });
+  assert.equal(isKnownLegacyRefusal(release("0.3.1"), release("0.4.0"), "forward-schema-15"), true);
+  assert.equal(isKnownLegacyRefusal(release("0.3.1"), release("0.4.1"), "forward-schema-15"), false);
+  assert.equal(isKnownLegacyRefusal(release("0.3.0"), release("0.4.0"), "forward-schema-15"), false);
+  assert.equal(isKnownLegacyRefusal(release("0.3.1"), release("0.4.0"), "compatible"), false);
+});
+
+test("legacy refusal proof requires the real error and preserves both data and runtime evidence", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-legacy-refusal-proof-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const runtime = path.join(root, "runtime"), state = path.join(root, "state");
+  await mkdir(path.join(runtime, "bin"), { recursive: true });
+  await mkdir(state, { recursive: true });
+  const canonical = await realpath(state);
+  const id = createHash("sha256").update(canonical).digest("hex");
+  const registry = path.join(runtime, "instances", id, "state.json");
+  await mkdir(path.dirname(registry), { recursive: true });
+  const app = path.join(state, "jobctrl.db"), history = path.join(state, "temporal.db");
+  for (const file of [app, history, registry, path.join(runtime, "active.json"), path.join(runtime, "bin", "jobctrl")]) await writeFile(file, "synthetic evidence");
+  const refusal = { code: 1, output: "this legacy runtime has no durable child-ownership record" };
+  const proof = { root, runtime, state, history };
+  await verifyLegacyRefusal({ ...proof, invoke: async () => refusal });
+  await assert.rejects(verifyLegacyRefusal({ ...proof, invoke: async () => ({ code: 0, output: refusal.output }) }), /explicitly refuse/);
+  await assert.rejects(verifyLegacyRefusal({ ...proof, invoke: async () => ({ code: 1, output: "different failure" }) }), /actual ownership problem/);
+  await assert.rejects(verifyLegacyRefusal({ ...proof, invoke: async () => { await writeFile(app, "changed"); return refusal; } }), /must preserve/);
+  await assert.rejects(verifyLegacyRefusal({ ...proof, invoke: async () => { await writeFile(registry, "changed"); return refusal; } }), /must preserve/);
+  let invoked = false;
+  await assert.rejects(verifyLegacyRefusal({ ...proof, root: "/", invoke: async () => { invoked = true; return refusal; } }), /isolated temporary workspace/);
+  assert.equal(invoked, false);
+});
+
 test("verification modules load without installing application development dependencies", async (context) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "jobctrl-proof-no-dependencies-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
@@ -94,4 +127,8 @@ test("release metadata uses a fixed GitHub API and withholds credentials from ch
 
 test("release acquisition rejects unknown predecessor installation modes", async () => {
   await assert.rejects(runPublishedAcquisitionUpgrades({ homebrewSource: "unsupported" }), /invalid Homebrew source acquisition/);
+});
+
+test("scoped acquisition qualification refuses a non-fixture workspace before starting processes", async () => {
+  await assert.rejects(prepareScopedWorkspace({ descriptor: { buildId: "synthetic" } }, "/", "/", "/", {}), /isolated temporary workspace/);
 });

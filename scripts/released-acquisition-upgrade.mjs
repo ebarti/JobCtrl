@@ -8,10 +8,12 @@ import { createHash, createPublicKey } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { chmod, copyFile, mkdir, mkdtemp, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
+import net from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
 import { verifyReleaseDescriptorSignature } from "./distribution-homebrew.render.bundle.mjs";
-import { fetchPublishedReleases, installArgs, runForwardInterruptionMatrix, selectLatestReleasedVersion, selectUpgradeMode } from "./released-upgrade-smoke.mjs";
+import { fetchPublishedReleases, installArgs, isKnownLegacyRefusal, runForwardInterruptionMatrix, selectLatestReleasedVersion, selectUpgradeMode, verifyLegacyRefusal } from "./released-upgrade-smoke.mjs";
 import { establishSourceOwnership } from "./released-source-ownership.mjs";
 
 const readJson = async (file) => JSON.parse(await readFile(file, "utf8"));
@@ -95,6 +97,73 @@ c=sqlite3.connect(sys.argv[1]); c.execute("INSERT INTO jobs(tenant_id,job_id,url
   return context;
 }
 
+// Build a separate synthetic source-owned workspace without starting the
+// untracked predecessor supervisor. This qualifies the supported scoped path;
+// it is not a recovery procedure for an actual legacy installation.
+export async function prepareScopedWorkspace(old, root, runtime, state, env) {
+  const fixture = await realpath(root), temp = await realpath(os.tmpdir());
+  const within = (parent, child) => {
+    const relative = path.relative(parent, child);
+    return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  };
+  assert.ok(within(temp, fixture) && within(fixture, await realpath(runtime)) && within(fixture, await realpath(state)), "scoped qualification requires an isolated temporary workspace");
+  const oldPayload = path.join(runtime, "releases", old.descriptor.buildId, "payload");
+  const python = path.join(oldPayload, "python", "bin", "python3");
+  let temporal = path.join(oldPayload, "temporal", "temporal");
+  const selector = path.join(runtime, "bin", "jobctrl");
+  const historyPath = path.join(state, "temporal", "temporal.db");
+  await mkdir(path.dirname(historyPath), { recursive: true, mode: 0o700 });
+  const seed = `import sys
+from jobctrl.database import create_exact_v14_database
+c=create_exact_v14_database(sys.argv[1]); c.execute("INSERT INTO jobs(tenant_id,job_id,url,title) VALUES('local','019ed290-3340-7000-8000-000000000892','https://jobs.example/acquisition-qa','Preserved acquisition QA job')"); c.commit(); c.close()`;
+  await run(python, ["-I", "-B", "-c", seed, path.join(state, "jobctrl.db")], env);
+  const temporalCommand = (args) => run(temporal, [...args, "--address", "127.0.0.1:7233", "--disable-config-file", "--disable-config-env"], env);
+  const listener = net.createServer();
+  await new Promise((resolve, reject) => { listener.once("error", reject); listener.listen(0, "127.0.0.1", resolve); });
+  const seedPort = listener.address().port;
+  await new Promise((resolve, reject) => listener.close((error) => error ? reject(error) : resolve()));
+  const seedTemporalCommand = (args, options) => run(temporal, [...args, "--address", `127.0.0.1:${seedPort}`, "--disable-config-file", "--disable-config-env"], env, options);
+  const workflowId = `jobctrl-scoped-upgrade-qa-${path.basename(path.dirname(state))}`;
+  const child = spawn(temporal, ["server", "start-dev", "--ip", "127.0.0.1", "--port", String(seedPort), "--db-filename", historyPath, "--headless", "--log-level", "error", "--disable-config-file", "--disable-config-env"], { env, stdio: ["ignore", "pipe", "pipe"] });
+  let output = "";
+  for (const stream of [child.stdout, child.stderr]) stream.on("data", (chunk) => { output = (output + chunk).slice(-8192); });
+  const finished = new Promise((resolve, reject) => { child.once("error", reject); child.once("close", (code, signal) => resolve({ code, signal })); });
+  let history;
+  try {
+    const deadline = Date.now() + 60_000;
+    let healthy = false;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null || child.signalCode !== null) throw new Error(`synthetic Temporal exited before readiness: ${output}`);
+      const holders = await run("/usr/sbin/lsof", ["-nP", `-iTCP:${seedPort}`, "-sTCP:LISTEN", "-Fp"], env, { allowFailure: true });
+      const holderPids = holders.output.split(/\r?\n/).filter((line) => /^p[0-9]+$/.test(line));
+      if (holderPids.length === 0) { await delay(250); continue; }
+      assert.deepEqual(holderPids, [`p${child.pid}`], "synthetic Temporal port belongs to a different process");
+      const health = await seedTemporalCommand(["operator", "cluster", "health", "--command-timeout", "2s", "--output", "json"], { allowFailure: true });
+      if (health.code === 0) { healthy = true; break; }
+      await delay(250);
+    }
+    assert.ok(healthy, `synthetic Temporal did not become healthy: ${output}`);
+    await seedTemporalCommand(["workflow", "start", "--workflow-id", workflowId, "--type", "JobCtrlUpgradeSmoke", "--task-queue", "jobctrl-upgrade-unused", "--input", "{}"]);
+    await seedTemporalCommand(["workflow", "terminate", "--workflow-id", workflowId, "--reason", "Owned scoped upgrade QA fixture"]);
+    history = JSON.parse((await seedTemporalCommand(["workflow", "describe", "--workflow-id", workflowId, "--output", "json"])).output).workflowExecutionInfo;
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+    let timer;
+    try { await Promise.race([finished, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("synthetic Temporal did not stop")), 15_000); })]); }
+    catch (error) { child.kill("SIGKILL"); await finished.catch(() => {}); throw error; }
+    finally { clearTimeout(timer); }
+  }
+  await writeFile(path.join(state, "qa-external-resume.txt"), "Synthetic external resume\n", { mode: 0o600 });
+  await establishSourceOwnership({ sourceBinary: process.env.JOBCTRL_RELEASE_QA_SOURCE_BINARY, root, runtime, state, history: historyPath, python, env });
+  const context = { selector, python, temporalCommand, workflowId, history, historyPath, schema: 14 };
+  context.useCandidate = (candidate) => {
+    const payload = path.join(runtime, "releases", candidate.descriptor.buildId, "payload");
+    context.python = path.join(payload, "python", "bin", "python3");
+    temporal = path.join(payload, "temporal", "temporal");
+  };
+  return context;
+}
+
 async function verifyWorkspace(context, candidate, runtime, state, env, expectedSchema, expectedTitle = "Preserved acquisition QA job") {
   const active = await readJson(path.join(runtime, "active.json"));
   assert.equal(active.receipt.buildId, candidate.descriptor.buildId);
@@ -115,6 +184,19 @@ async function verifyWorkspace(context, candidate, runtime, state, env, expected
   for (const file of pair.files) assert.equal(await hash(path.join(pairDir, file.name)), file.sha256);
 }
 
+async function verifyPreservedPredecessor(context, old, state, env) {
+  assert.equal(JSON.parse((await run(context.selector, ["version", "--json"], env)).output).buildId, old.descriptor.buildId);
+  await run(context.selector, ["start", "--no-open"], env);
+  assert.equal(JSON.parse((await run(context.selector, ["status", "--json"], env)).output).status, "running");
+  const query = "import json,sqlite3,sys; c=sqlite3.connect(sys.argv[1]); print(json.dumps([c.execute('PRAGMA user_version').fetchone()[0],c.execute(\"SELECT title FROM jobs WHERE url='https://jobs.example/acquisition-qa'\").fetchone()[0]])); c.close()";
+  assert.deepEqual(JSON.parse((await run(context.python, ["-I", "-B", "-c", query, path.join(state, "jobctrl.db")], env)).output), [14, "Preserved acquisition QA job"]);
+  assert.equal(await readFile(path.join(state, "qa-external-resume.txt"), "utf8"), "Synthetic external resume\n");
+  const history = JSON.parse((await context.temporalCommand(["workflow", "describe", "--workflow-id", context.workflowId, "--output", "json"])).output).workflowExecutionInfo;
+  assert.equal(history.execution.runId, context.history.execution.runId);
+  assert.equal(history.historyLength, context.history.historyLength);
+  await run(context.selector, ["stop"], env);
+}
+
 async function useLegacyHistory(state) {
   const directory = path.join(state, "temporal");
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -125,25 +207,33 @@ async function useLegacyHistory(state) {
   return path.join(directory, "temporal.db");
 }
 
-async function curlScenario(old, candidate, root, baseEnv) {
+async function curlScenario(old, candidate, root, baseEnv, scoped = false) {
   const home = path.join(root, "home"), runtime = path.join(root, "runtime"), state = path.join(root, "state"), bin = path.join(root, "bin");
   for (const directory of [home, state, bin]) await mkdir(directory, { recursive: true, mode: 0o700 });
   const env = { ...baseEnv, HOME: home, JOBCTRL_RUNTIME_HOME: runtime, JOBCTRL_DIR: state };
   const selector = path.join(runtime, "bin", "jobctrl");
   try {
     await run("/bin/bash", [path.join(old.directory, "install.sh"), "--home", runtime, "--bin-dir", bin, "--no-modify-path", "--release-url", pointer(old)], env);
-    const context = await prepareWorkspace(old, runtime, state, env, selector);
+    const context = scoped ? await prepareScopedWorkspace(old, root, runtime, state, env) : await prepareWorkspace(old, runtime, state, env, selector);
     console.log(`${old.descriptor.appVersion}: upgrading through the released curl bootstrap`);
     const upgrade = [path.join(candidate.directory, "install.sh"), "--home", runtime, "--bin-dir", bin, "--no-modify-path", "--release-url", pointer(candidate)];
     const forward = selectUpgradeMode(old.manifest, candidate.manifest, context.schema) === "forward-schema-15";
+    if (!scoped && isKnownLegacyRefusal(old, candidate, forward ? "forward-schema-15" : "compatible")) {
+      await verifyLegacyRefusal({ root, runtime, state, history: path.join(state, "temporal.db"), external: [path.join(state, "qa-external-resume.txt")],
+        invoke: () => run("/bin/bash", upgrade, env, { allowFailure: true }) });
+      await verifyPreservedPredecessor(context, old, state, env);
+      return { acquisition: "curl", status: "expected-refusal", sourceSchema: 14, targetSchema: 14,
+        checks: ["released-bootstrap-refuses-untracked-legacy-ownership", "data-registry-selector-and-journal-preserved", "released-predecessor-restarts-in-controlled-fixture", "job-resume-and-temporal-history-preserved"] };
+    }
     const checks = ["released-bootstrap", "real-services", "paired-backup", "job-and-resume-preserved", "temporal-history-preserved", "stop-and-restart"];
     let title = "Preserved acquisition QA job";
     if (forward) {
       // Earlier source checkouts stored the same history one level deeper.
       // Recreate that owned, stopped layout to qualify its real upgrade path.
-      const historyPath = await useLegacyHistory(state);
-      await establishSourceOwnership({ sourceBinary: process.env.JOBCTRL_RELEASE_QA_SOURCE_BINARY, root, runtime, state, history: historyPath, python: context.python, env });
+      const historyPath = scoped ? context.historyPath : await useLegacyHistory(state);
+      if (!scoped) await establishSourceOwnership({ sourceBinary: process.env.JOBCTRL_RELEASE_QA_SOURCE_BINARY, root, runtime, state, history: historyPath, python: context.python, env });
       checks.push("synthetic-source-owner-established-for-legacy-history");
+      if (scoped) checks.push("synthetic-scoped-workspace-created-without-running-legacy-supervisor");
       const matrix = await runForwardInterruptionMatrix({
         old, candidate, root, runtime, state, env, selector, acquisition: "curl", readinessFailure: true,
         historyPath, jobUrl: "https://jobs.example/acquisition-qa",
@@ -161,7 +251,7 @@ async function curlScenario(old, candidate, root, baseEnv) {
     await run(selector, ["stop"], env);
     await run(selector, ["start", "--no-open"], env);
     await verifyWorkspace(context, candidate, runtime, state, env, expectedSchema, title);
-    return { acquisition: "curl", sourceSchema: context.schema, targetSchema: expectedSchema, checks };
+    return { acquisition: scoped ? "curl-scoped-synthetic" : "curl", status: "upgraded", sourceSchema: context.schema, targetSchema: expectedSchema, checks };
   } finally { await run(selector, ["stop"], env, { allowFailure: true }).catch(() => {}); }
 }
 
@@ -178,11 +268,12 @@ async function curlAlreadyMigratedScenario(old, candidate, root, baseEnv) {
   const selector = path.join(runtime, "bin", "jobctrl");
   try {
     await run("/bin/bash", [path.join(old.directory, "install.sh"), "--home", runtime, "--bin-dir", bin, "--no-modify-path", "--release-url", pointer(old)], env);
-    const context = await prepareWorkspace(old, runtime, state, env, selector);
+    const known = isKnownLegacyRefusal(old, candidate, "forward-schema-15");
+    const context = known ? await prepareScopedWorkspace(old, root, runtime, state, env) : await prepareWorkspace(old, runtime, state, env, selector);
     if (selectUpgradeMode(old.manifest, candidate.manifest, context.schema) !== "forward-schema-15") {
       return { acquisition: "curl-already-migrated", status: "not-applicable" };
     }
-    const history = await useLegacyHistory(state);
+    const history = known ? context.historyPath : await useLegacyHistory(state);
     await run(candidate.installer, installArgs(candidate, runtime, true, "curl"), env);
     const payload = path.join(runtime, "releases", candidate.descriptor.buildId, "payload");
     const python = path.join(payload, "python", "bin", "python3");
@@ -190,7 +281,7 @@ async function curlAlreadyMigratedScenario(old, candidate, root, baseEnv) {
     const appInode = (await stat(app)).ino, historyInode = (await stat(history)).ino;
     const migrate = "import sqlite3,sys; from jobctrl.infrastructure.migrations.schema_v15 import upgrade_exact_v14_schema_to_v15; c=sqlite3.connect(sys.argv[1]); upgrade_exact_v14_schema_to_v15(c); c.close()";
     await run(python, ["-I", "-B", "-c", migrate, app], env);
-    await establishSourceOwnership({ sourceBinary: process.env.JOBCTRL_RELEASE_QA_SOURCE_BINARY, root, runtime, state, history, python: context.python, env });
+    if (!known) await establishSourceOwnership({ sourceBinary: process.env.JOBCTRL_RELEASE_QA_SOURCE_BINARY, root, runtime, state, history, python: context.python, env });
     await run("/bin/bash", [path.join(candidate.directory, "install.sh"), "--home", runtime, "--bin-dir", bin, "--no-modify-path", "--release-url", pointer(candidate)], env);
     context.useCandidate(candidate);
     await verifyWorkspace(context, candidate, runtime, state, env, 15);
@@ -199,7 +290,7 @@ async function curlAlreadyMigratedScenario(old, candidate, root, baseEnv) {
     await run(selector, ["stop"], env);
     await run(selector, ["start", "--no-open"], env);
     await verifyWorkspace(context, candidate, runtime, state, env, 15);
-    return { acquisition: "curl-already-migrated", sourceSchema: 15, targetSchema: 15, checks: ["real-installer-accepts-already-migrated-workspace", "synthetic-source-owner-established-for-legacy-history", "legacy-history-path-and-inode-preserved", "job-resume-and-workflow-preserved", "paired-backup", "stop-and-restart"] };
+    return { acquisition: "curl-already-migrated", status: "upgraded", sourceSchema: 15, targetSchema: 15, checks: ["real-installer-accepts-already-migrated-workspace", "synthetic-source-owner-established-for-legacy-history", "legacy-history-path-and-inode-preserved", "job-resume-and-workflow-preserved", "paired-backup", "stop-and-restart"] };
   } finally { await run(selector, ["stop"], env, { allowFailure: true }).catch(() => {}); }
 }
 
@@ -218,7 +309,7 @@ async function oldFormula(brew, old, env) {
   throw new Error("cannot find the exact published source formula in the Homebrew tap history");
 }
 
-async function brewScenario(old, candidate, root, baseEnv, sourceAcquisition = "homebrew") {
+async function brewScenario(old, candidate, root, baseEnv, sourceAcquisition = "homebrew", scoped = false) {
   const runtime = path.join(root, "runtime"), state = path.join(root, "state"), cache = path.join(root, "brew-cache");
   for (const directory of [state, cache]) await mkdir(directory, { recursive: true, mode: 0o700 });
   const env = { ...baseEnv, JOBCTRL_RUNTIME_HOME: runtime, JOBCTRL_DIR: state, HOMEBREW_NO_AUTO_UPDATE: "1", HOMEBREW_CACHE: cache };
@@ -237,7 +328,7 @@ async function brewScenario(old, candidate, root, baseEnv, sourceAcquisition = "
       const bin = path.join(root, "curl-bin");
       await mkdir(bin, { recursive: true, mode: 0o700 });
       await run("/bin/bash", [path.join(old.directory, "install.sh"), "--home", runtime, "--bin-dir", bin, "--no-modify-path", "--release-url", pointer(old)], env);
-      context = await prepareWorkspace(old, runtime, state, env, path.join(runtime, "bin", "jobctrl"));
+      context = scoped ? await prepareScopedWorkspace(old, root, runtime, state, env) : await prepareWorkspace(old, runtime, state, env, path.join(runtime, "bin", "jobctrl"));
     }
     const source = sourceAcquisition === "homebrew" ? await oldFormula(brew, old, env) : null;
     await run(brew, ["tap-new", "--no-git", tap], env); tapCreated = true;
@@ -246,24 +337,33 @@ async function brewScenario(old, candidate, root, baseEnv, sourceAcquisition = "
     if (sourceAcquisition === "homebrew") {
       await writeFile(formulaPath, source, { mode: 0o644 });
       await run(brew, ["install", "--formula", formula], env); installed = true;
-      context = await prepareWorkspace(old, runtime, state, env, frontend);
+      context = scoped ? await prepareScopedWorkspace(old, root, runtime, state, env) : await prepareWorkspace(old, runtime, state, env, frontend);
     }
     console.log(`${old.descriptor.appVersion}: upgrading through unmodified Homebrew`);
     await copyFile(path.join(candidate.directory, "jobctrl.rb"), formulaPath);
     await run(brew, [sourceAcquisition === "homebrew" ? "upgrade" : "install", "--formula", formula], env);
     installed = true;
     const forward = selectUpgradeMode(old.manifest, candidate.manifest, context.schema) === "forward-schema-15";
+    if (!scoped && isKnownLegacyRefusal(old, candidate, forward ? "forward-schema-15" : "compatible")) {
+      await verifyLegacyRefusal({ root, runtime, state, history: path.join(state, "temporal.db"), external: [path.join(state, "qa-external-resume.txt")],
+        invoke: () => run(frontend, ["start", "--no-open"], env, { allowFailure: true }) });
+      await verifyPreservedPredecessor(context, old, state, env);
+      return { acquisition: sourceAcquisition === "homebrew" ? "unmodified-homebrew" : "curl-to-unmodified-homebrew", status: "expected-refusal", sourceSchema: 14, targetSchema: 14,
+        checks: ["new-formula-frontend-refuses-untracked-legacy-ownership", "data-registry-selector-and-journal-preserved", "released-predecessor-selector-restarts-in-controlled-fixture", "job-resume-and-temporal-history-preserved"] };
+    }
     const checks = [sourceAcquisition === "homebrew" ? "real-formula-upgrade" : "real-formula-install-over-curl-workspace", "real-services", "paired-backup", "job-and-resume-preserved", "temporal-history-preserved", "stop-and-restart"];
     let title = "Preserved acquisition QA job";
     if (forward) {
       const matrix = await runForwardInterruptionMatrix({
         old, candidate, root, runtime, state, env, selector: context.selector, acquisition: "homebrew", readinessFailure: true,
+        ...(scoped ? { historyPath: context.historyPath } : {}),
         jobUrl: "https://jobs.example/acquisition-qa",
         payload: path.join(runtime, "releases", candidate.descriptor.buildId, "payload"),
         initial: { executable: frontend, args: ["start", "--no-open"] },
       });
       title = matrix.title;
       checks.push(...matrix.checks);
+      if (scoped) checks.push("synthetic-scoped-workspace-created-without-running-legacy-supervisor");
     } else {
       await run(frontend, ["start", "--no-open"], env);
     }
@@ -273,7 +373,7 @@ async function brewScenario(old, candidate, root, baseEnv, sourceAcquisition = "
     await run(context.selector, ["stop"], env);
     await run(frontend, ["start", "--no-open"], env);
     await verifyWorkspace(context, candidate, runtime, state, env, expectedSchema, title);
-    return { acquisition: sourceAcquisition === "homebrew" ? "unmodified-homebrew" : "curl-to-unmodified-homebrew", sourceSchema: context.schema, targetSchema: expectedSchema, checks };
+    return { acquisition: scoped ? "homebrew-scoped-synthetic" : sourceAcquisition === "homebrew" ? "unmodified-homebrew" : "curl-to-unmodified-homebrew", status: "upgraded", sourceSchema: context.schema, targetSchema: expectedSchema, checks };
   } finally {
     await run(path.join(runtime, "bin", "jobctrl"), ["stop"], env, { allowFailure: true }).catch(() => {});
     if (installed) await run(brew, ["uninstall", "--formula", formula], env, { allowFailure: true });
@@ -312,9 +412,14 @@ export async function runPublishedAcquisitionUpgrades({ releaseDirectory, output
   const results = [
     await curlScenario(old, candidate, path.join(root, "curl"), env),
     await brewScenario(old, candidate, path.join(root, "homebrew"), env, homebrewSource),
-    await curlAlreadyMigratedScenario(old, candidate, path.join(root, "curl-already-migrated"), env),
   ];
-  const report = { schemaVersion: 1, status: "passed", sourceBuildId: old.descriptor.buildId, candidateBuildId: candidate.descriptor.buildId, elapsedMs: Math.round(performance.now() - started), results };
+  if (isKnownLegacyRefusal(old, candidate, "forward-schema-15")) {
+    results.push(await curlScenario(old, candidate, path.join(root, "curl-scoped"), env, true));
+    results.push(await brewScenario(old, candidate, path.join(root, "homebrew-scoped"), env, homebrewSource, true));
+  }
+  results.push(await curlAlreadyMigratedScenario(old, candidate, path.join(root, "curl-already-migrated"), env));
+  const status = results.some((result) => result.status === "expected-refusal") ? "qualified-with-legacy-refusal" : "passed";
+  const report = { schemaVersion: 1, status, sourceBuildId: old.descriptor.buildId, candidateBuildId: candidate.descriptor.buildId, elapsedMs: Math.round(performance.now() - started), results };
   await writeFile(output, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
   return report;
 }

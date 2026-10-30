@@ -101,6 +101,16 @@ test("Homebrew render uses the exact signed curl ZIP identity without a toolchai
   );
   assert.deepEqual(rendered.publicationInputs, releasePublicationInputs({ descriptorRaw, descriptorUrl }));
   await execFileAsync("/usr/bin/ruby", ["-c", formulaPath]);
+  const caveatsDriver = `class Formula
+    def self.method_missing(*); end
+    def self.test; end
+    def version; ENV.fetch("JOBCTRL_TEST_VERSION"); end
+  end
+  load ARGV.fetch(0)
+  print Jobctrl.new.caveats`;
+  const caveatsFor = async (version) => (await execFileAsync("/usr/bin/ruby", ["-e", caveatsDriver, formulaPath], { env: { ...process.env, JOBCTRL_TEST_VERSION: version } })).stdout;
+  assert.match(await caveatsFor("0.4.0"), /Upgrades from normally used JobCtrl 0\.3\.1 workspaces are currently\s+blocked/);
+  assert.doesNotMatch(await caveatsFor("0.4.1"), /Upgrades from normally used JobCtrl 0\.3\.1/);
 });
 
 test("Homebrew promotion verification fails closed without P6 signature and published-asset smoke evidence", async () => {

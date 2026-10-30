@@ -578,7 +578,7 @@ jobs:
           retention-days: 14
 
   verify-released-upgrades:
-    name: Verify upgrade from the latest stable release
+    name: Qualify the latest stable transition
     needs: [resolve, sign, package-signed-candidate]
     runs-on: macos-15
     timeout-minutes: 40
@@ -608,7 +608,7 @@ jobs:
           cd "$RUNNER_TEMP/release"
           shasum -a 256 -c SHA256SUMS
 
-      - name: Verify the latest stable upgrade and its supported recovery path
+      - name: Verify the latest stable transition and its reported outcome
         if: ${{ inputs.channel == 'stable' }}
         env:
           JOBCTRL_RELEASE_METADATA_TOKEN: ${{ github.token }}

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash, createPublicKey } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import net from "node:net";
 import path from "node:path";
@@ -71,6 +71,58 @@ const hash = async (file) => {
   for await (const chunk of createReadStream(file)) digest.update(chunk);
   return digest.digest("hex");
 };
+
+// This is a release-specific limitation, not a new definition of a successful
+// upgrade. All other version pairs retain the positive upgrade qualification.
+export function isKnownLegacyRefusal(old, candidate, mode) {
+  return old.descriptor.appVersion === "0.3.1" && candidate.descriptor.appVersion === "0.4.0" && mode === "forward-schema-15";
+}
+
+// Capture the stopped synthetic workspace and its authenticated selection.
+// The proof intentionally includes the legacy registry: it must not be
+// rewritten to fabricate ownership when the migration is refused.
+export async function legacyRefusalSnapshot({ root, runtime, state, history, external = [] }) {
+  const temp = await realpath(os.tmpdir());
+  const fixture = await realpath(root);
+  const runtimeReal = await realpath(runtime);
+  const stateReal = await realpath(state);
+  const inside = (parent, child) => {
+    const relative = path.relative(parent, child);
+    return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  };
+  assert.ok(inside(temp, fixture) && inside(fixture, runtimeReal) && inside(fixture, stateReal), "legacy refusal proof requires an isolated temporary workspace");
+  assert.ok(inside(stateReal, await realpath(history)), "history must belong to the fixture workspace");
+  for (const file of external) assert.ok(inside(stateReal, await realpath(file)), "external fixture must belong to the workspace");
+  const instance = createHash("sha256").update(stateReal).digest("hex");
+  const app = path.join(stateReal, "jobctrl.db");
+  const active = path.join(runtimeReal, "active.json"), selector = path.join(runtimeReal, "bin", "jobctrl");
+  const registry = path.join(runtimeReal, "instances", instance, "state.json");
+  const paths = [app, history, ...[app, history].flatMap((file) => ["-wal", "-shm", "-journal"].map((suffix) => `${file}${suffix}`)),
+    ...external, active, path.join(runtimeReal, "current.json"), path.join(runtimeReal, "transition.json"), selector, registry];
+  const files = {};
+  for (const file of paths) {
+    try {
+      const info = await lstat(file);
+      assert.ok(info.isFile() && !info.isSymbolicLink(), `fixture path is not a regular file: ${file}`);
+      files[file] = { sha256: await hash(file), ino: info.ino };
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      files[file] = null;
+    }
+  }
+  assert.ok(files[app] && files[history] && files[active] && files[selector] && files[registry], "legacy refusal fixture must have its database pair, active selection, and registry");
+  const backups = await readdir(path.join(stateReal, "backups")).catch((error) => { if (error.code === "ENOENT") return []; throw error; });
+  return { files, backups: backups.sort() };
+}
+
+export async function verifyLegacyRefusal({ root, runtime, state, history, external = [], invoke }) {
+  const before = await legacyRefusalSnapshot({ root, runtime, state, history, external });
+  const result = await invoke();
+  assert.ok(Number.isInteger(result.code) && result.code !== 0, "legacy upgrade must explicitly refuse admission");
+  assert.match(result.output, /legacy runtime has no durable child-ownership record/i, "refusal must identify the actual ownership problem");
+  assert.deepEqual(await legacyRefusalSnapshot({ root, runtime, state, history, external }), before, "refusal must preserve the data pair, registry, selector, journal, and backup inventory");
+  return result;
+}
 
 async function command(executable, args, env, { allowFailure = false, onStarted = null, processGroup = false } = {}) {
   const child = spawn(executable, args, { env, detached: processGroup, stdio: ["ignore", "pipe", "pipe"] });
@@ -476,6 +528,25 @@ export async function scenario(old, candidate, root) {
       assert.equal(await hash(path.join(state, "temporal.db")), temporalHash);
       checked.push("archived-controller-refuses-before-backup-and-journal", "signed-schema-14-to-15-contract");
 
+      if (isKnownLegacyRefusal(old, candidate, mode)) {
+        console.log(`${old.descriptor.appVersion}: verifying the documented legacy ownership refusal`);
+        await verifyLegacyRefusal({ root, runtime, state, history: path.join(state, "temporal.db"),
+          invoke: () => command(candidate.installer, installArgs(candidate, runtime), env, { allowFailure: true }) });
+        assert.equal(JSON.parse((await command(selector, ["version", "--json"], env)).output).buildId, old.descriptor.buildId);
+        await command(selector, ["start", "--no-open"], env);
+        assert.equal(JSON.parse((await command(selector, ["status", "--json"], env)).output).status, "running");
+        const query = "import sqlite3,sys,json; c=sqlite3.connect(sys.argv[1]); print(json.dumps([c.execute('PRAGMA user_version').fetchone()[0],c.execute(\"SELECT title FROM jobs WHERE url='https://jobs.example/upgrade-qa'\").fetchone()[0]])); c.close()";
+        assert.deepEqual(JSON.parse((await command(python, ["-I", "-B", "-c", query, path.join(state, "jobctrl.db")], env)).output), [14, "Preserved released-binary QA job"]);
+        const history = JSON.parse((await temporalCommand(["workflow", "describe", "--workflow-id", workflowId, "--output", "json"])).output).workflowExecutionInfo;
+        assert.equal(history.execution.runId, originalHistory.execution.runId);
+        assert.equal(history.historyLength, originalHistory.historyLength);
+        await command(selector, ["stop"], env);
+        result.mode = "legacy-ownership-refused";
+        result.status = "expected-refusal";
+        checked.push("legacy-ownership-refusal", "data-registry-selector-and-journal-preserved", "released-predecessor-restarts-in-controlled-fixture", "job-and-temporal-history-preserved");
+        return result;
+      }
+
       python = path.join(payload, "python", "bin", "python3");
       temporal = path.join(payload, "temporal", "temporal");
       const { last } = await runForwardInterruptionMatrix({ old, candidate, root, runtime, state, env, selector, payload, checked });
@@ -536,8 +607,9 @@ export async function runReleasedUpgradeSmoke({ releaseDirectory, cacheDirectory
   const old = await releasedVersion(version, cache, trust, { PATH: "/usr/bin:/bin" });
   assert.ok(old.descriptor.sequence < candidate.descriptor.sequence, "upgrade source must precede the signed candidate");
   const result = await scenario(old, candidate, path.join(root, "latest-stable"));
-  console.log(`Released JobCtrl ${version} ${result.mode} upgrade qualification passed`);
-  const report = { schemaVersion: 1, status: "passed", candidateBuildId: candidate.descriptor.buildId, acquisitionBoundary: "signed-formula-cache-adapter", executables: "actual-latest-stable-and-signed-candidate", elapsedMs: Math.max(1, Math.round(performance.now() - started)), results: [result] };
+  const status = result.status === "expected-refusal" ? "qualified-with-legacy-refusal" : "passed";
+  console.log(`Released JobCtrl ${version} qualification: ${status} (${result.mode})`);
+  const report = { schemaVersion: 1, status, candidateBuildId: candidate.descriptor.buildId, acquisitionBoundary: "signed-formula-cache-adapter", executables: "actual-latest-stable-and-signed-candidate", elapsedMs: Math.max(1, Math.round(performance.now() - started)), results: [result] };
   await writeFile(output, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
   return report;
 }
