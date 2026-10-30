@@ -20,7 +20,6 @@ test("native CI executes every listed test exactly once on isolated runners", as
   context.after(() => rm(root, { recursive: true, force: true }));
   const bin = path.join(root, "bin"), list = path.join(root, "tests"), log = path.join(root, "go.log");
   await mkdir(bin);
-  await writeFile(list, "TestAlpha\nTestBeta\nTestGamma_One\nTestDelta\nok example/pkg 0.1s\n");
   const go = path.join(bin, "go");
   await writeFile(go, `#!/bin/sh
 if [ "$1" = test ] && [ "$3" = -list ]; then cat "$TEST_LIST"; exit 0; fi
@@ -28,21 +27,24 @@ if [ "$1" = list ]; then printf '%s\\n' example/internal/launcher example/intern
 printf '%s\\n' "$*" >> "$TEST_LOG"
 `);
   await chmod(go, 0o700);
-  const patterns = [];
-  for (const index of [0, 1]) {
-    await writeFile(log, "");
-    const result = spawnSync("bash", ["-c", run], { encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, TEST_SHARD: String(index), TEST_LIST: list, TEST_LOG: log } });
-    assert.equal(result.status, 0, result.stderr);
-    const commands = (await readFile(log, "utf8")).trim().split("\n");
-    assert.equal(commands.length, index === 0 ? 2 : 1);
-    assert.match(commands[0], /-race .* -count=1 .* -run /);
-    if (index === 0) assert.match(commands[1], /example\/internal\/other/);
-    patterns.push(new RegExp(commands[0].split(" -run ")[1]));
+  for (const shell of ["/bin/bash", "bash"]) {
+    await writeFile(list, "TestAlpha\nTestBeta\nTestGamma_One\nTestDelta\nok example/pkg 0.1s\n");
+    const patterns = [];
+    for (const index of [0, 1]) {
+      await writeFile(log, "");
+      const result = spawnSync(shell, ["-c", run], { encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, TEST_SHARD: String(index), TEST_LIST: list, TEST_LOG: log } });
+      assert.equal(result.status, 0, `${shell}: ${result.stderr}`);
+      const commands = (await readFile(log, "utf8")).trim().split("\n");
+      assert.equal(commands.length, index === 0 ? 2 : 1);
+      assert.match(commands[0], /-race .* -count=1 .* -run /);
+      if (index === 0) assert.match(commands[1], /example\/internal\/other/);
+      patterns.push(new RegExp(commands[0].split(" -run ")[1]));
+    }
+    for (const name of ["TestAlpha", "TestBeta", "TestGamma_One", "TestDelta"]) {
+      assert.equal(patterns.filter((pattern) => pattern.test(name)).length, 1, `${shell}: ${name} must run in exactly one shard`);
+    }
+    await writeFile(list, "ok example/pkg 0.1s\n");
+    const empty = spawnSync(shell, ["-c", run], { encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, TEST_SHARD: "0", TEST_LIST: list, TEST_LOG: log } });
+    assert.notEqual(empty.status, 0, `${shell}: empty native selection must fail`);
   }
-  for (const name of ["TestAlpha", "TestBeta", "TestGamma_One", "TestDelta"]) {
-    assert.equal(patterns.filter((pattern) => pattern.test(name)).length, 1, `${name} must run in exactly one shard`);
-  }
-  await writeFile(list, "ok example/pkg 0.1s\n");
-  const empty = spawnSync("bash", ["-c", run], { encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, TEST_SHARD: "0", TEST_LIST: list, TEST_LOG: log } });
-  assert.notEqual(empty.status, 0, "empty native selection must fail");
 });
