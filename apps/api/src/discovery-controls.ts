@@ -57,6 +57,11 @@ import { refreshProjections } from "./projections.js";
 import { InputError, resolveJobId } from "./write-model.js";
 
 export class RoleMatchFeedbackDecisionConflictError extends Error {}
+export class InvalidSavedDiscoverySettingsError extends Error {
+  constructor() {
+    super("Saved Discovery settings are invalid. Preserve the workspace and restore a verified backup, then retry Discovery.");
+  }
+}
 export class SourceLocatorReviewError extends Error {
   constructor(message: string, readonly status: 400 | 409) { super(message); }
 }
@@ -244,35 +249,39 @@ export function writeDiscoverySettings(
   db: SqliteDatabase,
   request: DiscoverySettingsUpdateRequest,
 ): DiscoverySettingsResponse {
-  const stored = readDiscoverySearchConfig(db);
-  const currentConfig = stored.config;
-  const current = discoverySettingsFromConfig(currentConfig);
-  const next: DiscoverySettings = {
-    ...current,
-    minFitScore: request.minFitScore ?? current.minFitScore,
-    autoApply: request.autoApply ?? current.autoApply,
-    applyApprovalRequired: request.applyApprovalRequired ?? current.applyApprovalRequired,
-    boards: request.boards ?? current.boards,
-    resultsPerSite: request.resultsPerSite ?? current.resultsPerSite,
-    hoursOld: request.hoursOld ?? current.hoursOld,
-    schedulingEnabled: request.schedulingEnabled ?? current.schedulingEnabled,
-    scheduleCron: request.scheduleCron ?? current.scheduleCron,
-    maxParallelFamilies: request.maxParallelFamilies ?? current.maxParallelFamilies,
-    useBrowserHeaders: request.useBrowserHeaders ?? current.useBrowserHeaders,
-    crawlUserAgentProduct: request.crawlUserAgentProduct ?? current.crawlUserAgentProduct,
-    crawlUserAgentContact: request.crawlUserAgentContact ?? current.crawlUserAgentContact,
-  };
-  const now = new Date().toISOString();
-  const config = configFromDiscoverySettings(next, currentConfig);
-  db.prepare(`
-    INSERT INTO discovery_settings (
-      tenant_id, search_config_json, created_at, updated_at
-    ) VALUES (?, ?, ?, ?)
-    ON CONFLICT(tenant_id) DO UPDATE SET
-      search_config_json = excluded.search_config_json,
-      updated_at = excluded.updated_at
-  `).run(DEFAULT_TENANT, JSON.stringify(config), now, now);
-  return resolvedDiscoverySettings(config, true);
+  // Lock the read and write together so a concurrent edit cannot replace the
+  // saved row after validation and before this update.
+  return db.transaction(() => {
+    const stored = readDiscoverySearchConfig(db);
+    const currentConfig = stored.config;
+    const current = discoverySettingsFromConfig(currentConfig);
+    const next: DiscoverySettings = {
+      ...current,
+      minFitScore: request.minFitScore ?? current.minFitScore,
+      autoApply: request.autoApply ?? current.autoApply,
+      applyApprovalRequired: request.applyApprovalRequired ?? current.applyApprovalRequired,
+      boards: request.boards ?? current.boards,
+      resultsPerSite: request.resultsPerSite ?? current.resultsPerSite,
+      hoursOld: request.hoursOld ?? current.hoursOld,
+      schedulingEnabled: request.schedulingEnabled ?? current.schedulingEnabled,
+      scheduleCron: request.scheduleCron ?? current.scheduleCron,
+      maxParallelFamilies: request.maxParallelFamilies ?? current.maxParallelFamilies,
+      useBrowserHeaders: request.useBrowserHeaders ?? current.useBrowserHeaders,
+      crawlUserAgentProduct: request.crawlUserAgentProduct ?? current.crawlUserAgentProduct,
+      crawlUserAgentContact: request.crawlUserAgentContact ?? current.crawlUserAgentContact,
+    };
+    const now = new Date().toISOString();
+    const config = configFromDiscoverySettings(next, currentConfig);
+    db.prepare(`
+      INSERT INTO discovery_settings (
+        tenant_id, search_config_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?)
+      ON CONFLICT(tenant_id) DO UPDATE SET
+        search_config_json = excluded.search_config_json,
+        updated_at = excluded.updated_at
+    `).run(DEFAULT_TENANT, JSON.stringify(config), now, now);
+    return resolvedDiscoverySettings(config, true);
+  }).immediate();
 }
 
 function readDiscoverySearchConfig(db: SqliteDatabase): {
@@ -284,17 +293,98 @@ function readDiscoverySearchConfig(db: SqliteDatabase): {
     "SELECT search_config_json FROM discovery_settings WHERE tenant_id = ?",
     [DEFAULT_TENANT],
   );
-  if (!row?.search_config_json) {
+  if (!row) {
     return { config: configFromDiscoverySettings(DEFAULT_DISCOVERY_SETTINGS), persisted: false };
   }
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(row.search_config_json) as unknown;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? { config: parsed as Record<string, unknown>, persisted: true }
-      : { config: configFromDiscoverySettings(DEFAULT_DISCOVERY_SETTINGS), persisted: false };
+    if (typeof row.search_config_json !== "string") throw new Error();
+    parsed = JSON.parse(row.search_config_json) as unknown;
   } catch {
-    return { config: configFromDiscoverySettings(DEFAULT_DISCOVERY_SETTINGS), persisted: false };
+    throw new InvalidSavedDiscoverySettingsError();
   }
+  if (!validSavedDiscoveryStructure(parsed)) throw new InvalidSavedDiscoverySettingsError();
+  return { config: parsed, persisted: true };
+}
+
+function validSavedDiscoveryStructure(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const isRecord = (item: unknown) => item !== null && typeof item === "object" && !Array.isArray(item);
+  const validInteger = (item: unknown, minimum: number, maximum = Number.MAX_SAFE_INTEGER) => {
+    if (typeof item !== "number" && !(typeof item === "string" && /^[+-]?[0-9]+$/.test(item.trim()))) return false;
+    const number = Number(item);
+    return Number.isSafeInteger(number) && number >= minimum && number <= maximum;
+  };
+  const validBoolean = (item: unknown) => typeof item === "boolean" || (
+    typeof item === "string" && ["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(item.trim().toLowerCase())
+  );
+  const stringList = (item: unknown) => Array.isArray(item) && item.every((part) => typeof part === "string");
+  for (const key of ["defaults", "automation", "crawl_user_agent", "location", "role_filter"]) {
+    if (Object.hasOwn(record, key) && !isRecord(record[key])) return false;
+  }
+  for (const key of ["boards", "sites", "location_accept", "exact_title_exclusions", "location_labels"]) {
+    if (Object.hasOwn(record, key) && !stringList(record[key])) return false;
+  }
+  const supportedBoards = new Set(["indeed", "linkedin", "zip_recruiter", "glassdoor"]);
+  for (const key of ["boards", "sites"]) {
+    if (Array.isArray(record[key]) && record[key].some((item) => !supportedBoards.has(item))) return false;
+  }
+  if ((Object.hasOwn(record, "boards") || Object.hasOwn(record, "sites"))
+    && !(Array.isArray(record.boards) && record.boards.length > 0)
+    && !(Array.isArray(record.sites) && record.sites.length > 0)) return false;
+  for (const key of ["queries", "locations"]) {
+    if (Object.hasOwn(record, key) && (!Array.isArray(record[key]) || !record[key].every(isRecord))) return false;
+  }
+  if (Array.isArray(record.queries) && record.queries.some((query) =>
+    typeof query.query !== "string"
+    || (Object.hasOwn(query, "tier") && !validInteger(query.tier, 1))
+    || (Object.hasOwn(query, "source_scope") && query.source_scope !== null && !stringList(query.source_scope))
+  )) return false;
+  if (Array.isArray(record.locations) && record.locations.some((location) =>
+    typeof location.location !== "string"
+    || (Object.hasOwn(location, "label") && typeof location.label !== "string")
+    || (Object.hasOwn(location, "remote") && typeof location.remote !== "boolean")
+  )) return false;
+  const defaults = recordValue(record.defaults);
+  for (const [key, minimum, maximum] of [
+    ["results_per_site", 1, 1000], ["hours_old", 1, 8760], ["distance", 0, Number.MAX_SAFE_INTEGER],
+  ] as const) {
+    if (Object.hasOwn(defaults, key) && !validInteger(defaults[key], minimum, maximum)) return false;
+  }
+  for (const key of ["country_indeed", "location"]) {
+    if (Object.hasOwn(defaults, key) && typeof defaults[key] !== "string") return false;
+  }
+  if (Object.hasOwn(record, "max_parallel_families") && !validInteger(record.max_parallel_families, 1, 4)) return false;
+  for (const key of ["workday_max_pages_per_employer", "workday_limited_max_pages_per_employer"]) {
+    if (Object.hasOwn(record, key) && !validInteger(record[key], 1)) return false;
+  }
+  const automation = recordValue(record.automation);
+  if (Object.hasOwn(automation, "min_fit_score") && !validInteger(automation.min_fit_score, 0, 10)) return false;
+  for (const [container, keys] of [
+    [record, ["scheduling_enabled"]],
+    [automation, ["auto_apply", "apply_approval_required"]],
+  ] as const) {
+    for (const key of keys) if (Object.hasOwn(container, key) && !validBoolean(container[key])) return false;
+  }
+  if (Object.hasOwn(record, "disable_jobspy") && typeof record.disable_jobspy !== "boolean") return false;
+  if (Object.hasOwn(record, "schedule_cron") && (typeof record.schedule_cron !== "string" || !record.schedule_cron.trim())) return false;
+  for (const key of ["country", "proxy"]) {
+    if (record[key] != null && typeof record[key] !== "string") return false;
+  }
+  const identity = recordValue(record.crawl_user_agent);
+  if (Object.hasOwn(identity, "use_browser_headers") && typeof identity.use_browser_headers !== "boolean") return false;
+  if (Object.hasOwn(identity, "product") && (typeof identity.product !== "string" || !identity.product.trim())) return false;
+  if (Object.hasOwn(identity, "contact") && typeof identity.contact !== "string") return false;
+  const location = recordValue(record.location);
+  for (const key of ["accept_patterns", "reject_patterns"]) {
+    if (Object.hasOwn(location, key) && !stringList(location[key])) return false;
+  }
+  if (Object.hasOwn(record, "glassdoor_location_map") && (
+    !isRecord(record.glassdoor_location_map)
+    || Object.values(record.glassdoor_location_map as Record<string, unknown>).some((item) => typeof item !== "string")
+  )) return false;
+  return true;
 }
 
 function discoverySettingsFromConfig(config: Record<string, unknown>): DiscoverySettings {
@@ -312,7 +402,7 @@ function discoverySettingsFromConfig(config: Record<string, unknown>): Discovery
       automation.apply_approval_required,
       DEFAULT_DISCOVERY_SETTINGS.applyApprovalRequired,
     ),
-    boards: boardList(config.boards),
+    boards: boardList(Array.isArray(config.boards) && config.boards.length ? config.boards : config.sites),
     resultsPerSite: positiveInt(defaults.results_per_site, DEFAULT_DISCOVERY_SETTINGS.resultsPerSite),
     hoursOld: positiveInt(defaults.hours_old, DEFAULT_DISCOVERY_SETTINGS.hoursOld),
     schedulingEnabled: boolValue(config.scheduling_enabled, DEFAULT_DISCOVERY_SETTINGS.schedulingEnabled),
@@ -393,7 +483,7 @@ function resolvedDiscoverySettings(
       "next_apply_job",
       persisted && Object.hasOwn(automation, "apply_approval_required"),
     ),
-    boards: setting(stored.boards, "next_run", persisted && Object.hasOwn(config, "boards")),
+    boards: setting(stored.boards, "next_run", persisted && (Object.hasOwn(config, "boards") || Object.hasOwn(config, "sites"))),
     resultsPerSite: setting(
       stored.resultsPerSite,
       "next_run",

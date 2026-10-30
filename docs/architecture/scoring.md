@@ -38,6 +38,17 @@ back as a new score version and a calibration anchor on the scoring policy.
 
 ## Posting Freshness Before An Attempt
 
+New scoring work captures literal exact-title exclusions from the saved
+Discovery row before availability checks, stage admission, or provider work.
+It validates the row and those exclusions without requiring unrelated Discovery controls; an
+unreadable row or malformed exclusions stops the attempt, while an absent row
+uses first-use defaults. The captured exclusions remain the source for that
+attempt even if settings change during analysis. The accepted score, report,
+binding, stale markers and stage ownership remain unchanged on refusal.
+Reusing a saved score does not read those controls. It still checks availability
+and ownership; if the score disappears before reuse, the caller must retry rather
+than start unvalidated scoring.
+
 Single-job and batch scoring require successfully verified active posting
 evidence no more than six hours old. Acquisition occurs outside the writer.
 The short stage claim checks the original canonical URL and freshness again

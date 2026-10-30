@@ -2277,9 +2277,16 @@ async def _reconcile_discovery_schedule(client: Any, task_queue: str) -> None:
         DiscoverWorkflowInput,
         discover_workflow_id,
     )
+    from jobctrl.domain.errors import InvalidSavedSearchError, SavedSearchReadError
     from jobctrl.domain.tenant import LOCAL_TENANT
 
-    enabled, cron = load_discovery_schedule_settings()
+    try:
+        enabled, cron = load_discovery_schedule_settings()
+    except (InvalidSavedSearchError, SavedSearchReadError) as exc:
+        # Do not delete or replace an existing schedule when its authority is
+        # unavailable. Discovery planning will refuse to use the same inputs.
+        log.warning("Discovery schedule reconciliation skipped: %s", exc)
+        return
     schedule_id = f"jobctrl-discovery-{LOCAL_TENANT}"
     handle = client.get_schedule_handle(schedule_id)
     if not enabled:
@@ -3699,11 +3706,11 @@ def doctor() -> None:
 
     # --- Crawl politeness disclosure (R10) ---
     try:
-        from jobctrl.config import load_saved_search_settings
+        from jobctrl.config import load_discovery_crawler_settings
         from jobctrl.database import get_connection as _get_connection
 
         try:
-            politeness_cfg = load_saved_search_settings()
+            politeness_cfg = load_discovery_crawler_settings()
         except Exception:  # noqa: BLE001 - disclosure must not crash doctor.
             politeness_cfg = {}
         try:

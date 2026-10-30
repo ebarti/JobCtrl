@@ -134,9 +134,9 @@ export function DiscoveryRuntimeSettingsPanel() {
       ) : null}
       {settingsQuery.data ? (
         <DiscoveryRuntimeSettingsForm initial={settingsQuery.data} />
-      ) : (
+      ) : settingsQuery.isPending ? (
         <Empty title="Loading runtime settings." />
-      )}
+      ) : null}
     </DisclosureSection>
   );
 }

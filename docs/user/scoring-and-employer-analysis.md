@@ -20,6 +20,15 @@ new provider work while preserving the accepted score and evidence. Use Job
 Detail’s **Check availability** to retry; see
 [saved posting availability](enrichment-and-extraction.md#saved-posting-availability).
 
+Scoring also uses your saved exact-title exclusions as part of its source
+context. If those saved settings cannot be read or the exclusions are damaged,
+the attempt stops before checking the posting or starting model work. Your
+previous score and evidence remain available. Check workspace access and retry;
+if data is damaged, preserve the workspace and consult
+[Back Up And Restore](data-and-safety.md#back-up-and-restore).
+Reusing an existing score does not need to read those settings; posting
+availability and work ownership are still checked.
+
 ## How The Score Is Calculated
 
 JobCtrl does not ask a model for one opaque number and save it. The model

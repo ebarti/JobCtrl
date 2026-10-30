@@ -655,6 +655,25 @@ turn source-shape searches into permanent tests.
 
 ## Saved Search Settings
 
+In an owned synthetic workspace, verify absent rows use first-use defaults;
+inject saved settings and profile read failures and corrupt values through the
+planning and source-family paths. No acquisition may occur while inputs are
+unavailable. Assert sanitized recovery errors, retryability for read failures,
+exact saved-byte retention, and a successful retry with the same roles,
+locations and boards. Exercise API read and write refusal on invalid settings,
+including first-use and restoration controls, and verify schedule reconciliation
+does not alter an existing schedule when its settings cannot be read.
+For Score, run `tests/test_score_saved_search_preflight.py` with synthetic
+provider ports and an owned Temporal test server. An unrelated invalid Discovery
+limit must not block valid title exclusions, while unreadable rows and invalid
+exclusions fail before availability, an attempt, or provider calls. Preserve the
+accepted score, report, binding, unresolved markers, saved bytes and current
+owner; restore the row and retry. Change exclusions during analysis and verify
+the scoring source stays bound to the admitted value. Replay the Temporal history.
+Reuse an accepted score with invalid or unreadable settings and confirm that no
+settings or provider read is needed. Race cache removal and ownership handoff;
+neither may turn the reuse into an unvalidated attempt or overwrite a successor.
+
 Bind `JOBCTRL_MIGRATION_TEST_PYTHON` to the locked automation virtualenv's
 `bin/python` and `JOBCTRL_MIGRATION_TEST_NODE` to the installed Node executable
 when running `corepack pnpm launcher:test`. This exercises the Python candidate

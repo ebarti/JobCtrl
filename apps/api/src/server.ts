@@ -220,6 +220,7 @@ import {
   listQuarantine,
   listRoleMatchFeedbackSuggestions,
   readDiscoverySettings,
+  InvalidSavedDiscoverySettingsError,
   listSourceLocatorCandidates,
   listSourceRegistry,
   patchSourceState,
@@ -5195,6 +5196,10 @@ function withDb<T>(
     db = retained ? retained.open() : openDatabase(dbPath);
     return read(db);
   } catch (error) {
+    if (error instanceof InvalidSavedDiscoverySettingsError) {
+      void reply.code(409);
+      return { ok: false, error: "invalid_saved_search", message: error.message };
+    }
     if (error instanceof PermanentDeleteSelectionConflict) {
       void reply.code(409);
       return { ok: false, error: "permanent_delete_selection_conflict", message: error.message };
@@ -5286,6 +5291,10 @@ async function withWritableDb<T>(
     db = openDatabase(dbPath);
     return await write(db);
   } catch (error) {
+    if (error instanceof InvalidSavedDiscoverySettingsError) {
+      void reply.code(409);
+      return { ok: false, error: "invalid_saved_search", message: error.message };
+    }
     if (error instanceof PermanentDeleteSelectionConflict) {
       void reply.code(409);
       return { ok: false, error: "permanent_delete_selection_conflict", message: error.message,

@@ -161,6 +161,10 @@ completion reports incomplete recovery and fences later mutations until exit.
 An unreadable process identity returns `ownership_unverified` and preserves the
 coordination record.
 
+Discovery settings reads and writes reject an invalid saved row with
+`invalid_saved_search`; an absent row retains first-use defaults. See
+[Discovery controls](complete-contract.md#discovery-controls).
+
 Credential responses expose enough state for the UI to show whether a provider
 is configured, but do not return stored secret material. Guided provider
 replacement rolls back on failure; an unrecoverable rollback is reported as an

@@ -28,6 +28,7 @@ from jobctrl.native_credentials import (
     load_native_credential_fallbacks as _load_native_credential_fallbacks,
 )
 from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.errors import InvalidSavedSearchError, SavedSearchReadError
 from jobctrl.domain.discovery.source_registry import (
     ATS_API_POLICY,
     BROAD_BOARD_LEAD_POLICY,
@@ -459,10 +460,34 @@ def load_search_config() -> dict:
 
 def load_saved_search_settings() -> dict:
     """Read canonical settings and sources without decoding board controls."""
+    return {**load_discovery_control_settings(), "confirmed_targets": _load_profile_target_search()}
+
+
+def load_discovery_control_settings() -> dict:
+    """Read Discovery controls without requiring unrelated profile targets."""
     search_cfg = _load_discovery_search_config_from_db()
     if search_cfg is None:
         search_cfg = _default_discovery_search_config()
-    return {**effective_discovery_search_config(search_cfg), "confirmed_targets": _load_profile_target_search()}
+    effective = effective_discovery_search_config(search_cfg)
+    # Legacy JSON may contain numeric tier strings. Comparisons in provider
+    # planning use integers; normalize the execution copy, not the saved row.
+    for query in effective.get("queries", []):
+        if "tier" in query:
+            query["tier"] = int(query["tier"])
+    return effective
+
+
+def load_discovery_crawler_settings() -> dict:
+    """Read only the crawler identity used by unrelated acquisition paths."""
+    return _load_discovery_search_config_from_db(validate=_valid_crawler_identity_structure) or {}
+
+
+def load_scoring_exact_title_exclusions() -> tuple[str, ...]:
+    """Read the literal saved exclusions used as scoring sources."""
+    search_cfg = _load_discovery_search_config_from_db(validate=_valid_exact_title_exclusions_structure)
+    if search_cfg is None:
+        search_cfg = _default_discovery_search_config()
+    return tuple(search_cfg.get("exact_title_exclusions", ()))
 
 
 def effective_discovery_search_config(
@@ -520,17 +545,19 @@ def save_discovery_automation_settings(
     apply_approval_required: bool,
 ) -> None:
     """Persist Apply automation choices with the SQLite-owned Discovery settings."""
-    search_cfg = _load_discovery_search_config_from_db() or _default_discovery_search_config()
-    raw_automation = search_cfg.get("automation")
-    automation = dict(raw_automation) if isinstance(raw_automation, dict) else {}
-    automation.update(
-        {
-            "auto_apply": bool(auto_apply),
-            "apply_approval_required": bool(apply_approval_required),
-        }
-    )
-    search_cfg["automation"] = automation
-    _save_discovery_search_config_to_db(search_cfg)
+    def update(search_cfg: dict) -> dict:
+        raw_automation = search_cfg.get("automation")
+        automation = dict(raw_automation) if isinstance(raw_automation, dict) else {}
+        automation.update(
+            {
+                "auto_apply": bool(auto_apply),
+                "apply_approval_required": bool(apply_approval_required),
+            }
+        )
+        search_cfg["automation"] = automation
+        return search_cfg
+
+    _update_discovery_search_config(update)
 
 
 def outreach_follow_up_reminders_enabled(config: dict | None = None) -> bool:
@@ -570,73 +597,230 @@ def _ensure_discovery_settings_table(conn: sqlite3.Connection) -> None:
     )
 
 
-def _load_discovery_search_config_from_db() -> dict | None:
-    if not DB_PATH.exists():
+def _reject_nonfinite_json(_value: str) -> None:
+    raise ValueError("non-finite JSON number")
+
+
+def _load_discovery_search_config_from_db(*, validate: Callable[[object], bool] | None = None) -> dict | None:
+    try:
+        DB_PATH.lstat()
+    except FileNotFoundError:
         return None
+    except OSError:
+        raise SavedSearchReadError("Saved Discovery settings") from None
     from jobctrl.database import _refuse_unresolved_initialization
 
-    _refuse_unresolved_initialization(DB_PATH)
     conn: sqlite3.Connection | None = None
     try:
-        conn = sqlite3.connect(DB_PATH)
+        _refuse_unresolved_initialization(DB_PATH)
+        conn = sqlite3.connect(f"{DB_PATH.resolve().as_uri()}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
-        _ensure_discovery_settings_table(conn)
-        row = conn.execute(
-            f"""
-            SELECT search_config_json
-            FROM {DISCOVERY_SETTINGS_TABLE}
-            WHERE tenant_id = ?
-            """,
-            (str(LOCAL_TENANT),),
-        ).fetchone()
-        if row is None:
-            conn.commit()
-            return None
-        loaded = json.loads(str(row["search_config_json"] or "{}"))
-        if isinstance(loaded, dict):
-            conn.commit()
-            return loaded
-    except Exception:
-        log.debug("Failed to load discovery settings from SQLite", exc_info=True)
+        return _read_discovery_search_config(conn, validate=validate)
+    except (OSError, sqlite3.Error):
+        raise SavedSearchReadError("Saved Discovery settings") from None
     finally:
         if conn is not None:
             conn.close()
-    return None
 
 
-def _save_discovery_search_config_to_db(search_cfg: dict) -> None:
-    if not DB_PATH.exists():
+def _read_discovery_search_config(
+    conn: sqlite3.Connection, *, validate: Callable[[object], bool] | None = None,
+) -> dict | None:
+    table = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (DISCOVERY_SETTINGS_TABLE,),
+    ).fetchone()
+    if table is None:
+        # A genuinely empty SQLite file is also a first-use workspace. A
+        # partially populated schema cannot prove saved settings are absent.
+        existing = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' LIMIT 1"
+        ).fetchone()
+        if existing is None:
+            return None
+        raise InvalidSavedSearchError("Saved Discovery settings")
+    row = conn.execute(
+        f"SELECT search_config_json FROM {DISCOVERY_SETTINGS_TABLE} WHERE tenant_id = ?",
+        (str(LOCAL_TENANT),),
+    ).fetchone()
+    if row is None:
+        return None
+    raw = row["search_config_json"]
+    if not isinstance(raw, str):
+        raise InvalidSavedSearchError("Saved Discovery settings")
+    try:
+        loaded = json.loads(raw, parse_constant=_reject_nonfinite_json)
+    except (ValueError, RecursionError):
+        raise InvalidSavedSearchError("Saved Discovery settings") from None
+    if not (validate or _valid_saved_discovery_structure)(loaded):
+        raise InvalidSavedSearchError("Saved Discovery settings")
+    return loaded
+
+
+def _update_discovery_search_config(update: Callable[[dict], dict]) -> None:
+    """Validate and update under the same write lock, preserving invalid rows."""
+    try:
+        DB_PATH.lstat()
+    except FileNotFoundError:
         return
+    except OSError:
+        raise SavedSearchReadError("Saved Discovery settings") from None
     from jobctrl.database import _refuse_unresolved_initialization
 
-    _refuse_unresolved_initialization(DB_PATH)
     conn: sqlite3.Connection | None = None
     try:
-        conn = sqlite3.connect(DB_PATH)
+        _refuse_unresolved_initialization(DB_PATH)
+        conn = sqlite3.connect(f"{DB_PATH.resolve().as_uri()}?mode=rw", uri=True)
+        conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN IMMEDIATE")
+        current = _read_discovery_search_config(conn)
+        next_config = update(current or _default_discovery_search_config())
         _ensure_discovery_settings_table(conn)
         now = datetime_utc_now()
         conn.execute(
             f"""
-            INSERT INTO {DISCOVERY_SETTINGS_TABLE} (
-                tenant_id, search_config_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?)
+            INSERT INTO {DISCOVERY_SETTINGS_TABLE} (tenant_id, search_config_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
             ON CONFLICT(tenant_id) DO UPDATE SET
-                search_config_json = excluded.search_config_json,
-                updated_at = excluded.updated_at
+                search_config_json = excluded.search_config_json, updated_at = excluded.updated_at
             """,
-            (
-                str(LOCAL_TENANT),
-                json.dumps(search_cfg, sort_keys=True),
-                now,
-                now,
-            ),
+            (str(LOCAL_TENANT), json.dumps(next_config, sort_keys=True), now, now),
         )
         conn.commit()
-    except Exception:
-        log.debug("Failed to save discovery settings to SQLite", exc_info=True)
+    except (OSError, sqlite3.Error):
+        raise SavedSearchReadError("Saved Discovery settings") from None
     finally:
         if conn is not None:
             conn.close()
+
+
+def _valid_stored_integer(value: object, minimum: int, maximum: int = 2**53 - 1) -> bool:
+    if type(value) is int:
+        number = value
+    elif type(value) is float and value.is_integer():
+        number = int(value)
+    elif isinstance(value, str) and re.fullmatch(r"[+-]?[0-9]+", value.strip()):
+        try:
+            number = int(value)
+        except ValueError:
+            return False
+    else:
+        return False
+    return minimum <= number <= maximum
+
+
+def _valid_crawler_identity_structure(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    if "crawl_user_agent" not in value:
+        return True
+    identity = value["crawl_user_agent"]
+    if not isinstance(identity, dict):
+        return False
+    if "use_browser_headers" in identity and not isinstance(identity["use_browser_headers"], bool):
+        return False
+    if "product" in identity and (not isinstance(identity["product"], str) or not identity["product"].strip()):
+        return False
+    return "contact" not in identity or isinstance(identity["contact"], str)
+
+
+def _valid_exact_title_exclusions_structure(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    if "exact_title_exclusions" not in value:
+        return True
+    exclusions = value["exact_title_exclusions"]
+    return isinstance(exclusions, list) and all(isinstance(item, str) for item in exclusions)
+
+
+def _valid_saved_discovery_structure(value: object) -> bool:
+    """Check persisted container shapes without imposing new semantic policy."""
+    if not _valid_crawler_identity_structure(value) or not _valid_exact_title_exclusions_structure(value):
+        return False
+    assert isinstance(value, dict)
+    for key in ("defaults", "automation", "crawl_user_agent", "location", "role_filter"):
+        if key in value and not isinstance(value[key], dict):
+            return False
+    for key in ("boards", "sites", "location_accept", "location_labels"):
+        if key in value and (
+            not isinstance(value[key], list) or any(not isinstance(item, str) for item in value[key])
+        ):
+            return False
+    supported_boards = {"indeed", "linkedin", "zip_recruiter", "glassdoor"}
+    for key in ("boards", "sites"):
+        if key in value and any(item not in supported_boards for item in value[key]):
+            return False
+    if ("boards" in value or "sites" in value) and not (value.get("boards") or value.get("sites")):
+        return False
+    for key in ("queries", "locations"):
+        if key in value and (
+            not isinstance(value[key], list) or any(not isinstance(item, dict) for item in value[key])
+        ):
+            return False
+    if any(
+        not isinstance(query.get("query"), str)
+        or ("tier" in query and not _valid_stored_integer(query["tier"], 1))
+        or ("source_scope" in query and query["source_scope"] is not None and (
+            not isinstance(query["source_scope"], list)
+            or any(not isinstance(item, str) for item in query["source_scope"])
+        ))
+        for query in value.get("queries", [])
+    ):
+        return False
+    if any(
+        not isinstance(location.get("location"), str)
+        or ("label" in location and not isinstance(location["label"], str))
+        or ("remote" in location and not isinstance(location["remote"], bool))
+        for location in value.get("locations", [])
+    ):
+        return False
+    defaults = value.get("defaults", {})
+    for key, minimum, maximum in (("results_per_site", 1, 1000), ("hours_old", 1, 8760), ("distance", 0, 2**53 - 1)):
+        if key in defaults and not _valid_stored_integer(defaults[key], minimum, maximum):
+            return False
+    for key in ("country_indeed", "location"):
+        if key in defaults and not isinstance(defaults[key], str):
+            return False
+    if "max_parallel_families" in value and not _valid_stored_integer(value["max_parallel_families"], 1, 4):
+        return False
+    for key in ("workday_max_pages_per_employer", "workday_limited_max_pages_per_employer"):
+        if key in value and not _valid_stored_integer(value[key], 1):
+            return False
+    automation = value.get("automation", {})
+    if "min_fit_score" in automation and not _valid_stored_integer(automation["min_fit_score"], 0, 10):
+        return False
+    boolean_strings = {"", "0", "1", "false", "true", "no", "yes", "off", "on"}
+    for container, keys in ((value, ("scheduling_enabled",)),
+                            (automation, ("auto_apply", "apply_approval_required"))):
+        for key in keys:
+            if key in container and not (
+                isinstance(container[key], bool)
+                or (isinstance(container[key], str) and container[key].strip().lower() in boolean_strings)
+            ):
+                return False
+    if "disable_jobspy" in value and not isinstance(value["disable_jobspy"], bool):
+        return False
+    if "schedule_cron" in value and (not isinstance(value["schedule_cron"], str) or not value["schedule_cron"].strip()):
+        return False
+    for key in ("country", "proxy"):
+        if key in value and value[key] is not None and not isinstance(value[key], str):
+            return False
+    locations = value.get("location", {})
+    for key in ("accept_patterns", "reject_patterns"):
+        if key in locations and (
+            not isinstance(locations[key], list) or any(not isinstance(item, str) for item in locations[key])
+        ):
+            return False
+    if "glassdoor_location_map" in value and (
+        not isinstance(value["glassdoor_location_map"], dict)
+        or any(not isinstance(item, str) for item in value["glassdoor_location_map"].values())
+    ):
+        return False
+    return True
+
+
+def _save_discovery_search_config_to_db(search_cfg: dict) -> None:
+    _update_discovery_search_config(lambda _current: search_cfg)
 
 
 def datetime_utc_now() -> str:
@@ -693,30 +877,42 @@ def _positive_int(value: object) -> int:
 
 
 def _load_profile_target_search() -> dict[str, list[str]]:
-    if not DB_PATH.exists():
+    try:
+        DB_PATH.lstat()
+    except FileNotFoundError:
         return _empty_target_search()
+    except OSError:
+        raise SavedSearchReadError("Saved Candidate Profile targets") from None
     from jobctrl.database import _refuse_unresolved_initialization
 
-    _refuse_unresolved_initialization(DB_PATH)
     conn: sqlite3.Connection | None = None
     try:
-        conn = sqlite3.connect(DB_PATH)
+        _refuse_unresolved_initialization(DB_PATH)
+        conn = sqlite3.connect(f"{DB_PATH.resolve().as_uri()}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
         table = conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'candidate_profiles'"
         ).fetchone()
         if table is None:
-            return _empty_target_search()
+            existing = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' LIMIT 1"
+            ).fetchone()
+            if existing is None:
+                return _empty_target_search()
+            raise InvalidSavedSearchError("Saved Candidate Profile targets")
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(candidate_profiles)").fetchall()}
+        target_columns = (
+            "experience_target_role", "experience_target_track", "experience_target_seniority_floor",
+            "experience_target_functions", "experience_target_specializations", "experience_target_locations",
+            "experience_target_work_models",
+        )
+        if not {"tenant_id", "profile_id", "version", *target_columns}.issubset(columns):
+            raise InvalidSavedSearchError("Saved Candidate Profile targets")
         row = conn.execute(
-            f"""
-            SELECT {_profile_target_column(columns, "experience_target_role")},
-                   {_profile_target_column(columns, "experience_target_track")},
-                   {_profile_target_column(columns, "experience_target_seniority_floor")},
-                   {_profile_target_column(columns, "experience_target_functions")},
-                   {_profile_target_column(columns, "experience_target_specializations")},
-                   {_profile_target_column(columns, "experience_target_locations")},
-                   {_profile_target_column(columns, "experience_target_work_models")},
+            """
+            SELECT experience_target_role, experience_target_track, experience_target_seniority_floor,
+                   experience_target_functions, experience_target_specializations,
+                   experience_target_locations, experience_target_work_models,
                    version
             FROM candidate_profiles
             WHERE tenant_id = ? AND profile_id = ?
@@ -725,6 +921,18 @@ def _load_profile_target_search() -> dict[str, list[str]]:
         ).fetchone()
         if row is None:
             return _empty_target_search()
+        if any(not isinstance(row[column], str) for column in target_columns):
+            raise InvalidSavedSearchError("Saved Candidate Profile targets")
+        if type(row["version"]) is not int:
+            raise InvalidSavedSearchError("Saved Candidate Profile targets")
+        try:
+            criteria = load_config_file(path=get_config_path(), strict=True)
+        except ConfigFileError as exc:
+            if isinstance(exc.__cause__, OSError):
+                raise SavedSearchReadError("Saved search criteria") from None
+            raise InvalidSavedSearchError("Saved search criteria") from None
+        except UnicodeError:
+            raise InvalidSavedSearchError("Saved search criteria") from None
         roles = _split_target_text(row["experience_target_role"])
         raw_locations = _split_target_rows(row["experience_target_locations"])
         raw_work_models = _split_target_rows(row["experience_target_work_models"])
@@ -748,12 +956,11 @@ def _load_profile_target_search() -> dict[str, list[str]]:
             "criteria": [
                 str(value)
                 for key in ("score_criteria", "target_criteria")
-                if (value := load_config_file(path=get_config_path()).get(key))
+                if (value := criteria.get(key))
             ],
         }
-    except Exception:
-        log.debug("Failed to load profile target-search preferences", exc_info=True)
-        return _empty_target_search()
+    except (OSError, sqlite3.Error):
+        raise SavedSearchReadError("Saved Candidate Profile targets") from None
     finally:
         if conn is not None:
             conn.close()
@@ -769,12 +976,6 @@ def _empty_target_search() -> dict[str, list[str]]:
         "locations": [],
         "work_models": [],
     }
-
-
-def _profile_target_column(columns: set[str], column: str) -> str:
-    if column in columns:
-        return column
-    return f"'' AS {column}"
 
 
 def _dedupe_strings(values: list[str]) -> list[str]:
@@ -823,7 +1024,7 @@ def resolve_jobspy_boards(search_cfg: dict | None = None, *, warn: bool = True) 
     ``sites`` remains accepted as a compatibility alias and logs a warning
     instead of failing existing local configs.
     """
-    cfg = search_cfg if search_cfg is not None else load_saved_search_settings()
+    cfg = search_cfg if search_cfg is not None else load_discovery_control_settings()
     boards = _string_list(cfg.get("boards")) if isinstance(cfg, dict) else []
     legacy_sites = _string_list(cfg.get("sites")) if isinstance(cfg, dict) else []
     if boards:
@@ -1178,7 +1379,7 @@ def load_source_registry(
     employers_cfg: dict | None = None,
 ) -> list[SourceRegistryEntry]:
     """Generate registry entries from packaged YAML and broad-board config."""
-    active_search_cfg = search_cfg if search_cfg is not None else load_saved_search_settings()
+    active_search_cfg = search_cfg if search_cfg is not None else load_discovery_control_settings()
     active_sites_cfg = sites_cfg if sites_cfg is not None else load_sites_config()
     active_employers_cfg = employers_cfg if employers_cfg is not None else load_employers_config()
     registry = [

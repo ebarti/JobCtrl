@@ -201,6 +201,15 @@ same place as manually-started runs.
 
 ## Discovery Schedule
 
+Discovery planning and each source family distinguish missing first-use rows
+from unreadable or invalid saved settings and profile targets. Read failures
+remain retryable; invalid saved inputs require recovery. Both stop before source
+acquisition and leave the stored inputs intact. If schedule settings cannot be
+read during worker startup, reconciliation leaves the existing schedule alone;
+the worker starts and any scheduled Discovery still goes through the same
+planning guard. Unrelated network operations read only their crawler identity;
+they do not need the profile's saved Discovery targets.
+
 Scheduled discovery is **off by default**. A single Temporal Schedule,
 `jobctrl-discovery-local`, can run `DiscoverWorkflow` on a cron expression, but
 it is reconciled from settings only at **worker startup**

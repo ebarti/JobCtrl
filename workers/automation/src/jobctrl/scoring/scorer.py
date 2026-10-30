@@ -128,6 +128,7 @@ def _build_use_case(
     determination_dependencies=None,
     job_interpretation_reader=None,
     confirmed_preferences_reader=None,
+    exact_title_exclusions: tuple[str, ...] | None = None,
 ) -> ScoreJobUseCase:
     """Construct a ``ScoreJobUseCase`` using local-mode defaults.
 
@@ -182,7 +183,10 @@ def _build_use_case(
 
         from jobctrl import config
 
-        exact_exclusions = tuple(config.load_saved_search_settings().get("exact_title_exclusions") or ())
+        exact_exclusions = (
+            config.load_scoring_exact_title_exclusions()
+            if exact_title_exclusions is None else exact_title_exclusions
+        )
         def confirmed_preferences_reader(snapshot, criteria):
             return snapshot_target_sources(snapshot, criteria, exact_title_exclusions=exact_exclusions)
     llm_port = determination_dependencies["llm"]
@@ -774,6 +778,26 @@ def score_job_by_id(
         return ScoreJobOutcome(ok=False, score=None, error=f"Job is not enriched: {stable_job_id}")
     if workflow_id and not enforce_workflow_ownership:
         _assert_direct_score_admission(conn, tenant_id, stable_job_id, workflow_id, cancel_event)
+    if enforce_workflow_ownership:
+        if not workflow_id or not recovery_workflow_id:
+            raise ValueError("Owned scoring requires the reserved workflow and activity owner")
+        _assert_reserved_score_admission(conn, tenant_id, stable_job_id, recovery_workflow_id, cancel_event)
+
+    # A cache hit does not build a scoring source. This is an advisory read;
+    # availability and ownership are still checked under the writer below.
+    cache_hint = (
+        not rescore and use_case is None
+        and (repository is None or (isinstance(repository, SqliteScoreRepository) and repository.connection is conn))
+        and _has_saved_score(conn, tenant_id, stable_job_id)
+    )
+    # For new work, capture the exact scoring source before availability,
+    # stage admission, or employer analysis. Reuse the captured value after
+    # provider work instead of rereading a possibly changed settings row.
+    exact_title_exclusions = None
+    if use_case is None and not cache_hint:
+        from jobctrl import config
+
+        exact_title_exclusions = config.load_scoring_exact_title_exclusions()
 
     from jobctrl.enrichment.availability import require_preparation_available, assert_fresh_candidate
     from jobctrl.infrastructure.preparation_recovery import PreparationReservationLost, claim_preparation_reservation
@@ -797,34 +821,25 @@ def score_job_by_id(
         expected_posting_url=expected_posting_url,
     ):
         job = SqlitePreparationTargetReader(conn).load(tenant_id, stable_job_id)
+        if cache_hint and not _has_saved_score(conn, tenant_id, stable_job_id):
+            return ScoreJobOutcome(ok=False, score=None, error="Saved score changed before reuse. Retry scoring.")
     if job is None:
         return ScoreJobOutcome(ok=False, score=None, error="Availability candidate changed")
 
     owned_metadata = None
     if enforce_workflow_ownership:
-        if not workflow_id or not recovery_workflow_id:
-            raise ValueError("Owned scoring requires the reserved workflow and activity owner")
         conn.execute("BEGIN IMMEDIATE")
         try:
             assert_fresh_candidate(
                 conn, str(stable_job_id), expected_posting_url, tenant_id=str(tenant_id), allow_unknown=True
             )
+            _assert_reserved_score_admission(conn, tenant_id, stable_job_id, recovery_workflow_id, cancel_event)
+            if cache_hint and not _has_saved_score(conn, tenant_id, stable_job_id):
+                conn.rollback()
+                return ScoreJobOutcome(ok=False, score=None, error="Saved score changed before reuse. Retry scoring.")
         except BaseException:
             conn.rollback()
             raise
-        row = conn.execute(
-            "SELECT state, json_extract(metadata_json, '$.automaticPreparation.workflowId') "
-            "FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'score'",
-            (str(tenant_id), str(stable_job_id)),
-        ).fetchone()
-        if (
-            row is None
-            or row[0] != "queued"
-            or row[1] != recovery_workflow_id
-            or (cancel_event is not None and cancel_event.is_set())
-        ):
-            conn.rollback()
-            raise PreparationReservationLost("Score reservation no longer owned")
         owned_metadata = _score_activity_metadata(
             conn,
             tenant_id=tenant_id,
@@ -869,9 +884,19 @@ def score_job_by_id(
     if policy_repository is None:
         policy_repository = SqliteScoringPolicyRepository(conn)
     existing = repository.load(tenant_id, stable_job_id)
+    if cache_hint and existing is None:
+        error = "Saved score changed before reuse. Retry scoring."
+        if enforce_workflow_ownership:
+            recorded = _record_score_stage_failed(
+                conn, job=job, tenant_id=tenant_id, started_at=utc_now(), metadata=owned_metadata,
+                error=error, cancel_event=cancel_event, require_ownership=True,
+            )
+            if not recorded:
+                raise PreparationReservationLost("Score activity no longer owns its stage")
+        return ScoreJobOutcome(ok=False, score=None, error=error)
     if existing is not None and not rescore:
         if enforce_workflow_ownership:
-            _record_score_stage_succeeded(
+            recorded = _record_score_stage_succeeded(
                 conn,
                 job=job,
                 score=existing,
@@ -879,6 +904,8 @@ def score_job_by_id(
                 metadata=owned_metadata,
                 cancel_event=cancel_event,
             )
+            if not recorded:
+                raise PreparationReservationLost("Score activity no longer owns its stage")
         else:
             with claim_preparation_reservation(
                 conn, tenant_id=tenant_id, job_id=stable_job_id, stage="score",
@@ -993,6 +1020,7 @@ def score_job_by_id(
                 llm_port=llm_port,
                 llm_model=llm_model,
                 publisher=publisher,
+                exact_title_exclusions=exact_title_exclusions,
             ),
             tenant_id=tenant_id,
             resume_text=resume_text,
@@ -1212,6 +1240,28 @@ class _OwnedScoreRepository:
         except BaseException:
             self._conn.rollback()
             raise
+
+
+def _has_saved_score(conn, tenant_id, job_id) -> bool:
+    """A non-rescore may reuse an existing SQLite score without new inputs."""
+    return conn.execute(
+        "SELECT 1 FROM job_scores WHERE tenant_id = ? AND job_id = ? LIMIT 1",
+        (str(tenant_id), str(job_id)),
+    ).fetchone() is not None
+
+
+def _assert_reserved_score_admission(conn, tenant_id, job_id, reservation_owner, cancel_event):
+    """Check the reservation without changing it; the writer repeats this check."""
+    from jobctrl.infrastructure.preparation_recovery import PreparationReservationLost
+
+    row = conn.execute(
+        "SELECT state, json_extract(metadata_json, '$.automaticPreparation.workflowId') "
+        "FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'score'",
+        (str(tenant_id), str(job_id)),
+    ).fetchone()
+    if (row is None or row[0] != "queued" or row[1] != reservation_owner
+            or (cancel_event is not None and cancel_event.is_set())):
+        raise PreparationReservationLost("Score reservation no longer owned")
 
 
 def _assert_direct_score_admission(conn, tenant_id, job_id, owner, cancel_event):

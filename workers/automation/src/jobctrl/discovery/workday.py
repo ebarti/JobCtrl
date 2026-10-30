@@ -504,7 +504,7 @@ def store_results(
     if cancel_event is not None and cancel_event.is_set():
         raise TransientNetworkError("Workday discovery canceled")
     now = datetime.now(timezone.utc).isoformat()
-    active_cfg = search_cfg if search_cfg is not None else config.load_saved_search_settings()
+    active_cfg = search_cfg if search_cfg is not None else config.load_discovery_control_settings()
     use_case = DiscoverJobsUseCase(
         exact_title_exclusions=tuple(active_cfg.get("exact_title_exclusions") or ()),
         repository=SqliteJobRepository(

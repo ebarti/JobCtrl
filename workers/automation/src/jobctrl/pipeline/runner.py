@@ -1767,9 +1767,9 @@ def _snapshot_discovery_next_run_settings(search_cfg: dict[str, Any]) -> dict[st
 
     defaults = search_cfg.get("defaults")
     defaults = defaults if isinstance(defaults, dict) else {}
-    boards = search_cfg.get("boards")
+    boards = config.resolve_jobspy_boards(search_cfg, warn=False)
     return {
-        "boards": [str(board) for board in boards] if isinstance(boards, list) else [],
+        "boards": boards,
         "results_per_site": int(defaults.get("results_per_site") or 50),
         "hours_old": int(defaults.get("hours_old") or 72),
         **{
