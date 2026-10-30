@@ -701,6 +701,13 @@ scenarioTest(
   },
 );
 
+scenarioTest("demo dashboard explains unavailable learning features without errors", async ({ page }) => {
+  await page.goto("/dashboard");
+  await expect(page.getByText("Learning recommendations require the local audited database.")).toBeVisible();
+  await expect(page.getByText("Tailoring policy history requires the local audited database.")).toBeVisible();
+  await expect(page.getByText(/Demo capability .* is not available/)).toHaveCount(0);
+});
+
 scenarioTest("demo shell renders the browser-profile isolation and personal-data boundary without product network", async ({
   page,
   context,
