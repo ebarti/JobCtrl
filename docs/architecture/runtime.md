@@ -681,6 +681,14 @@ is not a runtime secret read performed by the API:
   legacy `OPENAI_API_KEY` deletion path. AWS, Google, and Azure credential files
   stay in their vendor stores. A batch either applies completely or restores
   its pre-change native credential state; a recovery failure is explicit and sanitized.
+  Mutations across API processes for the same OS user share one credential
+  owner through snapshot, mutation, compensation, and response construction.
+  A secret-free in-flight record fences a surviving native helper after an API
+  crash; a timed-out helper retains ownership until it exits. Its PID is bound
+  to an OS process birth identity, so PID reuse does not retain a stale fence.
+  Unavailable inspection preserves the record and reports an unverified owner.
+  The distinct
+  plaintext migration workflow is not covered by this owner.
   `GET /v1/credentials` and post-mutation responses return presence only; each
   `configured` state is `true`, `false`, or `null`. An inspection failure is
   `configured=null` with `unavailableReason=inspection_failed`, not an absent

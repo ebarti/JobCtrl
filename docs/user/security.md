@@ -408,6 +408,9 @@ extension-pairing changes do not require that restart. Provider
 replacement is atomic from the web contract; native reads for presence,
 rollback, or migration stay internal and never cross the HTTP boundary. Windows uses Credential Manager and Linux uses Secret Service. Unavailable or
 locked stores are reported without falling back to plaintext persistence.
+API credential updates share an OS-user lock and a temporary helper identity
+record containing no credential values. Later saves wait for a surviving helper
+to exit; the separate plaintext migration has its own ownership rules.
 
 ## Runtime And Supply-Chain Boundary
 

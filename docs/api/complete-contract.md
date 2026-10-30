@@ -2198,7 +2198,13 @@ run link to its exact activity stream.
   unsupported host return sanitized `409 credential_store_unavailable`;
   operational native-store failures return sanitized
   `503 credential_store_unavailable` with a sanitized operational or rollback
-  failure reason. Neither
+  failure reason. A concurrent update that cannot acquire credential ownership
+  within 30 seconds returns `503 credential_store_unavailable` with reason
+  `busy`. A mutation whose helper has not stopped at its deadline returns
+  `partial_failure`; later updates wait until the helper stops. When process
+  identity cannot be verified, the API preserves the record and returns
+  `503 credential_store_unavailable` with reason `ownership_unverified`.
+  Restoring process inspection permits a retry without restarting the machine. Neither
   path returns raw native-store errors. `GET` and `DELETE` never return stored
   values; private batch snapshots are used only for compensating rollback, not
   provider runtime. If

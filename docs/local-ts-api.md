@@ -376,6 +376,9 @@ for the readiness boundary.
 
 Ordinary settings and secrets deliberately use separate routes and storage.
 See [Profile & Settings](api/profile-and-settings.md#settings-and-credentials).
+Credential mutation ownership is shared across local API processes and can
+return a bounded `busy` response while another update is active. Unverified
+process identity fails closed as `ownership_unverified`.
 `GET /v1/providers/models` returns sanitized ready-provider catalogs through
 the Python JSON-RPC boundary. `PATCH /v1/settings` accepts `preferredModels`,
 validates every non-null choice against that current catalog, and persists only

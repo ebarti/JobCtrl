@@ -155,6 +155,12 @@ enter the system. They do not hold provider credentials or raw feed contents.
 | `POST /v1/browser-capabilities/:capabilityId/disable` | Disable an optional capability immediately. |
 | `POST /v1/browser-capabilities/authenticated-linkedin-browser/profile-copy` | Backward-compatible operator API for copying one explicitly selected detected profile by opaque browser/profile IDs, retaining the legacy browser-only Default arm, or accepting one write-only manual source path; every arm requires explicit consent. It is not exposed by current Settings and is never used by integrated Discovery or Enrich. |
 
+Credential mutations are serialized across JobCtrl API processes for the same
+OS user. A bounded wait returns a sanitized `busy` response; uncertain helper
+completion reports incomplete recovery and fences later mutations until exit.
+An unreadable process identity returns `ownership_unverified` and preserves the
+coordination record.
+
 Credential responses expose enough state for the UI to show whether a provider
 is configured, but do not return stored secret material. Guided provider
 replacement rolls back on failure; an unrecoverable rollback is reported as an
