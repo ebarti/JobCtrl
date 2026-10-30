@@ -134,6 +134,11 @@ including when it replaces the cache while query cancellation is pending. Form r
 payloads live only in component memory, with explicit new-action identity after
 acknowledgement or a deliberate user choice. No external send or suggestion
 terminal-decision authority is introduced.
+The app session retains manual outcome and reflection drafts and uncertain
+retry identities separately by tenant and job across top-level navigation,
+keyed drawer changes, nested run detail and cold reads. A delayed acknowledgement
+from a form that has been replaced cannot clear the current owner's draft.
+Reloading discards this in-memory state.
 
 The Gmail feedback scanner searches bounded post-application windows using
 known application anchors. It reads a body only after metadata reaches the

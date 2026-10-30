@@ -24,6 +24,7 @@ export {
   InterviewReflectionPanel,
   JobOutcomePanel,
   ManualOutcomeForm,
+  OutcomeDraftRetentionProvider,
   OutcomeSuggestionsPanel,
   OutcomeTimeline,
   outcomeLabel,
