@@ -257,7 +257,7 @@ c=sqlite3.connect(p); c.execute('create table if not exists history(value text)'
 if not c.execute('select count(*) from history').fetchone()[0]: c.execute("insert into history values ('owned-history')")
 c.commit()
 while True: time.sleep(1)`
-	apiCode := `import http.server,json,os,pathlib
+	apiCode := `import http.server,json,os,pathlib,socketserver
 class H(http.server.BaseHTTPRequestHandler):
  def do_GET(self):
   try: pid=int(pathlib.Path(os.environ['TEST_WORKER_PID']).read_text())
@@ -265,7 +265,13 @@ class H(http.server.BaseHTTPRequestHandler):
   d=os.environ['JOBCTRL_DIR']; body=json.dumps({'ok':True,'appDir':d,'dbPath':str(pathlib.Path(d)/'jobctrl.db'),'worker':{'status':'healthy','heartbeat':{'pid':pid}}}).encode()
   self.send_response(200); self.send_header('Content-Type','application/json'); self.end_headers(); self.wfile.write(body)
  def log_message(self,*args): pass
-http.server.HTTPServer(('127.0.0.1',int(os.environ['JOBCTRL_API_PORT'])),H).serve_forever()`
+class Server(http.server.HTTPServer):
+ def server_bind(self):
+  # HTTPServer's reverse DNS lookup can hang on a hosted runner even after
+  # binding the socket. This owned loopback fixture has no need for DNS.
+  socketserver.TCPServer.server_bind(self)
+  self.server_name,self.server_port='127.0.0.1',self.server_address[1]
+Server(('127.0.0.1',int(os.environ['JOBCTRL_API_PORT'])),H).serve_forever()`
 	for name, contents := range map[string]string{"worker.py": workerCode, "temporal.py": temporalCode, "api.py": apiCode} {
 		if err := os.WriteFile(filepath.Join(root, name), []byte(contents), 0600); err != nil {
 			t.Fatal(err)

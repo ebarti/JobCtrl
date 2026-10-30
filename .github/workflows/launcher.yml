@@ -161,6 +161,26 @@ jobs:
       - name: Vet native launcher
         working-directory: launcher
         run: go vet ./...
+      - name: Diagnose loopback reverse DNS
+        shell: bash
+        run: |
+          "$JOBCTRL_MIGRATION_TEST_PYTHON" - <<'PYTHON'
+          import subprocess, sys
+          script = "import faulthandler,signal,socket; faulthandler.register(signal.SIGUSR1); print('reverse lookup start',flush=True); print(socket.getfqdn('127.0.0.1'),flush=True)"
+          child = subprocess.Popen([sys.executable, '-c', script], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+          try:
+              output, _ = child.communicate(timeout=3)
+              print('loopback reverse lookup completed:', output)
+          except subprocess.TimeoutExpired:
+              import signal
+              child.send_signal(signal.SIGUSR1)
+              try:
+                  output, _ = child.communicate(timeout=2)
+              except subprocess.TimeoutExpired:
+                  child.kill()
+                  output, _ = child.communicate()
+              print('loopback reverse lookup timed out:', output)
+          PYTHON
       - name: Test source workspace ownership
         working-directory: launcher
         run: go test -race -timeout 3m -count=1 ./internal/launcher -run 'TestSourceMigrationPreservesLaterWritesAcrossEveryDurableBoundary/starting|TestDevelopmentEntryAutomaticallyMigratesOwnedWorkspace' -v
