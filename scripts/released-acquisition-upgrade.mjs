@@ -337,6 +337,10 @@ async function brewScenario(old, candidate, root, baseEnv, sourceAcquisition = "
     if (sourceAcquisition === "homebrew") {
       await writeFile(formulaPath, source, { mode: 0o644 });
       await run(brew, ["install", "--formula", formula], env); installed = true;
+      // Homebrew installs a prefix-owned bootstrap only. Resolve it once so
+      // the synthetic scoped fixture has an authenticated old selection,
+      // without starting the untracked predecessor supervisor.
+      if (scoped) assert.equal(JSON.parse((await run(frontend, ["version", "--json"], env)).output).buildId, old.descriptor.buildId);
       context = scoped ? await prepareScopedWorkspace(old, root, runtime, state, env) : await prepareWorkspace(old, runtime, state, env, frontend);
     }
     console.log(`${old.descriptor.appVersion}: upgrading through unmodified Homebrew`);
