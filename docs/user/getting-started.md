@@ -251,11 +251,14 @@ use the updated formula, while bundled-installer installations use their signed
 release channel. Pulling source changes does not publish an update to installed
 users.
 
-A source checkout and the installed app use the same workspace, profile, resume,
-and Temporal history. A newer checkout can upgrade the shared database beyond
-what an older installed release understands. In that case update the installed
-app when a compatible release is published. Source upgrade and recovery details
-are in [Local Development](../local-development.md#schema-migrations-and-source-updates).
+A compatible source checkout and installed app use the same workspace, profile,
+resume and Temporal history. Older installed releases have limits: v0.3.1 supports
+schema 14 and expects Temporal history at `$JOBCTRL_DIR/temporal.db`, not the
+older source location `$JOBCTRL_DIR/temporal/temporal.db`. Do not move or delete
+history to force compatibility. A newer checkout can upgrade the shared database
+beyond what an older installed release understands; update the installed app when
+a compatible release is published. Source upgrade and recovery details are in
+[Local Development](../local-development.md#schema-migrations-and-source-updates).
 
 A release that moves to schema 15 uses its new authenticated installer to
 upgrade the original installation. Direct installed upgrades require an initialized
@@ -265,8 +268,7 @@ workspace and see the [v0.3.1 upgrade notes](https://github.com/ebarti/JobCtrl/r
 databases: the installer verifies them, stops instance-owned processes, backs up
 the current application and Temporal databases together, and applies the additive
 migration before checking startup health. Normal cleanup and restart do not
-require rebooting. If cleanup actually fails, preserve the reported evidence;
-reboot is a last-resort troubleshooting step.
+require rebooting. If cleanup fails, preserve the reported evidence.
 
 If startup fails or the upgrade is interrupted, JobCtrl preserves the live
 databases and recovery journal. Rerun the trusted new installer that began the
@@ -275,10 +277,13 @@ transition journal. The old binary cannot recover the new journal. After the
 new command has replaced it, run `jobctrl stop`, then `jobctrl update` to continue
 forward. Each attempt backs up the current pair, including later saved changes.
 A revoked candidate can still be stopped through the new command; revocation
-continues to block its startup or update. An untracked legacy runtime still
-requires the documented ownership recovery before migration can proceed. Do not remove the journal, reinstall over a schema-14 workspace without
-its original metadata, or restore an older snapshot over newer data. Rollback
-across this protocol change is refused. A same-protocol explicit rollback still
+continues to block its startup or update. If a legacy runtime lacks complete
+ownership records, JobCtrl cannot currently verify a safe recovery automatically
+and has no documented self-service procedure for it. Preserve the registry,
+workspace and journal, and seek support. Restarting the computer alone does not
+clear this refusal. Do not remove the journal, reinstall over a schema-14
+workspace without its original metadata, or restore an older snapshot over newer
+data. Rollback across this protocol change is refused. A same-protocol explicit rollback still
 restores the snapshot associated with its previous release, so data added since
 that snapshot is not carried backward. Automatic paired rollback is also
 unavailable while a workspace uses the legacy source Temporal history path;
