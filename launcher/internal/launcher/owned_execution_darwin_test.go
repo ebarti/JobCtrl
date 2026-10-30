@@ -402,6 +402,16 @@ func TestOwnedExecutionStdin(t *testing.T) {
 	ctx := executionTestContext(t)
 	root := filepath.Dir(ctx.Instance.StatePath)
 	ctx.Instance.ControlPath, ctx.Instance.LockPath = filepath.Join(root, "control.lock"), filepath.Join(root, "instance.lock")
+	originalCount := readCoalitionActiveTaskCount
+	unprovedCount := false
+	readCoalitionActiveTaskCount = func(id uint64) (uint64, error) {
+		count, err := originalCount(id)
+		if (err == nil && count > 0) || (err != nil && !errors.Is(err, syscall.ESRCH)) {
+			unprovedCount = true
+		}
+		return count, err
+	}
+	defer func() { readCoalitionActiveTaskCount = originalCount }()
 	reader, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -416,6 +426,7 @@ func TestOwnedExecutionStdin(t *testing.T) {
 	if err = runInOwnedExecution(ctx, []string{"__scope-test-command", ctx.Instance.StatePath, ctx.Instance.ID, "stdin", "unused"}, &output, io.Discard); err != nil {
 		t.Fatal(err)
 	}
+	readCoalitionActiveTaskCount = originalCount
 	if output.String() != "scope authenticated\nsynthetic stdin\n" {
 		t.Fatalf("stdin was not forwarded: %q", output.String())
 	}
@@ -424,6 +435,24 @@ func TestOwnedExecutionStdin(t *testing.T) {
 		t.Fatalf("finished empty execution lost its active receipt: %v", err)
 	}
 	completion, err := readExecutionCompletion(ctx, scopes[0].ID)
+	if errors.Is(err, os.ErrNotExist) && unprovedCount {
+		// The kernel may still count a task briefly after the helper exits. The
+		// controller must retain the active receipt instead of guessing zero;
+		// an independently verified stop can then attest and retire it.
+		if err := stop(ctx); err != nil {
+			t.Fatalf("stop could not verify the finished scope: %v", err)
+		}
+		completion, err = readExecutionCompletion(ctx, scopes[0].ID)
+		raw, marshalErr := json.Marshal(scopes[0])
+		expected := executionCompletionForReceipt(scopes[0], append(raw, '\n'), scopes[0].BootSession)
+		if err != nil || marshalErr != nil || completion.Scope != scopes[0] || completion.Scope.Purpose != "" || completion.ReceiptSHA256 != expected.ReceiptSHA256 || completion.VerificationBootSession != scopes[0].BootSession {
+			t.Fatalf("stop did not preserve the exact finished scope: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(root, "executions", scopes[0].ID+".json")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("verified stop retained the active receipt: %v", err)
+		}
+		return
+	}
 	if err != nil || completion.Scope != scopes[0] || completion.Scope.Purpose != "" || completion.VerificationBootSession != completion.Scope.BootSession {
 		t.Fatalf("finished execution completion does not match its scope: %v", err)
 	}
@@ -452,6 +481,64 @@ func TestOwnedExecutionStdin(t *testing.T) {
 	}
 	if err := stop(ctx); err != nil {
 		t.Fatalf("exact same-boot proof did not permit normal stop: %v", err)
+	}
+}
+
+// A conservative nonzero observation must never authorize completion, but a
+// later real stop can verify and retire the same synthetic execution safely.
+func TestFinishedOrdinaryExecutionRecoversFromTransientScopeCount(t *testing.T) {
+	ctx := executionTestContext(t)
+	root := filepath.Dir(ctx.Instance.StatePath)
+	ctx.Instance.ControlPath, ctx.Instance.LockPath = filepath.Join(root, "control.lock"), filepath.Join(root, "instance.lock")
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	writer.Close()
+	stdin, originalCount := os.Stdin, readCoalitionActiveTaskCount
+	os.Stdin = reader
+	injected := false
+	readCoalitionActiveTaskCount = func(id uint64) (uint64, error) {
+		if !injected {
+			injected = true
+			return 1, nil
+		}
+		return originalCount(id)
+	}
+	defer func() { os.Stdin, readCoalitionActiveTaskCount = stdin, originalCount }()
+	command := []string{"__scope-test-command", ctx.Instance.StatePath, ctx.Instance.ID, "stdin", "unused"}
+	if err := runInOwnedExecution(ctx, command, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	readCoalitionActiveTaskCount = originalCount
+	scopes, err := readOwnedExecutionScopes(ctx)
+	if err != nil || len(scopes) != 1 || !injected {
+		t.Fatalf("unproved execution did not retain its receipt: %v", err)
+	}
+	if _, err := readExecutionCompletion(ctx, scopes[0].ID); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("nonzero count published an unverified proof: %v", err)
+	}
+	if err := stop(ctx); err != nil {
+		t.Fatalf("real stop could not verify the retained scope: %v", err)
+	}
+	completion, err := readExecutionCompletion(ctx, scopes[0].ID)
+	raw, marshalErr := json.Marshal(scopes[0])
+	expected := executionCompletionForReceipt(scopes[0], append(raw, '\n'), scopes[0].BootSession)
+	if err != nil || marshalErr != nil || completion.Scope != scopes[0] || completion.Scope.Purpose != "" || completion.ReceiptSHA256 != expected.ReceiptSHA256 || completion.VerificationBootSession != scopes[0].BootSession {
+		t.Fatalf("stop did not preserve the exact finished scope: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "executions", scopes[0].ID+".json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("verified stop retained the active receipt: %v", err)
+	}
+	if err := runInOwnedExecution(ctx, command, io.Discard, io.Discard); err != nil {
+		t.Fatalf("restart after verified stop failed: %v", err)
+	}
+	if err := stop(ctx); err != nil {
+		t.Fatalf("cleanup after restart failed: %v", err)
+	}
+	if retained, err := readExecutionCompletion(ctx, scopes[0].ID); err != nil || retained != completion {
+		t.Fatalf("restart changed the original completion proof: %v", err)
 	}
 }
 

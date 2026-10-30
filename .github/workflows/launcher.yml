@@ -177,7 +177,10 @@ jobs:
           # Separate runners own their fixed test ports. Each top-level test is
           # assigned exactly once; selecting a parent includes all its subtests.
           tests="$(go test ./internal/launcher -list '^Test' | awk -v shard="$TEST_SHARD" '/^Test[[:alnum:]_]+$/ { if (count++ % 2 == shard) print }')"
-          [[ -n "$tests" ]]
+          if [[ -z "$tests" ]]; then
+            echo "No native launcher tests were assigned to shard $TEST_SHARD" >&2
+            exit 1
+          fi
           printf '%s\n' "$tests"
           pattern="$(printf '%s\n' "$tests" | paste -sd '|' -)"
           go test -race -timeout 18m -count=1 ./internal/launcher -run "^($pattern)$"
