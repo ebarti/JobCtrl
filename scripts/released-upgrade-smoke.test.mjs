@@ -1,15 +1,28 @@
 import assert from "node:assert/strict";
-import { cp, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { fetchPublishedReleases, interruptReleaseAtCheckpoint, runForwardInterruptionMatrix, selectLatestReleasedVersion, selectUpgradeMode } from "./released-upgrade-smoke.mjs";
+import { fetchPublishedReleases, interruptReleaseAtCheckpoint, runForwardInterruptionMatrix, scenario, selectLatestReleasedVersion, selectUpgradeMode } from "./released-upgrade-smoke.mjs";
 
 import { acquisitionChildEnvironment, runPublishedAcquisitionUpgrades } from "./released-acquisition-upgrade.mjs";
 
 const published = (version, day, extra = {}) => ({ tag_name: `v${version}`, published_at: `2026-10-${day}T10:00:00Z`, draft: false, prerelease: false, ...extra });
+
+test("upgrade setup reports the installer failure even when no selector was created", { skip: process.platform === "win32" }, async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-upgrade-error-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const installer = path.join(root, "failing-installer");
+  await writeFile(installer, "#!/bin/sh\necho 'synthetic installer failure' >&2\nexit 23\n", { mode: 0o700 });
+  const old = { installer, directory: root, archive: path.join(root, "unused.zip"), descriptor: { appVersion: "0.3.1", buildId: "synthetic" } };
+  await assert.rejects(scenario(old, {}, path.join(root, "fixture")), (error) => {
+    assert.match(error.message, /synthetic installer failure/);
+    assert.match(error.message, /cleanup failed:.*ENOENT/s);
+    return true;
+  });
+});
 
 test("the upgrade source advances to the latest published stable release", () => {
   const releases = [published("0.3.0", "18"), published("0.3.1", "19"), published("0.4.0", "20", { draft: true }), published("0.4.0-rc.1", "20", { prerelease: true })];

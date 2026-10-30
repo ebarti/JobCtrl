@@ -396,7 +396,7 @@ print(json.dumps([app.execute("SELECT title FROM jobs WHERE url=?",(sys.argv[3],
   return { last, title: `later-job-${last}`, checks: checked };
 }
 
-async function scenario(old, candidate, root) {
+export async function scenario(old, candidate, root) {
   const runtime = path.join(root, "runtime"), state = path.join(root, "state"), home = path.join(root, "home"), prefix = path.join(root, "formula");
   const bin = path.join(root, "bin");
   for (const directory of [root, home, state, bin]) await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -407,6 +407,8 @@ async function scenario(old, candidate, root) {
   await writeFile(path.join(bin, "brew"), '#!/bin/sh\ncase "$1" in\nupgrade) [ "$2" = ebarti/tap/jobctrl ] ;;\n--prefix) printf "%s\\n" "$JOBCTRL_UPGRADE_QA_PREFIX" ;;\n*) exit 64 ;;\nesac\n', { mode: 0o700 });
   const selector = path.join(runtime, "bin", "jobctrl");
   const checked = [];
+  let scenarioFailed = false;
+  let scenarioError;
   try {
     console.log(`${old.descriptor.appVersion}: installing and starting released runtime`);
     await command(old.installer, installArgs(old, runtime), env);
@@ -500,8 +502,22 @@ async function scenario(old, candidate, root) {
       checked.push("explicit-homebrew-reupdate-after-rollback");
     }
     return result;
+  } catch (error) {
+    scenarioFailed = true;
+    scenarioError = error;
+    throw error;
   } finally {
-    await command(selector, ["stop"], env, { allowFailure: true });
+    try {
+      await command(selector, ["stop"], env, { allowFailure: true });
+    } catch (cleanupError) {
+      if (!scenarioFailed) throw cleanupError;
+      const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+      if (scenarioError instanceof Error) {
+        scenarioError.message += `\nAdditionally, cleanup failed: ${cleanupMessage}`;
+      } else {
+        throw new AggregateError([scenarioError, cleanupError], `Upgrade qualification and cleanup failed: ${String(scenarioError)}`);
+      }
+    }
   }
 }
 
