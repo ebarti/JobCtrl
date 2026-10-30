@@ -316,7 +316,7 @@ def test_digest_cli_counts_canonical_jobs_once_and_respects_tenant_and_state(wor
     payload = json.loads(result.stdout)
     assert payload["newMatches"] == {"count": 2, "highFitCount": 1}
     assert payload["pendingApprovals"]["count"] == 1
-    assert payload["staleScores"]["count"] == 1
+    assert payload["staleScores"]["count"] == 2
     assert payload["followUpsDue"]["count"] == 1
     assert payload["highFitThreshold"] == 7
     assert payload["since"] == since

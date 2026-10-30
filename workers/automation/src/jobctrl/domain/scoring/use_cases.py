@@ -304,6 +304,9 @@ class ScoreJobUseCase:
         connection = getattr(self._repository, "connection", None)
         if connection is not None and connection.in_transaction and self._publisher is not None:
             raise RuntimeError("Cannot publish a score event inside a caller-owned transaction")
+        capture_staleness = getattr(self._repository, "capture_staleness_for_score", None)
+        if "_score_staleness_snapshot" not in job and callable(capture_staleness):
+            job = {**job, "_score_staleness_snapshot": capture_staleness(tenant_id, _job_id(job))}
         parse_result = self.compute(
             job=job,
             profile_snapshot=profile_snapshot,
@@ -500,6 +503,9 @@ class ScoreJobUseCase:
                 determination_id=resolved_parse.trace.determination_id,
             )
             self._persist_requirement_fit_report(tenant_id=tenant_id, score=new_score, parse=resolved_parse)
+            resolve_staleness = getattr(self._repository, "resolve_staleness_for_score", None)
+            if callable(resolve_staleness):
+                resolve_staleness(new_score, job.get("_score_staleness_snapshot"))
         self._publish_scored(new_score)
         return ScoreJobOutcome(ok=True, score=new_score)
 

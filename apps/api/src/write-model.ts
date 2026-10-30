@@ -524,68 +524,114 @@ export function resetStaleScoresForRescore(
   const selectedWhere = request.jobIds === undefined
     ? ""
     : jobIdsFilter.length
-      ? ` AND job_id IN (${jobIdsFilter.map(() => "?").join(", ")})`
+      ? ` AND marker.job_id IN (${jobIdsFilter.map(() => "?").join(", ")})`
       : " AND 0";
-  const rows = allRows<Record<string, unknown>>(
-    db,
-    `SELECT tenant_id, job_id, stale_reason, old_policy_version, new_policy_version
-     FROM job_score_staleness
-     WHERE tenant_id = ? AND resolved = 0
-       ${selectedWhere}
-     ORDER BY marked_at ASC${limit > 0 ? " LIMIT ?" : ""}`,
-    [LOCAL_TENANT, ...jobIdsFilter, ...(limit > 0 ? [limit] : [])],
-  );
-  const now = new Date().toISOString();
-  const jobKeys = rows.map((row) => String(row.job_id ?? "")).filter(Boolean);
-  for (const row of rows) {
-    const tenantId = String(row.tenant_id ?? "");
-    const jobId = String(row.job_id ?? "");
-    if (!tenantId || !jobId) {
-      continue;
-    }
-    upsertStageStateById(db, tenantId, jobId, "score", "pending", {
-      attemptCount: 0,
-      clearTiming: true,
-      skipValidation: true,
-    });
-    db.prepare(
-      `UPDATE job_score_staleness
-          SET resolved = 1,
-              resolved_at = ?
-        WHERE tenant_id = ?
-          AND job_id = ?
-          AND stale_reason = ?
-          AND old_policy_version = ?
-          AND new_policy_version = ?`,
-    ).run(
-      now,
-      tenantId,
-      jobId,
-      String(row.stale_reason ?? ""),
-      Number(row.old_policy_version ?? 0),
-      Number(row.new_policy_version ?? 0),
+  // Match the jobs list's active lifecycle using its source tables, before
+  // selecting owners or applying the bounded reset limit.
+  const activeWhere = `
+    AND EXISTS (SELECT 1 FROM jobs j WHERE j.tenant_id = marker.tenant_id AND j.job_id = marker.job_id)
+    AND NOT EXISTS (
+      SELECT 1 FROM jobctrl_deleted_jobs d
+       WHERE d.tenant_id = marker.tenant_id AND d.job_id = marker.job_id
+         AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM jobctrl_hidden_jobs h
+       WHERE h.tenant_id = marker.tenant_id AND h.job_id = marker.job_id AND h.unhidden_at IS NULL
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM posting_snapshot_sets pss
+       WHERE pss.tenant_id = marker.tenant_id AND pss.job_id = marker.job_id
+         AND pss.latest_active_state IN ('closed', 'expired', 'removed', 'location_incompatible')
+    )`;
+  return db.transaction((): ResetStaleScoresForRescoreResponse => {
+    const waiting = allRows<{ job_id: string; state: string; metadata_json: string | null }>(
+      db,
+      `SELECT DISTINCT marker.job_id, score_stage.state, score_stage.metadata_json
+         FROM job_score_staleness marker
+         JOIN job_stage_states score_stage
+           ON score_stage.tenant_id = marker.tenant_id
+          AND score_stage.job_id = marker.job_id AND score_stage.stage = 'score'
+        WHERE marker.tenant_id = ? AND marker.resolved = 0 ${selectedWhere} ${activeWhere}
+          AND score_stage.state IN ('pending', 'queued', 'running')
+        ORDER BY marker.job_id`,
+      [LOCAL_TENANT, ...jobIdsFilter],
     );
-    recordActionEventById(db, {
-      tenantId,
-      jobId,
-      stage: "score",
-      eventType: "ScoreRescoreRequested",
-      level: "info",
-      message: "Stale score reset for explicit rescore.",
-      payload: {
-        staleReason: String(row.stale_reason ?? ""),
-        oldPolicyVersion: Number(row.old_policy_version ?? 0),
-        newPolicyVersion: Number(row.new_policy_version ?? 0),
-        nextAction: "jobctrl run score --rescore",
-      },
-    });
-  }
-  return {
-    ok: true,
-    count: jobKeys.length,
-    jobKeys,
-    nextAction: "jobctrl run score --rescore",
-  };
+    const skippedActiveJobKeys: string[] = [];
+    const alreadyPendingJobKeys: string[] = [];
+    for (const row of waiting) {
+      const metadata = parseJsonRecord(row.metadata_json);
+      const automatic = metadata?.automaticPreparation;
+      const hasOwner = Boolean(
+        metadata?.activityOwner || metadata?.workflowId || metadata?.temporalRunId ||
+        (isRecord(automatic) && automatic.workflowId),
+      );
+      if (row.state !== "pending" || hasOwner) skippedActiveJobKeys.push(row.job_id);
+      else alreadyPendingJobKeys.push(row.job_id);
+    }
+    const rows = allRows<Record<string, unknown>>(
+      db,
+      `WITH markers AS (
+         SELECT tenant_id, job_id, stale_reason, old_policy_version, new_policy_version, marked_at,
+                ROW_NUMBER() OVER (
+                  PARTITION BY tenant_id, job_id
+                  ORDER BY marked_at, stale_reason, old_policy_version, new_policy_version
+                ) AS marker_rank
+           FROM job_score_staleness marker
+          WHERE marker.tenant_id = ? AND marker.resolved = 0 ${selectedWhere} ${activeWhere}
+       )
+       SELECT markers.tenant_id, markers.job_id, markers.stale_reason,
+              markers.old_policy_version, markers.new_policy_version,
+              score_stage.metadata_json AS stage_metadata_json
+         FROM markers
+         LEFT JOIN job_stage_states score_stage
+           ON score_stage.tenant_id = markers.tenant_id
+          AND score_stage.job_id = markers.job_id AND score_stage.stage = 'score'
+        WHERE markers.marker_rank = 1
+          AND (score_stage.state IS NULL OR score_stage.state NOT IN ('pending', 'queued', 'running'))
+        ORDER BY markers.marked_at, markers.job_id${limit > 0 ? " LIMIT ?" : ""}`,
+      [LOCAL_TENANT, ...jobIdsFilter, ...(limit > 0 ? [limit] : [])],
+    );
+    const jobKeys = rows.map((row) => String(row.job_id ?? "")).filter(Boolean);
+    for (const row of rows) {
+      const tenantId = String(row.tenant_id ?? "");
+      const jobId = String(row.job_id ?? "");
+      if (!tenantId || !jobId) continue;
+      upsertStageStateById(db, tenantId, jobId, "score", "pending", {
+        attemptCount: 0,
+        clearTiming: true,
+        skipValidation: true,
+      });
+      const metadata = parseJsonRecord(nullableString(row.stage_metadata_json));
+      if (metadata) {
+        const { activityOwner, workflowId, temporalRunId, automaticPreparation, activityAttempt, ...retained } = metadata;
+        db.prepare("UPDATE job_stage_states SET metadata_json = ? WHERE tenant_id = ? AND job_id = ? AND stage = 'score'")
+          .run(Object.keys(retained).length ? JSON.stringify(retained) : null, tenantId, jobId);
+      }
+      recordActionEventById(db, {
+        tenantId,
+        jobId,
+        stage: "score",
+        eventType: "ScoreRescoreRequested",
+        level: "info",
+        message: "Stale score reset for explicit rescore.",
+        payload: {
+          staleReason: String(row.stale_reason ?? ""),
+          oldPolicyVersion: Number(row.old_policy_version ?? 0),
+          newPolicyVersion: Number(row.new_policy_version ?? 0),
+          nextAction: "jobctrl run score --rescore",
+        },
+      });
+    }
+    return {
+      ok: true,
+      count: jobKeys.length,
+      jobKeys,
+      nextAction: "jobctrl run score --rescore",
+      skippedActiveJobKeys,
+      alreadyPendingJobKeys,
+    };
+  }).immediate();
 }
 
 export function softDeleteJob(db: SqliteDatabase, jobKey: string, request: DeleteJobRequest = {}): JobMutationResponse {

@@ -273,7 +273,16 @@ not for an employer ranking people.
 6. **Correct or evolve deliberately.** A user correction creates a new score
    version and a calibration anchor. A new scoring policy can mark comparable
    older scores stale, but it does not silently replace them; an explicit
-   re-score adopts the current policy.
+   re-score adopts the current policy. Resetting stale work keeps the saved
+   score visible and marked stale until a matching replacement is committed.
+   Failed or canceled work, or reuse of the saved score, does not clear the
+   warning. A later policy change remains visible if an older assessment finishes.
+   Reset leaves queued or running scoring alone. Wait for it to finish, then
+   retry the reset if the score is still stale; an already-pending score is
+   ready for scoring. Reset only targets active jobs: hidden, deleted, or
+   inactive postings retain their saved scores and warnings. Unhide or restore
+   a job, or wait until the posting is active again, before retrying its reset.
+   A manual correction also retains any existing warning.
 7. **Review profile edits on request.** Saving your profile does not update scores
    or regenerate materials. Jobs indicate when your saved score predates the
    profile. **Update score** first asks your configured scoring model whether the
