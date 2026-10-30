@@ -217,7 +217,10 @@ checks real; use only owned synthetic workspaces.
 
 Before channel promotion, the public-asset smoke also upgrades disposable
 workspaces from the latest stable release using the actual curl bootstrap and
-unmodified Homebrew with the signer-rendered formula. It verifies service
+unmodified Homebrew with the signer-rendered formula. Because this exercises
+Homebrew's actual prefix, it runs only on a GitHub-hosted runner after checking
+that no JobCtrl installation exists there. Its cleanup removes every test-owned
+JobCtrl keg and reports failures before starting another scenario. It verifies service
 readiness, a retained job and external resume, paired backup hashes, Temporal
 workflow history, and stop/restart. For the schema-15 transition, each path
 also exercises the nine durable interruption boundaries, real readiness failure,
