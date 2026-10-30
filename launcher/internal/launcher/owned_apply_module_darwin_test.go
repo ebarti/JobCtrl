@@ -19,15 +19,20 @@ import (
 )
 
 func TestActualNativeApplyModulePreservesManualSkipAndPeer(t *testing.T) {
-	runActualNativeApplyModuleFixture(t, false)
+	runActualNativeApplyModuleFixture(t, false, false)
 }
 
 func TestActualTemporalApplyUsesIndependentNativeScopes(t *testing.T) {
-	runActualNativeApplyModuleFixture(t, true)
+	runActualNativeApplyModuleFixture(t, true, false)
 }
 
-func runActualNativeApplyModuleFixture(t *testing.T, temporal bool) {
+func TestActualNativeApplyRetryAfterCleanupPreservesActivePeer(t *testing.T) {
+	runActualNativeApplyModuleFixture(t, false, true)
+}
+
+func runActualNativeApplyModuleFixture(t *testing.T, temporal, retryWithPeer bool) {
 	t.Helper()
+	controlled := temporal || retryWithPeer
 	python := migrationIntegrationPython(t)
 	workerSource, err := filepath.Abs(filepath.Join("..", "..", "..", "workers", "automation", "src"))
 	if err != nil {
@@ -44,7 +49,7 @@ func runActualNativeApplyModuleFixture(t *testing.T, temporal bool) {
 	}
 	adapterSource := filepath.Join(t.TempDir(), "python-adapter.go")
 	bootstrap := fmt.Sprintf("import sys,runpy;sys.path[:0]=[%q,%q];runpy.run_module('jobctrl.apply.execution',run_name='__main__')", workerSource, filepath.Dir(workerSource))
-	if temporal {
+	if controlled {
 		// This literal QA payload controls only external browser/agent ports;
 		// the fixed production module, claims, saga and native scope are real.
 		bootstrap = fmt.Sprintf("import sys,runpy;sys.path[:0]=[%q,%q];from tests.helpers.apply_execution_ports import install;install();runpy.run_module('jobctrl.apply.execution',run_name='__main__')", workerSource, filepath.Dir(workerSource))
@@ -78,7 +83,7 @@ func runActualNativeApplyModuleFixture(t *testing.T, temporal bool) {
 	component := manifest.Components[0]
 	component.ID, component.Path = "owned-release-policy", "release"
 	manifest.Components = append(manifest.Components, component)
-	if temporal {
+	if controlled {
 		mcp := filepath.Join(payload, "playwright-mcp", "bin", "playwright-mcp")
 		if err := os.MkdirAll(filepath.Dir(mcp), 0755); err != nil {
 			t.Fatal(err)
@@ -96,9 +101,11 @@ func runActualNativeApplyModuleFixture(t *testing.T, temporal bool) {
 	environment := []string{"HOME=" + home, "PATH=/usr/bin:/bin", "JOBCTRL_DIR=" + filepath.Join(home, "data"), "JOBCTRL_RUNTIME_HOME=" + filepath.Join(home, "runtime"), executionQASandboxVariable + "=" + executionQASandboxSelector, "LANGFUSE_DISABLE=1", "OTEL_SDK_DISABLED=true"}
 	var churnCount *atomic.Int64
 	var churnDir string
-	if temporal {
+	if controlled {
 		churnDir, churnCount = startApplyCensusChurn(t)
 		environment = append(environment, "JOBCTRL_TEST_CENSUS_CHURN_DIR="+churnDir)
+	}
+	if temporal {
 		temporalCLI := os.Getenv("JOBCTRL_TEMPORAL_CLI_PATH")
 		if temporalCLI == "" {
 			temporalCLI, err = exec.LookPath("temporal")
@@ -170,6 +177,9 @@ func runActualNativeApplyModuleFixture(t *testing.T, temporal bool) {
 		if temporal && mode == "run" {
 			arguments = []string{"-I", "-B", filepath.Join(filepath.Dir(harness), "apply_execution_temporal.py"), workerSource, instance.StateDir, evidence}
 		}
+		if retryWithPeer && mode == "run" {
+			arguments = []string{"-I", "-B", filepath.Join(filepath.Dir(harness), "apply_execution_retry_native.py"), workerSource, instance.StateDir, evidence}
+		}
 		command := exec.Command(python, arguments...)
 		command.Env = environment
 		if mode == "run" {
@@ -195,12 +205,16 @@ func runActualNativeApplyModuleFixture(t *testing.T, temporal bool) {
 		RequestID string `json:"request_id"`
 		ScopeID   string `json:"scope_id"`
 	}
-	if temporal {
-		if _, err := os.Stat(filepath.Join(evidence, "temporal-native-results.json")); err != nil {
+	if controlled {
+		resultsFile, expected := "temporal-native-results.json", 7
+		if retryWithPeer {
+			resultsFile, expected = "native-retry-results.json", 3
+		}
+		if _, err := os.Stat(filepath.Join(evidence, resultsFile)); err != nil {
 			t.Fatal(err)
 		}
 		files, err := filepath.Glob(filepath.Join(instance.StateDir, "apply-invocations", "*", "result.json"))
-		if len(files) != 7 {
+		if len(files) != expected {
 			for _, path := range files {
 				var trace struct {
 					RequestID string          `json:"request_id"`
@@ -221,8 +235,8 @@ func runActualNativeApplyModuleFixture(t *testing.T, temporal bool) {
 				t.Logf("actual native request=%s scope=%s output=%s error=%s read=%v decode=%v proof=%v custody=%v controllerTail=%s", trace.RequestID, trace.Binding.Scope.ID, trace.Output, trace.Error, readErr, decodeErr, proofErr, custodyErr, log)
 			}
 		}
-		if err != nil || len(files) != 7 {
-			t.Fatalf("real Temporal activity results missing: %v count=%d", err, len(files))
+		if err != nil || len(files) != expected {
+			t.Fatalf("controlled native activity results missing: %v count=%d expected=%d", err, len(files), expected)
 		}
 		for _, path := range files {
 			var result struct {
@@ -278,7 +292,7 @@ func runActualNativeApplyModuleFixture(t *testing.T, temporal bool) {
 			t.Fatal("native completion did not release the exact run's custody")
 		}
 	}
-	if temporal {
+	if controlled {
 		observations, err := filepath.Glob(filepath.Join(instance.StateDir, "qa-census-observations", "*.json"))
 		if err != nil || len(observations) == 0 {
 			t.Fatal("native process-session census observations missing")
