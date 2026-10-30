@@ -6,11 +6,22 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { fetchPublishedReleases, interruptReleaseAtCheckpoint, isKnownLegacyRefusal, runForwardInterruptionMatrix, scenario, selectLatestReleasedVersion, selectUpgradeMode, verifyLegacyRefusal } from "./released-upgrade-smoke.mjs";
+import { fetchPublishedReleases, installArgs, interruptReleaseAtCheckpoint, isKnownLegacyRefusal, runForwardInterruptionMatrix, scenario, selectLatestReleasedVersion, selectUpgradeMode, verifyLegacyRefusal } from "./released-upgrade-smoke.mjs";
 
 import { acquisitionChildEnvironment, prepareScopedWorkspace, runPublishedAcquisitionUpgrades } from "./released-acquisition-upgrade.mjs";
 
 const published = (version, day, extra = {}) => ({ tag_name: `v${version}`, published_at: `2026-10-${day}T10:00:00Z`, draft: false, prerelease: false, ...extra });
+
+test("released curl and Homebrew recovery use their respective authenticated acquisition modes", () => {
+  const release = { descriptor: { buildId: "candidate-build" }, directory: "/tmp/release", archive: "/tmp/release/candidate.zip" };
+  const curl = installArgs(release, "/tmp/runtime", true, "curl");
+  assert.deepEqual(curl, ["--source", "curl", "--stage-only", "--home", "/tmp/runtime", "--release-url", "https://releases.jobctrl.dev/v1/artifacts/candidate-build/channel-pointer.json"]);
+  assert.ok(!curl.includes("--descriptor-file") && !curl.includes("--archive-file"));
+  const homebrew = installArgs(release, "/tmp/runtime", false, "homebrew");
+  assert.ok(homebrew.includes("--descriptor-file") && homebrew.includes("--signature-file") && homebrew.includes("--archive-file"));
+  assert.ok(!homebrew.includes("--release-url"));
+  assert.throws(() => installArgs(release, "/tmp/runtime", false, "unknown"), /unsupported acquisition/);
+});
 
 test("upgrade setup reports the installer failure even when no selector was created", { skip: process.platform === "win32" }, async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-upgrade-error-"));
