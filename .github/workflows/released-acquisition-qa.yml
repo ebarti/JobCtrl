@@ -1,0 +1,77 @@
+name: Released acquisition upgrade QA
+
+on:
+  pull_request:
+    paths:
+      - "scripts/released-acquisition-upgrade.mjs"
+      - "scripts/released-source-ownership.mjs"
+      - "scripts/released-source-ownership.test.mjs"
+      - "scripts/released-upgrade-smoke.mjs"
+      - ".github/workflows/released-acquisition-qa.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: released-acquisition-qa-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  published-upgrade:
+    name: Exercise published curl and curl-to-Homebrew upgrades
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.21.1
+      - name: Obtain the current published candidate and formula
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/published-candidate"
+          gh release download v0.3.1 --repo ebarti/JobCtrl --dir "$RUNNER_TEMP/published-candidate" \
+            --pattern release-descriptor.json --pattern release-descriptor.json.sig \
+            --pattern manifest.json --pattern release-keys.json --pattern install.sh --pattern SHA256SUMS \
+            --pattern jobctrl-installer --pattern jobctrl-0.3.1-darwin-arm64.zip
+          curl --fail --silent --show-error --location --proto '=https' \
+            https://raw.githubusercontent.com/ebarti/homebrew-tap/ea5190ea7179925e07cbe68649659d44aee3d6ba/Formula/jobctrl.rb \
+            --output "$RUNNER_TEMP/published-candidate/jobctrl.rb"
+          test "$(jq -r '.appVersion' "$RUNNER_TEMP/published-candidate/release-descriptor.json")" = 0.3.1
+          grep -F 'JOBCTRL_BUILD_ID = "0.3.1-' "$RUNNER_TEMP/published-candidate/jobctrl.rb"
+      - name: Exercise both real acquisition paths from the previous stable release
+        env:
+          JOBCTRL_RELEASE_METADATA_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export JOBCTRL_RELEASE_KEY_ID=jobctrl-release-v1
+          export JOBCTRL_RELEASE_PUBLIC_KEY="$(jq -r '.keys["jobctrl-release-v1"]' "$RUNNER_TEMP/published-candidate/release-keys.json")"
+          node scripts/released-acquisition-upgrade.mjs \
+            --release-dir "$RUNNER_TEMP/published-candidate" \
+            --homebrew-source curl \
+            --output "$RUNNER_TEMP/released-acquisition-upgrade.json"
+      - name: Diagnose retained historical notarization failure
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          found=0
+          while IFS= read -r -d '' binary; do
+            found=1
+            echo "Rechecking the retained synthetic 0.3.0 payload with the original notarization requirement"
+            /usr/bin/codesign --verify --strict --check-notarization -R=notarized --verbose=4 "$binary" || echo "Notarization recheck failed (exit $?)"
+          done < <(find "$RUNNER_TEMP" -type f -path '*/jobctrl-acquisition-upgrades-*/curl/runtime/staging/*/payload/api/node_modules/better-sqlite3/build/Release/better_sqlite3.node' -print0)
+          if [[ "$found" = 0 ]]; then echo "No retained 0.3.0 SQLite binary was available for a notarization recheck"; fi
+
+      - name: Retain synthetic upgrade evidence
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: jobctrl-published-acquisition-qa-${{ github.run_id }}
+          path: ${{ runner.temp }}/released-acquisition-upgrade.json
+          if-no-files-found: error
+          retention-days: 14

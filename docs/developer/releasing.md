@@ -165,6 +165,10 @@ Wait for the complete workflow, including PyPI, to succeed. Independently read b
 - The stable channel pointer resolves to that build with the intended new
   sequence, safety floor, and retained revocations.
 - The public Homebrew formula names the same version and artifact digest.
+- `https://jobctrl.dev/install.sh` resolves to the same release-pinned install
+  script published with the latest stable GitHub Release. Compare its bytes to
+  the signed candidate’s retained `install.sh`; a stale bootstrap cannot own a
+  future launcher-protocol migration.
 - PyPI exposes the same package version and expected wheel/source distributions.
   Remove an inherited `UV_EXCLUDE_NEWER` cutoff when checking fresh availability.
 - Workflow evidence confirms notarization, immutable public download, native
@@ -183,9 +187,9 @@ protocol case upgrades from
 **the latest published stable version before the candidate**, rolls back to that
 version with its paired data backup, then explicitly upgrades again. For the
 protocol-1/schema-14 to protocol-2/schema-15 transition, it verifies the old
-controller's refusal, interrupts the signed new installer after selector
-handoff, preserves later application and Temporal WAL writes through forward
-recovery, and checks that cross-protocol rollback is refused. Both cases check
+controller's refusal, interrupts the signed new installer both before and after
+selector handoff, preserves later application and Temporal WAL writes through
+forward recovery, and checks that cross-protocol rollback is refused. Both cases check
 real service readiness, retained job data and Temporal history.
 
 The harness resolves that source from GitHub's published stable releases, so the
@@ -205,6 +209,20 @@ verification bundle and actual bundled runtimes without installing application
 development dependencies. The signed formula-cache adapter replaces only
 Homebrew acquisition. Keep installers, migrations, services and data/history
 checks real; use only owned synthetic workspaces.
+
+Before channel promotion, the public-asset smoke also upgrades disposable
+workspaces from the latest stable release using the actual curl bootstrap and
+unmodified Homebrew with the signer-rendered formula. It verifies service
+readiness, a retained job and external resume, paired backup hashes, Temporal
+workflow history, and stop/restart. For the schema-15 transition, each path
+also exercises the nine durable interruption boundaries, real readiness failure,
+forward recovery with later application and Temporal WAL commits, modeled
+revocation policy, and rollback refusal. The curl case uses the legacy Temporal
+history location; the Homebrew case uses the current location. A separate curl
+case also checks an already-migrated schema-15 workspace with legacy history.
+The signed binary's
+opt-in test checkpoint can only pause its own process in a marked temporary
+fixture; it never changes migration or release admission decisions.
 
 Verify the Homebrew formula with unmodified Homebrew: strict Developer ID checks
 must accept the actual released executables and reject an ad-hoc control inside

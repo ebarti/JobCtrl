@@ -229,6 +229,9 @@ func promoteForwardUpdate(ctx launchContext, build, source string, output io.Wri
 	if err := writeLegacyCurrent(store.Home, candidate); err != nil {
 		return true, err
 	}
+	if err := releaseQACheckpoint(store, release.State("selection_committed")); err != nil {
+		return true, err
+	}
 	if err := advance(store, &journal, release.Promoted); err != nil {
 		return true, err
 	}
