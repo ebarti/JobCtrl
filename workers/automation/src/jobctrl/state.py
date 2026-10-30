@@ -1544,12 +1544,13 @@ def reset_job_stage(
     if stage not in (*STAGE_ORDER, "apply"):
         raise ValueError(f"unknown stage: {stage}")
 
-    if stage == "enrich":
+    if stage in {"enrich", "apply"}:
         from jobctrl.pipeline.retry import reset_retry_stages
 
         return reset_retry_stages(
             conn, [(job_url_or_application_url, stage)],
             tenant_id=tenant_id, reset_attempts=reset_attempts,
+            _allow_apply_only=stage == "apply",
         )[0]["jobUrl"]
 
     from jobctrl.infrastructure.job_locators import resolve_job_locator

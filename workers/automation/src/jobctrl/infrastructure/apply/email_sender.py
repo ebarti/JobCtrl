@@ -13,13 +13,15 @@ class GmailEmailApplicationSender:
         self._client = client or GmailClient()
 
     def send_email_application(self, candidate: EmailApplicationCandidate, *, operation: EmailApplicationOperation) -> EmailApplicationSendResult:
+        if not isinstance(candidate.attachment_bytes, bytes) or not candidate.attachment_bytes:
+            raise ValueError("Email attachment bytes were not authorized")
         if type(operation) is not EmailApplicationOperation or operation.candidate_fingerprint != candidate.fingerprint():
             raise ValueError("email_candidate_binding_mismatch")
         result = self._client.send_email_application(
             to_email=candidate.recipient_email,
             subject=candidate.subject,
             body=candidate.body,
-            attachment_path=candidate.attachment_path,
+            attachment_bytes=candidate.attachment_bytes,
             attachment_name=candidate.attachment_name,
         )
         result = validate_send_confirmation(result)

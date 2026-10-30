@@ -229,6 +229,14 @@ Two knobs that look like Temporal concurrency but are not:
 - Concurrent workflows (a discovery run, a scoring batch, an apply) share the
   worker's activity slots; Temporal queues whatever exceeds them.
 
+Material renderers write to attempt-owned paths and publish only after their
+source snapshot and PDF slot are rechecked in the SQLite writer transaction.
+That transaction serializes publication with owned email intent. Tailor and
+Cover similarly recheck their captured material state before saving. A stale
+attempt cannot replace a winner's rows or files; a lost publication acknowledgement
+retains its file because the committed row may already reference it. Independent
+external file writes do not participate in the SQLite writer lock.
+
 ## What Bounds Throughput
 
 | Bound | Mechanism | Where |

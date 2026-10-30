@@ -28,7 +28,9 @@ import logging
 import sqlite3
 import threading
 import time
+from contextlib import nullcontext
 from pathlib import Path
+from uuid import uuid4
 
 from jobctrl import database as db_module
 from jobctrl import config
@@ -41,6 +43,7 @@ from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.services import ContentValidator, ResumeAssembler
 from jobctrl.domain.materials.use_cases import (
     ArtifactBudgetInfeasibleError,
+    MaterialsChangedDuringGeneration,
     TailorOutcome,
     TailoringLlmPolicy,
     TailoringPrerequisiteError,
@@ -73,9 +76,16 @@ from jobctrl.infrastructure.materials import (
 from jobctrl.infrastructure.materials.artifact_writer import LocalArtifactTextWriter
 from jobctrl.infrastructure.preparation import SqlitePreparationTargetReader
 from jobctrl.infrastructure.preparation_recovery import (
+    MaterialAttemptSuperseded,
+    MaterialActivityAttempt,
+    PreparationReservationLost,
+    assert_direct_material_attempt_not_superseded,
+    assert_material_activity_attempt_not_superseded,
     assert_material_activity_commit_allowed,
     claim_preparation_reservation,
     owns_preparation_reservation,
+    material_admission_write,
+    material_start_event_id,
     stage_completed_by_activity_owner,
 )
 from jobctrl.infrastructure.scoring import (
@@ -83,6 +93,7 @@ from jobctrl.infrastructure.scoring import (
     SqliteScoreRepository,
 )
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
+from jobctrl.scoring.material_lifecycle import preserve_direct_attempt_result
 from jobctrl.scoring.employer_analysis import build_analyze_use_case
 from jobctrl.infrastructure.materials.cover_letter_policy import reconcile_cover_letter_policy
 from jobctrl.state import (
@@ -523,6 +534,7 @@ def run_tailoring(
     cancel_event: threading.Event | None = None,
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
+    temporal_attempt: MaterialActivityAttempt | None = None,
 ) -> dict:
     """Freeze an eligible cohort, then use the canonical per-job lifecycle.
 
@@ -594,7 +606,10 @@ def run_tailoring(
                 cancel_event=cancel_event,
                 suppress_existing_artifacts=suppress_existing_artifacts,
                 allow_low_fit_override=allow_low_fit_override,
+                **({"temporal_attempt": temporal_attempt} if temporal_attempt is not None else {}),
             )
+        except PreparationReservationLost:
+            raise
         except Exception as exc:  # noqa: BLE001 - finish the cohort before aggregate escalation
             if cancel_event is not None and cancel_event.is_set():
                 raise
@@ -670,6 +685,7 @@ def tailor_job_by_url(
     )
 
 
+@preserve_direct_attempt_result("tailor")
 def tailor_job_by_id(
     job_id: JobId,
     *,
@@ -690,6 +706,7 @@ def tailor_job_by_id(
     workflow_id: str | None = None,
     cancel_event: threading.Event | None = None,
     recovery_workflow_id: str | None = None,
+    temporal_attempt: MaterialActivityAttempt | None = None,
 ) -> dict:
     """Tailor one active, eligible JobId for its tenant-scoped preparation step.
 
@@ -702,6 +719,29 @@ def tailor_job_by_id(
         raise RuntimeError("tailor activity canceled before dispatch")
     stable_job_id = canonical_job_id(str(job_id))
     conn = get_connection()
+    direct_start = (
+        material_start_event_id(conn, tenant_id=str(tenant_id), job_id=str(stable_job_id), stage="tailor")
+        if not workflow_id and temporal_attempt is None else None
+    )
+    guarded_admission = temporal_attempt is not None or direct_start is not None
+
+    def admission_write_boundary():
+        if temporal_attempt is not None:
+            return SqliteUnitOfWork(conn)
+        if direct_start is not None:
+            return material_admission_write(conn)
+        return nullcontext()
+
+    def attempt_start_guard() -> None:
+        assert_direct_material_attempt_not_superseded(
+            conn, tenant_id=str(tenant_id), job_id=str(stable_job_id), stage="tailor", observed_start=direct_start,
+        )
+        assert_material_activity_attempt_not_superseded(
+            conn, tenant_id=str(tenant_id), job_id=str(stable_job_id), stage="tailor",
+            workflow_id=workflow_id, attempt=temporal_attempt,
+        )
+
+    attempt_start_guard()
     from jobctrl.infrastructure.materials.manual_decline import material_request_declined
 
     if material_request_declined(
@@ -730,13 +770,15 @@ def tailor_job_by_id(
     # salary-only scores may still carry SCORE_ELIGIBILITY_BLOCKED rows from
     # the old policy; clearing them after selection would skip this invocation
     # and strand the preparation workflow until another external trigger.
-    score_skip_reason = _reconcile_score_eligibility_skip(
-        conn,
-        job_id=stable_job_id,
-        tenant_id=tenant_id,
-        min_score=min_score,
-        allow_low_fit_override=allow_low_fit_override,
-    )
+    with admission_write_boundary():
+        attempt_start_guard()
+        score_skip_reason = _reconcile_score_eligibility_skip(
+            conn,
+            job_id=stable_job_id,
+            tenant_id=tenant_id,
+            min_score=min_score,
+            allow_low_fit_override=allow_low_fit_override,
+        )
     if score_skip_reason is not None:
         conn.commit()
         return {
@@ -754,6 +796,8 @@ def tailor_job_by_id(
         job_id=stable_job_id,
         retailor=retailor,
         workflow_id=workflow_id,
+        commit_guard=attempt_start_guard if guarded_admission else None,
+        preserve_running_owner=direct_start is not None,
     )
     if existing_materials is not None:
         return {
@@ -788,28 +832,25 @@ def tailor_job_by_id(
         recovery_workflow_id=recovery_workflow_id,
     )
     if job is None:
-        if _record_tailor_enrichment_block(
-            conn,
-            job_id=stable_job_id,
-            tenant_id=tenant_id,
-            discovered_at=target.get("discovered_at"),
-        ):
-            conn.commit()
-            return {
-                "url": target["url"],
-                "job_id": str(stable_job_id),
-                "status": "skipped",
-                "reason": "enrichment_quarantined",
-            }
-        _record_tailor_skip(
-            conn,
-            job_id=stable_job_id,
-            tenant_id=tenant_id,
-            discovered_at=target.get("discovered_at"),
-            reason="not_eligible",
-            message="Tailoring skipped because the job is not currently eligible.",
-        )
-        conn.commit()
+        with admission_write_boundary():
+            attempt_start_guard()
+            if _record_tailor_enrichment_block(
+                conn, job_id=stable_job_id, tenant_id=tenant_id,
+                discovered_at=target.get("discovered_at"),
+            ):
+                if temporal_attempt is None:
+                    conn.commit()
+                return {
+                    "url": target["url"], "job_id": str(stable_job_id),
+                    "status": "skipped", "reason": "enrichment_quarantined",
+                }
+            _record_tailor_skip(
+                conn, job_id=stable_job_id, tenant_id=tenant_id,
+                discovered_at=target.get("discovered_at"), reason="not_eligible",
+                message="Tailoring skipped because the job is not currently eligible.",
+            )
+            if temporal_attempt is None:
+                conn.commit()
         return {
             "url": target["url"],
             "job_id": str(stable_job_id),
@@ -838,6 +879,7 @@ def tailor_job_by_id(
         cancel_event=cancel_event,
         expected_posting_url=expected_posting_url,
     ):
+        attempt_start_guard()
         if material_request_declined(
             conn, tenant_id=tenant_id, job_id=stable_job_id, stage="tailor",
             explicit_material_request=explicit_material_request, workflow_id=workflow_id,
@@ -876,6 +918,7 @@ def tailor_job_by_id(
         cancel_event=cancel_event,
         expected_posting_url=expected_posting_url,
     ):
+        attempt_start_guard()
         if material_request_declined(
             conn, tenant_id=tenant_id, job_id=stable_job_id, stage="tailor",
             explicit_material_request=explicit_material_request, workflow_id=workflow_id,
@@ -888,6 +931,7 @@ def tailor_job_by_id(
             discovered_at=job.get("discovered_at"),
         )
         started_at = utc_now()
+        material_attempt_id = uuid4().hex
         prior_attempts = _tailor_attempt_count(
             conn,
             tenant_id=tenant_id,
@@ -923,18 +967,26 @@ def tailor_job_by_id(
             "StageStarted",
             tenant_id=tenant_id,
             message="Tailoring started",
+            payload={
+                "materialAttemptId": material_attempt_id,
+                **({
+                    "temporalRunId": temporal_attempt.run_id or workflow_id,
+                    "temporalActivityId": temporal_attempt.activity_id,
+                    "temporalAttempt": temporal_attempt.number,
+                } if temporal_attempt is not None else {}),
+            },
         )
         conn.commit()
 
     def commit_guard() -> None:
-        assert_material_activity_commit_allowed(
-            conn,
-            tenant_id=str(tenant_id),
-            job_id=str(stable_job_id),
-            stage="tailor",
-            workflow_id=workflow_id,
-            cancel_event=cancel_event,
-        )
+        try:
+            assert_material_activity_commit_allowed(
+                conn, tenant_id=str(tenant_id), job_id=str(stable_job_id), stage="tailor",
+                workflow_id=workflow_id, cancel_event=cancel_event, attempt_id=material_attempt_id,
+            )
+        except MaterialAttemptSuperseded as exc:
+            exc.material_url = str(target.get("url") or "")
+            raise
 
     try:
         result = _tailor_one_job(
@@ -954,6 +1006,16 @@ def tailor_job_by_id(
             durable_attempt=current_attempt,
         )
         commit_guard()
+    except MaterialsChangedDuringGeneration:
+        from jobctrl.scoring.material_lifecycle import settle_stale_material_attempt
+
+        settle_stale_material_attempt(
+            conn, tenant_id=tenant_id, job_id=stable_job_id, stage="tailor", attempt_id=material_attempt_id,
+            started_at=started_at, prior_attempts=prior_attempts, workflow_id=workflow_id,
+            reason="materials_changed_during_tailoring",
+        )
+        return {"url": target["url"], "job_id": str(stable_job_id),
+                "status": "skipped", "reason": "materials_changed_during_tailoring"}
     except TailoringPrerequisiteError as exc:
         with SqliteUnitOfWork(conn):
             commit_guard()
@@ -1178,6 +1240,7 @@ def _reconcile_existing_approved_resume(
     retailor: bool,
     workflow_id: str | None,
     commit_guard=None,
+    preserve_running_owner: bool = False,
 ):
     """Treat the committed resume as authoritative after activity replay."""
     materials = SqliteMaterialsRepository(conn).load_current_approved(
@@ -1218,6 +1281,17 @@ def _reconcile_existing_approved_resume(
         with SqliteUnitOfWork(conn):
             if commit_guard is not None:
                 commit_guard()
+            current = conn.execute(
+                "SELECT state, metadata_json FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage='tailor'",
+                (str(tenant_id), str(job_id)),
+            ).fetchone()
+            if preserve_running_owner and current is not None and current["state"] == "running":
+                try:
+                    current_metadata = json.loads(current["metadata_json"] or "{}")
+                except (TypeError, ValueError):
+                    current_metadata = None
+                if not isinstance(current_metadata, dict) or current_metadata.get("activityOwner"):
+                    return materials
             set_stage_state(
                 conn,
                 job_id,

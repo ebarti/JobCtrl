@@ -1220,6 +1220,8 @@ Consequences:
 - ambiguous live runs after submit intent park in `needs_verification` for
   human resolution instead of being auto-requeued
 - live runs without approval stay pending and record an awaiting-approval event
+- an owned email approval refusal before submit intent restores its own attempt
+  allowance at settlement or recovery without erasing the claim and refusal history
 - every run persists raw agent output, and successful live results persist
   confirmation evidence with conservative verification confidence
 

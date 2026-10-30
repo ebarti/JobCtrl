@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import timedelta
 from typing import Any
 
@@ -91,6 +91,7 @@ class JobPipelineWorkflowInput:
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     continuous: bool = False
     automatic_recovery: bool = False
+    dispatch_frontier: int | None = None
 
     def __post_init__(self) -> None:
         if self.job_id is not None:
@@ -526,21 +527,27 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
         )
     if stage == "apply":
         apply_job_id = _apply_child_job_id(payload)
+        child_input = ApplyWorkflowInput(
+            tenant_id=payload.tenant_id,
+            expected_app_dir=payload.expected_app_dir,
+            expected_db_path=payload.expected_db_path,
+            job_id=apply_job_id,
+            dry_run=payload.dry_run,
+            headless=payload.headless,
+            model=payload.model,
+            min_score=payload.min_score,
+            workers=payload.workers,
+            limit=payload.limit,
+            continuous=payload.continuous,
+            dispatch_frontier=payload.dispatch_frontier,
+        )
+        if not workflow.patched('pipeline-apply-dispatch-frontier-v1'):
+            legacy_child = asdict(child_input)
+            legacy_child.pop('dispatch_frontier')
+            child_input = legacy_child
         return await workflow.execute_child_workflow(
             ApplyWorkflow.run,
-            ApplyWorkflowInput(
-                tenant_id=payload.tenant_id,
-                expected_app_dir=payload.expected_app_dir,
-                expected_db_path=payload.expected_db_path,
-                job_id=apply_job_id,
-                dry_run=payload.dry_run,
-                headless=payload.headless,
-                model=payload.model,
-                min_score=payload.min_score,
-                workers=payload.workers,
-                limit=payload.limit,
-                continuous=payload.continuous,
-            ),
+            child_input,
             id=f"{workflow.info().workflow_id}-apply",
         )
     raise ApplicationError(

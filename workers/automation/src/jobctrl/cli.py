@@ -1590,6 +1590,7 @@ def apply(
     ),
     fail_reason: Optional[str] = typer.Option(None, "--fail-reason", help="Reason for --mark-failed."),
     reset_failed: bool = typer.Option(False, "--reset-failed", help="Reset all failed jobs for retry."),
+    recover_stopped: bool = typer.Option(False, "--recover-stopped", help="Recover verifiably ended Apply custody; retain Skip and submission evidence. No application is started."),
 ) -> None:
     """Launch auto-apply to submit job applications."""
     _bootstrap()
@@ -1603,6 +1604,13 @@ def apply(
     from jobctrl.infrastructure.profile import get_profile_repository
 
     # --- Utility modes (no Chrome/Claude needed) ---
+
+    if recover_stopped:
+        from jobctrl.apply.launcher import recover_ambiguous_running_apply
+
+        count = recover_ambiguous_running_apply(only_stopped=True)
+        console.print(f"Recovered {count} Apply custody record(s). Skip and submission evidence retained; reset separately when safe.")
+        return
 
     def resolve_job_id(posting_url: str) -> JobId:
         identity = SqliteJobIdentityResolver(get_connection()).resolve_current_by_posting_url(
@@ -1626,12 +1634,15 @@ def apply(
     if mark_failed:
         from jobctrl.apply.launcher import mark_job
 
-        mark_job(
-            resolve_job_id(mark_failed),
-            "failed",
-            reason=fail_reason,
-            tenant_id=LOCAL_TENANT,
-        )
+        try:
+            mark_job(
+                resolve_job_id(mark_failed),
+                "failed",
+                reason=fail_reason,
+                tenant_id=LOCAL_TENANT,
+            )
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--mark-failed") from exc
         console.print(f"[yellow]Marked as failed:[/yellow] {mark_failed} ({fail_reason or 'manual'})")
         return
 

@@ -18,7 +18,8 @@ from .test_apply_launcher_ownership import owned_runtime as owned_runtime
 def _options():
     return dict(limit=1, target_job_id=None, tenant_id="local", min_score=7,
                 headless=False, model="default", dry_run=True, continuous=False,
-                poll_interval=60, workers=1, approval_required=True, workflow_id="synthetic-owned")
+                poll_interval=60, workers=1, approval_required=True, workflow_id="synthetic-owned",
+                standing_refusal_poll=False)
 
 
 @pytest.mark.parametrize("dry_run", [False, True])

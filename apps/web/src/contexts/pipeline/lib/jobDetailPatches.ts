@@ -29,6 +29,14 @@ export function patchDetailApplyStatus(current: unknown, applyStatus: string): u
   if (!isJobDetail(current)) {
     return current;
   }
+  if (applyStatus === "skipped" && (
+    current.activeApplyRun ||
+    current.stages.some((entry) => entry.stage === "apply" && ["queued", "succeeded", "needs_verification"].includes(entry.state)) ||
+    current.applyAudit?.hardBlockers.some((entry) =>
+      entry.code === "submission_intent_recorded" || entry.code === "submission_outcome_uncertain")
+  )) {
+    return current;
+  }
   return {
     ...current,
     job: { ...current.job, applyStatus },
@@ -46,7 +54,7 @@ export function patchListApplyStatus(
   return {
     ...current,
     items: current.items.map((job) =>
-      job.jobKey === jobId ? { ...job, applyStatus } : job,
+      job.jobKey === jobId && !(applyStatus === "skipped" && (job.applyStatus === "applied" || ["queued", "running", "needs_verification"].includes(job.currentState))) ? { ...job, applyStatus } : job,
     ),
   };
 }

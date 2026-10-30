@@ -403,6 +403,16 @@ export const APPLY_REVIEW_DECISION_VALUES = [
 ] as const;
 export type ApplyReviewDecisionValue = (typeof APPLY_REVIEW_DECISION_VALUES)[number];
 
+export const ApplyReviewEmailApplicationPreviewSchema = z.object({
+  recipient: z.string().email(),
+  subject: z.string().min(1),
+  body: z.string().min(1),
+  attachmentArtifactId: z.string().min(1),
+  attachmentName: z.string().min(1),
+  candidateRunId: z.string().min(1),
+  recordedAt: z.string().nullable(),
+}).strict();
+
 export const ApplyReviewDecisionRequestSchema = z
   .object({
     decision: z.enum(APPLY_REVIEW_DECISION_VALUES),
@@ -415,6 +425,7 @@ export const ApplyReviewDecisionRequestSchema = z
     partialOverrideRunId: z.string().trim().min(1).max(120).optional(),
     emailRecipient: z.string().trim().email().optional(),
     emailAttachmentArtifactId: z.string().trim().min(1).max(160).optional(),
+    reviewedEmailCandidate: ApplyReviewEmailApplicationPreviewSchema.optional(),
   })
   .strict();
 export type ApplyReviewDecisionRequest = z.infer<typeof ApplyReviewDecisionRequestSchema>;
@@ -966,15 +977,7 @@ export interface ApplyReviewApprovalGate {
   reasons: ApplyReviewApprovalGateReason[];
 }
 
-export interface ApplyReviewEmailApplicationPreview {
-  recipient: string;
-  subject: string;
-  body: string;
-  attachmentArtifactId: string;
-  attachmentName: string;
-  candidateRunId: string;
-  recordedAt: string | null;
-}
+export type ApplyReviewEmailApplicationPreview = z.infer<typeof ApplyReviewEmailApplicationPreviewSchema>;
 
 export interface ApplyReviewQueueItem {
   jobKey: string;

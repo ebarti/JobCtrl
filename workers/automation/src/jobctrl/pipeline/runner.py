@@ -55,6 +55,7 @@ from jobctrl.infrastructure.discovery.sqlite_run_repository import (
     SqliteDiscoveryRunRepository,
 )
 from jobctrl.infrastructure.workflow_run_context import current_workflow_id
+from jobctrl.infrastructure.preparation_recovery import MaterialActivityAttempt, PreparationReservationLost
 from jobctrl.infrastructure.discovery.production_wiring import (
     enqueue_manual_action_for_sources,
     run_scheduled_ats_sources,
@@ -2164,6 +2165,7 @@ def _run_tailor(
     tenant_id: str = "local",
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
+    temporal_attempt: MaterialActivityAttempt | None = None,
 ) -> dict:
     """Stage: Resume tailoring — generate tailored resumes for high-fit jobs."""
     if cancel_event is not None and cancel_event.is_set():
@@ -2184,6 +2186,7 @@ def _run_tailor(
         tailor_judge_model=tailor_judge_model,
         llm_model=llm_model,
         workflow_id=workflow_id,
+        **({"temporal_attempt": temporal_attempt} if temporal_attempt is not None else {}),
     )
     if cancel_event is not None and cancel_event.is_set():
         raise LlmTransientError("tailoring canceled")
@@ -2207,6 +2210,8 @@ def _run_cover(
     cancel_event: threading.Event | None = None,
     workflow_id: str | None = None,
     allow_low_fit_override: bool = False,
+    tenant_id: str = "local",
+    temporal_attempt: MaterialActivityAttempt | None = None,
 ) -> dict:
     """Stage: Cover letter generation."""
     if cancel_event is not None and cancel_event.is_set():
@@ -2218,8 +2223,11 @@ def _run_cover(
         conn=get_connection(),
         stage="pending_cover",
         min_score=0 if allow_low_fit_override else min_score,
-        limit=limit,
+        limit=0,
     )
+    jobs = [job for job in jobs if str(job.get("tenant_id") or "local") == tenant_id]
+    if limit > 0:
+        jobs = jobs[:limit]
     generated = 0
     skipped = 0
     errors = 0
@@ -2227,14 +2235,21 @@ def _run_cover(
     for job in jobs:
         if cancel_event is not None and cancel_event.is_set():
             raise LlmTransientError("cover letter generation canceled")
-        result = cover_letter_by_url(
-            str(job["url"]),
-            min_score=min_score,
-            validation_mode=validation_mode,
-            llm_model=llm_model,
-            workflow_id=workflow_id,
-            allow_low_fit_override=allow_low_fit_override,
-        )
+        try:
+            result = cover_letter_by_url(
+                str(job["url"]),
+                min_score=min_score,
+                validation_mode=validation_mode,
+                llm_model=llm_model,
+                workflow_id=workflow_id,
+                allow_low_fit_override=allow_low_fit_override,
+                tenant_id=TenantId(tenant_id),
+                cancel_event=cancel_event,
+                **({"temporal_attempt": temporal_attempt} if temporal_attempt is not None else {}),
+            )
+        except PreparationReservationLost:
+            skipped += 1
+            continue
         status = str(result.get("status") or "error")
         if status in {"ok", "already_done"}:
             generated += int(result.get("generated") or 0)

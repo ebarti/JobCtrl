@@ -83,6 +83,62 @@ full-width sequence rather than competing columns. When the surface becomes
 narrow, the queue moves above the review and the approval/defer/decline actions
 wrap below their binding explanation; no decision or audit section is removed.
 
+## Skip And Safe Reset
+
+**Skip** records a local stop for future Apply, including targeted requests,
+batches and standing automation. It also blocks dry-run claims until a safe
+explicit Apply reset. Approval settings do not override the stop. It preserves
+accepted materials and existing attempt history.
+
+Skip does not cancel a provider operation already in flight or prove an
+application was stopped externally. Use the separate run controls for active
+work, and inspect the employer site or provider history for an uncertain outcome.
+If an owned email send completes after Skip, Apply Audit and the original run
+history show its recorded outcome. A lost acknowledgement remains Needs verification.
+Neither outcome removes the local stop or permits an automatic retry.
+Recorded submit intent remains visible in Apply Audit even after Skip, later
+stage changes or restart. Ordinary reset cannot clear that evidence or permit
+another send. Skip also retains a prior Needs verification stop when no intent
+receipt is available; changing the label cannot resolve it. **Mark Applied** remains available to record a confirmed manual
+outcome.
+
+An Apply request queued before Skip, or while Skip was active, stays fenced even
+after a later reset. Start a new request after the reset to run that job. A
+standing loop can pick it up on a later poll after its previous poll has ended.
+
+An explicit Apply reset can release a local pre-submission Skip, a retryable
+failure, exhaustion or cancellation when no submit intent exists. It refuses
+active/queued work, Applied, Needs verification and policy-owned skip causes.
+Repeated Skip preserves these underlying dispositions and their details. For
+older records, retained Applied, verification and identifiable policy history
+continues to block an unsafe reset. A previously skipped queued row without a
+provable settlement remains blocked rather than being treated as canceled.
+If an Apply owner exits after Skip but before cleanup, use
+`jobctrl apply --recover-stopped` to check its recorded custody. This starts no
+application and retains Skip. Installed mode requires the original native
+completion proof; source mode uses its recorded owner lifetime and remains
+best effort for escaped descendants. A dead process ID alone is not proof of
+cleanup. Unknown or unverified custody remains blocked. Normal Apply startup
+performs this check too.
+Recovery after a restart and manual **Mark Applied** also preserve the existing
+attempt count. Reset preserves accepted artifacts and events; the budget is retained unless
+reset explicitly (or exhausted). A retryable `DRY_RUN` completion remains eligible
+for another rehearsal without resetting a manual Skip.
+
+An admitted run retains its owner across local stage changes. For a run with a
+launcher custody record, reset waits for the matching cleanup settlement or
+native custody retirement. A cancellation request, a stage label or a worker's
+return alone cannot establish cleanup. Submit intent still blocks retry after
+that settlement. Verified native retirement can restore a saved local Skip when
+an old writer left its matching owner's stage marked running; it does not reset
+the job. A separate safe reset remains necessary before a new request.
+
+The CLI `apply --mark-failed <url>` records a local failure only when no active
+owner, Skip, Applied outcome or unresolved submission evidence remains. Unsafe requests
+exit with a refusal and preserve the current stage and history; this command
+cannot establish that an external submission stopped. A safe manual failure
+preserves the attempt budget and accepted materials.
+
 ## Approval And Automation Modes
 
 For a one-off CLI batch, a finite `--limit` bounds the jobs claimed, including
@@ -130,9 +186,8 @@ an eligible later candidate from being claimed.
 Unattended Apply requires positive active evidence within 15 minutes. The owned
 email sender rechecks the original posting and current bound review before
 submit intent. Confirmed unavailability or a changed posting stops the attempt.
-An availability refusal before claim consumes no Apply attempt. If a fresh check
-blocks owned email intent after the run was claimed, that completed run remains a
-retryable failure and consumes its Apply attempt; no submit intent or send occurs.
+An availability refusal before claim consumes no Apply attempt. An availability
+failure after claim remains a retryable failure and consumes its Apply attempt.
 Use Job Detail's **Check availability** or **Inspect employer posting** to review
 uncertainty. Checks preserve approved materials and grant no submission authority.
 See [saved posting availability](enrichment-and-extraction.md#saved-posting-availability)
@@ -226,6 +281,49 @@ sender rechecks its capability, records submit intent immediately before the
 send, and accepts only the exact recipient and attachment approved in Apply
 Review.
 
+Immediately before owned email intent commits, the worker rereads the latest
+Apply Review decision, saved profile version, posting and application URLs,
+accepted materials and cover-letter binding, qualifying rehearsal, and current
+email candidate. It compares those records with the delayed run's sources and
+actual outgoing email in the same SQLite writer transaction as the intent.
+Each email approval retains fingerprints of the complete reviewed recipient,
+subject, body and attachment, plus accepted material identities and bytes.
+A newer rehearsal cannot replace that approved preview. Replacing a file within
+the same material generation also requires fresh review. Older approvals that
+only retained recipient and attachment IDs need a new approval before email send.
+Approval must identify the complete preview that was reviewed; a replacement
+subject or body cannot be silently adopted when recording the decision. The
+review panel captures that preview when approval is clicked. If the message,
+attachment name or rehearsal identity changes during preparation, approval
+stops for fresh review. An accepted resume render can update its attachment ID
+only when the refreshed queue identifies that exact rendered artifact. If
+approval and a defer/reset share the same recorded time, sending stays blocked
+until a fresh approval at a later time. An unavailable approval read is reported
+as unavailable approval authority, with review/material history preserved.
+This check always runs, including when `applyApprovalRequired` is off. Defer,
+reset, changed inputs, or a newly approved different candidate stop the older
+run with no intent or sender call. With approval waiting enabled, a stale email
+approval is refused before claim. If the email refusal happens after claim, its
+reason and history are retained and settlement restores that claim's attempt
+allowance. Recovery applies the same rule when settlement was interrupted. If
+that refusal was recorded before a local Skip, its matching owner can restore
+the attempt and park unchanged authority without releasing the Skip. An
+unproven owner, changed claim or recorded submission intent is not refunded.
+With approval waiting disabled, the first attempt may discover that the channel
+is email. After an owned email refusal, standing polls pause that job while its
+review and relevant inputs remain unchanged. A changed input or review wakes it;
+an explicitly requested single-job attempt can also retry it. Other jobs continue.
+
+The sender uses an immutable copy of the exact approved attachment bytes. A file
+replacement detected while intent is being saved rolls back that intent and
+requires fresh review. Replacing or removing the file after admission cannot
+change the attachment in the admitted email. An independent file change after
+the last check but before admission may go undetected; the admitted attachment
+still uses the previously approved bytes.
+
+Changes committed after intent cannot retract an admitted send. An interrupted
+or uncertain send still requires manual verification; it is never an automatic
+retry authorization.
 An HTTP success alone does not mark an email application Applied. Gmail must
 return a JSON object with a nonblank string message `id`. `threadId` may be
 absent; if supplied, it must also be a nonblank string. Other response fields

@@ -37,6 +37,7 @@ __all__ = [
     "BrowserPort",
     "BrowserSession",
     "EmailApplicationCandidate",
+    "EmailApplicationAuthorization",
     "EmailApplicationOperation",
     "EmailApplicationSenderPort",
     "EmailApplicationSendResult",
@@ -174,11 +175,22 @@ class EmailApplicationCandidate:
     attachment_artifact_id: str
     attachment_name: str
     attachment_path: str
+    # Set only by final authorization. Private bytes never enter event payloads.
+    attachment_bytes: bytes | None = field(default=None, repr=False)
 
     def fingerprint(self) -> str:
-        """Bind exact preview fields and the immutable material reference."""
-        return sha256(json.dumps(asdict(self), sort_keys=True, ensure_ascii=True).encode()).hexdigest()
+        """Bind the preview and immutable material reference, excluding private bytes."""
+        value = asdict(self)
+        value.pop("attachment_bytes")
+        return sha256(json.dumps(value, sort_keys=True, ensure_ascii=True).encode()).hexdigest()
 
+
+@dataclass(frozen=True)
+class EmailApplicationAuthorization:
+    """Validated send inputs, separate from serializable intent evidence."""
+
+    candidate: EmailApplicationCandidate
+    evidence: Mapping[str, Any]
 
 @dataclass(frozen=True)
 class EmailApplicationOperation:
@@ -215,7 +227,7 @@ class EmailApplicationSenderPort(Protocol):
     """Driven port: send an approved email application outside the agent."""
 
     def send_email_application(self, candidate: EmailApplicationCandidate, *, operation: EmailApplicationOperation) -> EmailApplicationSendResult:
-        """Send the approved candidate and return provider metadata."""
+        """Send immutable authorized attachment bytes and return an operation-bound receipt."""
         ...
 
 

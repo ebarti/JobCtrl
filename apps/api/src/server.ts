@@ -405,6 +405,7 @@ import {
   hideJob,
   hideJobs,
   InputError,
+  ApplyResetRefusedError,
   markJobApplied,
   markJobSkipped,
   permanentlyDeleteJob,
@@ -2759,7 +2760,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (body.reason) {
         command.reason = body.reason;
       }
-      return buildActionResponse(command, { status: "skipped" }, { stage: marked.stage });
+      return buildActionResponse(command, { status: "skipped", message: "Skipped locally. Future Apply is stopped; an in-flight submission may still complete. Verify any uncertain external outcome." }, { stage: marked.stage });
     });
   });
 
@@ -5340,6 +5341,10 @@ async function withWritableDb<T>(
     if (error instanceof ResumeRenderError) {
       void reply.code(502);
       return { ok: false, error: "resume_render_failed", message: error.message };
+    }
+    if (error instanceof ApplyResetRefusedError) {
+      void reply.code(409);
+      return { ok: false, error: "apply_reset_refused", message: error.message };
     }
     if (error instanceof ActionReceiptConflictError) {
       void reply.code(409);

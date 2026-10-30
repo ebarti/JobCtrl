@@ -150,6 +150,65 @@ def test_ended_source_owner_allows_best_effort_retry_and_distinct_successor(owne
                     assert time.monotonic() < deadline, "owned synthetic child did not finish after its control pipe closed"
 
 
+def test_skipped_source_claim_recovers_only_via_owner_lifetime(owned_runtime, tmp_path):
+    """A dead root alone cannot release Skip; source custody is best effort."""
+    from jobctrl.state import reset_job_stage
+
+    app, first, _ = owned_runtime
+    evidence = tmp_path / "skipped-owner.json"
+    control_read, control_write = os.pipe()
+    owner = subprocess.Popen([sys.executable, "-c", _OWNER, str(app), str(first), str(evidence), "registered", str(control_read)],
+        env={**os.environ, "JOBCTRL_DIR": str(app)}, start_new_session=True, pass_fds=(control_read,))
+    os.close(control_read)
+    child_path = Path(str(evidence) + ".child")
+    child_pid = None
+    try:
+        assert owner.wait(timeout=15) == 71
+        data = json.loads(_wait(evidence))
+        child_pid = int(_wait(child_path))
+        conn = database.get_connection()
+        attempt = conn.execute("SELECT attempt_count FROM job_stage_states WHERE tenant_id='local' AND job_id=? AND stage='apply'", (first,)).fetchone()[0]
+        set_stage_state(conn, first, "apply", "skipped", tenant_id="local", attempt_count=attempt,
+                        retryable=False, validate_transition=False)
+        record_job_event(conn, first, "apply", "StageSkipped", tenant_id="local",
+                         payload={"manualDisposition": "skip", "previousState": "running"})
+        conn.commit()
+        before = tuple(conn.execute("SELECT state,version,attempt_count FROM job_stage_states WHERE tenant_id='local' AND job_id=? AND stage='apply'", (first,)).fetchone())
+        with pytest.raises(ValueError, match="prior admitted run"):
+            reset_job_stage(conn, first, "apply")
+        assert launcher.recover_ambiguous_running_apply(only_stopped=True) == 1
+        assert launcher.recover_ambiguous_running_apply(only_stopped=True) == 0
+        assert tuple(conn.execute("SELECT state,version,attempt_count FROM job_stage_states WHERE tenant_id='local' AND job_id=? AND stage='apply'", (first,)).fetchone()) == before
+        settled = [json.loads(payload) for kind, payload in _events(conn, first) if kind == "ApplyClaimSettled"]
+        assert len(settled) == 1
+        assert settled[0]["run_id"] == data["run_id"] and settled[0]["launcher_id"] == data["launcher_id"]
+        assert settled[0]["owner_lifetime_released"] is True and settled[0]["full_tree_verified"] is False
+        os.kill(child_pid, 0)  # The separate controlled child survives best-effort source recovery.
+        reset_job_stage(conn, first, "apply")
+        assert conn.execute("SELECT state,attempt_count FROM job_stage_states WHERE tenant_id='local' AND job_id=? AND stage='apply'", (first,)).fetchone()[:] == ("pending", attempt)
+        assert Path(data["sentinel"]).read_bytes() == b"accepted owner bytes"
+    finally:
+        if owner.poll() is None:
+            owner.kill()
+        owner.wait(timeout=5)
+        try:
+            os.write(control_write, b"x")
+        except BrokenPipeError:
+            pass
+        finally:
+            os.close(control_write)
+        if child_pid is not None:
+            _wait(Path(str(evidence) + ".child.exited"))
+            from jobctrl.infrastructure.process_ownership import verify_session_exit, ProcessOwnershipError
+            deadline = time.monotonic() + 10
+            while True:
+                try:
+                    verify_session_exit(child_pid)
+                    break
+                except ProcessOwnershipError:
+                    assert time.monotonic() < deadline
+
+
 def test_synchronous_failed_spawn_durably_aborts_only_its_intent(owned_runtime, monkeypatch):
     app, _, _ = owned_runtime
     run = ownership.ApplyLauncherRun()

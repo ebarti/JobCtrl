@@ -11,7 +11,7 @@ from temporalio.client import WorkflowExecutionStatus
 from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 from temporalio.service import RPCError, RPCStatusCode
 
-from jobctrl import config
+from jobctrl import config, database
 from jobctrl.apply import auto_apply
 from jobctrl.apply.auto_apply import auto_apply_workflow_id, reconcile_auto_apply_loop
 from jobctrl.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
@@ -76,8 +76,11 @@ def _write_discovery_automation_settings(
     **automation: object,
 ) -> None:
     db_path = tmp_path / "jobctrl.db"
-    sqlite3.connect(db_path).close()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute('CREATE TABLE job_events (event_id INTEGER PRIMARY KEY, tenant_id TEXT)')
     monkeypatch.setattr(config, "DB_PATH", db_path)
+    monkeypatch.setattr(config, "APP_DIR", tmp_path)
+    monkeypatch.setattr(database, "DB_PATH", db_path)
     discovery = config._default_discovery_search_config()
     discovery["automation"] = automation
     config._save_discovery_search_config_to_db(discovery)
@@ -130,15 +133,15 @@ async def test_auto_apply_on_starts_exactly_one_standing_loop(tmp_path, monkeypa
         client,
         task_queue="jobctrl-test",
         settings_path=settings_path,
-        expected_app_dir="/tmp/jobctrl",
-        expected_db_path="/tmp/jobctrl/jobctrl.db",
+        expected_app_dir=str(tmp_path),
+        expected_db_path=str(tmp_path / "jobctrl.db"),
     )
     second = await reconcile_auto_apply_loop(
         client,
         task_queue="jobctrl-test",
         settings_path=settings_path,
-        expected_app_dir="/tmp/jobctrl",
-        expected_db_path="/tmp/jobctrl/jobctrl.db",
+        expected_app_dir=str(tmp_path),
+        expected_db_path=str(tmp_path / "jobctrl.db"),
     )
 
     assert first.action == "started"
@@ -154,8 +157,9 @@ async def test_auto_apply_on_starts_exactly_one_standing_loop(tmp_path, monkeypa
     assert payload.min_score == 9
     assert payload.workers == 3
     assert payload.approval_required is True
-    assert payload.expected_app_dir == "/tmp/jobctrl"
-    assert payload.expected_db_path == "/tmp/jobctrl/jobctrl.db"
+    assert payload.expected_app_dir == str(tmp_path)
+    assert payload.expected_db_path == str(tmp_path / "jobctrl.db")
+    assert payload.dispatch_frontier == 0
     assert start["kwargs"]["id"] == auto_apply_workflow_id("local")
     assert start["kwargs"]["id_conflict_policy"] is WorkflowIDConflictPolicy.USE_EXISTING
     assert start["kwargs"]["id_reuse_policy"] is WorkflowIDReusePolicy.ALLOW_DUPLICATE

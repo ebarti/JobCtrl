@@ -22,8 +22,11 @@ import json
 import math
 import sqlite3
 import uuid
+from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from jobctrl.database import effective_tailoring_min_score
@@ -53,6 +56,17 @@ from jobctrl.scoring.eligibility_sql import (
 )
 
 _LINEAGE_KEY = "__jobctrl_materials_lineage_id"
+
+
+def _source_matches(path: str, expected_sha256: str) -> bool:
+    try:
+        with Path(path).open("rb") as source:
+            digest = hashlib.sha256()
+            while chunk := source.read(1024 * 1024):
+                digest.update(chunk)
+        return digest.hexdigest() == expected_sha256
+    except OSError:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -516,6 +530,52 @@ class SqliteMaterialsRepository:
             raise
         else:
             self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+
+    def publish_rendered_pdf(
+        self, expected: MaterialsSet, artifact: Artifact, source_sha256: str,
+        *, commit_guard: Callable[[], None] | None = None,
+    ) -> MaterialsSet | None:
+        """Atomically revalidate a rendered PDF against its current source."""
+        if artifact.type not in (ArtifactType.RESUME_PDF, ArtifactType.COVER_LETTER_PDF):
+            raise ValueError("expected a rendered PDF artifact")
+        with self.write_transaction():
+            if commit_guard is not None:
+                commit_guard()
+            current = self.load_current_approved(expected.tenant_id, expected.job_id)
+            is_resume = artifact.type is ArtifactType.RESUME_PDF
+            source = current.tailored_resume if current and is_resume else current.cover_letter if current else None
+            existing = current.resume_pdf if current and is_resume else current.cover_letter_pdf if current else None
+            if (
+                current is None or current != expected or source is None
+                or source.status is not ArtifactStatus.APPROVED
+                or (existing is not None and existing.status is ArtifactStatus.APPROVED)
+                or not _source_matches(source.path, source_sha256)
+            ):
+                return None
+            now = datetime.now(timezone.utc).isoformat()
+            updated = (current.with_resume_pdf(artifact, updated_at=now) if is_resume
+                       else current.with_cover_letter_pdf(artifact, updated_at=now))
+            self.save(updated)
+            return updated
+
+    @contextmanager
+    def write_transaction(self):
+        """Take the same SQLite writer lock used by Apply intent admission."""
+        owns_transaction = not self._conn.in_transaction
+        if owns_transaction:
+            self._conn.execute("BEGIN IMMEDIATE")
+        else:
+            # A caller may have entered a deferred transaction. Acquire its
+            # writer lock before reading publication authority.
+            self._conn.execute("UPDATE job_materials SET generation=generation WHERE 0")
+        try:
+            yield
+            if owns_transaction:
+                self._conn.commit()
+        except BaseException:
+            if owns_transaction:
+                self._conn.rollback()
+            raise
 
     def _save_rows(
         self,

@@ -214,6 +214,90 @@ describe.each(families)("durable %s action identity through HTTP", (family) => {
   }, 45_000);
 });
 
+it("keeps Skip and submission uncertainty independent of an outcome receipt across restart", async () => {
+  const dbPath = seed();
+  const setup = new Database(dbPath);
+  setup.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,attempt_count,max_attempts,updated_at,retryable) VALUES ('local',?,'apply','needs_verification',2,3,'2026-01-01',0)").run(JOB);
+  setup.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,payload_json,occurred_at) VALUES ('local',?,1,'apply','ApplySubmitIntended',?,'2026-01-01')")
+    .run(JOB, JSON.stringify({ run_id: "synthetic-original-run" }));
+  const intent = setup.prepare("SELECT * FROM job_events WHERE tenant_id='local' AND job_id=? AND event_type='ApplySubmitIntended'").get(JOB);
+  setup.close();
+  const first = await server(dbPath);
+  const request = body("outcome");
+  let accepted: unknown;
+  vi.spyOn(globalThis, "fetch").mockImplementationOnce(async (input, init) => {
+    const response = await authorizedFetch(input, init);
+    expect(response.status).toBe(200);
+    accepted = await response.json();
+    throw new TypeError("Synthetic lost HTTP acknowledgement");
+  });
+  await expect(first.client.recordManualApplicationOutcome(JOB, request)).rejects.toThrow();
+  expect(accepted).toBeDefined();
+  const skipped = await first.client.markSkipped(JOB);
+  expect(skipped.message).toContain("in-flight submission may still complete");
+  const retry = { stage: "apply" as const, resetAttempts: true, runAfter: false, dryRun: false };
+  await expect(first.client.retryStage(JOB, retry))
+    .rejects.toMatchObject({ status: 409, responseBody: { error: "apply_reset_refused" } });
+  await stop(first.child);
+  const restarted = await server(dbPath);
+  expect(await restarted.client.recordManualApplicationOutcome(JOB, request)).toEqual(accepted);
+  await expect(restarted.client.recordManualApplicationOutcome(JOB, { ...request, note: "Different synthetic note" }))
+    .rejects.toMatchObject({ status: 409, responseBody: { error: "action_identity_conflict" } });
+  await expect(restarted.client.retryStage(JOB, retry))
+    .rejects.toMatchObject({ status: 409, responseBody: { error: "apply_reset_refused" } });
+  expect(counts(dbPath, "outcome")).toEqual({ facts: 1, events: 1 });
+  const beforeResolution = new Database(dbPath, { readonly: true });
+  try {
+    expect(beforeResolution.prepare("SELECT state,attempt_count FROM job_stage_states WHERE tenant_id='local' AND job_id=? AND stage='apply'").get(JOB))
+      .toEqual({ state: "needs_verification", attempt_count: 2 });
+    const stop = beforeResolution.prepare("SELECT payload_json FROM job_events WHERE tenant_id='local' AND job_id=? AND event_type='StageSkipped'").get(JOB) as { payload_json: string };
+    expect(JSON.parse(stop.payload_json)).toMatchObject({ previousState: "needs_verification", manualDisposition: "skip" });
+    expect(beforeResolution.prepare("SELECT * FROM job_events WHERE tenant_id='local' AND job_id=? AND event_type='ApplySubmitIntended'").get(JOB)).toEqual(intent);
+    expect(beforeResolution.prepare("SELECT COUNT(*) AS n FROM job_events WHERE tenant_id='local' AND job_id=? AND event_type='StageReset'").get(JOB)).toEqual({ n: 0 });
+  } finally { beforeResolution.close(); }
+  await restarted.client.markApplied(JOB, { reason: "Verified externally in synthetic QA" });
+  expect(await restarted.client.recordManualApplicationOutcome(JOB, request)).toEqual(accepted);
+  const resolved = new Database(dbPath, { readonly: true });
+  try {
+    expect(resolved.prepare("SELECT state,attempt_count FROM job_stage_states WHERE tenant_id='local' AND job_id=? AND stage='apply'").get(JOB))
+      .toEqual({ state: "succeeded", attempt_count: 2 });
+    expect(resolved.prepare("SELECT * FROM job_events WHERE tenant_id='local' AND job_id=? AND event_type='ApplySubmitIntended'").get(JOB)).toEqual(intent);
+    expect(resolved.prepare("SELECT COUNT(*) AS n FROM job_events WHERE tenant_id='local' AND job_id=? AND event_type='ApplicationManuallyMarked'").get(JOB)).toEqual({ n: 1 });
+  } finally { resolved.close(); }
+});
+
+it.each(["applied", "policy", "verification", "queued"] as const)("repeated HTTP Skip preserves %s authority through restart and reset", async (kind) => {
+  const dbPath = seed();
+  const db = new Database(dbPath);
+  const state = kind === "policy" ? "skipped" : kind === "verification" ? "needs_verification" : kind === "queued" ? "queued" : "pending";
+  db.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,attempt_count,max_attempts,updated_at,retryable,error_code,error_message,metadata_json) VALUES ('local',?,'apply',?,2,3,'2026-01-01',0,?,'synthetic retained detail',?)")
+    .run(JOB, state, kind === "policy" ? "MANUAL_ATS" : null, JSON.stringify({ marker: "synthetic" }));
+  db.close();
+  const first = await server(dbPath);
+  if (kind === "applied") await first.client.markApplied(JOB, { reason: "Synthetic confirmed application" });
+  const snapshot = () => {
+    const read = new Database(dbPath, { readonly: true });
+    try { return read.prepare("SELECT * FROM job_stage_states WHERE tenant_id='local' AND job_id=? AND stage='apply'").get(JOB); }
+    finally { read.close(); }
+  };
+  const before = snapshot();
+  await first.client.markSkipped(JOB);
+  await first.client.markSkipped(JOB);
+  expect(snapshot()).toEqual(before);
+  await stop(first.child);
+  const restarted = await server(dbPath);
+  await expect(restarted.client.retryStage(JOB, { stage: "apply", resetAttempts: true, runAfter: false, dryRun: false }))
+    .rejects.toMatchObject({ status: 409, responseBody: { error: "apply_reset_refused" } });
+  expect(snapshot()).toEqual(before);
+  const history = new Database(dbPath, { readonly: true });
+  try {
+    expect(history.prepare("SELECT COUNT(*) AS n FROM job_events WHERE tenant_id='local' AND job_id=? AND event_type='StageSkipped'").get(JOB)).toEqual({ n: 2 });
+    expect(history.prepare("SELECT COUNT(*) AS n FROM job_events WHERE tenant_id='local' AND job_id=? AND event_type='StageReset'").get(JOB)).toEqual({ n: 0 });
+    expect(history.prepare("SELECT COUNT(*) AS n FROM job_events WHERE tenant_id='local' AND job_id=? AND event_type='ApplicationManuallyMarked'").get(JOB)).toEqual({ n: Number(kind === "applied") });
+    expect(history.prepare("SELECT COUNT(*) AS n FROM job_events WHERE tenant_id='foreign'").get()).toEqual({ n: 0 });
+  } finally { history.close(); }
+});
+
 it("preserves contact revisions across score reset and lost outcome and send-log acknowledgements", async () => {
   const dbPath = seed();
   const first = await server(dbPath);

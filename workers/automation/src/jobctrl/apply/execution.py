@@ -39,18 +39,24 @@ _OPTION_TYPES = {
     "min_score": int, "headless": bool, "model": str, "dry_run": bool,
     "continuous": bool, "poll_interval": int, "workers": int,
     "approval_required": bool, "workflow_id": (str, type(None)),
+    "standing_refusal_poll": bool,
+    "dispatch_frontier": (int, type(None)),
 }
 
 
 def _options(value: object) -> dict:
-    if not isinstance(value, dict) or set(value) != set(_OPTION_TYPES):
+    required = set(_OPTION_TYPES) - {'dispatch_frontier', 'standing_refusal_poll'}
+    if not isinstance(value, dict) or not required <= set(value) <= set(_OPTION_TYPES):
         raise ValueError("Apply execution options do not match the fixed request schema")
+    value = {'dispatch_frontier': None, 'standing_refusal_poll': False, **value}
     for key, expected in _OPTION_TYPES.items():
         types = expected if isinstance(expected, tuple) else (expected,)
         if type(value[key]) not in types:
             raise ValueError(f"Apply execution option {key} has an invalid type")
     if value["workers"] < 1 or value["limit"] < 0 or value["poll_interval"] < 0:
         raise ValueError("Apply execution capacity must be positive or explicitly continuous")
+    if value['dispatch_frontier'] is not None and value['dispatch_frontier'] < 0:
+        raise ValueError('Apply dispatch frontier must be nonnegative')
     return value
 
 

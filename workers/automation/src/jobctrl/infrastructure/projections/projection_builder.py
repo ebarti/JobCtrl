@@ -1000,6 +1000,7 @@ class ProjectionBuilder:
         dirty_job_ids.update(self._stale_artifact_projection_jobs())
         dirty_job_ids.update(self._stale_stage_projection_jobs())
         dirty_job_ids.update(self._stale_compensation_projection_jobs())
+        dirty_job_ids.update(self._backfill_late_apply_settlements())
 
         # One-time score-audit backfill (see SCORE_AUDIT_BACKFILL): rebuild any
         # already-projected scored job whose audit columns are still NULL. This
@@ -4051,6 +4052,28 @@ class ProjectionBuilder:
                 continue
             self._store.upsert_apply_run(projection)
 
+    def _backfill_late_apply_settlements(self) -> set[str]:
+        """Repair existing fallback rows once, even with a current event cursor.
+
+        The refresh writer/savepoint owns both the repair and marker. History,
+        canonical stage state and tenant boundaries retain their authority.
+        """
+        marker = f"late_apply_settlement_v3:{self._tenant_id}"
+        if self._conn.execute("SELECT 1 FROM projection_backfills WHERE name=?", (marker,)).fetchone():
+            return set()
+        jobs = {str(row[0]) for row in self._conn.execute(
+            "SELECT DISTINCT job_id FROM job_events WHERE tenant_id=? AND stage='apply' "
+            "AND event_type='LockReleased' AND json_extract("
+            "CASE WHEN json_valid(payload_json) THEN payload_json ELSE '{}' END,'$.stage_preserved')=1",
+            (str(self._tenant_id),),
+        )}
+        if jobs:
+            self._rebuild_apply_runs()
+        self._conn.execute(
+            "INSERT INTO projection_backfills (name,completed_at) VALUES (?,?)", (marker, _utc_now()),
+        )
+        return jobs
+
     def _collect_apply_events_by_run(self) -> dict[str, list[dict]]:
         try:
             rows = self._conn.execute(
@@ -4164,6 +4187,25 @@ class ProjectionBuilder:
                 if event_type == "LockReleased" and result is not None:
                     continue
                 term_status, term_result = self._TERMINAL_EVENT_STATUS[event_type]
+                if event_type == "LockReleased" and payload.get("stage_preserved") is True:
+                    # Settlement reports the original run's result independently
+                    # of a newer/local stage disposition. This is display evidence,
+                    # not an ApplicationSubmitted fact or retry authority.
+                    late_status = payload.get("late_status")
+                    if late_status == "applied":
+                        # Only the sender's receipt-validated ApplicationSubmitted
+                        # event can establish success. An arbitrary sent event or
+                        # a caller's return value is not that evidence.
+                        term_status, term_result = "manual", "needs_verification"
+                    elif late_status == "dry_run":
+                        term_status, term_result = "dry_run_complete", "dry_run_complete"
+                        dry_run = True
+                    elif late_status == "skipped":
+                        term_status, term_result = "manual", "manual"
+                    elif late_status in {"failed", "needs_verification"} and any(
+                        item["event_type"] == "ApplySubmitIntended" and item["job_id"] == job_id for item in events
+                    ):
+                        term_status, term_result = "manual", "needs_verification"
                 status = term_status
                 result = str(payload.get("result")) if isinstance(payload.get("result"), str) else term_result
                 finished_at = (
@@ -4200,6 +4242,32 @@ class ProjectionBuilder:
 
         if not job_id:
             return None
+
+        # A late caller result, or even a contradictory terminal event, cannot
+        # resolve an admitted live intent. Only an exact operation-bound email
+        # receipt followed by its submitted fact establishes success.
+        same_job = [event for event in events if event["job_id"] == job_id]
+        late = any(event["event_type"] == "LockReleased" and event["payload"].get("stage_preserved") is True
+                   for event in same_job)
+        intents = [event for event in same_job if event["event_type"] == "ApplySubmitIntended"]
+        if late and intents:
+            from jobctrl.infrastructure.apply_controls import valid_email_confirmation
+
+            confirmed = False
+            submitted = False
+            if len(intents) == 1:
+                found_intent = False
+                for event in same_job:
+                    if event is intents[0]:
+                        found_intent = True
+                    elif found_intent and event["event_type"] == "EmailApplicationSent":
+                        confirmed = confirmed or valid_email_confirmation(
+                            intents[0]["payload"], event["payload"], self._tenant_id, job_id, run_id,
+                        )
+                    elif confirmed and event["event_type"] == "ApplicationSubmitted":
+                        submitted = True
+            if not submitted:
+                status, result, dry_run = "manual", "needs_verification", False
 
         # Hydrate denormalised job columns from the parent ``jobs`` row
         # so the read-side widgets render real values rather than

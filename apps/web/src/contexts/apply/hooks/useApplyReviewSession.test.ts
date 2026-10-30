@@ -2,6 +2,7 @@ import { act, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { LOCAL_TENANT, type TenantId } from "@jobctrl/domain-types";
 import type { Value } from "platejs";
+import { ApplyReviewDecisionRequestSchema } from "@jobctrl/contracts";
 import type { ApplyReviewQueueItem, ResumeReviewDraft, ResumeReviewDraftRenderResponse, ResumeCommentThread } from "@jobctrl/contracts";
 import { sampleApplyReviewQueue } from "../../../test/fixtures/projections.js";
 import { createTestQueryClient, renderHookWithProviders } from "../../../test/render.js";
@@ -12,6 +13,13 @@ import { normalizeResumePlateValue } from "../../materials/lib/resume-document.j
 
 const time = "2026-10-18T00:00:00Z";
 const item = sampleApplyReviewQueue.items[0]!;
+function emailReviewItem(): ApplyReviewQueueItem {
+  return { ...item, emailApplication: {
+    recipient: "synthetic@example.test", subject: "Synthetic application",
+    body: "Synthetic reviewed email body", attachmentArtifactId: "email-artifact",
+    attachmentName: "Resume.pdf", candidateRunId: "reviewed-rehearsal", recordedAt: time,
+  } };
+}
 const document = (text: string, bold = false): Value => [{ type: "resume_block", tagName: "p", children: [{ text, bold }] }];
 function draftFor(owner = item, value = document("A"), revisionNumber = 1, draftId = "draft-1"): ResumeReviewDraft {
   const revisionId = `${draftId}-revision-${revisionNumber}`;
@@ -573,15 +581,96 @@ describe("Apply review session", () => {
   });
 
   it("binds live approval to the rendered generation, current email and saved revision with no automation dispatch", async () => {
-    const emailItem = { ...item, emailApplication: { ...sampleApplyReviewQueue.items[0]!.emailApplication!, recipient: "synthetic@example.test", attachmentArtifactId: "email-artifact" } };
-    const canonical = { ...promotedItem(emailItem), emailApplication: { ...emailItem.emailApplication, attachmentArtifactId: "rendered-pdf" } };
+    const emailItem = emailReviewItem();
+    const canonical = { ...promotedItem(emailItem), emailApplication: { ...emailItem.emailApplication!, attachmentArtifactId: "rendered-pdf" } };
     const hook = mount({ applyReviewQueue: vi.fn(async () => ({ ok: true as const, items: [canonical] })) }, emailItem); await ready(hook);
     await act(async () => { await hook.result.current.decide("approve_submit", "reviewed"); });
     expect(hook.api.renderResumeReviewDraft).toHaveBeenCalledWith(hook.draft.draftId, { draftRevisionId: hook.draft.currentRevisionId });
     expect(hook.api.decideApplyReview).toHaveBeenCalledWith(emailItem.jobKey, expect.objectContaining({
       materialsGeneration: 2, profileVersion: item.approvalGate.profileVersion, applicationUrl: item.approvalGate.applicationUrl,
       emailRecipient: "synthetic@example.test", emailAttachmentArtifactId: "rendered-pdf",
+      reviewedEmailCandidate: { ...emailItem.emailApplication, attachmentArtifactId: "rendered-pdf" },
     }));
+    const sent = vi.mocked(hook.api.decideApplyReview).mock.calls[0]![1];
+    expect(ApplyReviewDecisionRequestSchema.safeParse(sent).success).toBe(true);
+    console.info("REVIEWED_EMAIL_REQUEST_EVIDENCE " + JSON.stringify(sent));
+    expect(hook.ports.api.applyJob).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("sends the unchanged reviewed preview without rendering (partial override: %s)", async (partial) => {
+    const emailItem = emailReviewItem();
+    const partialOverrideRunId = partial ? "partial-rehearsal" : undefined;
+    if (partial) emailItem.approvalGate = { ...emailItem.approvalGate, dryRunEvidence: null,
+      partialDryRunEvidence: { runId: partialOverrideRunId!, finishedAt: time, coverage: "partial", blockedChannels: ["browser"] } };
+    const draft = { ...draftFor(emailItem), state: "promoted" as const };
+    const hook = mount({ createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft })),
+      applyReviewQueue: vi.fn(async () => ({ ok: true as const, items: [emailItem] })),
+    }, emailItem); await ready(hook);
+    await act(async () => { await hook.result.current.decide("approve_submit", "reviewed", partialOverrideRunId); });
+    expect(hook.api.renderResumeReviewDraft).not.toHaveBeenCalled();
+    expect(hook.api.decideApplyReview).toHaveBeenCalledWith(emailItem.jobKey, expect.objectContaining({
+      reviewedEmailCandidate: emailItem.emailApplication,
+      ...(partialOverrideRunId ? { partialOverrideRunId } : {}),
+    }));
+    expect(hook.ports.api.applyJob).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["recipient", "different@example.test"], ["subject", "Replacement subject"], ["body", "Replacement body"],
+    ["attachmentArtifactId", "different-artifact"], ["attachmentName", "Replacement.pdf"],
+    ["candidateRunId", "different-rehearsal"], ["recordedAt", "2026-10-18T00:00:01Z"],
+  ] as const)("refuses an unseen changed email %s during approval preparation", async (field, replacement) => {
+    const emailItem = emailReviewItem();
+    const canonical = { ...promotedItem(emailItem), emailApplication: { ...emailItem.emailApplication!, attachmentArtifactId: "rendered-pdf", [field]: replacement } };
+    const hook = mount({ applyReviewQueue: vi.fn(async () => ({ ok: true as const, items: [canonical] })) }, emailItem); await ready(hook);
+    await act(async () => { await hook.result.current.decide("approve_submit", "reviewed"); });
+    expect(hook.api.decideApplyReview).not.toHaveBeenCalled();
+    expect(hook.result.current.errors.decision).toContain("Approval inputs changed");
+    expect(hook.result.current.draft?.currentRevisionId).toBe(hook.draft.currentRevisionId);
+    expect(hook.result.current.renderResult?.ok).toBe(true);
+    expect(hook.ports.api.applyJob).not.toHaveBeenCalled();
+  });
+
+  it.each(["appears", "disappears"])("requires fresh review when the email candidate %s", async (change) => {
+    const emailItem = emailReviewItem();
+    const initial = change === "appears" ? { ...emailItem, emailApplication: null } : emailItem;
+    const canonical = { ...promotedItem(emailItem), emailApplication: change === "disappears" ? null : emailItem.emailApplication };
+    const hook = mount({ applyReviewQueue: vi.fn(async () => ({ ok: true as const, items: [canonical] })) }, initial); await ready(hook);
+    await act(async () => { await hook.result.current.decide("approve_submit", "reviewed"); });
+    expect(hook.api.decideApplyReview).not.toHaveBeenCalled();
+    expect(hook.result.current.errors.decision).toContain("Approval inputs changed");
+    expect(hook.ports.api.applyJob).not.toHaveBeenCalled();
+  });
+
+  it("freezes the reviewed email before awaiting canonical refresh", async () => {
+    const emailItem = emailReviewItem();
+    const pending = deferred<Awaited<ReturnType<Api["applyReviewQueue"]>>>();
+    const hook = mount({ applyReviewQueue: vi.fn(() => pending.promise) }, emailItem); await ready(hook);
+    let decision!: Promise<void>;
+    act(() => { decision = hook.result.current.decide("approve_submit", "reviewed"); });
+    await waitFor(() => expect(hook.api.applyReviewQueue).toHaveBeenCalledTimes(1));
+    // Even in-place cache mutation during the await cannot rewrite the snapshot
+    // of what the user authorized when they clicked.
+    emailItem.emailApplication!.body = "replacement arriving after the click";
+    const canonical = { ...promotedItem(emailItem), emailApplication: { ...emailItem.emailApplication!, attachmentArtifactId: "rendered-pdf" } };
+    await act(async () => { pending.resolve({ ok: true, items: [canonical] }); await decision; });
+    expect(hook.api.decideApplyReview).not.toHaveBeenCalled();
+    expect(hook.result.current.errors.decision).toContain("Approval inputs changed");
+    expect(hook.ports.api.applyJob).not.toHaveBeenCalled();
+  });
+
+  it("preserves the accepted render and draft when the API refuses a later preview", async () => {
+    const emailItem = emailReviewItem();
+    const canonical = { ...promotedItem(emailItem), emailApplication: { ...emailItem.emailApplication!, attachmentArtifactId: "rendered-pdf" } };
+    const hook = mount({ applyReviewQueue: vi.fn(async () => ({ ok: true as const, items: [canonical] })),
+      decideApplyReview: vi.fn<Api["decideApplyReview"]>(async () => { throw new Error("approval_stale_email_candidate"); }),
+    }, emailItem); await ready(hook);
+    await act(async () => { await hook.result.current.decide("approve_submit", "reviewed"); });
+    expect(hook.api.decideApplyReview).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.errors.decision).toBe("approval_stale_email_candidate");
+    expect(hook.result.current.draft?.currentRevisionId).toBe(hook.draft.currentRevisionId);
+    expect(hook.result.current.draft?.state).toBe("promoted");
+    expect(hook.result.current.renderResult?.ok).toBe(true);
     expect(hook.ports.api.applyJob).not.toHaveBeenCalled();
   });
 

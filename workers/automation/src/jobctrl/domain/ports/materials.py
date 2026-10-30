@@ -15,6 +15,8 @@ policy, provenance and transaction ports below:
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Protocol
 
@@ -139,6 +141,21 @@ class MaterialsRepository(Protocol):
           * Persisting every artifact slot atomically with the parent
             row. SQLite uses a transaction; the cloud adapter will use
             an outbox.
+        """
+        ...
+
+    def write_transaction(self) -> AbstractContextManager[None]:
+        """Serialize material authority checks and writes with other writers."""
+        ...
+
+    def publish_rendered_pdf(
+        self, expected: MaterialsSet, artifact: Artifact, source_sha256: str,
+        *, commit_guard: Callable[[], None] | None = None,
+    ) -> MaterialsSet | None:
+        """Publish only if the approved source and PDF slot are still current.
+
+        The read, comparison, and write must share one writer transaction with
+        other material and Apply-intent writers. Return ``None`` for stale input.
         """
         ...
 

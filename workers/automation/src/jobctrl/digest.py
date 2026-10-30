@@ -635,7 +635,7 @@ def _latest_decision_cte() -> tuple[str, list[Any]]:
                 SELECT tenant_id, job_id, decision,
                        ROW_NUMBER() OVER (
                            PARTITION BY tenant_id, job_id
-                           ORDER BY decided_at DESC, decision_id DESC
+                           ORDER BY decided_at DESC, CASE WHEN decision = 'approve_submit' THEN 0 ELSE 1 END DESC, decision_id DESC
                        ) AS row_num
                 FROM application_review_decisions
                 WHERE tenant_id = ?

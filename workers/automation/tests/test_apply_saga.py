@@ -193,6 +193,16 @@ def _email_context(**overrides) -> EmailApplicationContext:
     return EmailApplicationContext(**values)
 
 
+def _approve_email_for_test(_tenant, _job, _posting, _run, candidate, _context):
+    from contextlib import nullcontext
+    from dataclasses import replace
+    from jobctrl.domain.ports.apply import EmailApplicationAuthorization
+
+    return nullcontext(EmailApplicationAuthorization(
+        candidate=replace(candidate, attachment_bytes=b"synthetic attachment"), evidence={},
+    ))
+
+
 def test_live_rehearsal_stops_at_manual_boundary(repo):
     browser = _FakeBrowser()
     agent = _FakeAgent(behaviour="applied")
@@ -633,6 +643,50 @@ def test_email_only_live_send_requires_approval_binding(repo):
     assert outcome.apply_run.submission_result.reason == "email_application_approval_required"
 
 
+@pytest.mark.parametrize("authority", ["missing", "none", "availability_only", "unpinned", "mismatched"])
+def test_owned_email_requires_current_approval_authority(repo, authority):
+    """A claim-time recipient match or freshness check cannot authorize a send."""
+    from contextlib import nullcontext
+    from dataclasses import replace
+    from jobctrl.domain.ports.apply import EmailApplicationAuthorization
+
+    sender = _FakeEmailSender()
+    def authorize(_tenant, _job, _posting, _run, candidate, _context):
+        if authority == "none":
+            value = None
+        elif authority == "availability_only":
+            value = {"available": True}
+        else:
+            pinned = replace(candidate, attachment_bytes=b"synthetic attachment")
+            if authority == "unpinned":
+                pinned = replace(pinned, attachment_bytes=None)
+            elif authority == "mismatched":
+                pinned = replace(pinned, recipient_email="other@example.com")
+            value = EmailApplicationAuthorization(candidate=pinned, evidence={})
+        return nullcontext(value)
+
+    authorizer = None if authority == "missing" else authorize
+    saga = ApplySaga(
+        browser_port=_FakeBrowser(),
+        agent_port=_FakeAgent(behaviour="email_only"),
+        repository=repo,
+        email_sender=sender,
+        email_intent_authorizer=authorizer,
+    )
+    outcome = saga.run(
+        apply_run=_starting(), browser_config=_config(), prompt=_prompt(), model="sonnet",
+        email_application_context=_email_context(
+            approved_recipient_email="apply@example.com",
+            approved_attachment_artifact_id="resume-pdf-1",
+        ),
+    )
+
+    assert sender.sent == []
+    assert isinstance(outcome.apply_run.submission_result, Failed)
+    assert outcome.apply_run.submission_result.error == "approval_authority_unavailable"
+    assert "ApplySubmitIntended" not in [event.event_type for event in outcome.apply_run.events]
+
+
 def test_email_only_live_send_records_intent_before_owned_send(repo):
     sender = _FakeEmailSender()
     saga = ApplySaga(
@@ -640,6 +694,7 @@ def test_email_only_live_send_records_intent_before_owned_send(repo):
         agent_port=_FakeAgent(behaviour="email_only"),
         repository=repo,
         email_sender=sender,
+        email_intent_authorizer=_approve_email_for_test,
     )
 
     outcome = saga.run(
@@ -662,10 +717,10 @@ def test_email_only_live_send_records_intent_before_owned_send(repo):
 
 def test_unverified_availability_stops_email_before_intent_or_send(repo):
     sender = _FakeEmailSender()
-    def refuse(_tenant, _job, _posting, _run):
+    def refuse(_tenant, _job, _posting, _run, _candidate, _context):
         raise RuntimeError("Check availability")
     saga = ApplySaga(browser_port=_FakeBrowser(), agent_port=_FakeAgent(behaviour="email_only"),
-                     repository=repo, email_sender=sender, availability_authorizer=refuse)
+                     repository=repo, email_sender=sender, email_intent_authorizer=refuse)
     outcome = saga.run(apply_run=_starting(), browser_config=_config(), prompt=_prompt(), model="sonnet",
                        email_application_context=_email_context(approved_recipient_email="apply@example.com",
                                                                 approved_attachment_artifact_id="resume-pdf-1"))
@@ -685,6 +740,7 @@ def test_email_sender_exception_is_ambiguous_after_submit_intent(repo):
         agent_port=_FakeAgent(behaviour="email_only"),
         repository=repo,
         email_sender=sender,
+        email_intent_authorizer=_approve_email_for_test,
     )
 
     outcome = saga.run(

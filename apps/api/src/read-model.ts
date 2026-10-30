@@ -1,4 +1,5 @@
 import { isPrivateApplyEvent } from "@jobctrl/domain-types";
+import { readApplyAuditControls } from "./apply-controls.js";
 import { companyBriefingSummaries } from "./company-briefings.js";
 import { resolveJobLocator } from "./job-locators.js";
 import { EMPLOYER_ANALYSIS_PROMPT_VERSION } from "./contracts.js";
@@ -1248,6 +1249,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
       currentErrorCode: jobSummary.errorCode,
       currentErrorMessage: jobSummary.errorMessage,
       latestApplyRun,
+      ...readApplyAuditControls(db, DEFAULT_TENANT, jobId),
       scoreBreakdown: jobSummary.scoreBreakdown,
       reviewEvidenceAvailable: Boolean(
         jobSummary.scoreBreakdown ||

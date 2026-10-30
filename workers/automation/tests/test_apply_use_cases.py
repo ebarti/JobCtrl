@@ -258,6 +258,10 @@ def test_approved_email_uses_transport_locked_agent_and_owned_sender(
     monkeypatch,
     repo,
 ):
+    from contextlib import nullcontext
+    from dataclasses import replace
+    from jobctrl.domain.ports.apply import EmailApplicationAuthorization
+
     _stub_legacy_prompt(monkeypatch)
     browser = _FakeBrowser()
     agent = _FakeAgent(
@@ -274,6 +278,9 @@ def test_approved_email_uses_transport_locked_agent_and_owned_sender(
         agent_port=agent,
         repository=repo,
         email_sender=sender,
+        email_intent_authorizer=lambda _tenant, _job, _posting, _run, candidate, _context: nullcontext(
+            EmailApplicationAuthorization(candidate=replace(candidate, attachment_bytes=b"synthetic attachment"), evidence={})
+        ),
     )
     use_case = SubmitApplicationUseCase(
         repository=repo,

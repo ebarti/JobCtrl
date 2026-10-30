@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from jobctrl.digest import acknowledge_digest, build_digest, read_digest_state
 from jobctrl.llm import SpendBudgetStatus
 
@@ -539,3 +541,39 @@ def _score_breakdown_for_job(job: dict[str, Any]) -> dict[str, Any]:
 
 def _parse_utc(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+@pytest.mark.parametrize("decision_id", ["0-revoked", "z-revoked"])
+@pytest.mark.parametrize("decision", ["defer", "reset"])
+def test_digest_review_ties_never_restore_submit_authority(tmp_path, decision_id, decision):
+    from jobctrl.database import close_connection, init_db
+    from jobctrl.digest import _latest_decision_cte
+
+    db_path = tmp_path / "digest-ties.db"
+    conn = init_db(db_path)
+    try:
+        job_id = "30000000-0000-4000-8000-000000000001"
+        other_job_id = "30000000-0000-4000-8000-000000000002"
+        conn.executemany("INSERT INTO jobs (tenant_id,job_id,url) VALUES (?,?,?)", [
+            ("local", job_id, "https://example.test/first"),
+            ("local", other_job_id, "https://example.test/second"),
+            ("other", job_id, "https://example.test/foreign"),
+        ])
+        conn.executemany("INSERT INTO application_review_decisions (tenant_id,job_id,decision_id,decision,decided_at) VALUES ('local',?,?,?,?)", [
+            (job_id, "a-approved", "approve_submit", "2026-10-24T10:00:00Z"),
+            (job_id, decision_id, decision, "2026-10-24T10:00:00Z"),
+            (job_id, "zz-later-approval", "approve_submit", "2026-10-24T10:00:00Z"),
+            (other_job_id, "other-job-approval", "approve_submit", "2026-10-24T10:00:01Z"),
+        ])
+        conn.execute("INSERT INTO application_review_decisions (tenant_id,job_id,decision_id,decision,decided_at) VALUES ('other',?,'foreign-approval','approve_submit','2026-10-24T10:00:02Z')", (job_id,))
+        cte, parameters = _latest_decision_cte()
+        query = cte + " SELECT job_id, decision FROM latest_digest_decision ORDER BY job_id"
+        assert [tuple(row) for row in conn.execute(query, parameters)] == [
+            (job_id, decision), (other_job_id, "approve_submit"),
+        ]
+        conn.execute("INSERT INTO application_review_decisions (tenant_id,job_id,decision_id,decision,decided_at) VALUES ('local',?,'fresh-approval','approve_submit','2026-10-24T10:00:01Z')", (job_id,))
+        assert [tuple(row) for row in conn.execute(query, parameters)] == [
+            (job_id, "approve_submit"), (other_job_id, "approve_submit"),
+        ]
+    finally:
+        close_connection(db_path)

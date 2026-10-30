@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-func TestActualNativeApplyModuleReleasesSameJobAndPreservesPeer(t *testing.T) {
+func TestActualNativeApplyModulePreservesManualSkipAndPeer(t *testing.T) {
 	runActualNativeApplyModuleFixture(t, false)
 }
 
