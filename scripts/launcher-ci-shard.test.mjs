@@ -44,5 +44,5 @@ printf '%s\\n' "$*" >> "$TEST_LOG"
   }
   await writeFile(list, "ok example/pkg 0.1s\n");
   const empty = spawnSync("bash", ["-c", run], { encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, TEST_SHARD: "0", TEST_LIST: list, TEST_LOG: log } });
-  assert.notEqual(empty.status, 0, "empty native selection must fail");
+  assert.notEqual(empty.status, 0, `empty native selection must fail; stdout=${JSON.stringify(empty.stdout)} stderr=${JSON.stringify(empty.stderr)} list=${JSON.stringify(await readFile(list, "utf8"))} log=${JSON.stringify(await readFile(log, "utf8"))}`);
 });
