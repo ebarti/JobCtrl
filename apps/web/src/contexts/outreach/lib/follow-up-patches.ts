@@ -10,6 +10,7 @@ function isThreadResponse(value: unknown): value is OutreachThreadResponse {
 }
 
 export interface SendLogPatchInput {
+  requestId?: string;
   draftId: string;
   channel: string;
   sentAt: string;
@@ -20,16 +21,18 @@ export interface SendLogPatchInput {
  * Optimistically record a user-attested send in the cached by-contact thread: a
  * new send log is appended and the thread flips to `isSent` (INV-1 — a thread
  * reaches a sent state ONLY through a user-attested record, never a transmission).
- * The synthetic id is a placeholder; the server response and SSE reconcile the
- * authoritative log, and a failed record rolls this back via the helper.
+ * The synthetic id is a placeholder; mutation settlement reconciles the
+ * authoritative log or removes that placeholder on failure.
+ * The by-contact cache may have changed threads while cancellation was pending;
+ * only the thread named by the mutation can receive this fact.
  */
-export function markThreadSentInThread(current: unknown, log: SendLogPatchInput): unknown {
-  if (!isThreadResponse(current) || !current.thread) {
+export function markThreadSentInThread(current: unknown, log: SendLogPatchInput, expectedThreadId: string): unknown {
+  if (!isThreadResponse(current) || !current.thread || current.thread.threadId !== expectedThreadId) {
     return current;
   }
   const thread: OutreachThreadDetail = current.thread;
   const sendLog: OutreachSendLogDto = {
-    sendLogId: `optimistic-send:${log.draftId}:${log.sentAt}`,
+    sendLogId: log.requestId ? `optimistic-send:${log.requestId}` : `optimistic-send:${log.draftId}:${log.sentAt}`,
     threadId: thread.threadId,
     draftId: log.draftId,
     channel: log.channel,
@@ -38,7 +41,7 @@ export function markThreadSentInThread(current: unknown, log: SendLogPatchInput)
   };
   return {
     ...current,
-    thread: { ...thread, sendLogs: [...thread.sendLogs, sendLog], isSent: true },
+    thread: { ...thread, sendLogs: [...thread.sendLogs.filter((entry) => entry.sendLogId !== sendLog.sendLogId), sendLog], isSent: true },
   };
 }
 

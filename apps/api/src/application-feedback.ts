@@ -1,3 +1,5 @@
+import { actionIdentity, actionReceiptKey, assertActionReceipt, readActionReceipt, ActionReceiptConflictError } from "./action-receipts.js";
+import { ManualApplicationOutcomeRequestSchema } from "@jobctrl/contracts";
 import { selectResumeMaterial, materialArtifactCandidates, RESUME_TEXT_ARTIFACT_TYPES, RESUME_PDF_ARTIFACT_TYPES, type MaterialArtifactCandidate } from "./material-preview-selection.js";
 import { safeCoverLetterAccepted, coverLetterAccepted, coverLetterSourceBytes, coverLetterTextForSource, requireCoverLetterApproval } from "./cover-letter-review.js";
 import { MessageOutcomeDeterminationSchema } from "@jobctrl/contracts";
@@ -480,24 +482,45 @@ export function recordManualApplicationOutcome(
   jobLocator: string,
   request: ManualApplicationOutcomeRequest,
 ): ApplicationOutcomeWriteResponse {
-  ensureApplicationFeedbackTables(db);
-  const jobId = resolveExternalJobId(db, jobLocator);
-  const interviewPrepGeneration = resolveInterviewPrepGeneration(
-    db,
-    jobId,
-    request.interviewPrepGeneration,
-  );
-  const outcome = insertOutcome(db, {
-    jobKey: jobId,
-    kind: request.kind,
-    source: "manual",
-    note: request.note ?? null,
-    occurredAt: request.occurredAt ?? new Date().toISOString(),
-    suggestionId: null,
-    evidenceId: null,
-    interviewPrepGeneration,
-  });
-  return { ok: true, outcome };
+  request = ManualApplicationOutcomeRequestSchema.parse(request);
+  return db.transaction(() => {
+    ensureApplicationFeedbackTables(db);
+    const jobId = resolveExternalJobId(db, jobLocator);
+    const operation = request.interviewPrepGeneration === undefined ? "manual-outcome" : "interview-reflection";
+    const identity = actionIdentity(DEFAULT_TENANT, operation, jobId, request.requestId, request);
+    const receipt = readActionReceipt(db, DEFAULT_TENANT, identity, "ApplicationOutcomeRecorded", "job");
+    if (receipt) {
+      const raw = getRow<OutcomeRow & { created_by: string }>(db,
+        `SELECT outcome_id, job_id, kind, source, note, occurred_at, recorded_at,
+                suggestion_id, evidence_id, interview_prep_generation, created_by
+         FROM application_outcomes WHERE tenant_id=? AND outcome_id=?`,
+        [DEFAULT_TENANT, receipt.factId]);
+      if (!raw || raw.job_id !== jobId || raw.kind !== request.kind || raw.source !== "manual" || raw.created_by !== "user") {
+        throw new ActionReceiptConflictError();
+      }
+      const outcome = outcomeFromRow(raw);
+      if (outcome.jobKey !== jobId || outcome.source !== "manual"
+        || outcome.kind !== request.kind || outcome.note !== (request.note ?? null)
+        || outcome.interviewPrepGeneration !== (request.interviewPrepGeneration ?? null)
+        || (request.occurredAt !== undefined && outcome.occurredAt !== request.occurredAt)) {
+        throw new ActionReceiptConflictError();
+      }
+      assertActionReceipt(identity, receipt, { ...outcome, createdBy: raw.created_by });
+      return { ok: true as const, outcome };
+    }
+    const interviewPrepGeneration = resolveInterviewPrepGeneration(db, jobId, request.interviewPrepGeneration);
+    const outcome = insertOutcome(db, {
+      jobKey: jobId,
+      kind: request.kind,
+      source: "manual",
+      note: request.note ?? null,
+      occurredAt: request.occurredAt ?? new Date().toISOString(),
+      suggestionId: null,
+      evidenceId: null,
+      interviewPrepGeneration,
+    }, identity);
+    return { ok: true as const, outcome };
+  }).immediate();
 }
 
 export function decideOutcomeSuggestion(
@@ -600,6 +623,7 @@ function insertOutcome(
     evidenceId: string | null;
     interviewPrepGeneration: number | null;
   },
+  identity?: ReturnType<typeof actionIdentity>,
 ): ApplicationOutcome {
   const recordedAt = new Date().toISOString();
   const outcome: ApplicationOutcome = {
@@ -635,23 +659,25 @@ function insertOutcome(
     "user",
   );
 
+  const event = {
+    tenantId: DEFAULT_TENANT,
+    jobId: outcome.jobKey,
+    outcomeId: outcome.outcomeId,
+    kind: outcome.kind,
+    source: outcome.source,
+    occurredAt: outcome.occurredAt,
+    suggestionId: outcome.suggestionId,
+    evidenceId: outcome.evidenceId,
+    interviewPrepGeneration: outcome.interviewPrepGeneration,
+    notePresent: Boolean(outcome.note),
+  };
   recordEvent(db, {
+    ...(identity ? { idempotencyKey: actionReceiptKey(identity, { ...outcome, createdBy: "user" }, event) } : {}),
     eventType: "ApplicationOutcomeRecorded",
     jobId: canonicalJobId(outcome.jobKey),
     stage: "apply",
     message: "Application outcome recorded.",
-    payload: {
-      tenantId: DEFAULT_TENANT,
-      jobId: outcome.jobKey,
-      outcomeId: outcome.outcomeId,
-      kind: outcome.kind,
-      source: outcome.source,
-      occurredAt: outcome.occurredAt,
-      suggestionId: outcome.suggestionId,
-      evidenceId: outcome.evidenceId,
-      interviewPrepGeneration: outcome.interviewPrepGeneration,
-      notePresent: Boolean(outcome.note),
-    },
+    payload: { ...event, ...(identity ? { receipt: { ...identity.binding, factId: outcome.outcomeId } } : {}) },
   });
 
   return outcome;
@@ -2291,6 +2317,7 @@ function recordEvent(
   db: SqliteDatabase,
   event: {
     eventType: string;
+    idempotencyKey?: string;
     payload: Record<string, unknown>;
     message: string;
     jobId: JobId;
@@ -2300,8 +2327,8 @@ function recordEvent(
   db.prepare(
     `INSERT INTO job_events (
        tenant_id, job_id, identity_version, stage, event_type, level, message,
-       occurred_at, payload_json, entity_kind, entity_ref
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       occurred_at, payload_json, entity_kind, entity_ref, idempotency_key
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     DEFAULT_TENANT,
     event.jobId,
@@ -2314,6 +2341,7 @@ function recordEvent(
     JSON.stringify(event.payload),
     "job",
     event.jobId,
+    event.idempotencyKey ?? null,
   );
 }
 

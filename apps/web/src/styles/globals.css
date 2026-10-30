@@ -3736,6 +3736,17 @@ input[type="radio"] {
   padding: 0;
 }
 
+.outcome-fields {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: inherit;
+  gap: inherit;
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
 .outcome-correction-fieldset {
   display: grid;
   grid-column: 1 / -1;
@@ -3754,6 +3765,7 @@ input[type="radio"] {
 }
 
 .outcome-submit,
+.outcome-retry-notice,
 .outcome-form .status-line,
 .outcome-correction-form .status-line {
   grid-column: 1 / -1;

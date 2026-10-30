@@ -8,6 +8,25 @@ changing scoring, ranking, thresholds, or Apply eligibility on its own. An
 owning policy changes only through an explicit score correction, approved role
 rule, or accepted learning recommendation.
 
+## Retrying A Manual Record
+
+If saving an outcome or post-interview reflection fails to acknowledge, use the
+same form's **Record outcome** or **Record reflection** button again. The form
+keeps the original submitted values and request identity while mounted. A retry
+returns the original record, including its timestamps, without another timeline
+entry or event, even after the local API restarts.
+
+The attempted input stays visible and locked during this uncertainty. **Start a
+new action** unlocks it and creates a distinct request identity; the earlier action
+may already have been recorded. Successful acknowledgement also prepares a new
+action. Submitted private notes are held in memory for retry, not copied into
+browser storage. Reloading or leaving the form discards that in-memory retry
+state; inspect the timeline before deliberately recording another observation.
+
+Reusing a request identity with different values is a conflict and applies no
+change. A new reflection still requires an accepted or superseded prep generation
+for the same job. Adding another observation does not retract an earlier fact.
+
 ## How Email Becomes An Outcome Suggestion
 
 1. **A user-started scan bounds application anchors.** Message count and date

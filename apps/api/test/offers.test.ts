@@ -323,6 +323,12 @@ describe("actual offer HTTP lifecycle", () => {
         })
       ).statusCode,
     ).toBe(200);
+    const sendRequest = {
+      requestId: "11720000-0000-4000-8000-000000000001",
+      draftId: "draft", channel: "email", sentAt: source.capturedAt,
+    };
+    const acceptedSend = await app.inject({ method: "POST", url: "/v1/outreach/threads/thread/send-logs", payload: sendRequest });
+    expect(acceptedSend.statusCode).toBe(200);
     await post("terms", {
       expectedRevisionId: saved.revisionId,
       terms,
@@ -338,7 +344,7 @@ describe("actual offer HTTP lifecycle", () => {
         await app.inject({
           method: "POST",
           url: "/v1/outreach/threads/thread/send-logs",
-          payload: {
+          payload: { requestId: "11720000-0000-4000-8000-000000000002",
             draftId: "draft",
             channel: "email",
             sentAt: source.capturedAt,
@@ -346,6 +352,13 @@ describe("actual offer HTTP lifecycle", () => {
         })
       ).statusCode,
     ).toBe(409);
+    const replay = await app.inject({ method: "POST", url: "/v1/outreach/threads/thread/send-logs", payload: sendRequest });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json()).toEqual(acceptedSend.json());
+    const persisted = new Database(dbPath);
+    expect(persisted.prepare("SELECT count(*) AS n FROM outreach_send_logs WHERE tenant_id='local' AND thread_id='thread'").get()).toEqual({ n: 1 });
+    expect(persisted.prepare("SELECT count(*) AS n FROM job_events WHERE tenant_id='local' AND event_type='OutreachSendLogged' AND entity_ref='thread'").get()).toEqual({ n: 1 });
+    persisted.close();
   });
 
   it.each([

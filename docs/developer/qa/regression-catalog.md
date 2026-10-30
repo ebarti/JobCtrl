@@ -600,6 +600,49 @@ then prove unchanged approvals and no extra export rows. Inspect desktop/mobile
 screenshots, page identity, console health, overflow and critical/serious axe
 results. Skipping this production gate is not passing browser evidence.
 
+## Manual Outcome And Send-Log Retry Identity
+
+Run API `test/action-retry.test.ts` with `application-feedback.test.ts`,
+`application-feedback-v7.test.ts`, `outreach.test.ts`, `offers.test.ts` and
+`outreach-projection-parity.test.ts`. The retry harness starts two independent
+loopback API processes over an owned exact-v15 database. It uses the normal
+`JobCtrlApiClient`, discards a completed HTTP acknowledgement, restarts the API,
+and compares the full original result. Hold an independent writer while equal
+and conflicting requests arrive, then require one fact/event per accepted
+identity and an explicit 409 for the conflicting loser. Inspect exact IDs,
+timestamps, counts and private-text exclusion; a sequential handler-only race
+is insufficient.
+
+Cover ordinary outcomes, prep-linked reflections and send logs, including omitted
+`occurredAt`, canonical job aliases, foreign tenant/operation/target bindings,
+malformed identities, missing receipt facts, receipt IDs redirected to another
+equal-payload action, missing or different event fact references, changed accepted
+facts and event fields, malformed or duplicate internal prefixes, changed draft/prep bindings, event
+failure, deferred commit failure and outer-transaction rollback. Replay after a
+later deliberate action, changed draft review or reminder must preserve that
+newer state. Fresh requests retain approved-draft, offer-source and
+accepted/superseded prep-generation checks. The sealed schema remains exact v15.
+For a retained full identity prefix, corrupt its separator to punctuation on
+either side of `:` and to Unicode; equal retries, including independent writers,
+must refuse without creating another fact or event.
+Attempt an offline dictionary guess against the persisted and SSE event payloads
+for a short synthetic private note. Neither the note nor its private SQLite
+binding may be exposed there. The binding itself remains inside the private
+database, which also holds the original note.
+
+Web outcome/reflection/send-log form and mutation tests cover frozen payloads,
+identity retention, explicit new actions, accessible errors, input retention and
+optimistic reconciliation without overwriting later thread state. Defer send-log
+query cancellation, replace the contact's cached thread, and then settle the
+original request with success and failure separately: neither the optimistic
+patch nor settlement may change the replacement's drafts, logs, sent status or
+reminder. The existing
+Interview Prep and Outreach browser paths discard an acknowledgement only after
+`route.fetch()` completes the real mutation, retry through the rendered form,
+and inspect canonical fact/event counts. Keep offer production API/RPC and
+worker preservation checks alongside these scenarios. Retain owned JUnit and
+observed product-path evidence; fixture coverage is not independent runtime QA.
+
 ## Auditability Checks
 
 For stale score reset and replacement (#1189), run the focused score
