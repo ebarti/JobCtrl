@@ -14,6 +14,7 @@ import {
   assertNodeAttributionClosure,
   assertHeadlessChromiumPayload,
   buildFixturePayload,
+  collectMcpNodeContributors,
   collectNodeLicenseInventory,
   collectPayloadNpmContributors,
   compareMacOsVersions,
@@ -532,6 +533,44 @@ test("physical npm payload traversal rejects pnpm virtual-store content", async 
   );
 });
 
+test("Playwright MCP attribution follows its exact core dependency and rejects closure drift", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-mcp-closure-"));
+  context.after(async () => rm(root, { recursive: true, force: true }));
+  const modules = path.join(root, "playwright-mcp", "node_modules");
+  const mcp = path.join(modules, "@playwright", "mcp");
+  const core = path.join(modules, "playwright-core");
+  await mkdir(mcp, { recursive: true });
+  await mkdir(core, { recursive: true });
+  const contracts = {
+    componentPaths: new Map([["playwright-mcp", "playwright-mcp"]]),
+    versions: { "playwright-mcp": "0.0.83" },
+  };
+  const writeMcp = (dependency) => writeFile(path.join(mcp, "package.json"), JSON.stringify({
+    name: "@playwright/mcp", version: "0.0.83", license: "Apache-2.0",
+    dependencies: { "playwright-core": dependency },
+  }));
+  const writeCore = (version) => writeFile(path.join(core, "package.json"), JSON.stringify({
+    name: "playwright-core", version, license: "Apache-2.0",
+  }));
+
+  await writeMcp("1.64.0-alpha-1790635538000");
+  await writeCore("1.64.0-alpha-1790635538000");
+  assert.deepEqual((await collectMcpNodeContributors(root, contracts)).map((entry) => entry.key), [
+    "@playwright/mcp@0.0.83", "playwright-core@1.64.0-alpha-1790635538000",
+  ]);
+  await writeCore("1.65.0");
+  await assert.rejects(collectMcpNodeContributors(root, contracts), /payload npm package closure drifted/);
+  await writeMcp("1.65.0");
+  assert.equal((await collectMcpNodeContributors(root, contracts)).length, 2);
+  await writeMcp("^1.65.0");
+  await assert.rejects(collectMcpNodeContributors(root, contracts), /exact.*playwright-core/i);
+  await writeMcp("1.65.0");
+  const unexpected = path.join(modules, "unexpected");
+  await mkdir(unexpected);
+  await writeFile(path.join(unexpected, "package.json"), JSON.stringify({ name: "unexpected", version: "1.0.0", license: "MIT" }));
+  await assert.rejects(collectMcpNodeContributors(root, contracts), /payload npm package closure drifted/);
+});
+
 test("child termination retains one exit promise across timeout and stale exitCode observation", async () => {
   class RacingChild extends EventEmitter {
     exitCode = null;
@@ -810,6 +849,11 @@ test("installed Python pruning removes proven build sources, docs, examples, and
     ["google/protobuf/testdata/__init__.py", ""],
     ["numpy/random/_examples/example.pyx", "source\n"],
     ["playwright/driver/README.md", "docs\n"],
+    ["playwright/driver/package/lib/tools/skills/playwright-cli/SKILL.md", "developer instructions\n"],
+    ["playwright/driver/package/lib/tools/skills/playwright-cli/references/tracing.md", "developer reference\n"],
+    ["playwright/driver/package/lib/tools/cli-client/program.js", "runtime\n"],
+    [["typer", ".agents", "skills", "typer", "SKILL.md"].join("/"), "developer instructions\n"],
+    ["typer/main.py", "runtime\n"],
     ["temporalio/contrib/openai_agents/README.md", "docs\n"],
     ["runtime-package/.gitattributes", "*.py text\n"],
     ["runtime-package/.gitmodules", "[submodule]\n"],
@@ -832,8 +876,25 @@ test("installed Python pruning removes proven build sources, docs, examples, and
   ]);
   assert.deepEqual((await buildFileInventory(root)).map((file) => file.path), [
     "httpx-1.0.dist-info/licenses/LICENSE.md",
+    "playwright/driver/package/lib/tools/cli-client/program.js",
     "temporalio/bridge/temporal_sdk_bridge.abi3.so",
+    "typer/main.py",
   ]);
+});
+
+test("forbidden scan rejects shipped Python developer-skill assets", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-python-skill-scan-"));
+  context.after(async () => rm(root, { recursive: true, force: true }));
+  for (const relativePath of [
+    "playwright-python/site-packages/playwright/driver/package/lib/tools/skills/playwright-cli/asset.txt",
+    ["worker", "site-packages", "typer", ".agents", "skills", "typer", "asset.txt"].join("/"),
+  ]) {
+    const target = path.join(root, ...relativePath.split("/"));
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, "developer asset\n");
+    await assert.rejects(scanForbiddenPayload(root), /known non-runtime Python source\/docs\/fixture closure/);
+    await rm(path.join(root, relativePath.split("/")[0]), { recursive: true, force: true });
+  }
 });
 
 test("forbidden scan rejects provider packs, dev tools, caches, and build-path leaks", async (context) => {
