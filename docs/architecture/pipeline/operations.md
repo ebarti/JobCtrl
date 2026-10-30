@@ -603,6 +603,8 @@ being restored, and hides selected-run counts, percentages, and ETAs. Recovery
 is an automatic transition state, not an accepted tracking mode. For selected
 scopes, `no_work` is valid only after coverage is `ready`, execution membership
 is closed, and projected demand is exactly zero.
+Positive-demand stage and source-family ranges may remain available before
+closure; their scope does not turn an open membership into proof of zero work.
 
 `incomplete` is a terminal audit state, not a degraded operating mode. Pipelines
 shows the exact partial evidence and bounded reason, withholds claims about the

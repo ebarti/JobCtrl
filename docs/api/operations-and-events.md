@@ -212,8 +212,11 @@ bounded shared-queue contention. A stale peer on that queue leaves its activity
 and admission unconfirmed, so contention is unbounded even when another worker
 reports fresh capacity. The overall ETA additionally waits for execution
 membership to close; per-stage and source-family ETAs can estimate their
-already-known scoped backlog while membership remains open. The web view marks
-cached overall, stage, and source-family ETAs stale after a failed snapshot
+already-known scoped backlog while membership remains open.
+An empty selected stage or source scope remains provisional until membership
+closes; it cannot report `no_work` merely because its current demand is zero.
+Positive scoped demand can still receive a range with sufficient bounded evidence.
+The web view marks cached overall, stage, and source-family ETAs stale after a failed snapshot
 refresh until a later read succeeds. A null provider total never becomes a
 synthetic remaining-page count; the
 source-family range can instead use recent whole-family projection durations
@@ -223,7 +226,7 @@ live source contention until queued or active. The estimator uses recent
 canonical stage/projection durations, reports a low/high range, confidence,
 basis, sample size, timestamp, and caveat, and rounds outward.
 Otherwise the response returns a typed `calibrating`, `paused`, `stale`, or
-`unavailable` reason such as `membership_open` (overall ETA only),
+`unavailable` reason such as `membership_open` (overall or an empty selected scope),
 `worker_unavailable`, `budget_exceeded`, `telemetry_stale`, or
 `contention_unbounded`. The range is an operational estimate, not a completion
 promise.

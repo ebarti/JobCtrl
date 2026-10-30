@@ -841,16 +841,17 @@ non-reversible operational identifiers, never filesystem paths or raw job URLs.
 returns low/high seconds, `low`/`medium`/`high` confidence, basis
 (`source_rate`, `stage_throughput`, or `cohort_throughput`), sample size,
 timestamp, and caveat. Non-numeric states are `calibrating` (insufficient
-samples or, for `overallEta`, open membership), `paused`
+samples or open membership for an overall or empty selected scope), `paused`
 (worker/budget/blocking/dispatch reason), `stale`, or `unavailable` (including
 no work, unsupported telemetry, unknown scope, or unbounded contention). Every
 numeric estimate requires at least five recent successful samples for each
 relevant remaining stage and fresh usable capacity. A stale peer on the selected
 task queue makes shared contention unbounded even when another worker is fresh.
 `overallEta` additionally requires closed execution membership; per-stage and
-source-family rows can
-estimate their already-known scoped backlog while membership remains open. The
-estimator uses canonical job-stage and pipeline-step durations, falling back to
+source-family rows can estimate their already-known scoped backlog while
+membership remains open. A selected scope cannot report `no_work` until
+membership closes; positive demand can still receive an estimate before closure.
+The estimator uses canonical job-stage and pipeline-step durations, falling back to
 operational attempt metrics only when the primary source is empty; it never
 blends the two. A source-family estimate may use recent completed-family
 durations even when provider `totalUnits` is null; it does not synthesize a

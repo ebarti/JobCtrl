@@ -1705,7 +1705,6 @@ function buildStages(input: {
             scope: selectedScope,
           },
         ),
-        membershipOpen: false,
       }) as PipelineEta,
       asOf: input.generatedAt,
     });
@@ -1881,7 +1880,7 @@ function estimateSourceFamilyEta(input: {
       ),
     ),
     scope: input.projectionCoverage.status === "ready" ? "known" : "unknown",
-    membershipOpen: false,
+    estimateScope: "stage",
     configuredSlots,
     stages: [
       {
@@ -2334,7 +2333,7 @@ function stageEtaInput(
       runtimeContext.runtimeActiveWork,
     ),
     scope: runtimeContext.scope,
-    membershipOpen: false,
+    estimateScope: "stage",
     blocked: counts.blocked > 0,
     stages,
     remainingPaths: [],

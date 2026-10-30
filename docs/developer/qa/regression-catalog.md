@@ -924,6 +924,12 @@ same-queue stale-peer contention withholds overall, stage, and source-family
 numeric ETAs; fresh-peer recovery restores them. A failed operations refresh
 must also mark a previously available source-family estimate stale without
 mutating the cached snapshot, then show the new estimate after a successful read.
+Run `test/pipeline-eta.test.ts` and `test/pipeline-operations.test.ts` for zero
+selected-stage and source-family demand while Discover membership remains open.
+Require `membership_open` rather than `no_work`, retain positive-demand current,
+sweep and source ranges with sufficient evidence, and permit `no_work` after
+closure. Empty global backlog remains independently scoped. Preserve stale
+telemetry and unbounded-contention refusals.
 
 For completed eligibility holds in pipeline operations, run
 `corepack pnpm --filter @jobctrl/api exec vitest run test/pipeline-operations.test.ts`
