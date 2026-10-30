@@ -261,6 +261,48 @@ describe("DemoLocalCommandExecutor", () => {
   });
 
 
+  it("explains unavailable demo rescore consistently across the reset result, job and event", async () => {
+    const { adapter, repository } = await harness();
+    const jobId = "job-fabrikam-systems";
+    const previous = repository.snapshotNow().state.readModel.jobs.details[jobId]!.job;
+    expect(DEMO_CAPABILITY_MANIFEST.rescoreJob.class).toBe("unavailable");
+    expect(DEMO_CAPABILITY_MANIFEST.rescoreJobsNotOnCurrentScoringPolicy.class).toBe("unavailable");
+    await expect(adapter.rescoreJob(jobId, { dryRun: false })).rejects.toMatchObject({
+      code: "demo_capability_not_implemented",
+    });
+    const initialDetail = await adapter.job(jobId);
+    expect(initialDetail.job.nextAction).toBe("Rescoring is unavailable in the demo.");
+    expect(initialDetail.stages).toContainEqual(expect.objectContaining({
+      stage: "score", nextAction: "Rescoring is unavailable in the demo.",
+    }));
+    const historicalRun = await adapter.workflowRun("run-failed-quality-gate");
+    expect(historicalRun.events).toContainEqual(expect.objectContaining({
+      eventType: "WorkflowFailed", message: "Rescoring is unavailable in the demo.",
+    }));
+    const response = await adapter.resetStaleScoresForRescore({
+      limit: 1,
+      jobKeys: [jobId],
+    });
+    expect(response).toMatchObject({
+      count: 1,
+      nextAction: "Rescoring is unavailable in the demo.",
+    });
+    const snapshot = repository.snapshotNow();
+    const detail = snapshot.state.readModel.jobs.details[jobId]!.job;
+    expect(detail).toMatchObject({ currentState: "pending", nextAction: response.nextAction });
+    expect(detail.scoreStaleness).toEqual(previous.scoreStaleness);
+    expect(detail.fitScore).toEqual(previous.fitScore);
+    expect(snapshot.state.readModel.jobs.list.items.find((job) => job.jobKey === jobId)).toMatchObject({
+      currentState: "pending", nextAction: response.nextAction,
+    });
+    expect(snapshot.eventLog).toContainEqual(expect.objectContaining({
+      event: expect.objectContaining({
+        eventType: "ScoreRescoreRequested",
+        payload: expect.objectContaining({ nextAction: response.nextAction }),
+      }),
+    }));
+  });
+
   it("preserves the reviewed profile, Required pin and event history when accepting cleanup cannot persist", async () => {
     const store = new QuotaOnNextTransactionStore();
     const { adapter, repository } = await harness(store);

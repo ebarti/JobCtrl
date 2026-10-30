@@ -356,6 +356,8 @@ the research task detail read.
 Global and per-job stage runs, rescore/re-tailor, retry, mark-applied, and
 mark-skipped commands are summarized in
 [Operations & Events](api/operations-and-events.md#starting-work).
+Stale-score reset advice is returned and recorded as an executable explicit
+rescore command; the reset itself does not dispatch scoring.
 Enrichment resets use the synchronous Python application service through
 `reset_enrichment`; its transaction and preservation rules are defined in
 [Enrichment Retry Ownership](architecture/contracts-types-and-api-boundaries.md#enrichment-retry-ownership).

@@ -1563,6 +1563,60 @@ For retry with `runAfter: true`, worker readiness precedes reset. A readiness
 failure leaves state, attempts, error details, retryability, and audit evidence
 unchanged and dispatches no work.
 
+For retry presentation and stale-score advice, hold both the retry response and
+the subsequent Job Detail read. Exercise the real Job actions caller: Discover
+sends `runAfter: false` and remains pending, while a dispatched preparation
+retry retains running feedback. If a response reports a reset without dispatch,
+the stage and workflow summary both settle to the returned state before the
+next read completes. Also return a failed or unsupported dispatch after the
+reset: both views retain the returned pending stage through a held and failed
+readback, and the dispatch failure remains visible. Check rollback on request
+failure. While an earlier retry response is held, publish a newer StageStarted
+detail through the event stream; then release the earlier reset, dispatch-failure,
+or request-failure response and fail the next read. The newer running stage and
+workflow summary must survive. Also cover a newer publication whose projection
+is structurally equal to the optimistic data. Publish the old failed stage in
+a read before the reset commits, including after query recreation: a delayed
+reset response followed by a failed read must leave an explicit uncertainty
+notice visible. Hold a pre-commit read across the response and ensure its success
+does not clear the notice or substitute for a distinct confirmation read. A
+successful post-response read clears that notice. Fail a confirmation and retry
+it through Job Detail, reopen an inactive job, and switch jobs and tenants; each
+notice must remain scoped to its owner until that owner's confirmation succeeds.
+While a confirmation waits, complete a matching post-response read and ensure
+no unnecessary second read starts. Close the drawer while its earlier read is
+held and another component still subscribes to the query; the closed drawer's
+operation must not start a later read, and reopening must still confirm it.
+Open Job Detail by a URL alias and retry the canonical Job while response and
+readback are held; the mounted alias detail must show the reset without changing
+another Job's cache. Navigate both from alias to canonical and from canonical
+to alias with a previously cached alternate: it must be stale and refetch on
+mount. Its retained state must show its own uncertainty notice through held or
+failed readback and clear only after that locator confirms the same canonical
+job. Preserve unrelated and other-tenant entries and newer cached values. If an
+alternate read was already in flight, including an initially empty cache entry,
+recheck the same query instance and returned job key after it completes, then
+invalidate the matching entry again; an active alternate must fetch again. A
+recreated query or a different canonical job must not be claimed.
+Open Screening Answers in an alias detail so it subscribes to the canonical
+detail query. A matching post-response read through that subscriber clears the
+canonical locator's notice even before its drawer is opened; a pre-response
+read cannot clear it. Overlap two retries while that subscriber's initially
+empty read is held and confirm both with one subsequent read. Repeat with the
+second retry settling during the first confirmation: that earlier confirmation
+must not clear the second retry's notice. Reject an application-target refresh
+with 409 and ensure no stage-retry uncertainty notice is created for an
+alternate locator.
+Feed both the API
+response and recorded event advice through the registered Python CLI with an
+owned no-spend seam; the resulting score workflow input must set `rescore`.
+Check Python's stage and event advice the same way and preserve the accepted
+score. These checks do not establish stale-marker resolution timing.
+For demo mode, use a retained synthetic workspace with a previously retryable
+failure: retry controls and diagnostics must reflect the unavailable demo
+capability without rewriting the saved record. Local retry behavior remains
+covered independently.
+
 ## Live Profile Discovery And Automatic Recovery
 
 Require a healthy worker before starting worker-backed stages. With the API

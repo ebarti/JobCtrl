@@ -11,6 +11,8 @@ import {
   AlertDescription,
   AlertTitle,
 } from "../../../shared/ui/alert.js";
+import { getApiCapabilityAvailability } from "../../../shared/lib/apiCapabilityAvailability.js";
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { Button } from "../../../shared/ui/button.js";
 import { ContextHelp } from "../../../shared/ui/context-help.js";
 import {
@@ -25,18 +27,22 @@ import { StageBadge } from "./StageBadge.js";
 export interface StageTimelineProps {
   stages: readonly StageSummary[];
   jobId?: string;
+  detailQueryId?: string;
   postingUrl?: string;
 }
 
 export function StageTimeline({
   stages,
   jobId,
+  detailQueryId,
   postingUrl,
 }: StageTimelineProps): JSX.Element {
+  const { featureFlags } = usePorts();
+  const retryAvailable = getApiCapabilityAvailability(featureFlags, "retryStage").available;
   return (
     <ol aria-label="Preparation stages" className="timeline stage-timeline">
       {stages.map((stage) => {
-        const diagnostics = stageDiagnostics(stage);
+        const diagnostics = stageDiagnostics(stage, retryAvailable);
         const postingPageUrl = publicPostingUrl(postingUrl);
         const guidance = stageGuidance(stage);
         const manualCaptureUrl = guidance ? postingPageUrl : null;
@@ -74,7 +80,8 @@ export function StageTimeline({
                   {stage.state === "blocked" &&
                   stage.errorCode === "ENRICH_ROBOTS_DISALLOWED" &&
                   jobId ? (
-                    <LegacyEnrichmentRetry jobId={jobId} />
+                    <LegacyEnrichmentRetry jobId={jobId} retryAvailable={retryAvailable}
+                      {...(detailQueryId === undefined ? {} : { detailQueryId })} />
                   ) : null}
                   <p>
                     <strong>Manual capture fallback.</strong> Open the posting
@@ -155,26 +162,32 @@ function StageDiagnosticDisclosure({
   );
 }
 
-function LegacyEnrichmentRetry({ jobId }: { jobId: string }): JSX.Element {
+function LegacyEnrichmentRetry({ jobId, detailQueryId, retryAvailable }: {
+  jobId: string; detailQueryId?: string; retryAvailable: boolean;
+}): JSX.Element {
   const retryStage = useRetryStageMutation();
 
   return (
     <div className="flex flex-col items-start gap-2">
-      <p>
-        Retry using the connected extension when available, or anonymous
-        acquisition otherwise. Host pacing and the current run request budget
-        still apply. The stage reset and new attempt remain in audit history,
-        and this preparation retry never reaches application submission.
-      </p>
+      {retryAvailable ? (
+        <p>
+          Retry using the connected extension when available, or anonymous
+          acquisition otherwise. Host pacing and the current run request budget
+          still apply. The stage reset and new attempt remain in audit history,
+          and this preparation retry never reaches application submission.
+        </p>
+      ) : <p>Retrying enrichment is unavailable in the demo.</p>}
       <Button
-        disabled={retryStage.isPending}
-        onClick={() =>
+        disabled={retryStage.isPending || !retryAvailable}
+        onClick={() => {
+          if (!retryAvailable) return;
           retryStage.mutate({
             jobId,
             stage: "enrich",
             runAfter: true,
-          })
-        }
+            ...(detailQueryId === undefined ? {} : { detailQueryId }),
+          });
+        }}
         size="sm"
       >
         {retryStage.isPending
@@ -238,7 +251,7 @@ function stageLabel(stage: StageSummary["stage"]): string {
   return STAGE_LABELS[stage];
 }
 
-function stageDiagnostics(stage: StageSummary): Array<[string, string]> {
+function stageDiagnostics(stage: StageSummary, retryAvailable: boolean): Array<[string, string]> {
   const diagnostics: Array<[string, string]> = [];
   if (["failed", "exhausted", "blocked", "skipped"].includes(stage.state)) {
     if (stage.failureReason === "attempt_budget_exhausted") {
@@ -261,7 +274,7 @@ function stageDiagnostics(stage: StageSummary): Array<[string, string]> {
     if (["failed", "exhausted"].includes(stage.state)) {
       diagnostics.push([
         "retry",
-        stage.retryable ? "available" : "not automatic",
+        retryAvailable ? (stage.retryable ? "available" : "not automatic") : "unavailable in the demo",
       ]);
     }
   }

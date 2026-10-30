@@ -21,6 +21,10 @@ An asynchronous start returns `202 Accepted` with run/workflow identity after
 Temporal accepts the workflow. Eligibility no-ops and synchronous commands use
 `200`; invalid input or a failed start returns an error.
 
+The stale-score reset response and its `ScoreRescoreRequested` event provide
+`jobctrl score --rescore` as `nextAction`. That explicit command operates on the
+eligible scoring queue; the reset itself does not dispatch scoring.
+
 `POST /v1/jobs/:jobKey/actions/retry-stage` has two distinct commands. A plain
 reset (`runAfter: false`) is local and synchronous. Enrichment resets cross the
 local Python RPC boundary and acknowledge the committed application-service

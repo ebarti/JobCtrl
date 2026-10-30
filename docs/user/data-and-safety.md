@@ -120,6 +120,8 @@ tailored-material review, Apply Review/dry-run, and run history. Every shortcut
 and action is simulated; it does not contact employers, send messages, or make
 external changes. **Reset synthetic demo data** asks for confirmation, then
 replaces the browser-local workspace with the original examples.
+Stage retry and rescoring are unavailable in the demo, including for retained
+synthetic histories that recorded a retryable failure.
 When a deployment changes the versioned synthetic seed, the next demo load
 performs the same replacement automatically: it rotates the workspace identity,
 clears pending simulated actions, and deletes generated demo blobs. This seed

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import os
 import sqlite3
+import subprocess
+import sys
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1008,3 +1012,50 @@ def test_stale_reset_rolls_back_and_respects_caller_transaction(conn: sqlite3.Co
         assert notifications == []
     finally:
         subscription.unsubscribe()
+
+
+def test_stale_score_reset_advice_reaches_registered_rescore_without_spend(
+    conn: sqlite3.Connection, tmp_path: Path
+) -> None:
+    job_id = _seed_job(conn, job_id=_job_id(21), url="https://example.com/jobs/reset-advice")
+    SqliteScoreRepository(conn).save(_build_score(job_id))
+    accepted = tuple(conn.execute("SELECT * FROM job_scores WHERE job_id = ?", (str(job_id),)).fetchone())
+    conn.execute(
+        """
+        INSERT INTO job_score_staleness (
+            tenant_id, job_id, stale_reason, old_policy_id, old_policy_version,
+            new_policy_id, new_policy_version, marked_at, resolved
+        ) VALUES (?, ?, 'scoring_policy_changed', 'policy-1', 1, 'policy-2', 2, '2026-01-01', 0)
+        """,
+        (str(LOCAL_TENANT), str(job_id)),
+    )
+    conn.commit()
+
+    SqliteScoreStalenessRepository(conn).reset_for_rescore(LOCAL_TENANT)
+
+    stage = conn.execute(
+        "SELECT state, next_action FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'score'",
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    event = conn.execute(
+        "SELECT payload_json FROM job_events WHERE tenant_id = ? AND job_id = ? AND event_type = 'ScoreRescoreRequested'",
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert stage["state"] == "pending"
+    assert tuple(conn.execute("SELECT * FROM job_scores WHERE job_id = ?", (str(job_id),)).fetchone()) == accepted
+    marker = conn.execute(
+        "SELECT resolved, resolved_at FROM job_score_staleness WHERE tenant_id = ? AND job_id = ?",
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert tuple(marker) == (0, None)
+    probe = subprocess.run(
+        [sys.executable, str(Path(__file__).parent / "fixtures" / "rescore_advice_probe.py")],
+        input=json.dumps([stage["next_action"], json.loads(event["payload_json"])["nextAction"]]),
+        text=True,
+        capture_output=True,
+        cwd=tmp_path,
+        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(tmp_path), "JOBCTRL_DIR": str(tmp_path)},
+        timeout=30,
+        check=False,
+    )
+    assert probe.returncode == 0, probe.stderr
