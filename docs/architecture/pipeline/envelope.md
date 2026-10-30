@@ -305,11 +305,18 @@ stage — defeating heartbeats and starving every other activity on the worker.
   `abandoned_thread` and records an `operational_attempt_metric`
   (`stage="operations"`, `attempt_kind="temporal_activity_thread"`,
   `error_class="abandoned_thread"`) so a wedged thread is observable. The
-  log marks the already-retired executor generation as abandoned. A fresh
-  bounded generation has already taken over before the grace wait, while the
-  old thread remains fenced by its cancel token and exact activity ownership;
-  the old call cannot consume the capacity needed for Temporal retry and owner
-  reconciliation.
+  A fresh bounded generation can take over before the grace wait, while the old
+  call remains subject to its cancellation token and exact activity ownership.
+  At most three generations may remain outstanding in the process, including
+  the current one. At the limit, the helper refuses new blocking calls with the
+  retryable `activity_executor_capacity_exhausted` error. A generation releases
+  its capacity only when every submitted call in that generation has returned;
+  the next admission can then create a replacement. Cancellation and pool
+  retirement do not prove threads or child processes stopped.
+- Spend preflight, owner-scoped preparation cancellation, and workflow start and
+  outcome writes use a separate bounded pool of two calls. These short controls
+  remain eligible while stage generations are full. The control pool does not
+  rotate on cancellation; it refuses excess work until a call actually returns.
 
 Score, Tailor and Cover use a **6-hour operational activity deadline** in both
 per-job preparation and pipeline batches. A stage owns several sequential model

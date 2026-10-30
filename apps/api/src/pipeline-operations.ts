@@ -1199,6 +1199,7 @@ function buildCapacity(
     availableSlots: telemetry.availableSlots,
     executorThreads: telemetry.executorThreads,
     slotSaturation: telemetry.slotSaturation,
+    blockingExecutor: telemetry.blockingExecutor,
     approximateTaskQueue: telemetry.taskQueueObservation,
   };
   return internalParallelism === null
@@ -2521,7 +2522,7 @@ function contention(
   globalRetryability: GlobalRetryability,
   telemetry: WorkerRuntimeTelemetrySnapshot,
 ) {
-  if (telemetry.status !== "available" || hasUnboundedQueueContention(telemetry)) {
+  if (telemetry.status !== "available" || blockingAdmissionUncertain(telemetry) || hasUnboundedQueueContention(telemetry)) {
     return { kind: "unknown" as const };
   }
   if (telemetry.activeDetailsTruncated || telemetry.activeSlots > telemetry.activeDetailsTotal) {
@@ -2544,13 +2545,18 @@ function contention(
 }
 
 function sharedRuntimeContention(telemetry: WorkerRuntimeTelemetrySnapshot) {
-  if (telemetry.status !== "available" || hasUnboundedQueueContention(telemetry)) {
+  if (telemetry.status !== "available" || blockingAdmissionUncertain(telemetry) || hasUnboundedQueueContention(telemetry)) {
     return { kind: "unknown" as const };
   }
   if (telemetry.activeDetailsTruncated || telemetry.activeSlots > telemetry.activeDetailsTotal) {
     return { kind: "truncated" as const };
   }
   return { kind: "bounded" as const, existingBacklog: [], retries: [], queuePresent: false };
+}
+
+function blockingAdmissionUncertain(telemetry: WorkerRuntimeTelemetrySnapshot): boolean {
+  const status = telemetry.blockingExecutor;
+  return status === null || status.refusingWorkers > 0 || status.unknownWorkers > 0;
 }
 
 function currentStageContention(

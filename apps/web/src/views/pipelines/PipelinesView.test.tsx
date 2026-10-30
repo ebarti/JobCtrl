@@ -63,6 +63,64 @@ describe("PipelinesView", () => {
     useStageTriggerStore.getState().reset();
   });
 
+  it("reports refused blocking work separately from free Temporal slots and unfinished calls", async () => {
+    const user = userEvent.setup();
+    const capacity = pipelinesIdleSnapshot.capacity;
+    if (capacity.status !== "available") throw new Error("Expected available capacity fixture");
+    await renderPipelineOperations({
+      ...pipelinesIdleSnapshot,
+      capacity: {
+        ...capacity,
+        blockingExecutor: {
+          acceptingWorkers: 0, refusingWorkers: 1, unknownWorkers: 0,
+          unfinishedRetiredGenerations: 3, unfinishedRetiredCalls: 3,
+          controlAcceptingWorkers: 1, controlRefusingWorkers: 0, controlUnknownWorkers: 0,
+          controlUnfinishedCalls: 0,
+        },
+      },
+    });
+    expect(getLivePipelineMetric("Worker slots in use")).toHaveTextContent("0 of 4");
+    expect(getLivePipelineMetric("Worker slots in use")).toHaveTextContent(
+      "4 free Temporal slots · 1 worker refusing stage work",
+    );
+    await user.click(screen.getByRole("button", { name: /Freshness and capacity/i }));
+    const ledger = screen.getByRole("region", { name: "Worker capacity facts" });
+    expect(ledger).toHaveTextContent("Stage work admission1 worker refusing stage work");
+    expect(ledger).toHaveTextContent("Short control admission1 accepting");
+    expect(ledger).toHaveTextContent("Unfinished retired calls3 reported");
+    expect(ledger).toHaveTextContent("Cancellation does not confirm that they or their child processes stopped.");
+  });
+
+  it("keeps missing blocking admission unknown for older workers", async () => {
+    const capacity = pipelinesIdleSnapshot.capacity;
+    if (capacity.status !== "available") throw new Error("Expected available capacity fixture");
+    await renderPipelineOperations({
+      ...pipelinesIdleSnapshot,
+      capacity: { ...capacity, blockingExecutor: null },
+    });
+    expect(getLivePipelineMetric("Worker slots in use")).toHaveTextContent(
+      "4 free Temporal slots · Stage work admission unknown",
+    );
+  });
+
+  it("reports mixed worker admission without promising which worker receives the next task", async () => {
+    const capacity = pipelinesMultiWorkerCapacitySnapshot.capacity;
+    if (capacity.status !== "available") throw new Error("Expected available capacity fixture");
+    await renderPipelineOperations({
+      ...pipelinesMultiWorkerCapacitySnapshot,
+      capacity: {
+        ...capacity,
+        blockingExecutor: {
+          acceptingWorkers: 1, refusingWorkers: 1, unknownWorkers: 1,
+          unfinishedRetiredGenerations: 3, unfinishedRetiredCalls: 3,
+        },
+      },
+    });
+    expect(getLivePipelineMetric("Worker slots in use")).toHaveTextContent(
+      "1 worker refusing stage work · 1 worker with unknown admission · 1 worker accepting",
+    );
+  });
+
   it.each([
     { reason: "no_work" as const, label: "No work remaining", tone: "ok" },
     { reason: "telemetry_stale" as const, label: "Unavailable · Telemetry stale", tone: "danger" },
@@ -391,7 +449,7 @@ describe("PipelinesView", () => {
       "Worker slots in use0 of 4",
     );
     expect(getLivePipelineMetric("Active work")).toHaveTextContent(
-      "Active workNo active workNo active stages",
+      "Active workNo active Temporal activitiesNo active stages",
     );
     expect(getLivePipelineMetric("Queue backlog")).toHaveTextContent(
       "Queue backlog0 queuedOldest queued task 0 sec",
@@ -583,7 +641,7 @@ describe("PipelinesView", () => {
       screen.getByRole("button", { name: /Freshness and capacity/i }),
     );
     expect(screen.getByRole("region", { name: "Worker capacity facts" })).toHaveTextContent(
-      "Configured slots4Active slots4Available slots0",
+      "Configured slots4Active slots4Free Temporal slots0",
     );
 
     expect(
@@ -811,7 +869,7 @@ describe("PipelinesView", () => {
     expect(await within(tools).findByRole("button", { name: "Run Discover" })).toBeEnabled();
     expect(alert).not.toHaveTextContent("reconciled_not_found");
     expect(getLivePipelineMetric("Active work")).toHaveTextContent(
-      "No active work",
+      "No active Temporal activities",
     );
     expect(screen.queryByRole("button", { name: "Stop discovery" })).not.toBeInTheDocument();
 
@@ -1319,7 +1377,7 @@ describe("PipelinesView", () => {
     expect(activityQueue).toHaveTextContent("Dispatch rate0.5/sec");
     expect(capacity).toHaveTextContent("Configured slots4");
     expect(capacity).toHaveTextContent("Active slots2");
-    expect(capacity).toHaveTextContent("Available slots2");
+    expect(capacity).toHaveTextContent("Free Temporal slots2");
     expect(capacity).toHaveTextContent("Internal concurrency2");
     expect(eta).toHaveTextContent("ConfidenceMedium");
     expect(eta).toHaveTextContent("BasisStage throughput");
@@ -1371,7 +1429,7 @@ describe("PipelinesView", () => {
     expect(capacity).toHaveTextContent("Fresh workers3");
     expect(capacity).toHaveTextContent("Configured slots12");
     expect(capacity).toHaveTextContent("Active slots9");
-    expect(capacity).toHaveTextContent("Available slots3");
+    expect(capacity).toHaveTextContent("Free Temporal slots3");
     expect(capacity).toHaveTextContent("Internal concurrency3");
   });
 

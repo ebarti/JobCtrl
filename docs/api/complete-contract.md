@@ -795,8 +795,15 @@ Its `kind` is `shared_activity_pool` or
 includes positive `internalParallelism`. All available arms include `asOf`,
 `staleAfterSeconds`, nullable `taskQueue`, `freshWorkerCount`,
 `staleWorkerCount`, `invalidWorkerCount`, `configuredSlots`, `activeSlots`,
-`availableSlots`, `executorThreads`, nullable `slotSaturation`, and
-`approximateTaskQueue`. Stale/unavailable capacity carries `asOf`,
+`availableSlots`, `executorThreads`, nullable `slotSaturation`, optional
+nullable `blockingExecutor`, and `approximateTaskQueue`. `blockingExecutor`
+contains nonnegative `acceptingWorkers`, `refusingWorkers`, `unknownWorkers`,
+`unfinishedRetiredGenerations`, and `unfinishedRetiredCalls`. Counts cover fresh
+workers; incomplete status stays unknown. The call counts are reported running
+or unresolved calls, not proof of stopped threads. Optional
+`controlAcceptingWorkers`, `controlRefusingWorkers`, `controlUnknownWorkers`,
+and `controlUnfinishedCalls` describe the separately bounded short-control lane.
+Stale/unavailable capacity carries `asOf`,
 `staleAfterSeconds`, nullable `taskQueue`, a bounded `reason`, and the typed
 task-queue observation; it does not expose misleading slot zeros.
 The task-queue observation separately reports workflow/activity pollers and

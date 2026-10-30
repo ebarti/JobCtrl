@@ -80,6 +80,13 @@ def write_worker_heartbeat(
         observed_at=observed_now,
         reason_code="not_sampled",
     )
+    # The existing heartbeat JSON is an extensible, backward-compatible
+    # telemetry envelope. Queue fields stay at the top level for old readers;
+    # this independent snapshot is timestamped by the containing heartbeat.
+    from jobctrl.infrastructure.temporal.run_in_activity import activity_executor_status
+
+    heartbeat_observation = queue_observation.to_json_dict()
+    heartbeat_observation["blockingExecutor"] = activity_executor_status().to_json_dict()
     db_path = Path(identity.db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     from jobctrl.database import _refuse_unresolved_initialization
@@ -165,7 +172,7 @@ def write_worker_heartbeat(
                 snapshot.active_details_total,
                 int(snapshot.active_details_truncated),
                 _json_dumps(snapshot.durations_json_dict()),
-                _json_dumps(queue_observation.to_json_dict()),
+                _json_dumps(heartbeat_observation),
             ),
         )
         conn.commit()

@@ -522,8 +522,27 @@ function CapacityLedger({
               />
               <InspectorLedgerItem label="Active slots" value={capacity.activeSlots} />
               <InspectorLedgerItem
-                label="Available slots"
+                label="Free Temporal slots"
                 value={capacity.availableSlots}
+              />
+              <InspectorLedgerItem
+                label="Stage work admission"
+                value={blockingAdmissionSummary(capacity)}
+              />
+              <InspectorLedgerItem
+                label="Short control admission"
+                value={controlAdmissionSummary(capacity)}
+              />
+              <InspectorLedgerItem
+                label="Unfinished control calls"
+                value={capacity.blockingExecutor?.controlUnfinishedCalls === undefined
+                  ? "Unknown" : `${capacity.blockingExecutor.controlUnfinishedCalls} reported`}
+              />
+              <InspectorLedgerItem
+                label="Unfinished retired calls"
+                value={capacity.blockingExecutor
+                  ? `${capacity.blockingExecutor.unfinishedRetiredCalls} reported`
+                  : "Unknown"}
               />
               <InspectorLedgerItem
                 label="Executor threads"
@@ -548,6 +567,9 @@ function CapacityLedger({
             <InspectorLedgerItem label="Reason" value={capacity.reason} />
           )}
         </InspectorLedger>
+        {capacity.status === "available" && capacity.blockingExecutor?.unfinishedRetiredCalls ? (
+          <p>These calls may still be running. Cancellation does not confirm that they or their child processes stopped.</p>
+        ) : null}
       </section>
       <TaskQueueLedger queue={capacity.approximateTaskQueue} />
     </div>
@@ -996,6 +1018,35 @@ function PipelineOverviewFact({
   );
 }
 
+function blockingAdmissionSummary(capacity: Extract<PipelineCapacity, { status: "available" }>): string {
+  const blocking = capacity.blockingExecutor;
+  if (!blocking) return "Stage work admission unknown";
+  const parts = [];
+  if (blocking.refusingWorkers > 0) {
+    parts.push(`${blocking.refusingWorkers} worker${blocking.refusingWorkers === 1 ? "" : "s"} refusing stage work`);
+  }
+  if (blocking.unknownWorkers > 0) {
+    parts.push(`${blocking.unknownWorkers} worker${blocking.unknownWorkers === 1 ? "" : "s"} with unknown admission`);
+  }
+  if (parts.length === 0) {
+    return blocking.acceptingWorkers > 0 ? "Workers accepting stage work" : "Stage work admission unknown";
+  }
+  if (blocking.acceptingWorkers > 0) {
+    parts.push(`${blocking.acceptingWorkers} worker${blocking.acceptingWorkers === 1 ? "" : "s"} accepting`);
+  }
+  return parts.join(" · ");
+}
+
+function controlAdmissionSummary(capacity: Extract<PipelineCapacity, { status: "available" }>): string {
+  const blocking = capacity.blockingExecutor;
+  if (!blocking || blocking.controlUnknownWorkers === undefined) return "Unknown";
+  const parts = [];
+  if (blocking.controlRefusingWorkers) parts.push(`${blocking.controlRefusingWorkers} refusing`);
+  if (blocking.controlUnknownWorkers) parts.push(`${blocking.controlUnknownWorkers} unknown`);
+  if (blocking.controlAcceptingWorkers) parts.push(`${blocking.controlAcceptingWorkers} accepting`);
+  return parts.length ? parts.join(" · ") : "Unknown";
+}
+
 function humanStageLabel(
   snapshot: PipelineOperationsSnapshot,
   stageId: string,
@@ -1218,7 +1269,7 @@ function PipelineLiveFlow({
         <PipelineOverviewFact
           description={
             capacity.status === "available"
-              ? `${capacity.availableSlots} available in the shared activity pool`
+              ? `${capacity.availableSlots} free Temporal slots · ${blockingAdmissionSummary(capacity)} · Short controls: ${controlAdmissionSummary(capacity)}`
               : "Runtime capacity has not been reported"
           }
           label="Worker slots in use"
@@ -1233,7 +1284,7 @@ function PipelineLiveFlow({
             snapshot.activeItemsTruncated ? " · Partial inventory" : ""
           }`}
           label="Active work"
-          value={activeInventory === 0 ? "No active work" : activeInventory ?? "Unknown"}
+          value={activeInventory === 0 ? "No active Temporal activities" : activeInventory ?? "Unknown"}
         />
         <PipelineOverviewFact
           description={queueBacklog.description}

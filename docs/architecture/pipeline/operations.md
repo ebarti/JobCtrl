@@ -607,6 +607,14 @@ Temporal task-queue observations. The operations reader derives the expected
 app directory from the configured database path, filters heartbeats to that
 resolved database/app-dir identity, selects the task queue named by the newest
 matching heartbeat, and aggregates fresh schema-valid workers from that queue.
+The heartbeat's backward-compatible queue-observation JSON also carries a
+separate blocking-executor status for the same worker. Operations totals
+accepting, refusing, and unknown workers and unfinished retired generations and
+calls, separately from short-control admission and unfinished control calls.
+Old or malformed status remains unknown. Free Temporal slots do not
+guarantee that a stage call can be admitted, and unfinished retired calls
+may still run; they disappear from the count only after their futures return.
+Any refusal or unknown blocking admission makes contention unbounded for ETA.
 Active slots count every activity; active-item detail is a separate
 oldest-first list capped at 20 with an exact allowlisted total and truncation
 marker. This global runtime inventory remains available when no Discover

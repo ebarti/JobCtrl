@@ -1061,6 +1061,21 @@ describe("pipeline operations read model", () => {
     expect(result.execution?.sweptExistingBacklog).toMatchObject({ terminal: 1, remaining: 0 });
     expect(stage(result, "score", "current_execution").eta).toMatchObject({ status: "available", caveat: null });
     expect(result.overallEta).toMatchObject({ status: "available", caveat: null });
+
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET task_queue_observation_json = json_set(task_queue_observation_json, '$.blockingExecutor', json(?))")
+      .run(JSON.stringify({
+        version: 1, unfinishedRetiredGenerations: 3, unfinishedRetiredCalls: 3,
+        generationLimit: 3, nextSubmission: "refusing",
+      }));
+    const blocked = snapshot(fixture);
+    expect(blocked.capacity).toMatchObject({
+      status: "available", availableSlots: 3,
+      blockingExecutor: { refusingWorkers: 1, unfinishedRetiredCalls: 3 },
+    });
+    expect(blocked.overallEta).toMatchObject({ status: "unavailable", reason: "contention_unbounded" });
+    expect(stage(blocked, "score", "current_execution").eta).toMatchObject({
+      status: "unavailable", reason: "contention_unbounded",
+    });
   });
 
   it("does not infer a conditional PDF skip from current MIN_SCORE-like rows without an exact outcome receipt", () => {
@@ -2466,6 +2481,7 @@ function insertHeartbeat(
     counts: Record<string, number>;
     details: Record<string, unknown>[];
     queueObservation?: unknown;
+    blockingExecutor?: Record<string, unknown> | null;
   },
 ): void {
   fixture.db.prepare(
@@ -2486,7 +2502,15 @@ function insertHeartbeat(
     JSON.stringify(input.counts),
     JSON.stringify(input.details),
     Object.values(input.counts).reduce((total, count) => total + count, 0),
-    JSON.stringify(input.queueObservation ?? availableObservation()),
+    JSON.stringify({
+      ...(input.queueObservation ?? availableObservation()) as Record<string, unknown>,
+      ...(input.blockingExecutor === null ? {} : {
+        blockingExecutor: input.blockingExecutor ?? {
+          version: 1, unfinishedRetiredGenerations: 0, unfinishedRetiredCalls: 0,
+          generationLimit: 3, nextSubmission: "accepting",
+        },
+      }),
+    }),
   );
 }
 

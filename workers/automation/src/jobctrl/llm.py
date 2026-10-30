@@ -222,6 +222,7 @@ async def check_spend_budget(payload: SpendBudgetInput | None = None) -> SpendBu
     return await run_blocking_with_heartbeat(
         lambda: enforce_spend_budget(payload.lane),
         starting_message="checking spend budget",
+        control=True,
     )
 
 
