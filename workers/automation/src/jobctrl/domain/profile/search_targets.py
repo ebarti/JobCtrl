@@ -70,3 +70,52 @@ def split_target_rows(value: object) -> list[str]:
         return []
     cleaned = re.sub(r"^\s*Target (?:roles?|locations?):\s*", "", str(value), flags=re.IGNORECASE)
     return [item.strip() for item in re.split(r"[;\n]", cleaned)]
+
+
+def guarded_target_rows(locations: str, work_models: str) -> list[tuple[str, tuple[str, ...], str | None]]:
+    """Identify exact Remote choices and location-free non-Remote choices."""
+    from jobctrl.domain.taxonomy import SEMANTIC_TAXONOMY
+
+    places = split_target_rows(locations)
+    models = split_target_rows(work_models)
+    remote_values = {"remote", SEMANTIC_TAXONOMY["workModel"]["remote"]}
+    work_model = SEMANTIC_TAXONOMY["workModel"]
+    nonremote_values = {"hybrid", work_model["hybrid"], "onsite", work_model["onsite"]}
+    rows = []
+    for index in range(max(len(places), len(models))):
+        place = places[index] if index < len(places) else ""
+        selected = models[index] if index < len(models) else ""
+        choices = tuple(value.strip() for value in selected.split(","))
+        remote = tuple(value for value in choices if value in remote_values)
+        nonremote = tuple(value for value in choices if value in nonremote_values)
+        if remote:
+            rows.append((place, remote, place or "Remote"))
+        if not place and nonremote:
+            rows.append((place, nonremote, ""))
+    return rows
+
+
+def has_profile_target_rows(locations: str, work_models: str) -> bool:
+    places = split_target_rows(locations)
+    models = split_target_rows(work_models)
+    return any(
+        (places[index] if index < len(places) else "") or (models[index] if index < len(models) else "")
+        for index in range(max(len(places), len(models)))
+    )
+
+
+def legacy_remote_target_rows(value: object) -> list[tuple[str, tuple[str, ...], str | None]]:
+    if not isinstance(value, list):
+        return []
+    return [
+        (row["location"], ("remote",), row.get("label") if isinstance(row.get("label"), str) else None)
+        for row in value
+        if isinstance(row, dict) and row.get("remote") is True and isinstance(row.get("location"), str)
+    ]
+
+
+def active_target_rows(
+    rows: list[tuple[str, tuple[str, ...], str | None]], search_cfg: dict,
+) -> list[tuple[str, tuple[str, ...], str | None]]:
+    labels = search_cfg.get("location_labels")
+    return [row for row in rows if row[2] in labels] if labels else rows

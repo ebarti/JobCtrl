@@ -286,9 +286,12 @@ def _write_env_updates(path: Path, updates: dict[str, str], *, dry_run: bool, qu
         if not quiet:
             console.print(f"[yellow]Would update {path}:[/yellow] {', '.join(sorted(updates))}")
         return
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    path.write_text(_env_file_updates(path, updates), encoding="utf-8")
-    path.chmod(0o600)
+    from jobctrl.config import config_file_lock
+
+    # Coordinate the read/merge/write with the init wizard's file updates.
+    with config_file_lock(path=path):
+        path.write_text(_env_file_updates(path, updates), encoding="utf-8")
+        path.chmod(0o600)
     for key, value in updates.items():
         import os
 
@@ -991,8 +994,13 @@ def action(
 def init() -> None:
     """Run the first-time setup wizard (profile, resume, search config)."""
     from jobctrl.wizard.init import run_wizard
+    from jobctrl.domain.errors import ConfigurationError
 
-    run_wizard()
+    try:
+        run_wizard()
+    except ConfigurationError as exc:
+        console.print(f"[red]Setup stopped:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
 
 
 @app.command()

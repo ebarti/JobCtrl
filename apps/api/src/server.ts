@@ -397,6 +397,7 @@ import {
   MAX_REQUIRED_COACHING_SOURCE_ROWS,
 } from "@jobctrl/domain-types";
 import { validateProfileTargetPlaces, type PlaceValidator } from "./place-validation.js";
+import { InvalidSavedTargetSearchError, UnsupportedRemoteSearchInputError } from "./discovery-targets.js";
 import {
   persistProfileUpdate,
 } from "./profile-events.js";
@@ -3123,6 +3124,18 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       const update = persistProfileUpdate(db, body);
       profileResponse = update.profile;
     } catch (error) {
+      if (error instanceof InvalidSavedDiscoverySettingsError) {
+        void reply.code(409);
+        return { ok: false, error: "invalid_saved_search", message: error.message };
+      }
+      if (error instanceof InvalidSavedTargetSearchError) {
+        void reply.code(409);
+        return { ok: false, error: "invalid_saved_search", message: error.message };
+      }
+      if (error instanceof UnsupportedRemoteSearchInputError) {
+        void reply.code(400);
+        return { ok: false, error: "unsupported_remote_search", message: error.message };
+      }
       if (error instanceof ProfileVersionConflictError) {
         void reply.code(409);
         return {
@@ -5294,6 +5307,14 @@ async function withWritableDb<T>(
     if (error instanceof InvalidSavedDiscoverySettingsError) {
       void reply.code(409);
       return { ok: false, error: "invalid_saved_search", message: error.message };
+    }
+    if (error instanceof InvalidSavedTargetSearchError) {
+      void reply.code(409);
+      return { ok: false, error: "invalid_saved_search", message: error.message };
+    }
+    if (error instanceof UnsupportedRemoteSearchInputError) {
+      void reply.code(400);
+      return { ok: false, error: "unsupported_remote_search", message: error.message };
     }
     if (error instanceof PermanentDeleteSelectionConflict) {
       void reply.code(409);

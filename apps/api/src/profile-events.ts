@@ -34,7 +34,7 @@ export function persistProfileUpdate(
       profile,
       recorded: changedSections.length > 0 ? recordEvent(db, changedSections) : null,
     };
-  })();
+  }).immediate();
 }
 
 export function profileChangedSections(
