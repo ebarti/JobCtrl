@@ -251,6 +251,12 @@ use the updated formula, while bundled-installer installations use their signed
 release channel. Pulling source changes does not publish an update to installed
 users.
 
+A source checkout and the installed app use the same workspace, profile, resume,
+and Temporal history. A newer checkout can upgrade the shared database beyond
+what an older installed release understands. In that case update the installed
+app when a compatible release is published. Source upgrade and recovery details
+are in [Local Development](../local-development.md#schema-migrations-and-source-updates).
+
 A release that moves to schema 15 uses its new authenticated installer to
 upgrade the original installation. Direct installed upgrades require an initialized
 schema-14 or schema-15 workspace and its original installation metadata. Older
@@ -274,7 +280,9 @@ requires the documented ownership recovery before migration can proceed. Do not 
 its original metadata, or restore an older snapshot over newer data. Rollback
 across this protocol change is refused. A same-protocol explicit rollback still
 restores the snapshot associated with its previous release, so data added since
-that snapshot is not carried backward. A source merge or synthetic test does
+that snapshot is not carried backward. Automatic paired rollback is also
+unavailable while a workspace uses the legacy source Temporal history path;
+the live workspace and backup are preserved. A source merge or synthetic test does
 not publish an upgrade; the signed installer must pass release qualification
 before installed users receive it.
 

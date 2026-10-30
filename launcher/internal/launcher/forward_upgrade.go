@@ -46,6 +46,9 @@ func promoteForwardUpdate(ctx launchContext, build, source string, output io.Wri
 	if err := refusePendingBridgeHandoff(store.Home); err != nil {
 		return true, err
 	}
+	if err := refusePendingSourceMigration(ctx); err != nil {
+		return true, err
+	}
 	// Repeat authentication under both locks. Staging is not authority for a
 	// later execution or a changed immutable receipt.
 	verifiedCandidate, err = verifyInstalledReleaseForExecution(store, candidate)
@@ -111,6 +114,9 @@ func promoteForwardUpdate(ctx launchContext, build, source string, output io.Wri
 	// the immutable old launcher, its Python command dispatcher or old recovery.
 	ctx = verifiedReleaseContext(ctx, verifiedCandidate)
 	ctx.Instance.RuntimeHome = store.Home
+	if err := requireLegacySourceOwnership(ctx); err != nil {
+		return true, err
+	}
 	if err := stop(verifiedReleaseContext(ctx, old)); err != nil {
 		return true, fmt.Errorf("quiesce workspace before update: %w", err)
 	}

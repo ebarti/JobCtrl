@@ -197,7 +197,16 @@ import {
   DISCOVERY_BROWSER_EXTENSION_UNAVAILABLE,
   commandForResolvedBlockCondition,
 } from "./blocked-condition-recovery.js";
-import { createRetainedDatabase, databaseExists, getRow, openDatabase, openReadOnlyDatabase } from "./db.js";
+import {
+  createRetainedDatabase,
+  databaseExists,
+  getRow,
+  IncompatibleSchemaManifestError,
+  IncompatibleSchemaVersionError,
+  openDatabase,
+  openReadOnlyDatabase,
+  SUPPORTED_SCHEMA_VERSION,
+} from "./db.js";
 import { ConfigFileInputError } from "./config-file.js";
 import { getMarketCompensationEstimate } from "./market-compensation-estimates.js";
 import { getPostedCompensationFact } from "./posted-compensation-facts.js";
@@ -483,7 +492,14 @@ export interface BuildAppOptions {
 }
 
 export function buildApp(options: BuildAppOptions): FastifyInstance {
-  normalizeExistingDatabase(options.dbPath);
+  try {
+    normalizeExistingDatabase(options.dbPath);
+  } catch (error) {
+    if (error instanceof IncompatibleSchemaVersionError || error instanceof IncompatibleSchemaManifestError) {
+      return buildIncompatibleDatabaseApp(options, error);
+    }
+    throw error;
+  }
   const app = Fastify({ logger: options.logger ?? false, routerOptions: { maxParamLength: 4096 } });
   const jobListDatabase = createRetainedDatabase(options.dbPath);
   const permanentDeleteSelections = new PermanentDeleteSelectionRegistry(options.dbPath);
@@ -4136,6 +4152,43 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     installWebAssetsNotFoundHandler(app, options.webAssetsDir);
   }
 
+  return app;
+}
+
+/** A database schema refusal must remain visible without opening product routes. */
+function buildIncompatibleDatabaseApp(
+  options: BuildAppOptions,
+  error: IncompatibleSchemaVersionError | IncompatibleSchemaManifestError,
+): FastifyInstance {
+  const app = Fastify({ logger: options.logger ?? false });
+  const currentVersion = error instanceof IncompatibleSchemaVersionError ? error.current : null;
+  const migrationRequired = currentVersion !== null && currentVersion >= 6 && currentVersion < SUPPORTED_SCHEMA_VERSION;
+  const newerDatabase = currentVersion !== null && currentVersion > SUPPORTED_SCHEMA_VERSION;
+  const problem = {
+    ok: false as const,
+    error: migrationRequired ? "database_migration_required" : "database_schema_incompatible",
+    currentVersion,
+    expectedVersion: SUPPORTED_SCHEMA_VERSION,
+    message: migrationRequired
+      ? "The workspace database needs an upgrade before this JobCtrl build can start. Use a compatible build or see the update guidance."
+      : newerDatabase
+        ? "This workspace was created by a newer JobCtrl version. Use a compatible newer build."
+        : "The workspace database schema is not compatible with this build. Stop JobCtrl and inspect the workspace before retrying.",
+  };
+
+  void app.register(cors, { origin: LOCAL_ORIGIN_PATTERNS, methods: LOCAL_CORS_METHODS });
+  app.addHook("onRequest", async (request, reply) => {
+    if (!isLoopbackHostHeader(request.headers.host)) {
+      return reply.code(403).send({ ok: false, error: "forbidden_host" });
+    }
+    if (!isLoopbackPeerAddress(request.ip || request.raw.socket.remoteAddress)) {
+      return reply.code(403).send({ ok: false, error: "forbidden_remote_client" });
+    }
+    return;
+  });
+  app.get("/v1/health", async (_request, reply) => reply.code(503).send(problem));
+  app.all("/v1/*", async (_request, reply) => reply.code(503).send(problem));
+  if (options.webAssetsDir) installWebAssetsNotFoundHandler(app, options.webAssetsDir);
   return app;
 }
 

@@ -362,7 +362,7 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("rejects legacy lifecycle tables before health-only startup completes", async () => {
+  it("reports incompatible legacy tables without opening product routes", async () => {
     const legacyDbPath = path.join(tempDir, "legacy-health.sqlite3");
     const token = "job" + "ctl";
     const db = new Database(legacyDbPath);
@@ -378,7 +378,12 @@ describe("local TypeScript API", () => {
     `);
     db.close();
 
-    expect(() => buildApp({ ...options, dbPath: legacyDbPath })).toThrow("schema version 0");
+    const app = buildApp({ ...options, dbPath: legacyDbPath });
+    const health = await app.inject({ method: "GET", url: "/v1/health" });
+    expect(health.statusCode).toBe(503);
+    expect(health.json()).toMatchObject({ error: "database_schema_incompatible", currentVersion: 0 });
+    expect((await app.inject({ method: "GET", url: "/v1/dashboard/summary" })).statusCode).toBe(503);
+    await app.close();
   });
 
   it("reports today's LLM spend against the configured budget", async () => {

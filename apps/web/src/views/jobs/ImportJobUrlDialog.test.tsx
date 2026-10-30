@@ -136,6 +136,7 @@ describe("ImportJobUrlDialog", () => {
 
 describe("acknowledged import progress", () => {
   const execution = { workflowId: "job-url-import-owned", executionId: "11111111-1111-4111-8111-111111111111" };
+  const secondExecution = { workflowId: "job-url-import-second", executionId: "33333333-3333-4333-8333-333333333333" };
   const imported = { ok: true, status: "imported", jobKey: "22222222-2222-4222-8222-222222222222", importedAt: "2026-10-24T12:00:00Z", alreadyExisted: false };
   async function submit() {
     const user = userEvent.setup();
@@ -148,26 +149,45 @@ describe("acknowledged import progress", () => {
     return { ...harness, onImported, dialog };
   }
 
-  it("follows a pending import and navigates once without submitting it again", async () => {
+  it("starts another import in the same dialog and tracks both without interrupting the user", async () => {
     let complete = false;
-    let starts = 0;
+    const starts: string[] = [];
     server.use(
       http.post("*/v1/jobs/import-url", async ({ request }) => {
-        starts += 1;
-        expect(await request.json()).toEqual({ url: "https://example.test/jobs/42", awaitResult: false });
-        return HttpResponse.json({ ok: true, status: "started", ...execution }, { status: 202 });
+        const body = await request.json() as { url: string; awaitResult: boolean };
+        expect(body.awaitResult).toBe(false);
+        starts.push(body.url);
+        return HttpResponse.json({ ok: true, status: "started", ...(starts.length === 1 ? execution : secondExecution) }, { status: 202 });
       }),
-      http.get("*/v1/jobs/import-url/:workflowId/:executionId", () => HttpResponse.json(complete ? imported : { ok: true, status: "pending", ...execution })),
+      http.get("*/v1/jobs/import-url/:workflowId/:executionId", ({ params }) => HttpResponse.json(
+        complete && params.executionId === execution.executionId
+          ? imported
+          : { ok: true, status: "pending", ...(params.executionId === execution.executionId ? execution : secondExecution) },
+      )),
     );
     const { queryClient, dialog, onImported } = await submit();
-    expect(await within(dialog).findByText(/has accepted this import/)).toBeVisible();
-    expect(within(dialog).getByRole("button", { name: "Importing…" })).toBeDisabled();
+    expect(await within(dialog).findByText(/Import accepted and running/)).toBeVisible();
+    const user = userEvent.setup();
+    const input = within(dialog).getByRole("textbox", { name: "Job posting URL" });
+    expect(input).toHaveValue("");
+    expect(input).toBeEnabled();
+    expect(within(dialog).getByRole("button", { name: "Import job" })).toBeEnabled();
     expect(within(dialog).getByRole("link", { name: "View import run" })).toHaveAttribute("href", `/runs/${execution.workflowId}`);
+    await user.type(input, "https://example.test/jobs/43");
+    await user.click(within(dialog).getByRole("button", { name: "Import job" }));
+    await waitFor(() => expect(within(dialog).getAllByRole("link", { name: "View import run" })).toHaveLength(2));
+    expect(starts).toEqual(["https://example.test/jobs/42", "https://example.test/jobs/43"]);
+    expect(input).toHaveValue("");
+    await user.type(input, "https://example.test/jobs/draft");
     complete = true;
     await act(async () => { await queryClient.invalidateQueries({ queryKey: discoveryKeys.jobUrlImportStatus(LOCAL_TENANT, execution.workflowId, execution.executionId) }); });
-    await waitFor(() => expect(onImported).toHaveBeenCalledExactlyOnceWith(imported.jobKey));
-    expect(starts).toBe(1);
-    expect(screen.queryByRole("dialog")).toBeNull();
+    const openJob = await within(dialog).findByRole("button", { name: "View job" });
+    expect(onImported).not.toHaveBeenCalled();
+    expect(dialog).toBeVisible();
+    expect(input).toHaveValue("https://example.test/jobs/draft");
+    expect(within(dialog).getByText(/Import accepted and running/)).toBeVisible();
+    await user.click(openJob);
+    expect(onImported).toHaveBeenCalledExactlyOnceWith(imported.jobKey);
   });
 
   it("shows a canceled execution as terminal and permits a new explicit import", async () => {
@@ -176,7 +196,7 @@ describe("acknowledged import progress", () => {
       http.get("*/v1/jobs/import-url/:workflowId/:executionId", () => HttpResponse.json({ ok: true, status: "canceled", message: "This import was canceled.", ...execution })),
     );
     const { dialog, onImported } = await submit();
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent("This import was canceled.");
+    expect(await within(dialog).findByText(/This import was canceled/)).toBeVisible();
     expect(within(dialog).getByRole("button", { name: "Import job" })).toBeEnabled();
     expect(onImported).not.toHaveBeenCalled();
   });
@@ -191,10 +211,28 @@ describe("acknowledged import progress", () => {
     );
     const { queryClient, dialog, onImported } = await submit();
     expect(await within(dialog).findByText(/Progress is temporarily unavailable/, {}, { timeout: 6_000 })).toBeVisible();
-    expect(within(dialog).getByRole("button", { name: "Importing…" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Import job" })).toBeEnabled();
     unavailable = false;
     await act(async () => { await queryClient.invalidateQueries({ queryKey: discoveryKeys.jobUrlImportStatus(LOCAL_TENANT, execution.workflowId, execution.executionId) }); });
-    await waitFor(() => expect(onImported).toHaveBeenCalledExactlyOnceWith(imported.jobKey));
+    expect(await within(dialog).findByRole("button", { name: "View job" })).toBeEnabled();
+    expect(onImported).not.toHaveBeenCalled();
     expect(starts).toBe(1);
+  });
+
+  it("keeps an accepted run visible and the form available after closing and reopening", async () => {
+    server.use(
+      http.post("*/v1/jobs/import-url", () => HttpResponse.json({ ok: true, status: "started", ...execution }, { status: 202 })),
+      http.get("*/v1/jobs/import-url/:workflowId/:executionId", () => HttpResponse.json({ ok: true, status: "pending", ...execution })),
+    );
+    const { dialog } = await submit();
+    expect(await within(dialog).findByText(/Import accepted and running/)).toBeVisible();
+    const user = userEvent.setup();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Import job" }));
+    const reopened = await screen.findByRole("dialog", { name: "Import a job posting" });
+    expect(within(reopened).getByRole("textbox", { name: "Job posting URL" })).toHaveValue("");
+    expect(within(reopened).getByRole("button", { name: "Import job" })).toBeEnabled();
+    expect(within(reopened).getByRole("link", { name: "View import run" })).toHaveAttribute("href", `/runs/${execution.workflowId}`);
   });
 });

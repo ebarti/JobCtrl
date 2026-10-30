@@ -9,9 +9,13 @@ import (
 // A selected installation need not have been started yet. Only absence of both
 // databases and every SQLite sidecar establishes that initialization is safe.
 func unusedDatabasePair(stateDir string) (bool, error) {
+	temporal, err := temporalHistoryPath(stateDir)
+	if err != nil {
+		return false, err
+	}
 	present := 0
-	for _, name := range []string{"jobctrl.db", "temporal.db"} {
-		info, err := os.Lstat(filepath.Join(stateDir, name))
+	for _, path := range []string{filepath.Join(stateDir, "jobctrl.db"), temporal} {
+		info, err := os.Lstat(path)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}

@@ -19,7 +19,7 @@ scripts/install
 
 `scripts/install` is the first-run path for new contributors. It checks for
 Node.js 22.13 or newer, Corepack, uv (the Python worker needs Python 3.11 or
-newer), and the Temporal CLI, offers
+newer), the Temporal CLI, and Go 1.24 or newer on macOS, offers
 Homebrew installs for missing machine-level tools when available, then runs the
 repository dependency setup: frozen corepack pnpm install, uv sync, and Playwright
 Chromium installs for both the web package and the Python worker. This direct
@@ -116,10 +116,11 @@ corepack pnpm dev
 `corepack pnpm dev` is the source-development counterpart of installed
 `jobctrl start`. It first builds the browser extension, then starts the full
 local fleet in dependency order: Temporal dev server, TypeScript API, Vite web
-app, and the Python worker. Before each
-component starts, the launcher stops the existing tracked JobCtrl process
-tree for that component, so rerunning `corepack pnpm dev` starts from a clean owned
-stack. It runs in the foreground so supervised terminals keep the child
+app, and the Python worker. On macOS, the fleet uses the same workspace lock
+and process ownership as the installed application. Starting a source fleet
+stops the previously owned source or installed fleet for that workspace first.
+An unverified older development process must be stopped separately. The command runs
+in the foreground so supervised terminals keep the child
 processes alive; keep the terminal open and stop the stack with Ctrl-C. The
 launcher tracks PIDs under `.dev/pids/`, writes logs under `.dev/logs/`, and
 defaults to:
@@ -129,7 +130,7 @@ defaults to:
   `JOBCTRL_API_PORT=8766`
 - Web API base URL: `VITE_JOBCTRL_API_BASE_URL=http://127.0.0.1:8766`
 - Web port: `5173` (`JOBCTRL_WEB_PORT` can override it)
-- Temporal persistence: `$JOBCTRL_DIR/temporal/temporal.db`
+- Temporal persistence for a new workspace: `$JOBCTRL_DIR/temporal.db`
   (`JOBCTRL_TEMPORAL_DB` can override it)
 
 `jobctrl.db` and the Temporal history store form one runtime identity. Keeping
@@ -137,6 +138,86 @@ both under `JOBCTRL_DIR` lets an interrupted workflow reconnect to the same
 history when the source stack is restarted from another Git worktree. To run a
 fully isolated stack, give it a separate `JOBCTRL_DIR`; do not point a shared
 `jobctrl.db` at a worktree-local Temporal database.
+
+If another API responds on the configured port and is not tracked by this
+checkout, source startup refuses before replacing processes or starting a web
+app against that API. Stop the other runtime or choose separate bindings. This
+probe only detects a responding API; it does not establish that all writers or
+detached descendants have stopped and is not migration authority.
+
+The source and installed launchers retain the earlier
+`$JOBCTRL_DIR/temporal/temporal.db` location if that is the only existing
+history. New workspaces use `$JOBCTRL_DIR/temporal.db`. If both locations or
+orphaned SQLite companions exist, startup refuses to choose between them.
+Preserve the application database, both histories and their companions; do
+not copy, replace or delete either history to make startup succeed. On macOS,
+`JOBCTRL_DB_PATH` and `JOBCTRL_TEMPORAL_DB` must identify the database and
+history in `JOBCTRL_DIR`. Set a separate `JOBCTRL_DIR` for an isolated stack.
+An installed launcher only accepts a legacy source history once a healthy
+source fleet has established its shared ownership; an older untracked source
+runtime cannot supply that proof. The macOS source fleet uses the local Temporal
+server at `localhost:7233` and its `default` namespace, as the installed app
+does.
+
+### Schema migrations and source updates
+
+The source checkout and the installed application are separate versions. To
+update a clean source checkout, first stop its attached stack with Ctrl-C. Then
+fast-forward its intended branch, refresh its dependencies and restart it:
+
+```bash
+git status --short --branch
+git pull --ff-only
+corepack pnpm dev:setup
+corepack pnpm dev
+```
+
+Preserve or commit any unrelated local changes before pulling. Pulling source
+does not update the installed application. For an installed release, use
+`jobctrl update` when a compatible release is available; the installed updater
+owns the stopped-runtime migration and paired backup. The schema-14 to 15
+protocol change specifically requires the trusted new installer described in
+[Getting Started](user/getting-started.md#update-roll-back-or-remove-jobctrl),
+not the older installed updater. Updating a database makes it unavailable to
+older builds that require an earlier schema. Source and installed builds use
+the same profile and resume in the shared workspace; they cannot run different
+schema versions against it at the same time.
+
+While the checkout owns the workspace, `jobctrl status` identifies its source
+supervisor. Use `corepack pnpm dev:status` in that checkout for individual
+component health. Stop the source fleet before using the installed `jobctrl
+backup` command; it will not replace a running source fleet with an installed
+one.
+
+On macOS, starting this checkout automatically upgrades an owned schema-14
+workspace to schema 15. It stops the owned runtime, backs up the application
+database and its matching Temporal history under
+`$JOBCTRL_DIR/backups/source-pair-<id>/`, and validates the upgrade before
+starting. No separate migration command is needed. If the upgrade is
+interrupted, restart the same checkout to retry; each attempt backs up the
+current pair and does not restore an older backup over later writes. Keep the
+recovery journal and all databases and SQLite companions in place.
+
+If the earlier runtime's ownership cannot be verified, the automatic upgrade
+does not modify the workspace. The default source command starts only the
+diagnostic API and web interface, which report that an upgrade is needed;
+the worker and Temporal stay stopped. Preserve the workspace and establish a
+verified recovery before retrying. Schemas older than 14, newer than this build,
+ambiguous histories, and non-macOS source starts do not take this automatic
+path. Do not invoke the private migration modules directly on a live workspace:
+they do not establish process ownership or a paired backup.
+
+For development that does not need personal data, a new isolated workspace
+uses the checkout's current schema on first start. This isolates the databases,
+not inherited provider credentials or environment files; use the synthetic QA
+rules in [Reliability & QA](local-reliability-qa.md#safe-qa-data) when testing:
+
+```bash
+JOBCTRL_DIR="$(mktemp -d)" corepack pnpm dev
+```
+
+Use a deliberately retained path instead of `mktemp` if the workspace must
+survive the session. Keep the application and Temporal databases together.
 
 Whenever `scripts/dev run`, `start`, or `restart` selects the product `web`
 component (including the default fleet), it runs `corepack pnpm extension:build`
@@ -166,9 +247,9 @@ launcher defaults above.
 | `JOBCTRL_DEMO_API_PORT`         | `8787`                      | Local Wrangler port for the demo consent and telemetry API.                                                                                                                                                            |
 | `JOBCTRL_DEMO_STATE_DIR`        | `.dev/demo/wrangler`        | Local Wrangler/D1 persistence shared by demo migrations and the demo API process.                                                                                                                                      |
 | `VITE_JOBCTRL_API_BASE_URL`     | proxied `/v1`               | Browser API origin when not using the default Vite proxy.                                                                                                                                                              |
-| `JOBCTRL_TEMPORAL_DB`           | `$JOBCTRL_DIR/temporal/temporal.db` | Temporal (the workflow engine) dev-server SQLite history store. Override it only together with an isolated `JOBCTRL_DIR`; sharing JobCtrl projections while switching Temporal history stores breaks workflow recovery. |
-| `TEMPORAL_ADDRESS`              | `localhost:7233`            | Temporal server address used by the worker, CLI, and workflow-starting RPC.                                                                                                                                            |
-| `TEMPORAL_NAMESPACE`            | `default`                   | Temporal namespace.                                                                                                                                                                                                    |
+| `JOBCTRL_TEMPORAL_DB`           | `$JOBCTRL_DIR/temporal.db`, or the sole existing legacy `$JOBCTRL_DIR/temporal/temporal.db` | Temporal (the workflow engine) dev-server SQLite history store. On macOS this must be the history selected for `JOBCTRL_DIR`; sharing JobCtrl projections while switching histories breaks workflow recovery. |
+| `TEMPORAL_ADDRESS`              | `localhost:7233`            | Temporal server address used by the worker, CLI, and workflow-starting RPC. The macOS shared-workspace fleet requires this local server. |
+| `TEMPORAL_NAMESPACE`            | `default`                   | Temporal namespace. The macOS shared-workspace fleet requires `default`. |
 | `JOBCTRL_API_SSE_POLL_MS`       | `250`                       | API event-stream database poll interval in milliseconds.                                                                                                                                                               |
 | `VITE_DEV_API_PROXY_TARGET`     | `http://127.0.0.1:8766`     | Vite dev-server `/v1` proxy target; override it for isolated or multi-worktree stacks.                                                                                                                                 |
 | `VITE_DEMO_API_PROXY_TARGET`    | launcher-managed            | Vite dev-server `/api` proxy target for demo mode. The launcher sets it to the tracked local Wrangler process so consent stays same-origin.                                                                            |
@@ -184,9 +265,11 @@ corepack pnpm dev:logs worker
 scripts/dev list
 ```
 
-`corepack pnpm dev:status` combines PID liveness with the API worker heartbeat health
-classification. When the worker process is alive but its heartbeat is stale,
-the worker row reports `stale` so operator status matches the dashboard.
+`corepack pnpm dev:status` reports tracked PID liveness separately from health.
+The API row can show `migration`, `incompatible`, `healthy`, or `unknown` when
+its watcher is alive. `unknown` means the health probe did not establish a
+result; it does not prove the process is down. When the worker process is alive
+but its heartbeat is stale, the worker row reports `stale`.
 
 For a detached background stack in a normal shell, use the explicit daemon mode:
 
@@ -291,14 +374,15 @@ unreachable execution finished, and it must not be used during normal operation.
 Run individual components only when troubleshooting a specific process:
 
 ```bash
-temporal server start-dev --db-filename "$JOBCTRL_DIR/temporal/temporal.db"
+temporal server start-dev --db-filename "$JOBCTRL_TEMPORAL_DB"
 corepack pnpm api:dev
 corepack pnpm web:dev
 uv --project workers/automation run jobctrl worker
 uv --project workers/automation run jobctrl doctor
 ```
 
-The Temporal dev server binds the frontend gRPC service on `127.0.0.1:7233` and
+Set `JOBCTRL_TEMPORAL_DB` to the existing workspace history before starting
+Temporal directly; the source launcher normally selects it for you. The Temporal dev server binds the frontend gRPC service on `127.0.0.1:7233` and
 the Web UI on `http://127.0.0.1:8233`. The launcher passes
 `--db-filename "$JOBCTRL_TEMPORAL_DB"` so workflow history persists across
 launcher and worktree restarts instead of disappearing when the process exits.

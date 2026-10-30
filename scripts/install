@@ -174,12 +174,32 @@ ensure_command() {
   record_missing "$label" "$hint" "$required"
 }
 
+ensure_go() {
+  local version=""
+  if command -v go >/dev/null 2>&1; then
+    version="$(go version 2>/dev/null | awk '{print $3}' | sed 's/^go//')"
+    if [[ "$version" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] && version_at_least "$version" "1.24.0"; then
+      ok "Go $version"
+      return 0
+    fi
+  fi
+  warn "Go 1.24+ is required on macOS for shared workspace startup; found ${version:-none}."
+  maybe_brew_install "Go" go || true
+  version="$(go version 2>/dev/null | awk '{print $3}' | sed 's/^go//' || true)"
+  if [[ "$version" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] && version_at_least "$version" "1.24.0"; then
+    ok "Go $version"
+    return 0
+  fi
+  record_missing "Go 1.24+" "install Go from go.dev or Homebrew" 1
+}
+
 check_system_dependencies() {
   heading "Checking system tools"
   ensure_node
   ensure_command "corepack" "Corepack" "install Corepack directly or with Homebrew (brew install corepack)" 1 corepack
   ensure_command "uv" "uv" "install uv from https://docs.astral.sh/uv/ or Homebrew" 1 uv
   ensure_command "temporal" "Temporal CLI" "install the Temporal CLI so pnpm dev can start temporal server start-dev" 0 temporal
+  if [[ "$(uname -s)" == "Darwin" ]]; then ensure_go; fi
 }
 
 enable_corepack() {

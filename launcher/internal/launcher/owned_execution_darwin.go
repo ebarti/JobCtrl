@@ -175,7 +175,7 @@ func executionScopeDirectory(ctx launchContext, create bool) (string, error) {
 	return dir, nil
 }
 func validateExecutionScope(ctx launchContext, s executionScope) error {
-	if s.Purpose != "" && s.Purpose != "apply" {
+	if s.Purpose != "" && s.Purpose != "apply" && s.Purpose != "source" {
 		return errors.New("invalid execution scope purpose")
 	}
 	if s.SchemaVersion != 1 || !executionIDValid(s.ID) || s.InstanceID != ctx.Instance.ID || s.StateDir != ctx.Instance.StateDir || s.RuntimeHome != ctx.Instance.RuntimeHome || s.RootPID <= 0 || s.RootIdentity == "" || len(s.RootIdentity) > 128 || s.CoalitionIDs[0] == 0 || s.CoalitionIDs[1] == 0 || s.JobLabel != "dev.jobctrl.exec."+ctx.Instance.ID+"."+s.ID {
@@ -315,7 +315,7 @@ func decodeExecutionReceipt(raw []byte, scope *executionScope) error {
 	if err := json.Unmarshal(raw, scope); err != nil {
 		return err
 	}
-	if seen["purpose"] && scope.Purpose != "apply" {
+	if seen["purpose"] && scope.Purpose != "apply" && scope.Purpose != "source" {
 		return errors.New("invalid execution receipt purpose")
 	}
 	return nil
@@ -869,6 +869,12 @@ func verifyOwnedExecutionExecutable(ctx launchContext, executable string) error 
 }
 
 func runInOwnedExecution(ctx launchContext, args []string, stdout, stderr io.Writer) error {
+	return runInOwnedExecutionWithAdmission(ctx, args, stdout, stderr, nil)
+}
+
+// afterAdmission releases a caller's selection lock only after the durable
+// scope receipt has been published and its command has been authorized.
+func runInOwnedExecutionWithAdmission(ctx launchContext, args []string, stdout, stderr io.Writer, afterAdmission func() error) error {
 	sandboxSelector := environmentMap(ctx.Environment)[executionQASandboxVariable]
 	if sandboxSelector != "" && sandboxSelector != executionQASandboxSelector {
 		return errors.New("unknown execution QA sandbox restriction")
@@ -976,6 +982,8 @@ func runInOwnedExecution(ctx launchContext, args []string, stdout, stderr io.Wri
 	scope := executionScope{SchemaVersion: 1, ID: id, InstanceID: ctx.Instance.ID, StateDir: ctx.Instance.StateDir, RuntimeHome: ctx.Instance.RuntimeHome, BootSession: boot, JobLabel: label, Domain: domain, RootPID: hello.PID, RootIdentity: identity, CoalitionIDs: ids}
 	if isApplyExecution(args) {
 		scope.Purpose = "apply"
+	} else if len(args) > 0 && args[0] == "__source-run" {
+		scope.Purpose = "source"
 	}
 	if err = validateExecutionScope(ctx, scope); err != nil {
 		return err
@@ -1025,6 +1033,11 @@ func runInOwnedExecution(ctx launchContext, args []string, stdout, stderr io.Wri
 	// control lock. Waiting for the command result must never hold admission.
 	releaseLock(admission)
 	admission = nil
+	if afterAdmission != nil {
+		if err := afterAdmission(); err != nil {
+			return err
+		}
+	}
 	_ = connection.SetDeadline(time.Time{})
 	go func() {
 		encoder := json.NewEncoder(connection)
@@ -1061,7 +1074,7 @@ func runInOwnedExecution(ctx launchContext, args []string, stdout, stderr io.Wri
 		if err := completeApplyExecution(ctx, scope); err != nil {
 			return fmt.Errorf("verify Apply execution completion: %w", err)
 		}
-	} else if result.Code == 0 {
+	} else if result.Code == 0 || (len(args) > 0 && args[0] == "__source-run") {
 		if err := attestFinishedOrdinaryExecution(ctx, scope); err != nil {
 			return fmt.Errorf("attest finished execution: %w", err)
 		}

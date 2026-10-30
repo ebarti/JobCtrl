@@ -140,7 +140,7 @@ Unless a row says otherwise, every path below is relative to JOBCTRL_DIR
 | Path | Contents |
 | --- | --- |
 | `jobctrl.db` plus `-wal` / `-shm` | Profile, jobs, discovery settings, events, projections, artifact metadata, review drafts, contacts, private offer terms/decisions and sources, and workflows. Treat all three files as one database. |
-| `temporal.db` plus `-wal` / `-shm` | Bundled-runtime Temporal state. During a native bundled update or rollback, it is hash-snapshotted and restored only together with `jobctrl.db`; never restore just one member of that pair. |
+| `temporal.db` plus `-wal` / `-shm` | Shared Temporal history for new workspaces; earlier source workspaces may retain `temporal/temporal.db`. Treat the history and `jobctrl.db` as one pair. |
 | `config.json` | Non-secret Settings values: general controls, provider configuration metadata, preferred model IDs, compensation source policy, and browser-adoption metadata. No API keys or feed contents. |
 | `.env` | Legacy/plaintext provider credentials used by remaining compatibility paths. Not encrypted at rest. |
 | `codex_home/` | Stable JobCtrl-owned Codex CLI state. `auth.json` is outside the prompt-readable `workspace/` subtree. |
@@ -149,7 +149,7 @@ Unless a row says otherwise, every path below is relative to JOBCTRL_DIR
 | `logs/`, `apply-workers/`, `chrome-workers/` | Logs and local browser/apply state, including CAPTCHA usage metadata when applicable. |
 | `browser-profiles/` | Consented copied profiles retained for separate compatibility capabilities. Integrated `DiscoverWorkflow` never reads or launches them. Non-secret adoption metadata lives in `config.json`. |
 | `extension-capability-token`, `extension-discovery-installation-id` | Private local browser-extension pairing secret and the extension installation selected for Discovery. Discovery bridge task bodies and results are memory-only and are not stored beside them. |
-| `backups/` | Database snapshots: `pair-<id>/` directories written by the installed launcher's `backup`, `update`, and `rollback`; `jobctrl-<timestamp>.db` files from a source checkout's `backup`; and job-data purge recovery bundles. See [Back Up And Restore](#back-up-and-restore). |
+| `backups/` | Database snapshots: `pair-<id>/` from installed operations; `source-pair-<id>/` from automatic source upgrades; application-only `jobctrl-<timestamp>.db` snapshots; and job-data purge recovery bundles. See [Back Up And Restore](#back-up-and-restore). |
 | `gmail/` | Gmail OAuth client and token files. |
 | Baseline/legacy resume files | `resume.txt`, `resume.pdf`, and older local style/template files. |
 
@@ -184,7 +184,9 @@ jobctrl backup
 
 The installed command snapshots `jobctrl.db` and `temporal.db` together into a
 new `backups/pair-<id>/` directory. If JobCtrl is running, it stops for the
-snapshot and starts again afterward. `--output` takes an absolute directory.
+snapshot and starts again afterward. If a source development fleet is running,
+stop it first; the installed backup command does not replace it with the
+installed app. `--output` takes an absolute directory.
 The two files are one restore unit: never restore just one of them. The
 launcher has no restore command for these pairs; updates and rollbacks write and
 restore their own, as described in
@@ -193,29 +195,21 @@ restore their own, as described in
 In a source checkout, `uv --project workers/automation run jobctrl backup`
 writes one consistent copy of `jobctrl.db` to `backups/jobctrl-<timestamp>.db`
 with SQLite `VACUUM INTO`. It is safe while the app runs and never deletes
-anything; `--output` takes a file or directory. To restore it, stop
-`corepack pnpm dev`, clear the stale WAL sidecars, and copy the backup over the
-live database:
-
-```bash
-rm -f ~/.jobctrl/jobctrl.db-wal ~/.jobctrl/jobctrl.db-shm
-cp ~/.jobctrl/backups/jobctrl-<timestamp>.db ~/.jobctrl/jobctrl.db
-```
+anything; `--output` takes a file or directory. This is an application-database
+snapshot, not a stopped and verified application/Temporal backup pair. It is
+not sufficient to restore a workspace with workflow history. Preserve the live
+databases and their WAL/SHM companions; do not delete companions or replace one
+database in isolation. The source checkout does not currently offer a paired
+restore command. See [Local Development](../local-development.md#schema-migrations-and-source-updates)
+for automatic source upgrades and recovery limitations.
 
 After restoring or replacing a database, restart JobCtrl (or rerun
 `corepack pnpm dev` in a source checkout) and reload any open JobCtrl browser
 tabs to create fresh event subscriptions. API callers that supplied an explicit
 `?since` cursor must discard it and start a fresh subscription too.
 
-Always restore the whole file; never hand-import individual tables. Read-model
-projection watermarks only move forward, so if a database is ever rebuilt
-piecemeal, delete the Python and TypeScript operations-projection watermarks to
-rebuild projections:
-
-```bash
-sqlite3 ~/.jobctrl/jobctrl.db \
-  "DELETE FROM event_watermarks WHERE projection_name LIKE '%operations_projections%';"
-```
+Never hand-import individual tables or reset projection watermarks as a
+substitute for a verified workspace recovery.
 
 #### Interrupted first database creation
 
