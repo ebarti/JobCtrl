@@ -35,6 +35,7 @@ boundary, or you need to know which page answers a given question.
 - [Portable Workspace](portable-workspace.md) — Future proposal (not implemented): bundle ownership and safe import.
 - [Application URL Authority Inventory](application-url-authority.md) — Which readers and writers still touch an application URL after exact v10, and how does a URL resolve to a job?
 - [Scoring Policy](scoring.md) — How does a discovered job become a defensible fit score?
+- [Employer Sponsorship History](employer-sponsorship-history.md) — Official-source investigation and future design (not implemented).
 - [Employer Analysis & Materials Audit](materials.md) — How are generated artifacts and their claims audited?
 - [Leadership Practice — future architecture (not implemented)](leadership-practice.md) — Bounded management reflection and experiments.
 - [Material Variant Comparison](material-variant-comparison.md) — Future proposal (not implemented).
