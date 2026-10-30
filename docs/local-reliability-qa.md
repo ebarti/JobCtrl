@@ -812,3 +812,20 @@ Stop the test child through its exact pipe and observe exit; never infer signal
 authority from an orphan numeric PID. Keep active/abandoned owner leases busy,
 refuse missing/linked/replaced lock files and persist known cleanup failure
 before release. A generic stage reset must not waive exact submit-intent ambiguity.
+
+## Public Demo Edge Persistence And Privacy
+
+Run `corepack pnpm demo-edge:check` and `corepack pnpm demo-edge:test` using the
+local synthetic D1 fixture. Exercise each required grant write and each optional
+telemetry admission or insertion failure, checking response cookies and retained
+identity/event rows. A successful initial grant whose response is lost can be
+retried without cookies: the operation counter remains deduplicated, but a new
+identity pair is created while the first remains until expiry. A repeat carrying
+the granted cookies refreshes the existing pair instead.
+
+Exercise expired, exactly expired and future controls in all seven retention
+tables, a repeated sweep, and rollback when the scheduled batch fails after
+earlier deletes. Capture and validate the closed custom log fields on success,
+failure and limited-denial paths. Source configuration declares an hourly cron
+and disables invocation logs and traces; local tests do not establish deployed
+schedule timing, account logging settings, physical retention or backup behavior.
