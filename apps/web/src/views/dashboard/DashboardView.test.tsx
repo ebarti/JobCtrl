@@ -19,6 +19,11 @@ describe("DashboardView", () => {
 
     expect(await screen.findByText("Learning recommendations require the local audited database.")).toBeInTheDocument();
     expect(screen.getByText("Tailoring policy history requires the local audited database.")).toBeInTheDocument();
+    const installLinks = screen.getAllByRole("link", { name: "Install JobCtrl" });
+    expect(installLinks).toHaveLength(2);
+    for (const link of installLinks) {
+      expect(link).toHaveAttribute("href", "https://jobctrl.dev/user/getting-started");
+    }
     expect(learningRecommendations).not.toHaveBeenCalled();
     expect(tailoringPolicyRevisions).not.toHaveBeenCalled();
     expect(screen.queryByText(/Demo capability .* is not available/)).not.toBeInTheDocument();

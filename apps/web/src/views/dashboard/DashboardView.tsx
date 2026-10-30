@@ -137,7 +137,8 @@ function LocalAppFeatureCard({ title, reason }: { title: string; reason: string 
     <section className="card col-span-full">
       <CardHeader title={title} meta="Local app" />
       <p className="px-4 py-3">
-        <span>{reason}</span> <a href={LOCAL_INSTALL_GUIDE_URL}>Install JobCtrl</a> to use this feature.
+        <span>{reason}</span>{" "}
+        <a className="underline underline-offset-2" href={LOCAL_INSTALL_GUIDE_URL}>Install JobCtrl</a> to use this feature.
       </p>
     </section>
   );
