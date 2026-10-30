@@ -242,9 +242,10 @@ changed or unfamiliar active ownership metadata produces an explicit cleanup
 failure and preserves the registry and database pair. Legacy registries that
 never recorded complete ownership remain `ownership-unverified`; an empty old
 process group cannot certify their historical descendants. Do not delete that
-registry or restore old databases to bypass the refusal. Manual recovery must
-establish the missing boundary; reboot is last-resort troubleshooting for an
-unrecoverable cleanup failure, not normal stop, backup, update or restart.
+registry or restore old databases to bypass the refusal. No self-service recovery
+is currently documented for an untracked legacy runtime; establishing the
+missing boundary requires a verified recovery design. Restarting the computer
+alone does not clear this refusal.
 
 Python CLI execution retains the shared release-selection lock across exec.
 Backup, update, rollback and uninstall take exclusive selection, and direct

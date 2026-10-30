@@ -60,7 +60,7 @@ const (
 )
 
 var (
-	errUntrackedOwnership = errors.New("this legacy runtime has no durable child-ownership record; recorded processes were checked, but cleanup cannot certify already-detached children. Keep the runtime registry and workspace intact, inspect remaining JobCtrl processes, and use the documented manual recovery procedure")
+	errUntrackedOwnership = errors.New("this legacy runtime has no durable child-ownership record; recorded processes were checked, but cleanup cannot certify already-detached children. Automatic recovery is unavailable; keep the runtime registry and workspace intact and seek support")
 	ErrAlreadyRunning     = errors.New("an active JobCtrl instance already owns this state directory")
 	ErrPortInUse          = errors.New("a required fixed loopback port is already in use")
 	ErrLockHeld           = errors.New("the JobCtrl instance lock is held")

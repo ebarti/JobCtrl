@@ -265,9 +265,10 @@ and waits for their exit. Successful cleanup permits normal restart. A missing
 or unfamiliar ownership record is a failure, including legacy records that
 cannot identify detached children; JobCtrl preserves the registry and live data
 instead of claiming they are stopped. Inspect the reported process/permission
-problem and use qualified manual recovery. Do not delete ownership metadata or
-restore an older pair to bypass a refusal. Reboot is last-resort troubleshooting
-when cleanup cannot be recovered, not a prerequisite for normal lifecycle work.
+problem and preserve the reported evidence. For a legacy runtime without
+complete ownership records, there is currently no documented self-service
+recovery; seek support. Restarting the computer alone does not clear this
+refusal. Do not delete ownership metadata or restore an older pair to bypass it.
 
 ### Credentials Outside The Workspace
 

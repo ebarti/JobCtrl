@@ -117,9 +117,10 @@ corepack pnpm dev
 `jobctrl start`. It first builds the browser extension, then starts the full
 local fleet in dependency order: Temporal dev server, TypeScript API, Vite web
 app, and the Python worker. On macOS, the fleet uses the same workspace lock
-and process ownership as the installed application. Starting a source fleet
+and process ownership as a compatible installed application. Starting a source fleet
 stops the previously owned source or installed fleet for that workspace first.
-An unverified older development process must be stopped separately. The command runs
+Older untracked processes cannot provide this ownership proof merely by stopping.
+The command runs
 in the foreground so supervised terminals keep the child
 processes alive; keep the terminal open and stop the stack with Ctrl-C. The
 launcher tracks PIDs under `.dev/pids/`, writes logs under `.dev/logs/`, and
@@ -145,7 +146,7 @@ app against that API. Stop the other runtime or choose separate bindings. This
 probe only detects a responding API; it does not establish that all writers or
 detached descendants have stopped and is not migration authority.
 
-The source and installed launchers retain the earlier
+The current source and compatible installed launchers retain the earlier
 `$JOBCTRL_DIR/temporal/temporal.db` location if that is the only existing
 history. New workspaces use `$JOBCTRL_DIR/temporal.db`. If both locations or
 orphaned SQLite companions exist, startup refuses to choose between them.
@@ -153,11 +154,12 @@ Preserve the application database, both histories and their companions; do
 not copy, replace or delete either history to make startup succeed. On macOS,
 `JOBCTRL_DB_PATH` and `JOBCTRL_TEMPORAL_DB` must identify the database and
 history in `JOBCTRL_DIR`. Set a separate `JOBCTRL_DIR` for an isolated stack.
-An installed launcher only accepts a legacy source history once a healthy
-source fleet has established its shared ownership; an older untracked source
-runtime cannot supply that proof. The macOS source fleet uses the local Temporal
-server at `localhost:7233` and its `default` namespace, as the installed app
-does.
+A compatible installed launcher only accepts a legacy source history once a
+healthy source fleet has established its shared ownership; an older untracked
+source runtime cannot supply that proof. In particular, v0.3.1 expects the root
+`temporal.db` and does not support the earlier source-only location. The macOS
+source fleet uses the local Temporal server at `localhost:7233` and its `default`
+namespace, as the installed app does.
 
 ### Schema migrations and source updates
 
@@ -201,11 +203,13 @@ recovery journal and all databases and SQLite companions in place.
 If the earlier runtime's ownership cannot be verified, the automatic upgrade
 does not modify the workspace. The default source command starts only the
 diagnostic API and web interface, which report that an upgrade is needed;
-the worker and Temporal stay stopped. Preserve the workspace and establish a
-verified recovery before retrying. Schemas older than 14, newer than this build,
-ambiguous histories, and non-macOS source starts do not take this automatic
-path. Do not invoke the private migration modules directly on a live workspace:
-they do not establish process ownership or a paired backup.
+the worker and Temporal stay stopped. If a legacy runtime lacks complete
+ownership records, there is currently no documented self-service recovery.
+Preserve the registry, workspace and journal and seek support; a computer
+restart alone does not clear the refusal. Schemas older than 14, newer than this
+build, ambiguous histories, and non-macOS source starts do not take this
+automatic path. Do not invoke the private migration modules directly on a live
+workspace: they do not establish process ownership or a paired backup.
 
 For development that does not need personal data, a new isolated workspace
 uses the checkout's current schema on first start. This isolates the databases,
