@@ -174,6 +174,11 @@ func (s *Store) Permit(receipt Receipt) error {
 	if err != nil {
 		return err
 	}
+	return state.Permit(receipt)
+}
+
+// Permit evaluates a receipt against a previously read channel authority.
+func (state ChannelState) Permit(receipt Receipt) error {
 	if receipt.Sequence < state.MinimumSafeSequence {
 		return fmt.Errorf("release sequence %d is below minimum-safe sequence %d", receipt.Sequence, state.MinimumSafeSequence)
 	}
@@ -248,7 +253,11 @@ func (j Journal) Resumable() bool {
 	return j.State != Idle && j.State != Promoted && j.State != RolledBack && j.State != Failed
 }
 
-type Store struct{ Home string }
+type Store struct {
+	Home             string
+	homeIdentity     os.FileInfo
+	releasesIdentity os.FileInfo
+}
 
 // Open refuses symlinked management roots and creates only owner-private
 // paths. It never follows a user-controlled final component.
@@ -265,7 +274,21 @@ func Open(home string) (*Store, error) {
 			return nil, err
 		}
 	}
-	return &Store{Home: abs}, nil
+	homeIdentity, err := os.Lstat(abs)
+	if err != nil || !homeIdentity.IsDir() || homeIdentity.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("release store home is not a regular directory")
+	}
+	releasesIdentity, err := os.Lstat(filepath.Join(abs, "releases"))
+	if err != nil || !releasesIdentity.IsDir() || releasesIdentity.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("release store releases is not a regular directory")
+	}
+	return &Store{Home: abs, homeIdentity: homeIdentity, releasesIdentity: releasesIdentity}, nil
+}
+
+// RetentionIdentities bind destructive cleanup to the directories that were
+// present when this store was opened, not replacements installed later.
+func (s *Store) RetentionIdentities() (os.FileInfo, os.FileInfo) {
+	return s.homeIdentity, s.releasesIdentity
 }
 
 func ensureDirectory(path string) error {

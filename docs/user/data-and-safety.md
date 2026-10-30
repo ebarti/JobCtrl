@@ -70,7 +70,7 @@ Google's handling of that data is described in
 
 The data controller for this documentation measurement is Eloi Barti, acting as
 an individual. For privacy questions, contact
-[me@eloibarti.com](mailto:me@eloibarti.com). This hosted documentation
+me[at]eloibarti.com (replace [at] with @). This hosted documentation
 measurement is separate from JobCtrl's local product telemetry and from the
 public demo measurement described below.
 
@@ -85,7 +85,7 @@ the consent service confirms acceptance. The `v2` consent contract replaces the
 earlier first-party-only choice, so existing visitors are asked again once.
 
 The data controller for the public demo is Eloi Barti, acting as an individual.
-For privacy questions, contact [me@eloibarti.com](mailto:me@eloibarti.com).
+For privacy questions, contact me[at]eloibarti.com (replace [at] with @).
 
 After acceptance, Cloudflare sets a versioned consent cookie plus random
 HttpOnly visitor and session identifiers. JobCtrl's persistent cookies expire
@@ -191,6 +191,32 @@ The two files are one restore unit: never restore just one of them. The
 launcher has no restore command for these pairs; updates and rollbacks write and
 restore their own, as described in
 [Update, Roll Back, Or Remove JobCtrl](getting-started.md#update-roll-back-or-remove-jobctrl).
+
+When a release promotion performs automatic release cleanup, JobCtrl keeps
+releases referenced by paired backups in the current workspace `backups/` and
+other workspaces recorded by the runtime, including a custom `JOBCTRL_DIR`.
+A source workspace is included when its checkout and runtime ownership can be
+verified; otherwise cleanup stops and preserves releases.
+Paired backup metadata in differently named folders is still considered;
+unrelated folders without `pair.json` are left alone. If workspace ownership,
+pair metadata, or the release store's directory identity
+cannot be verified before cleanup, cleanup stops before deleting releases. A
+release is eligible for cleanup only if its sequence and identity are recorded
+in channel state and its signed payload and expected metadata can be verified;
+releases without that recorded history, modified payload files, and extra files
+and directories are preserved. Generated receipt and policy files are not
+independently signed, so a valid edit to those files cannot always be
+distinguished from the original metadata. A release claimed for cleanup that
+cannot be safely returned is
+preserved under a `.retention-*` directory for inspection. An interruption during
+cleanup may leave a partially removed owned release there. An actively
+concurrent writer with access inside that claimed directory can race the last
+check before an individual file is removed. Writers that change backup
+authorities outside JobCtrl's runtime transition lock can also race cleanup's
+reference checks. The message identifies when the new release is already active.
+Backups placed elsewhere with `--output` are outside this automatic discovery.
+Retention alone does not make a rollback eligible: the release must also pass
+its safety policy and the paired files must pass verification.
 
 In a source checkout, `uv --project workers/automation run jobctrl backup`
 writes one consistent copy of `jobctrl.db` to `backups/jobctrl-<timestamp>.db`

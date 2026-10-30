@@ -54,6 +54,48 @@ Developer supervisors additionally use checkout-local `.dev/` process, log,
 and Temporal files; those are not installed-user authorities but remain
 sensitive.
 
+Installed release retention collects references before pruning. The current
+workspace comes from the resolved instance; other managed instances are mapped
+through runtime state records whose canonical workspace path hashes to the
+instance ID. Paired-backup metadata in any regular subdirectory of each
+workspace's `backups/` keeps its referenced build. The recorded pair ID may name
+a different local directory; its path components are checked and watched.
+Unrelated directories without `pair.json` are left in place and watched for a
+new reference. Active and controller releases, journal references, the
+eligible prior release, live instance releases, non-stable releases and foreign
+directories are preserved. A live installed instance must bind its payload path,
+build and manifest digest to an installed receipt. A source registry must bind
+the unchanged checkout launcher to its exact source execution scope and live
+kernel identities or a verified stopped completion. Unknown or changed ownership
+stops cleanup. Older execution receipts require matching completions and must
+have no live scope. A scope born on the current boot also requires verification
+on that boot; a prior-boot scope may have been verified on a later boot. Paired
+backup references remain protected in both kinds of
+workspace. Reference
+directories and files are read through anchored handles and rechecked during
+cleanup. Cooperative native backup writers use the runtime transition lock;
+concurrent writers outside that lock can still race the reference checks.
+Cleanup binds the store and releases directory to
+their identities at store open, reads entries through anchored directory handles,
+and atomically claims each candidate without replacing another path. A candidate
+is pruned only when its sequence, build and descriptor match recorded channel
+state, its installed release evidence authenticates and its complete tree
+matches the signed payload inventory and expected release metadata. Releases
+without a recorded sequence binding are preserved.
+Unrecorded files, links and empty directories, modified payload files and
+unverifiable releases are preserved. Generated receipt and policy files are not
+independently signed; a structurally valid edit to them is not necessarily
+detectable as an edit. A changed root or entry refuses deletion. A claim that
+cannot be safely returned is kept under its private `.retention-*` name for
+inspection; an interrupted cleanup can leave a partially removed owned tree
+there. An actively concurrent writer with access inside a claimed directory can
+still race the final pathname check and individual unlink. Unsupported platforms
+refuse pruning. Unreadable, linked, missing or malformed managed
+ownership/reference authority prevents all pruning; absent `backups/` is an
+empty set. External `backup --output` locations are not discovered. Retention
+does not bypass channel revocation, protocol compatibility, or pair digest checks
+for rollback.
+
 The proposed [sensitive-artifact retention and cleanup
 contract](../plans/sensitive-artifact-retention.md) inventories these authorities
 and defines reference protection, preview, containment, recovery, and future

@@ -1667,13 +1667,17 @@ func readState(path string) (instanceState, error) {
 	if err := decodeStrict(path, &state); err != nil {
 		return state, err
 	}
+	return state, validateRuntimeState(state)
+}
+
+func validateRuntimeState(state instanceState) error {
 	if (state.OwnershipVerified && state.StoppedAt == nil) || (state.ExecutionScopeID != "" && !executionIDValid(state.ExecutionScopeID)) {
-		return state, errors.New("invalid runtime ownership state")
+		return errors.New("invalid runtime ownership state")
 	}
 	if state.SchemaVersion != stateSchemaVersion || state.InstanceID == "" || state.CanonicalStateDir == "" || state.PayloadRoot == "" || state.BuildID == "" || state.ManifestSHA256 == "" || state.Components == nil {
-		return state, errors.New("invalid runtime registry state")
+		return errors.New("invalid runtime registry state")
 	}
-	return state, nil
+	return nil
 }
 
 func manifestDigest(payloadRoot string) (string, error) {

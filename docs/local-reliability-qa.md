@@ -92,6 +92,66 @@ independent ephemeral thread IDs, temporary logs and the credential-read fence;
 then observe disk use and model availability through the real UI flow. Never
 delete the original provider history as an automatic repair.
 
+For native release retention, use independently resolved runtime and workspace
+roots, including a custom `JOBCTRL_DIR`. Promote at least three signed synthetic
+stable releases, then verify the oldest referenced release is eligible for an
+explicit rollback and that the restored database pair matches its recorded
+backup identity and bytes. Check active, controller, journal, prior, live-instance,
+non-stable and foreign preservation while an unreferenced owned stable release
+is pruned. Missing, malformed, linked or unreadable managed ownership must stop
+cleanup before any release is deleted. A missing `pair.json` in a native `pair-`
+directory also stops cleanup; a non-prefixed directory verified to have no
+`pair.json` is treated as unrelated and watched. Malformed, unreadable or linked
+`pair.json` in any immediate backup subdirectory stops cleanup. Use owned
+synthetic workspaces and do not publish or deploy a release. Exercise the
+explicit rollback entry point with a renamed pair and verify its recorded
+identity and restored bytes. Separately,
+place metadata in a different directory with a local pair ID and exercise the
+rollback reader and `restorePair` to verify the pair binding and bytes. In both
+cases, retention must keep the referenced release while pruning a separate
+unreferenced release. Preserve unrelated directories without metadata, and refuse
+if a pair appears in one after collection or its aliased target is linked or
+replaced. Replace the release
+root after store open and during promotion; replace an entry at its atomic claim
+and the root after claim. Verify foreign bytes and successor paths are preserved,
+including a restore collision, and repeat the anchored filesystem cases on macOS
+and Linux. Add extra files and empty directories at the release root and inside
+the signed payload, modify an authenticated file, and replace a child during
+its claim. Preserve those contents while a separate intact, unreferenced signed
+release is pruned. Add a foreign file during cleanup and verify it survives.
+Check that an unauthenticated higher-sequence receipt cannot displace an intact
+signed prior release. Alter a signed candidate's receipt and policy to claim an
+unrecorded higher sequence and verify it cannot displace the recorded prior;
+an older recorded unreferenced release must still be pruned. Check that a live
+instance with an inconsistent build,
+payload path or manifest digest stops cleanup. Swap a paired-backup directory
+after listing and after collection, including swap-and-restore, and verify the
+pair identity and bytes and its referenced release remain intact. Also create a
+new backup authority after collection and verify cleanup refuses it.
+Unsupported platforms must refuse pruning.
+
+For shared source and installed workspaces, create a real source-purpose native
+execution receipt in an owned synthetic workspace. Check that its live source
+registry and later verified completion permit pruning a separate unreferenced
+release while preserving the release and exact bytes of its paired backup.
+Repeat with an authentic completed prior execution receipt in the same
+workspace; missing or malformed prior completion must stop cleanup. If the
+native controller does not publish completion, verify refusal and preserve the
+fixture. Separately exercise completed, missing, malformed, active and
+unavailable prior authorities with explicitly synthetic receipt and counter
+fixtures; these do not prove a native completion occurred.
+Exercise the native stop writer with synthetic source receipts: its completion
+may predate the stopped registry, and verification may occur on a later boot.
+Refuse a same-boot prior scope whose completion records a different verification
+boot, whether its synthetic scope counter reports zero or an absent coalition.
+Retain source-purpose separation from Apply and refuse a same-boot scope that
+is live or cannot be verified as stopped.
+Malformed, changed, missing or mismatched execution evidence, an unverified
+registry, or a changed checkout launcher must stop cleanup before deleting the
+control release. Preserve source-migration backups for both current and legacy
+Temporal paths. A controlled process-census seam does not prove host process
+cleanup or permission to signal a real process.
+
 <a id="required-commands"></a>
 
 | Surface | Starting command / selected recipe |
