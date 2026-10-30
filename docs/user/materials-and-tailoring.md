@@ -225,7 +225,14 @@ The user-visible surfaces divide the work:
   and the default template; Apply Review can override the template for one job.
   Template payloads hold style/layout only, not candidate or job facts. An
   unsaved template draft remains available when saved templates refresh or you
-  switch between templates during the same session.
+  switch between templates during the same session. Template settings show the
+  selected saved version and the exact version currently used as the default.
+  Saving a new version does not change the default until you choose **set
+  default** or **save default**. If saving succeeds but the default change is
+  not confirmed, the saved version remains available. Check the current default
+  before retrying **set default**. If templates cannot refresh, the panel labels
+  the last read default and offers a retry before changing the default. A later
+  successful read that shows the requested version clears the unconfirmed notice.
 - `/settings/models` owns the generator/judge execution policy used by newly
   started work. The current fields and fallback rules belong to
   [Configuration](configuration.md), not this page.
