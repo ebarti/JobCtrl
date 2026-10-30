@@ -862,6 +862,12 @@ jobs:
         with:
           node-version: 22.21.1
 
+      - name: Set up pinned Go for the synthetic source ownership fixture
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.4"
+          cache-dependency-path: launcher/go.mod
+
       - name: Install locked public-verification dependencies
         run: corepack pnpm install --frozen-lockfile
 
@@ -874,6 +880,9 @@ jobs:
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
           [[ "$main_relation" = ahead || "$main_relation" = identical ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
+
+      - name: Build the source ownership fixture controller
+        run: go -C launcher build -o "$RUNNER_TEMP/jobctrl-source-qa" ./cmd/jobctrl-source
 
       - name: Download the signed candidate metadata
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -933,6 +942,7 @@ jobs:
       - name: Qualify upgrades through the released curl and Homebrew acquisition paths
         if: ${{ inputs.channel == 'stable' }}
         env:
+          JOBCTRL_RELEASE_QA_SOURCE_BINARY: ${{ runner.temp }}/jobctrl-source-qa
           JOBCTRL_RELEASE_METADATA_TOKEN: ${{ github.token }}
           JOBCTRL_RELEASE_PUBLIC_KEY: ${{ needs.resolve.outputs.release_public_key }}
           JOBCTRL_RELEASE_KEY_ID: ${{ needs.resolve.outputs.release_key_id }}

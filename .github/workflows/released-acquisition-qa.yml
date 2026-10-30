@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "scripts/released-acquisition-upgrade.mjs"
+      - "scripts/released-source-ownership.mjs"
+      - "scripts/released-source-ownership.test.mjs"
       - "scripts/released-upgrade-smoke.mjs"
       - ".github/workflows/released-acquisition-qa.yml"
   workflow_dispatch:

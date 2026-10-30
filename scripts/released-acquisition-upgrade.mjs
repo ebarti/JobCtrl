@@ -12,6 +12,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { verifyReleaseDescriptorSignature } from "./distribution-homebrew.render.bundle.mjs";
 import { fetchPublishedReleases, installArgs, runForwardInterruptionMatrix, selectLatestReleasedVersion, selectUpgradeMode } from "./released-upgrade-smoke.mjs";
+import { establishSourceOwnership } from "./released-source-ownership.mjs";
 
 const readJson = async (file) => JSON.parse(await readFile(file, "utf8"));
 const hash = async (file) => {
@@ -141,6 +142,8 @@ async function curlScenario(old, candidate, root, baseEnv) {
       // Earlier source checkouts stored the same history one level deeper.
       // Recreate that owned, stopped layout to qualify its real upgrade path.
       const historyPath = await useLegacyHistory(state);
+      await establishSourceOwnership({ sourceBinary: process.env.JOBCTRL_RELEASE_QA_SOURCE_BINARY, root, runtime, state, history: historyPath, python: context.python, env });
+      checks.push("synthetic-source-owner-established-for-legacy-history");
       const matrix = await runForwardInterruptionMatrix({
         old, candidate, root, runtime, state, env, selector, acquisition: "curl", readinessFailure: true,
         historyPath, jobUrl: "https://jobs.example/acquisition-qa",
@@ -187,6 +190,7 @@ async function curlAlreadyMigratedScenario(old, candidate, root, baseEnv) {
     const appInode = (await stat(app)).ino, historyInode = (await stat(history)).ino;
     const migrate = "import sqlite3,sys; from jobctrl.infrastructure.migrations.schema_v15 import upgrade_exact_v14_schema_to_v15; c=sqlite3.connect(sys.argv[1]); upgrade_exact_v14_schema_to_v15(c); c.close()";
     await run(python, ["-I", "-B", "-c", migrate, app], env);
+    await establishSourceOwnership({ sourceBinary: process.env.JOBCTRL_RELEASE_QA_SOURCE_BINARY, root, runtime, state, history, python: context.python, env });
     await run("/bin/bash", [path.join(candidate.directory, "install.sh"), "--home", runtime, "--bin-dir", bin, "--no-modify-path", "--release-url", pointer(candidate)], env);
     context.useCandidate(candidate);
     await verifyWorkspace(context, candidate, runtime, state, env, 15);
@@ -195,7 +199,7 @@ async function curlAlreadyMigratedScenario(old, candidate, root, baseEnv) {
     await run(selector, ["stop"], env);
     await run(selector, ["start", "--no-open"], env);
     await verifyWorkspace(context, candidate, runtime, state, env, 15);
-    return { acquisition: "curl-already-migrated", sourceSchema: 15, targetSchema: 15, checks: ["real-installer-accepts-already-migrated-workspace", "legacy-history-path-and-inode-preserved", "job-resume-and-workflow-preserved", "paired-backup", "stop-and-restart"] };
+    return { acquisition: "curl-already-migrated", sourceSchema: 15, targetSchema: 15, checks: ["real-installer-accepts-already-migrated-workspace", "synthetic-source-owner-established-for-legacy-history", "legacy-history-path-and-inode-preserved", "job-resume-and-workflow-preserved", "paired-backup", "stop-and-restart"] };
   } finally { await run(selector, ["stop"], env, { allowFailure: true }).catch(() => {}); }
 }
 

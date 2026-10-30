@@ -243,6 +243,11 @@ test("stable promotion waits for real released curl and Homebrew upgrade evidenc
   assert.ok(names.indexOf(name) < names.indexOf("Seal the smoke-tested formula"));
   assert.match(qualification.run, /node scripts\/released-acquisition-upgrade\.mjs/);
   assert.match(qualification.run, /released-acquisition-upgrade\.json/);
+  const sourceBuild = "Build the source ownership fixture controller";
+  assert.ok(names.indexOf(sourceBuild) > names.indexOf("Reassert the audited source without write authority"));
+  assert.ok(names.indexOf(sourceBuild) < names.indexOf(name));
+  assert.match(smoke.steps.find((step) => step.name === sourceBuild).run, /go -C launcher build .*\.\/cmd\/jobctrl-source/);
+  assert.equal(qualification.env.JOBCTRL_RELEASE_QA_SOURCE_BINARY, "${{ runner.temp }}/jobctrl-source-qa");
   assert.doesNotMatch(qualification.run, /--homebrew-source/, "the release must test a genuine Homebrew-to-Homebrew upgrade");
   assert.ok(workflow.jobs["promote-channel-pointer"].needs.includes("smoke-and-verify"));
   assert.match(workflow.jobs["promote-channel-pointer"].if, /needs\['smoke-and-verify'\]\.result == 'success'/);
