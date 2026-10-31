@@ -1631,8 +1631,20 @@ describe("pipeline operations read model", () => {
 
     const result = snapshot(fixture);
     expect(result.projectionCoverage).toMatchObject({ status: "ready" });
+    expect(result.execution).toMatchObject({ membershipClosed: false });
     expect(result.activeStageCounts).toEqual([{ stage: "tailor", count: 1 }]);
-    expect(stage(result, "tailor", "current_execution").eta).toMatchObject({
+    const openTailor = stage(result, "tailor", "current_execution");
+    expect(openTailor.currentExecution).toMatchObject({ processing: 0, waiting: 0 });
+    expect(openTailor.eta).toMatchObject({ status: "calibrating", reason: "membership_open" });
+
+    insertExecution(fixture, { status: "succeeded" });
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    const closed = snapshot(fixture);
+    expect(closed.execution).toMatchObject({ membershipClosed: true });
+    expect(closed.activeStageCounts).toEqual([{ stage: "tailor", count: 1 }]);
+    const closedTailor = stage(closed, "tailor", "current_execution");
+    expect(closedTailor.currentExecution).toMatchObject({ processing: 0, waiting: 0 });
+    expect(closedTailor.eta).toMatchObject({
       status: "unavailable",
       reason: "no_work",
     });
