@@ -141,33 +141,49 @@ func TestOrdinaryWitnessControlLockIsBounded(t *testing.T) {
 				}
 				releaseLock(held)
 				held = nil
-				return
-			}
-			time.Sleep(30 * time.Millisecond)
-			releaseLock(held)
-			held = nil
-			select {
-			case err = <-done:
-				donePending = false
-				if err != nil {
-					t.Fatalf("execution did not complete after lock release: %v", err)
+			} else {
+				time.Sleep(30 * time.Millisecond)
+				releaseLock(held)
+				held = nil
+				select {
+				case err = <-done:
+					donePending = false
+					if err != nil {
+						t.Fatalf("execution did not complete after lock release: %v", err)
+					}
+				case <-time.After(10 * time.Second):
+					t.Fatal("owned execution did not finish after lock release")
 				}
-			case <-time.After(10 * time.Second):
-				t.Fatal("owned execution did not finish after lock release")
+				completion, err := readExecutionCompletion(ctx, scopes[0].ID)
+				if err != nil || completion.Scope != scopes[0] || completion.VerificationBootSession != scopes[0].BootSession {
+					t.Fatalf("short contention lost the exact completion: %v", err)
+				}
+			}
+			// Both contention paths retry with genuine kernel inspection after
+			// releasing the real lock; no missing completion is fabricated.
+			readCoalitionActiveTaskCount = originalCount
+			if err := stop(ctx); err != nil {
+				t.Fatalf("verified stop after lock release failed: %v", err)
+			}
+			if remaining, err := readOwnedExecutionScopes(ctx); err != nil || len(remaining) != 0 {
+				t.Fatalf("verified stop retained an active receipt: %v", err)
 			}
 			completion, err := readExecutionCompletion(ctx, scopes[0].ID)
 			if err != nil || completion.Scope != scopes[0] || completion.VerificationBootSession != scopes[0].BootSession {
-				t.Fatalf("short contention lost the exact completion: %v", err)
-			}
-			readCoalitionActiveTaskCount = originalCount
-			if err := stop(ctx); err != nil {
-				t.Fatalf("exact completion did not permit stop: %v", err)
+				t.Fatalf("verified stop lost the exact same-boot completion: %v", err)
 			}
 			if err := runInOwnedExecution(ctx, []string{"__scope-test-command", ctx.Instance.StatePath, ctx.Instance.ID, "stdin", "unused"}, io.Discard, io.Discard); err != nil {
 				t.Fatalf("same-boot subsequent execution was blocked: %v", err)
 			}
+			subsequent, err := readOwnedExecutionScopes(ctx)
+			if err != nil || len(subsequent) != 1 || subsequent[0].ID == scopes[0].ID || subsequent[0].BootSession != scopes[0].BootSession {
+				t.Fatalf("subsequent execution did not own a fresh same-boot scope: %v", err)
+			}
 			if err := stop(ctx); err != nil {
 				t.Fatalf("restarted synthetic execution did not stop: %v", err)
+			}
+			if remaining, err := readOwnedExecutionScopes(ctx); err != nil || len(remaining) != 0 {
+				t.Fatalf("restarted execution retained an active receipt: %v", err)
 			}
 		})
 	}
