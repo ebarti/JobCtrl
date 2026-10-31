@@ -337,6 +337,9 @@ release. Unverified older source processes are not migration authority.
 The source shell's component records also bind a private per-launch control
 endpoint. A small launch owner retains the original `Popen` and unreaped child
 identity; status and stop authenticate that owner before requesting cleanup.
+Stop clients serialize each component's initial read, request and receipt
+retirement under a separate operation lock. The owner's publication lock stays
+available while that operation waits for verified cleanup.
 The existing original-child/session ownership helper performs termination. No
 recovered PID is signalled, so a birth check followed by a numeric signal is not
 used as cross-process authority. Legacy, changed or unreachable records remain

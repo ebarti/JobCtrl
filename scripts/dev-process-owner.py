@@ -2,7 +2,7 @@
 """Retain original source child custody; recovered PIDs never authorize signals."""
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import fcntl
 import hashlib
 import hmac
@@ -297,58 +297,62 @@ def main() -> int:
     directory = Path(directory_arg).absolute()
     if action == "launch":
         return launch(directory, name, args[0], args[1], args[2] if len(args) > 2 else None)
-    with lock(directory, name):
-        if action == "forget":
-            try:
-                current = receipt(directory, name)
-            except Unverified:
-                current = None
-            if current is not None and current["state"] != "stopped":
+    # Serialize a client Stop from its initial read through receipt retirement.
+    # The owner publishes under name.lock, so it never waits on this operation lock.
+    operation = lock(directory, f"{name}.stop") if action == "stop" else nullcontext()
+    with operation:
+        with lock(directory, name):
+            if action == "forget":
                 try:
-                    request(current, "state")
-                except (OSError, ValueError, Unverified):
-                    pass
-                else:
-                    raise Unverified("a live launch owner must be stopped first")
-            # Validate every selected metadata file before removing any of it.
-            selected = [p for p in files(directory, name) if os.path.lexists(p)]
-            for file in selected:
-                read_regular(file)
-            for file in selected:
-                file.unlink()
-            print("record forgotten; no process was signalled")
-            return 0
-        value = receipt(directory, name, args[0] if args and args[0] else None)
-    if action == "state":
-        observed = state(value)
-        print(f"{observed} {value['pid'] if observed == 'up' else '-'}")
-    elif action == "stop":
-        result = "not running"
-        if value is not None:
-            if value["state"] != "stopped":
-                try:
-                    if request(value, "stop") != {"state": "stopped"}:
-                        raise Unverified()
-                except (OSError, ValueError, Unverified):
-                    # Foreground cancellation can complete in the owner while
-                    # this caller is connecting. Only its exact stopped receipt
-                    # can settle that lost acknowledgement, never PID absence.
-                    deadline = time.monotonic() + 1
-                    while True:
-                        with lock(directory, name):
-                            completed = receipt(directory, name, value["id"])
-                        if completed is not None and completed["state"] == "stopped":
-                            break
-                        if time.monotonic() >= deadline:
-                            raise Unverified() from None
-                        time.sleep(0.02)
-                result = "stopped"
-            with lock(directory, name):
-                retire(directory, name, value)
-        print(result)
-    else:
-        raise Unverified()
-    return 0
+                    current = receipt(directory, name)
+                except Unverified:
+                    current = None
+                if current is not None and current["state"] != "stopped":
+                    try:
+                        request(current, "state")
+                    except (OSError, ValueError, Unverified):
+                        pass
+                    else:
+                        raise Unverified("a live launch owner must be stopped first")
+                # Validate every selected metadata file before removing any of it.
+                selected = [p for p in files(directory, name) if os.path.lexists(p)]
+                for file in selected:
+                    read_regular(file)
+                for file in selected:
+                    file.unlink()
+                print("record forgotten; no process was signalled")
+                return 0
+            value = receipt(directory, name, args[0] if args and args[0] else None)
+        if action == "state":
+            observed = state(value)
+            print(f"{observed} {value['pid'] if observed == 'up' else '-'}")
+        elif action == "stop":
+            result = "not running"
+            if value is not None:
+                if value["state"] != "stopped":
+                    try:
+                        if request(value, "stop") != {"state": "stopped"}:
+                            raise Unverified()
+                    except (OSError, ValueError, Unverified):
+                        # Foreground cancellation can complete in the owner while
+                        # this caller is connecting. Only its exact stopped receipt
+                        # can settle that lost acknowledgement, never PID absence.
+                        deadline = time.monotonic() + 1
+                        while True:
+                            with lock(directory, name):
+                                completed = receipt(directory, name, value["id"])
+                            if completed is not None and completed["state"] == "stopped":
+                                break
+                            if time.monotonic() >= deadline:
+                                raise Unverified() from None
+                            time.sleep(0.02)
+                    result = "stopped"
+                with lock(directory, name):
+                    retire(directory, name, value)
+            print(result)
+        else:
+            raise Unverified()
+        return 0
 
 
 if __name__ == "__main__":

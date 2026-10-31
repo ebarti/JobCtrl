@@ -142,7 +142,9 @@ spec.loader.exec_module(owner)
 from jobctrl.infrastructure import process_ownership
 # Only this synthetic supervisor process selects a different cooperative grace.
 # The original handle, session census, cleanup budget and receipts stay intact.
-process_ownership._PROCESS_TERMINATION_GRACE_SECONDS = 2.0
+# The controller coordinates six owners; leaf owners retain their two-second grace.
+# Keep headroom within the existing 16-second cleanup and 10-second client bounds.
+process_ownership._PROCESS_TERMINATION_GRACE_SECONDS = 8.0
 original_terminate = owner.terminate_owned_process
 def terminate(child, *, launched_pid):
  marker = os.environ.get('JOBCTRL_TEST_CONTROLLER_STOP_STARTED')
