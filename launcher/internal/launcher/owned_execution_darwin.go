@@ -1311,6 +1311,8 @@ func finishTemporalProbeScope(ctx launchContext, scope executionScope) error {
 	return retireExecutionScopesWithCompletion(ctx, []executionScope{scope}, false, false, false)
 }
 
+var readTemporalProbeScopes = readOwnedExecutionScopes
+
 // Only the original probe controller calls this after joining its exact helper
 // and verifying zero members. Stop may hold the control lock before its first
 // census. Publishing this scope's same-boot proof cannot admit any new work and
@@ -1320,8 +1322,26 @@ func preserveTemporalProbeCompletion(ctx launchContext, scope executionScope) er
 	if err != nil || boot != scope.BootSession {
 		return errors.Join(errors.New("Temporal probe boot identity changed"), err)
 	}
-	scopes, err := readOwnedExecutionScopes(ctx)
+	raw, err := json.Marshal(scope)
 	if err != nil {
+		return err
+	}
+	expected := executionCompletionForReceipt(scope, append(raw, '\n'), boot)
+	matches := func(completion executionCompletion) bool {
+		return completion.Scope == scope && completion.ReceiptSHA256 == expected.ReceiptSHA256 && completion.VerificationBootSession == boot
+	}
+	scopes, err := readTemporalProbeScopes(ctx)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// Stop can durably complete and remove a receipt after ReadDir but
+			// before its open. Absence is not proof; recheck only this exact
+			// scope's durable completion without weakening the strict reader.
+			completion, completionErr := readExecutionCompletion(ctx, scope.ID)
+			if completionErr == nil && matches(completion) {
+				return nil
+			}
+			return errors.Join(err, errors.New("Temporal probe receipt disappeared without its exact completion"), completionErr)
+		}
 		return err
 	}
 	active := false
@@ -1333,11 +1353,6 @@ func preserveTemporalProbeCompletion(ctx launchContext, scope executionScope) er
 			active = true
 		}
 	}
-	raw, err := json.Marshal(scope)
-	if err != nil {
-		return err
-	}
-	expected := executionCompletionForReceipt(scope, append(raw, '\n'), boot)
 	completion, completionErr := readExecutionCompletion(ctx, scope.ID)
 	if completionErr != nil && !errors.Is(completionErr, os.ErrNotExist) {
 		return completionErr
@@ -1351,7 +1366,7 @@ func preserveTemporalProbeCompletion(ctx launchContext, scope executionScope) er
 		}
 		completion, completionErr = readExecutionCompletion(ctx, scope.ID)
 	}
-	if completionErr != nil || completion.Scope != scope || completion.ReceiptSHA256 != expected.ReceiptSHA256 || completion.VerificationBootSession != boot {
+	if completionErr != nil || !matches(completion) {
 		return errors.Join(errors.New("Temporal probe completion does not match its exact receipt and boot"), completionErr)
 	}
 	return nil

@@ -1028,6 +1028,117 @@ func TestTemporalProbeCompletionPrecedesFirstStopCensus(t *testing.T) {
 	if identity, err := processStartIdentity(peer.Process.Pid); err != nil || identity != peerIdentity {
 		t.Fatal("probe or first-census cleanup affected the unrelated peer")
 	}
+	t.Run("retirement-between-list-and-open", func(t *testing.T) {
+		oldRead := readTemporalProbeScopes
+		defer func() { readTemporalProbeScopes = oldRead }()
+		var missing error
+		reads := 0
+		readTemporalProbeScopes = func(readCtx launchContext) ([]executionScope, error) {
+			reads++
+			if reads != 1 || readCtx.Instance.ID != ctx.Instance.ID {
+				t.Fatal("unexpected probe receipt enumeration")
+			}
+			dir, err := executionScopeDirectory(readCtx, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil || len(entries) != 1 || entries[0].Name() != scope.ID+".json" {
+				t.Fatalf("exact receipt was not listed before retirement: %v, %v", entries, err)
+			}
+			// Resume the real cleanup owner after the directory snapshot, then
+			// attempt the listed receipt open only after Stop has completed.
+			releaseLock(control)
+			control = nil
+			retired := make(chan error, 1)
+			go func() { retired <- stop(ctx) }()
+			select {
+			case err := <-retired:
+				if err != nil {
+					t.Fatalf("concurrent real Stop: %v", err)
+				}
+			case <-time.After(20 * time.Second):
+				// Keep the original goroutine handle for final cleanup readback.
+				defer func() {
+					select {
+					case err := <-retired:
+						if err != nil {
+							t.Errorf("late Stop cleanup: %v", err)
+						}
+					case <-time.After(20 * time.Second):
+						t.Error("concurrent Stop did not join during cleanup")
+					}
+				}()
+				t.Fatal("concurrent Stop did not settle")
+			}
+			file, openErr := os.OpenFile(filepath.Join(dir, entries[0].Name()), os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+			if file != nil {
+				file.Close()
+			}
+			if !errors.Is(openErr, os.ErrNotExist) {
+				t.Fatalf("retired listed receipt open did not produce ENOENT: %v", openErr)
+			}
+			missing = openErr
+			return nil, openErr
+		}
+		if err := preserveTemporalProbeCompletion(ctx, scope); err != nil || reads != 1 {
+			t.Fatalf("exact durable completion did not resolve concurrent retirement: %v, reads=%d", err, reads)
+		}
+		if after, err := os.ReadFile(proofPath); err != nil || !bytes.Equal(proof, after) {
+			t.Fatal("concurrent retirement replaced the original exact completion")
+		}
+		readTemporalProbeScopes = func(launchContext) ([]executionScope, error) { return nil, missing }
+		for _, fault := range []string{"missing", "wrong-scope", "wrong-boot", "wrong-receipt", "malformed"} {
+			t.Run(fault, func(t *testing.T) {
+				defer func() {
+					if err := os.WriteFile(proofPath, proof, 0600); err != nil {
+						t.Errorf("restore exact synthetic completion: %v", err)
+					}
+				}()
+				changed := completion
+				switch fault {
+				case "missing":
+					err = os.Remove(proofPath)
+				case "wrong-scope":
+					changed.Scope.Purpose = "apply"
+					if changed.Scope.Purpose == scope.Purpose {
+						changed.Scope.Purpose = "source"
+					}
+					err = writeJSONAtomic(proofPath, changed)
+				case "wrong-boot":
+					changed.VerificationBootSession = "00000000-0000-0000-0000-000000000000"
+					if changed.VerificationBootSession == scope.BootSession {
+						changed.VerificationBootSession = "11111111-1111-1111-1111-111111111111"
+					}
+					err = writeJSONAtomic(proofPath, changed)
+				case "wrong-receipt":
+					changed.ReceiptSHA256 = strings.Repeat("0", 64)
+					err = writeJSONAtomic(proofPath, changed)
+				case "malformed":
+					err = os.WriteFile(proofPath, []byte("{}\n"), 0600)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				before, _ := os.ReadFile(proofPath)
+				if err := preserveTemporalProbeCompletion(ctx, scope); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("missing receipt with invalid proof lost its failure: %v", err)
+				}
+				after, readErr := os.ReadFile(proofPath)
+				if fault == "missing" {
+					if !errors.Is(readErr, os.ErrNotExist) {
+						t.Fatal("missing evidence was fabricated during the recheck")
+					}
+				} else if readErr != nil || !bytes.Equal(before, after) {
+					t.Fatal("refused completion evidence changed during the recheck")
+				}
+			})
+		}
+		readTemporalProbeScopes = func(launchContext) ([]executionScope, error) { return nil, syscall.EPERM }
+		if err := preserveTemporalProbeCompletion(ctx, scope); !errors.Is(err, syscall.EPERM) {
+			t.Fatalf("valid proof masked an enumeration inspection error: %v", err)
+		}
+	})
 	releaseLock(control)
 	control = nil
 	if err := stop(ctx); err != nil {

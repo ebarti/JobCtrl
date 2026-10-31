@@ -47,8 +47,10 @@ peer and the running Temporal component surviving probe cancellation, and an
 ordinary restart after cleanup. Hold the stop control lock before its first
 census and let a probe finish: its exact same-boot completion must remain usable
 after the coalition is reaped, while missing, malformed, mismatched and
-wrong-boot proof still refuses cleanup. The fixture is not evidence of a real
-Temporal freeze.
+wrong-boot proof still refuses cleanup. Retire a listed receipt between the
+probe's enumeration and open: only its exact durable completion may resolve
+that missing-file race; missing or invalid proof and inspection errors still
+fail. The fixture is not evidence of a real Temporal freeze.
 
 The bundled native smoke must preserve network isolation across launchd: run its
 native control process outside Seatbelt and select the fixed internal
