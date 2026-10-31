@@ -780,7 +780,12 @@ registered RPC and HTTP route, commit one message, fail the next read, inspect
 the safe cause, committed counts and previously accessible suggestion, then
 retry and prove one record per provider message. Cover provider, spend and
 source-binding failures, post-commit notification failure, and failure between
-anchor searches (excluding failed and untouched anchors). Check success,
+anchor searches (excluding failed and untouched anchors). Fail a second message
+after its suggestion, binding or event write and before commit: only the earlier
+message may remain in progress, evidence, suggestions, bindings and safe events;
+retry preserves that earlier record and commits the remaining message once.
+Drain the registered RPC subprocess through observed exit before removing its
+owned workspace; retain the workspace if cleanup cannot prove completion. Check success,
 failure, progress and events for private-content canaries; a lost response must
 not claim zero progress. The fake provider does not verify live Gmail search.
 

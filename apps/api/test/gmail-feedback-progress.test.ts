@@ -85,8 +85,20 @@ describe("Gmail feedback committed progress", () => {
         db.close();
       }
     } finally {
-      await app.close();
-      await dispatcher.close();
+      const cleanupFailures: unknown[] = [];
+      try {
+        await app.close();
+      } catch (error) {
+        cleanupFailures.push(error);
+      }
+      try {
+        await dispatcher.drain();
+      } catch (error) {
+        cleanupFailures.push(error);
+      }
+      if (cleanupFailures.length) {
+        throw new AggregateError(cleanupFailures, "Synthetic Gmail fixture cleanup failed; workspace retained.");
+      }
       fs.rmSync(workspace, { recursive: true, force: true });
     }
   });

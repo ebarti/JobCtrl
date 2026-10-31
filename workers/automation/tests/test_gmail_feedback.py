@@ -466,6 +466,88 @@ def test_spend_preflight_denial_retains_committed_prefix(tmp_path: Path) -> None
     assert retry["ok"] is True and retry["duplicateMessageCount"] == retry["linkedEvidenceCount"] == 1
 
 
+@pytest.mark.parametrize("fault", ["persistence", "binding", "event"])
+def test_precommit_failure_rolls_back_failed_message_and_preserves_committed_prefix(
+    tmp_path: Path, monkeypatch, fault: str,
+) -> None:
+    from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+
+    db_path = seed_feedback_db(tmp_path)
+    private_text = "owned private rollback canary"
+    client = FakeGmailClient(
+        [_linked_message_metadata("first"), _linked_message_metadata("second")],
+        {ident: _linked_message_body(ident, private_text) for ident in ("first", "second")},
+    )
+    if fault == "binding":
+        owner, attribute = SqliteDeterminationRepository, "bind"
+    else:
+        owner = feedback_module
+        attribute = "_store_suggestion" if fault == "persistence" else "_record_safe_event"
+    original = getattr(owner, attribute)
+    writes = 0
+    failures = 0
+
+    def fail_after_second_write(*args, **kwargs):
+        nonlocal writes, failures
+        result = original(*args, **kwargs)
+        if fault == "binding" and kwargs.get("entity_kind") != "outcome_suggestion":
+            return result
+        writes += 1
+        if writes == 2:
+            failures += 1
+            if fault == "binding":
+                raise DeterminationFailure("persistence_error")
+            raise sqlite3.OperationalError(private_text)
+        return result
+
+    monkeypatch.setattr(owner, attribute, fail_after_second_write)
+    failed = scan_gmail_feedback(db_path=db_path, client=client, recipient_email=RECIPIENT, limit=1)
+    expected_code = "persistence_error" if fault == "binding" else "gmail_scan_failed"
+    assert (failed["ok"], failed["status"], failed["failureCode"]) == (False, "blocked", expected_code)
+    assert failures == 1
+    assert failed["linkedEvidenceCount"] == failed["suggestionsCreatedCount"] == 1
+    assert len(failed["evidence"]) == len(failed["suggestions"]) == 1
+    assert failed["evidence"][0]["providerMessageId"] == "first"
+    assert private_text not in json.dumps(failed)
+    first_evidence_id = failed["evidence"][0]["evidenceId"]
+    first_suggestion_id = failed["suggestions"][0]["suggestionId"]
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM application_email_evidence").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM application_outcome_suggestions").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM semantic_entity_bindings").fetchone()[0] == 2
+        first_evidence = tuple(conn.execute(
+            "SELECT * FROM application_email_evidence WHERE evidence_id=?", (first_evidence_id,),
+        ).fetchone())
+        first_suggestion = tuple(conn.execute(
+            "SELECT * FROM application_outcome_suggestions WHERE suggestion_id=?", (first_suggestion_id,),
+        ).fetchone())
+        events = conn.execute(
+            "SELECT payload_json FROM job_events WHERE event_type='ApplicationEmailFeedbackIngested'",
+        ).fetchall()
+        assert len(events) == 1
+        assert private_text not in json.dumps(events)
+
+    retry = scan_gmail_feedback(db_path=db_path, client=client, recipient_email=RECIPIENT, limit=1)
+    assert retry["ok"] is True
+    assert retry["duplicateMessageCount"] == retry["linkedEvidenceCount"] == retry["suggestionsCreatedCount"] == 1
+    assert failures == 1 and private_text not in json.dumps(retry)
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM application_email_evidence").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM application_outcome_suggestions").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM semantic_entity_bindings").fetchone()[0] == 4
+        assert tuple(conn.execute(
+            "SELECT * FROM application_email_evidence WHERE evidence_id=?", (first_evidence_id,),
+        ).fetchone()) == first_evidence
+        assert tuple(conn.execute(
+            "SELECT * FROM application_outcome_suggestions WHERE suggestion_id=?", (first_suggestion_id,),
+        ).fetchone()) == first_suggestion
+        events = conn.execute(
+            "SELECT payload_json FROM job_events WHERE event_type='ApplicationEmailFeedbackIngested'",
+        ).fetchall()
+        assert len(events) == 2
+        assert private_text not in json.dumps(events)
+
+
 def test_post_commit_notification_failure_counts_the_committed_message(tmp_path: Path, monkeypatch) -> None:
     db_path = seed_feedback_db(tmp_path)
     client = FakeGmailClient(
