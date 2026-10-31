@@ -225,6 +225,10 @@ This setting caps AI-agent spend for one newly started Apply job. `0` is a
 zero-dollar cap, not an unlimited budget. The per-application cap works inside
 the shared [daily LLM budget](configuration.md#runtime-setting-daily-llm-budget);
 neither setting authorizes submission.
+When the provider reports token counts without a per-run cost, the result omits
+the per-run usage summary and the daily ledger uses its token-based estimate.
+Partial token counts leave accounting unresolved as described in the shared
+budget guide.
 
 ### Apply agent timeout {#runtime-setting-apply-agent-timeout}
 

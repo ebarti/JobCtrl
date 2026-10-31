@@ -13,7 +13,9 @@ from __future__ import annotations
 import json
 import hashlib
 import logging
+import math
 import os
+import sys
 import platform
 import queue
 import re
@@ -214,6 +216,20 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _observed_token_count(value: Any) -> int | None:
+    return value if type(value) is int and value >= 0 else None
+
+
+def _observed_cost(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        cost = float(value)
+    except OverflowError:
+        return None
+    return cost if math.isfinite(cost) and cost >= 0 else None
+
+
 def _enqueue_stdout_lines(stream: Any, out: "queue.Queue[str | None]") -> None:
     try:
         for line in stream:
@@ -411,6 +427,9 @@ class ClaudeCodeCliAdapter:
         consumed_browser_results: set[str] = set()
         stats: dict[str, Any] = {}
         usage_recorded = False
+        spend_observation = None
+        spend_failed = False
+        spend_error: Exception | None = None
         proc: subprocess.Popen | None = None
         start = time.time()
 
@@ -419,6 +438,12 @@ class ClaudeCodeCliAdapter:
             from jobctrl.llm import enforce_spend_budget
 
             enforce_spend_budget("apply")
+            from jobctrl.infrastructure.llm.spend_observation import SpendObservation
+            from jobctrl.llm import _utc_spend_day
+
+            spend_observation = SpendObservation(
+                day=_utc_spend_day(), lane="apply", provider="anthropic", model=model_label,
+            )
             from jobctrl.apply.ownership import spawn_owned_apply_process
 
             proc = spawn_owned_apply_process(
@@ -552,27 +577,47 @@ class ClaudeCodeCliAdapter:
                                             if isinstance(part, dict) and isinstance(part.get("text"), str)
                                         )
                     elif msg_type == "result":
-                        usage = msg.get("usage", {}) or {}
+                        raw_usage = msg.get("usage")
+                        usage = raw_usage if isinstance(raw_usage, Mapping) else {}
+                        input_count = _observed_token_count(usage.get("input_tokens"))
+                        output_count = _observed_token_count(usage.get("output_tokens"))
+                        reported_cost = _observed_cost(msg.get("total_cost_usd"))
                         stats = {
-                            "input": int(usage.get("input_tokens", 0) or 0),
-                            "output": int(usage.get("output_tokens", 0) or 0),
-                            "cache_read": int(usage.get("cache_read_input_tokens", 0) or 0),
-                            "cache_create": int(usage.get("cache_creation_input_tokens", 0) or 0),
-                            "cost_usd": float(msg.get("total_cost_usd", 0) or 0),
-                            "turns": int(msg.get("num_turns", 0) or 0),
+                            "input": input_count,
+                            "output": output_count,
+                            "cache_read": _observed_token_count(usage.get("cache_read_input_tokens")) or 0,
+                            "cache_create": _observed_token_count(usage.get("cache_creation_input_tokens")) or 0,
+                            "cost_usd": reported_cost,
+                            "turns": _observed_token_count(msg.get("num_turns")) or 0,
                         }
-                        if not usage_recorded and any(
-                            stats[key] > 0 for key in ("input", "output", "cache_read", "cache_create", "cost_usd")
+                        if not usage_recorded and (
+                            raw_usage is not None or reported_cost is not None
+                            or stats["cache_read"] > 0 or stats["cache_create"] > 0
                         ):
                             from jobctrl.llm import record_llm_spend
+                            from jobctrl.infrastructure.llm.spend_observation import SpendAccountingUnresolved
 
-                            record_llm_spend(
-                                input_tokens=stats["input"],
-                                output_tokens=stats["output"],
-                                estimated_usd=stats["cost_usd"],
-                                model=model_label,
-                                lane="apply",
-                            )
+                            try:
+                                spend_day = _utc_spend_day()
+                                spend_observation.observed(
+                                    day=spend_day, input_tokens=input_count, output_tokens=output_count,
+                                    estimated_usd=reported_cost,
+                                )
+                                if input_count is None or output_count is None:
+                                    raise SpendAccountingUnresolved("Provider usage has unknown token counts.")
+                                record_llm_spend(
+                                    input_tokens=input_count,
+                                    output_tokens=output_count,
+                                    estimated_usd=reported_cost,
+                                    model=model_label,
+                                    day=spend_day,
+                                    lane="apply",
+                                )
+                            except BaseException as error:
+                                spend_failed = True
+                                if not isinstance(error, Exception):
+                                    raise
+                                spend_error = error
                             usage_recorded = True
                         raw_result = msg.get("result", "")
                         result_text = (
@@ -600,7 +645,8 @@ class ClaudeCodeCliAdapter:
                     cache_create=stats.get("cache_create", 0),
                     cost_usd=float(stats.get("cost_usd", 0.0)),
                 )
-                if stats
+                if (stats and stats["input"] is not None and stats["output"] is not None
+                    and stats["cost_usd"] is not None)
                 else None
             )
             # Negative returncode means the process was killed by a
@@ -656,6 +702,8 @@ class ClaudeCodeCliAdapter:
                     )
                 except DeterminationFailure as failure:
                     submission = Failed(error=failure.code, retryable=False)
+            if spend_error is not None and not isinstance(submission, Failed):
+                raise spend_error
             return AgentResult(
                 submission_result=submission,
                 token_usage=token_usage,
@@ -672,13 +720,23 @@ class ClaudeCodeCliAdapter:
                 _kill_process_tree_if_alive(proc)
             raise
         finally:
-            if proc is not None:
-                _kill_process_tree_if_alive(proc)
-                _unregister_active_claude_process(worker_id, proc)
             try:
-                mcp_config_path.unlink(missing_ok=True)
-            except Exception:  # noqa: BLE001
-                log.debug("failed to delete apply MCP config %s", mcp_config_path, exc_info=True)
+                if proc is not None:
+                    _kill_process_tree_if_alive(proc)
+                    _unregister_active_claude_process(worker_id, proc)
+                try:
+                    mcp_config_path.unlink(missing_ok=True)
+                except Exception:  # noqa: BLE001
+                    log.debug("failed to delete apply MCP config %s", mcp_config_path, exc_info=True)
+            finally:
+                if spend_observation is not None:
+                    primary = sys.exception()
+                    try:
+                        spend_observation.close(unresolved=spend_failed)
+                    except BaseException:
+                        if primary is None:
+                            raise
+                        primary.add_note("Finishing the LLM spend receipt also failed.")
 
 
 def _allowed_tools_for_mcp_config(mcp_config: Mapping[str, Any]) -> str:

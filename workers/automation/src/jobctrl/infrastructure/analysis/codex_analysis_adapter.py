@@ -411,8 +411,9 @@ class CodexAnalysisAdapter:
                     factory=factory, approval=_deny_all_approval_mode,
                     model=self._model, effort=effort, prompt=prompt, operation="chat_json",
                     output_schema=output_schema,
-                    record_usage=lambda input_tokens, output_tokens: record(
+                    record_usage=lambda input_tokens, output_tokens, unresolved_usage=None: record(
                         "", input_tokens=input_tokens, output_tokens=output_tokens,
+                        usage_observed=True, unresolved_usage=unresolved_usage,
                     ),
                     record_usage_details=lambda cached, reasoning: record(
                         "", cached_input_tokens=cached, reasoning_output_tokens=reasoning,

@@ -38,7 +38,10 @@ NativeCredentialStore.read = blocked
 NativeCredentialStore.inspect = blocked
 subprocess.Popen = blocked
 socket.socket.connect = blocked
+socket.socket.connect_ex = blocked
+socket.socket.bind = blocked
 socket.create_connection = blocked
+socket.getaddrinfo = blocked
 if os.environ.get("DIGEST_TEST_FAIL_PROJECTION") == "1":
     from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
     def fail_refresh(*args, **kwargs):
@@ -247,7 +250,58 @@ def test_digest_cli_on_empty_exact_schema_returns_real_zeros_without_acknowledgi
     assert payload["pendingApprovals"]["count"] == 0
     assert payload["staleScores"]["count"] == 0
     assert payload["followUpsDue"]["count"] == 0
+    assert payload["budget"] == {
+        "status": "ok", "estimatedUsd": 0.0, "dailyBudgetUsd": 25.0,
+        "remainingUsd": 25.0, "unlimited": False,
+    }
     assert _state(db_path) == before
+
+
+@pytest.mark.parametrize("receipt_state", ["active", "abandoned"])
+@pytest.mark.parametrize("daily_budget", [12.5, 0.0])
+def test_digest_cli_keeps_other_data_when_spend_is_unresolved(
+    workspace: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch, receipt_state: str, daily_budget: float,
+) -> None:
+    import jobctrl.database as database
+    from jobctrl.infrastructure.llm.spend_observation import SpendObservation
+
+    app_dir, db_path = workspace
+    monkeypatch.setattr(database, "DB_PATH", db_path)
+    (app_dir / "config.json").write_text(json.dumps({"daily_budget_usd": daily_budget}))
+    recent = _time(1)
+    with sqlite3.connect(db_path) as conn:
+        job_id = _insert_job(conn, "local", 1, discovered=recent, score=9)
+        _stage(conn, "local", job_id, "pending", recent)
+        conn.execute(
+            "INSERT INTO job_score_staleness (tenant_id,job_id,stale_reason,old_policy_version,new_policy_version,marked_at,resolved) VALUES ('local',?,'synthetic',1,2,?,0)",
+            (job_id, recent),
+        )
+    receipt = SpendObservation(day="2026-01-01", lane="scoring", provider="google", model="synthetic")
+    receipt.observed(day="2026-01-01", input_tokens=11, output_tokens=None)
+    receipt_path = next((app_dir / ".jobctrl.db.llm-spend-pending").glob("*.jsonl"))
+    before_receipt = receipt_path.read_bytes()
+    before_state = _state(db_path)
+    if receipt_state == "abandoned":
+        receipt.close(unresolved=True)
+    try:
+        result = _run_digest(app_dir)
+        assert result.returncode == 0, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["ok"] is True
+        assert payload["newMatches"]["count"] == 1
+        assert payload["staleScores"]["count"] == 1
+        assert payload["pendingApprovals"]["count"] == 1
+        assert payload["budget"] == {
+            "status": "incomplete", "estimatedUsd": None, "dailyBudgetUsd": daily_budget,
+            "remainingUsd": None, "unlimited": daily_budget == 0,
+        }
+        assert receipt_path.read_bytes() == before_receipt
+        assert _state(db_path) == before_state
+        with sqlite3.connect(db_path) as conn:
+            assert conn.execute("SELECT COUNT(*) FROM llm_spend").fetchone() == (0,)
+    finally:
+        if receipt_state == "active":
+            receipt.close(unresolved=True)
 
 
 def test_digest_cli_counts_canonical_jobs_once_and_respects_tenant_and_state(workspace: tuple[Path, Path]) -> None:

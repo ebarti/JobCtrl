@@ -47,7 +47,9 @@ function digestRows(digest: DailyDigest): readonly DigestRow[] {
     .slice(0, 2)
     .map((source) => source.displayName ?? source.sourceId)
     .join(", ");
-  const budgetDetail = digest.budget.unlimited
+  const budgetDetail = digest.budget.status === "incomplete"
+    ? "LLM spend pending or unresolved"
+    : digest.budget.unlimited
     ? `${formatMoney(digest.budget.estimatedUsd)} spent`
     : `${formatMoney(digest.budget.remainingUsd)} remaining of ${formatMoney(digest.budget.dailyBudgetUsd)}`;
 
@@ -109,11 +111,11 @@ function digestRows(digest: DailyDigest): readonly DigestRow[] {
     {
       key: "budget",
       label: "Budget",
-      value: digest.budget.status === "over_budget" ? "over" : "ok",
+      value: digest.budget.status === "incomplete" ? "unknown" : digest.budget.status === "over_budget" ? "over" : "ok",
       detail: budgetDetail,
       href: digest.deepLinks.budget,
       actionLabel: "Open",
-      tone: digest.budget.status === "over_budget" ? "warn" : "ok",
+      tone: digest.budget.status === "ok" ? "ok" : "warn",
     },
   ];
 }

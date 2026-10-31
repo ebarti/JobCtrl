@@ -95,6 +95,7 @@ def test_llm_generation_span_records_spend_once(monkeypatch, in_memory_exporter)
     from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
 
     calls: list[dict] = []
+    monkeypatch.setattr("jobctrl.llm._utc_spend_day", lambda: "2042-06-09")
 
     def fake_record_llm_spend(**kwargs):
         calls.append(kwargs)
@@ -109,6 +110,7 @@ def test_llm_generation_span_records_spend_once(monkeypatch, in_memory_exporter)
             "input_tokens": 5,
             "output_tokens": 2,
             "model": "gemini-3.5-flash",
+            "day": "2042-06-09",
             "lane": "tailoring",
         }
     ]
@@ -354,25 +356,60 @@ def test_capture_serialization_failure_does_not_fail_model_work(monkeypatch, in_
 
 
 
-def test_content_opt_in_without_recording_does_not_serialize_bodies(monkeypatch):
+def test_content_opt_in_without_recording_does_not_serialize_bodies(monkeypatch, tmp_path):
     from contextlib import nullcontext
+    import sqlite3
     from types import SimpleNamespace
 
     from opentelemetry import trace
 
+    import jobctrl.database as database
     from jobctrl.infrastructure.observability import llm_spans
 
+    db_path = tmp_path / "jobctrl.db"
+    monkeypatch.setattr(database, "DB_PATH", db_path)
+    database.init_db(db_path)
+    monkeypatch.setattr("jobctrl.llm._utc_spend_day", lambda: "2042-06-09")
     monkeypatch.setenv("JOBCTRL_TRACE_CONTENT", "1")
+    attributes = []
+
+    class NonRecordingSpan(trace.NonRecordingSpan):
+        def set_attribute(self, key, value):
+            attributes.append((key, value))
+
     monkeypatch.setattr(llm_spans.trace, "get_tracer", lambda _name: SimpleNamespace(
-        start_as_current_span=lambda *_args, **_kwargs: nullcontext(trace.NonRecordingSpan(trace.INVALID_SPAN_CONTEXT)),
+        start_as_current_span=lambda *_args, **_kwargs: nullcontext(NonRecordingSpan(trace.INVALID_SPAN_CONTEXT)),
     ))
 
-    def forbidden(*_args, **_kwargs):
-        raise AssertionError("A nonrecording span must not serialize private request bodies")
+    markers = ("PRIVATE_PROMPT", "PRIVATE_OUTPUT", "PRIVATE_SCHEMA", "PRIVATE_INSTRUCTIONS", "PRIVATE_RUNTIME")
+    original_dumps = json.dumps
+    serializations = []
 
-    monkeypatch.setattr(llm_spans.json, "dumps", forbidden)
-    with llm_spans.llm_generation_span(
-        model="gpt-test", messages=[{"role": "user", "content": "Synthetic input"}], params={},
-        response_schema={"unused_non_json_value": object()},
-    ) as record:
-        record("Synthetic output")
+    def guarded_dumps(value, *args, **kwargs):
+        assert all(marker not in repr(value) for marker in markers), "Private provider content was serialized"
+        serializations.append(value)
+        return original_dumps(value, *args, **kwargs)
+
+    monkeypatch.setattr(llm_spans.json, "dumps", guarded_dumps)
+    try:
+        with llm_spans.llm_generation_span(
+            model="gpt-test", messages=[{"role": "user", "content": "PRIVATE_PROMPT"}], params={},
+            response_schema={"marker": "PRIVATE_SCHEMA", "unused_non_json_value": object()},
+            runtime_instructions="PRIVATE_INSTRUCTIONS", runtime_prompt="PRIVATE_RUNTIME",
+        ) as record:
+            record("PRIVATE_OUTPUT", input_tokens=5, output_tokens=2)
+            receipt = next((tmp_path / ".jobctrl.db.llm-spend-pending").glob("*.jsonl"))
+            receipt_text = receipt.read_text()
+            assert all(marker not in receipt_text for marker in markers)
+
+        assert all(marker not in repr(attributes) for marker in markers)
+        assert any(isinstance(value, dict) and value.get("day") == "2042-06-09"
+                   and value.get("input_tokens") == 5 and value.get("output_tokens") == 2
+                   for value in serializations)
+        with sqlite3.connect(db_path) as raw:
+            assert raw.execute("SELECT day, lane, input_tokens, output_tokens FROM llm_spend").fetchone() == (
+                "2042-06-09", "tailoring", 5, 2,
+            )
+        assert not list((tmp_path / ".jobctrl.db.llm-spend-pending").glob("*.jsonl"))
+    finally:
+        database.close_connection(db_path)

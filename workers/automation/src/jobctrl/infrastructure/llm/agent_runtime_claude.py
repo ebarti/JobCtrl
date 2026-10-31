@@ -101,22 +101,36 @@ async def call_claude_runtime(*, query: Any, options: Any, prompt: str, model: s
                 lambda: _ClaudeRuntime(query_func=_query, options_cls=_options, reuse_process=False),
                 task,
             )
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as error:
             # The service has joined the SDK task and cleanup at this point.
             # Account on the caller's span/lane, never from the SDK thread.
             if state.post_terminal_failure or getattr(state.messages, 'post_terminal_failure', False):
                 logging.getLogger(__name__).warning("Claude cleanup failed after a terminal receipt during cancellation.")
             if record_cancelled_usage is not None:
-                from jobctrl.infrastructure.analysis.claude_analysis_adapter import _usage_from_messages
+                from jobctrl.infrastructure.analysis.claude_analysis_adapter import _record_available_usage
 
                 try:
-                    input_tokens, output_tokens = _usage_from_messages(state.messages)
-                    if input_tokens is not None or output_tokens is not None:
-                        record_cancelled_usage("", input_tokens=input_tokens, output_tokens=output_tokens)
-                except Exception:
+                    _record_available_usage(state.messages, record_cancelled_usage)
+                except BaseException:
+                    try:
+                        record_cancelled_usage("", unresolved_usage=[{"reason": "usage_collection_failed"}])
+                    except BaseException:
+                        pass
+                    error.add_note("Persisting observed Claude usage also failed.")
                     logging.getLogger(__name__).warning("Could not record observed Claude usage after cancellation.")
             raise
-        except Exception:
+        except Exception as error:
+            if record_cancelled_usage is not None:
+                from jobctrl.infrastructure.analysis.claude_analysis_adapter import _record_available_usage
+
+                try:
+                    _record_available_usage(state.messages, record_cancelled_usage)
+                except BaseException:
+                    try:
+                        record_cancelled_usage("", unresolved_usage=[{"reason": "usage_collection_failed"}])
+                    except BaseException:
+                        pass
+                    error.add_note("Persisting observed Claude usage also failed.")
             if not any(type(message).__name__ == 'ResultMessage' for message in state.messages):
                 raise
             # A failure after the kit received the terminal can occur during
@@ -126,6 +140,17 @@ async def call_claude_runtime(*, query: Any, options: Any, prompt: str, model: s
         # Existing owners account for terminal usage before classifying the
         # native failure and parsing the response. Kit dispatch never substitutes
         # text for a missing native structured result.
+        if record_cancelled_usage is not None:
+            from jobctrl.infrastructure.analysis.claude_analysis_adapter import _record_available_usage
+
+            try:
+                _record_available_usage(state.messages, record_cancelled_usage)
+            except BaseException:
+                try:
+                    record_cancelled_usage("", unresolved_usage=[{"reason": "usage_collection_failed"}])
+                except BaseException:
+                    pass
+                raise
         return _ClaudeMessages(state.messages, succeeded=result.is_success, structured=schema is not None)
     finally:
         _call.reset(token)

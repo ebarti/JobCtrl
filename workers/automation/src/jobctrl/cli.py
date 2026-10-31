@@ -2006,6 +2006,8 @@ def _budget_status_label(budget: dict[str, Any]) -> str:
 
 
 def _budget_note(budget: dict[str, Any]) -> str:
+    if budget.get("status") == "incomplete":
+        return "LLM spend pending or unresolved"
     if budget.get("unlimited"):
         return "Unlimited local daily budget"
     estimated = float(budget.get("estimatedUsd") or 0.0)

@@ -18,6 +18,7 @@ cancellation of the wrapping asyncio task.
 from __future__ import annotations
 
 import json
+import hashlib
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any
 
@@ -171,7 +172,7 @@ def _structured_output_from_messages(messages: list[Any]) -> dict[str, Any]:
 
 def _optional_int(value: Any) -> int | None:
     """Coerce an SDK usage field to ``int``, or ``None`` when absent/unparseable."""
-    if value is None:
+    if value is None or isinstance(value, bool) or not isinstance(value, (int, str)):
         return None
     try:
         return int(value)
@@ -195,10 +196,81 @@ def _usage_from_messages(messages: list[Any]) -> tuple[int | None, int | None]:
         usage = getattr(message, "usage", None)
         if not isinstance(usage, Mapping):
             return None, None
-        input_tokens = _optional_int(usage.get("input_tokens")) or 0
-        output_tokens = _optional_int(usage.get("output_tokens")) or 0
-        return (input_tokens or None, output_tokens or None)
+        input_tokens = _optional_int(usage.get("input_tokens"))
+        output_tokens = _optional_int(usage.get("output_tokens"))
+        return (
+            input_tokens if input_tokens is not None and input_tokens >= 0 else None,
+            output_tokens if output_tokens is not None and output_tokens >= 0 else None,
+        )
     return None, None
+
+
+def _record_available_usage(messages: list[Any], record: Callable[..., None]) -> None:
+    """Record a terminal total, or unambiguous per-message SDK observations."""
+    terminal_counts = None
+    terminal = next((message for message in reversed(messages) if type(message).__name__ == "ResultMessage"), None)
+    if terminal is not None and getattr(terminal, "usage", None) is not None:
+        input_tokens, output_tokens = _usage_from_messages(messages)
+        terminal_counts = (input_tokens, output_tokens)
+        if input_tokens is not None and output_tokens is not None:
+            record("", input_tokens=input_tokens, output_tokens=output_tokens)
+            return
+
+    reports: list[dict[str, Any]] = []
+    for message in messages:
+        if type(message).__name__ != "AssistantMessage":
+            continue
+        usage = getattr(message, "usage", None)
+        if usage is None:
+            continue
+        if not isinstance(usage, Mapping):
+            usage = {}
+        input_tokens = _optional_int(usage.get("input_tokens"))
+        output_tokens = _optional_int(usage.get("output_tokens"))
+        input_tokens = input_tokens if input_tokens is not None and input_tokens >= 0 else None
+        output_tokens = output_tokens if output_tokens is not None and output_tokens >= 0 else None
+        message_id = getattr(message, "message_id", None)
+        identity = (
+            hashlib.sha256(message_id.encode("utf-8", "surrogatepass")).hexdigest()
+            if isinstance(message_id, str) and message_id else None
+        )
+        reports.append({"message_id_hash": identity, "input_tokens": input_tokens, "output_tokens": output_tokens})
+    if not reports:
+        if terminal_counts is not None:
+            if terminal_counts == (None, None):
+                record("", unresolved_usage=[{"input_tokens": None, "output_tokens": None}])
+            else:
+                record("", input_tokens=terminal_counts[0], output_tokens=terminal_counts[1])
+        return
+    if terminal_counts is not None:
+        fields = ("input_tokens", "output_tokens")
+        if terminal_counts == (None, None) or any(
+            terminal_counts[index] is None and any(report[field] is not None for report in reports)
+            for index, field in enumerate(fields)
+        ):
+            record("", unresolved_usage=[{"terminal_input_tokens": terminal_counts[0],
+                                          "terminal_output_tokens": terminal_counts[1]}, *reports])
+        else:
+            record("", input_tokens=terminal_counts[0], output_tokens=terminal_counts[1])
+        return
+    if len(reports) > 1 and any(report["message_id_hash"] is None for report in reports):
+        record("", unresolved_usage=reports)
+        return
+    unique: dict[str | None, dict[str, Any]] = {}
+    for report in reports:
+        identity = report["message_id_hash"]
+        if identity in unique and unique[identity] != report:
+            record("", unresolved_usage=reports)
+            return
+        unique[identity] = report
+    counts = []
+    for field in ("input_tokens", "output_tokens"):
+        values = [report[field] for report in unique.values()]
+        counts.append(sum(values) if all(value is not None for value in values) else None)
+    if any(count is None for count in counts):
+        record("", unresolved_usage=list(unique.values()))
+        return
+    record("", input_tokens=counts[0], output_tokens=counts[1])
 
 
 class _ClaudeStructuredCaller:
