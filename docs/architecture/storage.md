@@ -67,8 +67,13 @@ directories are preserved. A live installed instance must bind its payload path,
 build and manifest digest to an installed receipt. A source registry must bind
 the unchanged checkout launcher to its exact source execution scope and live
 kernel identities or a verified stopped completion. Unknown or changed ownership
-stops cleanup. Older execution receipts require matching completions and must
-have no live scope. A scope born on the current boot also requires verification
+stops cleanup. An independent installed Apply receipt also needs its exact native
+completion; an unresolved receipt prevents pruning even when the supervisor has
+stopped or the current workspace has no supervisor registry. The receipt does
+not identify a build, so cleanup preserves all candidate releases when it cannot
+establish completion. This check does not stop processes or change restart.
+Older execution receipts require matching completions and must have no live
+scope. A scope born on the current boot also requires verification
 on that boot; a prior-boot scope may have been verified on a later boot. Paired
 backup references remain protected in both kinds of
 workspace. Reference

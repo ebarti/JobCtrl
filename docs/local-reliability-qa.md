@@ -98,7 +98,14 @@ stable releases, then verify the oldest referenced release is eligible for an
 explicit rollback and that the restored database pair matches its recorded
 backup identity and bytes. Check active, controller, journal, prior, live-instance,
 non-stable and foreign preservation while an unreferenced owned stable release
-is pruned. Missing, malformed, linked or unreadable managed ownership must stop
+is pruned. Exercise an independent installed Apply through the owned selector,
+then verify the selection lock is released after the controller and helper exit.
+If its exact completion is unavailable, a separate workspace's promotion must
+preserve every candidate release. An exact completed receipt permits ordinary
+cleanup. Cover absent supervisor registry, malformed or foreign receipts,
+changed evidence during collection, same-boot live or unavailable coalition,
+and a prior-boot completed receipt; leave unrelated release contents untouched.
+Missing, malformed, linked or unreadable managed ownership must stop
 cleanup before any release is deleted. A missing `pair.json` in a native `pair-`
 directory also stops cleanup; a non-prefixed directory verified to have no
 `pair.json` is treated as unrelated and watched. Malformed, unreadable or linked

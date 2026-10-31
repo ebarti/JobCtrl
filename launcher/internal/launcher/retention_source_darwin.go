@@ -57,7 +57,7 @@ func verifyRetentionSourceAuthority(authority *retentionReferenceAuthority, inst
 	}}
 	var active *executionScope
 	var prior []executionScope
-	executions, err := openRetentionSourceDirectory(authority, instanceRoot, "executions")
+	executions, err := openRetentionExecutionDirectory(authority, instanceRoot, "executions")
 	if errors.Is(err, os.ErrNotExist) {
 		authority.watchAbsent(instanceRoot, "executions")
 	} else if err != nil {
@@ -78,7 +78,7 @@ func verifyRetentionSourceAuthority(authority *retentionReferenceAuthority, inst
 			if entry.Name() != id+".json" || !executionIDValid(id) {
 				return errors.New("unfamiliar source execution receipt")
 			}
-			raw, err := readRetentionSourceEvidence(authority, executions, entry.Name(), 16384)
+			raw, err := readRetentionExecutionEvidence(authority, executions, entry.Name(), 16384)
 			if err != nil {
 				return err
 			}
@@ -104,12 +104,12 @@ func verifyRetentionSourceAuthority(authority *retentionReferenceAuthority, inst
 		var completion executionCompletion
 		if completed == nil {
 			var err error
-			completed, err = openRetentionSourceDirectory(authority, instanceRoot, "completed-executions")
+			completed, err = openRetentionExecutionDirectory(authority, instanceRoot, "completed-executions")
 			if err != nil {
 				return completion, fmt.Errorf("source completion is unavailable: %w", err)
 			}
 		}
-		raw, err := readRetentionSourceEvidence(authority, completed, id+".json", 32768)
+		raw, err := readRetentionExecutionEvidence(authority, completed, id+".json", 32768)
 		if err != nil {
 			return completion, err
 		}
@@ -199,7 +199,7 @@ func verifyRetentionSourceAuthority(authority *retentionReferenceAuthority, inst
 	return nil
 }
 
-func openRetentionSourceDirectory(authority *retentionReferenceAuthority, parent *os.Root, name string) (*os.Root, error) {
+func openRetentionExecutionDirectory(authority *retentionReferenceAuthority, parent *os.Root, name string) (*os.Root, error) {
 	root, err := authority.openDirectory(parent, name)
 	if err != nil {
 		return nil, err
@@ -208,20 +208,20 @@ func openRetentionSourceDirectory(authority *retentionReferenceAuthority, parent
 	stat, ok := infoSysStat(info)
 	if err != nil || !ok || info.Mode().Perm() != 0o700 || int(stat.Uid) != os.Getuid() {
 		root.Close()
-		return nil, errors.New("unsafe source execution authority directory")
+		return nil, errors.New("unsafe execution authority directory")
 	}
 	authority.hold(root)
 	return root, nil
 }
 
-func readRetentionSourceEvidence(authority *retentionReferenceAuthority, root *os.Root, name string, limit int64) ([]byte, error) {
+func readRetentionExecutionEvidence(authority *retentionReferenceAuthority, root *os.Root, name string, limit int64) ([]byte, error) {
 	raw, info, err := readReferenceJSON(root, name)
 	if err != nil {
 		return nil, err
 	}
 	stat, ok := infoSysStat(info)
 	if !ok || info.Mode().Perm() != 0o600 || info.Size() > limit || int(stat.Uid) != os.Getuid() || stat.Nlink != 1 {
-		return nil, errors.New("unsafe source execution evidence")
+		return nil, errors.New("unsafe execution evidence")
 	}
 	authority.watch(root, name, info)
 	return raw, nil
