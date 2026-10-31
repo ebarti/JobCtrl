@@ -33,8 +33,9 @@ if (releaseFile) {
   }) as typeof db.prepare;
 }
 process.send?.({ kind: "ready", busyTimeoutMs: db.pragma("busy_timeout", { simple: true }) });
-process.once("message", () => {
+process.once("message", (message: unknown) => {
   try {
+    if (message !== null && typeof message === "object" && "kind" in message && message.kind === "cancel") return;
     const contact = updateContact(db, contactId, JSON.parse(encoded) as ContactUpdateRequest);
     process.send?.({ kind: "result", outcome: "committed", contact });
   } catch (error) {
