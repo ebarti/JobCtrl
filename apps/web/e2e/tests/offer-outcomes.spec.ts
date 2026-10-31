@@ -207,7 +207,14 @@ test("actual offer terms, decisions and corrections through Job Detail", async (
   await expect(
     panel.getByText("Offer decision: accepted", { exact: true }),
   ).toBeVisible();
-  await panel.getByText("Correct offer decision", { exact: true }).click();
+  // Saving retains the open form and its draft until an explicit review.
+  // Clicking the renamed summary would close the preserved decision form.
+  await expect(
+    panel.getByRole("combobox", { name: "Offer decision", exact: true }),
+  ).toBeVisible();
+  await expect(
+    panel.getByRole("button", { name: "Save offer decision" }),
+  ).toBeDisabled();
   await openSelect(
     panel.getByRole("combobox", { name: "Offer decision", exact: true }),
   );
@@ -223,6 +230,37 @@ test("actual offer terms, decisions and corrections through Job Detail", async (
   await panel
     .getByLabel("Decision correction reason")
     .fill("Corrected the synthetic decision");
+  await panel
+    .getByRole("button", {
+      name: "Keep draft and review latest offer",
+      exact: true,
+    })
+    .click();
+  await expect(
+    panel.getByText(
+      "Review your retained draft against the latest offer and attest again.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    panel
+      .getByRole("combobox", { name: "Offer decision", exact: true })
+      .locator("[data-slot=select-value]"),
+  ).toHaveText("declined");
+  await expect(panel.getByLabel("Decision source reference")).toHaveValue(
+    "Synthetic correction",
+  );
+  await expect(panel.getByLabel("Decision evidence or your attestation")).toHaveValue(
+    "I declined these exact terms. The earlier attestation was incorrect.",
+  );
+  await expect(panel.getByLabel("Decision correction reason")).toHaveValue(
+    "Corrected the synthetic decision",
+  );
+  await expect(
+    panel.getByRole("checkbox", {
+      name: "I attest to this offer decision on the current terms.",
+    }),
+  ).not.toBeChecked();
   await panel
     .getByRole("checkbox", {
       name: "I attest to this offer decision on the current terms.",
