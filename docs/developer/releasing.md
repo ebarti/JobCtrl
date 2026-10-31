@@ -154,6 +154,42 @@ Confirm the account action, recheck the candidate and current channel, then
 resume the existing run when its source is unchanged. Do not rotate credentials
 or bypass notarization to work around an agreement requirement.
 
+### Resume PyPI after a partially completed release
+
+If the GitHub Release is already public and immutable but its original workflow
+failed before PyPI publication, keep the original release tag and signed assets.
+The workflow has a PyPI-only recovery path; it does not build or sign a new app
+candidate, change the stable pointer, or republish Homebrew. First verify the
+original failed run, its successful signing, upgrade, lifecycle, pointer and
+Homebrew jobs, and the current signed stable pointer. The public immutable
+release must still be the latest stable release and match that pointer.
+
+Merge the reviewed recovery workflow to `main`, then create an annotated
+recovery tag on that reviewed commit. `RUN_ID` is the original failed release
+run ID; the recovery tag is an execution reference, not a new app release:
+
+```bash
+git tag -a vVERSION-pypi-resume.RUN_ID REVIEWED_MAIN_SHA -m 'Resume PyPI publication'
+git push origin refs/tags/vVERSION-pypi-resume.RUN_ID
+gh workflow run release-distribution.yml --repo ebarti/JobCtrl \
+  --ref vVERSION-pypi-resume.RUN_ID \
+  -f release_tag=vVERSION -f channel=stable -F resume_pypi=true \
+  -f sequence=CURRENT_SEQUENCE -f minimum_safe_sequence=EXISTING_FLOOR \
+  -f revoked_build_ids='EXISTING_SORTED_JSON_ARRAY' \
+  -f expected_channel_pointer_sha256=CURRENT_POINTER_SHA256
+```
+
+The recovery authority verifies the reviewed recovery ref, original run and
+its successful gates, immutable release attestation, source lineage, protected
+public key and exact live pointer. It also matches the immutable release's smoke
+evidence to the artifact from that original run. The existing PyPI gate then
+independently verifies the signed release, smoke evidence and source. Immediately
+before upload, the protected PyPI job rechecks the latest release and live pointer.
+Preserve the recovery tag and
+both workflow runs as audit evidence. If the pointer moved, an asset differs,
+or PyPI already contains part of the version, stop and reconcile rather than
+overwriting or blindly retrying.
+
 ## Verify what users receive
 
 Wait for the complete workflow, including PyPI, to succeed. Independently read back:
