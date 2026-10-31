@@ -68,6 +68,13 @@ corepack pnpm docs:check:runtime
 git diff --check
 ```
 
+Changes to release shell checks also run the focused release tests on a macOS
+runner with the system Bash. On macOS, run `node --test
+scripts/release-resume-pypi.test.mjs scripts/release-distribution-workflow.test.mjs`
+to exercise the same compatibility boundary locally. Do not rely on `set -e`
+alone to stop after a failed `[[ ... ]]` assertion in the system Bash; make the
+failure explicit.
+
 For a schema transition, require native cross-runtime migration proof with the
 locked Python and installed Node runtimes bound as documented in
 [Reliability & QA](../local-reliability-qa.md). Use only owned synthetic workspaces.
