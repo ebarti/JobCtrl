@@ -6,7 +6,8 @@ import type {
   ResumeTemplateVersionSummary,
 } from "@jobctrl/contracts";
 import { IconDeviceFloppy, IconStar } from "@tabler/icons-react";
-import { useEffect, useMemo, useState, type CSSProperties, type JSX } from "react";
+import { JobCtrlApiError } from "@jobctrl/api-client";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type JSX } from "react";
 
 import { ResumeStandalonePlateEditor } from "../../materials/components/ResumeAuditPins.js";
 import { Button } from "../../../shared/ui/button.js";
@@ -123,6 +124,43 @@ function templateDraft(template: ResumeTemplateSummary): TemplateDraft {
   };
 }
 
+function keepChanged<T>(base: T, draft: T, latest: T): T {
+  return JSON.stringify(base) === JSON.stringify(draft) ? latest : draft;
+}
+
+function reconcileTemplateDraft(draft: TemplateDraft, latest: ResumeTemplateSummary): TemplateDraft {
+  const base = draft.template.activeVersion.theme;
+  const edited = draft.theme;
+  const saved = latest.activeVersion.theme;
+  return {
+    ...draft,
+    template: latest,
+    displayName: keepChanged(draft.template.displayName, draft.displayName, latest.displayName),
+    theme: {
+      pageSize: keepChanged(base.pageSize, edited.pageSize, saved.pageSize),
+      fontFamily: keepChanged(base.fontFamily, edited.fontFamily, saved.fontFamily),
+      fontScale: keepChanged(base.fontScale, edited.fontScale, saved.fontScale),
+      density: keepChanged(base.density, edited.density, saved.density),
+      marginMm: {
+        top: keepChanged(base.marginMm.top, edited.marginMm.top, saved.marginMm.top),
+        right: keepChanged(base.marginMm.right, edited.marginMm.right, saved.marginMm.right),
+        bottom: keepChanged(base.marginMm.bottom, edited.marginMm.bottom, saved.marginMm.bottom),
+        left: keepChanged(base.marginMm.left, edited.marginMm.left, saved.marginMm.left),
+      },
+      headerLayout: keepChanged(base.headerLayout, edited.headerLayout, saved.headerLayout),
+      sectionHeadingStyle: keepChanged(base.sectionHeadingStyle, edited.sectionHeadingStyle, saved.sectionHeadingStyle),
+      alignment: keepChanged(base.alignment, edited.alignment, saved.alignment),
+      bulletSpacing: keepChanged(base.bulletSpacing, edited.bulletSpacing, saved.bulletSpacing),
+      accentColor: keepChanged(base.accentColor, edited.accentColor, saved.accentColor),
+      sectionOrder: keepChanged(base.sectionOrder, edited.sectionOrder, saved.sectionOrder),
+      hiddenSections: keepChanged(base.hiddenSections, edited.hiddenSections, saved.hiddenSections),
+    },
+    // Layout is not edited by this panel. Keep the current canonical layout.
+    layout: { ...latest.activeVersion.layout },
+    dirty: true,
+  };
+}
+
 function draftKey(tenantId: string, templateId: string): string {
   return JSON.stringify([tenantId, templateId]);
 }
@@ -140,6 +178,9 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
   const [savingTenants, setSavingTenants] = useState<Set<string>>(() => new Set());
   const [saveErrors, setSaveErrors] = useState<Record<string, string | null>>({});
   const [saveDefaultErrors, setSaveDefaultErrors] = useState<Record<string, string | null>>({});
+  const [conflicts, setConflicts] = useState<Record<string, boolean>>({});
+  const [reviewingTenants, setReviewingTenants] = useState<Set<string>>(() => new Set());
+  const observedTemplates = useRef<Record<string, ResumeTemplateSummary>>({});
   const activeTemplateId = selections.get(tenantId) ?? null;
   const selectTemplate = (id: string) => setSelections((previous) => new Map(previous).set(tenantId, id));
   const selectedId = activeTemplateId ?? fallbackTemplate?.templateId ?? null;
@@ -162,6 +203,7 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
 
   useEffect(() => {
     if (!activeTemplate) return;
+    observedTemplates.current[draftKey(tenantId, activeTemplate.templateId)] = activeTemplate;
     setDrafts((previous) => {
       const draftId = draftKey(tenantId, activeTemplate.templateId);
       const current = previous[draftId];
@@ -180,14 +222,28 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
   const defaultError = saveDefaultErrors[tenantId] ?? (setDefaultTemplate.error instanceof Error ? setDefaultTemplate.error.message : null);
   const selectedTemplateCanBeDefault = Boolean(activeTemplate);
   const selectedTemplateIsDefault =
-    activeTemplate && templatesQuery.data?.defaultTemplate?.templateId === activeTemplate.templateId;
-  const isSaving = savingTenants.has(tenantId) || setDefaultTemplate.isPending;
-  const templateSelectItems = [
-    ...templates.map((template) => ({ label: template.displayName, value: template.templateId })),
-    ...(activeTemplate && !templates.some((template) => template.templateId === activeTemplate.templateId)
-      ? [{ label: activeTemplate.displayName, value: activeTemplate.templateId }]
-      : []),
-  ];
+    activeTemplate && templatesQuery.data?.defaultTemplate?.templateId === activeTemplate.templateId
+    && templatesQuery.data.defaultTemplate.templateVersionId === activeTemplate.activeVersion.versionId;
+  const isSaving = savingTenants.has(tenantId) || reviewingTenants.has(tenantId) || setDefaultTemplate.isPending;
+  const needsReview = Boolean((key && conflicts[key]) || (draft?.dirty && activeTemplate && (
+    draft.template.activeVersion.versionId !== activeTemplate.activeVersion.versionId
+    || draft.template.displayName !== activeTemplate.displayName
+  )));
+  const selectableTemplates = new Map<string, ResumeTemplateSummary>(templates.map((template) => [template.templateId, template]));
+  for (const [savedKey, saved] of Object.entries(accepted)) {
+    if (savedKey !== draftKey(tenantId, saved.templateId)) continue;
+    const listedTemplate = selectableTemplates.get(saved.templateId);
+    if (!listedTemplate || saved.activeVersion.versionNumber >= listedTemplate.activeVersion.versionNumber) {
+      selectableTemplates.set(saved.templateId, saved);
+    }
+  }
+  if (activeTemplate && !selectableTemplates.has(activeTemplate.templateId)) {
+    selectableTemplates.set(activeTemplate.templateId, activeTemplate);
+  }
+  const templateSelectItems = [...selectableTemplates.values()].map((template) => ({
+    label: template.displayName,
+    value: template.templateId,
+  }));
 
   const editDraft = (change: (current: TemplateDraft) => TemplateDraft) => {
     if (!activeTemplate) return;
@@ -209,7 +265,9 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
     }));
   };
   const saveCurrent = (makeDefault: boolean) => {
-    if (!theme || !displayName.trim()) return;
+    if (!theme || !displayName.trim() || !activeTemplate || needsReview || isSaving) return;
+    const sourceKey = draftKey(tenantId, activeTemplate.templateId);
+    const submittedTemplate = activeTemplate;
     const editableTemplateId = activeTemplate?.builtIn ? undefined : activeTemplate?.templateId;
     setSavingTenants((previous) => new Set(previous).add(tenantId));
     setSaveErrors((previous) => ({ ...previous, [tenantId]: null }));
@@ -217,22 +275,78 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
     void saveTemplate.mutateAsync({
       body: {
         templateId: editableTemplateId,
+        expectedVersionId: editableTemplateId ? submittedTemplate.activeVersion.versionId : undefined,
         displayName: displayName.trim(),
         theme,
         layout,
       },
       makeDefault,
+      maySetDefault: (saved) => {
+        const observed = observedTemplates.current[sourceKey];
+        return !observed || observed.activeVersion.versionId === saved.template.activeVersion.versionId
+          || (observed.activeVersion.versionId === submittedTemplate.activeVersion.versionId && observed.displayName === submittedTemplate.displayName);
+      },
     }).then(({ saved, defaultError: error }) => {
       const savedKey = draftKey(tenantId, saved.template.templateId);
+      const defaultConflict = error?.cause instanceof JobCtrlApiError && error.cause.status === 409;
       setAccepted((previous) => ({ ...previous, [savedKey]: saved.template }));
-      setDrafts((previous) => ({ ...previous, [savedKey]: templateDraft(saved.template) }));
+      setDrafts((previous) => {
+        const observed = observedTemplates.current[sourceKey];
+        const changedWhileSaving = observed && (
+          observed.activeVersion.versionId !== saved.template.activeVersion.versionId && (
+            observed.activeVersion.versionId !== submittedTemplate.activeVersion.versionId
+            || observed.displayName !== submittedTemplate.displayName
+          )
+        );
+        const submittedDraft = previous[sourceKey];
+        return { ...previous, [savedKey]: (changedWhileSaving || defaultConflict) && submittedDraft
+          ? { ...submittedDraft, dirty: true }
+          : templateDraft(saved.template) };
+      });
+      if (defaultConflict) setConflicts((previous) => ({ ...previous, [savedKey]: true }));
       setSelections((previous) => new Map(previous).set(tenantId, saved.template.templateId));
       if (error) setSaveDefaultErrors((previous) => ({ ...previous, [tenantId]: error.message }));
     }).catch((error: unknown) => {
+      if (error instanceof JobCtrlApiError && error.status === 409) {
+        setConflicts((previous) => ({ ...previous, [sourceKey]: true }));
+      }
       setSaveErrors((previous) => ({ ...previous, [tenantId]: error instanceof Error ? error.message : String(error) }));
     }).finally(() => {
       setSavingTenants((previous) => { const next = new Set(previous); next.delete(tenantId); return next; });
     });
+  };
+
+  const reconcile = async (keepDraft: boolean) => {
+    if (!activeTemplate || !key || isSaving) return;
+    setReviewingTenants((previous) => new Set(previous).add(tenantId));
+    setSaveErrors((previous) => ({ ...previous, [tenantId]: null }));
+    try {
+      const result = await templatesQuery.refetch();
+      const latest = result.isSuccess && !result.error
+        ? result.data?.templates.find((item) => item.templateId === activeTemplate.templateId)
+        : undefined;
+      if (!latest || (acknowledged && (latest.activeVersion.versionNumber < acknowledged.activeVersion.versionNumber
+        || (latest.activeVersion.versionNumber === acknowledged.activeVersion.versionNumber
+          && latest.activeVersion.versionId !== acknowledged.activeVersion.versionId)))) {
+        setSaveErrors((previous) => ({ ...previous, [tenantId]: "Could not load the latest template. Your draft is retained; try again." }));
+        return;
+      }
+      if (latest.activeVersion.versionId !== activeTemplate.activeVersion.versionId || latest.displayName !== activeTemplate.displayName) {
+        setConflicts((previous) => ({ ...previous, [key]: true }));
+        setSaveErrors((previous) => ({ ...previous, [tenantId]: "The template changed again. Review the latest version before continuing." }));
+        return;
+      }
+      setDrafts((previous) => {
+        const current = previous[key];
+        if (!current) return previous;
+        return { ...previous, [key]: keepDraft ? reconcileTemplateDraft(current, latest) : templateDraft(latest) };
+      });
+      setConflicts((previous) => ({ ...previous, [key]: false }));
+    } catch {
+      setSaveErrors((previous) => ({ ...previous, [tenantId]: "Could not load the latest template. Your draft is retained; try again." }));
+    } finally {
+      setReviewingTenants((previous) => { const next = new Set(previous); next.delete(tenantId); return next; });
+    }
   };
 
   const workspaceControls = (
@@ -244,7 +358,7 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
         </div>
         <div className="resume-template-actions">
           <Button
-            disabled={!theme || isSaving || !displayName.trim()}
+            disabled={!theme || isSaving || needsReview || !displayName.trim()}
             size="sm"
             type="button"
             onClick={() => saveCurrent(false)}
@@ -253,7 +367,7 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
             {savingTenants.has(tenantId) ? "saving" : "save version"}
           </Button>
           <Button
-            disabled={!theme || isSaving || !displayName.trim()}
+            disabled={!theme || isSaving || needsReview || !displayName.trim()}
             size="sm"
             type="button"
             variant="outline"
@@ -263,7 +377,7 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
             save default
           </Button>
           <Button
-            disabled={!selectedTemplateCanBeDefault || Boolean(selectedTemplateIsDefault) || isSaving}
+            disabled={!selectedTemplateCanBeDefault || Boolean(selectedTemplateIsDefault) || isSaving || needsReview}
             size="sm"
             type="button"
             variant="ghost"
@@ -272,6 +386,13 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
               setDefaultTemplate.mutate({
                 templateId: activeTemplate.templateId,
                 versionId: activeTemplate.activeVersion.versionId,
+                expectedActiveVersionId: activeTemplate.activeVersion.versionId,
+              }, {
+                onError: (error) => {
+                  if (error instanceof JobCtrlApiError && error.status === 409) {
+                    setConflicts((previous) => ({ ...previous, [draftKey(tenantId, activeTemplate.templateId)]: true }));
+                  }
+                },
               });
             }}
           >
@@ -437,6 +558,41 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
           />
         </Field>
       </FieldGroup>
+      {acknowledged && activeTemplate && acknowledged.activeVersion.versionId !== activeTemplate.activeVersion.versionId ? (
+        <div role="group" aria-label="Saved template version">
+          <p>Saved version {acknowledged.activeVersion.versionNumber} is available. The current version is {activeTemplate.activeVersion.versionNumber}.</p>
+          <Button type="button" variant="outline" disabled={isSaving || needsReview} onClick={() => {
+            setSaveDefaultErrors((previous) => ({ ...previous, [tenantId]: null }));
+            setDefaultTemplate.reset();
+            setDefaultTemplate.mutate({
+              templateId: acknowledged.templateId,
+              versionId: acknowledged.activeVersion.versionId,
+              expectedActiveVersionId: activeTemplate.activeVersion.versionId,
+            }, {
+              onError: (error) => {
+                if (error instanceof JobCtrlApiError && error.status === 409) {
+                  setConflicts((previous) => ({ ...previous, [draftKey(tenantId, activeTemplate.templateId)]: true }));
+                }
+              },
+            });
+          }}>Set saved version {acknowledged.activeVersion.versionNumber} as default</Button>
+        </div>
+      ) : null}
+      {needsReview && activeTemplate ? (
+        <div role="group" aria-label="Review changed template">
+          <p role="status">This template changed while you were editing. Your draft is retained; review the latest version before saving.</p>
+          <details>
+            <summary>Latest saved template settings</summary>
+            <p>{activeTemplate.displayName} · Version {activeTemplate.activeVersion.versionNumber}</p>
+            <p>Font: {activeTemplate.activeVersion.theme.fontFamily} · Scale: {activeTemplate.activeVersion.theme.fontScale} · Density: {activeTemplate.activeVersion.theme.density}</p>
+            <p>Header: {activeTemplate.activeVersion.theme.headerLayout} · Headings: {activeTemplate.activeVersion.theme.sectionHeadingStyle} · Alignment: {activeTemplate.activeVersion.theme.alignment} · Bullet spacing: {activeTemplate.activeVersion.theme.bulletSpacing}</p>
+            <p>Accent: {activeTemplate.activeVersion.theme.accentColor} · Margins: {Object.values(activeTemplate.activeVersion.theme.marginMm).join(" / ")} mm</p>
+          </details>
+          <p>Keeping your draft applies your changed settings over the latest version. If both versions changed a setting, your draft value is used.</p>
+          <Button type="button" variant="outline" disabled={isSaving} onClick={() => void reconcile(true)}>Keep draft and review latest version</Button>
+          <Button type="button" variant="outline" disabled={isSaving} onClick={() => void reconcile(false)}>Discard draft and load latest version</Button>
+        </div>
+      ) : null}
       {templatesQuery.isLoading ? <div className="banner inline">Loading resume templates.</div> : null}
       {saveError || defaultError ? <div className="banner inline">{saveError ?? defaultError}</div> : null}
     </div>

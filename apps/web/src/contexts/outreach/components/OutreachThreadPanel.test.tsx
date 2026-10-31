@@ -499,6 +499,47 @@ it.each(["success", "conflict"])("keeps a revision's late %s bound to its origin
   expect(requests).toEqual(["thread-A"]);
 });
 
+it("retains newer typing while an approved-message revision is pending and submits it deliberately", async () => {
+  const approved = makeOutreachDraft({ draftId: "approved-synthetic", generation: 1, status: "approved", approvedAt: "2026-07-06T00:05:00+00:00", bodyText: "Synthetic approved message" });
+  let current = makeOutreachThreadResponse(makeOutreachThreadDetail({ drafts: [approved] }));
+  let finish: (response: Response) => void = () => {};
+  const requests: string[] = [];
+  function publish(bodyText: string) {
+    const previous = current.thread!;
+    const drafts = [
+      ...previous.drafts.map((draft) => draft.status === "candidate" ? { ...draft, status: "superseded" as const } : draft),
+      makeOutreachDraft({ draftId: `approved-revision-${requests.length}`, generation: previous.latestGeneration + 1, bodyText }),
+    ];
+    current = makeOutreachThreadResponse(makeOutreachThreadDetail({ drafts, sendLogs: previous.sendLogs, followUp: previous.followUp }));
+    return acknowledgeOutreachRevision(current, `approved-revision-${requests.length}`);
+  }
+  server.use(
+    http.get("*/v1/contacts/:contactId/outreach", () => HttpResponse.json(current)),
+    http.post("*/v1/outreach/threads/:threadId/drafts", async ({ request }) => {
+      const text = ((await request.json()) as { editedBodyText: string }).editedBodyText;
+      requests.push(text);
+      if (requests.length === 1) return new Promise<Response>((resolve) => { finish = resolve; });
+      return HttpResponse.json(publish(text));
+    }),
+  );
+  const view = renderWithProviders(<OutreachThreadPanel contactId="contact-1" />);
+  fireEvent.click(await view.findByRole("button", { name: "Revise approved message" }));
+  const input = view.getByRole("textbox", { name: "Edit message" });
+  fireEvent.change(input, { target: { value: "Approved revision A" } });
+  fireEvent.click(within(input.closest("form")!).getByRole("button", { name: "Revise draft" }));
+  await waitFor(() => expect(requests).toEqual(["Approved revision A"]));
+  fireEvent.change(input, { target: { value: "Newer approved revision B" } });
+  finish(HttpResponse.json(publish("Approved revision A")));
+  expect(await view.findByText(/newer edits remain here and have not been verified/i)).toBeInTheDocument();
+  expect(input).toHaveValue("Newer approved revision B");
+  expect(current.thread?.drafts.find((draft) => draft.status === "approved")).toEqual(approved);
+  fireEvent.click(within(input.closest("form")!).getByRole("button", { name: "Revise draft" }));
+  await waitFor(() => expect(requests).toEqual(["Approved revision A", "Newer approved revision B"]));
+  await waitFor(() => expect(view.queryByRole("textbox", { name: "Edit message" })).not.toBeInTheDocument());
+  expect(current.thread?.drafts.at(-1)?.bodyText).toBe("Newer approved revision B");
+  expect(current.thread?.drafts.find((draft) => draft.status === "approved")).toEqual(approved);
+});
+
 it.each(["success", "failure", "conflict"])("retains and can deliberately submit newer typing after a pending revision returns %s", async (outcome) => {
   const { makeOutreachPublicationConflict } = await import("../../../test/fixtures/outreach.js");
   const submitted = "Submitted synthetic revision A";

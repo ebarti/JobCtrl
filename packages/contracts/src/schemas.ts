@@ -755,11 +755,16 @@ export interface ResumeTemplateDetailResponse {
 export const ResumeTemplateVersionSaveRequestSchema = z
   .object({
     templateId: z.string().trim().min(1).max(120).optional(),
+    expectedVersionId: z.string().trim().min(1).max(200).optional(),
     displayName: z.string().trim().min(1).max(120),
     theme: ResumeTemplateThemeSchema,
     layout: ResumeTemplateLayoutSchema.optional().default({}),
   })
-  .strict();
+  .strict()
+  .refine((value) => Boolean(value.templateId) === Boolean(value.expectedVersionId), {
+    path: ["expectedVersionId"],
+    message: "Updating a template requires the current version; new templates must not specify one.",
+  });
 export type ResumeTemplateVersionSaveRequest = z.infer<
   typeof ResumeTemplateVersionSaveRequestSchema
 >;
@@ -773,6 +778,7 @@ export const ResumeTemplateDefaultSelectionRequestSchema = z
   .object({
     templateId: z.string().trim().min(1).max(120),
     versionId: z.string().trim().min(1).max(160).optional(),
+    expectedActiveVersionId: z.string().trim().min(1).max(160).optional(),
   })
   .strict();
 export type ResumeTemplateDefaultSelectionRequest = z.infer<

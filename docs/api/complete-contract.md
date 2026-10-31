@@ -256,6 +256,17 @@ current default, `GET /v1/resume-templates/:templateId` returns one template,
 `POST /v1/resume-templates` saves a style/layout-only template
 version, `PATCH /v1/resume-templates/default` selects the default template, and
 `PATCH /v1/jobs/:jobKey/resume-template` sets or clears a per-job override.
+For a new template, omit `templateId` and `expectedVersionId`. Updating an
+existing template requires both fields; `expectedVersionId` must equal its
+current active version. The comparison, version insert and event commit under
+one SQLite write transaction. A mismatch returns `409`
+`resume_template_version_conflict` and writes nothing. Older update clients
+that omit the precondition receive `400` and must refresh before updating;
+they cannot silently overwrite a newer template. Default selection may supply
+`expectedActiveVersionId` to require that the selected template still has that
+active version. A mismatch returns the same `409` without changing the default.
+Clients may still deliberately select an earlier historical version when they
+omit that optional active-version precondition.
 `POST /v1/jobs/:jobKey/resume-template/ensure-current` lazily creates a
 render-only materials generation when the latest accepted resume text exists
 but was rendered with an older effective template. The refreshed `resume_pdf`

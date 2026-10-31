@@ -202,7 +202,10 @@ Saving the first terms records one offer milestone if no reviewed offer mileston
 require a reason and preserve the earlier source and values. **Record offer
 decision** stores your accepted or declined attestation against the exact
 current terms. A later decision requires a correction reason and the current
-decision ID; conflicting saves ask you to reload. Offer history retains both
+decision ID. If a save or another update changes the current offer while your
+form is open, your draft stays visible. Review the latest offer and choose to
+keep or discard your draft before trying again; keeping it requires a fresh
+confirmation or attestation. Offer history retains both
 records. When terms change after a decision, the old decision stays visible
 with an explanation that it refers to earlier terms. Review the new terms
 before reconfirming. These actions need no interview-prep session and never

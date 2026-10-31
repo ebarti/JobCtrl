@@ -30,6 +30,7 @@ import { useCredentialsQuery } from "../hooks/useCredentialsQuery.js";
 import { useProviderStatusQuery } from "../hooks/useProviderStatusQuery.js";
 import { useUpdateCredentialsBatchMutation } from "../hooks/useUpdateCredentialsBatchMutation.js";
 import { useVerifyCodexProviderMutation } from "../hooks/useVerifyCodexProviderMutation.js";
+import { credentialRecoveryMessage } from "../lib/credential-recovery-message.js";
 import { removeLegacyOpenAiKeyBatch } from "../lib/provider-credential-plans.js";
 import { profileKeys } from "../queryKeys.js";
 
@@ -48,6 +49,12 @@ export function CredentialsPanel() {
   const providerStatusQuery = useProviderStatusQuery();
   const credentials = credentialsQuery.data?.credentials ?? [];
   const store = credentialsQuery.data?.store;
+  const guidedSetupAvailable = Boolean(store?.available || store?.unavailableReason === "unsupported_platform");
+  const [hasGuidedSetup, setHasGuidedSetup] = useState(false);
+  useEffect(() => {
+    if (guidedSetupAvailable) setHasGuidedSetup(true);
+  }, [guidedSetupAvailable]);
+  const providerEditingBlocked = credentialsQuery.isError || !guidedSetupAvailable;
   const statuses = providerStatusQuery.data?.providers ?? [];
   const configured = (keys: readonly CredentialKey[]) =>
     keys.some((key) => {
@@ -84,7 +91,9 @@ export function CredentialsPanel() {
     <>
       <DisclosureSection
         className="provider-setup-shell provider-setup-disclosure"
-        collapsedSummary={providerSetupSummary(store, statuses)}
+        collapsedSummary={providerEditingBlocked && (store || credentialsQuery.isError)
+          ? "Credential-store status unavailable"
+          : providerSetupSummary(store, statuses)}
         defaultOpen
         description="Provider authentication, ownership, and runtime readiness"
         title="LLM providers"
@@ -95,7 +104,7 @@ export function CredentialsPanel() {
           providerStatusError={providerStatusQuery.error?.message}
           store={store}
         />
-        {!store ? (
+        {!store && !hasGuidedSetup ? (
           <div className="empty" role="status">Checking provider setup.</div>
         ) : (
           <div className="provider-card-list">
@@ -108,47 +117,51 @@ export function CredentialsPanel() {
               <CodexProviderSetup
                 isolatedAuthDetected={codexStatus?.mode === "cli_auth"}
                 legacyOpenAiKeyConfigured={
-                  store.available && configured(["OPENAI_API_KEY"])
+                  !credentialsQuery.isError && Boolean(store?.available) && configured(["OPENAI_API_KEY"])
                 }
               />
             </ProviderCard>
-            {store.available || store.unavailableReason === "unsupported_platform" ? (
+            {guidedSetupAvailable || hasGuidedSetup ? (
               <>
                 <ProviderCard
                   description="Choose one direct or third-party Claude Agent SDK authentication route."
                   provider="claude"
                   status={mergeConfiguredStatus("claude", claudeStatus, claudeConfigured)}
+                  statusUnknown={providerEditingBlocked}
                   title="Claude"
                   ownership={providerOwnership(credentials, CLAUDE_KEYS, claudeStatus)}
                   onConfigurationChange={() => markProviderConfigurationChanged("claude")}
                 >
                   <ClaudeProviderForm
                     configured={claudeConfigured}
-                    currentMode={claudeCurrentMode}
+                    currentMode={providerEditingBlocked ? null : claudeCurrentMode}
                     environmentManagedKeys={environmentManagedKeys}
-                    secretStorageAvailable={store.available}
+                    inspectionBlocked={providerEditingBlocked}
+                    secretStorageAvailable={Boolean(store?.available)}
                   />
                 </ProviderCard>
                 <ProviderCard
                   description="Use a Gemini API key or Google Vertex AI with Application Default Credentials."
                   provider="google"
                   status={mergeConfiguredStatus("google", googleStatus, googleConfigured)}
+                  statusUnknown={providerEditingBlocked}
                   title="Google"
                   ownership={providerOwnership(credentials, GOOGLE_KEYS, googleStatus)}
                   onConfigurationChange={() => markProviderConfigurationChanged("google")}
                 >
                   <GoogleProviderForm
                     configured={googleConfigured}
-                    currentMode={googleCurrentMode}
+                    currentMode={providerEditingBlocked ? null : googleCurrentMode}
                     environmentManagedKeys={environmentManagedKeys}
-                    secretStorageAvailable={store.available}
+                    inspectionBlocked={providerEditingBlocked}
+                    secretStorageAvailable={Boolean(store?.available)}
                   />
                 </ProviderCard>
               </>
             ) : (
               <ReadOnlyProviderGuidance
                 includeCodex={false}
-                reason={store.unavailableReason}
+                reason={store?.unavailableReason ?? null}
               />
             )}
           </div>
@@ -157,7 +170,7 @@ export function CredentialsPanel() {
       {store && capSolver ? (
         <DisclosureSection
           className="provider-setup-shell provider-disclosure provider-disclosure--capsolver"
-          collapsedSummary={`${credentialStatusLabel(capSolver)} · optional · restart required`}
+          collapsedSummary={`${credentialsQuery.isError ? "Status unavailable" : credentialStatusLabel(capSolver)} · optional · restart required`}
           defaultOpen={false}
           description="A CapSolver key only enables JobCtrl's owned solver tool during a user-started Apply. Unsupported or unconfigured CAPTCHA always fails closed."
           title="Apply CAPTCHA solver"
@@ -165,17 +178,17 @@ export function CredentialsPanel() {
           <CredentialForm
             credentialKey="CAPSOLVER_API_KEY"
             label="CapSolver API key"
-            configured={capSolver.configured}
+            configured={credentialsQuery.isError ? null : capSolver.configured}
             effectiveSource={capSolver.effectiveSource}
             editable={capSolver.editable}
-            available={store.available}
+            available={store.available && !credentialsQuery.isError}
             {...(store.unavailableReason !== null
               ? { unavailableReason: store.unavailableReason }
               : {})}
           />
         </DisclosureSection>
       ) : null}
-      <CredentialPrivacyNotice store={store} />
+      <CredentialPrivacyNotice store={store} inspectionUnknown={credentialsQuery.isError} />
     </>
   );
 }
@@ -303,6 +316,7 @@ function ProviderCard({
   children,
   ownership,
   onConfigurationChange,
+  statusUnknown = false,
 }: {
   provider: ProviderId;
   title: string;
@@ -311,19 +325,20 @@ function ProviderCard({
   children: ReactNode;
   ownership?: string | undefined;
   onConfigurationChange?: (() => void) | undefined;
+  statusUnknown?: boolean;
 }) {
-  const statusLabel = status?.ready
+  const statusLabel = statusUnknown ? "Status unknown" : status?.ready
     ? "Ready"
     : provider === "codex" && status?.mode === "cli_auth"
       ? "Authenticated · runtime unavailable"
       : status?.configured
         ? "Configured · restart or verify"
         : "Not configured";
-  const statusMessage = visibleProviderStatusMessage(provider, status);
+  const statusMessage = statusUnknown ? undefined : visibleProviderStatusMessage(provider, status);
   const [open, setOpen] = useState(false);
-  const visibleOwnership = ownership === "not configured" ? undefined : ownership;
+  const visibleOwnership = statusUnknown || ownership === "not configured" ? undefined : ownership;
   const detectedMode =
-    provider === "claude" || provider === "google"
+    !statusUnknown && (provider === "claude" || provider === "google")
       ? providerModeLabel(provider, status?.mode)
       : null;
   const summary = [
@@ -337,7 +352,7 @@ function ProviderCard({
       onChangeCapture={onConfigurationChange}
     >
       <DisclosureSection
-        actions={<div className="provider-card-actions"><StatusBadge icon={false} tone={status?.ready ? "ok" : status?.configured ? "warn" : "muted"}>{statusLabel}</StatusBadge><Button aria-expanded={open} aria-label={`${open ? "Close" : "Configure"} ${title}`} size="sm" type="button" variant="outline" onClick={() => setOpen((current) => !current)}>{open ? "Close" : "Configure"}</Button></div>}
+        actions={<div className="provider-card-actions"><StatusBadge icon={false} tone={statusUnknown ? "warn" : status?.ready ? "ok" : status?.configured ? "warn" : "muted"}>{statusLabel}</StatusBadge><Button aria-expanded={open} aria-label={`${open ? "Close" : "Configure"} ${title}`} size="sm" type="button" variant="outline" onClick={() => setOpen((current) => !current)}>{open ? "Close" : "Configure"}</Button></div>}
         className="provider-disclosure"
         collapsedSummary={summary || "Provider configuration"}
         description={description}
@@ -394,8 +409,8 @@ function CodexProviderSetup({
     try {
       await removeLegacyKey.mutateAsync(removeLegacyOpenAiKeyBatch());
       setLegacyMessage("Legacy OPENAI_API_KEY removed from the native credential store.");
-    } catch {
-      setLegacyMessage("Could not remove the legacy value from the native credential store. Check credential store access and retry.");
+    } catch (error) {
+      setLegacyMessage(`Could not remove the legacy value from the native credential store. No successful removal was confirmed. ${credentialRecoveryMessage(error) ?? "Check credential status before trying again."}`);
     }
   }
 
@@ -503,17 +518,23 @@ function DemoProviderSetup() {
 
 function CredentialPrivacyNotice({
   store,
+  inspectionUnknown = false,
 }: {
   store?: CredentialsResponse["store"] | undefined;
+  inspectionUnknown?: boolean;
 }) {
-  const boundaryCopy = store?.available
+  const boundaryCopy = inspectionUnknown
+    ? "Claude and Google credential-store state is unavailable until it can be checked."
+    : store?.available
     ? `Claude and Google values saved here stay in ${nativeStoreLabel(store.nativeStore)}.`
     : store?.unavailableReason === "unsupported_platform"
       ? "Claude and Google credentials are configured through the worker environment on this platform."
       : store?.unavailableReason === "inspection_failed"
         ? `Claude and Google ${nativeStoreLabel(store.nativeStore)} state is unavailable until inspection succeeds.`
         : "Provider credential storage status is loading.";
-  const boundaryBadge = store?.available
+  const boundaryBadge = inspectionUnknown
+    ? "Credential-store status unavailable"
+    : store?.available
     ? nativeStoreLabel(store.nativeStore)
     : store?.unavailableReason === "unsupported_platform"
       ? "Process environment"

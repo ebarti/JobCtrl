@@ -173,6 +173,12 @@ invisible text layer keeps the PDF searchable and extractable. The **Export
 PDF** action itself does not save a profile or template, register the download
 as a JobCtrl artifact, or change Apply approval state.
 
+Template editing retains your draft when a newer version appears. Review the
+latest settings and choose whether to keep your changes or discard them before
+saving. Keeping changes applies your edited settings over the latest version;
+if both changed one setting, your value is kept. If saving a version succeeds
+but setting it as the default fails, the saved version remains selectable.
+
 Profile and preference forms validate before saving. After five seconds without
 an edit, they attempt to autosave the current draft; the explicit **Save
 changes** button uses the same mutation path. If a save fails, the draft and

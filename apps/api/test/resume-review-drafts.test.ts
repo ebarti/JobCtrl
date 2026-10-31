@@ -55,6 +55,40 @@ afterEach(() => {
 });
 
 describe("resume review draft API", () => {
+  it("requires a version precondition for template updates and rejects a stale update without writing", async () => {
+    const app = buildApp(options);
+    const request = { displayName: "Synthetic template", theme: BUILT_IN_RESUME_TEMPLATE_THEME, layout: {} };
+    const firstResponse = await app.inject({ method: "POST", url: "/v1/resume-templates", payload: request });
+    expect(firstResponse.statusCode, firstResponse.body).toBe(200);
+    const first = firstResponse.json().template;
+    const legacy = await app.inject({ method: "POST", url: "/v1/resume-templates", payload: { ...request, templateId: first.templateId } });
+    expect(legacy.statusCode, legacy.body).toBe(400);
+    const winning = await app.inject({ method: "POST", url: "/v1/resume-templates", payload: {
+      ...request, templateId: first.templateId, expectedVersionId: first.activeVersion.versionId, displayName: "Concurrent winner",
+    } });
+    expect(winning.statusCode, winning.body).toBe(200);
+    const stale = await app.inject({ method: "POST", url: "/v1/resume-templates", payload: {
+      ...request, templateId: first.templateId, expectedVersionId: first.activeVersion.versionId, displayName: "Stale draft",
+    } });
+    expect(stale.statusCode, stale.body).toBe(409);
+    expect(stale.json()).toMatchObject({ error: "resume_template_version_conflict" });
+    const defaultBefore = await app.inject({ method: "GET", url: "/v1/resume-templates" });
+    const defaultConflict = await app.inject({ method: "PATCH", url: "/v1/resume-templates/default", payload: {
+      templateId: first.templateId, versionId: first.activeVersion.versionId, expectedActiveVersionId: first.activeVersion.versionId,
+    } });
+    expect(defaultConflict.statusCode, defaultConflict.body).toBe(409);
+    const defaultAfter = await app.inject({ method: "GET", url: "/v1/resume-templates" });
+    expect(defaultAfter.json().defaultTemplate).toEqual(defaultBefore.json().defaultTemplate);
+    const current = await app.inject({ method: "GET", url: `/v1/resume-templates/${encodeURIComponent(first.templateId)}` });
+    expect(current.statusCode, current.body).toBe(200);
+    expect(current.json().template).toMatchObject({ displayName: "Concurrent winner", activeVersion: { versionId: winning.json().template.activeVersion.versionId } });
+    const inspect = new Database(options.dbPath, { readonly: true });
+    try {
+      const count = inspect.prepare("SELECT COUNT(*) AS total FROM resume_template_versions WHERE tenant_id = ? AND template_id = ?").get("local", first.templateId) as { total: number };
+      expect(count.total).toBe(2);
+    } finally { inspect.close(); }
+    await app.close();
+  });
   it("creates a draft from approved resume materials without mutating artifacts in place", async () => {
     const app = buildApp(options);
 

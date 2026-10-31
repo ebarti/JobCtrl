@@ -20,6 +20,7 @@ import { Input } from "../../../shared/ui/input.js";
 import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import { useDeleteCredentialMutation } from "../hooks/useDeleteCredentialMutation.js";
 import { useUpdateCredentialMutation } from "../hooks/useUpdateCredentialMutation.js";
+import { credentialRecoveryMessage } from "../lib/credential-recovery-message.js";
 
 export interface CredentialFormProps {
   credentialKey: CredentialKey;
@@ -62,24 +63,26 @@ export function CredentialForm({
       },
     },
     onSubmit: async ({ value, formApi }) => {
+      if (updateCredential.isPending || deleteCredential.isPending) return;
       setStatusMessage("");
       updateCredential.reset();
       deleteCredential.reset();
+      const submittedValue = value.value;
       let response: CredentialsResponse;
       try {
         response = await updateCredential.mutateAsync(value);
       } catch {
         return;
       }
-      formApi.reset({ key: credentialKey, value: EMPTY_VALUE });
+      const newerInput = formApi.getFieldValue("value") !== submittedValue;
+      if (!newerInput) formApi.reset({ key: credentialKey, value: EMPTY_VALUE });
       const checked = response.credentials.find(
         (entry) => entry.key === credentialKey,
       )?.configured;
-      setStatusMessage(
-        checked === true
-          ? `${label} saved in Keychain. Restart the JobCtrl worker to use it.`
-          : `${label} was submitted to Keychain, but JobCtrl could not verify it. Retry the Keychain check before making another change.`,
-      );
+      const result = checked === true
+        ? `${label} saved in Keychain. Restart the JobCtrl worker to use it.`
+        : `${label} was submitted to Keychain, but JobCtrl could not verify it. Retry the Keychain check before making another change.`;
+      setStatusMessage(`${result}${newerInput ? " Newer input remains unsaved." : ""}`);
     },
   });
 
@@ -88,18 +91,19 @@ export function CredentialForm({
   }, [form, credentialKey]);
 
   const removeCredential = () => {
+    if (updateCredential.isPending || deleteCredential.isPending) return;
     setStatusMessage("");
     updateCredential.reset();
     deleteCredential.reset();
+    const submittedValue = form.getFieldValue("value");
     deleteCredential.mutate(credentialKey, {
       onSuccess: (response) => {
-        form.reset({ key: credentialKey, value: EMPTY_VALUE });
-        setStatusMessage(
-          response.credentials.find((entry) => entry.key === credentialKey)
-            ?.configured === false
-            ? `${label} removed from Keychain. Restart the JobCtrl worker to apply the change.`
-            : `${label} removal was submitted, but JobCtrl could not verify it. Retry the Keychain check before making another change.`,
-        );
+        const newerInput = form.getFieldValue("value") !== submittedValue;
+        if (!newerInput) form.reset({ key: credentialKey, value: EMPTY_VALUE });
+        const result = response.credentials.find((entry) => entry.key === credentialKey)?.configured === false
+          ? `${label} removed from Keychain. Restart the JobCtrl worker to apply the change.`
+          : `${label} removal was submitted, but JobCtrl could not verify it. Retry the Keychain check before making another change.`;
+        setStatusMessage(`${result}${newerInput ? " Newer input remains unsaved." : ""}`);
       },
     });
   };
@@ -221,7 +225,7 @@ export function CredentialForm({
           size="sm"
           type="button"
           variant="outline"
-          disabled={!canEditKeychain || configured !== true || removing}
+          disabled={!canEditKeychain || configured !== true || removing || updateCredential.isPending}
           onClick={removeCredential}
         >
           {removing ? "Removing…" : "Remove"}
@@ -249,10 +253,16 @@ function credentialMutationErrorMessage(error: Error | null): string {
   if (!error) {
     return "";
   }
+  const recovery = credentialRecoveryMessage(error);
+  if (recovery) return recovery;
   if (error instanceof JobCtrlApiError && error.status === 503) {
-    return "Keychain is unavailable. Unlock Keychain Access, then retry.";
+    return "The credential store is unavailable. Check credential status before trying again.";
   }
   if (error instanceof JobCtrlApiError && error.status === 409) {
+    const body = error.responseBody;
+    if (body && typeof body === "object" && "error" in body && body.error === "credential_managed_by_environment") {
+      return "This credential is managed by the launch environment and cannot be changed here.";
+    }
     return "Keychain editing is unavailable on this platform. Use environment configuration instead.";
   }
   return "JobCtrl could not update Keychain. Retry after checking Keychain Access.";

@@ -31,6 +31,30 @@ class DemoFeatureFlags implements FeatureFlagPort {
 }
 
 describe("<ModelSelectionPanel>", () => {
+  it("pauses model selection while its submitted preference is pending", async () => {
+    const user = userEvent.setup();
+    let resolve!: (value: typeof sampleSettingsResponse) => void;
+    const updateSettings = vi.fn(() => new Promise<typeof sampleSettingsResponse>((done) => { resolve = done; }));
+    let canonical = sampleSettingsResponse;
+    renderWithProviders(<ModelSelectionPanel />, { withRouter: true, ports: buildTestPorts({ api: {
+      settings: vi.fn(async () => canonical), providerModels: vi.fn(async () => sampleProviderModelsResponse), updateSettings,
+    } }) });
+    const claude = await providerCard("Claude");
+    const select = await claude.findByRole("combobox", { name: /Preferred model/ });
+    await user.click(select);
+    await user.click(await screen.findByRole("option", { name: /Opus 4\.8/ }));
+    await user.click(claude.getByRole("button", { name: "Save model" }));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledWith({ preferredModels: { claude: "claude-opus-4-8" } }));
+    expect(select).toBeDisabled();
+    expect(select).toHaveTextContent("Opus 4.8");
+    canonical = { ...sampleSettingsResponse, settings: { ...sampleSettingsResponse.settings, preferredModels: { claude: "claude-opus-4-8" } } };
+    await act(async () => resolve(canonical));
+    await waitFor(() => expect(select).toBeEnabled());
+    await user.click(select);
+    await user.click(await screen.findByRole("option", { name: /Sonnet 5/ }));
+    expect(select).toHaveTextContent("Sonnet 5");
+    expect(claude.getByRole("button", { name: "Save model" })).toBeEnabled();
+  });
   it("renders the three-provider catalog and requires configuration before selection", async () => {
     renderWithProviders(<ModelSelectionPanel />, {
       withRouter: true,
