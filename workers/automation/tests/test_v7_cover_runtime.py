@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import threading
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
+from temporalio.testing import ActivityEnvironment
 
 from jobctrl.database import init_db
 from jobctrl.domain.identifiers import JobId, canonical_job_id
@@ -30,6 +33,7 @@ from jobctrl.domain.scoring.value_objects import (
 )
 from jobctrl.domain.tenant import TenantId
 from jobctrl.infrastructure.materials import SqliteMaterialsRepository
+from jobctrl.infrastructure.preparation_recovery import MaterialActivityAttempt
 from jobctrl.infrastructure.scoring import SqliteScoreRepository
 from jobctrl.materials import activities as activities_module
 from jobctrl.materials.activities import CoverLetterActivityInput
@@ -386,6 +390,7 @@ def test_cover_default_runner_fences_cancellation_before_artifact_or_terminal_wr
 def test_cover_job_replay_closes_running_state_from_committed_approved_artifact(
     conn: sqlite3.Connection,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _seed_target(conn, tenant_id=_TENANT_A)
     _seed_eligible_score(conn, tenant_id=_TENANT_A)
@@ -393,6 +398,13 @@ def test_cover_job_replay_closes_running_state_from_committed_approved_artifact(
     _seed_stage_rows(conn, tenant_id=_TENANT_A)
     repository = SqliteMaterialsRepository(conn)
     llm = _CoverLlm()
+    env = ActivityEnvironment()
+    env.info = replace(env.info, workflow_run_id="owned-cover-replay-run", attempt=1)
+    attempt = MaterialActivityAttempt(env.info.activity_id, env.info.attempt, env.info.workflow_run_id)
+    prior_attempts = conn.execute(
+        "SELECT attempt_count FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()[0]
     first = cover_letter_module.cover_letter_by_id(
         _JOB_ID,
         tenant_id=_TENANT_A,
@@ -400,26 +412,43 @@ def test_cover_job_replay_closes_running_state_from_committed_approved_artifact(
         repository=repository,
         llm_port=llm,
         pdf_renderer=_PdfRenderer(),
+        workflow_id=env.info.workflow_run_id,
+        temporal_attempt=attempt,
     )
     assert first["status"] == "ok"
+    materials_sql = "SELECT * FROM job_materials_artifacts WHERE tenant_id = ? AND job_id = ? ORDER BY artifact_type"
+    scope = (str(_TENANT_A), str(_JOB_ID))
+    artifacts = conn.execute(materials_sql, scope).fetchall()
+    artifacts_before = [tuple(row) for row in artifacts]
+    bytes_before = {Path(row["path"]): Path(row["path"]).read_bytes() for row in artifacts if Path(row["path"]).is_file()}
+    # Model the interrupted first execution, including its real Temporal start
+    # identity and completed-count basis, rather than an unrelated direct read.
     conn.execute(
         """
         UPDATE job_stage_states
-        SET state = 'running'
+        SET state = 'running', attempt_count = ?, finished_at = NULL, duration_ms = NULL,
+            metadata_json = ?
         WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'
         """,
-        (str(_TENANT_A), str(_JOB_ID)),
+        (prior_attempts, json.dumps({"activityOwner": env.info.workflow_run_id,
+                                    "attemptCountBasis": "completed"}), *scope),
     )
     conn.commit()
 
-    replay = cover_letter_module.cover_letter_by_id(
-        _JOB_ID,
-        tenant_id=_TENANT_A,
-        snapshot=_snapshot(_TENANT_A),
-        repository=repository,
-        llm_port=llm,
-        pdf_renderer=_PdfRenderer(),
-    )
+    async def inline(blocking, **_):
+        return blocking()
+
+    monkeypatch.setattr("jobctrl.database.get_connection", lambda: conn)
+    monkeypatch.setattr("jobctrl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat", inline)
+    env.info = replace(env.info, attempt=2)
+
+    async def retry_activity():
+        return await env.run(
+            activities_module.cover_letter_activity,
+            CoverLetterActivityInput(tenant_id=str(_TENANT_A), job_id=_JOB_ID),
+        )
+
+    replay = asdict(asyncio.run(retry_activity()))
 
     assert replay["status"] == "already_done"
     assert replay["reason"] == "approved_cover_already_committed"
@@ -432,6 +461,12 @@ def test_cover_job_replay_closes_running_state_from_committed_approved_artifact(
         (str(_TENANT_A), str(_JOB_ID)),
     ).fetchone()
     assert state["state"] == "succeeded"
+    assert conn.execute(
+        "SELECT attempt_count FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'",
+        scope,
+    ).fetchone()[0] == prior_attempts + 1
+    assert [tuple(row) for row in conn.execute(materials_sql, scope)] == artifacts_before
+    assert {path: path.read_bytes() for path in bytes_before} == bytes_before
 
 
 def test_cover_by_id_skips_missing_approved_materials_before_llm_or_artifact_work(
