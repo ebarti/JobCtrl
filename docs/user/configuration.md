@@ -409,6 +409,19 @@ token cost for an in-flight call. The limit is not a reservation or strict
 in-flight cap. `GET /v1/health` and `jobctrl doctor` report the global USD total
 and each lane's observed tokens, configured threshold, and status.
 
+While a provider call is in progress, spend may be shown as pending because its
+usage has not yet settled. If accounting still shows as unresolved after active
+calls finish, a provider observation or its database commit needs inspection.
+The local digest still shows its other sections and marks the budget incomplete
+without guessing the spend or remaining amount.
+JobCtrl stops admitting further model calls rather than presenting a complete
+zero or automatically repeating an ambiguous ledger write. If a usage report
+contains only some token counts, the known values are retained for inspection
+and the missing values stay unknown. `jobctrl doctor`
+reports the condition. Preserve the private `.jobctrl.db.llm-spend-pending`
+receipts in the workspace and compare them with the ledger and provider records;
+there is no automatic reconciliation command for an uncertain commit.
+
 ## Provider sessions
 
 JobCtrl uses agent-runtime-kit to execute provider requests. Codex can keep its

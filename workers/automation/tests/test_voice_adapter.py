@@ -227,10 +227,14 @@ async def test_rewrite_span_omits_tokens_when_sdk_reports_no_usage(in_memory_exp
 
 
 @pytest.mark.asyncio
-async def test_rewrite_span_survives_malformed_sdk_usage(in_memory_exporter) -> None:
-    # A drifted / non-int usage field must NEVER fail the voice pass — token
-    # extraction runs inside the re-raising span block, so it degrades the
-    # unparseable count to omitted rather than raising.
+async def test_rewrite_span_retains_partial_sdk_usage_as_unresolved(in_memory_exporter, monkeypatch, tmp_path) -> None:
+    import jobctrl.database as database
+    import jobctrl.llm as accounting
+    from jobctrl.infrastructure.llm.spend_observation import SpendAccountingUnresolved
+
+    db_path = tmp_path / "jobctrl.db"
+    monkeypatch.setattr(database, "DB_PATH", db_path)
+    database.init_db(db_path)
     adapter = ClaudeVoiceAdapter(
         query_fn=_fake_query(
             _voiced_structured(),
@@ -238,10 +242,13 @@ async def test_rewrite_span_survives_malformed_sdk_usage(in_memory_exporter) -> 
         ),
         options_factory=_FakeClaudeOptions,
     )
-    result = await adapter.rewrite("system", _request())  # must not raise
-    assert result.executive_profile.startswith("Rebuilt the deploy pipeline")
+    with pytest.raises(SpendAccountingUnresolved):
+        await adapter.rewrite("system", _request())
 
     attrs = dict(in_memory_exporter.get_finished_spans()[0].attributes or {})
     assert "gen_ai.usage.input_tokens" not in attrs
     assert "langfuse.observation.usage_details" not in attrs
     assert attrs["gen_ai.usage.output_tokens"] == 10
+    with pytest.raises(SpendAccountingUnresolved):
+        accounting.read_llm_spend()
+    database.close_connection(db_path)

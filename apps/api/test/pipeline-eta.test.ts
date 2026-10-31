@@ -59,6 +59,11 @@ function input(overrides: Partial<PipelineEtaEstimatorInput> = {}): PipelineEtaE
 }
 
 describe("estimatePipelineEta", () => {
+  it("does not call incomplete accounting a budget overrun", () => {
+    expect(estimatePipelineEta(input({ budgetAvailable: null }))).toEqual({
+      status: "unavailable", reason: "accounting_incomplete", asOf: AS_OF,
+    });
+  });
   it("applies gate order before attempting any calculation", () => {
     expect(
       estimatePipelineEta(

@@ -3,6 +3,7 @@ import { JobCtrlApiError } from "@jobctrl/api-client";
 import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { healthKeys } from "../../contexts/operations/healthKeys.js";
 import { sampleHealthResponse } from "../../test/fixtures/projections.js";
 import { renderWithProviders } from "../../test/render.js";
 import { FakeEventStreamPort, buildTestPorts } from "../../test/testPorts.js";
@@ -60,6 +61,21 @@ describe("<ConnectionStatusPill>", () => {
     expect(await screen.findByText("LLM $0.12 / unlimited")).toBeInTheDocument();
   });
 
+  it("does not display a known spend amount for incomplete accounting", async () => {
+    renderConnectionStatusPill({
+      health: {
+        ...sampleHealthResponse,
+        llmSpend: {
+          ...sampleHealthResponse.llmSpend,
+          status: "incomplete", inputTokens: null, outputTokens: null,
+          estimatedUsd: null, remainingUsd: null,
+        },
+      },
+    });
+    expect(await screen.findByText("LLM spend pending or unresolved")).toBeInTheDocument();
+    expect(screen.queryByText(/LLM \$0/)).not.toBeInTheDocument();
+  });
+
   it("keeps worker health failures visible as an alert", async () => {
     renderConnectionStatusPill({
       health: {
@@ -90,6 +106,36 @@ describe("<ConnectionStatusPill>", () => {
     expect(await screen.findByText("Upgrade required")).toHaveAttribute("data-status", "lost");
     expect(screen.getByRole("alert")).toHaveTextContent("workspace database needs an upgrade");
     expect(screen.getByRole("alert")).toContainElement(screen.getByRole("link", { name: "Update guidance" }));
+  });
+
+  it("prioritizes a database startup refusal over cached incomplete spend", async () => {
+    const incomplete = {
+      ...sampleHealthResponse,
+      llmSpend: {
+        ...sampleHealthResponse.llmSpend,
+        status: "incomplete" as const, inputTokens: null, outputTokens: null,
+        estimatedUsd: null, remainingUsd: null,
+      },
+    };
+    const startupError = new JobCtrlApiError(503, "Unavailable", undefined, {
+      ok: false, error: "database_migration_required", currentVersion: 14, expectedVersion: 15,
+    });
+    let refuseHealth = false;
+    const ports = buildTestPorts({
+      eventStream: new FakeEventStreamPort(),
+      api: { health: vi.fn(async () => { if (refuseHealth) throw startupError; return incomplete; }) },
+    });
+    const { queryClient } = renderWithProviders(<ConnectionStatusPill />, { ports, withEventStream: true });
+    const queryKey = healthKeys.live(ports.session.getSession().tenantId);
+
+    expect(await screen.findByText("LLM spend pending or unresolved")).toBeInTheDocument();
+    refuseHealth = true;
+    await act(async () => { await queryClient.invalidateQueries({ queryKey }); });
+
+    expect(await screen.findByText("Upgrade required")).toHaveAttribute("data-status", "lost");
+    expect(queryClient.getQueryData(queryKey)).toEqual(incomplete);
+    expect(screen.queryByText("LLM spend pending or unresolved")).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("workspace database needs an upgrade");
   });
 
   it("does not present a newer database as needing migration", async () => {

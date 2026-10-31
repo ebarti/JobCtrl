@@ -61,6 +61,42 @@ def test_native_gemini_3_minimal_thinking_uses_thinking_level() -> None:
     assert "thinkingBudget" not in requests[0]["generationConfig"]["thinkingConfig"]
 
 
+@pytest.mark.parametrize("native", [False, True])
+def test_http_provider_empty_usage_report_is_unresolved(monkeypatch, tmp_path, native):
+    import sqlite3
+    import jobctrl.database as database
+    from jobctrl.infrastructure.llm.spend_observation import SpendAccountingUnresolved
+
+    db_path = tmp_path / "jobctrl.db"
+    monkeypatch.setattr(database, "DB_PATH", db_path)
+    database.init_db(db_path)
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        data = {"candidates": [{"content": {"parts": [{"text": "ok"}]}}], "usageMetadata": {}} if native else {
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}], "usage": {},
+        }
+        return httpx.Response(status_code=200, json=data)
+
+    client = LLMClient(base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+                       model="gemini-synthetic", api_key="synthetic")
+    client._client.close()
+    client._client = httpx.Client(transport=httpx.MockTransport(handler))
+    client._use_native_gemini = native
+    try:
+        with pytest.raises(SpendAccountingUnresolved):
+            client.chat([{"role": "user", "content": "synthetic"}])
+    finally:
+        client.close()
+    assert len(requests) == 1
+    with sqlite3.connect(db_path) as raw:
+        assert raw.execute("SELECT COUNT(*) FROM llm_spend").fetchone() == (0,)
+    with pytest.raises(SpendAccountingUnresolved):
+        llm.read_llm_spend()
+    database.close_connection(db_path)
+
+
 def test_compat_gemini_3_minimal_thinking_uses_thinking_level() -> None:
     requests: list[dict] = []
 

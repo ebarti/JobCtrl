@@ -2174,11 +2174,16 @@ writes `worker_runtime_heartbeats` into the same database; `GET /v1/health`
 returns the API app/database identity plus the latest Python worker
 heartbeat status (`healthy`, `missing`, `stale` after 45 s, or `mismatched`
 when the worker points at a different app dir/database) and an `llmSpend`
-block (`status: ok | over_budget`, today's `estimatedUsd` from the local
+block (`status: ok | over_budget | incomplete`, today's `estimatedUsd` from the local
 `llm_spend` metering table, and configured `dailyBudgetUsd` from
 `config.json` — default `25`, `0` = unlimited). Its `lanes` object reports every
 known product lane with input, output, total, limit, remaining, unlimited, and
-`ok | over_budget` status. Lane limits are read from `laneTokenLimits`; unknown
+`ok | over_budget | incomplete` status. While a provider receipt is pending or
+unresolved, health returns null spend and token totals and null remaining
+amounts, and the digest budget returns `incomplete` with null estimated and
+remaining amounts. Incomplete accounting gives pipeline ETA an unavailable
+`accounting_incomplete` reason, not a budget-exceeded reason. Lane limits are
+read from `laneTokenLimits`; unknown
 keys and non-integral or negative values are rejected by `PATCH /v1/settings`.
 The top-level spend status continues to represent the global USD ceiling so an
 exhausted lane does not make unrelated lanes unavailable. The response also

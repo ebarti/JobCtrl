@@ -99,6 +99,13 @@ def record_llm_spend(
 
 def read_llm_spend(day: str | None = None) -> dict[str, Any]:
     """Return global totals summed across every lane for one UTC day."""
+    from jobctrl.infrastructure.llm.spend_observation import require_resolved_spend
+
+    require_resolved_spend()
+    return _read_llm_spend(day)
+
+
+def _read_llm_spend(day: str | None = None) -> dict[str, Any]:
     from jobctrl.database import get_connection, init_db
 
     spend_day = day or _utc_spend_day()
@@ -126,6 +133,13 @@ def read_llm_spend(day: str | None = None) -> dict[str, Any]:
 
 def read_llm_spend_by_lane(day: str | None = None) -> dict[LlmLane, dict[str, int | float | str]]:
     """Return current-schema runtime lane totals; migration-only legacy is omitted."""
+    from jobctrl.infrastructure.llm.spend_observation import require_resolved_spend
+
+    require_resolved_spend()
+    return _read_llm_spend_by_lane(day)
+
+
+def _read_llm_spend_by_lane(day: str | None = None) -> dict[LlmLane, dict[str, int | float | str]]:
     from jobctrl.database import get_connection, init_db
 
     spend_day = day or _utc_spend_day()
@@ -155,8 +169,9 @@ def read_spend_budget_status(
     lane: LlmLane | str | None = None,
     daily_budget_usd: float | None = None,
     lane_token_limits: dict[LlmLane, int] | None = None,
+    require_complete: bool = False,
 ) -> SpendBudgetStatus:
-    """Read today's spend and compare it with the configured daily budget."""
+    """Read today's spend; reporting can also require no in-flight receipts."""
     if daily_budget_usd is None:
         from jobctrl.infrastructure.scoring.criteria_provider import read_daily_budget_usd
 
@@ -166,8 +181,15 @@ def read_spend_budget_status(
         from jobctrl.infrastructure.scoring.criteria_provider import read_lane_token_limits
 
         lane_token_limits = read_lane_token_limits()
-    row = read_llm_spend()
-    lane_row = read_llm_spend_by_lane(str(row["day"]))[spend_lane]
+    if require_complete:
+        from jobctrl.infrastructure.llm.spend_observation import complete_spend_snapshot
+
+        with complete_spend_snapshot():
+            row = _read_llm_spend()
+            lane_row = _read_llm_spend_by_lane(str(row["day"]))[spend_lane]
+    else:
+        row = read_llm_spend()
+        lane_row = read_llm_spend_by_lane(str(row["day"]))[spend_lane]
     budget = max(0.0, float(daily_budget_usd or 0.0))
     estimated = float(row["estimated_usd"])
     lane_input = int(lane_row["input_tokens"])
@@ -480,11 +502,13 @@ class LLMClient:
             )
             resp.raise_for_status()
             data = resp.json()
-            usage = data.get("usageMetadata") or {}
+            raw_usage = data.get("usageMetadata")
+            usage = raw_usage if isinstance(raw_usage, dict) else {}
             record(
                 "",
                 input_tokens=usage.get("promptTokenCount"),
                 output_tokens=usage.get("candidatesTokenCount"),
+                usage_observed=raw_usage is not None,
             )
             text = _extract_native_gemini_text(data, model=self.model)
             return text
@@ -548,11 +572,13 @@ class LLMClient:
 
             resp.raise_for_status()
             data = resp.json()
-            usage = data.get("usage") or {}
+            raw_usage = data.get("usage")
+            usage = raw_usage if isinstance(raw_usage, dict) else {}
             record(
                 "",
                 input_tokens=usage.get("prompt_tokens"),
                 output_tokens=usage.get("completion_tokens"),
+                usage_observed=raw_usage is not None,
             )
             text = _extract_compat_text(data, model=self.model)
             return text

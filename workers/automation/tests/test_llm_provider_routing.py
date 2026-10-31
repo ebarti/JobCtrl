@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import sqlite3
 from types import SimpleNamespace
 from typing import Any
 
@@ -19,6 +21,8 @@ from jobctrl.infrastructure.llm.llm_client import (
 )
 from jobctrl.infrastructure.llm.provider_errors import ProviderCallError
 from jobctrl.llm_lanes import bind_llm_lane
+
+_REAL_RECORD_LLM_SPEND = legacy_llm.record_llm_spend
 
 
 @pytest.fixture(autouse=True)
@@ -172,6 +176,117 @@ class _UsageThenIteratorFailureCodex(_Codex):
         return _UsageThenIteratorFailureThread()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_codex_partial_later_usage_preserves_observed_counts_and_original_failure(monkeypatch, tmp_path, cancel):
+    import jobctrl.database as database
+    from jobctrl.infrastructure.llm.spend_observation import SpendAccountingUnresolved
+
+    db_path = tmp_path / "jobctrl.db"
+    monkeypatch.setattr(database, "DB_PATH", db_path)
+    database.init_db(db_path)
+    monkeypatch.setattr(legacy_llm, "enforce_spend_budget", lambda _lane=None: legacy_llm.read_llm_spend())
+    monkeypatch.setattr(legacy_llm, "record_llm_spend", _REAL_RECORD_LLM_SPEND)
+    error = asyncio.CancelledError("synthetic-cancel") if cancel else OSError("synthetic stream failure")
+
+    class Stream:
+        def __init__(self):
+            self.values = iter(((11, 7), (20, None)))
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            try:
+                input_tokens, output_tokens = next(self.values)
+            except StopIteration:
+                raise error
+            return SimpleNamespace(payload=SimpleNamespace(
+                turn_id="synthetic-turn",
+                token_usage=SimpleNamespace(total=SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens)),
+            ))
+
+        async def aclose(self):
+            pass
+
+    class Handle:
+        id = "synthetic-turn"
+
+        def stream(self):
+            return Stream()
+
+    class Thread:
+        async def turn(self, prompt, **kwargs):
+            return Handle()
+
+    class Codex(_Codex):
+        async def thread_start(self, **kwargs):
+            return Thread()
+
+    backend = CodexSdkBackend(model="codex-test-model", async_codex_factory=Codex, approval_mode_factory=lambda: "deny")
+    with pytest.raises(asyncio.CancelledError if cancel else ProviderCallError) as raised:
+        await backend._call([{"role": "user", "content": "synthetic"}], response_schema=None,
+                            temperature=None, max_tokens=None, thinking_budget=None)
+    if cancel:
+        assert raised.value is error
+    else:
+        assert raised.value.__cause__ is error
+    with sqlite3.connect(db_path) as raw:
+        assert raw.execute("SELECT COUNT(*) FROM llm_spend").fetchone() == (0,)
+    receipt = next((tmp_path / ".jobctrl.db.llm-spend-pending").glob("*.jsonl"))
+    header, observed = [json.loads(line) for line in receipt.read_text().splitlines()]
+    assert header["provider"] == "openai" and header["lane"] == "tailoring"
+    assert {(row["input_tokens"], row["output_tokens"]) for row in observed["ambiguous_reports"]} == {
+        (11, 7), (20, None),
+    }
+    with pytest.raises(SpendAccountingUnresolved):
+        legacy_llm.read_llm_spend()
+    database.close_connection(db_path)
+
+
+@pytest.mark.asyncio
+async def test_codex_empty_usage_object_is_unresolved(monkeypatch, tmp_path):
+    import jobctrl.database as database
+    from jobctrl.infrastructure.llm.spend_observation import SpendAccountingUnresolved
+
+    db_path = tmp_path / "jobctrl.db"
+    monkeypatch.setattr(database, "DB_PATH", db_path)
+    database.init_db(db_path)
+    monkeypatch.setattr(legacy_llm, "enforce_spend_budget", lambda _lane=None: legacy_llm.read_llm_spend())
+    monkeypatch.setattr(legacy_llm, "record_llm_spend", _REAL_RECORD_LLM_SPEND)
+
+    class Thread:
+        async def run(self, *args, **kwargs):
+            return SimpleNamespace(status="completed", final_response="synthetic", usage=SimpleNamespace(total=None))
+
+    class Codex(_Codex):
+        async def thread_start(self, **kwargs):
+            return Thread()
+
+    backend = CodexSdkBackend(model="codex-test-model", async_codex_factory=Codex, approval_mode_factory=lambda: "deny")
+    with pytest.raises(SpendAccountingUnresolved):
+        await backend._call([{"role": "user", "content": "synthetic"}], response_schema=None,
+                            temperature=None, max_tokens=None, thinking_budget=None)
+    with sqlite3.connect(db_path) as raw:
+        assert raw.execute("SELECT COUNT(*) FROM llm_spend").fetchone() == (0,)
+    with pytest.raises(SpendAccountingUnresolved):
+        legacy_llm.read_llm_spend()
+    database.close_connection(db_path)
+
+
+_DEFAULT_GOOGLE_USAGE = object()
+
+
+class _GoogleConversation:
+    def __init__(self, response):
+        self.response = response
+
+    async def receive_steps(self, usage=_DEFAULT_GOOGLE_USAGE):
+        if usage is _DEFAULT_GOOGLE_USAGE:
+            usage = self.response.usage_metadata
+        yield SimpleNamespace(usage_metadata=usage)
+
+
 class _GoogleResponse:
     usage_metadata = SimpleNamespace(
         prompt_token_count=6,
@@ -181,11 +296,13 @@ class _GoogleResponse:
 
     def __init__(self) -> None:
         self.consumed = False
+        self._conversation = _GoogleConversation(self)
 
     @property
     def chunks(self):
         async def stream():
-            yield "chunk"
+            async for _ in self._conversation.receive_steps():
+                yield "chunk"
             self.consumed = True
 
         return stream()
@@ -210,7 +327,213 @@ class _GoogleAgent:
         return None
 
     async def chat(self, prompt: str) -> _GoogleResponse:
-        return _GoogleResponse()
+        self.response = _GoogleResponse()
+        self.conversation = self.response._conversation
+        return self.response
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+@pytest.mark.parametrize("unavailable_after_close", [False, True])
+async def test_google_usage_survives_stream_failure_and_cancellation(monkeypatch, cancel, unavailable_after_close):
+    error = asyncio.CancelledError("synthetic-cancel") if cancel else OSError("synthetic stream failure")
+    spend = []
+    monkeypatch.setattr(legacy_llm, "record_llm_spend", lambda **values: spend.append(values))
+    monkeypatch.setattr(setup_probes, "antigravity_auth_kwargs", lambda env=None: {"api_key": "synthetic"})
+
+    class Response(_GoogleResponse):
+        closed = False
+
+        @property
+        def usage_metadata(self):
+            if self.closed and unavailable_after_close:
+                raise RuntimeError("synthetic closed response")
+            return _GoogleResponse.usage_metadata
+
+        @property
+        def chunks(self):
+            async def stream():
+                async for _ in self._conversation.receive_steps():
+                    yield "synthetic chunk"
+                raise error
+            return stream()
+
+    class Agent(_GoogleAgent):
+        async def chat(self, prompt):
+            self.response = Response()
+            self.conversation = self.response._conversation
+            return self.response
+
+        async def __aexit__(self, *exc):
+            self.response.closed = True
+
+    backend = GoogleSdkBackend(agent_factory=Agent, config_factory=lambda **kwargs: SimpleNamespace(**kwargs),
+                               types_module=_GoogleTypes)
+    with pytest.raises(asyncio.CancelledError if cancel else OSError) as raised:
+        await backend._call([{"role": "user", "content": "synthetic"}], response_schema=None,
+                            temperature=None, max_tokens=None, thinking_budget=None)
+    assert raised.value is error
+    assert len(spend) == 1
+    assert (spend[0]["input_tokens"], spend[0]["output_tokens"], spend[0]["lane"]) == (6, 2, "tailoring")
+
+
+@pytest.mark.asyncio
+async def test_google_usage_snapshot_does_not_read_a_reused_agents_next_turn():
+    from jobctrl.infrastructure.llm.agent_runtime_antigravity import (
+        AntigravityGeneration, _Call, _Response, _bind_step_source, _record_available_usage,
+    )
+
+    counts = []
+    state = _Call(None, None, False, AntigravityGeneration(), lambda *values: counts.append(values))
+    response = _GoogleResponse()
+    state.native_response = response
+    _bind_step_source(state, response, SimpleNamespace(conversation=response._conversation))
+    async for _ in _Response(response, state).chunks:
+        pass
+    response.usage_metadata = SimpleNamespace(prompt_token_count=99, candidates_token_count=33)
+    _record_available_usage(state)
+    assert counts == [(6, 2)]
+
+
+@pytest.mark.asyncio
+async def test_google_usage_discovered_during_cancel_cleanup_is_retained(monkeypatch):
+    cancellation = asyncio.CancelledError("synthetic-cancel")
+    spend = []
+    monkeypatch.setattr(legacy_llm, "record_llm_spend", lambda **values: spend.append(values))
+    monkeypatch.setattr(setup_probes, "antigravity_auth_kwargs", lambda env=None: {"api_key": "synthetic"})
+
+    class Response(_GoogleResponse):
+        usage_metadata = None
+
+        @property
+        def chunks(self):
+            async def stream():
+                async for _ in self._conversation.receive_steps(None):
+                    yield "synthetic chunk"
+                raise cancellation
+            return stream()
+
+    class Agent(_GoogleAgent):
+        async def chat(self, prompt):
+            self.response = Response()
+            self.conversation = self.response._conversation
+            return self.response
+
+        async def __aexit__(self, *exc):
+            self.response.usage_metadata = SimpleNamespace(prompt_token_count=6, candidates_token_count=2)
+            async for _ in self.conversation.receive_steps():
+                pass
+
+    backend = GoogleSdkBackend(agent_factory=Agent, config_factory=lambda **kwargs: SimpleNamespace(**kwargs),
+                               types_module=_GoogleTypes)
+    with pytest.raises(asyncio.CancelledError) as raised:
+        await backend._call([{"role": "user", "content": "synthetic"}], response_schema=None,
+                            temperature=None, max_tokens=None, thinking_budget=None)
+    assert raised.value is cancellation
+    assert [(row["input_tokens"], row["output_tokens"], row["lane"]) for row in spend] == [(6, 2, "tailoring")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("termination", ["success", "failure", "cancel"])
+@pytest.mark.parametrize("latest", [(20, None), (None, None)])
+async def test_google_partial_latest_snapshot_preserves_prior_counts_without_fabricating_total(
+    monkeypatch, tmp_path, termination, latest,
+):
+    import jobctrl.database as database
+    from jobctrl.infrastructure.llm.spend_observation import SpendAccountingUnresolved
+
+    db_path = tmp_path / "jobctrl.db"
+    monkeypatch.setattr(database, "DB_PATH", db_path)
+    database.init_db(db_path)
+    monkeypatch.setattr(legacy_llm, "enforce_spend_budget", lambda _lane=None: legacy_llm.read_llm_spend())
+    monkeypatch.setattr(legacy_llm, "record_llm_spend", _REAL_RECORD_LLM_SPEND)
+    monkeypatch.setattr(setup_probes, "antigravity_auth_kwargs", lambda env=None: {"api_key": "synthetic"})
+    error = asyncio.CancelledError("synthetic-cancel") if termination == "cancel" else OSError("synthetic-stream")
+
+    class Response(_GoogleResponse):
+        @property
+        def chunks(self):
+            async def stream():
+                self.usage_metadata = SimpleNamespace(prompt_token_count=11, candidates_token_count=7)
+                async for _ in self._conversation.receive_steps():
+                    yield "first"
+                self.usage_metadata = SimpleNamespace(prompt_token_count=latest[0], candidates_token_count=latest[1])
+                step = SimpleNamespace(prompt_token_count=9 if latest[0] is not None else None,
+                                       candidates_token_count=None)
+                async for _ in self._conversation.receive_steps(step):
+                    yield "second"
+                if termination != "success":
+                    raise error
+                self.consumed = True
+            return stream()
+
+    class Agent(_GoogleAgent):
+        async def chat(self, prompt):
+            self.response = Response()
+            self.conversation = self.response._conversation
+            return self.response
+
+    backend = GoogleSdkBackend(agent_factory=Agent, config_factory=lambda **kwargs: SimpleNamespace(**kwargs),
+                               types_module=_GoogleTypes)
+    exception_type = SpendAccountingUnresolved if termination == "success" else type(error)
+    with pytest.raises(exception_type) as raised:
+        await backend._call([{"role": "user", "content": "synthetic"}], response_schema=None,
+                            temperature=None, max_tokens=None, thinking_budget=None)
+    if termination != "success":
+        assert raised.value is error
+    with sqlite3.connect(db_path) as raw:
+        assert raw.execute("SELECT COUNT(*) FROM llm_spend").fetchone() == (0,)
+    receipts = list((tmp_path / ".jobctrl.db.llm-spend-pending").glob("*.jsonl"))
+    assert len(receipts) == 1
+    header, observed = [json.loads(line) for line in receipts[0].read_text().splitlines()]
+    assert header["provider"] == "google" and header["lane"] == "tailoring"
+    assert {(row["input_tokens"], row["output_tokens"]) for row in observed["ambiguous_reports"]} >= {
+        (11, 7), latest,
+    }
+    with pytest.raises(SpendAccountingUnresolved):
+        legacy_llm.read_llm_spend()
+    database.close_connection(db_path)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("final_output", [0, 9])
+async def test_google_complete_terminal_usage_after_step_without_usage(monkeypatch, tmp_path, final_output):
+    import jobctrl.database as database
+
+    db_path = tmp_path / "jobctrl.db"
+    monkeypatch.setattr(database, "DB_PATH", db_path)
+    database.init_db(db_path)
+    monkeypatch.setattr(legacy_llm, "enforce_spend_budget", lambda _lane=None: legacy_llm.read_llm_spend())
+    monkeypatch.setattr(legacy_llm, "record_llm_spend", _REAL_RECORD_LLM_SPEND)
+    monkeypatch.setattr(setup_probes, "antigravity_auth_kwargs", lambda env=None: {"api_key": "synthetic"})
+
+    class Response(_GoogleResponse):
+        @property
+        def chunks(self):
+            async def stream():
+                self.usage_metadata = None
+                async for _ in self._conversation.receive_steps(None):
+                    yield "first"
+                self.usage_metadata = SimpleNamespace(prompt_token_count=21, candidates_token_count=final_output)
+                async for _ in self._conversation.receive_steps():
+                    yield "second"
+                self.consumed = True
+            return stream()
+
+    class Agent(_GoogleAgent):
+        async def chat(self, prompt):
+            self.response = Response()
+            self.conversation = self.response._conversation
+            return self.response
+
+    backend = GoogleSdkBackend(agent_factory=Agent, config_factory=lambda **kwargs: SimpleNamespace(**kwargs),
+                               types_module=_GoogleTypes)
+    assert await backend._call([{"role": "user", "content": "synthetic"}], response_schema=None,
+                               temperature=None, max_tokens=None, thinking_budget=None) == "plain google"
+    totals = legacy_llm.read_llm_spend_by_lane()["tailoring"]
+    assert (totals["input_tokens"], totals["output_tokens"]) == (21, final_output)
+    assert not list((tmp_path / ".jobctrl.db.llm-spend-pending").glob("*.jsonl"))
+    database.close_connection(db_path)
 
 
 class _GoogleTypes:
@@ -429,6 +752,7 @@ def test_codex_sdk_retains_safe_builder_error_fields_and_usage_from_failed_turn(
             "input_tokens": 11,
             "output_tokens": 7,
             "model": "codex-test-model",
+            "day": legacy_llm._utc_spend_day(),
             "lane": "tailoring",
         }
     ]
@@ -454,6 +778,7 @@ def test_codex_sdk_records_usage_before_iterator_failure(
             "input_tokens": 13,
             "output_tokens": 5,
             "model": "codex-test-model",
+            "day": legacy_llm._utc_spend_day(),
             "lane": "tailoring",
         }
     ]
