@@ -6,11 +6,48 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { fetchPublishedReleases, interruptReleaseAtCheckpoint, isKnownLegacyRefusal, runForwardInterruptionMatrix, scenario, selectLatestReleasedVersion, selectUpgradeMode, verifyLegacyRefusal } from "./released-upgrade-smoke.mjs";
+import { fetchPublishedReleases, installArgs, interruptReleaseAtCheckpoint, isKnownLegacyRefusal, runForwardInterruptionMatrix, scenario, selectLatestReleasedVersion, selectUpgradeMode, verifyLegacyRefusal } from "./released-upgrade-smoke.mjs";
 
-import { acquisitionChildEnvironment, prepareScopedWorkspace, runPublishedAcquisitionUpgrades } from "./released-acquisition-upgrade.mjs";
+import { acquisitionChildEnvironment, assertDisposableBrewFixture, cleanupBrewFixture, prepareScopedWorkspace, runPublishedAcquisitionUpgrades } from "./released-acquisition-upgrade.mjs";
 
 const published = (version, day, extra = {}) => ({ tag_name: `v${version}`, published_at: `2026-10-${day}T10:00:00Z`, draft: false, prerelease: false, ...extra });
+
+test("Homebrew acquisition fixture refuses existing installs and cleans all of its own versions", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-brew-fixture-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const cellar = path.join(root, "cellar"), frontend = path.join(root, "jobctrl");
+  const hosted = { GITHUB_ACTIONS: "true", RUNNER_ENVIRONMENT: "github-hosted" };
+  await assertDisposableBrewFixture({ environment: hosted, cellar, frontend });
+  await assert.rejects(assertDisposableBrewFixture({ environment: {}, cellar, frontend }), /GitHub-hosted/);
+  await mkdir(cellar);
+  await assert.rejects(assertDisposableBrewFixture({ environment: hosted, cellar, frontend }), /existing JobCtrl/);
+  await rm(cellar, { recursive: true });
+  await writeFile(frontend, "existing");
+  await assert.rejects(assertDisposableBrewFixture({ environment: hosted, cellar, frontend }), /existing JobCtrl/);
+  await rm(frontend);
+
+  await mkdir(cellar);
+  const calls = [];
+  const runner = async (_brew, args) => { calls.push(args); return { code: 0, output: "" }; };
+  await assert.rejects(cleanupBrewFixture({ brew: "/brew", formula: "test/tap/jobctrl", tap: "test/tap", env: {}, cellar, tapCreated: true, runner, environment: {} }), /GitHub-hosted/);
+  await cleanupBrewFixture({ brew: "/brew", formula: "test/tap/jobctrl", tap: "test/tap", env: {}, cellar, tapCreated: true, runner, environment: hosted });
+  assert.deepEqual(calls, [["uninstall", "--force", "--formula", "test/tap/jobctrl"], ["untap", "test/tap"]]);
+  const failingCalls = [];
+  const failingRunner = async (_brew, args) => { failingCalls.push(args); return { code: 1, output: `${args[0]} failed` }; };
+  await assert.rejects(cleanupBrewFixture({ brew: "/brew", formula: "test/tap/jobctrl", tap: "test/tap", env: {}, cellar, tapCreated: true, runner: failingRunner, environment: hosted }), /uninstall failed[\s\S]*untap failed/);
+  assert.equal(failingCalls.length, 2, "untap must be attempted even when uninstall fails");
+});
+
+test("released curl and Homebrew recovery use their respective authenticated acquisition modes", () => {
+  const release = { descriptor: { buildId: "candidate-build" }, directory: "/tmp/release", archive: "/tmp/release/candidate.zip" };
+  const curl = installArgs(release, "/tmp/runtime", true, "curl");
+  assert.deepEqual(curl, ["--source", "curl", "--stage-only", "--home", "/tmp/runtime", "--release-url", "https://releases.jobctrl.dev/v1/artifacts/candidate-build/channel-pointer.json"]);
+  assert.ok(!curl.includes("--descriptor-file") && !curl.includes("--archive-file"));
+  const homebrew = installArgs(release, "/tmp/runtime", false, "homebrew");
+  assert.ok(homebrew.includes("--descriptor-file") && homebrew.includes("--signature-file") && homebrew.includes("--archive-file"));
+  assert.ok(!homebrew.includes("--release-url"));
+  assert.throws(() => installArgs(release, "/tmp/runtime", false, "unknown"), /unsupported acquisition/);
+});
 
 test("upgrade setup reports the installer failure even when no selector was created", { skip: process.platform === "win32" }, async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-upgrade-error-"));
@@ -56,7 +93,8 @@ test("released upgrade qualification distinguishes the forward schema transition
 test("legacy refusal is limited to the documented release pair", () => {
   const release = (appVersion) => ({ descriptor: { appVersion } });
   assert.equal(isKnownLegacyRefusal(release("0.3.1"), release("0.4.0"), "forward-schema-15"), true);
-  assert.equal(isKnownLegacyRefusal(release("0.3.1"), release("0.4.1"), "forward-schema-15"), false);
+  assert.equal(isKnownLegacyRefusal(release("0.3.1"), release("0.4.1"), "forward-schema-15"), true);
+  assert.equal(isKnownLegacyRefusal(release("0.3.1"), release("0.4.2"), "forward-schema-15"), false);
   assert.equal(isKnownLegacyRefusal(release("0.3.0"), release("0.4.0"), "forward-schema-15"), false);
   assert.equal(isKnownLegacyRefusal(release("0.3.1"), release("0.4.0"), "compatible"), false);
 });

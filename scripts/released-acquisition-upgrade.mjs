@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash, createPublicKey } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import net from "node:net";
 import path from "node:path";
@@ -37,6 +37,42 @@ async function run(executable, args, env, { allowFailure = false } = {}) {
     if (!allowFailure) assert.equal(result.code, 0, `${path.basename(executable)} ${args.join(" ")}: ${output}`);
     return { ...result, output };
   } finally { clearTimeout(timer); }
+}
+
+async function pathExists(file) {
+  try { await lstat(file); return true; }
+  catch (error) { if (error.code === "ENOENT") return false; throw error; }
+}
+
+// This test installs into Homebrew's real prefix. Refuse developer machines
+// and any runner that already has a JobCtrl installation before touching it.
+function assertHostedRunner(environment) {
+  assert.ok(environment.GITHUB_ACTIONS === "true" && environment.RUNNER_ENVIRONMENT === "github-hosted",
+    "Homebrew acquisition qualification requires a disposable GitHub-hosted runner");
+}
+
+export async function assertDisposableBrewFixture({ environment, cellar, frontend }) {
+  assertHostedRunner(environment);
+  for (const file of [cellar, frontend]) {
+    assert.ok(!(await pathExists(file)), `Homebrew acquisition qualification refuses an existing JobCtrl installation: ${file}`);
+  }
+}
+
+export async function cleanupBrewFixture({ brew, formula, tap, env, cellar, tapCreated, runner = run, environment = process.env }) {
+  if (!tapCreated) return;
+  assertHostedRunner(environment);
+  const failures = [];
+  const attempt = async (args) => {
+    try {
+      const result = await runner(brew, args, env, { allowFailure: true });
+      if (result.code !== 0) failures.push(`${args[0]} failed: ${result.output}`);
+    } catch (error) { failures.push(`${args[0]} failed: ${error.message}`); }
+  };
+  // Homebrew retains older kegs after an upgrade. This runner was checked
+  // empty before the test, so all versions here belong to this fixture.
+  if (await pathExists(cellar)) await attempt(["uninstall", "--force", "--formula", formula]);
+  await attempt(["untap", tap]);
+  if (failures.length) throw new Error(`Homebrew fixture cleanup failed: ${failures.join("; ")}`);
 }
 
 async function download(url, file, env) {
@@ -317,7 +353,7 @@ async function brewScenario(old, candidate, root, baseEnv, sourceAcquisition = "
   const tap = `jobctrl/upgrade-qa-${process.env.GITHUB_RUN_ID ?? process.pid}`;
   const formula = `${tap}/jobctrl`;
   const frontend = "/opt/homebrew/bin/jobctrl";
-  let tapCreated = false, installed = false;
+  let tapCreated = false, scenarioFailure;
   try {
     let context;
     if (sourceAcquisition === "curl") {
@@ -336,7 +372,7 @@ async function brewScenario(old, candidate, root, baseEnv, sourceAcquisition = "
     const formulaPath = path.join(repository, "Formula", "jobctrl.rb");
     if (sourceAcquisition === "homebrew") {
       await writeFile(formulaPath, source, { mode: 0o644 });
-      await run(brew, ["install", "--formula", formula], env); installed = true;
+      await run(brew, ["install", "--formula", formula], env);
       // Homebrew installs a prefix-owned bootstrap only. Resolve it once so
       // the synthetic scoped fixture has an authenticated old selection,
       // without starting the untracked predecessor supervisor.
@@ -346,7 +382,6 @@ async function brewScenario(old, candidate, root, baseEnv, sourceAcquisition = "
     console.log(`${old.descriptor.appVersion}: upgrading through unmodified Homebrew`);
     await copyFile(path.join(candidate.directory, "jobctrl.rb"), formulaPath);
     await run(brew, [sourceAcquisition === "homebrew" ? "upgrade" : "install", "--formula", formula], env);
-    installed = true;
     const forward = selectUpgradeMode(old.manifest, candidate.manifest, context.schema) === "forward-schema-15";
     if (!scoped && isKnownLegacyRefusal(old, candidate, forward ? "forward-schema-15" : "compatible")) {
       await verifyLegacyRefusal({ root, runtime, state, history: path.join(state, "temporal.db"), external: [path.join(state, "qa-external-resume.txt")],
@@ -378,10 +413,17 @@ async function brewScenario(old, candidate, root, baseEnv, sourceAcquisition = "
     await run(frontend, ["start", "--no-open"], env);
     await verifyWorkspace(context, candidate, runtime, state, env, expectedSchema, title);
     return { acquisition: scoped ? "homebrew-scoped-synthetic" : sourceAcquisition === "homebrew" ? "unmodified-homebrew" : "curl-to-unmodified-homebrew", status: "upgraded", sourceSchema: context.schema, targetSchema: expectedSchema, checks };
+  } catch (error) {
+    scenarioFailure = error;
+    throw error;
   } finally {
     await run(path.join(runtime, "bin", "jobctrl"), ["stop"], env, { allowFailure: true }).catch(() => {});
-    if (installed) await run(brew, ["uninstall", "--formula", formula], env, { allowFailure: true });
-    if (tapCreated) await run(brew, ["untap", tap], env, { allowFailure: true });
+    try {
+      await cleanupBrewFixture({ brew, formula, tap, env, cellar: "/opt/homebrew/Cellar/jobctrl", tapCreated });
+    } catch (error) {
+      if (scenarioFailure) scenarioFailure.message += `\n${error.message}`;
+      else throw error;
+    }
   }
 }
 
@@ -396,6 +438,7 @@ export function acquisitionChildEnvironment(inherited) {
 export async function runPublishedAcquisitionUpgrades({ releaseDirectory, output, publicKeyBase64, keyId, homebrewSource = "homebrew" }) {
   assert.ok(homebrewSource === "homebrew" || homebrewSource === "curl", "invalid Homebrew source acquisition");
   assert.equal(process.platform, "darwin"); assert.equal(process.arch, "arm64");
+  await assertDisposableBrewFixture({ environment: process.env, cellar: "/opt/homebrew/Cellar/jobctrl", frontend: "/opt/homebrew/bin/jobctrl" });
   const raw = Buffer.from(publicKeyBase64 ?? "", "base64"); assert.equal(raw.length, 32);
   assert.match(keyId ?? "", /^[A-Za-z0-9._-]+$/);
   const publicKey = createPublicKey({ key: Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), raw]), format: "der", type: "spki" });

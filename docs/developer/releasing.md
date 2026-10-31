@@ -191,7 +191,7 @@ controller's refusal, interrupts the signed new installer both before and after
 selector handoff, preserves later application and Temporal WAL writes through
 forward recovery, and checks that cross-protocol rollback is refused. Both cases check
 real service readiness, retained job data and Temporal history. The explicit
-v0.3.1-to-v0.4.0 exception reports `qualified-with-legacy-refusal`: it verifies
+v0.3.1-to-v0.4.0 and v0.3.1-to-v0.4.1 exceptions report `qualified-with-legacy-refusal`: they verify
 that the real installer refuses an untracked legacy runtime, preserves the data
 pair, registry, selector and journal, and that the predecessor can restart in the
 controlled fixture. That result does **not** qualify a direct user upgrade.
@@ -217,7 +217,10 @@ checks real; use only owned synthetic workspaces.
 
 Before channel promotion, the public-asset smoke also upgrades disposable
 workspaces from the latest stable release using the actual curl bootstrap and
-unmodified Homebrew with the signer-rendered formula. It verifies service
+unmodified Homebrew with the signer-rendered formula. Because this exercises
+Homebrew's actual prefix, it runs only on a GitHub-hosted runner after checking
+that no JobCtrl installation exists there. Its cleanup removes every test-owned
+JobCtrl keg and reports failures before starting another scenario. It verifies service
 readiness, a retained job and external resume, paired backup hashes, Temporal
 workflow history, and stop/restart. For the schema-15 transition, each path
 also exercises the nine durable interruption boundaries, real readiness failure,
@@ -225,7 +228,7 @@ forward recovery with later application and Temporal WAL commits, modeled
 revocation policy, and rollback refusal. The curl case uses the legacy Temporal
 history location; the Homebrew case uses the current location. A separate curl
 case also checks an already-migrated schema-15 workspace with legacy history.
-For the v0.3.1-to-v0.4.0 exception, the real curl and Homebrew paths instead
+For the v0.3.1-to-v0.4.0 and v0.3.1-to-v0.4.1 exceptions, the real curl and Homebrew paths instead
 first verify the documented refusal and preservation. Separate synthetic
 workspaces, initialized without running an untracked predecessor supervisor and
 given a real source-ownership witness, exercise both signed acquisition paths
@@ -258,7 +261,7 @@ new release's verified installer against the original runtime home; retain the
 predecessor receipt and immutable payload as historical authentication evidence.
 The predecessor is never executed during this forward path. Normally used
 v0.3.1 installations have an untracked runtime registry that prevents the new
-controller from proving process shutdown. The v0.4.0 installer refuses those
+controller from proving process shutdown. The v0.4.0 and v0.4.1 installers refuse those
 upgrades; no self-service recovery is documented. Reboot alone does not resolve
 the refusal. For a workspace with verified ownership, no bridge catalog, bridge
 release, or reboot is a migration prerequisite.

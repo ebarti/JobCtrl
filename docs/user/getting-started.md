@@ -260,7 +260,7 @@ beyond what an older installed release understands; update the installed app whe
 a compatible release is published. Source upgrade and recovery details are in
 [Local Development](../local-development.md#schema-migrations-and-source-updates).
 
-**v0.3.1 upgrade limitation:** v0.4.0 cannot automatically upgrade a normally
+**v0.3.1 upgrade limitation:** v0.4.1 cannot automatically upgrade a normally
 used v0.3.1 workspace because the older runtime did not record enough information
 to verify that all of its child processes stopped. The installer refuses before
 migration and preserves the workspace and installation records. There is no
