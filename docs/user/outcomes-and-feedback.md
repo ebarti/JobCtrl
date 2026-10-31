@@ -111,6 +111,11 @@ the scan trigger; scan initiation is the `POST` API action listed below. Gmail
 setup and the read/send boundary are documented in
 [Apply](apply.md#gmail-connector-and-sending-boundary).
 
+A failed scan reports its safe cause and any confirmed progress in the API
+response. Suggestions committed before the failure remain available for
+review; a deliberate retry skips messages already ingested. If the worker
+connection is lost, the amount committed may be unknown until retry.
+
 Apply-run state and application outcomes answer different questions. Apply
 history records what the automation attempted and whether submission evidence
 exists; outcome history records your reviewed understanding of what followed.

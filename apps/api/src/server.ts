@@ -1150,15 +1150,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         } catch (error) {
           if (error instanceof GmailFeedbackScanError) {
             void reply.code(error.statusCode);
-            return {
-              ok: false,
-              error:
-                error.statusCode === 400
-                  ? "invalid_gmail_feedback_scan"
-                  : "gmail_feedback_scan_failed",
-              message: error.message,
-              ...(error.failureCode ? { failureCode: error.failureCode } : {}),
-            };
+            return error.response;
           }
           throw error;
         }

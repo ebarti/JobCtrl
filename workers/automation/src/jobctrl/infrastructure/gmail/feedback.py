@@ -13,7 +13,10 @@ from email.utils import getaddresses, parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+import httpx
+
 from jobctrl.database import close_connection, open_exact_v15_database
+from jobctrl.domain.determinations import DeterminationFailure
 from jobctrl.infrastructure.migrations.schema_manifest import (
     EXACT_V15_MANIFEST,
     SchemaManifestError,
@@ -22,6 +25,7 @@ from jobctrl.infrastructure.migrations.schema_manifest import (
 from jobctrl.domain.events.base import DomainEvent
 from jobctrl.domain.ports.events import EventHandler, EventPublisher, Subscription
 from jobctrl.infrastructure.gmail.client import GmailClient, GmailFeedbackInputError, validate_feedback_recipient
+from jobctrl.infrastructure.gmail.auth import GmailAuthError
 from jobctrl.state import record_job_event
 
 TENANT_ID = "local"
@@ -36,6 +40,55 @@ MAX_WINDOW_DAYS = 180
 
 class GmailFeedbackError(RuntimeError):
     """Raised when a bounded feedback scan cannot run safely."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+_DETERMINATION_FAILURE_CODES = frozenset({
+    "provider_unavailable", "provider_error", "provider_non_retryable", "budget_denied", "spend_denied",
+    "malformed_json", "schema_violation", "source_schema_violation", "duplicate_source_id",
+    "foreign_source_id", "non_verbatim_quote", "mismatched_value", "missing_evidence_citation",
+    "inconsistent_verdict", "cache_binding_invalid", "cache_lock_unavailable", "persistence_error",
+    "configuration_invalid", "message_identity_changed", "message_recipient_changed",
+})
+
+
+def safe_scan_failure(error: Exception) -> dict[str, Any]:
+    """Keep public failure distinctions without returning private exception details."""
+    if isinstance(error, GmailFeedbackRecipientError):
+        code = "invalid_recipient"
+    elif isinstance(error, GmailFeedbackInputError):
+        code = "invalid_search"
+    elif isinstance(error, DeterminationFailure):
+        code = error.code if error.code in _DETERMINATION_FAILURE_CODES else "determination_failed"
+    elif isinstance(error, GmailAuthError):
+        code = "gmail_auth_required"
+    elif isinstance(error, httpx.TimeoutException):
+        code = "gmail_timeout"
+    elif isinstance(error, httpx.HTTPStatusError):
+        status_code = error.response.status_code
+        code = ("gmail_auth_required" if status_code == 401 else "gmail_rate_limited" if status_code == 429
+                else "gmail_provider_unavailable" if status_code >= 500 else "gmail_provider_error")
+    elif isinstance(error, httpx.RequestError):
+        code = "gmail_transport_error"
+    elif isinstance(error, httpx.HTTPError):
+        code = "gmail_provider_error"
+    elif isinstance(error, GmailFeedbackError) and error.code == "invalid_recipient":
+        code = error.code
+    else:
+        code = "gmail_scan_failed"
+    invalid = code in {"invalid_recipient", "invalid_scan_options", "invalid_search"}
+    unavailable = code in {
+        "provider_unavailable", "budget_denied", "gmail_auth_required", "gmail_timeout",
+        "gmail_transport_error", "gmail_rate_limited", "gmail_provider_unavailable", "gmail_provider_error",
+    }
+    return {
+        "ok": False,
+        "status": "invalid" if invalid else "unavailable" if unavailable else "blocked",
+        "failureCode": code,
+    }
 
 
 class GmailFeedbackRecipientError(GmailFeedbackError):
@@ -125,12 +178,13 @@ def scan_gmail_feedback(
     )
 
     conn = open_exact_v15_database(db_path)
+    summary: dict[str, Any] | None = None
     try:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=10000")
         conn.execute("PRAGMA foreign_keys=ON")
         if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
-            raise GmailFeedbackError("Gmail feedback scan requires SQLite foreign-key enforcement.")
+            raise GmailFeedbackError("database_unavailable")
 
         gmail = client or GmailClient()
         ensure_application_feedback_tables(conn)
@@ -144,8 +198,6 @@ def scan_gmail_feedback(
 
         from jobctrl.infrastructure.determinations import determination_dependencies, SqliteDeterminationRepository
         from jobctrl.domain.feedback.message_interpretation import ModelMessageInterpreter
-        from jobctrl.domain.determinations import DeterminationFailure
-
         interpreter = ModelMessageInterpreter(
             **(
                 determination_dependencies_override
@@ -155,7 +207,7 @@ def scan_gmail_feedback(
         anchors = _load_application_anchors(conn, limit=bounded_limit)
         summary = {
             "ok": True,
-            "scannedAnchorCount": len(anchors),
+            "scannedAnchorCount": 0,
             "searchedMessageCount": 0,
             "linkedEvidenceCount": 0,
             "suggestionsCreatedCount": 0,
@@ -175,6 +227,7 @@ def scan_gmail_feedback(
                 before=before,
                 max_results=bounded_max_results,
             )
+            summary["scannedAnchorCount"] += 1
             summary["searchedMessageCount"] += len(metadata_items)
 
             for metadata in metadata_items:
@@ -231,9 +284,8 @@ def scan_gmail_feedback(
                     )
                     outcome, outcome_envelope = interpreter.outcome(message_id=message_id, text=text)
                 except DeterminationFailure as error:
-                    summary["ok"] = False
-                    summary["status"] = "unavailable" if error.code == "provider_unavailable" else "blocked"
-                    summary["failureCode"] = error.code
+                    if summary["ok"]:
+                        summary.update(safe_scan_failure(error))
                     continue
                 decision = LinkDecision(
                     linked=True,
@@ -303,8 +355,6 @@ def scan_gmail_feedback(
                     if conn.in_transaction:
                         conn.rollback()
                     raise
-                _publish_committed_events(publisher)
-
                 summary["linkedEvidenceCount"] += 1
                 if suggestion["created"]:
                     summary["suggestionsCreatedCount"] += 1
@@ -326,7 +376,15 @@ def scan_gmail_feedback(
                         "determinationId": outcome_envelope.determination_id,
                     }
                 )
+                _publish_committed_events(publisher)
 
+        return summary
+    except Exception as error:
+        # Every message commits separately. Preserve the committed prefix even
+        # if a later provider, persistence, or publication step fails.
+        if summary is None:
+            raise
+        summary.update(safe_scan_failure(error))
         return summary
     finally:
         close_connection(db_path)
@@ -687,7 +745,7 @@ def _read_stdin_json() -> dict[str, Any]:
         return {}
     parsed = json.loads(raw)
     if not isinstance(parsed, dict):
-        raise GmailFeedbackError("Gmail feedback worker input must be a JSON object.")
+        raise GmailFeedbackError("invalid_input")
     return parsed
 
 
@@ -709,19 +767,10 @@ def main(argv: list[str] | None = None) -> int:
             window_days=int(payload.get("windowDays") or args.window_days),
         )
     except Exception as exc:
-        print(
-            json.dumps(
-                {
-                    "ok": False,
-                    "error": exc.__class__.__name__,
-                    "message": str(exc),
-                },
-                sort_keys=True,
-            )
-        )
+        print(json.dumps(safe_scan_failure(exc), sort_keys=True))
         return 1
     print(json.dumps(summary, sort_keys=True))
-    return 0
+    return 0 if summary["ok"] else 1
 
 
 if __name__ == "__main__":
