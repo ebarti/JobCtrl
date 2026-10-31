@@ -348,7 +348,7 @@ func TestOwnedExecutionParentEOFDoesNotAdmitWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	marker := filepath.Join(directory, "must-not-exist")
-	payload, err := json.Marshal(executionCommand{"/usr/bin/touch", []string{marker}, nil, directory})
+	payload, err := json.Marshal(executionCommand{Executable: "/usr/bin/touch", Arguments: []string{marker}, Directory: directory})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -408,7 +408,7 @@ func TestLifecycleMigratesSupportedSchemasToV15AndRestoresExactSourceOnRollback(
 			fixture := newV6ActivationFixture(t)
 			setJobCtrlUserVersion(t, fixture.python, fixture.state, sourceVersion)
 			proofs := 0
-			temporalQuiescenceProof = func(_, _ launchContext) error {
+			temporalQuiescenceProof = func(_, _, _ launchContext) error {
 				proofs++
 				return nil
 			}
@@ -506,7 +506,7 @@ c.commit(); c.close()`
 			}
 			sealedV7CandidateBuilder = buildSealedV15Candidate
 			sealedV7CandidateInstaller = installSealedV15Candidate
-			temporalQuiescenceProof = func(_, _ launchContext) error { t.Fatal("v7+ requested v6 Temporal identity proof"); return nil }
+			temporalQuiescenceProof = func(_, _, _ launchContext) error { t.Fatal("v7+ requested v6 Temporal identity proof"); return nil }
 			assertRestored := func() {
 				t.Helper()
 				pair, err := retainedPairForReceipt(fixture.state, fixture.old)
@@ -764,7 +764,7 @@ c.commit();c.close()`
 	if output, err := exec.Command(python, "-I", "-B", "-c", code, database).CombinedOutput(); err != nil {
 		t.Fatalf("seed v11 source: %v %s", err, output)
 	}
-	temporalQuiescenceProof = func(_, _ launchContext) error { t.Fatal("v11 requested v6 proof"); return nil }
+	temporalQuiescenceProof = func(_, _, _ launchContext) error { t.Fatal("v11 requested v6 proof"); return nil }
 	sealedV7CandidateBuilder = buildSealedV14Candidate
 	sealedV7CandidateInstaller = func(candidate launchContext, path string) error {
 		code := `import sqlite3,sys

@@ -1143,6 +1143,9 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 			return err
 		}
 	}
+	// Rebinding below selects the service payload. Keep the originally
+	// authenticated controller separately for any native health scope.
+	controller := ctx
 	transition, err := store.TransitionLock()
 	if err != nil {
 		return fmt.Errorf("acquire lifecycle transition lock: %w", err)
@@ -1301,7 +1304,7 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 	}
 	switch databaseVersion {
 	case legacyJobCtrlSchemaVersion:
-		if err := temporalQuiescenceProof(activeRuntime, candidateRuntime); err != nil {
+		if err := temporalQuiescenceProof(activeRuntime, candidateRuntime, controller); err != nil {
 			return restartBeforeBackup(fmt.Errorf("v6-to-v10 upgrade blocked before backup: %w", err))
 		}
 	case exactJobCtrlSchemaVersion:

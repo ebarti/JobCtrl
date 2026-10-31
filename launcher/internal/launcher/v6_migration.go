@@ -139,7 +139,7 @@ finally: c.close()`
 // proveStoppedTemporalQuiescence reopens only the old Temporal service after
 // the managed tree has stopped. With API and worker absent, no new workflow can
 // be admitted between the visibility proof and the paired snapshot.
-func proveStoppedTemporalQuiescence(active, candidate launchContext) error {
+func proveStoppedTemporalQuiescence(active, candidate, controller launchContext) error {
 	state, err := temporalProofState(active)
 	if err != nil {
 		return err
@@ -185,7 +185,7 @@ func proveStoppedTemporalQuiescence(active, candidate launchContext) error {
 	}
 
 	signals := make(chan os.Signal)
-	proofErr := waitForTemporal(active, temporal.command, temporal.exits, signals)
+	proofErr := waitForTemporal(active, controller, temporal.command, temporal.exits, signals)
 	if proofErr == nil {
 		proofErr = runTemporalQuiescenceModule(candidate)
 	}
