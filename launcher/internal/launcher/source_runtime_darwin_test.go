@@ -3,11 +3,13 @@
 package launcher
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -215,6 +217,7 @@ func TestDevelopmentEntryAutomaticallyMigratesOwnedWorkspace(t *testing.T) {
 		}
 		if err := os.RemoveAll(ownedRoot); err != nil {
 			t.Errorf("remove synthetic workspace: %v", err)
+			logSyntheticCleanupRemainder(t, ownedRoot)
 		}
 	})
 	root, home := filepath.Join(ownedRoot, "source"), filepath.Join(ownedRoot, "home")
@@ -365,6 +368,8 @@ Server(('127.0.0.1',int(os.environ['JOBCTRL_API_PORT'])),H).serve_forever()`
 			t.Error("second synthetic source command exit could not be verified")
 		}
 		safeToRemove = firstExited && (second == nil || secondExited)
+		t.Logf("synthetic cleanup: Stop succeeded; first waited=%t exited=%t; second started=%t waited=%t exited=%t; safeToRemove=%t",
+			firstWaited, firstExited, second != nil, secondWaited, secondExited, safeToRemove)
 	})
 	markerPattern := filepath.Join(inst.Dir, "source-runs", "*.json")
 	deadline := time.Now().Add(30 * time.Second)
@@ -548,6 +553,78 @@ c=sqlite3.connect(sys.argv[1]); assert c.execute('select value from history').fe
 	} else {
 		releaseLock(lock)
 	}
+}
+
+// This runs only after the first removal failure on a disposable hosted runner.
+// Observed PIDs are evidence only: no diagnostic may signal them or retry removal.
+func logSyntheticCleanupRemainder(t *testing.T, ownedRoot string) {
+	t.Helper()
+	if os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("RUNNER_OS") != "macOS" {
+		t.Log("synthetic cleanup remainder retained; hosted-only diagnostics not enabled")
+		return
+	}
+	if info, err := os.Lstat(ownedRoot); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		t.Logf("synthetic root unavailable or redirected: %q (%v)", ownedRoot, err)
+		return
+	}
+	func() {
+		cache := ownedRoot
+		for _, part := range []string{"home", "Library", "Caches", "go-build"} {
+			cache = filepath.Join(cache, part)
+			info, err := os.Lstat(cache)
+			if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				t.Logf("synthetic cache directory unavailable or redirected: %q (%v)", cache, err)
+				return
+			}
+		}
+		dir, err := os.Open(cache)
+		if err != nil {
+			t.Logf("synthetic cache listing: %v", err)
+			return
+		}
+		entries, readErr := dir.ReadDir(64)
+		closeErr := dir.Close()
+		t.Logf("synthetic cache listing: at most 64 entries; read=%v close=%v", readErr, closeErr)
+		for _, entry := range entries {
+			info, err := entry.Info()
+			if err != nil {
+				t.Logf("synthetic cache entry %q: %v", entry.Name(), err)
+				continue
+			}
+			t.Logf("synthetic cache entry %q: mode=%v size=%d modified=%s", entry.Name(), info.Mode(), info.Size(), info.ModTime().Format(time.RFC3339Nano))
+		}
+		for _, name := range []string{"trim.txt", "README"} {
+			info, err := os.Lstat(filepath.Join(cache, name))
+			if err != nil {
+				t.Logf("synthetic cache metadata %q: %v", name, err)
+				continue
+			}
+			t.Logf("synthetic cache metadata %q: mode=%v size=%d modified=%s", name, info.Mode(), info.Size(), info.ModTime().Format(time.RFC3339Nano))
+		}
+	}() // A vanished cache must not suppress the remaining root-scoped evidence.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	// -O avoids lsof's forked stat helpers; -Di disables its device-cache writes.
+	// +D stays under this owned root and does not follow links without -x.
+	command := exec.CommandContext(ctx, "/usr/sbin/lsof", "-nP", "-l", "-O", "-Di", "-a", "-u", strconv.Itoa(os.Getuid()), "-FpcRftn", "+D", ownedRoot)
+	command.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + filepath.Join(ownedRoot, "home"), "TMPDIR=" + ownedRoot, "LC_ALL=C"}
+	command.WaitDelay = time.Second
+	var output syntheticCleanupOutput
+	command.Stdout, command.Stderr = &output, &output
+	err := command.Run() // Wait/reap only this original read-only diagnostic child.
+	t.Logf("synthetic root open-file/process evidence (max 16 KiB; truncated=%t):\n%s\nlsof=%v deadline=%v", output.truncated, output.data, err, ctx.Err())
+}
+
+type syntheticCleanupOutput struct {
+	data      []byte
+	truncated bool
+}
+
+func (out *syntheticCleanupOutput) Write(p []byte) (int, error) {
+	n := min(len(p), (16<<10)-len(out.data))
+	out.data = append(out.data, p[:n]...)
+	out.truncated = out.truncated || n < len(p)
+	return len(p), nil
 }
 
 func TestDevelopmentEntryPointUsesNativeWorkspaceScope(t *testing.T) {
