@@ -79,6 +79,13 @@ test("the upgrade source advances to the latest published stable release", () =>
   assert.equal(selectLatestReleasedVersion(releases, "0.3.2"), "0.3.1", "a published-candidate rerun must still exercise its predecessor");
 });
 
+test("a published historical candidate is qualified against its own predecessor", () => {
+  const releases = [published("0.3.0", "18"), published("0.3.1", "19"), published("0.4.2", "31")];
+  assert.equal(selectLatestReleasedVersion(releases, "0.3.1"), "0.3.0");
+  assert.equal(selectLatestReleasedVersion(releases, "0.4.0"), "0.4.2", "an unpublished correction uses the current stable release");
+  assert.throws(() => selectLatestReleasedVersion([...releases, published("0.3.9", "19")], "0.3.1"), /ambiguous/);
+});
+
 test("missing or malformed stable release metadata fails instead of using a historical fallback", () => {
   assert.throws(() => selectLatestReleasedVersion([published("0.3.1", "19")], "0.3.1"), /no previous/);
   for (const tag of ["invalid", "0.3.1/../../bin/tool", "0.3.1;tool", "0.3.1\n"]) {

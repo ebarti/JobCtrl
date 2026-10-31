@@ -242,8 +242,9 @@ Other version pairs still require their positive upgrade qualification.
 
 The harness resolves that source from GitHub's published stable releases, so the
 source advances automatically after each release. Drafts, prereleases and the
-candidate itself are excluded; a rerun after publication still tests the previous
-release. Its signed descriptor and artifact hashes must verify against protected
+candidate itself are excluded; for a published historical candidate, only
+releases published before it can be predecessors. Ambiguous publication times
+fail the check. Its signed descriptor and artifact hashes must verify against protected
 release trust, and its signed sequence must precede the candidate's.
 
 Historical source schemas, detailed readiness-fault injection, old failed

@@ -18,9 +18,9 @@ import { establishSourceOwnership } from "./released-source-ownership.mjs";
 
 const readJson = async (file) => JSON.parse(await readFile(file, "utf8"));
 
-// The corrective 0.4.0 follows a briefly published 0.4.2, but most existing
-// users still come from 0.3.1. Qualify both transitions rather than letting
-// the newer same-schema predecessor hide the documented legacy refusal.
+// The corrective 0.4.0 follows a briefly published 0.4.2, while 0.3.1 remains
+// a public predecessor. Qualify both transitions rather than letting the newer
+// same-schema predecessor hide the documented legacy refusal.
 export function selectAcquisitionSourceVersions(releases, candidateVersion) {
   const latest = selectLatestReleasedVersion(releases, candidateVersion);
   if (candidateVersion !== "0.4.0" || latest === "0.3.1") return [latest];
