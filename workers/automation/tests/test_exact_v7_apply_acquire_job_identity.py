@@ -1302,7 +1302,7 @@ def test_late_result_cannot_replace_local_stop_or_reset_or_successor(conn, monke
 @pytest.mark.parametrize("overlap", ["before_intent", "after_intent", "lost_ack"])
 def test_owned_email_skip_overlap_retains_durable_authority(conn, monkeypatch, tmp_path, overlap):
     """Real claim, final-intent writer, saga and SQLite event writer; fake transports only."""
-    from jobctrl.apply.launcher import SqliteApplyRunRepository, _authorize_posting_before_submit
+    from jobctrl.apply.launcher import SqliteApplyRunRepository
     from jobctrl.domain.apply import ApplyRun, new_apply_run_id
     from jobctrl.domain.apply.process_manager import ApplySaga
     from jobctrl.state import reset_job_stage
@@ -1651,7 +1651,7 @@ def test_successor_claim_without_start_fences_old_owner_intent_and_settlement(co
 @pytest.mark.parametrize("intent_scope", ["earlier_run", "same_run", "during_agent", "other_tenant", "other_job", "none"])
 def test_final_intent_rechecks_all_durable_job_intents_for_inherited_attempt(conn, monkeypatch, tmp_path, intent_scope):
     """An already-admitted activity must obey the same stop as a fresh claim."""
-    from jobctrl.apply.launcher import SqliteApplyRunRepository, _authorize_posting_before_submit
+    from jobctrl.apply.launcher import SqliteApplyRunRepository
     from jobctrl.domain.apply import ApplyRun
     from jobctrl.domain.apply.process_manager import ApplySaga
     from jobctrl.state import ensure_job_stage_rows, record_job_event, set_stage_state

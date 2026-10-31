@@ -229,7 +229,7 @@ def test_direct_already_done_preserves_an_active_direct_stage(
     )
 
 
-def _assert_direct_reuse_preserves_active_stage(batch_runtime, monkeypatch, tmp_path, stage, *, workflow_id):
+def _assert_direct_reuse_preserves_active_stage(runtime, monkeypatch, tmp_path, stage, *, workflow_id):
     from jobctrl import database
     from jobctrl.infrastructure.preparation_recovery import assert_material_activity_commit_allowed
     from jobctrl.scoring import cover_letter
@@ -238,7 +238,7 @@ def _assert_direct_reuse_preserves_active_stage(batch_runtime, monkeypatch, tmp_
         _seed_stage_rows, _seed_target, _snapshot,
     )
 
-    conn = batch_runtime.connect()
+    conn = runtime.connect()
     _seed_target(conn, tenant_id=_TENANT_A)
     _seed_eligible_score(conn, tenant_id=_TENANT_A)
     _seed_approved_resume(conn, tmp_path, tenant_id=_TENANT_A)
@@ -277,8 +277,8 @@ def _assert_direct_reuse_preserves_active_stage(batch_runtime, monkeypatch, tmp_
     config_path = tmp_path / "cover-config.json"
     config_path.write_text('{"cover_letter_generation":true}')
     monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(config_path))
-    monkeypatch.setattr(database, "DB_PATH", Path(batch_runtime.db_path))
-    monkeypatch.setattr(cover_letter, "get_connection", batch_runtime.connect)
+    monkeypatch.setattr(database, "DB_PATH", Path(runtime.db_path))
+    monkeypatch.setattr(cover_letter, "get_connection", runtime.connect)
     if stage == "tailor":
         result = tailor.tailor_job_by_id(_JOB_ID, snapshot=_snapshot(_TENANT_A), tenant_id=_TENANT_A)
     else:

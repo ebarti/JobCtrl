@@ -796,6 +796,7 @@ for (const state of ["running", "needs_verification"] as const) {
             event.run(QA_PLATFORM_JOB_ID, "ApplySubmitIntended", JSON.stringify({ run_id: runId }), new Date().toISOString());
           }
         }).immediate();
+        const beforeStage = db.prepare("SELECT * FROM job_stage_states WHERE tenant_id='local' AND job_id=? AND stage='apply'").get(QA_PLATFORM_JOB_ID);
         const beforeArtifacts = db.prepare("SELECT * FROM job_materials_artifacts WHERE tenant_id='local' AND job_id=?").all(QA_PLATFORM_JOB_ID);
         const prohibited = watchProhibitedProductPathRequests(page);
         await page.setViewportSize({ width, height: 900 });
@@ -810,7 +811,7 @@ for (const state of ["running", "needs_verification"] as const) {
             await expect(audit.getByText("Submission outcome requires verification", { exact: true })).toBeVisible();
             await expect(audit.getByText(new RegExp(`Submission intent is recorded for run\\(s\\): ${runId}`))).toBeVisible();
           }
-          // The actual run history remains inspectable even though the local stage changes.
+          // The actual run history remains inspectable after the independent local stop.
           const history = drawer.getByRole("button", { name: /^10 · Apply history/ });
           if (await history.getAttribute("aria-expanded") === "false") await history.click();
           await expect(drawer.getByRole("link", { name: `Open apply run ${runId} for this job` })).toBeVisible();
@@ -831,7 +832,7 @@ for (const state of ["running", "needs_verification"] as const) {
         await page.reload();
         await assertEvidence();
         await expect(audit.getByText("Skipped locally", { exact: true })).toBeVisible();
-        // This action has no reset control in the skipped drawer: exercise its real
+        // This action has no reset control after the local stop: exercise its real
         // supported HTTP contract in the same browser session, without dispatching work.
         const resetStatus = await page.evaluate(async (jobId) => {
           const response = await fetch(`/v1/jobs/${encodeURIComponent(jobId)}/actions/retry-stage`, {
@@ -846,7 +847,14 @@ for (const state of ["running", "needs_verification"] as const) {
         await assertEvidence();
         await expect(audit.getByText("Skipped locally", { exact: true })).toBeVisible();
         const current = db.prepare("SELECT state,attempt_count FROM job_stage_states WHERE tenant_id='local' AND job_id=? AND stage='apply'").get(QA_PLATFORM_JOB_ID);
-        expect(current).toEqual({ state: "skipped", attempt_count: 1 });
+        expect(current).toEqual({ state: state === "needs_verification" ? "needs_verification" : "skipped", attempt_count: 1 });
+        if (state === "needs_verification") {
+          expect(db.prepare("SELECT * FROM job_stage_states WHERE tenant_id='local' AND job_id=? AND stage='apply'").get(QA_PLATFORM_JOB_ID)).toEqual(beforeStage);
+        }
+        const manualSkips = db.prepare("SELECT payload_json FROM job_events WHERE tenant_id='local' AND job_id=? AND stage='apply' AND event_type='StageSkipped'")
+          .all(QA_PLATFORM_JOB_ID) as Array<{ payload_json: string }>;
+        expect(manualSkips).toHaveLength(1);
+        expect(JSON.parse(manualSkips[0]!.payload_json)).toMatchObject({ manualDisposition: "skip", previousState: state });
         expect(db.prepare("SELECT * FROM job_materials_artifacts WHERE tenant_id='local' AND job_id=?").all(QA_PLATFORM_JOB_ID)).toEqual(beforeArtifacts);
         expect(prohibited).toEqual([`POST /v1/jobs/${QA_PLATFORM_JOB_ID}/actions/retry-stage`]);
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
