@@ -25,6 +25,15 @@ function fixtureErrorSummary(error) {
   return boundedFixtureDiagnostic(summary, 1024);
 }
 
+async function waitForFixtureFile(file) {
+  for (let attempt = 0; attempt < 250; attempt++) {
+    try { return await readFile(file, "utf8"); }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+    await delay(20);
+  }
+  assert.fail(`Owned fixture marker did not appear: ${file}`);
+}
+
 async function createHarness() {
   const temporaryRoot = await mkdtemp(path.join(tmpdir(), "jobctrl-dev-lifecycle-"));
   const binDir = path.join(temporaryRoot, "bin");
@@ -125,6 +134,23 @@ exec sleep 300
   for (const name of ["pnpm", "temporal", "uv"]) {
     await copyFile(fakeCorepack, path.join(binDir, name));
   }
+  await writeFile(path.join(temporaryRoot, "scripts/fixture-controller-owner.py"), `import importlib.util,os,pathlib,sys
+script = sys.argv.pop(1)
+spec = importlib.util.spec_from_file_location('fixture_source_owner', script)
+owner = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(owner)
+from jobctrl.infrastructure import process_ownership
+# Only this synthetic supervisor process selects a different cooperative grace.
+# The original handle, session census, cleanup budget and receipts stay intact.
+process_ownership._PROCESS_TERMINATION_GRACE_SECONDS = 2.0
+original_terminate = owner.terminate_owned_process
+def terminate(child, *, launched_pid):
+ marker = os.environ.get('JOBCTRL_TEST_CONTROLLER_STOP_STARTED')
+ if marker: pathlib.Path(marker).write_text('started')
+ return original_terminate(child, launched_pid=launched_pid)
+owner.terminate_owned_process = terminate
+raise SystemExit(owner.main())
+`);
   // Product ownership is exercised by the native source-controller tests;
   // these shell fixtures reuse the launch owner in a separate controller namespace.
   await writeFile(path.join(binDir, "go"), `#!/usr/bin/env bash
@@ -143,7 +169,7 @@ export JOBCTRL_DEV_INNER=1
 printf -v command 'exec %q run' "$root/scripts/dev"
 for component in "$@"; do printf -v command '%s %q' "$command" "$component"; done
 launch_id=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
-python3 -B "$root/scripts/dev-process-owner.py" launch "$controller_dir" api "$launch_id" "$command" &
+python3 -B "$root/scripts/fixture-controller-owner.py" "$root/scripts/dev-process-owner.py" launch "$controller_dir" api "$launch_id" "$command" &
 controller_child=$!
 finish() {
   python3 -B "$root/scripts/dev-process-owner.py" stop "$controller_dir" api
@@ -446,6 +472,132 @@ test("fixture cleanup retains unverified state and closes its original peer", as
       harness.run("forget", "docs");
     } catch (error) { failure = error; }
     await harness.cleanup(failure);
+  }
+});
+
+test("a fake source controller lets its inner supervisor finish a blocked drain", { skip: process.platform !== "darwin", timeout: 30_000 }, async () => {
+  const harness = await createHarness();
+  const ready = path.join(harness.temporaryRoot, "receipt-lock-held");
+  const release = path.join(harness.temporaryRoot, "release-receipt-lock");
+  const stopping = path.join(harness.temporaryRoot, "controller-cleanup-started");
+  harness.env.JOBCTRL_TEST_CONTROLLER_STOP_STARTED = stopping;
+  try {
+    const targets = ["temporal", "api", "worker", "docs", "demo-api", "demo-web"];
+    harness.run("start", ...targets);
+    await harness.waitForLaunches(targets.length);
+    const peer = harness.spawnPeer();
+    const holder = harness.trackChild(spawn("python3", ["-I", "-S", "-B", "-c", `
+import fcntl,os,pathlib,sys,time
+fd = os.open(sys.argv[1], os.O_RDWR | os.O_NOFOLLOW)
+try:
+ fcntl.flock(fd, fcntl.LOCK_EX)
+ pathlib.Path(sys.argv[2]).write_text('held')
+ while not pathlib.Path(sys.argv[3]).exists(): time.sleep(0.02)
+finally: os.close(fd)
+`, path.join(harness.devDir, "pids/temporal.lock"), ready, release], {
+      cwd: harness.temporaryRoot, env: harness.env, stdio: "ignore",
+    }));
+    assert.equal(await waitForFixtureFile(ready), "held");
+    const stop = harness.trackChild(spawn(path.join(harness.temporaryRoot, "scripts/dev"), ["stop", ...targets], {
+      cwd: harness.temporaryRoot, env: harness.env, stdio: ["ignore", "pipe", "pipe"],
+    }));
+    let output = "";
+    stop.stdout.on("data", (chunk) => { output += chunk; });
+    stop.stderr.on("data", (chunk) => { output += chunk; });
+    assert.equal(await waitForFixtureFile(stopping), "started");
+    // Outlast the old two-second leaf grace and its one-second census retry.
+    // The original holder releases the real publication lock cooperatively.
+    await delay(3_500);
+    await writeFile(release, "release");
+    await harness.waitForChildClose(holder);
+    await harness.waitForChildClose(stop, 10_000);
+    assert.equal(holder.exitCode, 0);
+    assert.equal(stop.exitCode, 0, output);
+    assert.equal(peer.exitCode, null);
+    assert.equal(peer.signalCode, null);
+    for (const name of targets) {
+      await assert.rejects(readFile(path.join(harness.devDir, `pids/${name}.identity.json`)), { code: "ENOENT" });
+    }
+    await assert.rejects(readFile(path.join(harness.devDir, "source-controller/api.identity.json")), { code: "ENOENT" });
+  } catch (error) {
+    harness.recordFailure(error);
+    throw error;
+  } finally {
+    let releaseFailure;
+    try { await writeFile(release, "release"); } catch (error) { releaseFailure = error; }
+    await harness.cleanup(releaseFailure);
+  }
+});
+
+test("concurrent Stop clients serialize receipt retirement and preserve a peer", { timeout: 30_000 }, async () => {
+  const harness = await createHarness();
+  const release = path.join(harness.temporaryRoot, "release-first-stop");
+  try {
+    harness.run("start", "docs", "demo-web");
+    await harness.waitForLaunches(2);
+    const peerPid = await harness.pid("demo-web");
+    const client = path.join(harness.temporaryRoot, "gated-stop.py");
+    await writeFile(client, `import fcntl,importlib.util,os,pathlib,sys,time
+script,directory,name,role,ready,release = sys.argv[1:]
+spec = importlib.util.spec_from_file_location('fixture_stop_client', script)
+owner = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(owner)
+if role == 'first':
+ original_request = owner.request
+ def request(value, action):
+  if action == 'stop':
+   pathlib.Path(ready).write_text('entered')
+   while not pathlib.Path(release).exists(): time.sleep(0.02)
+  return original_request(value, action)
+ owner.request = request
+else:
+ fd = os.open(pathlib.Path(directory) / (name + '.stop.lock'), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+ try:
+  try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+  except BlockingIOError: pathlib.Path(ready).write_text('blocked')
+  else:
+   pathlib.Path(ready).write_text('unlocked')
+   fcntl.flock(fd, fcntl.LOCK_UN)
+ finally: os.close(fd)
+sys.argv = [script, 'stop', directory, name]
+raise SystemExit(owner.main())
+`);
+    const startClient = (role, ready) => {
+      const child = harness.trackChild(spawn("python3", ["-I", "-S", "-B", client,
+        path.join(harness.temporaryRoot, "scripts/dev-process-owner.py"),
+        path.join(harness.devDir, "pids"), "docs", role, ready, release], {
+        cwd: harness.temporaryRoot, env: harness.env, stdio: ["ignore", "pipe", "pipe"],
+      }));
+      let output = "";
+      child.stdout.on("data", (chunk) => { output += chunk; });
+      child.stderr.on("data", (chunk) => { output += chunk; });
+      return { child, output: () => output };
+    };
+    const firstReady = path.join(harness.temporaryRoot, "first-stop-entered");
+    const secondReady = path.join(harness.temporaryRoot, "second-stop-probe");
+    const first = startClient("first", firstReady);
+    assert.equal(await waitForFixtureFile(firstReady), "entered");
+    const second = startClient("second", secondReady);
+    // This is a kernel lock observation while the first real request is held,
+    // rather than an assumption that a scheduled client has had time to run.
+    assert.equal(await waitForFixtureFile(secondReady), "blocked");
+    await writeFile(release, "release");
+    await harness.waitForChildClose(first.child, 10_000);
+    await harness.waitForChildClose(second.child, 10_000);
+    assert.equal(first.child.exitCode, 0, first.output());
+    assert.equal(second.child.exitCode, 0, second.output());
+    assert.match(first.output(), /^stopped\s*$/);
+    assert.match(second.output(), /^not running\s*$/);
+    assert.equal(await harness.pid("demo-web"), peerPid);
+    assert.match(harness.run("status", "demo-web"), /demo-web\s+up\b/);
+    await assert.rejects(readFile(path.join(harness.devDir, "pids/docs.identity.json")), { code: "ENOENT" });
+  } catch (error) {
+    harness.recordFailure(error);
+    throw error;
+  } finally {
+    let releaseFailure;
+    try { await writeFile(release, "release"); } catch (error) { releaseFailure = error; }
+    await harness.cleanup(releaseFailure);
   }
 });
 
