@@ -95,7 +95,7 @@ jobs:
           test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"
           test "$GITHUB_SHA" = "$head_sha"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$head_sha...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$head_sha"
 
       - name: Require explicit revocations, protected trust, and blocked tracked policy
@@ -116,7 +116,7 @@ jobs:
           printf %s "$JOBCTRL_RELEASE_PUBLIC_KEY" | base64 --decode > "$RUNNER_TEMP/release-public-key"
           test "$(wc -c < "$RUNNER_TEMP/release-public-key" | tr -d ' ')" = 32
           test "$(base64 -w0 < "$RUNNER_TEMP/release-public-key")" = "$JOBCTRL_RELEASE_PUBLIC_KEY"
-          [[ "$JOBCTRL_RELEASE_KEY_ID" =~ ^[A-Za-z0-9._-]+$ ]]
+          [[ "$JOBCTRL_RELEASE_KEY_ID" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "Invalid JOBCTRL_RELEASE_KEY_ID" >&2; exit 1; }
           test "$(jq -r '.manifestSigning.keyId' packaging/distribution/signing-policy.json)" = "$JOBCTRL_RELEASE_KEY_ID"
           sha="$(git rev-parse HEAD)"
           source_date_epoch="$(git show -s --format=%ct HEAD)"
@@ -191,7 +191,7 @@ jobs:
           test "$GH_REPO" = "$GITHUB_REPOSITORY"
           test "$(gh repo view "$GH_REPO" --json nameWithOwner --jq '.nameWithOwner')" = "$GITHUB_REPOSITORY"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
           release="$RUNNER_TEMP/preflight-release.json"
           error="$RUNNER_TEMP/preflight-release.err"
@@ -244,7 +244,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$RELEASE_REF"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Install locked workspace dependencies
@@ -352,7 +352,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$RELEASE_REF"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Verify checkout-rooted release authority and the prepared handoff
@@ -708,7 +708,7 @@ jobs:
           }
           require_curated_release_notes "$notes"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
           release="$RUNNER_TEMP/release"
           draft="$RUNNER_TEMP/release-draft.json"
@@ -762,7 +762,7 @@ jobs:
         run: |
           set -euo pipefail
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Publish checksum-checked immutable candidate assets to R2
@@ -776,10 +776,10 @@ jobs:
           set -euo pipefail
           test -n "$AWS_ACCESS_KEY_ID"
           test -n "$AWS_SECRET_ACCESS_KEY"
-          [[ "$R2_ACCOUNT_ID" =~ ^[a-f0-9]{32}$ ]]
-          [[ "$R2_BUCKET" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]]
-          [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ ]]
-          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[0-9]+$ ]]
+          [[ "$R2_ACCOUNT_ID" =~ ^[a-f0-9]{32}$ ]] || { echo "Invalid R2_ACCOUNT_ID" >&2; exit 1; }
+          [[ "$R2_BUCKET" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]] || { echo "Invalid R2_BUCKET" >&2; exit 1; }
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ ]] || { echo "Invalid GITHUB_RUN_ID" >&2; exit 1; }
+          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[0-9]+$ ]] || { echo "Invalid GITHUB_RUN_ATTEMPT" >&2; exit 1; }
           r2_endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           release="$RUNNER_TEMP/release"
           # Cloudflare can cache a first-read 404 longer than this bounded
@@ -884,7 +884,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$RELEASE_REF"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Build the source ownership fixture controller
@@ -1062,7 +1062,7 @@ jobs:
         run: |
           set -euo pipefail
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Require the protected Homebrew tap deploy key
@@ -1096,7 +1096,7 @@ jobs:
         run: |
           set -euo pipefail
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Commit synchronized formula
@@ -1225,7 +1225,7 @@ jobs:
         run: |
           set -euo pipefail
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Atomically promote one R2 channel pointer with compare-and-swap
@@ -1240,8 +1240,8 @@ jobs:
           set -euo pipefail
           test -n "$AWS_ACCESS_KEY_ID"
           test -n "$AWS_SECRET_ACCESS_KEY"
-          [[ "$R2_ACCOUNT_ID" =~ ^[a-f0-9]{32}$ ]]
-          [[ "$R2_BUCKET" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]]
+          [[ "$R2_ACCOUNT_ID" =~ ^[a-f0-9]{32}$ ]] || { echo "Invalid R2_ACCOUNT_ID" >&2; exit 1; }
+          [[ "$R2_BUCKET" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]] || { echo "Invalid R2_BUCKET" >&2; exit 1; }
           r2_endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           pointer="$RUNNER_TEMP/release/channel-pointer.json"
           destination="v1/$RELEASE_CHANNEL/darwin-arm64.json"
@@ -1379,7 +1379,7 @@ jobs:
           }
           require_curated_release_notes "$notes"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
           candidate="$RUNNER_TEMP/release"
           smoke="$RUNNER_TEMP/smoke-evidence/release/published-candidate-smoke.json"
@@ -1413,7 +1413,7 @@ jobs:
             require_asset_digest "$release" "$asset"
           done
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
           test "$(GH_TOKEN="$ADMIN_READ_TOKEN" gh api -H 'X-GitHub-Api-Version: 2026-03-10' "repos/$GITHUB_REPOSITORY/immutable-releases" --jq '.enabled')" = true
           if [[ "$(jq -r '.isDraft' "$release")" = true ]]; then
@@ -1541,7 +1541,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_COMMIT"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$EXPECTED_SOURCE_COMMIT...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$EXPECTED_SOURCE_COMMIT"
           test "$(gh release view "$RELEASE_TAG" --json isImmutable --jq '.isImmutable')" = true
           gh release verify "$RELEASE_TAG"
@@ -1652,7 +1652,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$RELEASE_REF"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Set up only the exact locked release-build dependencies
@@ -1723,7 +1723,7 @@ jobs:
           tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$tag_sha...main" --jq '.status')"
           test "$EXPECTED_SOURCE_COMMIT" = "$tag_sha"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh release view "$RELEASE_TAG" --json isImmutable --jq '.isImmutable')" = true
           test -f "$DIST_DIR/SHA256SUMS" && test ! -L "$DIST_DIR/SHA256SUMS"
           packages="$DIST_DIR/packages"
@@ -1746,10 +1746,10 @@ jobs:
           EXPECTED_CHANNEL_POINTER_SHA256: ${{ inputs.expected_channel_pointer_sha256 }}
         run: |
           set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          [[ "$RELEASE_SEQUENCE" =~ ^[1-9][0-9]*$ ]]
-          [[ "$EXPECTED_SOURCE_COMMIT" =~ ^[a-f0-9]{40}$ ]]
-          [[ "$EXPECTED_CHANNEL_POINTER_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid RELEASE_TAG" >&2; exit 1; }
+          [[ "$RELEASE_SEQUENCE" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid RELEASE_SEQUENCE" >&2; exit 1; }
+          [[ "$EXPECTED_SOURCE_COMMIT" =~ ^[a-f0-9]{40}$ ]] || { echo "Invalid EXPECTED_SOURCE_COMMIT" >&2; exit 1; }
+          [[ "$EXPECTED_CHANNEL_POINTER_SHA256" =~ ^[a-f0-9]{64}$ ]] || { echo "Invalid EXPECTED_CHANNEL_POINTER_SHA256" >&2; exit 1; }
           test "$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name')" = "$RELEASE_TAG"
           release="$RUNNER_TEMP/pypi-resume-release.json"
           gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,isImmutable,targetCommitish,assets > "$release"

@@ -48,6 +48,85 @@ function assertShellSyntax(label, source) {
   assert.equal(result.status, 0, `${label}: ${result.stderr}`);
 }
 
+test("release lineage gates reject non-ancestor commits under the system shell", () => {
+  const workflow = loadYaml(workflowUrl);
+  const guards = [];
+  for (const [jobName, job] of Object.entries(workflow.jobs)) {
+    for (const step of job.steps ?? []) {
+      const lines = (step.run ?? "").split("\n");
+      for (let index = 0; index < lines.length; index += 1) {
+        if (/^\s*main_relation=/.test(lines[index])) {
+          const guard = lines
+            .slice(index + 1)
+            .find((line) => line.includes("$main_relation"))
+            ?.trim();
+          assert.ok(guard, `${jobName}: missing main lineage guard`);
+          guards.push({ jobName, guard });
+        }
+      }
+    }
+  }
+  assert.ok(guards.length > 0, "release workflow must check main lineage");
+  const shell = process.platform === "darwin" ? "/bin/bash" : "bash";
+  for (const { jobName, guard } of guards) {
+    for (const [relation, accepted] of [
+      ["ahead", true], ["identical", true], ["diverged", false],
+      ["behind", false], ["unknown", false], ["", false],
+    ]) {
+      const result = spawnSync(
+        shell,
+        ["-c", `set -euo pipefail\nmain_relation=$1\n${guard}\nprintf accepted`, "release-lineage-test", relation],
+        { encoding: "utf8", env: { ...process.env, BASH_ENV: "" } },
+      );
+      assert.equal(result.status === 0, accepted, `${jobName}: ${JSON.stringify(relation)}: ${result.stderr}`);
+      assert.equal(result.stdout === "accepted", accepted, `${jobName}: unexpected continuation for ${JSON.stringify(relation)}`);
+    }
+  }
+});
+
+test("release workflow input validation fails closed under the system shell", () => {
+  const workflow = loadYaml(workflowUrl);
+  const samples = {
+    JOBCTRL_RELEASE_KEY_ID: ["fixture-key", "invalid key"],
+    R2_ACCOUNT_ID: ["a".repeat(32), "invalid"],
+    R2_BUCKET: ["jobctrl-release", "invalid_bucket"],
+    GITHUB_RUN_ID: ["123", "invalid"],
+    GITHUB_RUN_ATTEMPT: ["1", "invalid"],
+    RELEASE_TAG: ["v0.4.0", "invalid"],
+    RELEASE_SEQUENCE: ["14", "0"],
+    EXPECTED_SOURCE_COMMIT: ["a".repeat(40), "invalid"],
+    EXPECTED_CHANNEL_POINTER_SHA256: ["a".repeat(64), "invalid"],
+  };
+  const shell = process.platform === "darwin" ? "/bin/bash" : "bash";
+  let count = 0;
+  for (const [jobName, job] of Object.entries(workflow.jobs)) {
+    for (const step of job.steps ?? []) {
+      assert.doesNotMatch(
+        step.run ?? "",
+        /^\s*\[\[.*\]\]\s*$/m,
+        `${jobName}: a bare Bash assertion may not stop the system shell`,
+      );
+      for (const line of (step.run ?? "").split("\n")) {
+        const match = line.match(/^\s*\[\[\s*"\$([A-Z0-9_]+)"\s*=~/);
+        if (!match) continue;
+        const name = match[1];
+        assert.ok(samples[name], `${jobName}: add validation samples for ${name}`);
+        count += 1;
+        for (const [value, accepted] of [[samples[name][0], true], [samples[name][1], false]]) {
+          const result = spawnSync(
+            shell,
+            ["-c", `set -euo pipefail\n${name}=$1\n${line.trim()}\nprintf accepted`, "release-input-test", value],
+            { encoding: "utf8", env: { ...process.env, BASH_ENV: "" } },
+          );
+          assert.equal(result.status === 0, accepted, `${jobName}: ${name}=${JSON.stringify(value)}: ${result.stderr}`);
+          assert.equal(result.stdout === "accepted", accepted, `${jobName}: unexpected continuation for ${name}`);
+        }
+      }
+    }
+  }
+  assert.ok(count > 0, "release workflow must validate its inputs");
+});
+
 test("release workflow binds creation, reuse, and final readback to curated notes", async () => {
   const source = await readFile(workflowUrl, "utf8");
   const workflow = loadYaml(workflowUrl);

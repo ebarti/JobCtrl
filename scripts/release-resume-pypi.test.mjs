@@ -23,6 +23,11 @@ const required = [
 ];
 
 test("PyPI resumption accepts only the verified release and its successful original gates", async (context) => {
+  assert.doesNotMatch(
+    await readFile(script, "utf8"),
+    /^\s*\[\[.*\]\]\s*$/m,
+    "a bare Bash assertion may not stop the system shell",
+  );
   const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-pypi-resume-test-"));
   context.after(() => rm(root, { recursive: true, force: true }));
   const bin = path.join(root, "bin");
@@ -35,7 +40,7 @@ fs.appendFileSync(process.env.TASK_CALLS, JSON.stringify(args) + '\\n');
 if (args[0] === 'api') {
   const endpoint = args[1];
   if (endpoint.includes('/commits/')) process.stdout.write(endpoint.endsWith(state.tag) ? state.source : state.recovery);
-  else if (endpoint.includes('/compare/')) process.stdout.write(state.relation);
+  else if (endpoint.includes('/compare/')) process.stdout.write(endpoint.includes(state.recovery + '...main') ? state.recoveryRelation : state.sourceRelation);
   else if (endpoint.includes('/actions/runs/') && endpoint.includes('/jobs?')) process.stdout.write(JSON.stringify({jobs: state.jobs}));
   else if (endpoint.includes('/actions/runs/')) process.stdout.write(JSON.stringify(state.run));
   else if (endpoint.endsWith('/releases/latest')) process.stdout.write(state.latest);
@@ -66,32 +71,45 @@ fs.writeFileSync(args[args.indexOf('-o') + 1], state.pointer);
   const source = "a".repeat(40), recovery = "b".repeat(40), tag = "v0.4.2";
   const pointer = `${JSON.stringify({ channel: "stable", sequence: 13, buildId: `0.4.2-${source}-darwin-arm64` })}\n`;
   const baseline = {
-    source, recovery, tag, pointer, relation: "ahead", latest: tag,
+    source, recovery, tag, pointer, recoveryRelation: "ahead", sourceRelation: "ahead", latest: tag,
     run: { path: ".github/workflows/release-distribution.yml", event: "workflow_dispatch", head_branch: tag, head_sha: source, status: "completed", conclusion: "failure" },
     jobs: [...required.map((name) => ({ name, conclusion: "success" })), { name: "Publish the verified GitHub Release", conclusion: "failure" }],
     release: { isDraft: false, isPrerelease: false, isImmutable: true, targetCommitish: source, assets: [{ name: "channel-pointer.json", digest: `sha256:${digest(pointer)}` }] },
   };
   const cases = [
     ["verified", () => {}, true],
+    ["identical commits", (s) => { s.recoveryRelation = "identical"; s.sourceRelation = "identical"; }, true],
+    ["invalid tag", (_s, env) => { env.RELEASE_TAG = "not-a-version"; }, false, true],
+    ["invalid sequence", (_s, env) => { env.RELEASE_SEQUENCE = "0"; }, false, true],
+    ["invalid pointer digest", (_s, env) => { env.EXPECTED_CHANNEL_POINTER_SHA256 = "invalid"; }, false, true],
+    ["invalid recovery sha", (_s, env) => { env.GITHUB_SHA = "invalid"; }, false, true],
+    ["invalid key id", (_s, env) => { env.JOBCTRL_RELEASE_KEY_ID = "invalid key"; }, false, true],
+    ["wrong recovery ref", (_s, env) => { env.GITHUB_REF = "refs/tags/unrelated"; }, false, true],
+    ["invalid original run", (_s, env) => { env.GITHUB_REF = `refs/tags/${tag}-pypi-resume.0`; }, false, true],
     ["wrong original commit", (s) => { s.run.head_sha = "c".repeat(40); }, false],
     ["missing signing proof", (s) => { s.jobs.find((j) => j.name.startsWith("Sign and notarize")).conclusion = "failure"; }, false],
     ["missing lifecycle proof", (s) => { s.jobs.find((j) => j.name.startsWith("Smoke public assets")).conclusion = "skipped"; }, false],
     ["mutable release", (s) => { s.release.isImmutable = false; }, false],
     ["stale latest release", (s) => { s.latest = "v0.5.0"; }, false],
     ["different live pointer", (s) => { s.pointer += " "; }, false],
-    ["unrelated recovery commit", (s) => { s.relation = "diverged"; }, false],
+    ["unrelated recovery commit", (s) => { s.recoveryRelation = "diverged"; }, false],
+    ["unrelated source commit", (s) => { s.sourceRelation = "diverged"; }, false],
   ];
-  for (const [label, mutate, accepted] of cases) {
+  for (const [label, mutate, accepted, noGh] of cases) {
     const state = structuredClone(baseline);
-    mutate(state);
+    const overrides = {};
+    mutate(state, overrides);
     const dir = path.join(root, label.replaceAll(" ", "-"));
     await mkdir(dir);
     const statePath = path.join(dir, "state.json"), output = path.join(dir, "output"), calls = path.join(dir, "calls");
     await writeFile(statePath, JSON.stringify(state));
     await writeFile(output, "");
-    const result = spawnSync("bash", [script], {
+    // GitHub's macOS runners also ship Bash 3.2 at this path. A newer Bash
+    // earlier in PATH must not hide differences in fail-closed behavior.
+    const shell = process.platform === "darwin" ? "/bin/bash" : "bash";
+    const result = spawnSync(shell, [script], {
       encoding: "utf8", timeout: 10000,
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, TASK_STATE: statePath, TASK_CALLS: calls, RUNNER_TEMP: dir, GITHUB_OUTPUT: output, GITHUB_REPOSITORY: "fixture/repo", GITHUB_REF: `refs/tags/${tag}-pypi-resume.123`, GITHUB_SHA: recovery, RELEASE_TAG: tag, RELEASE_SEQUENCE: "13", EXPECTED_CHANNEL_POINTER_SHA256: digest(pointer), JOBCTRL_RELEASE_PUBLIC_KEY: Buffer.alloc(32, 1).toString("base64"), JOBCTRL_RELEASE_KEY_ID: "fixture-key" },
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, TASK_STATE: statePath, TASK_CALLS: calls, RUNNER_TEMP: dir, GITHUB_OUTPUT: output, GITHUB_REPOSITORY: "fixture/repo", GITHUB_REF: `refs/tags/${tag}-pypi-resume.123`, GITHUB_SHA: recovery, RELEASE_TAG: tag, RELEASE_SEQUENCE: "13", EXPECTED_CHANNEL_POINTER_SHA256: digest(pointer), JOBCTRL_RELEASE_PUBLIC_KEY: Buffer.alloc(32, 1).toString("base64"), JOBCTRL_RELEASE_KEY_ID: "fixture-key", ...overrides },
     });
     assert.equal(result.status === 0, accepted, `${label}: ${result.stderr}`);
     const value = await readFile(output, "utf8");
@@ -100,6 +118,15 @@ fs.writeFileSync(args[args.indexOf('-o') + 1], state.pointer);
       assert.match(value, /original_run_id=123/);
       assert.match(value, /source_date_epoch=1700000000/);
       assert.match(await readFile(calls, "utf8"), /"release","verify"/);
-    } else assert.equal(value, "", `${label} must fail before authorizing PyPI`);
+    } else {
+      assert.equal(value, "", `${label} must fail before authorizing PyPI`);
+      if (noGh) {
+        const recorded = await readFile(calls, "utf8").catch((error) => {
+          if (error.code === "ENOENT") return "";
+          throw error;
+        });
+        assert.equal(recorded, "", `${label} must fail before querying GitHub`);
+      }
+    }
   }
 });

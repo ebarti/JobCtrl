@@ -7,26 +7,26 @@ set -euo pipefail
 : "${RELEASE_TAG:?}" "${RELEASE_SEQUENCE:?}" "${EXPECTED_CHANNEL_POINTER_SHA256:?}"
 : "${JOBCTRL_RELEASE_PUBLIC_KEY:?}" "${JOBCTRL_RELEASE_KEY_ID:?}"
 
-[[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-[[ "$RELEASE_SEQUENCE" =~ ^[1-9][0-9]*$ ]]
-[[ "$EXPECTED_CHANNEL_POINTER_SHA256" =~ ^[a-f0-9]{64}$ ]]
-[[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
-[[ "$JOBCTRL_RELEASE_KEY_ID" =~ ^[A-Za-z0-9._-]+$ ]]
+[[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid RELEASE_TAG" >&2; exit 1; }
+[[ "$RELEASE_SEQUENCE" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid RELEASE_SEQUENCE" >&2; exit 1; }
+[[ "$EXPECTED_CHANNEL_POINTER_SHA256" =~ ^[a-f0-9]{64}$ ]] || { echo "Invalid EXPECTED_CHANNEL_POINTER_SHA256" >&2; exit 1; }
+[[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "Invalid GITHUB_SHA" >&2; exit 1; }
+[[ "$JOBCTRL_RELEASE_KEY_ID" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "Invalid JOBCTRL_RELEASE_KEY_ID" >&2; exit 1; }
 prefix="refs/tags/$RELEASE_TAG-pypi-resume."
-[[ "$GITHUB_REF" == "$prefix"* ]]
+[[ "$GITHUB_REF" == "$prefix"* ]] || { echo "Invalid GITHUB_REF" >&2; exit 1; }
 original_run="${GITHUB_REF#"$prefix"}"
-[[ "$original_run" =~ ^[1-9][0-9]*$ ]]
+[[ "$original_run" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid original_run" >&2; exit 1; }
 
 test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 test "$(gh api "repos/$GITHUB_REPOSITORY/commits/${GITHUB_REF#refs/tags/}" --jq '.sha')" = "$GITHUB_SHA"
 recovery_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...main" --jq '.status')"
-[[ "$recovery_relation" = ahead || "$recovery_relation" = identical ]]
+case "$recovery_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
 source_commit="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')"
-[[ "$source_commit" =~ ^[a-f0-9]{40}$ ]]
+[[ "$source_commit" =~ ^[a-f0-9]{40}$ ]] || { echo "Invalid source_commit" >&2; exit 1; }
 source_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$source_commit...main" --jq '.status')"
-[[ "$source_relation" = ahead || "$source_relation" = identical ]]
+case "$source_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
 source_date_epoch="$(git show -s --format=%ct "$source_commit")"
-[[ "$source_date_epoch" =~ ^[1-9][0-9]*$ ]]
+[[ "$source_date_epoch" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid source_date_epoch" >&2; exit 1; }
 
 run_json="$RUNNER_TEMP/original-release-run.json"
 jobs_json="$RUNNER_TEMP/original-release-jobs.json"
