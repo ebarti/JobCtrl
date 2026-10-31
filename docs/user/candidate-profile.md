@@ -26,9 +26,8 @@ JobCtrl does not let a generated resume or an import silently become truth. The
 profile boundary works in this order:
 
 1. **Import creates a draft.** Resume-PDF import returns extracted
-   profile data and inferred style without changing saved facts. The current
-   browser confirmation returns to the saved Profile without staging that
-   returned draft into the editor; see the import limitation below.
+   profile data and inferred style without changing saved facts. The browser
+   presents the draft on Profile for explicit section selection and acceptance.
 2. **Save validates and normalizes.** The API parses the submitted profile
    through the Candidate Profile domain rules, validates target places when
    present, and replaces the normalized profile rows in one database
@@ -54,14 +53,45 @@ profile boundary works in this order:
 This version boundary is what lets JobCtrl prove which candidate facts a score,
 resume, or application decision actually used.
 
-## Current Import Limitation
+## Review An Imported Resume
 
 The web import flow previews your PDF and asks whether to extract profile data,
-style, or both. Its confirmation currently receives an API draft, removes the
-upload state and returns to `/profile`, which loads the saved profile. It does
-not populate the editor with that extracted draft or save imported facts. Review
-and save deliberate changes through Profile; completing import alone does not
-establish a saved change.
+style, or both. After extraction, Profile shows the returned fields as a draft.
+Select the sections to keep and choose **Accept selected sections**, or reject
+the draft. Any extraction warnings appear with the draft. Experience,
+education, and skills are added alongside saved entries;
+existing achievement evidence is retained, and extracted bullets are not
+created as confirmed achievement evidence. Personal details and summary replace
+the corresponding saved values only when their section is selected. Import
+itself never changes the saved profile. Personal fields shown for review come
+from the recorded extraction, even if the saved profile changes while the PDF is
+being read. Style review includes only page and font details observed in the PDF;
+other saved style choices remain unchanged when those details are accepted. If that source record cannot be verified, the PDF stays available
+for retry. Older drafts whose source attempt cannot be verified stay
+in browser recovery; show and copy their JSON, then import the PDF again to review
+those fields.
+
+The draft is bound to the saved profile version read before extraction. A
+concurrent profile save prevents acceptance until you load the latest profile
+and review and select the sections again. If a damaged draft would hide a field
+that the current saved profile would change, acceptance stops; load the verified
+latest profile to see the full changes and make a new selection. A failed or unconfirmed save keeps
+the draft in this browser, including after a reload. A save attempt is recorded
+before it is sent. After an unconfirmed result, the original selection can be
+retried only while the saved profile version is unchanged; if it changed, inspect
+the saved profile before removing the draft or starting another import. A first profile save is fenced against an initially absent
+profile. If draft storage fails, the extracted draft remains available in the
+current session and the uploaded PDF is retained; retry browser storage before
+reloading. If review data cannot be verified, no save is sent; removing that
+review retains the older or unexpected data for recovery. Clearing site data
+removes the saved review drafts and recovery data.
+
+Open tabs share saved review drafts. A tab checks that its draft is still at
+the reviewed revision before saving, and a stale tab cannot remove a newer
+revision. Removing a draft does not cancel a save already in flight; check the
+saved profile before deciding what to do.
+If the profile save succeeds but the draft cannot be removed, retry removal
+rather than accepting the same draft again.
 
 The selected PDF and its filename are stored in this browser so the wizard can
 survive navigation and refresh. Leaving the wizard or choosing **Cancel** keeps
@@ -75,23 +105,32 @@ you retry. A failed replacement leaves the previously saved selection unchanged.
 If import succeeds but removing the PDF fails, retrying removal does not repeat
 the import request. Once removal succeeds, you can choose the same PDF again
 and start a new import; an identical request already running must first finish.
-The request's PDF, filename and options and the returned draft stay in memory
-for the current app session, even after the stored upload is removed. The draft
-is not staged in the Profile editor; reloading the app clears these in-memory
-copies. If cleanup failed before a reload, the app no longer knows the earlier
-request completed, so submitting again can repeat it.
+The completed request's PDF, filename and options stay in memory for the current
+app session after the stored upload is removed. The separate review draft is
+saved in browser storage before that cleanup and remains until accepted or
+rejected. New drafts contain reviewable fields and the saved personal values needed
+for comparison, not a copy of the complete saved profile. Older retained drafts
+may still contain additional data. After accepting or rejecting one, Profile
+shows a preserved legacy review: select **Show recovery JSON** to inspect and copy
+its complete data before clearing browser site data. It can contain sensitive
+profile information. After upgrading, close or reload all older Profile tabs and
+wait for any in-flight saves to finish before reviewing imports. JobCtrl does not
+automatically close or reload older browser tabs. An older tab may already have
+loaded a draft or started a save; updating browser storage cannot cancel that work. If upload cleanup failed before a reload, the app no longer knows the
+earlier request completed, so submitting again can repeat it.
 
 The current version coordinates saves and removal between open tabs. If another
 tab changes the selection, return to upload and choose **Load latest saved
-PDF** before continuing. If browser storage is unavailable, enable site data and retry in a current browser. Reload or close
+PDF** before continuing. Removal is unavailable while that selection loads;
+review the loaded PDF before removing it. If browser storage is unavailable, enable site data and retry in a current browser. Reload or close
 older JobCtrl tabs: older versions cannot coordinate with each other and may
 still change the earlier copy. They cannot erase the current version's record.
 
 Reviewed multi-source intake, duplicate/conflict reconciliation and item-level
-fact promotion are **proposed, not implemented**. The [owning intake design and
+fact promotion remain **proposed, not implemented**. The [owning intake design and
 current-path assessment](../plans/2026-09-21-profile-evidence-selective-tailoring.md#2-current-foundations-and-acceptance-map)
 preserve explicit acceptance, unknown facts and canonical ownership. They do
-not change the current import flow or authorize generated facts.
+not authorize generated facts.
 
 ## What You Can See And Control
 
@@ -245,8 +284,8 @@ bounded excerpts. Sparse storage keys remain available only from each row's
 ## Lifecycle
 
 1. **Create or request an import draft.** First-run setup creates the local
-   profile. Resume import extracts a draft through the API; the current browser
-   handoff limitation above prevents it from populating the canonical editor.
+   profile. Resume import extracts a draft through the API; choose its sections
+   in Profile before accepting them into the saved record.
 2. **Validate and save.** The API normalizes the accepted data into profile and
    child rows, records the update, and refreshes profile reads.
 3. **Snapshot for work.** A scoring, tailoring, or Apply run receives an

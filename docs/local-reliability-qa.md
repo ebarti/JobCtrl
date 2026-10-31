@@ -176,6 +176,60 @@ cleanup or permission to signal a real process.
 | Docs | `corepack pnpm docs:build`, diff check |
 | Cross-stack | `corepack pnpm check`, `corepack pnpm test`, affected separate web suites |
 
+For resume import review, use synthetic PDF and profile fixtures through the
+registered extraction and Profile save paths. Verify visible selected sections,
+explicit acceptance/rejection, initial and stale version fences, recoverable
+extraction/save failures, browser reload after extraction and stale save, draft
+storage failure and retry before upload cleanup, preserved newer edits and
+existing achievement evidence, and no confirmed achievement created from an
+extracted bullet. Read Profile A, save B before the worker loads its base, extract
+an email without a name, then save C and rebase: the review must show only the
+receipt's email and accepting it must preserve C. Repeat for a PDF style import:
+change an unobserved color from A to B to C, rebase, and verify accepting observed
+style fields preserves C. Missing or invalid extraction receipts must retain the
+upload; forged selected fields must be refused within the version-fenced write.
+Check the submitted and parsed PDF digests agree. Use two synthetic PDFs with the
+same extracted text but different observed styles; swap complete worker responses
+and determination IDs, and reject missing, foreign or ambiguous attempt bindings.
+Substitute a complete valid second import tuple under the first draft's retained
+identity, and refuse Profile-only, style-only and combined acceptance. Exercise
+an idempotent worker retry and
+binding-write rollback without changing saved Profile or earlier bindings.
+Inspect the owned stored draft before and after rebase: the
+profile password, unrelated profile sections, evidence and extraction text
+preview must not be copied into browser storage. Reload an older full draft with
+an uncertain attempt and preserve its original data even if the canonical profile
+has changed or is unavailable. Rebase a legacy draft with a value present only in
+its old base; retain the complete prior record atomically, including across reload
+and subsequent rebases, and leave its bytes untouched when the transaction fails.
+After acceptance and rejection, expose complete legacy recovery JSON across reload
+and keep it out of profile-save requests. Exercise a legacy personal draft
+without extraction provenance: preserve its complete recovery data and require a
+fresh import before applying personal values. Old review-envelope readers must
+refuse to write after the version changes.
+Hydrate a v1 projected draft with verified source fields whose reviewed value matches an intermediate saved
+base, then rebase after that canonical value changes. Preserve the original
+proposal, accepted evidence and recovery record through failed writes, reload and
+selected acceptance; ambiguous or unsupported projections must leave the stored
+bytes intact. Attempt same-version acceptance of an unsupported projection and
+of projected records with unexpected style fields: neither may dispatch a profile
+save or create an attempt marker, and each remains available for recovery. Valid
+v1, v2 and supported older unprojected style selections must still work.
+Corrupt a stored review base and verify selective acceptance
+uses the complete canonical profile. Lose a save response or fail draft removal,
+reload, and prove that later profile edits and deletions cannot be overwritten
+or imported twice; verify an unchanged-version retry uses the original selection.
+Corrupt a draft base so it hides an imported field and prove acceptance waits
+for a verified refresh, visible re-review, and a new selection.
+
+For the cross-stack synthetic import proof, set `JOBCTRL_PROOF_PYTHON` to an
+existing locked Python interpreter, ensure the Temporal CLI and `lsof` are
+available, then run `scripts/qa/profile-import-product-path/run.sh` from the
+checkout. It creates and retains its own temporary root, disables credential
+lookups and external providers, and runs the registered API, RPC and workflow
+with a synthetic model adapter and web controls. The default web suite skips this
+opt-in proof; the focused API and web attribution tests run normally.
+
 For event-stream reconciliation, use an owned synthetic workspace with the
 actual API and a Linux-isolated browser. Read before a delayed or failed first
 connection, commit a change before the server chooses its cursor, and verify

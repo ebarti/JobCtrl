@@ -53,6 +53,7 @@ class ProfileRepository(Protocol):
         pdf_bytes: bytes,
         *,
         filename: str = "resume.pdf",
+        attempt_id: str | None = None,
     ) -> "ProfileImportResult":
         """Parse a resume PDF into a draft profile + style payload.
 
@@ -73,6 +74,7 @@ class PdfParserPort(Protocol):
         filename: str,
         base_profile: dict[str, Any] | None,
         base_style: dict[str, Any] | None,
+        attempt_id: str | None = None,
     ) -> dict[str, Any]:
         """Return ``{"profile": ..., "style": ..., "source": ...}``.
 

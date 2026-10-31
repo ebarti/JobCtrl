@@ -1,4 +1,8 @@
-from jobctrl.profile_import import PdfTextResult, extract_pdf_text, style_from_pdf_metadata
+from hashlib import sha256
+from types import SimpleNamespace
+
+from jobctrl.domain.profile.resume_extraction import ResumeExtraction
+from jobctrl.profile_import import PdfTextResult, extract_pdf_text, import_resume_pdf, inferred_style_fields, style_from_pdf_metadata
 
 
 def _simple_pdf(lines: list[str]) -> bytes:
@@ -42,6 +46,21 @@ def test_extract_pdf_text_reads_resume_pdf_text_and_metadata():
     assert "/Helvetica" in result.font_names
 
 
+def test_import_reports_digest_of_the_pdf_bytes_actually_parsed():
+    class Extractor:
+        def extract(self, _text):
+            result = ResumeExtraction.model_validate({
+                "personal": dict.fromkeys(["full_name", "email", "phone", "linkedin", "github", "website", "city", "country"]),
+                "executive_profile": None, "experience": [], "education": [], "skills": [],
+            })
+            return result, SimpleNamespace(determination_id="a" * 64)
+
+    pdf = _simple_pdf(["Synthetic resume content for the owned PDF import test", "Synthetic role and qualifications"])
+    draft = import_resume_pdf(pdf, extractor=Extractor())
+    assert draft["source"]["pdfSha256"] == sha256(pdf).hexdigest()
+    assert draft["source"]["inferredStyle"]["paper_size"] == "letterpaper"
+
+
 def test_style_from_pdf_metadata_infers_editable_style_controls():
     result = PdfTextResult(
         text="Resume text",
@@ -58,3 +77,17 @@ def test_style_from_pdf_metadata_infers_editable_style_controls():
     assert style["font_family"] == "roman"
     assert style["body_alignment"] == "left"
     assert style["moderncv_color"] == "blue"
+
+
+def test_inferred_style_fields_exclude_inherited_and_default_values():
+    result = PdfTextResult(
+        text="Synthetic resume text", page_count=1, page_sizes=[(612.0, 792.0)],
+        font_names=["/Helvetica"], font_sizes=[11.0],
+    )
+    full = style_from_pdf_metadata(result, base_style={"moderncv_color": "blue", "page_scale": 0.9})
+    assert inferred_style_fields(result, full) == {
+        "paper_size": "letterpaper", "document_font_size": "11pt", "font_family": "sans",
+    }
+    assert inferred_style_fields(PdfTextResult(text="synthetic", page_count=1), full) == {}
+    unknown = PdfTextResult(text="synthetic", page_count=1, page_sizes=[(400, 400)], font_names=["/UnknownFont"])
+    assert inferred_style_fields(unknown, full) == {}

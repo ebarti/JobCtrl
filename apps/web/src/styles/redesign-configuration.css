@@ -1980,3 +1980,37 @@
 .config-layout .provider-disclosure {
   border-top: 0;
 }
+
+.profile-import-review {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+  padding: 1.25rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.profile-import-review__draft {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  gap: 0.75rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+
+.profile-import-review__draft .form-actions {
+  flex-wrap: wrap;
+}
+
+.profile-import-review__draft fieldset {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.profile-import-review__section ul {
+  margin: 0.4rem 0 0 1.5rem;
+  padding: 0;
+  white-space: pre-wrap;
+}
