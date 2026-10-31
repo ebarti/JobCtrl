@@ -23,8 +23,8 @@ SOURCE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SOURCE / "workers/automation/src"))
 from jobctrl.infrastructure.process_ownership import (  # noqa: E402
     ProcessOwnershipError,
-    _cleanup_deadline,
     _waitid_nowait,
+    cleanup_budget,
     terminate_owned_process,
 )
 
@@ -220,31 +220,29 @@ def launch(directory: Path, name: str, secret: str, command: str, log: str | Non
 
     def cleanup() -> bool:
         nonlocal failed
-        budget = _cleanup_deadline.set(time.monotonic() + 16)
-        try:
-            terminate_owned_process(child, launched_pid=child_pid)
-            if output is not None:
-                output.join(timeout=1)
-                if output.is_alive():
-                    raise Unverified()
-            with lock(directory, name):
-                if receipt(directory, name, secret) != value:
-                    raise Unverified()
-                current = endpoint.lstat()
-                if (current.st_dev, current.st_ino) != (endpoint_identity.st_dev, endpoint_identity.st_ino):
-                    raise Unverified()
-                endpoint.unlink()
-                control.rmdir()
-                stopped = {**value, "state": "stopped"}
-                atomic_write(identity_file, json.dumps(stopped).encode())
-                value.update(stopped)
-            return True
-        except (ProcessOwnershipError, OSError, Unverified, subprocess.TimeoutExpired):
-            failed = True
-            print(f"dev: {name} cleanup failed; ownership records retained for review or retry.", file=sys.stderr, flush=True)
-            return False
-        finally:
-            _cleanup_deadline.reset(budget)
+        with cleanup_budget(16):
+            try:
+                terminate_owned_process(child, launched_pid=child_pid)
+                if output is not None:
+                    output.join(timeout=1)
+                    if output.is_alive():
+                        raise Unverified()
+                with lock(directory, name):
+                    if receipt(directory, name, secret) != value:
+                        raise Unverified()
+                    current = endpoint.lstat()
+                    if (current.st_dev, current.st_ino) != (endpoint_identity.st_dev, endpoint_identity.st_ino):
+                        raise Unverified()
+                    endpoint.unlink()
+                    control.rmdir()
+                    stopped = {**value, "state": "stopped"}
+                    atomic_write(identity_file, json.dumps(stopped).encode())
+                    value.update(stopped)
+                return True
+            except (ProcessOwnershipError, OSError, Unverified, subprocess.TimeoutExpired):
+                failed = True
+                print(f"dev: {name} cleanup failed; ownership records retained for review or retry.", file=sys.stderr, flush=True)
+                return False
 
     while True:
         # WNOWAIT observes natural completion without releasing the original
