@@ -233,7 +233,7 @@ const LOCAL_CASES = [
   ["updateProfile", (api) => api.updateProfile({ templateText: "Updated bundled template" })],
   ["updateSettings", (api) => api.updateSettings({ dailyBudgetUsd: 12, workerActivitySlots: 8 })],
   ["createContact", (api) => api.createContact({ role: "recruiter", employer: "Demo Workshop", attributes: [{ kind: "name", value: "Synthetic contact" }] })],
-  ["updateContact", (api) => api.updateContact("contact-demo-hiring-partner", { role: "hiring_manager" })],
+  ["updateContact", async (api) => api.updateContact("contact-demo-hiring-partner", { expectedFingerprint: (await api.contact("contact-demo-hiring-partner")).contact.fingerprint, role: "hiring_manager" })],
   ["deleteContact", (api) => api.deleteContact("contact-demo-hiring-partner", { reason: "Demo cleanup" })],
   ["confirmContactCandidate", (api) => api.confirmContactCandidate("research-demo-hiring-partner", "candidate-demo-hiring-partner", { role: "recruiter" })],
   ["approveOutreachDraft", (api) => api.approveOutreachDraft("thread-demo", "outreach-draft-candidate")],
@@ -965,6 +965,71 @@ describe("DemoLocalCommandExecutor", () => {
     expect(snapshot.revision).toBe(before.revision + 4);
   });
 
+  it("keeps contact edits independent of score reset and outcome retry in a reopened demo", async () => {
+    const store = new InMemoryDemoWorkspaceStore();
+    const { adapter, repository } = await harness(store);
+    const contactId = "contact-demo-hiring-partner";
+    const scoreJob = "job-fabrikam-systems";
+    await repository.mutate((draft) => {
+      const fact = draft.state.readModel.contacts.details[contactId]!.contact.attributes[0]!;
+      fact.value = "  Synthetic imported title  ";
+      fact.provenance = { ...fact.provenance, sourceKind: "user_imported_list", sourceRef: "synthetic-source" };
+    });
+    const base = (await adapter.contact(contactId)).contact;
+    const scoreBefore = repository.snapshotNow().state.readModel.jobs.details[scoreJob]!.job;
+    expect(await adapter.resetStaleScoresForRescore({ jobKeys: [scoreJob], limit: 1 }))
+      .toMatchObject({ count: 1, jobKeys: [scoreJob] });
+    const afterReset = repository.snapshotNow().state.readModel.jobs.details[scoreJob]!;
+    expect(afterReset.job).toMatchObject({ fitScore: scoreBefore.fitScore, scoreVersion: scoreBefore.scoreVersion,
+      scoredAt: scoreBefore.scoredAt, scoreCriteria: scoreBefore.scoreCriteria, scoreTrace: scoreBefore.scoreTrace,
+      scoreStaleness: scoreBefore.scoreStaleness });
+    const outcome = { requestId: "11720000-0000-4000-8000-000000000009", kind: "interview" as const, note: "Synthetic outcome" };
+    const accepted = await adapter.recordManualApplicationOutcome(JOB, outcome);
+    expect((await adapter.contact(contactId)).contact.fingerprint).toBe(base.fingerprint);
+    const imported = base.attributes[0]!;
+    const newer = await adapter.updateContact(contactId, { expectedFingerprint: base.fingerprint,
+      role: "warm_intro", attributes: [
+        ...base.attributes.map(({ attributeId, kind, value }) => ({ attributeId, kind, value })),
+        { kind: "note", value: "New synthetic fact" },
+      ] });
+    const added = newer.contact.attributes.find((fact) => fact.value === "New synthetic fact")!;
+    await expect(adapter.updateContact(contactId, { expectedFingerprint: base.fingerprint, employer: "Draft employer" }))
+      .rejects.toMatchObject({ status: 409 });
+    const latest = (await adapter.contact(contactId)).contact;
+    const saved = await adapter.updateContact(contactId, { expectedFingerprint: latest.fingerprint, employer: "Draft employer" });
+    expect(saved.contact).toMatchObject({ employer: "Draft employer", role: "warm_intro" });
+    expect(saved.contact.attributes.find((fact) => fact.attributeId === imported.attributeId)).toEqual(imported);
+    expect(saved.contact.attributes.find((fact) => fact.attributeId === added.attributeId)).toEqual(added);
+    expect(repository.snapshotNow().state.readModel.jobs.details[scoreJob]).toEqual(afterReset);
+    const reopened = await harness(store);
+    expect(await reopened.adapter.recordManualApplicationOutcome(JOB, outcome)).toEqual(accepted);
+    expect((await reopened.adapter.contact(contactId)).contact.attributes).toEqual(saved.contact.attributes);
+    expect(reopened.repository.snapshotNow().eventLog.filter((entry) => entry.event.eventType === "ApplicationOutcomeRecorded"))
+      .toHaveLength(1);
+  });
+
+  it("fences canonical demo changes and supports previously saved contacts without edit tokens", async () => {
+    const { adapter, repository } = await harness();
+    const contactId = "contact-demo-hiring-partner";
+    await repository.mutate((draft) => {
+      delete (draft.state.readModel.contacts.details[contactId]!.contact as Partial<{ fingerprint: string }>).fingerprint;
+    });
+    const before = (await adapter.contact(contactId)).contact;
+    expect(before.fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    await repository.mutate((draft) => {
+      draft.state.readModel.contacts.details[contactId]!.contact.attributes[0]!.provenance.sourceRef = "newer-source";
+    });
+    const accepted = repository.snapshotNow();
+    await expect(adapter.updateContact(contactId, { expectedFingerprint: before.fingerprint, role: "referrer" }))
+      .rejects.toMatchObject({ status: 409 });
+    expect(repository.snapshotNow()).toEqual(accepted);
+    const latest = (await adapter.contact(contactId)).contact;
+    const next = await adapter.updateContact(contactId, { expectedFingerprint: latest.fingerprint, role: "referrer" });
+    expect(next.contact.fingerprint).not.toBe(latest.fingerprint);
+    expect((await adapter.contact(contactId)).contact).toEqual(next.contact);
+    expect(next.contact.attributes).toEqual(latest.attributes);
+  });
+
   it("updates contact attributes with retain-or-create identity and provenance semantics", async () => {
     const { adapter, repository } = await harness();
     await repository.mutate((draft) => {
@@ -979,6 +1044,7 @@ describe("DemoLocalCommandExecutor", () => {
       };
     });
     const request = {
+      expectedFingerprint: (await adapter.contact("contact-demo-hiring-partner")).contact.fingerprint,
       role: "hiring_manager" as const,
       attributes: [
         { kind: "title" as const, value: "Synthetic hiring partner" },
@@ -986,7 +1052,8 @@ describe("DemoLocalCommandExecutor", () => {
       ],
     };
     const first = await adapter.updateContact("contact-demo-hiring-partner", request);
-    const replay = await adapter.updateContact("contact-demo-hiring-partner", request);
+    await expect(adapter.updateContact("contact-demo-hiring-partner", request)).rejects.toMatchObject({ status: 409 });
+    const replay = await adapter.updateContact("contact-demo-hiring-partner", { ...request, expectedFingerprint: first.contact.fingerprint });
     expect(first.contact.attributes).toEqual([
       {
         attributeId: "contact-demo-role",
@@ -1033,6 +1100,92 @@ describe("DemoLocalCommandExecutor", () => {
       "ContactAttributeRecorded",
       "ContactUpdated",
     ]);
+  });
+
+  it("retains the selected duplicate fact and rejects invalid identity claims", async () => {
+    const { adapter, repository } = await harness();
+    const contactId = "contact-demo-hiring-partner";
+    await repository.mutate((draft) => {
+      const contact = draft.state.readModel.contacts.details[contactId]!.contact;
+      const duplicate = structuredClone(contact.attributes[0]!);
+      duplicate.attributeId = "contact-demo-duplicate";
+      duplicate.provenance.sourceRef = "synthetic-second-source";
+      contact.attributes.push(duplicate);
+    });
+    const base = (await adapter.contact(contactId)).contact;
+    const selected = base.attributes.find((fact) => fact.attributeId === "contact-demo-duplicate")!;
+    const saved = await adapter.updateContact(contactId, { expectedFingerprint: base.fingerprint,
+      attributes: [{ attributeId: selected.attributeId, kind: "title", value: selected.value }] });
+    expect(saved.contact.attributes).toEqual([selected]);
+    const normalized = await adapter.updateContact(contactId, { expectedFingerprint: saved.contact.fingerprint,
+      attributes: [{ attributeId: selected.attributeId, kind: "title", value: `${selected.value} ` }] });
+    expect(normalized.contact.attributes).toEqual([selected]);
+    const accepted = repository.snapshotNow();
+    for (const attributes of [
+      [{ attributeId: selected.attributeId, kind: "title" as const, value: selected.value },
+        { attributeId: selected.attributeId, kind: "title" as const, value: selected.value }],
+      [{ attributeId: "foreign-fact", kind: "title" as const, value: selected.value }],
+    ]) {
+      await expect(adapter.updateContact(contactId, { expectedFingerprint: normalized.contact.fingerprint, attributes }))
+        .rejects.toMatchObject({ status: 400 });
+      expect(repository.snapshotNow()).toEqual(accepted);
+    }
+  });
+
+  it("retains id-less raw values and distinct sourced identities before normalized matches", async () => {
+    const { adapter, repository } = await harness();
+    const contactId = "contact-demo-hiring-partner";
+    const value = "synthetic@example.test";
+    const raw = `  ${value}  `;
+    await repository.mutate((draft) => {
+      const contact = draft.state.readModel.contacts.details[contactId]!.contact;
+      const original = contact.attributes[0]!;
+      contact.attributes = ["raw-one", "raw-two", "normalized"].map((attributeId, index) => ({
+        ...structuredClone(original), attributeId, kind: "email", value: index < 2 ? raw : value,
+        provenance: { ...original.provenance, sourceKind: "user_imported_list", sourceRef: `synthetic-${index}` },
+      }));
+    });
+    const base = (await adapter.contact(contactId)).contact;
+    const mixed = await adapter.updateContact(contactId, { expectedFingerprint: base.fingerprint, attributes: [
+      { kind: "email", value: raw }, { kind: "email", value: raw },
+      { attributeId: "normalized", kind: "email", value },
+    ] });
+    expect(mixed.contact.attributes).toEqual(base.attributes);
+    const idless = await adapter.updateContact(contactId, { expectedFingerprint: mixed.contact.fingerprint,
+      attributes: base.attributes.map(({ kind, value: factValue }) => ({ kind, value: factValue })) });
+    expect(idless.contact.attributes).toEqual(base.attributes);
+  });
+
+  it("retains a long sourced fact and validates new values after trimming", async () => {
+    const { adapter, repository } = await harness();
+    const contactId = "contact-demo-hiring-partner";
+    const long = "L".repeat(2001);
+    await repository.mutate((draft) => {
+      const fact = draft.state.readModel.contacts.details[contactId]!.contact.attributes[0]!;
+      fact.value = long;
+      fact.provenance = { ...fact.provenance, sourceKind: "user_imported_list", sourceRef: "synthetic-long-import" };
+    });
+    const base = (await adapter.contact(contactId)).contact;
+    const original = base.attributes[0]!;
+    const saved = await adapter.updateContact(contactId, { expectedFingerprint: base.fingerprint, attributes: [
+      { attributeId: original.attributeId, kind: original.kind, value: long },
+      { kind: "note", value: `${"N".repeat(2000)} ` },
+    ] });
+    expect(saved.contact.attributes.find((fact) => fact.attributeId === original.attributeId)).toEqual(original);
+    expect(saved.contact.attributes.find((fact) => fact.value === "N".repeat(2000))).toBeDefined();
+    const idless = await adapter.updateContact(contactId, { expectedFingerprint: saved.contact.fingerprint,
+      attributes: saved.contact.attributes.map(({ kind, value }) => ({ kind, value })) });
+    expect(idless.contact.attributes).toEqual(saved.contact.attributes);
+    const accepted = repository.snapshotNow();
+    for (const fact of [
+      { attributeId: original.attributeId, kind: original.kind, value: "X".repeat(2001) },
+      { kind: "unsupported_new", value: "synthetic" },
+      { kind: "note", value: "   " },
+    ]) {
+      await expect(adapter.updateContact(contactId, { expectedFingerprint: idless.contact.fingerprint, attributes: [fact] }))
+        .rejects.toMatchObject({ status: 400 });
+      expect(repository.snapshotNow()).toEqual(accepted);
+    }
   });
 
   it("confirms candidate evidence exactly once and completes the owning research task", async () => {

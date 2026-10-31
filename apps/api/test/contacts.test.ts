@@ -1,8 +1,13 @@
+import { fork, type ChildProcess } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { JobCtrlApiClient, JobCtrlApiUnconfirmedWriteError } from "@jobctrl/api-client";
+import { getContactDetail, updateContact, ContactRevisionConflictError } from "../src/contacts.js";
+import { openDatabase } from "../src/db.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
   ContactDetail,
@@ -51,6 +56,432 @@ async function createContact(
   const body = res.json() as { ok: boolean; contact?: ContactDetail };
   return { statusCode: res.statusCode, contact: body.contact, body };
 }
+
+function canonicalState(db: Database.Database, contactId: string) {
+  return {
+    contact: db.prepare("SELECT * FROM contacts WHERE contact_id = ?").get(contactId),
+    facts: db.prepare("SELECT * FROM contact_attributes WHERE contact_id = ? ORDER BY attribute_id").all(contactId),
+    events: db.prepare("SELECT * FROM job_events WHERE entity_ref = ? ORDER BY event_id").all(contactId),
+    threads: db.prepare("SELECT * FROM outreach_threads ORDER BY thread_id").all(),
+    drafts: db.prepare("SELECT * FROM outreach_drafts ORDER BY draft_id").all(),
+    sends: db.prepare("SELECT * FROM outreach_send_logs ORDER BY send_log_id").all(),
+  };
+}
+
+function retainEditObservation(scenario: string, observation: unknown) {
+  const root = process.env["JOBCTRL_CONTACT_EDIT_EVIDENCE_DIR"];
+  if (!root) return;
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(path.join(root, `${scenario}.json`), JSON.stringify({
+    scenario, observedAt: new Date().toISOString(), observation,
+  }, null, 2));
+}
+
+interface WriterOptions {
+  readonly releaseFile?: string;
+  readonly shortLockWait?: boolean;
+}
+
+function writer(dbPath: string, contact: ContactDetail, role: "referrer" | "warm_intro", options: WriterOptions = {}) {
+  const child: ChildProcess = fork(fileURLToPath(new URL("./contact-edit-writer.ts", import.meta.url)),
+    [dbPath, contact.contactId, JSON.stringify({ expectedFingerprint: contact.fingerprint, role }),
+      options.releaseFile ?? "", ...(options.shortLockWait ? ["short-lock-wait"] : [])],
+    { execArgv: ["--import", "tsx"], stdio: ["ignore", "pipe", "pipe", "ipc"] });
+  const messages: Array<{ kind: string; outcome?: string; busyTimeoutMs?: number }> = [];
+  const listeners = new Set<() => void>();
+  let diagnostic = "";
+  child.stderr?.on("data", (data) => { diagnostic += String(data); });
+  child.on("message", (message) => {
+    messages.push(message as typeof messages[number]);
+    for (const listener of listeners) listener();
+  });
+  cleanups.push(() => child.kill());
+  const wait = (kind: string) => new Promise<typeof messages[number]>((resolve, reject) => {
+    const timer = setTimeout(() => { listeners.delete(check); reject(new Error(`Writer missing ${kind}: ${diagnostic}`)); }, 8_000);
+    const check = () => {
+      const found = messages.find((message) => message.kind === kind);
+      if (found) { clearTimeout(timer); listeners.delete(check); resolve(found); }
+    };
+    listeners.add(check);
+    check();
+  });
+  return { child, wait };
+}
+
+describe("contact edit authority", () => {
+  it("round-trips id-less raw facts before normalized matches without claiming an identity twice", async () => {
+    const { app, dbPath } = withTempApp();
+    const value = "synthetic@example.test";
+    const raw = `  ${value}  `;
+    const created = (await createContact(app, { employer: "Acme", attributes: [
+      { kind: "email", value }, { kind: "email", value }, { kind: "email", value },
+    ] })).contact!;
+    const db = openDatabase(dbPath);
+    try {
+      const update = db.prepare("UPDATE contact_attributes SET value_json = ?, source_kind = 'user_imported_list', source_ref = ?, recorded_at = ? WHERE attribute_id = ?");
+      created.attributes.forEach((fact, index) => update.run(JSON.stringify(index < 2 ? raw : value),
+        `synthetic-import-${index}`, `2020-01-0${index + 1}T00:00:00Z`, fact.attributeId));
+      const base = getContactDetail(db, created.contactId)!;
+      const before = canonicalState(db, created.contactId).facts;
+      const save = async (fingerprint: string, reserved: boolean) => app.inject({ method: "PATCH", url: `/v1/contacts/${created.contactId}`,
+        payload: { expectedFingerprint: fingerprint, attributes: [
+          { kind: "email", value: raw }, { kind: "email", value: raw },
+          { ...(reserved ? { attributeId: base.attributes[2]!.attributeId } : {}), kind: "email", value },
+        ] } });
+      const mixed = await save(base.fingerprint, true);
+      expect(mixed.statusCode).toBe(200);
+      const mixedContact = (mixed.json() as { contact: ContactDetail }).contact;
+      expect(mixedContact.attributes).toEqual(base.attributes);
+      expect(canonicalState(db, created.contactId).facts).toEqual(before);
+      const idless = await save(mixedContact.fingerprint, false);
+      expect(idless.statusCode).toBe(200);
+      expect((idless.json() as { contact: ContactDetail }).contact.attributes).toEqual(base.attributes);
+      expect(canonicalState(db, created.contactId).facts).toEqual(before);
+    } finally { db.close(); }
+  });
+
+  it("retains long sourced facts while validating only newly written values at the trimmed limit", async () => {
+    const { app, dbPath } = withTempApp();
+    const created = (await createContact(app, { employer: "Acme", attributes: [{ kind: "note", value: "seed" }] })).contact!;
+    const db = openDatabase(dbPath);
+    try {
+      const long = "L".repeat(2001);
+      db.prepare("UPDATE contact_attributes SET value_json = ?, attribute_kind = 'legacy_kind', source_kind = 'user_imported_list', source_ref = 'synthetic-long-import' WHERE attribute_id = ?")
+        .run(JSON.stringify(long), created.attributes[0]!.attributeId);
+      const base = getContactDetail(db, created.contactId)!;
+      const original = base.attributes[0]!;
+      const replacement = await app.inject({ method: "PATCH", url: `/v1/contacts/${created.contactId}`,
+        payload: { expectedFingerprint: base.fingerprint, attributes: [
+          { attributeId: original.attributeId, kind: original.kind, value: long },
+          { kind: "note", value: `${"N".repeat(2000)} ` },
+        ] } });
+      expect(replacement.statusCode).toBe(200);
+      const saved = (replacement.json() as { contact: ContactDetail }).contact;
+      expect(saved.attributes.find((fact) => fact.attributeId === original.attributeId)).toEqual(original);
+      expect(saved.attributes.find((fact) => fact.value === "N".repeat(2000))).toBeDefined();
+      const idless = await app.inject({ method: "PATCH", url: `/v1/contacts/${created.contactId}`,
+        payload: { expectedFingerprint: saved.fingerprint, attributes: saved.attributes.map(({ kind, value }) => ({ kind, value })) } });
+      expect(idless.statusCode).toBe(200);
+      const retained = (idless.json() as { contact: ContactDetail }).contact;
+      expect(retained.attributes).toEqual(saved.attributes);
+      const before = canonicalState(db, created.contactId);
+      for (const fact of [
+        { attributeId: original.attributeId, kind: "note", value: "X".repeat(2001) },
+        { kind: "note", value: "Y".repeat(2001) },
+        { kind: "unsupported_new", value: "synthetic" },
+        { kind: "note", value: "   " },
+      ]) {
+        const invalid = await app.inject({ method: "PATCH", url: `/v1/contacts/${created.contactId}`,
+          payload: { expectedFingerprint: retained.fingerprint, attributes: [fact] } });
+        expect(invalid.statusCode).toBe(400);
+        expect(canonicalState(db, created.contactId)).toEqual(before);
+      }
+    } finally { db.close(); }
+  });
+
+  it("retains the selected identity and provenance when duplicate facts are reconciled", async () => {
+    const { app, dbPath } = withTempApp();
+    const created = (await createContact(app, { employer: "Acme", attributes: [{ kind: "email", value: "duplicate@example.test" }] })).contact!;
+    const first = openDatabase(dbPath);
+    const second = openDatabase(dbPath);
+    try {
+      first.prepare("UPDATE contact_attributes SET source_kind = 'user_imported_list', source_ref = 'synthetic-import', recorded_at = '2020-01-01T00:00:00Z' WHERE attribute_id = ?")
+        .run(created.attributes[0]!.attributeId);
+      const base = getContactDetail(second, created.contactId)!;
+      const newer = updateContact(first, created.contactId, { expectedFingerprint: base.fingerprint,
+        attributes: [{ kind: "email", value: "duplicate@example.test" }, { kind: "email", value: "duplicate@example.test" }] });
+      const retained = newer.attributes.find((fact) => fact.attributeId !== base.attributes[0]!.attributeId)!;
+      const mixed = await app.inject({ method: "PATCH", url: `/v1/contacts/${created.contactId}`,
+        payload: { expectedFingerprint: newer.fingerprint, attributes: [
+          { kind: "email", value: retained.value },
+          { attributeId: base.attributes[0]!.attributeId, kind: "email", value: retained.value },
+        ] } });
+      expect(mixed.statusCode).toBe(200);
+      const mixedContact = (mixed.json() as { contact: ContactDetail }).contact;
+      expect(mixedContact.attributes).toEqual(newer.attributes);
+      const res = await app.inject({ method: "PATCH", url: `/v1/contacts/${created.contactId}`,
+        payload: { expectedFingerprint: mixedContact.fingerprint, attributes: [{ attributeId: retained.attributeId, kind: retained.kind, value: retained.value }] } });
+      expect(res.statusCode).toBe(200);
+      const saved = (res.json() as { contact: ContactDetail }).contact;
+      expect(saved.attributes).toEqual([retained]);
+      const foreign = (await createContact(app, { employer: "Another", attributes: [{ kind: "email", value: retained.value }] })).contact!;
+      const accepted = canonicalState(second, created.contactId);
+      for (const attributes of [
+        [{ attributeId: retained.attributeId, kind: "email", value: retained.value }, { attributeId: retained.attributeId, kind: "email", value: retained.value }],
+        [{ attributeId: foreign.attributes[0]!.attributeId, kind: "email", value: retained.value }],
+      ]) {
+        const invalid = await app.inject({ method: "PATCH", url: `/v1/contacts/${created.contactId}`,
+          payload: { expectedFingerprint: saved.fingerprint, attributes } });
+        expect(invalid.statusCode).toBe(400);
+        expect(canonicalState(second, created.contactId)).toEqual(accepted);
+      }
+      const normalized = updateContact(second, created.contactId, { expectedFingerprint: saved.fingerprint,
+        attributes: [{ attributeId: retained.attributeId, kind: "email", value: `${retained.value} ` }] });
+      expect(normalized.attributes).toEqual(saved.attributes);
+      first.prepare("UPDATE contact_attributes SET value_json = ? WHERE attribute_id = ?")
+        .run(JSON.stringify("  duplicate@example.test  "), retained.attributeId);
+      const spaced = getContactDetail(first, created.contactId)!;
+      const exactFacts = canonicalState(first, created.contactId).facts;
+      const preserved = updateContact(second, created.contactId, { expectedFingerprint: spaced.fingerprint,
+        attributes: [{ attributeId: retained.attributeId, kind: "email", value: spaced.attributes[0]!.value }] });
+      expect(preserved.attributes).toEqual(spaced.attributes);
+      expect(canonicalState(second, created.contactId).facts).toEqual(exactFacts);
+    } finally { first.close(); second.close(); }
+  });
+
+  it.each([
+    { role: "warm_intro" },
+    { employer: "New employer" },
+    { jobId: JOB_ID_TWO },
+    { attributes: [{ kind: "name", value: "Corrected name" }, { kind: "email", value: "new@example.test" }] },
+  ])("rejects stale replacement %j across independent connections without losing newer facts/history", async (replacement) => {
+    const { app, dbPath } = withTempApp();
+    const original = (await createContact(app, { employer: "Acme", jobId: JOB_ID_ONE,
+      attributes: [{ kind: "name", value: "Original" }] })).contact!;
+    const first = openDatabase(dbPath);
+    const second = openDatabase(dbPath);
+    try {
+      // Seed accepted outreach content/history as preservation controls only.
+      first.prepare("INSERT INTO outreach_threads (thread_id, contact_id, job_id, created_at, updated_at) VALUES ('preserved-thread', ?, ?, 'same', 'same')")
+        .run(original.contactId, JOB_ID_ONE);
+      first.exec("INSERT INTO outreach_drafts (draft_id, thread_id, kind, status, body_text, created_at, approved_at) VALUES ('preserved-draft', 'preserved-thread', 'initial', 'approved', 'Accepted synthetic message', 'same', 'same')");
+      first.exec("INSERT INTO outreach_send_logs (send_log_id, thread_id, draft_id, channel, sent_at, logged_at) VALUES ('preserved-send', 'preserved-thread', 'preserved-draft', 'email', 'same', 'same')");
+      const base = getContactDetail(second, original.contactId)!;
+      const next = updateContact(first, original.contactId, { expectedFingerprint: original.fingerprint,
+        ...replacement } as Parameters<typeof updateContact>[2]);
+      const accepted = canonicalState(first, original.contactId);
+      expect(accepted.events).toHaveLength(replacement.attributes ? 5 : 3);
+      expect(accepted.facts).toHaveLength(replacement.attributes ? 2 : 1);
+      expect(next.fingerprint).not.toBe(base.fingerprint);
+      expect(() => updateContact(second, original.contactId, { expectedFingerprint: base.fingerprint,
+        role: base.role, employer: base.employer, jobId: base.jobId,
+        attributes: [{ kind: "name", value: "Original" }] })).toThrow(ContactRevisionConflictError);
+      const rejected = await app.inject({ method: "PATCH", url: `/v1/contacts/${original.contactId}`,
+        payload: { expectedFingerprint: base.fingerprint, ...replacement } });
+      expect(rejected.statusCode).toBe(409);
+      expect(rejected.json()).toMatchObject({ error: "contact_revision_conflict" });
+      expect(canonicalState(second, original.contactId)).toEqual(accepted);
+      expect(getContactDetail(second, original.contactId)).toEqual(next);
+      retainEditObservation(`stale-${Object.keys(replacement)[0]}`, {
+        base, next, conflict: rejected.json(), accepted, afterRejection: canonicalState(second, original.contactId),
+      });
+      expect(accepted.threads).toHaveLength(1);
+      expect(accepted.drafts).toHaveLength(1);
+      expect(accepted.sends).toHaveLength(1);
+    } finally { first.close(); second.close(); }
+  });
+
+  it("rejects absent/malformed/foreign bases and deleted contacts explicitly", async () => {
+    const { app } = withTempApp();
+    const one = (await createContact(app, { employer: "One" })).contact!;
+    const two = (await createContact(app, { employer: "Two" })).contact!;
+    for (const base of [undefined, null, "", "invalid", 1]) {
+      const res = await app.inject({ method: "PATCH", url: `/v1/contacts/${one.contactId}`,
+        payload: { expectedFingerprint: base, role: "referrer" } });
+      expect(res.statusCode).toBe(400);
+    }
+    const foreign = await app.inject({ method: "PATCH", url: `/v1/contacts/${one.contactId}`,
+      payload: { expectedFingerprint: two.fingerprint, role: "referrer" } });
+    expect(foreign.statusCode).toBe(409);
+    await app.inject({ method: "DELETE", url: `/v1/contacts/${one.contactId}` });
+    expect((await app.inject({ method: "PATCH", url: `/v1/contacts/${one.contactId}`,
+      payload: { expectedFingerprint: one.fingerprint, role: "referrer" } })).statusCode).toBe(404);
+  });
+
+  it("binds full raw provenance and same-timestamp facts, while projection refresh leaves the token stable", async () => {
+    const { app, dbPath } = withTempApp();
+    const contact = (await createContact(app, { employer: "Acme", attributes: [{ kind: "email", value: "synthetic@example.test" }] })).contact!;
+    const db = openDatabase(dbPath);
+    try {
+      await app.inject({ method: "GET", url: "/v1/contacts" });
+      expect(getContactDetail(db, contact.contactId)!.fingerprint).toBe(contact.fingerprint);
+      for (const sql of [
+        "UPDATE contact_attributes SET confidence = 0.3",
+        "UPDATE contact_attributes SET attribute_id = 'replacement-identity'",
+        "UPDATE contact_attributes SET capture_method = 'another-method'",
+        "UPDATE contact_attributes SET source_ref = 'another-source'",
+        "UPDATE contact_attributes SET user_confirmed = 0",
+        "UPDATE contact_attributes SET source_kind = 'user_imported_list'",
+        "UPDATE contact_attributes SET recorded_at = '2026-10-24T00:00:00Z'",
+        "UPDATE contact_attributes SET value_json = '\"other@example.test\"'",
+        "UPDATE contacts SET role = 'warm_intro'",
+      ]) {
+        const before = getContactDetail(db, contact.contactId)!;
+        db.exec(sql);
+        const after = getContactDetail(db, contact.contactId)!;
+        expect(after.updatedAt).toBe(before.updatedAt);
+        expect(after.fingerprint).not.toBe(before.fingerprint);
+        expect(() => updateContact(db, contact.contactId, { expectedFingerprint: before.fingerprint, role: "referrer" })).toThrow(ContactRevisionConflictError);
+      }
+      const before = canonicalState(db, contact.contactId);
+      const current = getContactDetail(db, contact.contactId)!;
+      const next = updateContact(db, contact.contactId, { expectedFingerprint: current.fingerprint,
+        attributes: [{ kind: "email", value: "other@example.test" }], role: "referrer" });
+      expect(next.fingerprint).not.toBe(current.fingerprint);
+      expect(canonicalState(db, contact.contactId).facts).toEqual(before.facts);
+    } finally { db.close(); }
+  });
+
+  it.each(["contact_attributes", "job_events"])("rolls back the complete replacement when %s persistence fails", async (table) => {
+    const { app, dbPath } = withTempApp();
+    const contact = (await createContact(app, { employer: "Acme", attributes: [{ kind: "name", value: "Accepted" }] })).contact!;
+    const db = openDatabase(dbPath);
+    try {
+      const before = canonicalState(db, contact.contactId);
+      db.exec(`CREATE TEMP TRIGGER fail_contact_edit BEFORE INSERT ON ${table} BEGIN SELECT RAISE(ABORT, 'injected persistence failure'); END`);
+      expect(() => updateContact(db, contact.contactId, { expectedFingerprint: contact.fingerprint,
+        employer: "Changed", role: "referrer", attributes: [{ kind: "name", value: "Changed" }] })).toThrow("injected persistence failure");
+      expect(canonicalState(db, contact.contactId)).toEqual(before);
+      expect(getContactDetail(db, contact.contactId)).toEqual(contact);
+      retainEditObservation(`rollback-${table}`, { before, afterFailure: canonicalState(db, contact.contactId) });
+    } finally { db.close(); }
+  });
+
+  it("advances the base even for a no-op save on the identical clock tick", async () => {
+    const { app, dbPath } = withTempApp();
+    const contact = (await createContact(app, { employer: "Acme" })).contact!;
+    const db = openDatabase(dbPath);
+    const clock = vi.spyOn(Date.prototype, "toISOString").mockReturnValue(contact.updatedAt!);
+    try {
+      const before = canonicalState(db, contact.contactId);
+      const next = updateContact(db, contact.contactId, { expectedFingerprint: contact.fingerprint });
+      expect(canonicalState(db, contact.contactId).contact).toEqual(before.contact);
+      expect(next.fingerprint).not.toBe(contact.fingerprint);
+      expect(() => updateContact(db, contact.contactId, { expectedFingerprint: contact.fingerprint })).toThrow(ContactRevisionConflictError);
+      expect(canonicalState(db, contact.contactId).events).toHaveLength(2);
+    } finally { clock.mockRestore(); db.close(); }
+  });
+
+  it("reads the detail and fingerprint from one snapshot while another connection commits", async () => {
+    const { app, dbPath } = withTempApp();
+    const contact = (await createContact(app, { employer: "Acme", attributes: [{ kind: "name", value: "Accepted" }] })).contact!;
+    const reader = openDatabase(dbPath);
+    reader.pragma("journal_mode = WAL");
+    const other = openDatabase(dbPath);
+    const prepare = reader.prepare.bind(reader);
+    let next: ContactDetail | undefined;
+    reader.prepare = ((sql: string) => {
+      const statement = prepare(sql);
+      if (sql.startsWith("SELECT * FROM contacts")) {
+        const get = statement.get.bind(statement);
+        statement.get = (...args: unknown[]) => {
+          const result = get(...args);
+          next = updateContact(other, contact.contactId, { expectedFingerprint: contact.fingerprint,
+            role: "referrer", attributes: [{ kind: "name", value: "Newer" }] });
+          return result;
+        };
+      }
+      return statement;
+    }) as typeof reader.prepare;
+    try {
+      expect(getContactDetail(reader, contact.contactId)).toEqual(contact);
+      retainEditObservation("consistent-snapshot", { snapshot: contact, concurrentlyCommitted: next });
+      expect(next?.displayName).toBe("Newer");
+      reader.prepare = prepare;
+      expect(getContactDetail(reader, contact.contactId)).toEqual(next);
+    } finally { reader.close(); other.close(); }
+  });
+
+  it("admits only one of two independent concurrent writers sharing a base", async () => {
+    const { app, dbPath } = withTempApp();
+    const contact = (await createContact(app, { employer: "Acme", attributes: [{ kind: "name", value: "Accepted" }] })).contact!;
+    const writers = [writer(dbPath, contact, "referrer"), writer(dbPath, contact, "warm_intro")];
+    const ready = await Promise.all(writers.map((entry) => entry.wait("ready")));
+    expect(ready.map((entry) => entry.busyTimeoutMs)).toEqual([5_000, 5_000]);
+    writers.forEach((entry) => entry.child.send("start"));
+    const outcomes = await Promise.all(writers.map((entry) => entry.wait("result")));
+    expect(outcomes.map((result) => result.outcome).sort()).toEqual(["committed", "conflict"]);
+    const db = openDatabase(dbPath);
+    try {
+      const state = canonicalState(db, contact.contactId);
+      expect(state.events).toHaveLength(3);
+      expect(state.facts).toHaveLength(1);
+      expect(state.facts[0]).toMatchObject({ attribute_id: contact.attributes[0]!.attributeId });
+      retainEditObservation("concurrent-writers", { outcomes, state });
+    } finally { db.close(); }
+  });
+
+  it("holds writer ownership between comparison and replacement, then refuses the superseded base", async () => {
+    const { app, dbPath } = withTempApp();
+    const contact = (await createContact(app, { employer: "Acme" })).contact!;
+    const release = `${dbPath}.release`;
+    const first = writer(dbPath, contact, "referrer", { releaseFile: release });
+    await first.wait("ready");
+    first.child.send("start");
+    await first.wait("compared");
+    const blocked = writer(dbPath, contact, "warm_intro", { shortLockWait: true });
+    expect((await blocked.wait("ready")).busyTimeoutMs).toBe(100);
+    blocked.child.send("start");
+    const blockedResult = await blocked.wait("result");
+    expect(blockedResult.outcome).toBe("SQLITE_BUSY");
+    fs.writeFileSync(release, "release");
+    expect((await first.wait("result")).outcome).toBe("committed");
+    const retry = writer(dbPath, contact, "warm_intro");
+    await retry.wait("ready");
+    retry.child.send("start");
+    const retryResult = await retry.wait("result");
+    expect(retryResult.outcome).toBe("conflict");
+    const db = openDatabase(dbPath);
+    try {
+      expect(canonicalState(db, contact.contactId).events).toHaveLength(2);
+      expect(getContactDetail(db, contact.contactId)!.role).toBe("referrer");
+      retainEditObservation("writer-barrier", { blocked: blockedResult, retried: retryResult, state: canonicalState(db, contact.contactId) });
+    } finally { db.close(); }
+  });
+
+  it("fences a lost acknowledgement across API restart and recovers through the typed HTTP caller", async () => {
+    const { app, dbPath } = withTempApp();
+    let address = await app.listen({ host: "127.0.0.1", port: 0 });
+    const realFetch = globalThis.fetch;
+    let loseNextPatch = false;
+    const browserFetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const response = await realFetch(input, { ...init, headers: { ...init?.headers, origin: "http://127.0.0.1:5173" } });
+      if (loseNextPatch && init?.method === "PATCH") {
+        loseNextPatch = false;
+        await response.arrayBuffer();
+        throw new TypeError("Injected lost acknowledgement after committed PATCH");
+      }
+      return response;
+    });
+    cleanups.push(() => browserFetch.mockRestore());
+    let client = new JobCtrlApiClient(address);
+    const contact = (await client.createContact({ role: "other", employer: "Acme", attributes: [] })).contact;
+    const request = { expectedFingerprint: contact.fingerprint, role: "referrer" as const };
+    loseNextPatch = true;
+    const failure: unknown = await client.updateContact(contact.contactId, request).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(JobCtrlApiUnconfirmedWriteError);
+    expect(failure).toMatchObject({
+      method: "PATCH",
+      path: `/v1/contacts/${contact.contactId}`,
+      writeOutcomeUnknown: true,
+      cause: expect.objectContaining({ message: "Injected lost acknowledgement after committed PATCH" }),
+    });
+    await app.close();
+    const restarted = buildApp({ dbPath, configPath: path.join(path.dirname(dbPath), "config.json") });
+    address = await restarted.listen({ host: "127.0.0.1", port: 0 });
+    client = new JobCtrlApiClient(address);
+    try {
+      const db = openDatabase(dbPath);
+      const accepted = canonicalState(db, contact.contactId);
+      db.close();
+      await expect(client.updateContact(contact.contactId, request)).rejects.toMatchObject({ status: 409,
+        responseBody: { error: "contact_revision_conflict" } });
+      const readback = (await client.contact(contact.contactId)).contact;
+      expect(readback.role).toBe("referrer");
+      const check = openDatabase(dbPath);
+      expect(canonicalState(check, contact.contactId)).toEqual(accepted);
+      expect(accepted.events).toHaveLength(2);
+      check.close();
+      const recovered = await client.updateContact(contact.contactId, { expectedFingerprint: readback.fingerprint, role: "warm_intro" });
+      expect(recovered.contact.role).toBe("warm_intro");
+      expect(recovered.contact.fingerprint).not.toBe(readback.fingerprint);
+      retainEditObservation("lost-ack-restart", { original: contact, accepted, readback, recovered: recovered.contact });
+    } finally { await restarted.close(); }
+  });
+});
 
 describe("contacts API", () => {
   it("creates a contact and renders provenance for every fact (INV-2)", async () => {
@@ -182,7 +613,7 @@ describe("contacts API", () => {
     const res = await app.inject({
       method: "PATCH",
       url: `/v1/contacts/${contactId}`,
-      payload: { role: "referrer" },
+      payload: { expectedFingerprint: created.contact!.fingerprint, role: "referrer" },
     });
     expect(res.statusCode).toBe(200);
     expect((res.json() as { contact: ContactDetail }).contact.role).toBe("referrer");
@@ -193,7 +624,7 @@ describe("contacts API", () => {
     const res = await app.inject({
       method: "PATCH",
       url: "/v1/contacts/does-not-exist",
-      payload: { role: "referrer" },
+      payload: { expectedFingerprint: "0".repeat(64), role: "referrer" },
     });
     expect(res.statusCode).toBe(404);
   });
@@ -497,6 +928,7 @@ END:VCARD`;
       method: "PATCH",
       url: `/v1/contacts/${contactId}`,
       payload: {
+        expectedFingerprint: before.fingerprint,
         role: "referrer",
         attributes: [
           { kind: "name", value: "Bob Manager" },
@@ -511,6 +943,7 @@ END:VCARD`;
     for (const kind of ["name", "email"]) {
       const kept = afterByKind.get(kind)!;
       const original = originalByKind.get(kind)!;
+      expect(kept).toEqual(original);
       expect(kept.provenance.sourceKind).toBe("user_imported_list");
       expect(kept.provenance.sourceRef).toBe("referrals.csv");
       expect(kept.provenance.capturedAt).toBe(original.provenance.capturedAt);
@@ -522,6 +955,7 @@ END:VCARD`;
       method: "PATCH",
       url: `/v1/contacts/${contactId}`,
       payload: {
+        expectedFingerprint: after.fingerprint,
         attributes: [
           { kind: "name", value: "Bob Manager" },
           { kind: "email", value: "bob.manager@globex.example" },

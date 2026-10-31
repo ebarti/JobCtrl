@@ -13,7 +13,7 @@ import { demoSeedDigest } from "./digest.js";
 import { assertDemoSeedInvariants } from "./invariants.js";
 import { scanDemoPrivacy } from "./privacy.js";
 import { DEMO_SEED } from "./seed.js";
-import { DEMO_CAPABILITY_CLASSES } from "./contracts.js";
+import { DEMO_CAPABILITY_CLASSES, type DemoSeedValue } from "./contracts.js";
 
 const CLOCK = { anchor: "2031-01-02T03:04:05.000Z" } as const;
 const CONTOSO_JOB_KEY = "job-contoso-reliability";
@@ -139,8 +139,16 @@ describe("canonical public demo seed", () => {
 
   it("is deterministic, immutable by type, and covers the required lifecycle arms", () => {
     expect(() => assertDemoSeedInvariants(DEMO_SEED)).not.toThrow();
-    expect(demoSeedDigest(DEMO_SEED)).toBe("fnv1a-f2c8b2e5");
+    expect(demoSeedDigest(DEMO_SEED)).toBe("fnv1a-e595419f");
     expect(demoSeedDigest({ b: 2, a: ["seed", true] })).toBe(demoSeedDigest({ a: ["seed", true], b: 2 }));
+  });
+
+  it("includes contact edit publication bases in the full seed integrity digest", () => {
+    const changed = structuredClone(DEMO_SEED) as DemoSeedValue;
+    const contact = changed.readModel.contacts.details["contact-demo-hiring-partner"]!.contact;
+    contact.fingerprint = "e".repeat(64);
+
+    expect(demoSeedDigest(changed)).not.toBe(demoSeedDigest(DEMO_SEED));
   });
 
   it("has non-empty server-shaped route data and normalized detail maps", () => {

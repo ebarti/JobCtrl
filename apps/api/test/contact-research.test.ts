@@ -16,6 +16,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
   ConfirmContactCandidateResponse,
+  ContactMutationResponse,
   ContactResearchDetailResponse,
   ContactResearchListResponse,
 } from "../src/contracts.js";
@@ -346,6 +347,64 @@ describe("contact research API", () => {
       payload: {},
     });
     expect(again.statusCode).toBe(400);
+  });
+
+  it("preserves research outcomes and sourced facts across contact edits and stale retries", async () => {
+    const { app, dbPath } = withTempApp();
+    const { taskId, candidateId } = seedNeedsReviewTask(dbPath);
+    const attempts = ["response_too_large", "acquisition_timeout", "redirect_failed", "transport_failed", "http_error"]
+      .map((outcome) => ({ sourceKind: "public_web_page", sourceRef: TEAM_URL, outcome,
+        attemptedAt: "2026-07-06T00:00:00Z", detail: `Recover from ${outcome}` }));
+    const setup = new Database(dbPath);
+    const candidate = setup.prepare("SELECT attributes_json FROM contact_candidates WHERE tenant_id='local' AND candidate_id=?")
+      .get(candidateId) as { attributes_json: string };
+    const attributes = JSON.parse(candidate.attributes_json) as Array<{ kind: string; value: string }>;
+    attributes.find((fact) => fact.kind === "email")!.value = "  research@example.test  ";
+    setup.prepare("UPDATE contact_candidates SET attributes_json=? WHERE tenant_id='local' AND candidate_id=?")
+      .run(JSON.stringify(attributes), candidateId);
+    setup.close();
+
+    const confirmed = await app.inject({ method: "POST",
+      url: `/v1/contacts/research/${taskId}/candidates/${candidateId}/confirm`, payload: {} });
+    expect(confirmed.statusCode).toBe(200);
+    const contact = (confirmed.json() as ConfirmContactCandidateResponse).contact;
+    expect(contact.fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    const sourced = contact.attributes.find((fact) => fact.kind === "email")!;
+    expect(sourced).toMatchObject({ value: "  research@example.test  ",
+      provenance: { sourceKind: "public_web_page", sourceRef: TEAM_URL, userConfirmed: true } });
+
+    const db = new Database(dbPath);
+    db.prepare("UPDATE contact_research_tasks SET source_attempts_json=? WHERE tenant_id='local' AND task_id=?")
+      .run(JSON.stringify(attempts), taskId);
+    const originalFact = db.prepare("SELECT * FROM contact_attributes WHERE tenant_id='local' AND attribute_id=?")
+      .get(sourced.attributeId);
+    const originalTask = db.prepare("SELECT * FROM contact_research_tasks WHERE tenant_id='local' AND task_id=?").get(taskId);
+    const originalCandidate = db.prepare("SELECT * FROM contact_candidates WHERE tenant_id='local' AND candidate_id=?").get(candidateId);
+    db.close();
+    const detail = await app.inject({ method: "GET", url: `/v1/contacts/research/${taskId}` });
+    expect((detail.json() as ContactResearchDetailResponse).task.sourceAttempts).toEqual(attempts);
+
+    const saved = await app.inject({ method: "PATCH", url: `/v1/contacts/${contact.contactId}`,
+      payload: { expectedFingerprint: contact.fingerprint, role: "warm_intro", attributes: [
+        ...contact.attributes.map(({ attributeId, kind, value }) => ({ attributeId, kind, value })),
+        { kind: "note", value: "Synthetic added fact" },
+      ] } });
+    expect(saved.statusCode).toBe(200);
+    const latest = (saved.json() as ContactMutationResponse).contact;
+    expect(latest.attributes.find((fact) => fact.attributeId === sourced.attributeId)).toEqual(sourced);
+    const stale = await app.inject({ method: "PATCH", url: `/v1/contacts/${contact.contactId}`,
+      payload: { expectedFingerprint: contact.fingerprint, employer: "Stale employer" } });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json()).toMatchObject({ error: "contact_revision_conflict" });
+    const check = new Database(dbPath, { readonly: true });
+    try {
+      expect(check.prepare("SELECT * FROM contact_attributes WHERE tenant_id='local' AND attribute_id=?").get(sourced.attributeId)).toEqual(originalFact);
+      expect(check.prepare("SELECT * FROM contact_research_tasks WHERE tenant_id='local' AND task_id=?").get(taskId)).toEqual(originalTask);
+      expect(check.prepare("SELECT * FROM contact_candidates WHERE tenant_id='local' AND candidate_id=?").get(candidateId)).toEqual(originalCandidate);
+    } finally { check.close(); }
+    const readAfter = await app.inject({ method: "GET", url: `/v1/contacts/research/${taskId}` });
+    expect((readAfter.json() as ContactResearchDetailResponse).task.sourceAttempts).toEqual(attempts);
+    expect(eventPayloadBlob(dbPath)).not.toContain("research@example.test");
   });
 
   it("never leaks a candidate value into event payloads (sensitivity)", async () => {

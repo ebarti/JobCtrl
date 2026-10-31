@@ -1,6 +1,7 @@
-import { ManualApplicationOutcomeRequestSchema } from "@jobctrl/contracts";
-import type { ApplyReviewApprovalGateReason } from "@jobctrl/contracts";
 import { JobCtrlApiError } from "@jobctrl/api-client";
+import { ContactAttributeInputSchema, ContactUpdateRequestSchema, ManualApplicationOutcomeRequestSchema } from "@jobctrl/contracts";
+import type { ApplyReviewApprovalGateReason, ContactDetail } from "@jobctrl/contracts";
+import { demoContactFingerprint } from "./contact-fingerprint.js";
 import {
   LOCAL_TENANT,
   createContactCreated,
@@ -289,10 +290,17 @@ export class DemoLocalCommandExecutor {
     const selection = selectionId ? this.permanentDeleteSelections.get(selectionId) : undefined;
     if (selectionId) this.permanentDeleteSelections.delete(selectionId);
     const current = await this.workspace.snapshot();
+    const update = method === "updateContact" ? ContactUpdateRequestSchema.parse(args[1]) : null;
+    const source = update ? requireMapValue(current.state.readModel.contacts.details, String(args[0])).contact : null;
+    const sourceFingerprint = source ? await demoContactFingerprint(source) : null;
     let response: unknown;
     const now = this.clock.now().toISOString();
     const commit = await this.workspace.mutate(
       (draft, context) => {
+        if (update && (update.expectedFingerprint !== sourceFingerprint ||
+          JSON.stringify(requireMapValue(draft.state.readModel.contacts.details, String(args[0])).contact) !== JSON.stringify(source))) {
+          throw new JobCtrlApiError(409, "Conflict", "This contact changed. Review the latest contact before retrying your draft.", { error: "contact_revision_conflict" });
+        }
         response = this.apply(method, args as unknown[], draft, context, now, selection);
       },
       { expectedResetEpoch: current.resetEpoch },
@@ -300,7 +308,12 @@ export class DemoLocalCommandExecutor {
     if (commit.kind !== "committed") {
       throw new DemoCommandPersistenceError();
     }
-    return structuredClone(response) as ApiClientResponse<TMethod>;
+    const result = structuredClone(response);
+    if (method === "createContact" || method === "updateContact" || method === "confirmContactCandidate") {
+      const detail = result as { contact: ContactDetail };
+      detail.contact.fingerprint = await demoContactFingerprint(detail.contact);
+    }
+    return result as ApiClientResponse<TMethod>;
   }
 
   private apply(
@@ -1371,6 +1384,7 @@ export class DemoLocalCommandExecutor {
           };
         });
         const contact = {
+          fingerprint: (draft.revision + 1).toString(16).padStart(64, "0"),
           contactId,
           displayName: attributes.find((attribute) => attribute.kind === "name")?.value ?? "",
           role: body.role ?? "other",
@@ -1406,7 +1420,7 @@ export class DemoLocalCommandExecutor {
       }
       case "updateContact": {
         const contactId = requiredString(args[0], "contactId");
-        const body = record(args[1]);
+        const body = ContactUpdateRequestSchema.parse(args[1]);
         const detail = requireMapValue(draft.state.readModel.contacts.details, contactId);
         const contact = detail.contact;
         const employer = Object.hasOwn(body, "employer") ? trimmedStringValue(body.employer) : contact.employer;
@@ -1423,23 +1437,43 @@ export class DemoLocalCommandExecutor {
         let attributes = contact.attributes;
         if (Object.hasOwn(body, "attributes")) {
           changedFields.push("attributes");
+          const inputs = body.attributes ?? [];
+          const byId = new Map(contact.attributes.map((attribute) => [attribute.attributeId, attribute]));
+          const specified = new Set<string>();
+          for (const input of inputs) {
+            if (input.attributeId === undefined) continue;
+            if (!byId.has(input.attributeId) || specified.has(input.attributeId)) {
+              throw new JobCtrlApiError(400, "Bad Request", "Contact fact identity is invalid or repeated.", { error: "invalid_contact" });
+            }
+            specified.add(input.attributeId);
+          }
           const remaining = new Map<string, typeof contact.attributes>();
           for (const attribute of contact.attributes) {
-            const key = `${attribute.kind} ${attribute.value}`;
+            if (specified.has(attribute.attributeId)) continue;
+            const key = JSON.stringify([attribute.kind, attribute.value]);
             const bucket = remaining.get(key);
             if (bucket) bucket.push(attribute);
             else remaining.set(key, [attribute]);
           }
-          attributes = arrayValue(body.attributes).flatMap((rawAttribute, index) => {
-            const input = record(rawAttribute);
-            const kind = requiredTrimmedString(input.kind, `attributes[${index}].kind`);
-            const value = requiredTrimmedString(input.value, `attributes[${index}].value`);
-            const kept = remaining.get(`${kind} ${value}`)?.shift();
-            if (kept) return [structuredClone(kept)];
+          attributes = inputs.map((input, index) => {
+            const kind = input.kind;
+            const value = input.value.trim();
+            const rawKey = JSON.stringify([kind, input.value]);
+            const normalizedKey = JSON.stringify([kind, value]);
+            const kept = input.attributeId !== undefined
+              ? byId.get(input.attributeId)
+              : remaining.get(rawKey)?.shift() ??
+                (rawKey !== normalizedKey ? remaining.get(normalizedKey)?.shift() : undefined);
+            if (kept && kept.kind === kind &&
+                (kept.value === input.value || kept.value === value)) return structuredClone(kept);
+            const parsed = ContactAttributeInputSchema.safeParse({ kind, value: input.value });
+            if (!parsed.success) {
+              throw new JobCtrlApiError(400, "Bad Request", "Contact fact is invalid.", { error: "invalid_contact" });
+            }
             const attribute = {
               attributeId: this.createId(`contact-attribute-${index + 1}`),
-              kind,
-              value,
+              kind: parsed.data.kind,
+              value: parsed.data.value,
               provenance: {
                 sourceKind: "user_entered" as const,
                 sourceRef: "user_entered",
@@ -1450,10 +1484,11 @@ export class DemoLocalCommandExecutor {
               },
             } as typeof contact.attributes[number];
             createdAttributes.push(attribute);
-            return [attribute];
+            return attribute;
           });
         }
         Object.assign(contact, {
+          fingerprint: (draft.revision + 1).toString(16).padStart(64, "0"),
           displayName: attributes.find((attribute) => attribute.kind === "name")?.value ?? "",
           role,
           employer,
@@ -1515,6 +1550,7 @@ export class DemoLocalCommandExecutor {
           ?? attributes.find((attribute) => attribute.kind === "title")?.value
           ?? "Synthetic confirmed contact";
         const contact = {
+          fingerprint: (draft.revision + 1).toString(16).padStart(64, "0"),
           contactId,
           displayName,
           role: record(args[2]).role ?? candidate.role,
