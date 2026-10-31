@@ -309,6 +309,13 @@ and `error_code`, without `status`; Discover has its own family, enrichment,
 and compensation fields. Awaited profile import retains `status`, `draft`,
 `error`, and `error_code`. URL and manual-capture imports require their nested
 workflow result because their current callers always await it. An awaited
+manual-capture import also carries the internal generation resolved from the
+reviewed HTTP lifecycle; the worker checks it at admission and publication.
+The RPC handler rejects callers that omit that observed generation.
+The explicit recovery route advances that generation under a reviewed-lifecycle
+transaction, fencing old activity threads even after workflow termination. The
+public lifecycle ID is an opaque change detector, not a
+write authority. An awaited
 `run_stage` or `profile_import` call requires completion, rather than accepting
 a start-only acknowledgment. Stage completion must match Discover or pipeline
 input, using the worker's deduplicated effective stages; an explicit `stages`

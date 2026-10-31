@@ -21,6 +21,9 @@ import type {
   RoleMatchFeedbackSuggestion,
   ManualCaptureDismissResponse,
   ManualCaptureListResponse,
+  ManualCaptureImportRequest,
+  ManualCapturePrepareResponse,
+  ManualCaptureSupersedeResponse,
   ManualActionReasonValue,
   ManualCaptureImportResponse,
   ManualCaptureModeValue,
@@ -967,27 +970,264 @@ export function decideQuarantineEntry(
   return { ok: true, jobKey: row.job_id, decision: decision.decision, recordedAt: now };
 }
 
+// A historical import with no matching snapshot is unverified, not proven
+// failed. The original capture observation and explicit resubmission are
+// required before the worker can revisit that live owner.
+const LEGACY_UNVERIFIED_MANUAL_CAPTURE = `m.status = 'imported'
+  AND length(m.content_sha256)=64 AND m.content_sha256 NOT GLOB '*[^0-9a-f]*'
+  AND typeof(m.content_length)='integer' AND m.content_length>=0
+  AND CASE WHEN json_valid(m.retry_context_json) THEN
+    json_extract(m.retry_context_json, '$.manual_capture_provenance.source_kind')='user_mediated_capture'
+    AND json_extract(m.retry_context_json, '$.manual_capture_provenance.source_id')=COALESCE(m.source_id, 'manual_capture:' || m.item_id)
+    AND json_extract(m.retry_context_json, '$.manual_capture_provenance.originating_url')=m.originating_url
+    AND json_extract(m.retry_context_json, '$.manual_capture_provenance.capture_mode')=m.capture_mode
+    AND json_extract(m.retry_context_json, '$.manual_capture_provenance.captured_at')=m.imported_at
+    AND json_extract(m.retry_context_json, '$.manual_capture_provenance.future_manual_action_required')=m.future_manual_action_required
+    ELSE 0 END
+  AND EXISTS (
+    SELECT 1 FROM jobs j
+    JOIN job_source_observations o ON o.tenant_id=j.tenant_id AND o.job_id=j.job_id
+    WHERE j.tenant_id=m.tenant_id AND j.job_id=m.job_id
+      AND o.source_id=COALESCE(m.source_id, 'manual_capture:' || m.item_id)
+      AND o.source_native_id=m.item_id AND o.run_id='manual-capture:' || m.item_id
+      AND o.observed_url=m.captured_url
+      AND NOT EXISTS (SELECT 1 FROM jobctrl_deleted_jobs d WHERE d.tenant_id=j.tenant_id
+        AND d.job_id=j.job_id AND (d.restored_at IS NULL OR julianday(d.restored_at)<=julianday(d.deleted_at)))
+      AND NOT EXISTS (SELECT 1 FROM posting_snapshot_sets s WHERE s.tenant_id=j.tenant_id AND s.job_id=j.job_id
+        AND CASE WHEN json_valid(s.snapshot_set_json) THEN CASE
+          WHEN json_type(s.snapshot_set_json, '$.snapshots')='array' THEN
+            EXISTS (SELECT 1 FROM json_each(s.snapshot_set_json, '$.snapshots') p
+              WHERE CASE WHEN p.type='object' THEN json_extract(p.value, '$.source_id') END=COALESCE(m.source_id, 'manual_capture:' || m.item_id)
+                AND CASE WHEN p.type='object' THEN json_extract(p.value, '$.raw_text_hash') END=m.content_sha256
+                AND CASE WHEN p.type='object' THEN json_type(p.value, '$.snapshot_version') END='integer'
+                AND CASE WHEN p.type='object' THEN json_extract(p.value, '$.snapshot_version') END>0)
+          ELSE 1 END ELSE 1 END)
+  )`;
+
 export function listManualCaptureQueue(db: SqliteDatabase): ManualCaptureListResponse {
   const rows = allRows<ManualCaptureRow>(
     db,
-    `SELECT item_id, originating_url, source_id, reason, retry_context_json, required_at, status
-     FROM manual_capture_queue
-     WHERE tenant_id = ? AND status = 'pending'
+    `SELECT m.item_id, m.originating_url, m.source_id, m.reason, m.retry_context_json, m.required_at, m.status
+     FROM manual_capture_queue m
+     WHERE m.tenant_id = ? AND (m.status = 'pending' OR (${LEGACY_UNVERIFIED_MANUAL_CAPTURE}))
      ORDER BY required_at DESC, item_id ASC`,
     [DEFAULT_TENANT],
   );
   return {
     ok: true,
-    items: rows.map((row) => ({
-      itemId: row.item_id,
-      originatingUrl: row.originating_url,
-      sourceId: row.source_id,
-      reason: manualActionReason(row.reason) ?? "ambiguous_career_system",
-      retryContext: parseObject(row.retry_context_json),
-      requiredAt: row.required_at,
-      status: "pending",
-    })),
+    items: rows.map((row) => {
+      const context = parseObject(row.retry_context_json);
+      delete context.manual_capture_page_decision;
+      delete context.manual_capture_recovery_unverified;
+      delete context.manual_capture_import_unresolved;
+      const pageDecision = manualCapturePageDecision(db, context);
+      const unresolved = Object.hasOwn(context, "manual_capture_api_admission") || Object.hasOwn(context, "manual_capture_admission")
+        || Object.hasOwn(context, "manual_capture_reopen_authority");
+      delete context.manual_capture_api_admission;
+      delete context.manual_capture_admission;
+      delete context.manual_capture_generation;
+      delete context.manual_capture_reopen_authority;
+      delete context.manual_capture_extension_superseded;
+      return {
+        itemId: row.item_id,
+        lifecycleId: manualCaptureIdentity(row)?.lifecycleId ?? null,
+        originatingUrl: row.originating_url,
+        sourceId: row.source_id,
+        reason: manualActionReason(row.reason) ?? "ambiguous_career_system",
+        retryContext: { ...context,
+          ...(unresolved ? { manual_capture_import_unresolved: true } : {}),
+          ...(pageDecision ? { manual_capture_page_decision: pageDecision } : {}),
+          ...(row.status === "imported" || context.manual_capture_legacy_owner
+            ? { manual_capture_recovery_unverified: true } : {}) },
+        requiredAt: row.required_at,
+        status: row.status === "imported" ? "imported" : "pending",
+      };
+    }),
   };
+}
+
+// The public identity is derived from, and cannot be used as, the internal
+// write generation. A historical recovery keeps its reviewed lifetime while
+// its own reopening authority changes the internal generation.
+function manualCaptureIdentity(row: ManualCaptureRow): { lifecycleId: string; generation: string | null } | null {
+  let value: unknown;
+  try { value = JSON.parse(row.retry_context_json); } catch { return null; }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const context = value as Record<string, unknown>;
+  const rawGeneration = context.manual_capture_generation;
+  if (rawGeneration !== undefined && rawGeneration !== null
+      && (typeof rawGeneration !== "string" || !rawGeneration)) return null;
+  const generation = typeof rawGeneration === "string" ? rawGeneration : null;
+  let reviewedGeneration = generation;
+  const rawAuthority = context.manual_capture_reopen_authority;
+  if (rawAuthority !== undefined && rawAuthority !== null) {
+    if (!rawAuthority || typeof rawAuthority !== "object" || Array.isArray(rawAuthority)) return null;
+    const authority = rawAuthority as Record<string, unknown>;
+    if (authority.generation !== generation || typeof authority.run_id !== "string" || !authority.run_id
+        || (authority.previous_generation !== null && typeof authority.previous_generation !== "string")) return null;
+    reviewedGeneration = authority.previous_generation as string | null;
+  }
+  const lifecycleId = crypto.createHash("sha256")
+    .update(JSON.stringify(["manual-capture-review-v1", row.item_id, reviewedGeneration]))
+    .digest("hex");
+  return { lifecycleId, generation };
+}
+
+export function manualCaptureLifecycle(db: SqliteDatabase, itemId: string): { lifecycleId: string; generation: string | null } | null {
+  const row = getManualCaptureRow(db, itemId);
+  return row ? manualCaptureIdentity(row) : null;
+}
+
+function captureFingerprint(input: ManualCaptureImportRequest): string {
+  return crypto.createHash("sha256").update(JSON.stringify([
+    input.captureMode, input.capturedUrl ?? null, input.contentText ?? null,
+    input.contentHtmlBase64 ?? null, input.note ?? null, input.futureManualActionRequired,
+  ])).digest("hex");
+}
+
+function captureDraft(input: ManualCaptureImportRequest, originatingUrl: string): Record<string, unknown> {
+  let content = input.contentText ?? "";
+  if (!content && input.contentHtmlBase64) {
+    try { content = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(input.contentHtmlBase64, "base64")); }
+    catch { throw new InputError("Captured HTML must be valid UTF-8."); }
+  }
+  return { token: crypto.randomBytes(16).toString("hex"), capture_mode: input.captureMode,
+    captured_url: input.capturedUrl ?? originatingUrl, content, note: input.note ?? null,
+    future_manual_action_required: input.futureManualActionRequired };
+}
+
+/** Reserve and retain a reviewed submission before an import can be dispatched. */
+export function prepareManualCapture(
+  db: SqliteDatabase, itemId: string, input: ManualCaptureImportRequest,
+): ManualCapturePrepareResponse {
+  return db.transaction((): ManualCapturePrepareResponse => {
+    const row = getManualCaptureRow(db, itemId);
+    const identity = row && manualCaptureIdentity(row);
+    if (!row || !identity || !input.expectedLifecycleId || identity.lifecycleId !== input.expectedLifecycleId) {
+      throw new ManualCaptureLifecycleConflict("This capture changed. Refresh and review it again.");
+    }
+    const eligible = getRow<{ present: number }>(db,
+      `SELECT 1 AS present FROM manual_capture_queue m WHERE m.tenant_id=? AND m.item_id=?
+       AND (m.status='pending' OR (${LEGACY_UNVERIFIED_MANUAL_CAPTURE}))`, [DEFAULT_TENANT, itemId]);
+    const context = JSON.parse(row.retry_context_json) as Record<string, unknown>;
+    if (!eligible || Object.hasOwn(context, "manual_capture_api_admission") || Object.hasOwn(context, "manual_capture_admission")
+        || Object.hasOwn(context, "manual_capture_reopen_authority")) {
+      throw new ManualCaptureLifecycleConflict("Prevent earlier imports from saving before reviewing this capture.");
+    }
+    const generation = crypto.randomBytes(16).toString("hex");
+    context.manual_capture_generation = generation;
+    context.manual_capture_draft = captureDraft(input, row.originating_url);
+    context.manual_capture_api_admission = { generation, fingerprint: captureFingerprint(input), source: "manual" };
+    delete context.manual_capture_reopen_authority;
+    db.prepare("UPDATE manual_capture_queue SET retry_context_json=? WHERE tenant_id=? AND item_id=?")
+      .run(JSON.stringify(context), DEFAULT_TENANT, itemId);
+    const prepared = manualCaptureLifecycle(db, itemId);
+    if (!prepared) throw new ManualCaptureLifecycleConflict("This capture changed. Refresh and review it again.");
+    return { ok: true, itemId, lifecycleId: prepared.lifecycleId };
+  }).immediate();
+}
+
+/** A dispatch can only consume the exact content retained for this lifecycle. */
+export function preparedManualCaptureGeneration(
+  db: SqliteDatabase, itemId: string, input: ManualCaptureImportRequest,
+): string | null | undefined {
+  const row = getManualCaptureRow(db, itemId);
+  const identity = row && manualCaptureIdentity(row);
+  if (!row || !identity || !input.expectedLifecycleId || identity.lifecycleId !== input.expectedLifecycleId) return undefined;
+  const context = JSON.parse(row.retry_context_json) as Record<string, unknown>;
+  const admission = context.manual_capture_api_admission;
+  if (!admission || typeof admission !== "object" || Array.isArray(admission)) return undefined;
+  const claim = admission as Record<string, unknown>;
+  if (claim.source !== "manual" || claim.generation !== identity.generation || claim.fingerprint !== captureFingerprint(input)) return undefined;
+  return identity.generation;
+}
+
+/** The extension's durable local queue replays the same capture without a second preparation call. */
+export function prepareExtensionManualCapture(
+  db: SqliteDatabase, itemId: string, input: ExtensionCaptureIngestRequest, capture: ManualCaptureImportRequest,
+): string | null {
+  const row = getManualCaptureRow(db, itemId);
+  const identity = row && manualCaptureIdentity(row);
+  const eligible = getRow<{ present: number }>(db,
+    `SELECT 1 AS present FROM manual_capture_queue m WHERE m.tenant_id=? AND m.item_id=?
+     AND (m.status='pending' OR (${LEGACY_UNVERIFIED_MANUAL_CAPTURE}))`, [DEFAULT_TENANT, itemId]);
+  if (!row || !identity || !eligible) {
+    throw new ManualCaptureLifecycleConflict("This capture changed. Refresh and review it again.");
+  }
+  const context = JSON.parse(row.retry_context_json) as Record<string, unknown>;
+  const fingerprint = crypto.createHash("sha256").update(JSON.stringify([
+    captureFingerprint(capture), input.originatingUrl, input.captureClient, input.extensionVersion,
+  ])).digest("hex");
+  const existing = context.manual_capture_api_admission;
+  if (Object.hasOwn(context, "manual_capture_api_admission")) {
+    if (!existing || typeof existing !== "object" || Array.isArray(existing)) {
+      throw new ManualCaptureLifecycleConflict("This capture changed. Refresh and review it again.");
+    }
+    const claim = existing as Record<string, unknown>;
+    const reopen = context.manual_capture_reopen_authority;
+    const sameReopen = reopen && typeof reopen === "object" && !Array.isArray(reopen)
+      && (reopen as Record<string, unknown>).previous_generation === claim.generation
+      && (reopen as Record<string, unknown>).generation === identity.generation;
+    if (claim.source !== "extension" || typeof claim.generation !== "string"
+        || (claim.generation !== identity.generation && !sameReopen) || claim.fingerprint !== fingerprint) {
+      throw new ManualCaptureLifecycleConflict("This capture conflicts with an earlier submission.");
+    }
+    return claim.generation;
+  }
+  if (Object.hasOwn(context, "manual_capture_admission")) {
+    // A capture admitted by an older version already carries its retained
+    // draft. Do not change its row while that worker may be publishing.
+    const saved = context.manual_capture_draft;
+    const expected = captureDraft(capture, row.originating_url);
+    if (!saved || typeof saved !== "object" || Array.isArray(saved)
+        || ["capture_mode", "captured_url", "content", "note", "future_manual_action_required"]
+          .some((key) => (saved as Record<string, unknown>)[key] !== expected[key])) {
+      throw new ManualCaptureLifecycleConflict("This capture conflicts with an earlier submission.");
+    }
+    return identity.generation;
+  }
+  if (Object.hasOwn(context, "manual_capture_reopen_authority")) {
+    throw new ManualCaptureLifecycleConflict("This capture is being recovered. Review it before retrying.");
+  }
+  const generation = crypto.randomBytes(16).toString("hex");
+  context.manual_capture_generation = generation;
+  context.manual_capture_draft = captureDraft(capture, row.originating_url);
+  context.manual_capture_api_admission = { generation, fingerprint, source: "extension" };
+  delete context.manual_capture_reopen_authority;
+  db.prepare("UPDATE manual_capture_queue SET retry_context_json=? WHERE tenant_id=? AND item_id=?")
+    .run(JSON.stringify(context), DEFAULT_TENANT, itemId);
+  return generation;
+}
+
+export class ManualCaptureLifecycleConflict extends Error {}
+export class ExtensionCaptureSuperseded extends Error {
+  constructor() { super("This extension capture was superseded. Its local queued copy was not imported."); }
+}
+
+export function isExtensionCaptureSuperseded(db: SqliteDatabase, itemId: string): boolean {
+  const previous = getRow<{ retry_context_json: string }>(db,
+    "SELECT retry_context_json FROM manual_capture_queue WHERE tenant_id=? AND item_id=?", [DEFAULT_TENANT, itemId]);
+  return Boolean(previous && parseObject(previous.retry_context_json).manual_capture_extension_superseded === "superseded");
+}
+
+function manualCapturePageDecision(db: SqliteDatabase, context: Record<string, unknown>): string | null {
+  const draft = parseObject(context.manual_capture_draft);
+  const id = optionalText(draft.page_determination_id);
+  const url = optionalText(draft.captured_url);
+  if (!id || !/^[a-f0-9]{64}$/.test(id) || !url) return null;
+  const row = getRow<{ envelope_json: string }>(db,
+    "SELECT envelope_json FROM semantic_determinations WHERE tenant_id=? AND determination_id=?",
+    [DEFAULT_TENANT, id]);
+  const envelope = parseObject(row?.envelope_json);
+  if (envelope.determination_id !== id || envelope.input_fingerprint !== id
+      || envelope.tenant_id !== DEFAULT_TENANT || envelope.entity_id !== url
+      || envelope.kind !== "page_interpretation" || envelope.lane !== "enrichment") return null;
+  const result = parseObject(envelope.result);
+  const kind = parseObject(result.page_kind).value;
+  const access = parseObject(result.access_state).value;
+  if (access === "login_required" || access === "challenge") return "access_blocked";
+  if (["listing", "other", "unknown"].includes(String(kind))) return "posting_unverified";
+  return null;
 }
 
 export function seedExtensionManualCapture(
@@ -996,6 +1236,7 @@ export function seedExtensionManualCapture(
 ): { itemId: string; sourceId: string } | ExtensionCaptureIngestResponse {
   const now = new Date().toISOString();
   const itemId = extensionManualCaptureItemId(input);
+  if (isExtensionCaptureSuperseded(db, itemId)) throw new ExtensionCaptureSuperseded();
   upsertSourceRegistryEntry(db, {
     sourceId: EXTENSION_MANUAL_CAPTURE_SOURCE_ID,
     kind: "user_mediated_capture",
@@ -1011,11 +1252,19 @@ export function seedExtensionManualCapture(
      ON CONFLICT(tenant_id, item_id) DO UPDATE SET
        originating_url = CASE
          WHEN manual_capture_queue.status IN ('imported', 'dismissed')
+           OR (json_valid(manual_capture_queue.retry_context_json)
+               AND (json_type(manual_capture_queue.retry_context_json, '$.manual_capture_draft') = 'object'
+                 OR json_type(manual_capture_queue.retry_context_json, '$.manual_capture_legacy_owner') = 'text'
+                 OR json_type(manual_capture_queue.retry_context_json, '$.manual_capture_admission') = 'object'))
            THEN manual_capture_queue.originating_url
          ELSE excluded.originating_url
        END,
        source_id = CASE
          WHEN manual_capture_queue.status IN ('imported', 'dismissed')
+           OR (json_valid(manual_capture_queue.retry_context_json)
+               AND (json_type(manual_capture_queue.retry_context_json, '$.manual_capture_draft') = 'object'
+                 OR json_type(manual_capture_queue.retry_context_json, '$.manual_capture_legacy_owner') = 'text'
+                 OR json_type(manual_capture_queue.retry_context_json, '$.manual_capture_admission') = 'object'))
            THEN manual_capture_queue.source_id
          ELSE excluded.source_id
        END,
@@ -1027,7 +1276,16 @@ export function seedExtensionManualCapture(
        retry_context_json = CASE
          WHEN manual_capture_queue.status IN ('imported', 'dismissed')
            THEN manual_capture_queue.retry_context_json
-         ELSE excluded.retry_context_json
+         WHEN json_valid(manual_capture_queue.retry_context_json)
+           THEN json_patch(excluded.retry_context_json, json_object(
+             'manual_capture_draft', json_extract(manual_capture_queue.retry_context_json, '$.manual_capture_draft'),
+             'manual_capture_legacy_owner', json_extract(manual_capture_queue.retry_context_json, '$.manual_capture_legacy_owner'),
+             'manual_capture_admission', json_extract(manual_capture_queue.retry_context_json, '$.manual_capture_admission'),
+             'manual_capture_api_admission', json_extract(manual_capture_queue.retry_context_json, '$.manual_capture_api_admission'),
+             'manual_capture_generation', json_extract(manual_capture_queue.retry_context_json, '$.manual_capture_generation'),
+             'manual_capture_extension_superseded', json_extract(manual_capture_queue.retry_context_json, '$.manual_capture_extension_superseded'),
+             'manual_capture_reopen_authority', json_extract(manual_capture_queue.retry_context_json, '$.manual_capture_reopen_authority')))
+         ELSE manual_capture_queue.retry_context_json
        END,
        required_at = CASE
          WHEN manual_capture_queue.status IN ('imported', 'dismissed')
@@ -1056,7 +1314,7 @@ export function seedExtensionManualCapture(
     ),
     now,
   );
-  const replay = importedExtensionManualCaptureResponse(db, itemId);
+  const replay = importedExtensionManualCaptureResponse(db, itemId, input);
   if (replay) {
     return replay;
   }
@@ -1104,17 +1362,44 @@ function dismissedExtensionManualCaptureResponse(
 function importedExtensionManualCaptureResponse(
   db: SqliteDatabase,
   itemId: string,
+  input: ExtensionCaptureIngestRequest,
 ): ManualCaptureImportResponse | null {
   const row = getRow<ImportedManualCaptureRow>(
     db,
-    `SELECT item_id, originating_url, source_id, reason, retry_context_json,
-            required_at, status, imported_at, capture_mode, captured_url,
-            future_manual_action_required, job_id
-     FROM manual_capture_queue
-     WHERE tenant_id = ? AND item_id = ? AND status = 'imported'`,
+    `SELECT m.item_id, m.originating_url, m.source_id, m.reason, m.retry_context_json,
+            m.required_at, m.status, m.imported_at, m.capture_mode, m.captured_url,
+            m.future_manual_action_required, m.job_id, m.content_sha256, m.content_length, m.note
+     FROM manual_capture_queue m
+     WHERE m.tenant_id = ? AND m.item_id = ? AND m.status = 'imported'
+       AND EXISTS (SELECT 1 FROM jobs j WHERE j.tenant_id=m.tenant_id AND j.job_id=m.job_id
+         AND NOT EXISTS (SELECT 1 FROM jobctrl_deleted_jobs d WHERE d.tenant_id=j.tenant_id
+           AND d.job_id=j.job_id AND (d.restored_at IS NULL OR julianday(d.restored_at)<=julianday(d.deleted_at))))
+       AND EXISTS (SELECT 1 FROM posting_snapshot_sets s WHERE s.tenant_id=m.tenant_id AND s.job_id=m.job_id
+         AND s.latest_snapshot_version>0 AND CASE WHEN json_valid(s.snapshot_set_json) THEN
+           EXISTS (SELECT 1 FROM json_each(s.snapshot_set_json, '$.snapshots') p
+             WHERE CASE WHEN p.type='object' THEN json_extract(p.value, '$.source_id') END
+                 =COALESCE(m.source_id, 'manual_capture:' || m.item_id)
+               AND CASE WHEN p.type='object' THEN json_type(p.value, '$.snapshot_version') END='integer'
+               AND CASE WHEN p.type='object' THEN json_extract(p.value, '$.snapshot_version') END>0
+               AND CASE WHEN p.type='object' THEN json_extract(p.value, '$.raw_text_hash') END=m.content_sha256)
+           ELSE 0 END)`,
     [DEFAULT_TENANT, itemId],
   );
   if (!row?.imported_at) {
+    return null;
+  }
+  let content: string;
+  try {
+    content = input.contentText || (input.contentHtmlBase64
+      ? new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(input.contentHtmlBase64, "base64"))
+      : input.capturedUrl ? `<main>Captured posting URL: ${input.capturedUrl}</main>` : "");
+  } catch {
+    return null;
+  }
+  if (row.capture_mode !== input.captureMode || row.captured_url !== (input.capturedUrl || row.originating_url)
+      || row.content_sha256 !== crypto.createHash("sha256").update(content).digest("hex")
+      || row.content_length !== [...content].length || (row.note ?? null) !== (input.note ?? null)
+      || Boolean(row.future_manual_action_required) !== input.futureManualActionRequired) {
     return null;
   }
   const retryContext = parseObject(row.retry_context_json);
@@ -1141,18 +1426,59 @@ export function dismissManualCapture(
   db: SqliteDatabase,
   itemId: string,
   _reason?: string,
+  expectedLifecycleId?: string,
 ): ManualCaptureDismissResponse {
-  const row = getManualCaptureRow(db, itemId);
-  if (!row) {
-    throw new InputError(`Manual capture item ${itemId} was not found.`);
-  }
-  const now = new Date().toISOString();
-  db.prepare(
-    `UPDATE manual_capture_queue
-     SET status = 'dismissed', dismissed_at = ?
-     WHERE tenant_id = ? AND item_id = ?`,
-  ).run(now, DEFAULT_TENANT, itemId);
-  return { ok: true, itemId, status: "dismissed", dismissedAt: now };
+  return db.transaction((): ManualCaptureDismissResponse => {
+    const row = getManualCaptureRow(db, itemId);
+    if (!row) {
+      throw new InputError(`Manual capture item ${itemId} was not found.`);
+    }
+    const identity = manualCaptureIdentity(row);
+    if (!identity || (expectedLifecycleId !== undefined && identity.lifecycleId !== expectedLifecycleId)) {
+      throw new ManualCaptureLifecycleConflict("This capture changed. Refresh the queue and review it again.");
+    }
+    const now = new Date().toISOString();
+    const result = db.prepare(
+      `UPDATE manual_capture_queue AS m
+       SET status = 'dismissed', dismissed_at = ?,
+           retry_context_json = CASE WHEN json_valid(retry_context_json)
+             THEN json_set(json_remove(retry_context_json, '$.manual_capture_draft', '$.manual_capture_legacy_owner', '$.manual_capture_reopen_authority', '$.manual_capture_api_admission'),
+                           '$.manual_capture_generation', lower(hex(randomblob(16)))) ELSE retry_context_json END
+       WHERE m.tenant_id = ? AND m.item_id = ? AND (m.status = 'pending' OR (${LEGACY_UNVERIFIED_MANUAL_CAPTURE}))`,
+    ).run(now, DEFAULT_TENANT, itemId);
+    if (result.changes !== 1) {
+      throw new InputError(`Manual capture item ${itemId} changed before dismissal.`);
+    }
+    return { ok: true, itemId, status: "dismissed", dismissedAt: now };
+  }).immediate();
+}
+
+export function supersedeManualCapture(db: SqliteDatabase, itemId: string, expectedLifecycleId: string): ManualCaptureSupersedeResponse {
+  return db.transaction((): ManualCaptureSupersedeResponse => {
+    const row = getManualCaptureRow(db, itemId);
+    const identity = row && manualCaptureIdentity(row);
+    if (!row || !identity || identity.lifecycleId !== expectedLifecycleId) {
+      throw new ManualCaptureLifecycleConflict("This capture changed. Refresh the queue and review it again.");
+    }
+    const context = JSON.parse(row.retry_context_json) as Record<string, unknown>;
+    context.manual_capture_generation = crypto.randomBytes(16).toString("hex");
+    const draft = context.manual_capture_draft;
+    if (draft && typeof draft === "object" && !Array.isArray(draft)) {
+      // Late failure receipts are bound to the old draft token. Rotate it
+      // alongside the generation while preserving the reviewed content.
+      (draft as Record<string, unknown>).token = crypto.randomBytes(16).toString("hex");
+    }
+    delete context.manual_capture_reopen_authority;
+    delete context.manual_capture_admission;
+    delete context.manual_capture_api_admission;
+    if (row.source_id === EXTENSION_MANUAL_CAPTURE_SOURCE_ID) context.manual_capture_extension_superseded = "superseded";
+    const updated = db.prepare("UPDATE manual_capture_queue SET retry_context_json=? WHERE tenant_id=? AND item_id=?")
+      .run(JSON.stringify(context), DEFAULT_TENANT, itemId);
+    if (updated.changes !== 1) throw new ManualCaptureLifecycleConflict("This capture changed. Refresh the queue and review it again.");
+    const next = manualCaptureLifecycle(db, itemId);
+    if (!next) throw new ManualCaptureLifecycleConflict("This capture changed. Refresh the queue and review it again.");
+    return { ok: true, itemId, lifecycleId: next.lifecycleId };
+  }).immediate();
 }
 
 export function recordDiscoveryFeedback(
@@ -1320,9 +1646,9 @@ function getSourceRegistryRow(db: SqliteDatabase, sourceId: string): SourceRegis
 function getManualCaptureRow(db: SqliteDatabase, itemId: string): ManualCaptureRow | undefined {
   return getRow<ManualCaptureRow>(
     db,
-    `SELECT item_id, originating_url, source_id, reason, retry_context_json, required_at, status
-     FROM manual_capture_queue
-     WHERE tenant_id = ? AND item_id = ? AND status = 'pending'`,
+    `SELECT m.item_id, m.originating_url, m.source_id, m.reason, m.retry_context_json, m.required_at, m.status
+     FROM manual_capture_queue m
+     WHERE m.tenant_id = ? AND m.item_id = ? AND (m.status = 'pending' OR (${LEGACY_UNVERIFIED_MANUAL_CAPTURE}))`,
     [DEFAULT_TENANT, itemId],
   );
 }

@@ -5758,6 +5758,8 @@ export interface QuarantineListResponse {
 
 export interface ManualCaptureQueueItemSummary {
   itemId: string;
+  /** Opaque identity for the current review lifetime; not an authorization token. */
+  lifecycleId?: string | null;
   originatingUrl: string;
   sourceId: string | null;
   reason: ManualActionReasonValue;
@@ -5770,6 +5772,17 @@ export interface ManualCaptureListResponse {
   ok: true;
   items: ManualCaptureQueueItemSummary[];
 }
+
+export const ManualCaptureSupersedeSchema = z.object({
+  expectedLifecycleId: z.string().regex(/^[0-9a-f]{64}$/),
+}).strict();
+export interface ManualCaptureSupersedeResponse {
+  ok: true;
+  itemId: string;
+  lifecycleId: string;
+}
+
+export type ManualCapturePrepareResponse = ManualCaptureSupersedeResponse;
 
 export const DISCOVERY_FEEDBACK_KINDS = [
   "saved",
@@ -6451,6 +6464,7 @@ export type JobUrlImportStatusResponse = JobUrlImportCompletedResponse | (
 
 export const ManualCaptureImportSchema = z
   .object({
+    expectedLifecycleId: z.string().regex(/^[0-9a-f]{64}$/).optional(),
     captureMode: z.enum(MANUAL_CAPTURE_MODE_VALUES),
     capturedUrl: z
       .string()
@@ -6542,6 +6556,7 @@ export type ExtensionCaptureIngestResponse =
 export const ManualCaptureDismissSchema = z
   .object({
     reason: z.string().trim().max(400).optional(),
+    expectedLifecycleId: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   })
   .strict();
 export type ManualCaptureDismissRequest = z.infer<typeof ManualCaptureDismissSchema>;

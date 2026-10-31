@@ -929,6 +929,7 @@ export const DEMO_READ_MODEL = {
       items: [
         {
           itemId: "capture-demo-browser",
+          lifecycleId: "0".repeat(64),
           originatingUrl: "https://demo.invalid/source-preview.html",
           sourceId: "demo-source:northwind",
           reason: "browser_extension_capture",

@@ -124,6 +124,12 @@ source fields, input/output limits, model-use flags and error codes.
 | Review queues | locator candidates, quarantine, and manual-capture routes |
 | Feedback | discovery feedback and role-match decision routes |
 
+Manual-capture conflict reasons can distinguish terminal workflow outcomes from
+an import still in progress. An explicit recovery action fences earlier attempts
+for the reviewed capture; see the [complete contract](complete-contract.md#discovery-controls).
+Queue lifetimes bind imports and dismissals to the reviewed item, including
+when the same URL is explicitly reopened.
+
 Source-locator reads are strictly read-only. The opt-in
 `source-proposals from-history` CLI path feeds the same queue and registry with
 saved origin/extraction receipts and unknown completeness. Explicit review
@@ -134,6 +140,9 @@ and the [wire contract](complete-contract.md#discovery-controls).
 
 These controls decide where discovery may look and how proposed sources or jobs
 enter the system. They do not hold provider credentials or raw feed contents.
+The Manual Capture queue retains user-submitted pending page content locally for
+review and retry, with a durable unresolved-attempt flag across reloads; see the
+[capture contract](complete-contract.md#discovery-controls).
 
 ## Settings And Credentials
 

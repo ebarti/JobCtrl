@@ -1,5 +1,5 @@
 import { JobCtrlApiError } from "@jobctrl/api-client";
-import { ContactAttributeInputSchema, ContactUpdateRequestSchema, ManualApplicationOutcomeRequestSchema, ResumeTemplateDefaultSelectionRequestSchema, ResumeTemplateVersionSaveRequestSchema } from "@jobctrl/contracts";
+import { ContactAttributeInputSchema, ContactUpdateRequestSchema, ManualApplicationOutcomeRequestSchema, ManualCaptureDismissSchema, ResumeTemplateDefaultSelectionRequestSchema, ResumeTemplateVersionSaveRequestSchema } from "@jobctrl/contracts";
 import type { ApplyReviewApprovalGateReason, ContactDetail } from "@jobctrl/contracts";
 import { demoContactFingerprint } from "./contact-fingerprint.js";
 import {
@@ -48,6 +48,7 @@ import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
 import { DEMO_RESCORE_UNAVAILABLE_MESSAGE } from "./capabilities.js";
 import type { ApiClientResponse } from "./contracts.js";
 import { isActiveDemoJob, matchingDemoJobKeys } from "./job-filter.js";
+import { withDemoCaptureLifecycle } from "./manual-capture.js";
 import {
   purgeDemoJobProjections,
   recomputeDemoOperationalProjections,
@@ -579,6 +580,19 @@ export class DemoLocalCommandExecutor {
       }
       case "dismissManualCapture": {
         const itemId = requiredString(args[0], "itemId");
+        const parsed = ManualCaptureDismissSchema.safeParse(args[1] ?? {});
+        if (!parsed.success) throw new JobCtrlApiError(400, "Bad Request");
+        if (!parsed.data.expectedLifecycleId) {
+          throw manualCaptureConflict("Refresh the queue and review this capture again.");
+        }
+        const matches = draft.state.readModel.discovery.manualCapture.items.filter((candidate) => candidate.itemId === itemId);
+        if (matches.length === 0) {
+          const message = `Manual capture item ${itemId} was not found.`;
+          throw new JobCtrlApiError(404, "Not Found", message, { ok: false, error: "not_found", message });
+        }
+        if (matches.length !== 1 || withDemoCaptureLifecycle(matches[0]!).lifecycleId !== parsed.data.expectedLifecycleId) {
+          throw manualCaptureConflict("This capture changed. Refresh the queue and review it again.");
+        }
         draft.state.readModel.discovery.manualCapture.items =
           draft.state.readModel.discovery.manualCapture.items.filter((item) => item.itemId !== itemId);
         return { ok: true, itemId, status: "dismissed", dismissedAt: now };
@@ -1847,6 +1861,10 @@ export class DemoLocalCommandExecutor {
     if (!permanent) recomputeDemoOutcomeProjections(draft);
     return { ok: true, count: jobKeys.length, jobKeys };
   }
+}
+
+function manualCaptureConflict(message: string): JobCtrlApiError {
+  return new JobCtrlApiError(409, "Conflict", message, { ok: false, error: "manual_capture_state_changed", message });
 }
 
 function permanentDeleteSelectionConflict(conflictingJobKeys?: string[], unprocessedJobKeys?: string[]): JobCtrlApiError {
