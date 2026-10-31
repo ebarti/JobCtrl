@@ -94,7 +94,8 @@ test("legacy refusal is limited to the documented release pair", () => {
   const release = (appVersion) => ({ descriptor: { appVersion } });
   assert.equal(isKnownLegacyRefusal(release("0.3.1"), release("0.4.0"), "forward-schema-15"), true);
   assert.equal(isKnownLegacyRefusal(release("0.3.1"), release("0.4.1"), "forward-schema-15"), true);
-  assert.equal(isKnownLegacyRefusal(release("0.3.1"), release("0.4.2"), "forward-schema-15"), false);
+  assert.equal(isKnownLegacyRefusal(release("0.3.1"), release("0.4.2"), "forward-schema-15"), true);
+  assert.equal(isKnownLegacyRefusal(release("0.3.1"), release("0.4.3"), "forward-schema-15"), false);
   assert.equal(isKnownLegacyRefusal(release("0.3.0"), release("0.4.0"), "forward-schema-15"), false);
   assert.equal(isKnownLegacyRefusal(release("0.3.1"), release("0.4.0"), "compatible"), false);
 });

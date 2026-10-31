@@ -955,23 +955,33 @@ jobs:
         if: ${{ inputs.channel == 'stable' }}
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
+          XDG_CONFIG_HOME: ${{ runner.temp }}/homebrew-smoke-config
           JOBCTRL_RUNTIME_HOME: ${{ runner.temp }}/homebrew-runtime
           JOBCTRL_DIR: ${{ runner.temp }}/homebrew-runtime/state
         run: |
           set -euo pipefail
           release="$RUNNER_TEMP/release"
           tap_name="jobctrl/release-smoke-${GITHUB_RUN_ID}"
+          test "${RUNNER_ENVIRONMENT:-}" = github-hosted
+          formula_bin="$(brew --prefix)/bin/jobctrl"
+          test ! -e "$formula_bin"
+          test ! -L "$formula_bin"
+          test ! -e "$(brew --cellar)/jobctrl"
+          test ! -L "$(brew --cellar)/jobctrl"
           brew tap-new --no-git "$tap_name"
           tap_repo="$(brew --repository "$tap_name")"
           install -m 0644 "$release/jobctrl.rb" "$tap_repo/Formula/jobctrl.rb"
           formula="$tap_name/jobctrl"
-          formula_bin="$(brew --prefix)/bin/jobctrl"
           cleanup() {
             "$formula_bin" stop >/dev/null 2>&1 || true
             brew uninstall --formula "$formula" >/dev/null 2>&1 || true
+            brew untrust --formula "$formula" >/dev/null 2>&1 || true
             brew untap "$tap_name" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
+          # Homebrew may load the formula in a child process without the
+          # fully qualified command-line name that grants implicit trust.
+          brew trust --formula "$formula"
           brew audit --strict --formula "$formula"
           brew install --formula "$formula"
           brew test "$formula"
