@@ -165,6 +165,16 @@ func promoteForwardUpdate(ctx launchContext, build, source string, output io.Wri
 	pairReceipt := active.Receipt
 	if version == 15 {
 		pairReceipt = candidate
+		// The first backup of an already-v15 workspace belongs to its active
+		// predecessor only if that signed release declares the v15 contract
+		// and can be supervised by this controller. A later backup may contain
+		// writes made by the candidate and must never authorize an old rollback.
+		if journal.BackupID == "" && journal.SourceSchemaVersion == 15 && journal.State == release.MetadataVerified &&
+			old.runtime.LauncherProtocol == 2 && protocolSupports(old.distribution, launcherProtocol) {
+			if _, err := readBridgeSchemaContract(old, 14); err == nil {
+				pairReceipt = active.Receipt
+			}
+		}
 	}
 	pair, err := snapshotPair(ctx, pairReceipt)
 	if err != nil {
