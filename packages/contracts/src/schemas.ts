@@ -1962,8 +1962,18 @@ export const ProfileUpdateRequestSchema = z
     style: z.unknown().optional(),
     styleText: z.string().optional(),
     templateText: z.string().optional(),
-    expectedProfileVersion: z.number().int().positive().optional(),
+    expectedProfileVersion: z.number().int().positive().nullable().optional(),
     acceptedCandidateInterpretationId: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    importStyleReceiptId: z.string().uuid().optional(),
+    importReview: z.object({
+      attemptId: z.string().uuid(),
+      determinationId: z.string().regex(/^[a-f0-9]{64}$/),
+      draftId: z.string().min(1).max(160),
+      sections: z.array(z.enum(["personal", "summary", "experience", "education", "skills", "style"]))
+        .min(1).max(6).refine((values) => new Set(values).size === values.length),
+      personalFields: z.array(z.enum(["full_name", "email", "phone", "linkedin_url", "github_url", "website_url", "city", "country"]))
+        .max(8).refine((values) => new Set(values).size === values.length),
+    }).strict().optional(),
   })
   .strict();
 export type ProfileUpdateRequest = z.infer<typeof ProfileUpdateRequestSchema>;

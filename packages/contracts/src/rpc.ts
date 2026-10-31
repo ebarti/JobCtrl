@@ -845,6 +845,7 @@ export const ProfileImportParamsSchema = z
     expectedAppDir: z.string().trim().min(1).optional(),
     expectedDbPath: z.string().trim().min(1).optional(),
     pdfPath: z.string().min(1),
+    attemptId: z.string().uuid().optional(),
     importProfile: z.boolean().default(true),
     importStyle: z.boolean().default(true),
     awaitResult: z.boolean().optional(),

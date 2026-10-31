@@ -467,6 +467,7 @@ def build_profile_import_workflow_spec(params: dict[str, Any]) -> WorkflowStartS
         expected_app_dir=params.get("expectedAppDir"),
         expected_db_path=params.get("expectedDbPath"),
         pdf_path=str(_require(params, "pdfPath")),
+        attempt_id=params.get("attemptId"),
         import_profile=bool(params.get("importProfile", True)),
         import_style=bool(params.get("importStyle", True)),
     )

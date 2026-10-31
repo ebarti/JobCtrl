@@ -14,10 +14,12 @@ def import_profile_pdf(
     *,
     import_profile: bool = True,
     import_style: bool = True,
+    attempt_id: str | None = None,
 ) -> dict[str, Any]:
     path = Path(pdf_path).expanduser()
     use_case = ImportProfileUseCase(repository=get_profile_repository())
-    result = use_case(path.read_bytes(), filename=path.name)
+    options = {"attempt_id": attempt_id} if attempt_id is not None else {}
+    result = use_case(path.read_bytes(), filename=path.name, **options)
     draft: dict[str, Any] = {"source": result.source}
     if import_profile:
         draft["profile"] = result.profile

@@ -8,10 +8,13 @@ import { IconCheck, IconFileTypePdf, IconMinus } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
+import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
 import { Button, buttonVariants } from "../../../shared/ui/button.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { useImportResumeMutation } from "../hooks/useImportResumeMutation.js";
+import { hasVerifiedPersonalSource, hasVerifiedStyleSource, importReviewSections, projectImportReview } from "../lib/import-review.js";
+import { useProfileImportReviewStore } from "../stores/profile-import-review-store.js";
 import {
   hasCompletedImport,
   hasPendingImport,
@@ -21,7 +24,8 @@ import {
 export function ImportConfirmForm() {
   const navigate = useNavigate();
   const router = useRouter();
-  const { storage } = usePorts();
+  const { api, storage } = usePorts();
+  const tenantId = useTenantId();
   const filename = useProfileImportStore((state) => state.filename);
   const pdfBase64 = useProfileImportStore((state) => state.pdfBase64);
   const importProfile = useProfileImportStore((state) => state.importProfile);
@@ -37,6 +41,7 @@ export function ImportConfirmForm() {
 
   const importResume = useImportResumeMutation();
   const [statusMessage, setStatusMessage] = useState("");
+  const [reviewAvailable, setReviewAvailable] = useState(false);
 
   useEffect(() => {
     navigationAbort.current = new AbortController();
@@ -95,10 +100,52 @@ export function ImportConfirmForm() {
       setStatusMessage("");
       let response;
       try {
+        // Bind the review to the canonical version before the importer reads
+        // its base. A concurrent save during extraction will then conflict.
+        const base = await api.profile();
+        if (
+          generation !== navigationGeneration.current ||
+          pathname !== router.history.location.pathname
+        ) {
+          finishImport(revision);
+          return;
+        }
         response = await importResume.mutateAsync(value);
+        if (value.importProfile && !hasVerifiedPersonalSource({ profile: response.profile, source: response.source })) {
+          finishImport(revision);
+          setStatusMessage("The extracted personal fields could not be verified. Your saved PDF and earlier review drafts remain available; retry extraction.");
+          return;
+        }
+        if (value.importStyle && !hasVerifiedStyleSource({ style: response.style, source: response.source })) {
+          finishImport(revision);
+          setStatusMessage("The extracted style could not be verified. Your saved PDF and earlier review drafts remain available; retry extraction.");
+          return;
+        }
+        const draft = projectImportReview({
+          tenantId,
+          filename: value.filename,
+          importProfile: value.importProfile,
+          importStyle: value.importStyle,
+          result: { profile: response.profile, style: response.style, source: response.source },
+          base,
+        });
+        if (!importReviewSections({ ...draft, id: "preview", revision: 0, attempt: null }).length) {
+          finishImport(revision);
+          if (generation === navigationGeneration.current && pathname === router.history.location.pathname) {
+            setStatusMessage("No new reviewable fields were found. Your saved PDF remains available; retry extraction or change the selected scope.");
+          }
+          return;
+        }
+        if (!(await useProfileImportReviewStore.getState().stage(draft, storage))) {
+          finishImport(revision);
+          setReviewAvailable(true);
+          setStatusMessage("The extracted draft could not be saved for reload. Your PDF and any earlier drafts remain available; check Profile and retry browser storage or import again.");
+          return;
+        }
       } catch (error) {
         finishImport(revision);
-        throw error;
+        setStatusMessage("The import could not be completed. Your saved PDF and any earlier review drafts are still available; retry when Profile and extraction are available.");
+        return;
       }
       finishImport(revision, response);
       const latest = useProfileImportStore.getState();
@@ -113,7 +160,7 @@ export function ImportConfirmForm() {
         );
         return;
       }
-      setStatusMessage(`import draft ${response.action?.status ?? "ready"}`);
+      setStatusMessage("Extraction complete. Review the draft in Profile; no profile changes have been saved.");
       if (
         !(await reset(
           storage,
@@ -186,8 +233,8 @@ export function ImportConfirmForm() {
         </span>
         <h2 data-typography="section-title">Review the final import</h2>
         <p data-typography="body">
-          Check the source and selected scope once more before applying the
-          import.
+          Check the source and selected scope before extracting a draft. You
+          will review and choose what to save afterward.
         </p>
       </header>
 
@@ -358,6 +405,7 @@ export function ImportConfirmForm() {
               >
                 Back
               </Link>
+              {reviewAvailable ? <Link className={buttonVariants({ variant: "outline" })} to="/profile">Review draft</Link> : null}
             </div>
           )}
         </form.Subscribe>

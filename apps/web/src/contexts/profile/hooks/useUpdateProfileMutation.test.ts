@@ -2,10 +2,11 @@ import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import { http, HttpResponse } from "msw";
 import { waitFor } from "@testing-library/react";
 import { act } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { server } from "../../../test/msw/server.js";
 import { renderHookWithProviders } from "../../../test/render.js";
+import { buildTestPorts } from "../../../test/testPorts.js";
 import { profileKeys } from "../queryKeys.js";
 import { useUpdateProfileMutation } from "./useUpdateProfileMutation.js";
 
@@ -44,5 +45,22 @@ describe("useUpdateProfileMutation", () => {
       profile: { personal: { full_name: string } };
     };
     expect(restored.profile.personal.full_name).toBe("Old");
+  });
+
+  it("does not roll an older import failure over a newer saved cache", async () => {
+    let reject!: (error: Error) => void;
+    const updateProfile = vi.fn(() => new Promise<never>((_resolve, fail) => { reject = fail; }));
+    const { result, queryClient } = renderHookWithProviders(() => useUpdateProfileMutation({ optimistic: false }), {
+      ports: buildTestPorts({ api: { updateProfile } }),
+    });
+    const key = profileKeys.profile(LOCAL_TENANT);
+    queryClient.setQueryData(key, initialProfile);
+    act(() => { result.current.mutate({ profile: { personal: { full_name: "Synthetic import" } }, expectedProfileVersion: 1 }); });
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledOnce());
+    const newer = { ...initialProfile, profileVersion: 2, profile: { personal: { full_name: "Newer saved edit" } } };
+    queryClient.setQueryData(key, newer);
+    await act(async () => reject(new Error("synthetic conflict")));
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(queryClient.getQueryData(key)).toEqual(newer);
   });
 });

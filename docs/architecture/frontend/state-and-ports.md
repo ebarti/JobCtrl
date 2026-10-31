@@ -53,7 +53,7 @@ is the canonical decision matrix.
 | Manual outcome, reflection and send-log retry | **Mounted form session** | Each form retains the submitted payload and request identity in memory until acknowledgement or an explicit new action. Send-log reconciliation updates only the initiating thread; current thread reads remain authoritative. See the [retry contract](../../api/complete-contract.md#manual-action-retry-contract). |
 | Artifacts list / detail | **Server** (Query) | Same. |
 | Apply run live timeline | **Server** (Query) — appended via `setQueryData` from SSE | High-frequency; see §7.5. |
-| Resume import wizard selection and options | **Client** (Zustand + browser storage) | The filename and PDF are accepted together only after a successful storage write; pending reads and failed replacements cannot publish a stale choice. Current-version tabs compare and update the versioned record in a single IndexedDB read-write transaction, including a tombstone for cleanup. A stale snapshot or unavailable transaction fails closed and offers recovery. The earlier v1 key is read-only and separately recoverable; older tabs cannot erase the v2 record, but still need reloading because they cannot coordinate v1 writes with each other. Selection and options survive navigation, refresh, and Cancel, until explicit removal or successful import cleanup. In-flight and completed imports within a tab are matched by exact source and options; successful removal retires completed-request authority without bypassing an in-flight request. Request identity and returned drafts stay in session memory and are not staged into Profile. The URL identifies the step, not its data. |
+| Resume import wizard selection and options | **Client** (Zustand + browser storage) | The filename and PDF are accepted together only after a successful storage write; pending reads and failed replacements cannot publish a stale choice. Current-version tabs compare and update the versioned record in a single IndexedDB read-write transaction, including a tombstone for cleanup. A stale snapshot or unavailable transaction fails closed and offers recovery. The earlier v1 upload key is read-only and separately recoverable; older tabs cannot erase the v2 upload record. Selection and options survive navigation, refresh, and Cancel, until explicit removal or successful import cleanup. In-flight and completed request identity stays in session memory; the returned review fields are separately staged in browser storage for Profile. The URL identifies the step, not its data. |
 | Form drafts (profile, settings) | **Form library state** (TanStack Form) | Profile and resume style stay object-valued until the existing string-valued update request; validation does not replace the edited object with normalized schema output. Owned by the form until submit; mutates the server via the mutation hook. The shared Profile, Cost and capacity, and Discovery Automation autosave controller attempts an unchanged dirty snapshot once after five seconds; an explicit Save or a different draft can retry, and an in-flight submit does not erase newer edits. Apply and Discovery runtime forms keep a tenant-scoped, non-refetchable acknowledged baseline in the QueryClient: successful reads and their own save responses advance it, while optimistic writes and rollbacks do not; newer edits remain pending. Within one QueryClient, runtime writes for the same tenant and panel are ordered across remounts, and saves write only deliberately edited fields so an unacknowledged commit cannot be overwritten by a stale draft. Direct Profile Plate edits with an unambiguous semantic owner project into this same draft rather than creating a second profile store. |
 
 Contact creation and model-policy editors pause during their saves; contact
@@ -126,6 +126,43 @@ Synchronous mutations that do not patch a specific cached row still reconcile
 through `onSettled` invalidation. Non-apply-only global/batch pipeline stage
 starts use that path: the API returns HTTP 200 with worker action results, then
 the mutation invalidates operational reads on settle.
+
+Resume extraction stages review drafts in the Profile context's browser-owned
+store, separate from the upload storage and canonical profile query. A private
+transactional browser record commits the draft before the uploaded PDF is
+cleared; a failed write retains both the in-session draft and PDF for retry. The
+draft retains reviewable fields, receipt IDs, the pre-extraction saved version and
+only the saved personal values needed for comparison, rather than copying the
+whole profile or extraction text preview. Personal values are limited to the
+API's persisted extraction receipt; style proposals contain only observed PDF
+metadata. The attempt ID also identifies the browser draft, so substituting a
+different source tuple under that identity remains recoverable. Acceptance rejoins
+the attempt and extraction within the Profile version-fenced transaction.
+Hydration preserves older full drafts and uncertain save attempts; a legacy draft
+without a verified source attempt is
+recovery-only and cannot issue a Profile write. Rebase projects other supported
+unprojected legacy changes against their original saved base before comparing
+them with the new one. A verified v1
+projected result remains unchanged across rebase even if its proposal matched an
+intermediate saved version. Rebase retains a complete copy of the older record
+in the same transaction. Acceptance or rejection of a legacy
+draft converts it to a separate read-only recovery surface: its complete JSON can
+be shown and copied until the browser's site data is cleared. A v2 review
+envelope makes older v1 tabs refuse subsequent storage operations they cannot
+understand, but hydration alone does not upgrade an existing v1 envelope and it
+cannot revoke a request already admitted by an old tab. The launcher opens an
+external browser and does not invalidate old pages on upgrade; a surviving old
+page can still send a generic Profile patch after restart. Explicit
+selected-section acceptance validates the same projection authority used by
+rebase and reads the current canonical profile. Unsupported versions and
+unexpected projected fields cannot be dispatched as a profile update; valid
+selections use the ordinary version-fenced Profile mutation. A transactional attempt
+marker is saved before dispatch. An unconfirmed attempt can repeat its original
+selection only at the same profile version; a newer version prevents replay or
+rebase because the first outcome is unknown. Failed saves retain the draft, and
+loading a newer base after a confirmed stale rejection requires review again. Import
+acceptance does not optimistically patch the profile cache, so a failed older
+acceptance cannot roll back a newer saved cache entry.
 
 Interview note saves compare `expectedRevision` at the canonical owner. The
 browser reconciles the returned saved revision with its current form draft,

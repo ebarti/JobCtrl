@@ -22,13 +22,14 @@ export function persistProfileUpdate(
   db: SqliteDatabase,
   request: ProfileUpdateRequest,
   recordEvent: typeof recordProfileUpdatedEvent = recordProfileUpdatedEvent,
+  verifyImportStyle?: (receiptId: string, style: unknown) => void,
 ): {
   profile: ProfileConfigResponse;
   recorded: RecordedProfileUpdated | null;
 } {
   return db.transaction(() => {
     const previous = readProfileConfig(db);
-    const profile = writeProfileConfig(db, request);
+    const profile = writeProfileConfig(db, request, verifyImportStyle);
     const changedSections = profileChangedSections(request, previous, profile);
     return {
       profile,

@@ -90,6 +90,7 @@ export interface ProfileImportInput {
   pdfBytes: Buffer;
   importProfile: boolean;
   importStyle: boolean;
+  attemptId: string;
 }
 
 export interface ProfileImportResult {
@@ -389,6 +390,7 @@ export function createProfileImporter(
       expectedAppDir: context.appDir,
       expectedDbPath: context.dbPath,
       pdfPath,
+      attemptId: input.attemptId,
       importProfile: input.importProfile,
       importStyle: input.importStyle,
       awaitResult: true,

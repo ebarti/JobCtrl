@@ -12,6 +12,7 @@ import { readTargetRoleProposal } from "./candidate-interpretations.js";
 import { resetJobStageWithEnrichmentOwner, retryFailedJobsWithEnrichmentOwner } from "./enrichment-retry.js";
 import { ResumeEditIntentReviewSchema } from "@jobctrl/contracts";
 import { readDetermination } from "./semantic-determinations.js";
+import { assertReviewedImportStyle, bindImportedDraft } from "./profile-import-provenance.js";
 import { isDeepStrictEqual } from "node:util";
 import { FormSnapshotSchema, FormMappingResponseSchema } from "@jobctrl/contracts";
 import { ResumeEditReviewSchema } from "@jobctrl/contracts";
@@ -3120,7 +3121,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     const db = openDatabase(options.dbPath);
     let profileResponse: ProfileConfigResponse | undefined;
     try {
-      const update = persistProfileUpdate(db, body);
+      const update = persistProfileUpdate(db, body, undefined,
+        (receiptId, style) => assertReviewedImportStyle(db, receiptId, style, body.importReview));
       profileResponse = update.profile;
     } catch (error) {
       if (error instanceof ProfileVersionConflictError) {
@@ -3373,16 +3375,27 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     try {
       const pdfBytes = decodeBase64Pdf(body.pdfBase64);
+      const attemptId = randomUUID();
       const draft = await profileImporter(
         {
           filename: body.filename,
           pdfBytes,
           importProfile: body.importProfile,
           importStyle: body.importStyle,
+          attemptId,
         },
         actionContext,
       );
-      return { ok: true, ...draft };
+      try {
+        const db = openReadOnlyDatabase(options.dbPath);
+        try {
+          return { ok: true, ...bindImportedDraft(db, attemptId, pdfBytes, body.filename, body.importProfile, body.importStyle, draft) };
+        } finally { db.close(); }
+      } catch {
+        void reply.code(502);
+        return { ok: false, error: body.importProfile ? "resume_extraction_receipt_unavailable" : "resume_style_receipt_unavailable",
+          message: "The import source could not be verified. Your saved PDF remains available for retry." };
+      }
     } catch (error) {
       if (error instanceof InputError) {
         void reply.code(400);

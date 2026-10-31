@@ -20,6 +20,7 @@ class ProfileImportActivityInput:
     expected_db_path: str | None = None
     import_profile: bool = True
     import_style: bool = True
+    attempt_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -46,11 +47,10 @@ async def profile_import_activity(
     )
 
     def _do() -> Any:
-        return import_profile_pdf(
-            payload.pdf_path,
-            import_profile=payload.import_profile,
-            import_style=payload.import_style,
-        )
+        options: dict[str, Any] = {"import_profile": payload.import_profile, "import_style": payload.import_style}
+        if payload.attempt_id is not None:
+            options["attempt_id"] = payload.attempt_id
+        return import_profile_pdf(payload.pdf_path, **options)
 
     try:
         draft = await run_blocking_with_heartbeat(
