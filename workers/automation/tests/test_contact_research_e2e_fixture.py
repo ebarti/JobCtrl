@@ -217,7 +217,10 @@ def test_real_node_allocated_capability_runs_the_synthetic_activity(tmp_path: Pa
     payload = json.loads(result.stdout)
     task = payload.pop("persistedTask")
     assert payload == {
-        "output": {"taskId": "contact-research-e2e-oversize", "status": "needs_review", "candidateCount": 0, "attemptCount": 1},
+        "output": {
+            "taskId": "contact-research-e2e-oversize", "status": "needs_review",
+            "candidateCount": 0, "attemptCount": 1, "errorCode": None,
+        },
         "responseClosed": True, "responseRead": False, "requests": 1, "modelCalls": 0,
     }
     assert task["task_id"] == "contact-research-e2e-oversize"

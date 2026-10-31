@@ -21,7 +21,9 @@ from typing import Callable
 
 from jobctrl.domain.contact.aggregate import Contact
 from jobctrl.domain.contact.research import ContactCandidate, ContactResearchTask
-from jobctrl.domain.contact.research_services import ContactResearchService, ResearchSourceSpec
+from jobctrl.domain.contact.research_services import (
+    INFERENCE_FAILURE_OUTCOMES, ContactResearchService, ResearchSourceSpec,
+)
 from jobctrl.domain.contact.value_objects import ContactAttribute, ContactLink, ContactRole
 from jobctrl.domain.identifiers import ContactId, generate_contact_id
 from jobctrl.domain.ports.contact import (
@@ -37,6 +39,12 @@ class ContactResearchInputError(ValueError):
     """Raised when a caller supplies structurally invalid research input."""
 
 
+@dataclass(frozen=True)
+class RunContactResearchResult:
+    task: ContactResearchTask
+    attempt_failure: str | None = None
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -46,7 +54,7 @@ class RunContactResearchUseCase:
     repository: ContactResearchTaskRepository
     service: ContactResearchService
     fetcher: ResearchPageFetcherPort
-    llm: LlmPort
+    llm: LlmPort | None
     clock: Callable[[], str] = _now
     new_id: Callable[[], str] = lambda: generate_contact_id()
     check_cancelled: Callable[[], None] = lambda: None
@@ -60,13 +68,26 @@ class RunContactResearchUseCase:
         sources: tuple[ResearchSourceSpec, ...],
         model: str | None = None,
     ) -> ContactResearchTask:
+        return self.execute_with_outcome(
+            tenant_id, task_id=task_id, link=link, sources=sources, model=model,
+        ).task
+
+    def execute_with_outcome(
+        self,
+        tenant_id: TenantId,
+        *,
+        task_id: str,
+        link: ContactLink,
+        sources: tuple[ResearchSourceSpec, ...],
+        model: str | None = None,
+    ) -> RunContactResearchResult:
         self.check_cancelled()
         existing = self.repository.load(tenant_id, task_id)
         if existing is not None and existing.link != link:
             raise ContactResearchInputError("Research task already belongs to a different link")
         # A repeated activity must not replace proposals or their review state.
         if existing is not None and existing.has_accepted_result:
-            return existing
+            return RunContactResearchResult(existing)
         started_at = self.clock()
         task = (existing or ContactResearchTask.create(
             tenant_id=tenant_id, task_id=task_id, link=link, created_at=started_at,
@@ -75,10 +96,11 @@ class RunContactResearchUseCase:
             tenant_id, task, check_cancelled=self.check_cancelled,
         )
         if not admitted:
-            return task
+            return RunContactResearchResult(task)
 
         result = self.service.research(
             task_id=task_id,
+            tenant_id=str(tenant_id),
             sources=sources,
             fetcher=self.fetcher,
             llm=self.llm,
@@ -88,15 +110,21 @@ class RunContactResearchUseCase:
             check_cancelled=self.check_cancelled,
         )
         self.check_cancelled()
-        task = task.propose(
-            candidates=result.candidates,
-            source_attempts=result.source_attempts,
-            needs_review_at=self.clock(),
-        )
+        failed = next((attempt for attempt in result.source_attempts if attempt.outcome in INFERENCE_FAILURE_OUTCOMES), None)
+        if failed is not None:
+            task = replace(task, source_attempts=task.source_attempts + result.source_attempts).fail(
+                error_class=failed.outcome, failed_at=self.clock(),
+            )
+        else:
+            task = task.propose(
+                candidates=result.candidates,
+                source_attempts=result.source_attempts,
+                needs_review_at=self.clock(),
+            )
         task, _admitted = self.repository.save_attempt_if_unproposed(
-            tenant_id, task, check_cancelled=self.check_cancelled,
+            tenant_id, task, check_cancelled=self.check_cancelled, new_attempts=result.source_attempts,
         )
-        return task
+        return RunContactResearchResult(task, failed.outcome if failed else None)
 
 
 @dataclass
@@ -175,4 +203,5 @@ __all__ = [
     "ConfirmContactCandidateUseCase",
     "ContactResearchInputError",
     "RunContactResearchUseCase",
+    "RunContactResearchResult",
 ]

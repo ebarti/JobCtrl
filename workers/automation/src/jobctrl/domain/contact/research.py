@@ -76,6 +76,11 @@ class ResearchSourceOutcome(str, Enum):
     REDIRECT_FAILED = "redirect_failed"
     TRANSPORT_FAILED = "transport_failed"
     HTTP_ERROR = "http_error"
+    PROVIDER_UNAVAILABLE = "provider_unavailable"
+    PROVIDER_FAILED = "provider_failed"
+    SPEND_DENIED = "spend_denied"
+    INVALID_OUTPUT = "invalid_output"
+    EMPTY_CONTENT = "empty_content"
 
 
 @dataclass(frozen=True)
@@ -91,6 +96,7 @@ class ResearchSourceAttempt:
     outcome: str
     attempted_at: str
     detail: str = ""
+    determination_id: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.source_ref, str) or not self.source_ref.strip():
@@ -206,6 +212,8 @@ class ContactResearchTask:
             status=ResearchTaskStatus.RUNNING,
             started_at=started_at,
             updated_at=started_at,
+            failed_at=None,
+            error_class=None,
         )
 
     def propose(
@@ -230,9 +238,11 @@ class ContactResearchTask:
             self,
             status=ResearchTaskStatus.NEEDS_REVIEW,
             candidates=tuple(candidates),
-            source_attempts=tuple(source_attempts),
+            source_attempts=self.source_attempts + tuple(source_attempts),
             needs_review_at=needs_review_at,
             updated_at=needs_review_at,
+            failed_at=None,
+            error_class=None,
         )
 
     def confirm_candidate(

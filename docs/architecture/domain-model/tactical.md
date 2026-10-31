@@ -589,7 +589,7 @@ auto-fetched.
 
 **Domain Services:** `ContactResearchService` (pure) — authorises each source,
 fetches allowed public pages through the injected gateway-routed fetcher, and
-extracts candidates via a schema-driven `LlmPort.chat_json`.
+extracts candidates via a source-bound determination and records its receipt.
 
 **Domain Events** (payloads carry only ids, kinds, provenance metadata,
 outcomes, and timestamps — never candidate values):
@@ -598,6 +598,7 @@ outcomes, and timestamps — never candidate values):
 - `ContactResearchTaskNeedsReview { tenantId, taskId, candidateCount, needsReviewAt }`
 - `ContactResearchTaskCompleted { tenantId, taskId, confirmedCount, completedAt }`
 - `ContactResearchTaskFailed { tenantId, taskId, errorClass, retryable, failedAt }`
+- `ContactResearchSourceAttemptFailed { tenantId, taskId, outcome, attemptedAt }`
   — All consumed by: Operations (the `contact_research_task_projections` read model).
 
 ### Aggregate: OutreachThread

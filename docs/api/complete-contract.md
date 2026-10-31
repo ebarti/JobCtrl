@@ -1721,6 +1721,17 @@ require an explicit confirm command before becoming stored contact facts (INV-4)
   summary plus `sourceAttempts[]` (the per-source outcome audit) and
   `candidates[]`, each with its proposed `attributes[]` (value + provenance).
   An unknown id returns `{ ok: false, error: "research_task_not_found" }`.
+
+  Successful model attempts include `determinationId`; older and unsuccessful
+  attempts may omit it. `no_candidates` requires an accepted empty model result.
+  `provider_unavailable`, `provider_failed`, `spend_denied`, `invalid_output`,
+  `empty_content`, and `extraction_failed` describe failed inference or missing
+  source text. They include safe guidance in `detail`; they do not promote
+  contacts or replace previously accepted proposals.
+  The detail reader joins a recorded receipt to its task, contact lane and
+  source identity. A missing, damaged, foreign or inconsistent receipt, or a
+  historical empty result without a receipt, is reported as `extraction_failed`
+  while existing proposals remain readable.
   Acquisition failures use the distinct outcomes `response_too_large`,
   `acquisition_timeout`, `redirect_failed`, `transport_failed`, and
   `http_error`, with an actionable `detail`. They are not `no_candidates`.

@@ -66,6 +66,7 @@ const CONTACT_RESEARCH_EVENT_TYPES = new Set([
   "ContactResearchTaskNeedsReview",
   "ContactResearchTaskCompleted",
   "ContactResearchTaskFailed",
+  "ContactResearchSourceAttemptFailed",
 ]);
 const OUTREACH_EVENT_TYPES = new Set([
   "OutreachDraftGenerated",

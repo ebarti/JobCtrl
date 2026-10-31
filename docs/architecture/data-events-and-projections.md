@@ -323,6 +323,9 @@ transaction to its caller. Any failure rolls back the entire pass, including
 replacement deletes. TypeScript applies its per-pass event bound after tenant
 filtering. Direct contact, contact-research, and outreach refreshes use the same
 transaction boundary; outreach threads and due follow-ups publish together.
+An overlapping failed contact-research attempt appends its safe source outcome
+and `ContactResearchSourceAttemptFailed` event together under the writer fence.
+The winning review stays current, and the event invalidates its open detail.
 Permanent job deletion rebuilds affected aggregates synchronously
 and retains these cursors; it does not replay unrelated history. First-run and
 schema-recovery paths also detect missing/stale projection rows and rebuild from

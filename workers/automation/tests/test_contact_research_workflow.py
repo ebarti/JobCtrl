@@ -39,6 +39,7 @@ from jobctrl.infrastructure.contact import (
     SqliteContactResearchTaskRepository,
 )
 from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
+from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
 from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
 
 _HOST = "acme.example"
@@ -68,7 +69,17 @@ class _FakeLlm(LlmPort):
 
     def chat_json(self, messages: list[LlmMessage], **kwargs) -> dict:  # noqa: ARG002
         self.calls += 1
-        return {"candidates": self._candidates}
+        source = json.loads(messages[1].content)["sources"][0]
+        source_text, source_id = source["text"], source["source_id"]
+        candidates = []
+        for item in self._candidates:
+            candidate = {"role": item.get("role", "other"), "confidence": item.get("confidence", 0.5)}
+            for field in ("name", "title", "email", "profileUrl"):
+                if field in item:
+                    start = source_text.index(item[field])
+                    candidate[field] = {"source_id": source_id, "start": start, "end": start + len(item[field])}
+            candidates.append(candidate)
+        return {"source_id": source_id, "candidates": candidates}
 
 
 class _RecordingLlm(LlmPort):
@@ -80,7 +91,25 @@ class _RecordingLlm(LlmPort):
 
     def chat_json(self, messages: list[LlmMessage], **kwargs) -> dict:  # noqa: ARG002
         self.calls.append(messages)
-        return {"candidates": []}
+        return {"source_id": json.loads(messages[1].content)["sources"][0]["source_id"], "candidates": []}
+
+
+@pytest.fixture(autouse=True)
+def _synthetic_activity_dependencies(monkeypatch):
+    """Keep activity tests off the user's provider, settings and spend database."""
+    from jobctrl.infrastructure import determinations, llm as llm_infra
+
+    monkeypatch.setattr(llm_infra, "LlmAdapter", lambda **_kwargs: _RecordingLlm())
+
+    def dependencies(conn, *, tenant_id, lane, model_spec=None, adapter=None):
+        return {
+            "llm": adapter or llm_infra.LlmAdapter(default_model=model_spec),
+            "repository": determinations.SqliteDeterminationRepository(conn),
+            "tenant_id": str(tenant_id), "lane": lane,
+            "provider": "synthetic", "model": "synthetic", "preflight": lambda: None,
+        }
+
+    monkeypatch.setattr(determinations, "determination_dependencies", dependencies)
 
 
 def _counter():
@@ -130,7 +159,11 @@ def _run_use_case(
     policy = ContactResearchSourcePolicy(domain_allowlist=allowlist)
     use_case = RunContactResearchUseCase(
         repository=research_repo,
-        service=ContactResearchService(policy=policy),
+        service=ContactResearchService(
+            policy=policy,
+            determination_repository=SqliteDeterminationRepository(research_repo._conn),
+            preflight=lambda: None, provider="synthetic", selected_model="synthetic",
+        ),
         fetcher=fetcher,
         llm=llm,
         new_id=_counter(),
@@ -146,7 +179,7 @@ def _run_use_case(
 def test_run_proposes_candidates_needing_review_with_provenance(tmp_path: Path) -> None:
     _conn, research_repo, _contact_repo = _setup(tmp_path)
     fetcher = _FakeFetcher(
-        ResearchPageFetch(outcome=ResearchSourceOutcome.ALLOWED.value, text="team page body")
+        ResearchPageFetch(outcome=ResearchSourceOutcome.ALLOWED.value, text=f"Team: {_SECRET_NAME} {_SECRET_EMAIL}")
     )
     llm = _FakeLlm(
         [{"name": _SECRET_NAME, "email": _SECRET_EMAIL, "role": "hiring_manager", "confidence": 0.8}]
@@ -215,7 +248,7 @@ def test_disallowed_source_is_rejected_without_fetching(tmp_path: Path) -> None:
 def test_confirm_candidate_requires_command_and_promotes_to_contact(tmp_path: Path) -> None:
     conn, research_repo, contact_repo = _setup(tmp_path)
     fetcher = _FakeFetcher(
-        ResearchPageFetch(outcome=ResearchSourceOutcome.ALLOWED.value, text="team page body")
+        ResearchPageFetch(outcome=ResearchSourceOutcome.ALLOWED.value, text=f"Team: {_SECRET_NAME} {_SECRET_EMAIL}")
     )
     llm = _FakeLlm([{"name": _SECRET_NAME, "email": _SECRET_EMAIL, "role": "hiring_manager"}])
     task = _run_use_case(
@@ -259,7 +292,7 @@ def test_confirm_candidate_requires_command_and_promotes_to_contact(tmp_path: Pa
 def test_candidate_values_never_leak_into_events(tmp_path: Path) -> None:
     conn, research_repo, _contact_repo = _setup(tmp_path)
     fetcher = _FakeFetcher(
-        ResearchPageFetch(outcome=ResearchSourceOutcome.ALLOWED.value, text="team page body")
+        ResearchPageFetch(outcome=ResearchSourceOutcome.ALLOWED.value, text=f"Team: {_SECRET_NAME} {_SECRET_EMAIL}")
     )
     llm = _FakeLlm([{"name": _SECRET_NAME, "email": _SECRET_EMAIL, "role": "recruiter"}])
     _run_use_case(
@@ -293,7 +326,7 @@ def test_research_task_events_preserve_tenant_and_canonical_job_id(tmp_path: Pat
             tenant_id=tenant_id,
             task_id="same-task-id",
             fetcher=_FakeFetcher(
-                ResearchPageFetch(outcome=ResearchSourceOutcome.ALLOWED.value, text="team page body")
+                ResearchPageFetch(outcome=ResearchSourceOutcome.ALLOWED.value, text=f"Team: {_SECRET_NAME} {_SECRET_EMAIL}")
             ),
             llm=_FakeLlm([]),
             sources=(ResearchSourceSpec(category="public_web_page", url=_TEAM_URL),),
@@ -830,7 +863,7 @@ def test_retry_keeps_existing_proposal_and_failed_new_task_records_actionable_ou
     _conn, research_repo, _ = _setup(tmp_path)
     sources = (ResearchSourceSpec(category="public_web_page", url=_TEAM_URL),)
     original = _run_use_case(
-        research_repo, fetcher=_FakeFetcher(ResearchPageFetch(outcome="allowed", text="synthetic")),
+        research_repo, fetcher=_FakeFetcher(ResearchPageFetch(outcome="allowed", text="Synthetic Person synthetic")),
         llm=_FakeLlm([{"name": "Synthetic Person"}]), sources=sources,
     )
     response = _BoundedResponse(_TEAM_URL, b"x" * 100)
@@ -1045,7 +1078,7 @@ def test_actual_activity_records_fetch_failure_without_llm_or_replacing_previous
     conn, research_repo, _ = _setup(tmp_path)
     sources = (ResearchSourceSpec(category="public_web_page", url=_TEAM_URL),)
     previous = _run_use_case(
-        research_repo, fetcher=_FakeFetcher(ResearchPageFetch(outcome="allowed", text="synthetic")),
+        research_repo, fetcher=_FakeFetcher(ResearchPageFetch(outcome="allowed", text="Synthetic Person synthetic")),
         llm=_FakeLlm([{"name": "Synthetic Person"}]), sources=sources,
     )
     response = _BoundedResponse(_TEAM_URL, b"x" * 100)
@@ -1097,7 +1130,7 @@ def test_actual_activity_uses_production_fetch_limits_and_persists_distinct_resu
     conn, research_repo, _ = _setup(tmp_path)
     previous = _run_use_case(
         research_repo,
-        fetcher=_FakeFetcher(ResearchPageFetch(outcome="allowed", text="synthetic")),
+        fetcher=_FakeFetcher(ResearchPageFetch(outcome="allowed", text="Synthetic Person synthetic")),
         llm=_FakeLlm([{"name": "Synthetic Person"}]),
         sources=(ResearchSourceSpec(category="public_web_page", url=_TEAM_URL),),
     )
@@ -1211,7 +1244,7 @@ def test_cancellation_during_page_parsing_prevents_model_call(
     conn, repository, _ = _setup(tmp_path)
     previous = _run_use_case(
         repository,
-        fetcher=_FakeFetcher(ResearchPageFetch(outcome="allowed", text="synthetic")),
+        fetcher=_FakeFetcher(ResearchPageFetch(outcome="allowed", text="Second Synthetic Person synthetic")),
         llm=_FakeLlm([{"name": "Synthetic Person"}]),
         sources=(ResearchSourceSpec(category="public_web_page", url=_TEAM_URL),),
     )
@@ -1252,12 +1285,12 @@ def test_cancellation_waiting_for_result_writer_prevents_publication(tmp_path: P
     conn, repository, _ = _setup(tmp_path)
     previous = _run_use_case(
         repository,
-        fetcher=_FakeFetcher(ResearchPageFetch(outcome="allowed", text="synthetic")),
+        fetcher=_FakeFetcher(ResearchPageFetch(outcome="allowed", text="Second Synthetic Person synthetic")),
         llm=_FakeLlm([{"name": "Synthetic Person"}]),
         sources=(ResearchSourceSpec(category="public_web_page", url=_TEAM_URL),),
     )
     db_path = tmp_path / "jobctrl.db"
-    model_started, release_model, result_begin, cancelled = (Event() for _ in range(4))
+    model_started, release_model, final_ready, allow_final, result_begin, cancelled = (Event() for _ in range(6))
     llm = _FakeLlm([{"name": "Second Synthetic Person"}])
 
     class BlockingLlm(_FakeLlm):
@@ -1284,10 +1317,26 @@ def test_cancellation_waiting_for_result_writer_prevents_publication(tmp_path: P
 
         own.set_trace_callback(trace)
         try:
+            class ObservedRepository(SqliteContactResearchTaskRepository):
+                def __init__(self):
+                    super().__init__(own, publisher=InProcessEventBus())
+                    self.saves = 0
+
+                def save_attempt_if_unproposed(self, *args, **kwargs):
+                    self.saves += 1
+                    if self.saves == 2:
+                        final_ready.set()
+                        assert allow_final.wait(3)
+                    return super().save_attempt_if_unproposed(*args, **kwargs)
+
             use_case = RunContactResearchUseCase(
-                repository=SqliteContactResearchTaskRepository(own, publisher=InProcessEventBus()),
-                service=ContactResearchService(policy=ContactResearchSourcePolicy(domain_allowlist=(_HOST,))),
-                fetcher=_FakeFetcher(ResearchPageFetch(outcome="allowed", text="synthetic")),
+                repository=ObservedRepository(),
+                service=ContactResearchService(
+                    policy=ContactResearchSourcePolicy(domain_allowlist=(_HOST,)),
+                    determination_repository=SqliteDeterminationRepository(own), preflight=lambda: None,
+                    provider="synthetic", selected_model="synthetic",
+                ),
+                fetcher=_FakeFetcher(ResearchPageFetch(outcome="allowed", text="Second Synthetic Person synthetic")),
                 llm=BlockingLlm([]), new_id=lambda: "task-2-candidate", check_cancelled=check_cancelled,
             )
             return use_case.execute(
@@ -1302,8 +1351,10 @@ def test_cancellation_waiting_for_result_writer_prevents_publication(tmp_path: P
         with ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(run)
             assert model_started.wait(2)
-            writer.execute("BEGIN IMMEDIATE")
             release_model.set()
+            assert final_ready.wait(2)
+            writer.execute("BEGIN IMMEDIATE")
+            allow_final.set()
             assert result_begin.wait(2)
             cancelled.set()
             writer.commit()
@@ -1318,6 +1369,7 @@ def test_cancellation_waiting_for_result_writer_prevents_publication(tmp_path: P
         ).fetchone()[0] == 1
     finally:
         release_model.set()
+        allow_final.set()
         writer.rollback()
         writer.close()
         conn.close()
@@ -1330,13 +1382,13 @@ def test_cancellation_waiting_for_initial_writer_prevents_research(tmp_path: Pat
     conn, repository, _ = _setup(tmp_path)
     previous = _run_use_case(
         repository,
-        fetcher=_FakeFetcher(ResearchPageFetch(outcome="allowed", text="synthetic")),
+        fetcher=_FakeFetcher(ResearchPageFetch(outcome="allowed", text="Second Synthetic Person synthetic")),
         llm=_FakeLlm([{"name": "Synthetic Person"}]),
         sources=(ResearchSourceSpec(category="public_web_page", url=_TEAM_URL),),
     )
     db_path = tmp_path / "jobctrl.db"
     cancelled, initial_begin = Event(), Event()
-    fetcher = _FakeFetcher(ResearchPageFetch(outcome="allowed", text="synthetic"))
+    fetcher = _FakeFetcher(ResearchPageFetch(outcome="allowed", text="Second Synthetic Person synthetic"))
     llm = _FakeLlm([{"name": "Second Synthetic Person"}])
 
     def check_cancelled():
@@ -1352,7 +1404,11 @@ def test_cancellation_waiting_for_initial_writer_prevents_research(tmp_path: Pat
         try:
             use_case = RunContactResearchUseCase(
                 repository=SqliteContactResearchTaskRepository(own, publisher=InProcessEventBus()),
-                service=ContactResearchService(policy=ContactResearchSourcePolicy(domain_allowlist=(_HOST,))),
+                service=ContactResearchService(
+                    policy=ContactResearchSourcePolicy(domain_allowlist=(_HOST,)),
+                    determination_repository=SqliteDeterminationRepository(own), preflight=lambda: None,
+                    provider="synthetic", selected_model="synthetic",
+                ),
                 fetcher=fetcher, llm=llm, new_id=lambda: "task-2-candidate", check_cancelled=check_cancelled,
             )
             return use_case.execute(
@@ -1478,7 +1534,7 @@ def test_overlapping_failed_attempt_does_not_replace_newly_published_proposal(tm
     class InterleavedFailure:
         def fetch(self, _url):
             accepted.append(_run_use_case(
-                peer_repo, fetcher=_FakeFetcher(ResearchPageFetch(outcome="allowed", text="synthetic")),
+                peer_repo, fetcher=_FakeFetcher(ResearchPageFetch(outcome="allowed", text="Synthetic Person synthetic")),
                 llm=_FakeLlm([{"name": "Synthetic Person"}]), sources=sources,
             ))
             return ResearchPageFetch(outcome="transport_failed")
@@ -1488,8 +1544,9 @@ def test_overlapping_failed_attempt_does_not_replace_newly_published_proposal(tm
             research_repo, fetcher=InterleavedFailure(), llm=_FakeLlm([]), sources=sources,
         )
         assert accepted[0].candidates
-        assert result == accepted[0]
-        assert research_repo.load(LOCAL_TENANT, "task-1") == accepted[0]
+        assert result.candidates == accepted[0].candidates and result.status == accepted[0].status
+        assert [attempt.outcome for attempt in result.source_attempts] == ["allowed", "transport_failed"]
+        assert research_repo.load(LOCAL_TENANT, "task-1") == result
     finally:
         peer.close()
         conn.close()
@@ -1516,7 +1573,7 @@ def test_concurrent_research_attempts_keep_success_regardless_of_completion_orde
             started[self.kind].set()
             assert release[self.kind].wait(3)
             if self.kind == "success":
-                return ResearchPageFetch(outcome="allowed", text="synthetic page")
+                return ResearchPageFetch(outcome="allowed", text="Synthetic Person synthetic page")
             return ResearchPageFetch(outcome="transport_failed")
 
     def run(kind: str):
@@ -1551,13 +1608,19 @@ def test_concurrent_research_attempts_keep_success_regardless_of_completion_orde
             second_result = futures[second].result(timeout=2)
         final = repository.load(LOCAL_TENANT, "task-1")
         assert final is not None and len(final.candidates) == 1
-        assert final.source_attempts[0].outcome == "allowed"
+        expected_outcomes = (
+            ["allowed", "transport_failed"] if first == "success" else ["transport_failed", "allowed"]
+        )
+        assert [attempt.outcome for attempt in final.source_attempts] == expected_outcomes
         winner = first_result if first == "success" else second_result
         assert winner.candidates[0].candidate_id == final.candidates[0].candidate_id
         if first == "success":
             assert final.status is ResearchTaskStatus.COMPLETED
             assert final.candidates[0].status is CandidateStatus.CONFIRMED
             assert len(contact_repository.list_for_tenant(LOCAL_TENANT)) == 1
+            assert conn.execute(
+                "SELECT COUNT(*) FROM job_events WHERE event_type = 'ContactResearchSourceAttemptFailed'"
+            ).fetchone()[0] == 1
         assert conn.execute(
             "SELECT COUNT(*) FROM job_events WHERE event_type = 'ContactCandidateProposed'"
         ).fetchone()[0] == 1
@@ -1769,7 +1832,7 @@ def test_event_publication_failure_releases_write_lock_before_fetch(
                 peer_errors.append(str(exc))
             finally:
                 peer.close()
-            return ResearchPageFetch(outcome="allowed", text="synthetic page") if succeed else ResearchPageFetch(outcome="transport_failed")
+            return ResearchPageFetch(outcome="allowed", text="Synthetic Person synthetic page") if succeed else ResearchPageFetch(outcome="transport_failed")
 
     try:
         repository = SqliteContactResearchTaskRepository(conn, publisher=FailingPublisher())
