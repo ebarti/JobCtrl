@@ -787,6 +787,8 @@ async def test_pipeline_workflow_runs_apply_as_child_workflow():
         "workers": 3,
         "approval_required": True,
         "workflow_id": f"{workflow_id}-apply",
+        "standing_refusal_poll": False,
+        "dispatch_frontier": None,
         "install_signal_handlers": False,
     }
 

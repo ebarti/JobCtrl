@@ -111,6 +111,10 @@ class _AcquireConnection:
         self._candidates = candidates
         self.projected_canonical_identity = False
 
+    @property
+    def in_transaction(self) -> bool:
+        return self._conn.in_transaction
+
     def execute(
         self,
         sql: str,
