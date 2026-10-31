@@ -212,7 +212,11 @@ test("full scope and stale-base web changes cannot authorize static preview", co
   const temporary=mkdtempSync(path.join(os.tmpdir(),"jobctrl-preview-scope-"));
   context.after(()=>rmSync(temporary,{recursive:true,force:true}));
   const repository=path.join(temporary,"repo");mkdirSync(repository);
-  const git=(...args)=>execFileSync("git",["-C",repository,...args],{encoding:"utf8",stdio:["ignore","pipe","pipe"]}).trim();
+  const gitEnv=Object.fromEntries(Object.entries(process.env).filter(([key])=>!key.startsWith("GIT_")));
+  const developerHome=path.join(temporary,"developer-home");mkdirSync(developerHome);
+  writeFileSync(path.join(developerHome,".gitconfig"),"[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = /usr/bin/false\n");
+  Object.assign(gitEnv,{HOME:developerHome,GIT_CONFIG_NOSYSTEM:"1",GIT_CONFIG_GLOBAL:"/dev/null"});
+  const git=(...args)=>execFileSync("git",["-c","core.hooksPath=/dev/null","-c","commit.gpgsign=false","-C",repository,...args],{env:gitEnv,encoding:"utf8",stdio:["ignore","pipe","pipe"]}).trim();
   git("init","-q");git("config","user.name","Synthetic CI");git("config","user.email","ci@example.invalid");
   const web="apps/web/src/preview.ts",worker="workers/automation/src/jobctrl/native_credentials.py";
   for(const file of [web,worker]){mkdirSync(path.dirname(path.join(repository,file)),{recursive:true});writeFileSync(path.join(repository,file),"base");}
@@ -224,7 +228,7 @@ test("full scope and stale-base web changes cannot authorize static preview", co
   assert.equal(step.env.ADMITTED_AFFECTED,expression("steps.scope.outputs.head_privacy == 'false'"));
   const check=(merge,affected="true")=>{
     const output=path.join(temporary,"output");writeFileSync(output,"");
-    const result=spawnSync("bash",["-c",run],{cwd:repository,encoding:"utf8",env:{...process.env,PR_BASE_SHA:base,GITHUB_SHA:merge,GITHUB_OUTPUT:output,ADMITTED_AFFECTED:affected}});
+    const result=spawnSync("bash",["-c",run],{cwd:repository,encoding:"utf8",env:{...gitEnv,PR_BASE_SHA:base,GITHUB_SHA:merge,GITHUB_OUTPUT:output,ADMITTED_AFFECTED:affected}});
     assert.equal(result.status,0,result.stderr);return readFileSync(output,"utf8");
   };
   assert.equal(selectSurfaces([{status:"M",path:worker},{status:"M",path:web}]).mode,"full");

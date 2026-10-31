@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { lstatSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -196,7 +196,16 @@ function main(args) {
   if (options["--notice"]) process.stdout.write(`::notice title=JobCtrl CI scope v1::${notice}\n`);
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+function invokedDirectly() {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (invokedDirectly()) {
   try { main(process.argv.slice(2)); }
   catch (error) {
     process.stderr.write(`PR CI scope refused: ${error instanceof SyntaxError ? "Malformed event JSON" : error.message}\n`);
