@@ -1544,7 +1544,11 @@ verification-code MCP server:
   application anchors. The request accepts optional `recipientEmail`, `limit`,
   `maxResultsPerAnchor`, and `windowDays` values. The response returns counts
   plus evidence/suggestion IDs, canonical `jobId` values, kinds, and confidence
-  values only; it never returns raw Gmail body text.
+  values only; it never returns raw Gmail body text. Worker failures return
+  `ok: false`, a safe `failureCode` and message, and an HTTP status: 400 for
+  invalid scan input, 503 for Gmail/model unavailability, and 500 for blocked
+  determinations or worker failures. Existing evidence remains stored; a
+  bounded scan is not an exhaustive mailbox search.
 
 The web review queue records approval facts only. `approve_submit` is bound to
 the material, profile, URL, and dry-run evidence shown in Apply Review; stale

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import math
 import re
 import time
 from datetime import datetime
@@ -14,20 +15,25 @@ from typing import Any
 import httpx
 
 from jobctrl.infrastructure.gmail.auth import GMAIL_SEND_SCOPE, GmailAuthError, get_access_token, load_token
+from jobctrl.infrastructure.gmail.privacy import private_gmail_operation
 
 GMAIL_API_ROOT = "https://gmail.googleapis.com/gmail/v1/users/me"
 _HEADERS = ("From", "To", "Subject", "Date")
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_FEEDBACK_EMAIL_RE = re.compile(
+    r"^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*@"
+    r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+"
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"
+)
 _HINT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{1,48}")
 _VERIFICATION_TERMS = (
     '(verification OR "verification code" OR code OR confirm OR confirmation '
     'OR OTP OR "one-time" OR security OR login)'
 )
-_FEEDBACK_TERMS = (
-    '("application received" OR "thank you for applying" OR application OR applied '
-    'OR recruiter OR interview OR assessment OR "coding challenge" OR rejection '
-    'OR offer OR undeliverable OR bounced)'
-)
+
+
+class GmailFeedbackInputError(ValueError):
+    """Invalid bounded feedback search input, without provider or message data."""
 
 
 class GmailSendError(RuntimeError):
@@ -94,14 +100,15 @@ class GmailClient:
             return results
 
     def read_email(self, *, message_id: str) -> dict[str, Any]:
-        with self._client() as http:
-            response = http.get(
-                f"{GMAIL_API_ROOT}/messages/{message_id}",
-                headers=self._headers(),
-                params={"format": "full"},
-            )
-            response.raise_for_status()
-            payload = response.json()
+        with private_gmail_operation("gmail.message.read"):
+            with self._client() as http:
+                response = http.get(
+                    f"{GMAIL_API_ROOT}/messages/{message_id}",
+                    headers=self._headers(),
+                    params={"format": "full"},
+                )
+                response.raise_for_status()
+                payload = response.json()
         headers = _headers_to_dict(payload.get("payload", {}).get("headers") or [])
         return {
             "id": payload.get("id", ""),
@@ -157,7 +164,6 @@ class GmailClient:
     def search_feedback_emails(
         self,
         *,
-        query: str,
         to_email: str,
         after: datetime,
         before: datetime,
@@ -165,31 +171,37 @@ class GmailClient:
     ) -> list[dict[str, Any]]:
         """Search bounded application-feedback candidates and return metadata only."""
 
-        max_results = max(1, min(int(max_results or 10), 20))
-        after_ms = int(after.timestamp() * 1000)
-        before_ms = int(before.timestamp() * 1000)
+        try:
+            if isinstance(max_results, bool) or (isinstance(max_results, float) and not max_results.is_integer()):
+                raise ValueError
+            max_results = max(1, min(int(max_results), 20))
+        except (TypeError, ValueError, OverflowError):
+            raise GmailFeedbackInputError("Gmail feedback search requires a valid result limit") from None
         q = _build_feedback_query(
-            query=query,
             to_email=to_email,
             after=after,
             before=before,
         )
-        with self._client() as http:
-            response = http.get(
-                f"{GMAIL_API_ROOT}/messages",
-                headers=self._headers(),
-                params={"q": q, "maxResults": max_results},
-            )
-            response.raise_for_status()
-            messages = response.json().get("messages") or []
-            results: list[dict[str, Any]] = []
-            for item in messages[:max_results]:
-                msg = self._get_message_metadata(http, str(item["id"]), include_snippet=False)
-                internal_ms = int(msg.get("internalDate") or 0)
-                if internal_ms < after_ms or internal_ms > before_ms:
-                    continue
-                results.append(msg)
-            return results
+        after_ms = math.ceil(after.timestamp() * 1000)
+        before_ms = math.floor(before.timestamp() * 1000)
+        with private_gmail_operation("gmail.feedback.search") as span:
+            with self._client() as http:
+                response = http.get(
+                    f"{GMAIL_API_ROOT}/messages",
+                    headers=self._headers(),
+                    params={"q": q, "maxResults": max_results},
+                )
+                response.raise_for_status()
+                messages = response.json().get("messages") or []
+                results: list[dict[str, Any]] = []
+                for item in messages[:max_results]:
+                    msg = self._get_message_metadata(http, str(item["id"]), include_snippet=False)
+                    internal_ms = int(msg.get("internalDate") or 0)
+                    if internal_ms < after_ms or internal_ms > before_ms:
+                        continue
+                    results.append(msg)
+                span.set_attribute("jobctrl.gmail.metadata_count", len(results))
+                return results
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {get_access_token()}"}
@@ -259,27 +271,32 @@ def _ensure_send_scope() -> None:
         raise GmailAuthError("Gmail token missing gmail.send scope; run jobctrl gmail-auth to re-consent")
 
 
-def _build_feedback_query(
-    *,
-    query: str,
-    to_email: str,
-    after: datetime,
-    before: datetime,
-) -> str:
-    recipient = to_email.strip()
-    if not recipient or not _EMAIL_RE.match(recipient):
-        raise ValueError("Gmail feedback search requires a recipient email")
-    hints = _safe_query_hints(query)
-    if not hints:
-        raise ValueError("Gmail feedback search requires application hints")
-    terms = [
-        _FEEDBACK_TERMS,
-        f"to:{recipient}",
-        "(" + " OR ".join(hints) + ")",
-        f"after:{after.strftime('%Y/%m/%d')}",
-        f"before:{before.strftime('%Y/%m/%d')}",
-    ]
-    return " ".join(terms)
+def validate_feedback_recipient(to_email: str) -> str:
+    recipient = to_email.strip() if isinstance(to_email, str) else ""
+    if (
+        len(recipient) > 254
+        or not _FEEDBACK_EMAIL_RE.fullmatch(recipient)
+        or len(recipient.split("@", 1)[0]) > 64
+    ):
+        raise GmailFeedbackInputError("Gmail feedback search requires a recipient email")
+    return recipient
+
+
+def _build_feedback_query(*, to_email: str, after: datetime, before: datetime) -> str:
+    recipient = validate_feedback_recipient(to_email)
+    if (
+        not isinstance(after, datetime)
+        or not isinstance(before, datetime)
+        or after.utcoffset() is None
+        or before.utcoffset() is None
+        or after > before
+    ):
+        raise GmailFeedbackInputError("Gmail feedback search requires a valid date range")
+    # Gmail interprets calendar dates in Pacific time. Epoch seconds preserve
+    # the requested time zone; the metadata check below enforces exact bounds.
+    start = math.floor(after.timestamp()) - 1
+    end = math.ceil(before.timestamp()) + 1
+    return f'to:"{recipient}" after:{start} before:{end}'
 
 
 def _safe_query_hints(query: str) -> list[str]:

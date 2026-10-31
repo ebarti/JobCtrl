@@ -2107,10 +2107,41 @@ describe("application feedback API", () => {
     expect(response.json()).toEqual({
       ok: false,
       error: "gmail_feedback_scan_failed",
-      message: "Gmail feedback scan failed: JSON-RPC request timed out after 600000ms",
+      message: "Gmail feedback worker transport failed.",
+      failureCode: "rpc_transport_error",
     });
 
     await app.close();
+  });
+
+  it("preserves a terminal model failure code without exposing worker text", async () => {
+    const privateText = "Synthetic private mail text in worker error";
+    const dispatcher: JsonRpcDispatcher = {
+      call: async () => ({ jsonrpc: "2.0", id: 1,
+        result: { ok: false, status: "blocked", failureCode: "provider_non_retryable", message: privateText } }),
+      close: async () => {},
+    };
+    const app = buildApp({ ...options, gmailFeedbackScanner: createWorkerGmailFeedbackScanner(dispatcher) });
+    const response = await app.inject({ method: "POST", url: "/v1/outcomes/gmail/scan", payload: {} });
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toMatchObject({ ok: false, failureCode: "provider_non_retryable" });
+    expect(response.body).not.toContain(privateText);
+    await app.close();
+  });
+
+  it("does not expose an unrecognized worker failure code or RPC error data", async () => {
+    const privateText = "Synthetic private mail text in worker error";
+    for (const rpcReply of [
+      { jsonrpc: "2.0" as const, id: 1, result: { ok: false, failureCode: privateText, message: privateText } },
+      { jsonrpc: "2.0" as const, id: 1, error: { code: -32603, message: privateText, data: privateText } },
+    ]) {
+      const dispatcher: JsonRpcDispatcher = { call: async () => rpcReply, close: async () => {} };
+      const app = buildApp({ ...options, gmailFeedbackScanner: createWorkerGmailFeedbackScanner(dispatcher) });
+      const response = await app.inject({ method: "POST", url: "/v1/outcomes/gmail/scan", payload: {} });
+      expect(response.statusCode).toBe(500);
+      expect(response.body).not.toContain(privateText);
+      await app.close();
+    }
   });
 
   it("rejects non-timestamp outcome dates before they reach event payloads", async () => {

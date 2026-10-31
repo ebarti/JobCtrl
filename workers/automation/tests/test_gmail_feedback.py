@@ -108,7 +108,6 @@ class FakeGmailClient:
     def search_feedback_emails(
         self,
         *,
-        query: str,
         to_email: str,
         after: datetime,
         before: datetime,
@@ -116,7 +115,6 @@ class FakeGmailClient:
     ) -> list[dict[str, Any]]:
         self.search_calls.append(
             {
-                "query": query,
                 "to_email": to_email,
                 "after": after,
                 "before": before,
@@ -219,11 +217,9 @@ def test_unlinked_metadata_does_not_read_email_body(tmp_path: Path) -> None:
 
     assert client.search_calls
     search = client.search_calls[0]
-    query = search["query"]
     assert search["to_email"] == RECIPIENT
     assert search["after"] == datetime(2026, 6, 1, 10, 0, tzinfo=timezone.utc)
     assert search["before"] == datetime(2026, 6, 8, 10, 0, tzinfo=timezone.utc)
-    assert query == ""  # Recipient/date bound search; meaning belongs to the model.
     assert client.read_calls == []
     assert summary["linkedEvidenceCount"] == 0
     assert summary["unlinkedCandidateCount"] == 1
@@ -278,7 +274,6 @@ def test_linked_body_is_ingested_and_suggested(tmp_path: Path) -> None:
             "kind": "applied_confirmation",
             "confidence": pytest.approx(0.64),
             "determinationId": summary["suggestions"][0]["determinationId"],
-            "citations": summary["suggestions"][0]["citations"],
         }
     ]
 

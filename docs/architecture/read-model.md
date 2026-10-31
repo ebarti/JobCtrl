@@ -140,10 +140,14 @@ keyed drawer changes, nested run detail and cold reads. A delayed acknowledgemen
 from a form that has been replaced cannot clear the current owner's draft.
 Reloading discards this in-memory state.
 
-The Gmail feedback scanner searches bounded post-application windows using
-known application anchors. It reads a body only after metadata reaches the
-link-confidence threshold, then stores evidence locally and proposes a
-classification. The user accepts, corrects, or declines the suggestion.
+The Gmail feedback scanner searches a recipient and bounded post-application
+window for each known anchor, without employer or outcome keyword filters.
+The client requests at most the configured number of metadata results and checks
+their exact timestamps. A valid source-bound model determination selects the
+application before the body is read; another determination proposes the outcome.
+Repeated provider message IDs do not create duplicate evidence. The user
+accepts, corrects, or declines the suggestion. A bounded result is not proof of
+complete mailbox coverage.
 
 Raw mail bodies never enter events, broad projections, logs, telemetry, or the
 scan API response.

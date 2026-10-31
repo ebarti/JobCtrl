@@ -1153,6 +1153,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
                   ? "invalid_gmail_feedback_scan"
                   : "gmail_feedback_scan_failed",
               message: error.message,
+              ...(error.failureCode ? { failureCode: error.failureCode } : {}),
             };
           }
           throw error;

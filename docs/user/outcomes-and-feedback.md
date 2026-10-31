@@ -126,9 +126,13 @@ Both may appear in the same job audit timeline without sharing ownership.
 - **Suggestions** remain separate in `application_outcome_suggestions` until you
   decide them. A pending Gmail suggestion is never treated as a confirmed
   application; suggestion accuracy is derived from later decisions.
-- **Linked Gmail evidence** stays local. A bounded scan starts from known
-  application anchors and reads body content only after a valid linking determination accepts the bounded metadata. Raw mail bodies never enter broad projections, events,
-  logs, telemetry, or scan responses.
+- **Linked Gmail evidence** stays local. A scan starts from known application
+  anchors and searches a bounded recipient and date window with a limit on the
+  messages returned. A source-bound model determination decides whether the
+  metadata links to an application; the body is read only after a valid link.
+  A bounded search can miss messages, and no anchors means no Gmail search.
+  Previously stored evidence remains available after a failed scan. Raw mail
+  bodies never enter broad projections, events, logs, telemetry, or scan responses.
 - **Local notes** stay in the canonical outcome table. Events carry safe IDs,
   kinds, timestamps, confidence/link markers, and presence flags rather than
   note text.
