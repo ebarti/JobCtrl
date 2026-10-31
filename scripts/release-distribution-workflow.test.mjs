@@ -477,7 +477,7 @@ test("PyPI recovery binds the immutable release to the original run's smoke evid
   await chmod(gh, 0o755);
   const check = (immutable = "true") => spawnSync("bash", ["-c", run], {
     encoding: "utf8",
-    env: { ...process.env, PATH: `${path.join(root, "bin")}:${process.env.PATH}`, RUNNER_TEMP: root, RELEASE_TAG: "v0.4.2", TASK_IMMUTABLE: immutable, TASK_SMOKE_DIGEST: `sha256:${sha256(bytes)}` },
+    env: { ...process.env, PATH: `${path.join(root, "bin")}:${process.env.PATH}`, RUNNER_TEMP: root, RELEASE_TAG: "v0.3.5", TASK_IMMUTABLE: immutable, TASK_SMOKE_DIGEST: `sha256:${sha256(bytes)}` },
   });
   assert.equal(check().status, 0);
   assert.notEqual(check("false").status, 0, "a mutable release cannot authorize PyPI");
@@ -500,8 +500,8 @@ test("PyPI recovery refuses a release or pointer that changed before upload", as
   await chmod(gh, 0o755);
   await chmod(curl, 0o755);
   const source = "a".repeat(40);
-  const pointer = `${JSON.stringify({ channel: "stable", sequence: 13, buildId: `0.4.2-${source}-darwin-arm64` })}\n`;
-  const baseline = { latest: "v0.4.2", pointer, release: { isDraft: false, isPrerelease: false, isImmutable: true, targetCommitish: source, assets: [{ name: "channel-pointer.json", digest: `sha256:${sha256(pointer)}` }] } };
+  const pointer = `${JSON.stringify({ channel: "stable", sequence: 13, buildId: `0.3.5-${source}-darwin-arm64` })}\n`;
+  const baseline = { latest: "v0.3.5", pointer, release: { isDraft: false, isPrerelease: false, isImmutable: true, targetCommitish: source, assets: [{ name: "channel-pointer.json", digest: `sha256:${sha256(pointer)}` }] } };
   const cases = [
     ["current", () => {}, true],
     ["new latest release", (s) => { s.latest = "v0.5.0"; }, false],
@@ -518,7 +518,7 @@ test("PyPI recovery refuses a release or pointer that changed before upload", as
     await writeFile(statePath, JSON.stringify(state));
     const result = spawnSync("bash", ["-c", step.run], {
       encoding: "utf8", timeout: 10000,
-      env: { ...process.env, PATH: `${path.join(root, "bin")}:${process.env.PATH}`, TASK_STATE: statePath, RUNNER_TEMP: dir, GITHUB_REPOSITORY: "fixture/repo", RELEASE_TAG: "v0.4.2", RELEASE_SEQUENCE: "13", EXPECTED_SOURCE_COMMIT: source, EXPECTED_CHANNEL_POINTER_SHA256: sha256(pointer) },
+      env: { ...process.env, PATH: `${path.join(root, "bin")}:${process.env.PATH}`, TASK_STATE: statePath, RUNNER_TEMP: dir, GITHUB_REPOSITORY: "fixture/repo", RELEASE_TAG: "v0.3.5", RELEASE_SEQUENCE: "13", EXPECTED_SOURCE_COMMIT: source, EXPECTED_CHANNEL_POINTER_SHA256: sha256(pointer) },
     });
     assert.equal(result.status === 0, accepted, `${label}: ${result.stderr}`);
   }

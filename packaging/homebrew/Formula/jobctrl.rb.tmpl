@@ -95,7 +95,7 @@ class Jobctrl < Formula
   end
 
   def caveats
-    upgrade_warning = if ["0.4.0", "0.4.1", "0.4.2"].include?(version.to_s)
+    upgrade_warning = if ["0.4.0", "0.4.1"].include?(version.to_s)
       <<~EOS
         Upgrades from normally used JobCtrl 0.3.1 workspaces are currently
         blocked because earlier child processes cannot be verified as stopped.
