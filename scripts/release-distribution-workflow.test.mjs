@@ -281,6 +281,55 @@ test("Homebrew publishes only the signer-bound formula after its credential-free
   assert.notEqual(check().status, 0);
 });
 
+test("Homebrew lifecycle isolates and trusts only its disposable formula", async (context) => {
+  const workflow = loadYaml(workflowUrl);
+  const step = workflow.jobs["smoke-and-verify"].steps.find(
+    (candidate) => candidate.name === "Audit, install, test, and run the rendered formula lifecycle",
+  );
+  assert.ok(step);
+  assertShellSyntax(step.name, step.run);
+  assert.equal(step.env.XDG_CONFIG_HOME, "${{ runner.temp }}/homebrew-smoke-config");
+  assert.match(step.run, /test "\$\{RUNNER_ENVIRONMENT:-\}" = github-hosted/);
+  assert.match(step.run, /test ! -e "\$formula_bin"/);
+  assert.match(step.run, /test ! -e "\$\(brew --cellar\)\/jobctrl"/);
+  const trap = step.run.indexOf("trap cleanup EXIT");
+  const trust = step.run.indexOf('brew trust --formula "$formula"');
+  const audit = step.run.indexOf('brew audit --strict --formula "$formula"');
+  const untrust = step.run.indexOf('brew untrust --formula "$formula"');
+  const untap = step.run.indexOf('brew untap "$tap_name"');
+  assert.ok(trap >= 0 && trust > trap && audit > trust, "install the cleanup trap and trust the exact formula before auditing it");
+  assert.ok(untrust >= 0 && untap > untrust, "remove the temporary formula trust before removing its tap");
+  assert.doesNotMatch(step.run, /HOMEBREW_NO_REQUIRE_TAP_TRUST/, "the check must not disable Homebrew trust globally");
+
+  const { chmod, mkdir, symlink } = await import("node:fs/promises");
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-formula-guard-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const bin = path.join(root, "bin"), prefix = path.join(root, "prefix"), calls = path.join(root, "calls");
+  await mkdir(bin);
+  await mkdir(path.join(prefix, "bin"), { recursive: true });
+  await mkdir(path.join(prefix, "Cellar"), { recursive: true });
+  await writeFile(calls, "");
+  const brew = path.join(bin, "brew");
+  await writeFile(brew, '#!/bin/bash\ncase "$1" in\n  --prefix) echo "$TASK_BREW_PREFIX" ;;\n  --cellar) echo "$TASK_BREW_PREFIX/Cellar" ;;\n  *) echo "$1" >> "$TASK_BREW_CALLS"; exit 55 ;;\nesac\n');
+  await chmod(brew, 0o755);
+  const run = (runnerEnvironment) => spawnSync("bash", ["-c", step.run], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, RUNNER_TEMP: root, RUNNER_ENVIRONMENT: runnerEnvironment, GITHUB_RUN_ID: "123", TASK_BREW_PREFIX: prefix, TASK_BREW_CALLS: calls },
+  });
+  assert.notEqual(run("self-hosted").status, 0, "refuse a non-disposable runner");
+  const installed = path.join(prefix, "bin", "jobctrl");
+  await writeFile(installed, "preserve");
+  assert.notEqual(run("github-hosted").status, 0, "refuse an existing executable");
+  assert.equal(await readFile(installed, "utf8"), "preserve");
+  await rm(installed);
+  await symlink(path.join(root, "missing"), installed);
+  assert.notEqual(run("github-hosted").status, 0, "refuse a dangling executable symlink");
+  await rm(installed);
+  await mkdir(path.join(prefix, "Cellar", "jobctrl"));
+  assert.notEqual(run("github-hosted").status, 0, "refuse an existing cellar");
+  assert.equal(await readFile(calls, "utf8"), "", "no mutation may occur before all guards pass");
+});
+
 test("final publication shell accepts exact and immutable reruns and refuses altered drafts before publishing", async (context) => {
   const { mkdir, chmod } = await import("node:fs/promises");
   const workflow = loadYaml(workflowUrl);

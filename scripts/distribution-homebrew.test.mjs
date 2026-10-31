@@ -111,7 +111,8 @@ test("Homebrew render uses the exact signed curl ZIP identity without a toolchai
   const caveatsFor = async (version) => (await execFileAsync("/usr/bin/ruby", ["-e", caveatsDriver, formulaPath], { env: { ...process.env, JOBCTRL_TEST_VERSION: version } })).stdout;
   assert.match(await caveatsFor("0.4.0"), /Upgrades from normally used JobCtrl 0\.3\.1 workspaces are currently\s+blocked/);
   assert.match(await caveatsFor("0.4.1"), /Upgrades from normally used JobCtrl 0\.3\.1 workspaces are currently\s+blocked/);
-  assert.doesNotMatch(await caveatsFor("0.4.2"), /Upgrades from normally used JobCtrl 0\.3\.1/);
+  assert.match(await caveatsFor("0.4.2"), /Upgrades from normally used JobCtrl 0\.3\.1 workspaces are currently\s+blocked/);
+  assert.doesNotMatch(await caveatsFor("0.4.3"), /Upgrades from normally used JobCtrl 0\.3\.1/);
 });
 
 test("Homebrew promotion verification fails closed without P6 signature and published-asset smoke evidence", async () => {

@@ -75,7 +75,7 @@ const hash = async (file) => {
 // This is a release-specific limitation, not a new definition of a successful
 // upgrade. All other version pairs retain the positive upgrade qualification.
 export function isKnownLegacyRefusal(old, candidate, mode) {
-  return old.descriptor.appVersion === "0.3.1" && ["0.4.0", "0.4.1"].includes(candidate.descriptor.appVersion) && mode === "forward-schema-15";
+  return old.descriptor.appVersion === "0.3.1" && ["0.4.0", "0.4.1", "0.4.2"].includes(candidate.descriptor.appVersion) && mode === "forward-schema-15";
 }
 
 // Capture the stopped synthetic workspace and its authenticated selection.
