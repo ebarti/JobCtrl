@@ -22,6 +22,8 @@ type forwardUpdateFixture struct {
 	home, data, python string
 	store              *release.Store
 	old, candidate     homebrewBootstrapFixture
+	public             ed25519.PublicKey
+	private            ed25519.PrivateKey
 	env                []string
 	ctx                launchContext
 }
@@ -44,7 +46,7 @@ func newForwardUpdateFixtureWithSourceProtocol(t *testing.T, sourceProtocol int,
 		old = signBridgeTransitionFixture(t, old, private, "")
 	}
 	candidate := newSignedHomebrewBootstrapFixtureWithCompatibility(t, private, "forward-target-0002", 2, 2, python, 2, 2)
-	candidate = signBridgeTransitionFixture(t, candidate, private, "")
+	candidate = signDistinctForwardFixture(t, candidate, private)
 	if sourceProtocol == 2 {
 		allowOldRetentionRollback(t, &candidate, private)
 	}
@@ -88,7 +90,24 @@ c=sqlite3.connect(sys.argv[2]);c.execute('CREATE TABLE t(v TEXT)');c.execute("IN
 	if err != nil {
 		t.Fatal(err)
 	}
-	return forwardUpdateFixture{home, data, python, store, old, candidate, env, ctx}
+	return forwardUpdateFixture{home: home, data: data, python: python, store: store, old: old, candidate: candidate, public: public, private: private, env: env, ctx: ctx}
+}
+
+func signDistinctForwardFixture(t *testing.T, fixture homebrewBootstrapFixture, private ed25519.PrivateKey) homebrewBootstrapFixture {
+	t.Helper()
+	path := filepath.Join(fixture.payloadRoot, "launcher", "jobctrl")
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprintf(file, "\n# selector for %s\n", fixture.buildID); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return signBridgeTransitionFixture(t, fixture, private, "")
 }
 
 func seedForwardSchema15(t *testing.T, f forwardUpdateFixture) {
@@ -141,6 +160,267 @@ c=sqlite3.connect(sys.argv[1]);assert c.execute('PRAGMA user_version').fetchone(
 c=sqlite3.connect(sys.argv[2]);assert c.execute('SELECT v FROM t').fetchone() == ('initial-temporal',);c.close()`
 	if output, err := exec.Command(f.python, "-I", "-B", "-c", read, filepath.Join(f.data, "jobctrl.db"), filepath.Join(f.data, "temporal.db")).CombinedOutput(); err != nil {
 		t.Fatalf("rollback did not restore the paired predecessor data: %v %s", err, output)
+	}
+}
+
+func TestForwardUpdateAfterRollbackPreservesRetainedSelectorAndNewWrites(t *testing.T) {
+	f := newForwardUpdateFixtureWithSourceProtocol(t, 2, true)
+	seedForwardSchema15(t, f)
+	previousStart := startReleaseCommand
+	t.Cleanup(func() { startReleaseCommand = previousStart })
+	startReleaseCommand = func(launchContext, release.Receipt, string) error { return nil }
+	if err := PromoteStagedRelease(f.home, f.candidate.buildID, "homebrew", f.env, io.Discard); err != nil {
+		t.Fatalf("initial update: %v", err)
+	}
+	if err := Run(filepath.Join(f.home, "bin", "jobctrl"), []string{"rollback", "--to", f.old.buildID}, f.env, io.Discard, io.Discard); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	active, err := f.store.ReadActive()
+	if err != nil || active.Receipt != f.old.receipt || active.SelectorBuildID != f.candidate.buildID {
+		t.Fatalf("rollback did not retain the authenticated newer selector: %#v %v", active, err)
+	}
+	write := `import sqlite3,sys
+c=sqlite3.connect(sys.argv[1]);c.execute("UPDATE candidate_profiles SET personal_full_name='after-rollback' WHERE tenant_id='synthetic'");c.commit();c.close()
+c=sqlite3.connect(sys.argv[2]);c.execute("UPDATE t SET v='after-rollback-history'");c.commit();c.close()`
+	if output, err := exec.Command(f.python, "-I", "-B", "-c", write, filepath.Join(f.data, "jobctrl.db"), filepath.Join(f.data, "temporal.db")).CombinedOutput(); err != nil {
+		t.Fatalf("write data after rollback: %v %s", err, output)
+	}
+	if err := PromoteStagedRelease(f.home, f.candidate.buildID, "homebrew", f.env, io.Discard); err != nil {
+		t.Fatalf("update again using the retained selector: %v", err)
+	}
+	active, err = f.store.ReadActive()
+	if err != nil || active.Receipt != f.candidate.receipt || active.SelectorBuildID != f.candidate.buildID {
+		t.Fatalf("re-update did not select the candidate: %#v %v", active, err)
+	}
+	read := `import sqlite3,sys
+c=sqlite3.connect(sys.argv[1]);assert c.execute("SELECT personal_full_name FROM candidate_profiles WHERE tenant_id='synthetic'").fetchone()==('after-rollback',);c.close()
+c=sqlite3.connect(sys.argv[2]);assert c.execute('SELECT v FROM t').fetchone()==('after-rollback-history',);c.close()`
+	if output, err := exec.Command(f.python, "-I", "-B", "-c", read, filepath.Join(f.data, "jobctrl.db"), filepath.Join(f.data, "temporal.db")).CombinedOutput(); err != nil {
+		t.Fatalf("re-update lost writes made after rollback: %v %s", err, output)
+	}
+}
+
+func TestForwardUpdateAfterRollbackRejectsUnsafeRetainedSelector(t *testing.T) {
+	for _, testCase := range []struct {
+		name   string
+		mutate func(*testing.T, forwardUpdateFixture)
+	}{
+		{"tampered selector", func(t *testing.T, f forwardUpdateFixture) {
+			if err := os.WriteFile(filepath.Join(f.home, "bin", "jobctrl"), []byte("tampered selector"), 0755); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"selector receipt identity mismatch", func(t *testing.T, f forwardUpdateFixture) {
+			alias := "forward-selector-alias-0002"
+			dir := filepath.Join(f.home, "releases", alias)
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			receipt, err := os.ReadFile(filepath.Join(f.home, "releases", f.candidate.buildID, "receipt.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "receipt.json"), receipt, 0600); err != nil {
+				t.Fatal(err)
+			}
+			active, err := f.store.ReadActive()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.store.WriteSelectedActive(active.Receipt, active.Generation, alias, active.Acquisition); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"selector newer than target", func(t *testing.T, f forwardUpdateFixture) {
+			newer := newSignedHomebrewBootstrapFixtureWithCompatibility(t, f.private, "forward-selector-0003", 3, 2, f.python, 2, 2)
+			newer = signDistinctForwardFixture(t, newer, f.private)
+			if err := stageHomebrewFixture(f.home, newer, f.public); err != nil {
+				t.Fatal(err)
+			}
+			verified, err := verifyInstalledReleaseForExecution(f.store, newer.receipt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := handoffPublicSelector(f.home, verified); err != nil {
+				t.Fatal(err)
+			}
+			active, err := f.store.ReadActive()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.store.WriteSelectedActive(active.Receipt, active.Generation, newer.buildID, active.Acquisition); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := newForwardUpdateFixtureWithSourceProtocol(t, 2, true)
+			seedForwardSchema15(t, f)
+			previousStart := startReleaseCommand
+			t.Cleanup(func() { startReleaseCommand = previousStart })
+			startReleaseCommand = func(launchContext, release.Receipt, string) error { return nil }
+			if err := PromoteStagedRelease(f.home, f.candidate.buildID, "homebrew", f.env, io.Discard); err != nil {
+				t.Fatalf("initial update: %v", err)
+			}
+			if err := Run(filepath.Join(f.home, "bin", "jobctrl"), []string{"rollback", "--to", f.old.buildID}, f.env, io.Discard, io.Discard); err != nil {
+				t.Fatalf("rollback: %v", err)
+			}
+			testCase.mutate(t, f)
+			active, err := f.store.ReadActive()
+			if err != nil {
+				t.Fatal(err)
+			}
+			journal, err := os.ReadFile(filepath.Join(f.home, release.JournalFile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := lifecycleDatabaseDigests(t, f.data)
+			if err := PromoteStagedRelease(f.home, f.candidate.buildID, "homebrew", f.env, io.Discard); err == nil || !strings.Contains(err.Error(), "source selector differs") {
+				t.Fatalf("unsafe retained selector was not refused: %v", err)
+			}
+			if after, err := f.store.ReadActive(); err != nil || after != active {
+				t.Fatalf("refusal changed active selection: %#v %v", after, err)
+			}
+			if after, err := os.ReadFile(filepath.Join(f.home, release.JournalFile)); err != nil || !bytes.Equal(journal, after) {
+				t.Fatalf("refusal changed the transition journal: %v", err)
+			}
+			if !sameDatabaseDigests(before, lifecycleDatabaseDigests(t, f.data)) {
+				t.Fatal("refusal changed the database pair")
+			}
+		})
+	}
+}
+
+func TestForwardUpdateAfterRollbackToLaterReleaseRecovers(t *testing.T) {
+	for _, boundary := range []release.State{"", release.MetadataVerified, release.SelectorHandoffPending, release.SelectorReplaced} {
+		name := string(boundary)
+		if name == "" {
+			name = "uninterrupted"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newForwardUpdateFixtureWithSourceProtocol(t, 2, true)
+			seedForwardSchema15(t, f)
+			previousStart, previousFailure := startReleaseCommand, transitionFailure
+			t.Cleanup(func() { startReleaseCommand, transitionFailure = previousStart, previousFailure })
+			startReleaseCommand = func(launchContext, release.Receipt, string) error { return nil }
+			transitionFailure = nil
+			if err := PromoteStagedRelease(f.home, f.candidate.buildID, "homebrew", f.env, io.Discard); err != nil {
+				t.Fatalf("initial update: %v", err)
+			}
+			if err := Run(filepath.Join(f.home, "bin", "jobctrl"), []string{"rollback", "--to", f.old.buildID}, f.env, io.Discard, io.Discard); err != nil {
+				t.Fatalf("rollback: %v", err)
+			}
+			later := newSignedHomebrewBootstrapFixtureWithCompatibility(t, f.private, "forward-later-0003", 3, 2, f.python, 2, 2)
+			later = signDistinctForwardFixture(t, later, f.private)
+			if err := stageHomebrewFixture(f.home, later, f.public); err != nil {
+				t.Fatal(err)
+			}
+			if boundary != "" {
+				transitionFailure = func(state release.State) error {
+					if state == boundary {
+						return errTransitionInterrupted
+					}
+					return nil
+				}
+				if err := PromoteStagedRelease(f.home, later.buildID, "homebrew", f.env, io.Discard); !errors.Is(err, errTransitionInterrupted) {
+					t.Fatalf("did not interrupt at %s: %v", boundary, err)
+				}
+				transitionFailure = nil
+			}
+			write := `import sqlite3,sys
+c=sqlite3.connect(sys.argv[1]);c.execute("UPDATE candidate_profiles SET personal_full_name='later-write' WHERE tenant_id='synthetic'");c.commit();c.close()
+c=sqlite3.connect(sys.argv[2]);c.execute("UPDATE t SET v='later-history'");c.commit();c.close()`
+			if output, err := exec.Command(f.python, "-I", "-B", "-c", write, filepath.Join(f.data, "jobctrl.db"), filepath.Join(f.data, "temporal.db")).CombinedOutput(); err != nil {
+				t.Fatalf("write before re-update: %v %s", err, output)
+			}
+			if err := PromoteStagedRelease(f.home, later.buildID, "homebrew", f.env, io.Discard); err != nil {
+				t.Fatalf("update or recover using retained selector: %v", err)
+			}
+			active, err := f.store.ReadActive()
+			if err != nil || active.Receipt != later.receipt || active.SelectorBuildID != later.buildID {
+				t.Fatalf("later release not selected: %#v %v", active, err)
+			}
+			read := `import sqlite3,sys
+c=sqlite3.connect(sys.argv[1]);assert c.execute("SELECT personal_full_name FROM candidate_profiles WHERE tenant_id='synthetic'").fetchone()==('later-write',);c.close()
+c=sqlite3.connect(sys.argv[2]);assert c.execute('SELECT v FROM t').fetchone()==('later-history',);c.close()`
+			if output, err := exec.Command(f.python, "-I", "-B", "-c", read, filepath.Join(f.data, "jobctrl.db"), filepath.Join(f.data, "temporal.db")).CombinedOutput(); err != nil {
+				t.Fatalf("update or recovery lost later writes: %v %s", err, output)
+			}
+		})
+	}
+}
+
+func TestForwardUpdateRejectsIncompatibleOrRevokedRetainedSelector(t *testing.T) {
+	for _, reason := range []string{"incompatible", "revoked"} {
+		t.Run(reason, func(t *testing.T) {
+			f := newForwardUpdateFixtureWithSourceProtocol(t, 2, true)
+			seedForwardSchema15(t, f)
+			previousStart := startReleaseCommand
+			t.Cleanup(func() { startReleaseCommand = previousStart })
+			startReleaseCommand = func(launchContext, release.Receipt, string) error { return nil }
+			later := newSignedHomebrewBootstrapFixtureWithCompatibility(t, f.private, "forward-later-0003", 3, 2, f.python, 2, 2)
+			later = signDistinctForwardFixture(t, later, f.private)
+			if err := stageHomebrewFixture(f.home, later, f.public); err != nil {
+				t.Fatal(err)
+			}
+			if reason == "revoked" {
+				if err := PromoteStagedRelease(f.home, f.candidate.buildID, "homebrew", f.env, io.Discard); err != nil {
+					t.Fatalf("initial update: %v", err)
+				}
+				if err := Run(filepath.Join(f.home, "bin", "jobctrl"), []string{"rollback", "--to", f.old.buildID}, f.env, io.Discard, io.Discard); err != nil {
+					t.Fatalf("rollback: %v", err)
+				}
+				state, err := f.store.ReadChannelState("stable")
+				if err != nil {
+					t.Fatal(err)
+				}
+				state.RevokedBuildIDs[f.candidate.buildID] = true
+				if err := f.store.CommitMetadata(state); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				incompatible := newSignedHomebrewBootstrapFixtureWithCompatibility(t, f.private, "forward-incompatible-0002", 2, 1, f.python, 1, 1)
+				incompatible = signDistinctForwardFixture(t, incompatible, f.private)
+				if err := stageHomebrewFixture(f.home, incompatible, f.public); err != nil {
+					t.Fatal(err)
+				}
+				verified, err := verifyInstalledReleaseForExecution(f.store, incompatible.receipt)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := handoffPublicSelector(f.home, verified); err != nil {
+					t.Fatal(err)
+				}
+				active, err := f.store.ReadActive()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := f.store.WriteSelectedActive(active.Receipt, active.Generation, incompatible.buildID, active.Acquisition); err != nil {
+					t.Fatal(err)
+				}
+			}
+			active, err := f.store.ReadActive()
+			if err != nil {
+				t.Fatal(err)
+			}
+			journal, journalErr := os.ReadFile(filepath.Join(f.home, release.JournalFile))
+			if journalErr != nil && !os.IsNotExist(journalErr) {
+				t.Fatal(journalErr)
+			}
+			before := lifecycleDatabaseDigests(t, f.data)
+			if err := PromoteStagedRelease(f.home, later.buildID, "homebrew", f.env, io.Discard); err == nil || !strings.Contains(err.Error(), "source selector differs") {
+				t.Fatalf("%s retained selector was not refused: %v", reason, err)
+			}
+			if after, err := f.store.ReadActive(); err != nil || after != active {
+				t.Fatalf("refusal changed active selection: %#v %v", after, err)
+			}
+			if after, err := os.ReadFile(filepath.Join(f.home, release.JournalFile)); (os.IsNotExist(journalErr) && !os.IsNotExist(err)) || (journalErr == nil && (err != nil || !bytes.Equal(journal, after))) {
+				t.Fatalf("refusal changed the transition journal: %v", err)
+			}
+			if !sameDatabaseDigests(before, lifecycleDatabaseDigests(t, f.data)) {
+				t.Fatal("refusal changed the database pair")
+			}
+		})
 	}
 }
 
