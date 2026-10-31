@@ -49,6 +49,7 @@ export function AiExecutionPolicyPanel() {
   const catalogQuery = useProviderModelCatalogQuery();
   const updateSettings = useUpdateAiExecutionPolicyMutation();
   const [status, setStatus] = useState<SaveStatus | null>(null);
+  const [saving, setSaving] = useState(false);
   const response = settingsQuery.data;
   const models = useMemo(
     () =>
@@ -128,6 +129,7 @@ export function AiExecutionPolicyPanel() {
         });
         return;
       }
+      setSaving(true);
       try {
         const saved = await updateSettings.mutateAsync(parsed.data);
         const savedGenerators = saved.settings.tailoringGeneratorModels ?? [];
@@ -150,6 +152,8 @@ export function AiExecutionPolicyPanel() {
           kind: "error",
           message: "AI execution policy could not be saved. Try again.",
         });
+      } finally {
+        setSaving(false);
       }
     },
   });
@@ -247,6 +251,7 @@ export function AiExecutionPolicyPanel() {
             {status.message}
           </div>
         ) : null}
+        {saving ? <p role="status">Saving AI policy. Editing is paused until the save finishes.</p> : null}
         <form.Field name="defaultLlmModel">
           {(field) => (
             <ModelSelectControl
@@ -254,7 +259,7 @@ export function AiExecutionPolicyPanel() {
               label="Default model"
               models={models}
               value={field.state.value}
-              readOnly={!effective.defaultLlmModel.editable || catalogQuery.isPending || Boolean(catalogQuery.error)}
+              readOnly={saving || !effective.defaultLlmModel.editable || catalogQuery.isPending || Boolean(catalogQuery.error)}
               help="Used by newly started model calls and the writing pass. Explicit analysis, generator, and judge choices take precedence."
               onChange={(value) => {
                 clearSaveStatus();
@@ -282,7 +287,7 @@ export function AiExecutionPolicyPanel() {
                       <Checkbox
                         id={id}
                         name="analysisLegs"
-                        disabled={!effective.analysisLegs.editable}
+                        disabled={saving || !effective.analysisLegs.editable}
                         checked={field.state.value.includes(option.value)}
                         onCheckedChange={(checked) => {
                           const next = checked
@@ -314,7 +319,7 @@ export function AiExecutionPolicyPanel() {
               label="Primary tailoring generator"
               models={models}
               value={field.state.value}
-              readOnly={!effective.tailoringGeneratorModels.editable || catalogQuery.isPending || Boolean(catalogQuery.error)}
+              readOnly={saving || !effective.tailoringGeneratorModels.editable || catalogQuery.isPending || Boolean(catalogQuery.error)}
               help={context(
                 effective.tailoringGeneratorModels.source,
                 "next tailoring workflow",
@@ -333,7 +338,7 @@ export function AiExecutionPolicyPanel() {
               label="Fallback tailoring generator"
               models={models}
               value={field.state.value}
-              readOnly={!effective.tailoringGeneratorModels.editable || catalogQuery.isPending || Boolean(catalogQuery.error)}
+              readOnly={saving || !effective.tailoringGeneratorModels.editable || catalogQuery.isPending || Boolean(catalogQuery.error)}
               help="Optional second choice; used after the primary."
               onChange={(value) => {
                 clearSaveStatus();
@@ -349,7 +354,7 @@ export function AiExecutionPolicyPanel() {
               label="Tailoring judge"
               models={models}
               value={field.state.value}
-              readOnly={!effective.tailoringJudgeModel.editable || catalogQuery.isPending || Boolean(catalogQuery.error)}
+              readOnly={saving || !effective.tailoringJudgeModel.editable || catalogQuery.isPending || Boolean(catalogQuery.error)}
               help={context(
                 effective.tailoringJudgeModel.source,
                 "next tailoring workflow",
@@ -370,7 +375,7 @@ export function AiExecutionPolicyPanel() {
                   id="cover-letter-generation"
                   name="coverLetterGeneration"
                   aria-describedby="cover-letter-generation-help"
-                  disabled={!effective.coverLetterGeneration.editable}
+                  disabled={saving || !effective.coverLetterGeneration.editable}
                   checked={field.state.value}
                   onCheckedChange={(checked) => {
                     clearSaveStatus();
@@ -400,7 +405,7 @@ export function AiExecutionPolicyPanel() {
                   id="resume-voice-polish"
                   name="resumeVoicePolish"
                   aria-describedby="resume-voice-polish-help"
-                  disabled={!effective.resumeVoicePolish.editable}
+                  disabled={saving || !effective.resumeVoicePolish.editable}
                   checked={field.state.value}
                   onCheckedChange={(checked) => {
                     clearSaveStatus();
@@ -434,7 +439,7 @@ export function AiExecutionPolicyPanel() {
                   analysisModel={codexAnalysis ? response.settings.preferredModels.codex ?? null : null}
                   includeDefaultAnalysisModel={codexAnalysis}
                   value={field.state.value}
-                  readOnly={catalogQuery.isPending || Boolean(catalogQuery.error) || !effective.codexReasoningEfforts.editable}
+                  readOnly={saving || catalogQuery.isPending || Boolean(catalogQuery.error) || !effective.codexReasoningEfforts.editable}
                   onChange={(value) => { clearSaveStatus(); field.handleChange(value); }}
                 />
               )}

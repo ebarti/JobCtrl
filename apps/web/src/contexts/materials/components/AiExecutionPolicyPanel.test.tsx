@@ -9,6 +9,33 @@ import { buildTestPorts } from "../../../test/testPorts.js";
 import { AiExecutionPolicyPanel } from "./AiExecutionPolicyPanel.js";
 
 describe("<AiExecutionPolicyPanel>", () => {
+  it("pauses all policy controls until a pending save is acknowledged", async () => {
+    const user = userEvent.setup();
+    let resolve!: (value: typeof sampleSettingsResponse) => void;
+    let canonical = sampleSettingsResponse;
+    const updateSettings = vi.fn(() => new Promise<typeof sampleSettingsResponse>((done) => { resolve = done; }));
+    renderWithProviders(<AiExecutionPolicyPanel />, { ports: buildTestPorts({ api: {
+      settings: vi.fn(async () => canonical), providerModels: vi.fn(async () => sampleProviderModelsResponse), updateSettings,
+    } }) });
+    const polish = await screen.findByRole("checkbox", { name: "Extra résumé polish" });
+    await user.click(polish);
+    await user.click(screen.getByRole("button", { name: "Save AI policy" }));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledWith({ resumeVoicePolish: true }));
+    expect(polish).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("checkbox", { name: "Generate cover letters" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("checkbox", { name: "Claude" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("combobox", { name: "Default model" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Primary tailoring generator" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Fallback tailoring generator" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Tailoring judge" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Reasoning effort · GPT-5.5" })).toBeDisabled();
+    canonical = { ...sampleSettingsResponse, settings: { ...sampleSettingsResponse.settings, resumeVoicePolish: true } };
+    await act(async () => resolve(canonical));
+    await waitFor(() => expect(polish).not.toHaveAttribute("aria-disabled", "true"));
+    await user.click(polish);
+    expect(polish).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Save AI policy" })).toBeEnabled();
+  });
   it.each([true, false])("saves extra resume polish %s independently of the model catalog", async (enabled) => {
     const user = userEvent.setup();
     const settings = { ...sampleSettingsResponse, settings: { ...sampleSettingsResponse.settings, defaultLlmModel: "codex:saved-model", resumeVoicePolish: !enabled } };

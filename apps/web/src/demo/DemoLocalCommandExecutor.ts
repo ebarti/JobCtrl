@@ -1,5 +1,5 @@
 import { JobCtrlApiError } from "@jobctrl/api-client";
-import { ContactAttributeInputSchema, ContactUpdateRequestSchema, ManualApplicationOutcomeRequestSchema } from "@jobctrl/contracts";
+import { ContactAttributeInputSchema, ContactUpdateRequestSchema, ManualApplicationOutcomeRequestSchema, ResumeTemplateDefaultSelectionRequestSchema, ResumeTemplateVersionSaveRequestSchema } from "@jobctrl/contracts";
 import type { ApplyReviewApprovalGateReason, ContactDetail } from "@jobctrl/contracts";
 import { demoContactFingerprint } from "./contact-fingerprint.js";
 import {
@@ -889,10 +889,15 @@ export class DemoLocalCommandExecutor {
         return { ok: true, thread, reply, feedbackSignal };
       }
       case "saveResumeTemplate": {
-        const body = record(args[0]);
+        const parsed = ResumeTemplateVersionSaveRequestSchema.safeParse(args[0]);
+        if (!parsed.success) throw new JobCtrlApiError(400, "Bad Request", `Invalid resume template save request: ${parsed.error.issues[0]?.message ?? "Invalid input."}`);
+        const body = parsed.data;
         const templateId = stringValue(body.templateId) ?? this.createId("template");
         const templates = draft.state.readModel.materials.resumeTemplates.templates;
         const existingIndex = templates.findIndex((template) => template.templateId === templateId);
+        if (body.templateId && (existingIndex < 0 || templates[existingIndex]?.activeVersion.versionId !== body.expectedVersionId)) {
+          throw new JobCtrlApiError(409, "Conflict", "The template changed. Review the latest version before saving.");
+        }
         const previous = existingIndex >= 0 ? templates[existingIndex]! : templates[0]!;
         const base = structuredClone(previous);
         const versionId = this.createId("template-version");
@@ -914,6 +919,7 @@ export class DemoLocalCommandExecutor {
           },
         });
         if (existingIndex >= 0) {
+          mutableMap(draft.state.readModel.materials.templateDetails)[JSON.stringify(["version", templateId, previous.activeVersion.versionId])] = { ok: true, template: structuredClone(previous) };
           templates[existingIndex] = base;
         } else {
           templates.push(base);
@@ -929,16 +935,26 @@ export class DemoLocalCommandExecutor {
         return { ok: true, template: base };
       }
       case "setDefaultResumeTemplate": {
-        const body = record(args[0]);
-        const templateId = requiredString(body.templateId, "templateId");
-        const template = requireById(draft.state.readModel.materials.resumeTemplates.templates, "templateId", templateId);
-        const requestedVersionId = stringValue(body.versionId);
-        if (requestedVersionId && requestedVersionId !== template.activeVersion.versionId) {
-          throw new TypeError(`Demo resume template version ${requestedVersionId} was not found.`);
+        const parsed = ResumeTemplateDefaultSelectionRequestSchema.safeParse(args[0]);
+        if (!parsed.success) throw new JobCtrlApiError(400, "Bad Request", `Invalid resume template default request: ${parsed.error.issues[0]?.message ?? "Invalid input."}`);
+        const body = parsed.data;
+        const templateId = body.templateId;
+        const template = draft.state.readModel.materials.resumeTemplates.templates.find((item) => item.templateId === templateId);
+        const requestedVersionId = body.versionId;
+        const expectedActiveVersionId = body.expectedActiveVersionId;
+        if (expectedActiveVersionId && expectedActiveVersionId !== template?.activeVersion.versionId) {
+          throw new JobCtrlApiError(409, "Conflict", "The template changed. Review the latest version before saving.");
         }
-        const metadata = templateMetadata(template, "profile_default");
+        if (!template) throw new JobCtrlApiError(400, "Bad Request", `Resume template not found: ${templateId}`);
+        const selected = requestedVersionId && requestedVersionId !== template.activeVersion.versionId
+          ? draft.state.readModel.materials.templateDetails[JSON.stringify(["version", templateId, requestedVersionId])]?.template
+          : template;
+        if (!selected) {
+          throw new JobCtrlApiError(400, "Bad Request", `Demo resume template version ${requestedVersionId} was not found.`);
+        }
+        const metadata = templateMetadata(selected, "profile_default");
         draft.state.readModel.materials.resumeTemplates.defaultTemplate = metadata;
-        draft.state.readModel.materials.resumeTemplates.effectiveDefaultVersion = template.activeVersion;
+        draft.state.readModel.materials.resumeTemplates.effectiveDefaultVersion = selected.activeVersion;
         refreshDefaultTemplateConsumers(draft, metadata);
         context.appendDomainEvent(atTime(createResumeTemplateDefaultChanged(LOCAL_TENANT, {
           templateId: metadata.templateId,

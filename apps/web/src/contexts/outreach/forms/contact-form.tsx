@@ -48,6 +48,7 @@ export interface ContactFormValues {
 export interface ContactFormProps {
   submitLabel: string;
   pending: boolean;
+  pauseWhilePending?: boolean;
   saveBlocked?: boolean;
   onSubmit: (request: ContactCreateRequest) => void | Promise<void>;
   initialValues?: Partial<ContactFormValues>;
@@ -98,6 +99,7 @@ function assembleCandidate(values: ContactFormValues) {
 export const ContactForm = forwardRef<ContactFormHandle, ContactFormProps>(function ContactForm({
   submitLabel,
   pending,
+  pauseWhilePending = false,
   saveBlocked = false,
   onSubmit,
   initialValues,
@@ -107,6 +109,7 @@ export const ContactForm = forwardRef<ContactFormHandle, ContactFormProps>(funct
   onCancel,
 }, ref) {
   const formId = useId();
+  const editingPaused = pending && pauseWhilePending;
   const defaults = useRef(defaultFormValues(initialValues, lockedJobId));
   const validate = (values: ContactFormValues) => {
     const candidate = assembleCandidate(values);
@@ -155,11 +158,14 @@ export const ContactForm = forwardRef<ContactFormHandle, ContactFormProps>(funct
       {errorMessage ? (
         <div className="banner inline">{errorMessage}</div>
       ) : null}
+      {editingPaused ? <p role="status">Saving contact. Editing is paused until the save finishes.</p> : null}
+      <fieldset disabled={editingPaused} className="contents">
       <form.Field name="role">
         {(field) => (
           <Field className="field">
             <FieldLabel htmlFor={`${formId}-role`}>Role</FieldLabel>
             <Select
+              disabled={editingPaused}
               items={CONTACT_ROLES.map((role) => ({
                 label: contactRoleLabel(role),
                 value: role,
@@ -231,6 +237,7 @@ export const ContactForm = forwardRef<ContactFormHandle, ContactFormProps>(funct
                           Kind
                         </FieldLabel>
                         <Select
+                          disabled={editingPaused}
                           items={CONTACT_ATTRIBUTE_KINDS.map((kind) => ({
                             label: contactAttributeKindLabel(kind),
                             value: kind,
@@ -338,6 +345,7 @@ export const ContactForm = forwardRef<ContactFormHandle, ContactFormProps>(funct
           </div>
         )}
       </form.Subscribe>
+      </fieldset>
     </form>
   );
 });

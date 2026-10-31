@@ -187,6 +187,29 @@ held; prove both remain visible after the response. Check the safe stream
 summary, interruption/replay ordering, and that unrelated tenant/job rows are
 not attributed to the run.
 
+For form-save reconciliation, delay synthetic contact creation and model-policy
+saves and verify their editing controls pause until acknowledgement. Delay a
+contact edit, type newer changes, and check the reopened-session fence. For Offer terms
+and decisions, edit after dispatch, publish another revision or return 409,
+and prove the visible draft and the next explicitly reviewed expected IDs. For
+templates, exercise a dirty or pending draft through a newer publication, a
+failed latest-version read and a failed set-default after a successful version
+save. Use independent SQLite writers to hold the write lock across a competing
+publication and prove the stale version request cannot commit. Verify a stale
+default request is refused and the saved version remains selectable.
+For provider setup, delay fake API responses with synthetic placeholder inputs;
+check later key, path and mode edits through a save and provider-status refresh.
+After a failed save, make the credentials read report a failed inspection or
+fail outright. Verify the real settings panel keeps the newer draft and the
+specific save failure, blocks guided writes, and restores editing after a
+successful read. For both providers, retain the distinct incomplete-recovery
+and unverified-ownership removal errors through the same transition.
+For CapSolver, delay synthetic save and removal responses, enter a newer value,
+and verify it remains unsaved and can be deliberately submitted after either
+success or failure. Verify an environment-managed removal reports its actual
+cause rather than an unsupported platform.
+No real credential store, account or provider connection is used.
+
 For Apply browser ownership, run locked pytest for
 `tests/test_apply_browser_ownership.py`, `tests/test_apply_chrome_dry_run_guard.py`,
 `tests/test_apply_origin_policy.py` and `tests/test_browser_capabilities.py`.

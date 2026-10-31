@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
+import { Worker } from "node:worker_threads";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -12,6 +14,7 @@ import {
   listResumeTemplates,
   resolveCurrentResumeArtifactIdForOpen,
   ResumeTemplateInputError,
+  ResumeTemplateVersionConflictError,
   resumeTemplateStateForJob,
   setDefaultResumeTemplate,
   setJobResumeTemplateAssignment,
@@ -46,6 +49,37 @@ afterEach(() => {
 });
 
 describe("resume template service", () => {
+  it("refuses a stale version after an independent writer commits while the save waits for the lock", async () => {
+    const first = createResumeTemplateVersion(db, {
+      displayName: "Synthetic template", theme: BUILT_IN_RESUME_TEMPLATE_THEME, layout: {},
+    }).template;
+    const sqliteModule = createRequire(import.meta.url).resolve("better-sqlite3");
+    const writer = new Worker(`
+      const { parentPort, workerData } = require('node:worker_threads');
+      const Database = require(workerData.sqliteModule);
+      const other = new Database(workerData.dbPath);
+      other.exec('BEGIN IMMEDIATE');
+      other.prepare('UPDATE resume_templates SET display_name = ? WHERE tenant_id = ? AND template_id = ?').run('Concurrent saved template', 'local', workerData.templateId);
+      other.prepare("INSERT INTO resume_template_versions (tenant_id, version_id, template_id, version_number, display_name, status, theme_json, layout_json, content_hash, created_at) SELECT tenant_id, ?, template_id, version_number + 1, ?, status, theme_json, layout_json, content_hash, created_at FROM resume_template_versions WHERE tenant_id = ? AND version_id = ?").run('synthetic-concurrent-version', 'Concurrent saved template', 'local', workerData.versionId);
+      parentPort.postMessage('locked');
+      setTimeout(() => { other.exec('COMMIT'); other.close(); }, 100);
+    `, { eval: true, workerData: { sqliteModule, dbPath: path.join(tempDir, "jobctrl.db"), templateId: first.templateId, versionId: first.activeVersion.versionId } });
+    const exited = new Promise<void>((resolve, reject) => {
+      writer.once("error", reject);
+      writer.once("exit", (code) => code === 0 ? resolve() : reject(new Error(`writer exited ${code}`)));
+    });
+    await new Promise<void>((resolve, reject) => { writer.once("message", () => resolve()); writer.once("error", reject); });
+    expect(() => createResumeTemplateVersion(db, {
+      templateId: first.templateId, expectedVersionId: first.activeVersion.versionId,
+      displayName: "Stale draft", theme: BUILT_IN_RESUME_TEMPLATE_THEME, layout: {},
+    })).toThrow(ResumeTemplateVersionConflictError);
+    await exited;
+    expect(getResumeTemplateDetail(db, first.templateId)?.template).toMatchObject({
+      displayName: "Concurrent saved template", activeVersion: { versionId: "synthetic-concurrent-version" },
+    });
+    const versions = db.prepare("SELECT COUNT(*) AS total FROM resume_template_versions WHERE tenant_id = ? AND template_id = ?").get("local", first.templateId) as { total: number };
+    expect(versions.total).toBe(2);
+  });
   it("saves style-only template versions, default selection, and per-job overrides", async () => {
     const initial = listResumeTemplates(db);
     expect(initial.templates).toHaveLength(1);
@@ -98,6 +132,7 @@ describe("resume template service", () => {
     }).template;
     const second = createResumeTemplateVersion(db, {
       templateId: first.templateId,
+      expectedVersionId: first.activeVersion.versionId,
       displayName: "Pinned template",
       theme: {
         ...BUILT_IN_RESUME_TEMPLATE_THEME,

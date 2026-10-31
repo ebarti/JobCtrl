@@ -47,6 +47,10 @@ the page title is Contacts. From there you can:
 - preview and import CSV or vCard contacts, retaining filename provenance; and
 - inspect due follow-ups before opening a contact.
 
+While a new contact is being saved, its editor and dismissal controls are paused.
+They become available again if the save fails. Existing contact edits can continue
+while their save is pending, as described below.
+
 The Contact Detail route workspace at `/outreach/:contactId` shows each fact
 and its source, capture method, timestamp, confidence, and confirmation state.
 A Job Detail workspace also composes the contacts linked to that application.

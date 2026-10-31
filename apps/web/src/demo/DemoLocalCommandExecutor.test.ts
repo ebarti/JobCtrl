@@ -1638,6 +1638,7 @@ describe("DemoLocalCommandExecutor", () => {
     });
     const saved = await adapter.saveResumeTemplate({
       templateId: template.templateId,
+      expectedVersionId: template.activeVersion.versionId,
       displayName: "Revised bundled template",
       theme: template.activeVersion.theme,
       layout: template.activeVersion.layout,
@@ -1691,6 +1692,50 @@ describe("DemoLocalCommandExecutor", () => {
     expect(snapshot.eventLog.find((entry) => entry.event.eventType === "JobHidden")?.event).toMatchObject({
       payload: { jobId: JOB, reason: "Synthetic privacy choice", hiddenAt: NOW },
     });
+  });
+
+  it("refuses a stale demo template update and retains the winning version", async () => {
+    const { adapter, repository } = await harness();
+    const original = repository.snapshotNow().state.readModel.materials.resumeTemplates.templates[0]!;
+    const body = { templateId: original.templateId, expectedVersionId: original.activeVersion.versionId,
+      displayName: "Synthetic winning version", theme: original.activeVersion.theme, layout: original.activeVersion.layout };
+    const winner = await adapter.saveResumeTemplate(body);
+    await expect(adapter.saveResumeTemplate({ ...body, displayName: "Synthetic stale draft" })).rejects.toMatchObject({ status: 409 });
+    const current = repository.snapshotNow().state.readModel.materials.resumeTemplates.templates.find((item) => item.templateId === original.templateId);
+    expect(current).toMatchObject({ displayName: "Synthetic winning version", activeVersion: { versionId: winner.template.activeVersion.versionId } });
+    await expect(adapter.setDefaultResumeTemplate({ templateId: original.templateId, versionId: original.activeVersion.versionId,
+      expectedActiveVersionId: original.activeVersion.versionId })).rejects.toMatchObject({ status: 409 });
+    const selected = await adapter.setDefaultResumeTemplate({ templateId: original.templateId, versionId: original.activeVersion.versionId,
+      expectedActiveVersionId: winner.template.activeVersion.versionId });
+    expect(selected.defaultTemplate.templateVersionId).toBe(original.activeVersion.versionId);
+  });
+
+  it("rejects invalid template default preconditions and malformed template saves without changing the workspace", async () => {
+    const { adapter, repository } = await harness();
+    const original = repository.snapshotNow().state.readModel.materials.resumeTemplates.templates[0]!;
+    const before = repository.snapshotNow();
+    const invalidDefaults = [
+      { templateId: original.templateId, expectedActiveVersionId: 42 },
+      { templateId: original.templateId, expectedActiveVersionId: null },
+      { templateId: original.templateId, expectedActiveVersionId: " " },
+      { templateId: original.templateId, expectedActiveVersionID: original.activeVersion.versionId },
+    ];
+    for (const body of invalidDefaults) {
+      await expect(adapter.setDefaultResumeTemplate(body as unknown as Parameters<ApiClientPort["setDefaultResumeTemplate"]>[0])).rejects.toMatchObject({ status: 400 });
+    }
+    await expect(adapter.setDefaultResumeTemplate({ templateId: "missing-synthetic-template" })).rejects.toMatchObject({ status: 400 });
+    await expect(adapter.setDefaultResumeTemplate({ templateId: "missing-synthetic-template", expectedActiveVersionId: "synthetic-version" })).rejects.toMatchObject({ status: 409 });
+    await expect(adapter.setDefaultResumeTemplate({ templateId: original.templateId, versionId: "missing-synthetic-version" })).rejects.toMatchObject({ status: 400 });
+    const invalidTheme = { displayName: "Synthetic template", theme: { ...original.activeVersion.theme, fontScale: 2 }, layout: {} };
+    const invalidThemeError = await adapter.saveResumeTemplate(invalidTheme).then(() => null, (error: unknown) => error);
+    expect(invalidThemeError).toMatchObject({ status: 400, message: expect.stringMatching(/^Invalid resume template save request:/) });
+    expect(invalidThemeError).toMatchObject({ message: expect.not.stringMatching(/current version/i) });
+    await expect(adapter.saveResumeTemplate({ templateId: original.templateId, displayName: "Synthetic template", theme: original.activeVersion.theme, layout: {} }))
+      .rejects.toMatchObject({ status: 400, message: expect.stringMatching(/current version/i) });
+    const after = repository.snapshotNow();
+    expect(after.revision).toBe(before.revision);
+    expect(after.eventLog).toEqual(before.eventLog);
+    expect(after.state.readModel.materials.resumeTemplates).toEqual(before.state.readModel.materials.resumeTemplates);
   });
 
   it("cascades permanent job deletion and contact deletion without dangling read models", async () => {

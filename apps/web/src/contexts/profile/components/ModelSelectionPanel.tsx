@@ -155,7 +155,7 @@ function ProviderModelCard({
   const savedModelUnavailable = Boolean(savedModel && !knownModelIds.has(savedModel));
   const draftIsValid = draftModel === "" || knownModelIds.has(draftModel);
   const catalogReady = Boolean(catalog?.ready && models.length > 0);
-  const canEdit = settingsReady && catalogReady && !catalogPending && !isDemo;
+  const canEdit = settingsReady && catalogReady && !catalogPending && !isDemo && !updateSettings.isPending;
   const unchanged = draftModel === currentSavedModel;
   const canSave = canEdit && draftIsValid && !unchanged && !updateSettings.isPending;
   const providerDefaultValue = `__${provider}-provider-default__`;

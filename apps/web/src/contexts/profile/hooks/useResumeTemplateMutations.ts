@@ -13,6 +13,7 @@ import { profileKeys } from "../queryKeys.js";
 interface SaveTemplateVariables {
   readonly body: ResumeTemplateVersionSaveRequest;
   readonly makeDefault: boolean;
+  readonly maySetDefault?: (saved: ResumeTemplateVersionSaveResponse) => boolean;
 }
 
 interface SaveTemplateResult {
@@ -30,17 +31,22 @@ export function useSaveResumeTemplateMutation(): UseMutationResult<
   const queryClient = useQueryClient();
   return useMutation({
     mutationKey: [...profileKeys.resumeTemplates(tenantId), "save"],
-    mutationFn: async ({ body, makeDefault }) => {
+    mutationFn: async ({ body, makeDefault, maySetDefault }) => {
       const saved = await api.saveResumeTemplate(body);
       if (!makeDefault) return { saved, defaultError: null };
+      if (maySetDefault && !maySetDefault(saved)) {
+        return { saved, defaultError: new Error("The version was saved, but the template changed during the save. Review it before setting a default.") };
+      }
       try {
         await api.setDefaultResumeTemplate({
           templateId: saved.template.templateId,
           versionId: saved.template.activeVersion.versionId,
+          expectedActiveVersionId: saved.template.activeVersion.versionId,
         });
         return { saved, defaultError: null };
       } catch (error) {
-        return { saved, defaultError: error instanceof Error ? error : new Error(String(error)) };
+        const detail = error instanceof Error ? error.message : String(error);
+        return { saved, defaultError: new Error(`The version was saved, but the default change was not confirmed: ${detail}`, { cause: error }) };
       }
     },
     onSettled: () => {

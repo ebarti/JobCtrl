@@ -66,6 +66,9 @@ different owners even though the UI presents them together. See
 routes used by autosave, resume preview, source administration, and native-store-backed
 credentials.
 
+Existing resume-template updates carry an expected active version and fail
+closed on a stale or missing precondition; see [Jobs & Materials](api/jobs-and-materials.md#artifacts-and-resume-templates).
+
 Target Search can request role suggestions through
 `POST /v1/profile/target-role-suggestions`. The web sends only the last saved
 `profileVersion`; it never sends the current browser form draft. The TypeScript

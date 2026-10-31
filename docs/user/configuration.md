@@ -118,6 +118,11 @@ printing secrets. **Status unknown** (`inspection_failed`) is distinct from
 **not configured**: it means JobCtrl could not inspect the native store. Provider-mode
 replacement is all-or-nothing from the web contract; a failed change preserves
 the previous configuration or reports an explicit sanitized recovery failure.
+If credential inspection fails during an open provider edit, JobCtrl keeps the
+unsaved form and its save or removal result visible. Guided changes stay paused
+until credential inspection succeeds again.
+If you enter a newer CapSolver value while a save or removal is pending, it
+remains in the form as an unsaved edit.
 Credential updates from JobCtrl API processes for the same OS user are
 serialized. If another update or its native helper is still active, retry
 after it finishes. A timed-out update whose helper has not stopped reports an
@@ -246,6 +251,15 @@ from that catalog is explained beside the control and is never added to its
 options. A pinned provider client can expose a different catalog from a newer
 installed client using the same account; check the active JobCtrl runtime before
 concluding the account lacks a model.
+
+Model preference and AI execution-policy controls pause editing while their
+save is pending. After a failed save, the chosen values remain available to
+review and retry.
+
+Provider setup forms let you continue editing during a save. A later key,
+service-account path, or mode choice remains in the form for a separate save;
+an acknowledged key or path is cleared only if it still matches the submitted
+value. A provider-status change does not replace a form with unsaved edits.
 
 A saved preference is scoped to its provider and cannot change which provider
 JobCtrl selects. Newly constructed adapters use this precedence:

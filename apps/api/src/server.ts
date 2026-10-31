@@ -363,6 +363,7 @@ import {
   getResumeTemplateDetail,
   listResumeTemplates,
   ResumeTemplateInputError,
+  ResumeTemplateVersionConflictError,
   resolveCurrentResumeArtifactIdForOpen,
   resolveEffectiveResumeTemplate,
   setDefaultResumeTemplate,
@@ -5309,6 +5310,10 @@ async function withWritableDb<T>(
     if (error instanceof ResumeTemplateInputError) {
       void reply.code(400);
       return { ok: false, error: "invalid_resume_template", message: error.message };
+    }
+    if (error instanceof ResumeTemplateVersionConflictError) {
+      void reply.code(409);
+      return { ok: false, error: "resume_template_version_conflict", message: error.message };
     }
     if (error instanceof SourceLocatorReviewError) {
       void reply.code(error.status);

@@ -378,7 +378,7 @@ test("first open preserves a resume-template draft when another version is saved
     await expect.poll(() => streams).toBeGreaterThan(0);
     const changed = await page.request.post("/v1/resume-templates", {
       headers,
-      data: { templateId, displayName: "Synthetic Saved Elsewhere", theme: createdTemplate.activeVersion.theme, layout: createdTemplate.activeVersion.layout },
+      data: { templateId, expectedVersionId: createdTemplate.activeVersion.versionId, displayName: "Synthetic Saved Elsewhere", theme: createdTemplate.activeVersion.theme, layout: createdTemplate.activeVersion.layout },
     });
     expect(changed.ok(), await changed.text()).toBe(true);
     const refreshed = page.waitForResponse((response) =>
@@ -391,6 +391,7 @@ test("first open preserves a resume-template draft when another version is saved
     await expect(name).toHaveValue("Synthetic Unsaved Template");
     await expect(controls.getByLabel("Font scale", { exact: true })).toHaveValue("1.1");
     await page.screenshot({ path: testInfo.outputPath("first-open-template-draft.png") });
+    await controls.getByRole("button", { name: "Keep draft and review latest version" }).click();
     const saved = page.waitForResponse((response) =>
       new URL(response.url()).pathname === "/v1/resume-templates" && response.request().method() === "POST" && response.ok(),
     );

@@ -236,6 +236,12 @@ they cross the browser boundary.
 | `GET /v1/artifacts/:artifactId/download.docx` | Download an owned, hash-verified retained DOCX export as an attachment. |
 | `/v1/resume-templates` | Create, inspect, and select versioned resume templates. |
 
+Updating an existing template requires the current version ID. A stale update
+returns a conflict without publishing a version; clients reload and deliberately
+reconcile the draft. Creating a new template does not need a version ID. The
+default selection can also bind the active version it expects. See the
+[field-level template contract](complete-contract.md#artifacts-and-tailoring-audit).
+
 The API serves registered artifacts, never an arbitrary filesystem path. The
 job detail projection links each accepted generation to provenance, validation,
 and layout evidence. Artifact summaries include a nullable canonical
