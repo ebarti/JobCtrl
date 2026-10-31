@@ -1,3 +1,4 @@
+import { http, HttpResponse } from "msw";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
@@ -9,6 +10,7 @@ import {
 } from "../../../test/fixtures/projections.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
 import { createTestQueryClient, renderWithProviders } from "../../../test/render.js";
+import { server } from "../../../test/msw/server.js";
 import { useSettingsQuery } from "../hooks/useSettingsQuery.js";
 import { profileKeys } from "../queryKeys.js";
 import {
@@ -301,6 +303,54 @@ describe("<SettingsForm>", () => {
 
     expect(applyConcurrency).toHaveValue(5);
     expect(screen.getByText("Saved; newer changes pending.")).toBeInTheDocument();
+  });
+
+  it("keeps newer typing and the canonical settings when an older save and refresh fail", async () => {
+    let releaseWrite!: () => void;
+    let writes = 0;
+    let reads = 0;
+    server.use(
+      http.patch("*/v1/settings", async () => {
+        writes += 1;
+        await new Promise<void>((resolve) => { releaseWrite = resolve; });
+        return HttpResponse.json({ ok: false }, { status: 500 });
+      }),
+      http.get("*/v1/settings", () => {
+        reads += 1;
+        return HttpResponse.json({ ok: false }, { status: 500 });
+      }),
+    );
+    const queryClient = createTestQueryClient();
+    const key = profileKeys.settings(LOCAL_TENANT);
+    queryClient.setQueryData(key, sampleSettingsResponse);
+    function QueryBackedSettings() {
+      const query = useSettingsQuery();
+      return query.data ? <SettingsForm initial={query.data.settings}
+        effectiveSettings={query.data.effectiveSettings} /> : null;
+    }
+    renderWithProviders(<QueryBackedSettings />, { queryClient });
+    const budget = screen.getByLabelText("Daily LLM budget (USD)");
+    fireEvent.change(budget, { target: { value: "40" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(writes).toBe(1));
+    fireEvent.change(budget, { target: { value: "45" } });
+    const newer = {
+      ...sampleSettingsResponse,
+      settings: { ...sampleSettingsResponse.settings, dailyBudgetUsd: 60, applyConcurrency: 5 },
+      effectiveSettings: {
+        ...sampleSettingsResponse.effectiveSettings,
+        dailyBudgetUsd: { ...sampleSettingsResponse.effectiveSettings.dailyBudgetUsd, value: 60 },
+        applyConcurrency: { ...sampleSettingsResponse.effectiveSettings.applyConcurrency, value: 5 },
+      },
+    };
+    act(() => queryClient.setQueryData(key, newer));
+    act(() => releaseWrite());
+    expect(await screen.findByText("Could not save settings. Review the fields and try again.")).toBeInTheDocument();
+    await waitFor(() => expect(reads).toBeGreaterThan(0));
+    await waitFor(() => expect(queryClient.getQueryState(key)?.status).toBe("error"));
+    expect(queryClient.getQueryData(key)).toEqual(newer);
+    expect(budget).toHaveValue(45);
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
   });
 
   it("keeps the saved worker value editable and reports restart state", async () => {

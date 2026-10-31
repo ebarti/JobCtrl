@@ -365,6 +365,27 @@ job aliases before bulk reset. Measure cold and warm HTTP acknowledgement latenc
 when changing the transport boundary. Existing retry UI and event-invalidation
 tests cover immediate optimistic feedback and rollback on failure.
 
+For contact update and delete ownership, use synthetic contacts and controlled
+API responses. Check an unrelated list still refreshes while another contact's
+write is pending. Exercise an external move with both recently read and
+age-stale caches, including reads before and after a delayed write commits. When
+the order cannot be established and readback fails, preserve the accepted list
+and show the retryable out-of-date notice. Also check detail rollback, newer
+detail edits, confirmed moves and deletes, independent newer publications, and
+successful retry in the Contacts, Contact Detail, Job Detail, and offer-recipient
+surfaces. Resolve two independent updates around both a pending and a failed
+readback; both confirmed changes must remain. Fail an older write and its read
+before an independent successful response arrives; the response must still
+merge without clearing the failed-refresh notice. Hold a first contact-list read
+across update and delete settlement;
+verify joined loaders resolve, one later read occurs without delaying writes,
+and a failed follow-up remains visible and retryable. Replace the query and
+start a newer read in separate controls to verify the follow-up does not act on
+their ownership. Publish newer data while that first GET is in flight, then
+complete it successfully; retain the newer publication and resolve the joined
+loader. A discarded read must preserve an earlier failed-refresh notice until
+an unsuperseded read succeeds.
+
 ## Discovery Transaction Recovery
 
 Run the `discovery-transactions` recipe for preparation or enrichment transaction
