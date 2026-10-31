@@ -138,7 +138,18 @@ The distinction matters for anyone reading the API or the UI:
   `awaitResult`; JSON-RPC starts the registered workflow, waits for its result,
   and the HTTP route answers **200 OK** only after the worker-owned activity
   completes. Manual-capture retries reconstruct that response from the
-  canonical imported queue row after validating capture identity and content.
+  canonical imported queue row after validating capture identity, content and
+  its matching successful snapshot. Manual capture retains the submitted draft
+  before acquisition; discovery, snapshot, enrichment and acknowledgement then
+  commit together under a short writer lock after ownership and cancellation
+  checks. The cited page decision must identify one posting and not a login or
+  challenge; a source-bound model selection supplies the posting fields.
+  Failed acquisition or publication leaves the draft actionable. An unverified
+  historical receipt with an exact original observation is reopened only by an
+  explicit content submission, without attributing an ambiguous old failure.
+  Imports and dismissals bind to the reviewed capture lifetime. A conflicting
+  start never acknowledges the other execution's input; its exact run and any
+  running successor are checked before the retained submission is released.
 - **Sync-mode methods block for their result** and answer **200 OK** with the
   payload inline. `analyze_job`, `generate_outreach_draft`, and `cancel_run`
   are synchronous.

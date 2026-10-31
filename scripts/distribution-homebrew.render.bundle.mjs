@@ -9250,9 +9250,11 @@ function isTemporalBridgeBuildSourcePath(relativePath) {
   return TEMPORAL_BRIDGE_BUILD_SOURCE_PATHS.some((sourcePath) => relativePath === sourcePath || relativePath.startsWith(`${sourcePath}/`));
 }
 function isKnownPythonNonRuntimePath(relativePath) {
+  const [packageName, metadataDirectory, resourceDirectory] = relativePath.split("/");
+  const isTyperDevelopmentInstructions = packageName === "typer" && metadataDirectory?.startsWith(".") && resourceDirectory === "skills";
   return [...PYTHON_RUNTIME_NON_RUNTIME_PATHS].some(
     (nonRuntimePath) => relativePath === nonRuntimePath || relativePath.startsWith(`${nonRuntimePath}/`)
-  ) || /^temporalio\/contrib\/.+\/README\.md$/.test(relativePath);
+  ) || isTyperDevelopmentInstructions || /^temporalio\/contrib\/.+\/README\.md$/.test(relativePath);
 }
 function pythonRuntimeRelativePath(payloadPath) {
   return payloadPath.replace(/^(?:worker|playwright-python)\/site-packages\//, "").replace(/^python\/lib\/python3\.12\//, "");
@@ -9687,7 +9689,7 @@ async function normalizeInstalledPythonMetadata(sitePackagesRoots) {
       const rows = (await readFile3(recordPath, "utf8")).split(/\r?\n/).filter(Boolean);
       const canonicalRows = rows.filter((row) => {
         const installedPath = pythonRecordPath(row);
-        return !installedPath.startsWith("bin/") && !installedPath.endsWith("/direct_url.json") && !installedPath.endsWith("/uv_cache.json");
+        return !installedPath.startsWith("bin/") && !installedPath.endsWith("/direct_url.json") && !installedPath.endsWith("/uv_cache.json") && !isKnownPythonNonRuntimePath(installedPath);
       });
       await writeFile2(recordPath, `${canonicalRows.join("\n")}
 `, { mode: 420 });

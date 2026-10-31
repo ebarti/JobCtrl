@@ -20,11 +20,23 @@
         </div>
         <button id="select-discovery" type="button" hidden>Use this Chrome profile for Discovery</button>
       </section>
-      <section>
+      <section class="action-row">
         <button id="capture" class="primary" type="button">Save job</button>
         <button id="autofill" type="button">Review autofill</button>
         <button id="retry-queue" type="button">Sync queued captures</button>
+        <button id="review-queue" type="button">Review queued captures</button>
         <button id="clear-queue" type="button">Clear queue</button>
+      </section>
+      <section id="queue-review" hidden>
+        <label for="queue-selection">Queued capture</label>
+        <select id="queue-selection"><option value="">Select a capture</option></select>
+        <p id="queue-state"></p>
+        <p id="queue-url"></p>
+        <label for="queue-content">Saved content</label>
+        <textarea id="queue-content" readonly rows="5"></textarea>
+        <p id="queue-note"></p>
+        <p>Discarding removes only the local copy and cannot recall a send in progress.</p>
+        <button id="discard-queued" type="button" disabled>Discard selected capture</button>
       </section>
       <p id="status" role="status"></p>
     </main>

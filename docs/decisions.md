@@ -2715,6 +2715,20 @@ The owning context supplies minimized canonical IDs and texts to `LlmPort.chat_j
 
 An accepted envelope persists its kind, schema and prompt versions, provider/model, input fingerprint and typed result. Identical inputs and versions reuse the stored determination without another call. The lane and BR-050 spend preflight run before a new call. Provider unavailability, spend denial, malformed JSON, schema violations, foreign IDs and invalid quotes/numbers have distinct safe failure codes. A failed refresh preserves the last accepted artifact and records the blocked attempt. There is no lexical fallback; affected offline-demo capabilities report unavailable.
 
+Manual Capture applies the cited page-identity and access verdict before intake,
+and selects the requested posting's fields and description from bound captured
+sources. An unavailable, ambiguous or invalid determination retains the draft;
+structured field order, CSS selectors and prose length do not select meaning.
+Historical receipts lacking a matching snapshot are labelled unverified rather
+than attributing an old source-level failure to a particular capture.
+Manual Capture binds review, import and dismissal to one capture lifetime;
+reopening a dismissed item invalidates stale requests and local edits even when
+the deterministic item ID is reused. An in-progress conflict does not
+acknowledge the losing submission. A workflow's terminal status does not prove
+that a timed-out activity thread has stopped. An explicit, reviewed-lifecycle
+recovery action advances the capture generation atomically before allowing a
+retry, preventing earlier attempts from publishing while retaining the draft.
+
 Saved search controls are already authoritative when the user saves them. Source/query planning executes their literal values and performs no model reinterpretation or second approval. Downstream determinations assess posting meaning against the supplied saved criteria without replacing those choices. Scoring receives the exact saved target-source snapshot and profile version; later profile edits cannot rewrite earlier determinations’ sources. Provider search/filter execution belongs to JobStreaming. Structurally valid fetched listings proceed through canonical ingestion to full-posting analysis and scoring without a separate intake model gate. Source-native listing flags, exact identity, limits, security rules and literal user-authored title exclusions remain mechanical.
 
 Owner correction (2026-10-07): remove the separate metadata-only intake filter, its queue and batch/model settings. JobStreaming executes saved provider searches; supported filters and unsupported-filter warnings belong to its adapters. Company ATS feeds may expose all listed vacancies and currently use JobCtrl’s direct API adapters; their suitability is assessed from full postings downstream. Historical intake captures and envelopes remain under the frozen native schema. Unconsumed source payloads recover through canonical ingestion in bounded source-family batches, with current literal exclusions and limits; the retired verdict, preferences and envelope are never consulted. Each new determination uses one provider. Employer analysis retains its optional ensemble; BR-058 permits one ready provider. Claim verification is a separate call alongside the existing quality judge. Generators record line IDs, evidence/requirement IDs, transform and reason; the verifier affirms source contributions and findings by line ID. Readers join recorded IDs; unanchored lines say “No recorded source”.

@@ -807,6 +807,8 @@ def profile_import(params: dict[str, Any]) -> WorkflowStartSpec:
 
 
 def manual_capture_import(params: dict[str, Any]) -> WorkflowStartSpec:
+    if "expectedCaptureGeneration" not in params:
+        raise invalid_params("manual capture review generation is required")
     try:
         return build_manual_capture_import_workflow_spec(params)
     except ValueError as exc:

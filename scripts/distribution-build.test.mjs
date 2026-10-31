@@ -571,6 +571,44 @@ test("Playwright MCP attribution follows its exact core dependency and rejects c
   await assert.rejects(collectMcpNodeContributors(root, contracts), /payload npm package closure drifted/);
 });
 
+test("Playwright MCP contribution closure matches its dedicated lock and rejects drift", async (context) => {
+  const runtime = path.join(process.cwd(), "packaging", "distribution", "playwright-mcp");
+  const manifest = JSON.parse(await readFile(path.join(runtime, "package.json"), "utf8"));
+  const lock = await readFile(path.join(runtime, "pnpm-lock.yaml"), "utf8");
+  const snapshots = lock.split("\nsnapshots:\n")[1];
+  const mcpSnapshot = snapshots?.match(/^  '@playwright\/mcp@([^']+)':\n((?: {4,}[^\n]*\n)+)/m);
+  assert.ok(mcpSnapshot, "dedicated lock must contain the Playwright MCP snapshot");
+  const mcpVersion = manifest.dependencies["@playwright/mcp"];
+  assert.equal(mcpSnapshot[1], mcpVersion);
+  const coreVersion = mcpSnapshot[2].match(/^      playwright-core: (\S+)$/m)?.[1];
+  assert.match(coreVersion ?? "", /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/, "locked Playwright core must be an exact version");
+  assert.ok(lock.includes(`  playwright-core@${coreVersion}:`), "the locked core must have a package entry");
+
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-mcp-closure-"));
+  context.after(async () => rm(root, { recursive: true, force: true }));
+  const modules = path.join(root, "playwright-mcp", "node_modules");
+  const mcp = path.join(modules, "@playwright", "mcp");
+  const core = path.join(modules, "playwright-core");
+  const extra = path.join(modules, "unexpected-package");
+  await Promise.all([mkdir(mcp, { recursive: true }), mkdir(core, { recursive: true })]);
+  const writePackage = (directory, name, version) => writeFile(path.join(directory, "package.json"), JSON.stringify({ name, version, license: "Apache-2.0", ...(name === "@playwright/mcp" ? { dependencies: { "playwright-core": coreVersion } } : {}) }));
+  await Promise.all([writePackage(mcp, "@playwright/mcp", mcpVersion), writePackage(core, "playwright-core", coreVersion)]);
+  const contracts = { componentPaths: new Map([["playwright-mcp", "playwright-mcp"]]), versions: { "playwright-mcp": mcpVersion } };
+  const collect = () => collectMcpNodeContributors(root, contracts);
+  const contributors = await collect();
+  assert.deepEqual(contributors.map((entry) => entry.key), [`@playwright/mcp@${mcpVersion}`, `playwright-core@${coreVersion}`]);
+
+  await writePackage(core, "playwright-core", "0.0.0");
+  await assert.rejects(collect(), /payload npm package closure drifted/);
+  await writePackage(core, "playwright-core", coreVersion);
+  await writePackage(mcp, "@playwright/mcp", "0.0.0");
+  await assert.rejects(collect(), /Playwright MCP package identity does not match inventory/);
+  await writePackage(mcp, "@playwright/mcp", mcpVersion);
+  await mkdir(extra);
+  await writePackage(extra, "unexpected-package", "1.0.0");
+  await assert.rejects(collect(), /payload npm package closure drifted/);
+});
+
 test("child termination retains one exit promise across timeout and stale exitCode observation", async () => {
   class RacingChild extends EventEmitter {
     exitCode = null;
@@ -851,6 +889,9 @@ test("installed Python pruning removes proven build sources, docs, examples, and
     ["playwright/driver/README.md", "docs\n"],
     ["playwright/driver/package/lib/tools/skills/playwright-cli/SKILL.md", "developer instructions\n"],
     ["playwright/driver/package/lib/tools/skills/playwright-cli/references/tracing.md", "developer reference\n"],
+    ["playwright/driver/package/lib/tools/skills/playwright-trace/SKILL.md", "development docs\n"],
+    ["playwright/driver/package/lib/coreBundle.js", "runtime\n"],
+    ["typer/.synthetic-metadata/skills/fixture.dat", "development docs\n"],
     ["playwright/driver/package/lib/tools/cli-client/program.js", "runtime\n"],
     [["typer", ".agents", "skills", "typer", "SKILL.md"].join("/"), "developer instructions\n"],
     ["typer/main.py", "runtime\n"],
@@ -865,6 +906,7 @@ test("installed Python pruning removes proven build sources, docs, examples, and
     await writeFile(destination, contents, { mode: 0o644 });
   }
 
+  await assert.rejects(scanForbiddenPayload(root), /known non-runtime Python source\/docs\/fixture closure/);
   const result = await pruneInstalledPythonTree(root);
 
   assert.equal(result.temporalBridge.status, "temporal-bridge-build-sources-pruned");
@@ -876,10 +918,44 @@ test("installed Python pruning removes proven build sources, docs, examples, and
   ]);
   assert.deepEqual((await buildFileInventory(root)).map((file) => file.path), [
     "httpx-1.0.dist-info/licenses/LICENSE.md",
+    "playwright/driver/package/lib/coreBundle.js",
     "playwright/driver/package/lib/tools/cli-client/program.js",
     "temporalio/bridge/temporal_sdk_bridge.abi3.so",
     "typer/main.py",
   ]);
+  await assert.doesNotReject(scanForbiddenPayload(root));
+});
+
+test("Python pruning removes packaged development instructions while preserving other runtime files", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-python-pruning-"));
+  context.after(async () => rm(root, { recursive: true, force: true }));
+  const paths = [
+    ["typer", ".synthetic-metadata", "skills", "fixture.dat"],
+    ["typer", ".synthetic-metadata", "runtime.dat"],
+    ["other_package", ".synthetic-metadata", "skills", "runtime.dat"],
+  ];
+  for (const segments of paths) {
+    const file = path.join(root, ...segments);
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, "synthetic", { mode: 0o644 });
+  }
+  const distInfo = path.join(root, "typer-1.0.dist-info");
+  await mkdir(distInfo);
+  const records = paths.map((segments) => `${segments.join("/")},sha256=synthetic,9`);
+  const retainedMetadata = "typer-1.0.dist-info/RECORD,,";
+  const recordFile = path.join(distInfo, "RECORD");
+  await writeFile(recordFile, [...records, retainedMetadata, ""].join("\n"));
+  await assert.rejects(scanForbiddenPayload(root), /known non-runtime Python source\/docs\/fixture closure/);
+  await pruneInstalledPythonTree(root);
+  await normalizeInstalledPythonMetadata([root]);
+  await assert.rejects(readFile(path.join(root, ...paths[0])), { code: "ENOENT" });
+  assert.equal(await readFile(path.join(root, ...paths[1]), "utf8"), "synthetic");
+  assert.equal(await readFile(path.join(root, ...paths[2]), "utf8"), "synthetic");
+  const expectedRecord = [records[1], records[2], retainedMetadata, ""].join("\n");
+  assert.equal(await readFile(recordFile, "utf8"), expectedRecord);
+  await normalizeInstalledPythonMetadata([root]);
+  assert.equal(await readFile(recordFile, "utf8"), expectedRecord);
+  await assert.doesNotReject(scanForbiddenPayload(root));
 });
 
 test("forbidden scan rejects shipped Python developer-skill assets", async (context) => {

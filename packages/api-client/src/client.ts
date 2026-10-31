@@ -104,6 +104,8 @@ import type {
   ManualCaptureDismissRequest,
   ManualCaptureDismissResponse,
   ManualCaptureImportRequest,
+  ManualCaptureSupersedeResponse,
+  ManualCapturePrepareResponse,
   ManualCaptureImportResponse,
   ManualCaptureListResponse,
   ManualApplicationOutcomeRequest,
@@ -493,6 +495,14 @@ export class JobCtrlApiClient {
 
   manualCaptureQueue(): Promise<ManualCaptureListResponse> {
     return this.get("/v1/discovery/manual-capture");
+  }
+
+  supersedeManualCapture(itemId: string, expectedLifecycleId: string): Promise<ManualCaptureSupersedeResponse> {
+    return this.post(`/v1/discovery/manual-capture/${encodeURIComponent(itemId)}/supersede`, { expectedLifecycleId });
+  }
+
+  prepareManualCapture(itemId: string, body: ManualCaptureImportRequest): Promise<ManualCapturePrepareResponse> {
+    return this.post(`/v1/discovery/manual-capture/${encodeURIComponent(itemId)}/prepare`, body);
   }
 
   importManualCapture(
