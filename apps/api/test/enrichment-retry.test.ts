@@ -475,6 +475,12 @@ describe("canonical enrichment retry through HTTP, Python RPC and CLI", () => {
     const f = fixture();
     seedMaterialRetry(f, "tailor", "failed");
     runSyntheticPostingProducer(f, PEER, "seed");
+    const snapshotSql = "SELECT snapshot_set_json,latest_active_state FROM posting_snapshot_sets WHERE tenant_id='local' AND job_id=?";
+    const receiptSql = "SELECT event_id FROM job_events WHERE tenant_id='local' AND job_id=? AND event_type='PostingSnapshotStatePersisted' ORDER BY event_id";
+    const peerBefore = f.db.prepare(snapshotSql).get(PEER) as Record<string, unknown>;
+    const receiptsBefore = f.db.prepare(receiptSql).all(PEER);
+    expect(peerBefore).toMatchObject({ latest_active_state: "active" });
+    expect(receiptsBefore).toHaveLength(1);
     const app = buildApp({ dbPath: f.dbPath, appDir: f.directory, configPath: path.join(f.directory, "config.json"),
       actionDispatcher: f.actionDispatcher, requireHealthyWorkerForActions: false,
       providerDispatcher: { close: async () => {}, call: async (method, params) => {
@@ -486,6 +492,12 @@ describe("canonical enrichment retry through HTTP, Python RPC and CLI", () => {
       const response = await app.inject({ method: "POST", url: "/v1/jobs/bulk-retry-failed", payload: { jobKeys: [JOB] } });
       expect(response.statusCode, response.body).toBe(200);
       expect(response.json()).toMatchObject({ ok: true, count: 1, stageCounts: { tailor: 1 } });
+      const peerAfter = f.db.prepare(snapshotSql).get(PEER) as Record<string, unknown>;
+      expect(peerAfter.latest_active_state).toBe("active");
+      expect(peerAfter.snapshot_set_json).not.toBe(peerBefore.snapshot_set_json);
+      const receiptsAfter = f.db.prepare(receiptSql).all(PEER);
+      expect(receiptsAfter).toHaveLength(receiptsBefore.length + 2);
+      expect(receiptsAfter.slice(0, receiptsBefore.length)).toEqual(receiptsBefore);
     } finally { await app.close(); }
   }, 30_000);
 
