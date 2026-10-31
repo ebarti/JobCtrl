@@ -13,15 +13,16 @@ const pr = load("pr-ci");
 const events = workflow => workflow.on ?? workflow.true;
 const expression = value => "$" + "{{ " + value + " }}";
 const command = (job, text) => job.steps.find(step => step.run === text);
-const leaves = { api:"api", web:"web", storybook:"storybook", e2e:"e2e", extension:"extension", python311:"python", python312:"python", python313:"python", docs:"docs", launcher0:"launcher", launcher1:"launcher", "credentials-macos":"credentials", "credentials-windows":"credentials", "credentials-ubuntu":"credentials", gmail:"gmail", distribution:"distribution", demo:"demo", edge:"edge" };
-const required = ["Release check","Script unit tests","Build (dead-link gate)","API checks and tests","Web unit, types, and build","Storybook build and browser tests","Web end-to-end","Browser extension","Python 3.11","Python 3.12","Python 3.13"];
+const leaves = { api:"api", web:"web", storybook:"storybook", e2e:"e2e", extension:"extension", python:"python", docs:"docs", launcher0:"launcher", launcher1:"launcher", "credentials-macos":"credentials", "credentials-windows":"credentials", "credentials-ubuntu":"credentials", gmail:"gmail", distribution:"distribution", demo:"demo", edge:"edge" };
+const required = ["Release check","Script unit tests","Build (dead-link gate)","API checks and tests","Web unit, types, and build","Storybook build and browser tests","Web end-to-end","Browser extension","Python / Python 3.12"];
 
-test("native admission retains every required name without a planner or final-gate runner", () => {
+test("native admission binds the required contexts without a planner or final-gate runner", () => {
   assert.deepEqual(events(pr), { pull_request:{ types:["opened","synchronize","reopened","edited"] } });
   assert.deepEqual(Object.keys(pr.jobs).sort(), ["preflight","scripts",...Object.keys(leaves),"preview"].sort());
   assert.deepEqual(pr.permissions, { contents:"read" });
   assert.equal(pr.concurrency["cancel-in-progress"], true);
-  const names = Object.values(pr.jobs).map(job => job.name);
+  const checkNames = ([id, job]) => id === "python" ? [job.name + " / " + load("python").jobs.python.name] : [job.name];
+  const names = Object.entries(pr.jobs).flatMap(checkNames);
   for (const name of required) assert.equal(names.filter(item => item === name).length, 1, name);
   assert.equal(pr.jobs.preflight.if, undefined);
   assert.equal(pr.jobs.preflight.needs, undefined);
@@ -34,12 +35,12 @@ test("native admission retains every required name without a planner or final-ga
     assert.equal(job.permissions, undefined);
     assert.equal(job.environment, undefined);
     assert.equal(job["continue-on-error"] ?? false, false);
-    for (const step of job.steps) assert.equal(step["continue-on-error"] ?? false, false, step.name);
+    for (const step of job.steps ?? []) assert.equal(step["continue-on-error"] ?? false, false, step.name);
   }
   assert.deepEqual(Object.keys(pr.jobs.preflight.outputs).sort(), [...SURFACES,"head_privacy","preview"].sort());
   const expanded = ["Release check","Script unit tests",...Object.values(SUITE_CONTEXTS).flat()].sort();
   assert.equal(new Set(expanded).size, expanded.length);
-  assert.deepEqual(expanded, Object.entries(pr.jobs).filter(([id]) => id !== "preview").map(([,job]) => job.name).sort());
+  assert.deepEqual(expanded, Object.entries(pr.jobs).filter(([id]) => id !== "preview").flatMap(checkNames).sort());
 });
 
 test("privacy and scope are base-only; bootstrap has no exclusion authority", () => {
@@ -142,19 +143,28 @@ test("pristine head privacy precedes tooling; boundary diagnostics remain indepe
 
 });
 
-test("three literal Python results share the complete locked version-specific recipe", () => {
-  const legacy=load("python").jobs.python;
-  assert.deepEqual(legacy.strategy,{"fail-fast":false,matrix:{"python-version":["3.11","3.12","3.13"]}});
-  for(const version of ["3.11","3.12","3.13"]){
-    const job=pr.jobs["python"+version.replace(".","")];
-    assert.equal(job.name,"Python "+version);
-    assert.equal(job.env.PYTHON_VERSION,version);
-    assert.equal(job.strategy,undefined);
-    assert.deepEqual(job.steps,pr.jobs.python311.steps);
-    const normalize=steps=>JSON.stringify(steps).replaceAll(expression("matrix.python-version"),version).replaceAll(expression("env.PYTHON_VERSION"),version).replaceAll("$PYTHON_VERSION",version);
-    assert.equal(normalize(job.steps),normalize(legacy.steps));
-    assert.match(job.steps.find(step=>step.name==="Test").run,/pytest workers\/automation\/tests -q -n 2 --dist=loadfile --max-worker-restart=0 --durations=25 --junitxml=/);
-  }
+test("one primary Python result calls the canonical complete locked recipe", () => {
+  const owning = load("python");
+  const job = owning.jobs.python;
+  assert.equal(pr.jobs.python.uses, "./.github/workflows/python.yml");
+  assert.equal(pr.jobs.python.steps, undefined);
+  assert.equal(pr.jobs.python["runs-on"], undefined);
+  assert.ok(Object.hasOwn(events(owning), "workflow_call"));
+  assert.deepEqual(owning.permissions, { contents: "read" });
+  assert.equal(job.strategy, undefined);
+  assert.equal(job.name, "Python 3.12");
+  assert.equal(job.env.PYTHON_VERSION, "3.12");
+  assert.equal(job.env.UV_PYTHON, job.env.PYTHON_VERSION);
+  assert.equal(job.env.PYTHONFAULTHANDLER, "1");
+  assert.equal(job.steps.find(step => step.uses?.startsWith("actions/setup-python@")).with["python-version"], expression("env.PYTHON_VERSION"));
+  assert.ok(command(job, "uv --project workers/automation sync --locked --all-extras"));
+  assert.ok(command(job, "uv --project workers/automation run --locked --all-extras ruff check workers/automation/src workers/automation/tests"));
+  assert.ok(command(job, "uv --project workers/automation run --locked --all-extras python scripts/generate-semantic-result-schemas.py --check"));
+  assert.ok(command(job, 'uv --project workers/automation run --locked --all-extras pytest workers/automation/tests -q -n 2 --dist=loadfile --max-worker-restart=0 --durations=25 --junitxml="$RUNNER_TEMP/python-$PYTHON_VERSION.xml"'));
+  assert.ok(command(job, "uv --project workers/automation run --locked --all-extras python -m build --no-isolation workers/automation"));
+  assert.equal(command(job, "bash scripts/install-temporal-test-server.sh").name, "Install verified Temporal time-skipping test server");
+  assert.equal(job.steps.find(step => step.name === "Upload synthetic Python JUnit report").if, "always()");
+  for (const step of job.steps) assert.equal(step["continue-on-error"] ?? false, false, step.name);
 });
 
 test("main/manual bodies stay intact without duplicate PR execution or expanded deployment access", () => {

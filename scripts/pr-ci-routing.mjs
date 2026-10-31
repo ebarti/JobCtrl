@@ -10,7 +10,7 @@ export const SUITE_CONTEXTS = Object.freeze({
   storybook: ["Storybook build and browser tests"],
   e2e: ["Web end-to-end"],
   extension: ["Browser extension"],
-  python: ["Python 3.11", "Python 3.12", "Python 3.13"],
+  python: ["Python / Python 3.12"],
   docs: ["Build (dead-link gate)"],
   launcher: ["Darwin launcher shard 0", "Darwin launcher shard 1"],
   credentials: ["Native credentials (macos-latest)", "Native credentials (windows-latest)", "Native credentials (ubuntu-latest)"],

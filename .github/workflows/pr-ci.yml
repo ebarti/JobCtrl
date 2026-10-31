@@ -140,7 +140,7 @@ jobs:
                 eventNumber: e.number, eventPullRequestNumber: p.number, ref: process.env.GITHUB_REF,
               }));
           const suites = ["api","web","storybook","e2e","extension","python","docs","launcher","credentials","gmail","distribution","demo","edge"];
-          const names = ["Release check","Script unit tests","API checks and tests","Web unit, types, and build","Storybook build and browser tests","Web end-to-end","Browser extension","Python 3.11","Python 3.12","Python 3.13","Build (dead-link gate)","Darwin launcher shard 0","Darwin launcher shard 1","Native credentials (macos-latest)","Native credentials (windows-latest)","Native credentials (ubuntu-latest)","Synthetic Gmail token ACL (Windows)","Release distribution contracts","Build and verify demo","Demo edge checks"];
+          const names = ["Release check","Script unit tests","API checks and tests","Web unit, types, and build","Storybook build and browser tests","Web end-to-end","Browser extension","Python / Python 3.12","Build (dead-link gate)","Darwin launcher shard 0","Darwin launcher shard 1","Native credentials (macos-latest)","Native credentials (windows-latest)","Native credentials (ubuntu-latest)","Synthetic Gmail token ACL (Windows)","Release distribution contracts","Build and verify demo","Demo edge checks"];
           const selected = Object.fromEntries(suites.map(id => [id, true]));
           const scope = {
             schemaVersion: 1, repository: { id: e.repository.id, fullName: process.env.GITHUB_REPOSITORY },
@@ -426,131 +426,11 @@ jobs:
           corepack pnpm extension:test
           xvfb-run --auto-servernum corepack pnpm extension:e2e
 
-  python311:
+  python:
     needs: preflight
     if: ${{ needs.preflight.result == 'success' && needs.preflight.outputs.python != 'false' }}
-    name: Python 3.11
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      PYTHON_VERSION: "3.11"
-      PYTHONFAULTHANDLER: "1"
-
-    steps: &python-ci-steps
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Set up Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-      - name: Set up pinned uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version: 0.11.7
-          enable-cache: true
-          cache-dependency-glob: workers/automation/uv.lock
-          cache-suffix: py${{ env.PYTHON_VERSION }}
-      - name: Sync the locked dependency graph
-        run: uv --project workers/automation sync --locked --all-extras
-      - name: Lint
-        run: uv --project workers/automation run --locked --all-extras ruff check workers/automation/src workers/automation/tests
-      - name: Check generated semantic result contracts
-        run: uv --project workers/automation run --locked --all-extras python scripts/generate-semantic-result-schemas.py --check
-      - name: Enable Linux user namespaces for Bubblewrap
-        if: ${{ runner.os == 'Linux' && runner.environment == 'github-hosted' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          # Bubblewrap needs unprivileged user namespaces on GitHub-hosted
-          # Linux runners for the sandboxed Codex SDK regression test.
-          current_userns="$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || true)"
-          if [[ -n "$current_userns" && "$current_userns" != "1" ]]; then
-            sudo sysctl -w kernel.unprivileged_userns_clone=1
-          fi
-          current_apparmor="$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)"
-          if [[ -n "$current_apparmor" && "$current_apparmor" != "0" ]]; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
-      - name: Use memory-backed temp storage when available
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          # Hosted-runner disk latency once stretched the SQLite migration
-          # tests from ~50s to ~620s in one lane; tmpfs removes that
-          # amplification. The macOS launcher workflow still exercises the
-          # migration boundary on real disk.
-          if [[ -d /dev/shm && -w /dev/shm ]]; then
-            tmpdir="/dev/shm/jobctrl-${GITHUB_RUN_ID}-py${{ env.PYTHON_VERSION }}"
-            mkdir -p "$tmpdir"
-            echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
-          fi
-      - name: Install verified Temporal CLI for integration tests
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          # Pin the Linux archive for the same CLI version used by the
-          # packaged runtime. Avoid SDK downloads during individual tests.
-          if [[ "$RUNNER_OS" != "Linux" || "$RUNNER_ARCH" != "X64" ]]; then
-            echo "No verified Temporal CLI for $RUNNER_OS/$RUNNER_ARCH" >&2
-            exit 1
-          fi
-          archive="$RUNNER_TEMP/jobctrl-temporal-linux-amd64.tar.gz"
-          executable_dir="$RUNNER_TEMP/jobctrl-temporal-linux-amd64"
-          curl --fail --location --silent --show-error --retry 4 --retry-all-errors \
-            --retry-delay 2 --connect-timeout 15 --max-time 120 \
-            --output "$archive" \
-            https://github.com/temporalio/cli/releases/download/v1.7.3/temporal_cli_1.7.3_linux_amd64.tar.gz
-          printf '%s  %s\n' '32a4320080342bccab37633b8777f548aa0b413c3d37fdbc7cb9d861c5fa11d0' "$archive" | sha256sum --check
-          mkdir -p "$executable_dir"
-          tar -xOf "$archive" temporal > "$executable_dir/temporal"
-          chmod 700 "$executable_dir/temporal"
-          "$executable_dir/temporal" --version
-          echo "JOBCTRL_TEMPORAL_CLI_PATH=$executable_dir/temporal" >> "$GITHUB_ENV"
-      - name: Install verified Temporal time-skipping test server
-        shell: bash
-        run: bash scripts/install-temporal-test-server.sh
-      - name: Install Chromium for guarded availability regression
-        run: uv --project workers/automation run --locked --all-extras playwright install --with-deps chromium
-      - name: Test
-        run: uv --project workers/automation run --locked --all-extras pytest workers/automation/tests -q -n 2 --dist=loadfile --max-worker-restart=0 --durations=25 --junitxml="$RUNNER_TEMP/python-$PYTHON_VERSION.xml"
-      - name: Build package
-        run: uv --project workers/automation run --locked --all-extras python -m build --no-isolation workers/automation
-
-      - name: Upload synthetic Python JUnit report
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: python-${{ env.PYTHON_VERSION }}-junit-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/python-${{ env.PYTHON_VERSION }}.xml
-          retention-days: 7
-          if-no-files-found: warn
-
-  python312:
-    needs: preflight
-    if: ${{ needs.preflight.result == 'success' && needs.preflight.outputs.python != 'false' }}
-    name: Python 3.12
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      PYTHON_VERSION: "3.12"
-      PYTHONFAULTHANDLER: "1"
-    steps: *python-ci-steps
-
-  python313:
-    needs: preflight
-    if: ${{ needs.preflight.result == 'success' && needs.preflight.outputs.python != 'false' }}
-    name: Python 3.13
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      PYTHON_VERSION: "3.13"
-      PYTHONFAULTHANDLER: "1"
-    steps: *python-ci-steps
+    name: Python
+    uses: ./.github/workflows/python.yml
 
   docs:
     needs: preflight
