@@ -821,6 +821,8 @@ async def test_registered_rpc_to_real_submission_settlement_and_restart(tmp_path
     import threading
     from jobctrl import config, database
     from jobctrl.apply import launcher
+    from jobctrl.domain.apply.process_manager import _build_email_application_candidate, _candidate_payload
+    from jobctrl.domain.apply.use_cases import _email_application_context
     from jobctrl.domain.identifiers import JobId
     from jobctrl.domain.rpc.messages import JsonRpcRequest
     from jobctrl.infrastructure import apply as adapters
@@ -870,6 +872,35 @@ async def test_registered_rpc_to_real_submission_settlement_and_restart(tmp_path
         files.append(material)
         conn.execute('UPDATE job_materials_artifacts SET path=? WHERE job_id=? AND artifact_type=?', (str(material), LOCAL_JOB_ID, kind))
     conn.commit()
+    # A live email claim needs the complete reviewed preview, bound only after
+    # the synthetic posting, accepted material paths and file bytes are final.
+    columns, joins = launcher._apply_candidate_select_parts()
+    row = dict(conn.execute(
+        f"SELECT {columns} FROM jobs {joins} WHERE jobs.tenant_id=? AND jobs.job_id=?",
+        ('local', LOCAL_JOB_ID),
+    ).fetchone())
+    approval_inputs = dict(
+        tenant_id='local', job_id=LOCAL_JOB_ID, materials_generation=row['materials_generation'],
+        profile_version=1, application_url=row['application_url'] or row['url'],
+    )
+    assert launcher._approval_refusal_reason(conn, **approval_inputs) == 'approval_stale_email_candidate'
+    candidate = _build_email_application_candidate(
+        'apply@example.com', _email_application_context(row, snapshot),
+    )
+    candidate_payload = _candidate_payload(candidate, run_id=f'dry-run-{LOCAL_JOB_ID}', duration_ms=0)
+    record_job_event(conn, JobId(LOCAL_JOB_ID), 'apply', 'EmailApplicationCandidateRecorded', payload=candidate_payload)
+    source = launcher._email_source_binding(conn, 'local', LOCAL_JOB_ID, row)
+    record_job_event(conn, JobId(LOCAL_JOB_ID), 'apply', 'ApplyReviewDecisionRecorded', payload={
+        'decisionId': f'approval-{LOCAL_JOB_ID}', 'emailApprovalBinding': {
+            'version': 1,
+            'candidateSha256': launcher._email_candidate_digest(candidate_payload),
+            'materialsSha256': launcher._email_materials_digest(source),
+            'postingUrlSha256': launcher._email_binding_digest([source['posting_url']]),
+            'postingInputsSha256': launcher._email_posting_inputs_digest(source),
+        },
+    })
+    conn.commit()
+    assert launcher._approval_refusal_reason(conn, **approval_inputs) is None
     def fingerprint():
         return {'rows': hashlib.sha256(json.dumps([tuple(r) for r in conn.execute('SELECT * FROM job_materials_artifacts')]).encode()).hexdigest(),
                 'files': [hashlib.sha256(f.read_bytes()).hexdigest() for f in files]}
