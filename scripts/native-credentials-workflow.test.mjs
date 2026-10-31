@@ -1,21 +1,27 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import test from "node:test";
+import { selectSurfaces } from "./pr-ci-routing.mjs";
 import { fileURLToPath } from "node:url";
 
 const workflowPath = fileURLToPath(new URL("../.github/workflows/native-credentials.yml", import.meta.url));
-const yamlReader = "require 'yaml'; require 'json'; puts JSON.generate(YAML.safe_load(File.read(ARGV[0]), permitted_classes: [], permitted_symbols: [], aliases: false))";
+const yamlReader = "require 'yaml'; require 'json'; puts JSON.generate(YAML.safe_load(File.read(ARGV[0]), permitted_classes: [], permitted_symbols: [], aliases: true))";
 
 test("native credential CI builds only the required native dependency and exercises fake batch ownership", () => {
   const workflow = JSON.parse(execFileSync("ruby", ["-e", yamlReader, workflowPath], { encoding: "utf8" }));
-  // Ruby's YAML parser treats the YAML 1.1 key `on` as boolean true.
-  const paths = (workflow.on ?? workflow.true).pull_request.paths;
+  const prPath = fileURLToPath(new URL("../.github/workflows/pr-ci.yml", import.meta.url));
+  const pr = JSON.parse(execFileSync("ruby", ["-e", yamlReader, prPath], { encoding: "utf8" }));
   for (const source of ["credential-mutation-lock.ts", "credential-process-identity.ts"]) {
-    assert.ok(paths.includes(`apps/api/src/${source}`), `${source} must trigger native credential CI`);
+    assert.equal(selectSurfaces([{ status: "M", path: "apps/api/src/" + source }]).selected.credentials, true, source + " must select native host proof");
   }
-
-  const job = workflow.jobs.native;
-  assert.deepEqual(job.strategy.matrix.os, ["macos-latest", "windows-latest", "ubuntu-latest"]);
+  assert.deepEqual(pr.jobs["credentials-macos"].steps, workflow.jobs.native.steps, "PR and manual host proofs must match");
+  for (const host of ["macos", "windows", "ubuntu"]) {
+    assert.deepEqual(pr.jobs["credentials-" + host].steps, workflow.jobs.native.steps);
+    assert.equal(pr.jobs["credentials-" + host]["runs-on"], host + "-latest");
+  }
+  const job = pr.jobs["credentials-macos"];
+  assert.deepEqual(workflow.jobs.native.strategy.matrix.os, ["macos-latest", "windows-latest", "ubuntu-latest"]);
+  assert.equal(job.strategy, undefined);
   const steps = job.steps;
   const commands = steps.flatMap((step) => typeof step.run === "string" ? step.run.split("\n").map((line) => line.trim()) : []);
   const installs = commands.filter((line) => /^corepack pnpm\b.*\binstall\b/.test(line));

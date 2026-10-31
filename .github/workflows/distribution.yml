@@ -17,18 +17,6 @@ on:
       - "packaging/**"
       - "scripts/distribution-*"
       - ".github/workflows/distribution.yml"
-  pull_request:
-    paths:
-      - "package.json"
-      - "apps/*/package.json"
-      - "packages/*/package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "workers/automation/pyproject.toml"
-      - "workers/automation/uv.lock"
-      - "packaging/**"
-      - "scripts/distribution-*"
-      - ".github/workflows/distribution.yml"
   workflow_dispatch:
 
 permissions:

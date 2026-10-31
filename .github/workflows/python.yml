@@ -16,8 +16,6 @@ on:
       - "LICENSE"
       - "NOTICE"
       - ".github/workflows/python.yml"
-  # Required branch checks must exist for every PR, including docs-only changes.
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -120,6 +118,15 @@ jobs:
       - name: Install Chromium for guarded availability regression
         run: uv --project workers/automation run --locked --all-extras playwright install --with-deps chromium
       - name: Test
-        run: uv --project workers/automation run --locked --all-extras pytest workers/automation/tests -q -n 2 --dist=loadfile --max-worker-restart=0 --durations=25
+        run: uv --project workers/automation run --locked --all-extras pytest workers/automation/tests -q -n 2 --dist=loadfile --max-worker-restart=0 --durations=25 --junitxml="$RUNNER_TEMP/python-${{ matrix.python-version }}.xml"
       - name: Build package
         run: uv --project workers/automation run --locked --all-extras python -m build --no-isolation workers/automation
+
+      - name: Upload synthetic Python JUnit report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: python-${{ matrix.python-version }}-junit-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/python-${{ matrix.python-version }}.xml
+          retention-days: 7
+          if-no-files-found: warn
