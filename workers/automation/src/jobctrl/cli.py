@@ -2131,6 +2131,9 @@ def retry(
         raise typer.Exit(code=1)
 
     console.print(f"[green]Reset {stage} for retry:[/green] {job_url}")
+    if job_url.retailor_required:
+        console.print("Approved materials remain available. Use explicit re-tailor to create a replacement.")
+        return
     if run_after:
         if stage == "apply":
             identity = SqliteJobIdentityResolver(get_connection()).resolve_current_by_posting_url(

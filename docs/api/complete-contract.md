@@ -522,7 +522,15 @@ when refused. Existing direct permanent-delete requests without `selectionId`
 and the explicitly authorized job-data purge retain their existing behavior.
 `POST /v1/jobs/bulk-retry-failed` accepts the same selected-job or
 all-matching bulk mutation body and resets each active failed job's failed stage
-to `pending`; non-failed selected jobs are ignored. A persisted legacy
+to `pending`; non-failed selected jobs are ignored. Response `jobKeys` and
+`retailorRequiredJobKeys` use canonical job IDs, even when a request selected
+jobs by URL. Earlier API versions returned posting URLs in these fields;
+clients that use the keys to identify jobs should use the IDs to read job
+details. A selected stage, job visibility, or posting availability that changes
+after the API captures its identity aborts the whole cohort before any reset or
+dispatch. Hidden or deleted jobs and closed, expired, removed or location-incompatible
+postings are ineligible. The response is `409 retry_selection_changed` with a message to
+refresh the jobs list and review the selection before retrying. A persisted legacy
 `exhausted` row is exposed as `state: "failed"` with
 `failureReason: "attempt_budget_exhausted"`, remains retryable, and has its
 attempt count reset atomically by this action.
@@ -2045,15 +2053,24 @@ Current-version preparation maintenance actions are separate endpoints:
   `503 { ok: false, error: "worker_runtime_unavailable", worker }`; the prior
   stage row, attempt/error metadata, and event history remain unchanged and no
   dispatcher call occurs. With `runAfter: false`, the route is an intentional
-  local-only reset and does not require a Temporal activity worker. Enrichment
-  resets require the local Python RPC runtime and return `200` only after the
-  reset commits. They preserve accepted enrichment content and attempt history,
+  local-only reset and does not require a Temporal activity worker. All stage
+  resets bind the selected stage and job lifecycle before the writer runs; if
+  either changes, the route returns `409 retry_selection_changed` before any
+  reset or dispatch. The bound identity is the state observed by the API for
+  this request; the command does not identify a previously displayed attempt.
+  An unchanged missing stage can still be reset deliberately.
+  Stage resets require the local Python RPC runtime and return `200` only after the
+  reset commits. They preserve accepted enrichment and materials, provenance, and attempt history,
   clear terminal stage fields and execution ownership, and retain the stage
   attempt count unless `resetAttempts` is true or the stage was exhausted.
   An RPC or persistence failure returns an error rather than a successful reset;
   a rejected persistence transaction leaves the previous state and events intact.
-  Mixed bulk cohorts containing Enrich commit through the same service; if a
-  selected row is no longer failed/exhausted, the complete cohort is rejected.
+  All bulk cohorts commit through the same service; if a selected row is no
+  longer failed/exhausted or is no longer eligible for retry, the complete
+  cohort is rejected.
+  If an approved resume or cover means a replacement requires explicit re-tailor,
+  the reset returns `200` with that guidance in `message` and does not dispatch
+  it, even when `runAfter` was requested.
   For an already enriched LinkedIn job with no application URL, send
   `{ "stage": "enrich", "runAfter": true, "refreshApplyUrl": true }` to
   inspect only that posting through the live extension. This bounded action
@@ -2068,11 +2085,15 @@ Current-version preparation maintenance actions are separate endpoints:
   controls cannot supply a target.
 - `POST /v1/jobs/bulk-retry-failed` accepts selected jobs or all matching jobs.
   With the default `runAfter: false` it only resets each retryable failed stage
-  to `pending`. Attempt-budget failures are included even when their legacy
+  to `pending`. Optional `resetAttempts: true` also clears non-exhausted attempt
+  counts. Attempt-budget failures are included even when their legacy
   stored marker is non-retryable; the same transaction resets the attempt count
   to zero. With `runAfter: true`, the API groups reset preparation stages
   (`enrich`, `score`, `tailor`, `cover`) and dispatches bounded batch
   `run_stage` workflows with the selected job URLs and requested worker count.
+  Targets requiring an explicit re-tailor are excluded from dispatch, listed in
+  `retailorRequiredJobKeys`, and described in `message`; their accepted materials
+  remain available.
   The route records pipeline workflow metadata plus per-job `StageQueued`
   events with `source: "bulk_retry_failed"` so later debugging can tell which
   action picked up the reset rows. Enrich cohorts can reset and dispatch while

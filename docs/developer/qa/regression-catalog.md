@@ -1018,6 +1018,26 @@ candidate values enter events or determination receipts. Exercise the actual
 activity with Temporal heartbeats, dispatch and replay, including old-format
 activity output and both preflight histories, then inspect the API and UI.
 
+For stage reset parity, run locked
+`pytest tests/test_stage_retry_consistency.py tests/test_enrichment_retry.py tests/test_exact_v7_state_reset.py tests/test_materials_queue_selectors.py`
+and the API enrichment-retry, write-model-state and write-model-cancel suites.
+Use owned synthetic SQLite, files, and the actual local RPC and CLI. Compare
+default and explicit attempt resets across Tailor and Cover aliases; verify
+exhaustion, metadata/version fences, accepted file and provenance preservation,
+newer incomplete and approved generations, and full-cohort rollback when a
+selected member changes state or retryability. A plain
+retry of already approved materials must report the explicit re-tailor action
+and not dispatch a replacement. Preserve the prior Enrich and mixed-cohort checks.
+Include `test_retry_material_predecessor.py` in both completion orders and the
+direct, activity and batch material-attempt suites. Combine material cleanup
+with a refused Apply cohort member and verify complete rollback. Through the
+actual reset RPC, retain Apply intent, unsettled-owner and policy refusals and
+their HTTP 409 classification; safe reset must preserve the precise Skip release
+frontier, reject earlier dispatches and admit a newly reviewed dispatch. API
+fixtures use the registered RPC handlers with credential bootstrap, network and
+child providers denied. Their synthetic evidence does not certify independently
+running older source processes.
+
 For legacy evidence preservation (#1281), run locked
 `pytest tests/test_legacy_evidence_preservation.py tests/test_legacy_evidence_recovery.py tests/test_semantic_storage.py tests/test_v12_activation.py`
 and the full worker and native launcher suites with this checkout's locked

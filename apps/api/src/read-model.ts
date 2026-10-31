@@ -5185,6 +5185,7 @@ function listActivityFromEvents(
   const eventTypePredicate = "COALESCE(e.event_type, '')";
   const activityClauses = [
     "e.tenant_id = ?",
+    "COALESCE(e.event_type, '') <> 'PostingSnapshotStatePersisted'",
     "(e.job_id IS NULL OR jp.job_id IS NOT NULL)",
     "d.job_id IS NULL",
     "h.job_id IS NULL",
@@ -5292,6 +5293,7 @@ function getActivityEventFromEvents(db: SqliteDatabase, eventId: string): Activi
   const activityClauses = [
     "e.event_id = ?",
     "e.tenant_id = ?",
+    "COALESCE(e.event_type, '') <> 'PostingSnapshotStatePersisted'",
     "(e.job_id IS NULL OR jp.job_id IS NOT NULL)",
     "d.job_id IS NULL",
     "h.job_id IS NULL",
