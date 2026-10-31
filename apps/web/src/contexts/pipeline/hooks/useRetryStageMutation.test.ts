@@ -6,6 +6,7 @@ import { act } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { jobsKeys } from "../../operations/jobsKeys.js";
+import { createQueryClient } from "../../../shared/lib/queryClient.js";
 import { useToastStore } from "../../../shared/stores/toasts.js";
 import { server } from "../../../test/msw/server.js";
 import { createTestQueryClient, renderHookWithProviders } from "../../../test/render.js";
@@ -321,7 +322,7 @@ describe("useRetryStageMutation", () => {
     server.use(http.post("*/v1/jobs/:jobKey/actions/retry-stage", () => HttpResponse.json({
       ok: false, error: "retry_selection_changed", message,
     }, { status: 409 })));
-    const queryClient = createTestQueryClient();
+    const queryClient = createQueryClient();
     const { result, unmount } = renderHookWithProviders(() => useRetryStageMutation(), { queryClient });
     queryClient.setQueryData(jobsKeys.detail(LOCAL_TENANT, "job-1"), initialDetail);
     await act(async () => {
