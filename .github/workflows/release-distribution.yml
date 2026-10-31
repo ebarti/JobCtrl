@@ -1417,7 +1417,11 @@ jobs:
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
           test "$(GH_TOKEN="$ADMIN_READ_TOKEN" gh api -H 'X-GitHub-Api-Version: 2026-03-10' "repos/$GITHUB_REPOSITORY/immutable-releases" --jq '.enabled')" = true
           if [[ "$(jq -r '.isDraft' "$release")" = true ]]; then
-            gh release edit "$RELEASE_TAG" --draft=false
+            if [[ "$RELEASE_CHANNEL" = stable ]]; then
+              gh release edit "$RELEASE_TAG" --draft=false --latest
+            else
+              gh release edit "$RELEASE_TAG" --draft=false
+            fi
           fi
           immutable=false
           for (( attempt = 0; attempt < 10; attempt++ )); do

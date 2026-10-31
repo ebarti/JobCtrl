@@ -104,6 +104,12 @@ no existing pointer. Keep downloaded evidence outside the tracked tree and
 refresh this comparison immediately before dispatch. A changed channel requires
 reconciliation, not a blind retry.
 
+When an authorized version correction is numerically lower than the preceding
+Homebrew formula, advance the formula's `version_scheme` and its validation
+contract so Homebrew recognizes it as an upgrade. A stable publication is
+explicitly marked as the latest GitHub Release after its signed channel and
+Homebrew promotion succeed; prereleases are not marked latest.
+
 Dispatch the workflow **on the tag**, with the tag also supplied as its input:
 
 ```bash
@@ -226,8 +232,9 @@ protocol-1/schema-14 to protocol-2/schema-15 transition, it verifies the old
 controller's refusal, interrupts the signed new installer both before and after
 selector handoff, preserves later application and Temporal WAL writes through
 forward recovery, and checks that cross-protocol rollback is refused. Both cases check
-real service readiness, retained job data and Temporal history. The explicit
-v0.3.1-to-v0.4.0, v0.4.1, and v0.4.2 exceptions report `qualified-with-legacy-refusal`: they verify
+real service readiness, retained job data and Temporal history. When v0.3.1 is
+the latest stable predecessor, the explicit v0.3.1-to-v0.4.0, v0.4.1, and
+v0.4.2 exceptions report `qualified-with-legacy-refusal`: they verify
 that the real installer refuses an untracked legacy runtime, preserves the data
 pair, registry, selector and journal, and that the predecessor can restart in the
 controlled fixture. That result does **not** qualify a direct user upgrade.
@@ -271,6 +278,9 @@ given a real source-ownership witness, exercise both signed acquisition paths
 and the interruption matrix. Those fixtures test supported, scoped migrations;
 they are not a recovery method or proof that a normal v0.3.1 installation can
 upgrade. The report records both the refusal and the scoped successes.
+For the corrected v0.4.0 release, this acquisition gate also runs against
+v0.3.1 when the briefly published v0.4.2 is the latest stable predecessor;
+its report identifies each source version separately.
 The signed binary's
 opt-in test checkpoint can only pause its own process in a marked temporary
 fixture; it never changes migration or release admission decisions.

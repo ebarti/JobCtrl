@@ -454,7 +454,7 @@ test("final publication shell accepts exact and immutable reruns and refuses alt
   const names = ["jobctrl-fixture-darwin-arm64.zip", "jobctrl-installer", "install.sh", "release-descriptor.json", "release-descriptor.json.sig", "channel-pointer.json", "manifest.json", "manifest.sig", "release-keys.json", "release-metadata.json", "SHA256SUMS", "jobctrl-release-audit.tar"];
   const notes = "# Fixture release\n\nTest publication only.\n";
   const ref = "a".repeat(40);
-  for (const scenario of ["new", "immutable rerun", "wrong digest", "missing digest", "missing asset", "unexpected asset"]) {
+  for (const scenario of ["new", "prerelease new", "immutable rerun", "wrong digest", "missing digest", "missing asset", "unexpected asset"]) {
     const root = path.join(temporary, scenario);
     for (const directory of ["release", "release-notes", "smoke-evidence/release", "bin"]) await mkdir(path.join(root, directory), { recursive: true });
     const assets = [];
@@ -474,7 +474,7 @@ test("final publication shell accepts exact and immutable reruns and refuses alt
       assets.push({ name: "published-candidate-smoke.json", digest: `sha256:${sha256(smoke)}` });
       await writeFile(path.join(root, "published"), "yes");
     }
-    await writeFile(path.join(root, "remote.json"), JSON.stringify({ targetCommitish: ref, isPrerelease: false, body: notes, assets }));
+    await writeFile(path.join(root, "remote.json"), JSON.stringify({ targetCommitish: ref, isPrerelease: scenario === "prerelease new", body: notes, assets }));
     const gh = path.join(root, "bin", "gh");
     await writeFile(gh, `#!${process.execPath}
 const fs = require('node:fs');
@@ -508,12 +508,14 @@ if (args[0] === 'api') {
     await chmod(gh, 0o755);
     const result = spawnSync("bash", ["-c", run], {
       encoding: "utf8", timeout: 10000,
-      env: { ...process.env, PATH: `${path.join(root, "bin")}:${process.env.PATH}`, RUNNER_TEMP: root, RELEASE_REF: ref, RELEASE_TAG: "v0.2.1", RELEASE_CHANNEL: "stable", EXPECTED_RELEASE_NOTES_SHA256: sha256(notes), GITHUB_REPOSITORY: "fixture/release", ADMIN_READ_TOKEN: "fixture" },
+      env: { ...process.env, PATH: `${path.join(root, "bin")}:${process.env.PATH}`, RUNNER_TEMP: root, RELEASE_REF: ref, RELEASE_TAG: "v0.2.1", RELEASE_CHANNEL: scenario === "prerelease new" ? "prerelease" : "stable", EXPECTED_RELEASE_NOTES_SHA256: sha256(notes), GITHUB_REPOSITORY: "fixture/release", ADMIN_READ_TOKEN: "fixture" },
     });
-    const accepted = scenario === "new" || scenario === "immutable rerun";
+    const accepted = scenario === "new" || scenario === "prerelease new" || scenario === "immutable rerun";
     assert.equal(result.status === 0, accepted, `${scenario}: ${result.stderr}`);
     const calls = (await readFile(path.join(root, "calls.jsonl"), "utf8")).trim().split("\n").map(JSON.parse);
-    assert.equal(calls.some(args => args[1] === "edit"), scenario === "new", scenario);
+    const edit = calls.find(args => args[1] === "edit");
+    assert.equal(Boolean(edit), scenario === "new" || scenario === "prerelease new", scenario);
+    if (edit) assert.equal(edit.includes("--latest"), scenario === "new", scenario);
     assert.equal(calls.filter(args => args[1] === "verify-asset").length, accepted ? names.length + 1 : 0, scenario);
     assert.equal(calls.some(args => args[1] === "download"), false);
   }
