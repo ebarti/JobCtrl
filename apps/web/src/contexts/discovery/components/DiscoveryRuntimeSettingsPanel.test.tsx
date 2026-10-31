@@ -498,11 +498,17 @@ describe("<DiscoveryRuntimeSettingsPanel>", () => {
     if (timing === "before") await startAutomationSave();
     await act(async () => runtimeSave.resolve(initial));
     await within(runtime).findByText(/newer changes pending/i);
-    await waitFor(() => expect(discoverySettings.mock.calls.length).toBeGreaterThan(1));
-    if (timing === "after") await startAutomationSave();
+    if (timing === "before") {
+      await waitFor(() => expect(queryClient.getQueryState(discoveryKeys.settings(LOCAL_TENANT))?.isInvalidated).toBe(true));
+      expect(discoverySettings).toHaveBeenCalledTimes(1);
+    } else {
+      await waitFor(() => expect(discoverySettings.mock.calls.length).toBeGreaterThan(1));
+      await startAutomationSave();
+    }
 
     const cached = queryClient.getQueryData<DiscoverySettingsResponse>(discoveryKeys.settings(LOCAL_TENANT));
     expect(cached?.settings.autoApply).toBe(true);
+    expect(results).toHaveValue(30);
     await user.click(within(runtime).getByRole("button", { name: "Discard changes" }));
     expect(cron).toHaveValue("0 7 * * *");
     const savedAutomation = {
@@ -510,8 +516,10 @@ describe("<DiscoveryRuntimeSettingsPanel>", () => {
       settings: { ...initial.settings, autoApply: true },
       effectiveSettings: { ...initial.effectiveSettings, autoApply: { ...initial.effectiveSettings.autoApply, value: true } },
     };
+    const readsBeforeSiblingSettlement = discoverySettings.mock.calls.length;
     await act(async () => automationSave.resolve(savedAutomation));
     await within(automation).findByText("Automation settings saved in SQLite");
+    await waitFor(() => expect(discoverySettings.mock.calls.length).toBeGreaterThan(readsBeforeSiblingSettlement));
     rerender(<DiscoveryAutomationSettingsPanel />);
     rerender(panels);
     expect(await screen.findByLabelText("Schedule cron")).toHaveValue("0 7 * * *");

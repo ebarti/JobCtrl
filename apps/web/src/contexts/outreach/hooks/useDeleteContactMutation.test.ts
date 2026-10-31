@@ -16,7 +16,7 @@ import { outreachKeys } from "../queryKeys.js";
 import { useDeleteContactMutation } from "./useDeleteContactMutation.js";
 
 describe("useDeleteContactMutation", () => {
-  it("optimistically removes the row and resolves on success", async () => {
+  it("removes the confirmed row and resolves on success", async () => {
     const { result, queryClient } = renderHookWithProviders(() => useDeleteContactMutation());
     queryClient.setQueryData(
       outreachKeys.contactList(LOCAL_TENANT, {}),
@@ -27,9 +27,11 @@ describe("useDeleteContactMutation", () => {
       await Promise.resolve();
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(queryClient.getQueryData<ContactListResponse>(outreachKeys.contactList(LOCAL_TENANT, {}))?.items.map((contact) => contact.contactId))
+      .toEqual([sampleSecondaryContactSummary.contactId]);
   });
 
-  it("rolls back the removed row when the DELETE fails", async () => {
+  it("retains the row when the DELETE fails", async () => {
     server.use(
       http.delete("*/v1/contacts/:contactId", () =>
         new HttpResponse(JSON.stringify({ ok: false }), { status: 500 }),

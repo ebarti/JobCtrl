@@ -108,19 +108,55 @@ job, mark applied, mark skipped, retry stage with `runAfter: false`, cancel
 stage, update profile, update settings, update/delete credential) take the
 **optimistic update** path:
 
-1. `onMutate`: snapshot affected query data; apply the optimistic patch.
+1. `onMutate`: record the query baseline and apply a pure optimistic patch.
 2. `mutationFn`: call the API.
-3. `onError`: roll back to the snapshot.
-4. `onSettled`: invalidate the affected keys (forces a re-fetch to
-   reconcile any drift with the server).
+3. `onError`: remove that operation's patch and reapply later overlapping
+   patches only while the helper still owns the query publication.
+4. `onSettled`: invalidate the affected keys to reconcile with the server.
 
-This pattern is implemented in each context's mutation hooks via the
-`createOptimisticMutation` helper (`shared/lib/createOptimisticMutation.ts`),
-which has 23 call sites today: 19 supply a real `onMutate` patcher +
-rollback, and 4 are deliberately settle-only (`applyJob`, `dryRun`,
-`cancelApply`, `importResume` — no meaningful pre-response patch, so they
-invalidate on settle only). The `onMutate` patcher is a pure function; it
-is unit-tested separately from the hook.
+Context mutation hooks use `createOptimisticMutation`
+(`shared/lib/createOptimisticMutation.ts`). Overlapping helper patches retain
+operation order, so a failed edit does not erase another edit, including one
+that has already succeeded. An independent successful refetch, direct cache
+publication, query reset, or removal ends the older operations' rollback
+authority for that query. When a settlement invalidates queries with other
+optimistic writes still pending, those queries are marked stale and refetched
+after the pending writes settle; unrelated matching queries refetch immediately.
+An operation skips query ownership only when its caller can prove disjointness.
+Contact creation skips disjoint literal employer/job filters. A list without
+accepted data keeps its first read and reconciles after that read settles;
+there is no provisional row to patch or roll back yet. Contact updates
+and deletes do not claim list queries based on cached membership: a different
+client can change membership before its event arrives. Update retains optimistic
+detail edits. Lists reflect a matching successful response when their query has
+not published newer data; a publication subscription also recognizes explicitly
+identified partial changes to other contacts after their optimistic ledger has
+settled. Failed or pending reads do not supersede confirmed row changes. A pending
+create is distinct only from a contact already present before that create.
+Unknown partials and full publications remain authoritative. A failed reconciliation keeps the accepted
+list or contact detail and shows a retryable out-of-date notice. List-only edits
+and removals therefore appear after success rather than immediately. Paginated
+job queries remain conservative
+because missing rows can still affect membership or totals. Disjoint queries
+are not cancelled while patching.
+If a contact list's first read was already in flight at settlement, it is
+reconciled once that read finishes, without delaying the mutation or rejecting
+joined loaders. A replaced or reset query, a later read, or a further
+publication takes authority. Contact-list reads fence their data at cache commit
+against publications made since the read began, including the first GET. A
+superseded read retains the later data and any existing failed-refresh notice;
+it cannot end the pending operations' rollback ownership.
+The completed mutation does not wait for another write to finish. An independent
+canonical publication still takes authority. Contact creation replaces its own
+provisional row with the returned server identity only in matching lists; an
+already present canonical row remains authoritative. Partial event and send-log
+patches retain their own order in the
+ledger, so rollback removes a failed optimistic patch without reverting
+unrelated fields or a newer same-field value. A partial patch that cannot be
+reapplied triggers exact-key invalidation. Failed refetches do not create a new
+publication. The short-lived ledger is released when its operations settle or
+another publication takes ownership. Settle-only mutations skip patching.
+Patchers must be pure because rollback may reapply them to the baseline.
 
 Synchronous mutations that do not patch a specific cached row still reconcile
 through `onSettled` invalidation. Non-apply-only global/batch pipeline stage

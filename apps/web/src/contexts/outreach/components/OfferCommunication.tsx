@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 import type { OutreachDraftKind } from "@jobctrl/contracts";
 import { useContactsListQuery } from "../hooks/useContactsListQuery.js";
 import { OutreachThreadPanel } from "./OutreachThreadPanel.js";
+import { ContactRefreshNotice } from "./ContactRefreshNotice.js";
 import { Field, FieldGroup, FieldLabel } from "../../../shared/ui/field.js";
 import {
   Select,
@@ -42,13 +43,15 @@ export function OfferCommunication({
         through your own channel, then log the send. Acceptance and decline
         drafts require your matching decision on these terms.
       </p>
-      {contacts.error ? <p role="alert">{contacts.error.message}</p> : null}
-      {!contacts.data?.items.length ? (
+      {contacts.error && !contacts.isRefetchError ? <p role="alert">{contacts.error.message}</p> : null}
+      {contacts.error && !contacts.data ? <ContactRefreshNotice initial retry={() => { void contacts.refetch(); }} /> : null}
+      {contacts.isRefetchError ? <ContactRefreshNotice retry={() => { void contacts.refetch(); }} /> : null}
+      {contacts.isSuccess && !contacts.data?.items.length ? (
         <p>
           Link a confirmed contact in this job’s Contacts section to draft a
           message.
         </p>
-      ) : (
+      ) : contacts.data?.items.length ? (
         <FieldGroup>
           <Field>
             <FieldLabel htmlFor={`${id}-contact`}>Offer recipient</FieldLabel>
@@ -103,7 +106,7 @@ export function OfferCommunication({
             </Select>
           </Field>
         </FieldGroup>
-      )}
+      ) : null}
       {contactId ? (
         <>
           <OutreachThreadPanel
