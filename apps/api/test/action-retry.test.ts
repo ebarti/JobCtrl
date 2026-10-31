@@ -214,6 +214,90 @@ describe.each(families)("durable %s action identity through HTTP", (family) => {
   }, 45_000);
 });
 
+it("preserves contact revisions across score reset and lost outcome and send-log acknowledgements", async () => {
+  const dbPath = seed();
+  const first = await server(dbPath);
+  const created = await first.client.createContact({
+    employer: "Synthetic employer", jobId: JOB, role: "recruiter",
+    attributes: [{ kind: "email", value: "first@example.test" }],
+  });
+  const contactId = created.contact.contactId;
+  const importedId = created.contact.attributes[0]!.attributeId;
+  const setup = new Database(dbPath);
+  setup.prepare("UPDATE outreach_threads SET contact_id=? WHERE thread_id='thread'").run(contactId);
+  setup.prepare("UPDATE contact_attributes SET value_json=?, source_kind='user_imported_list', source_ref='synthetic-import', capture_method='csv_import', recorded_at='2020-01-01T00:00:00Z' WHERE attribute_id=?")
+    .run(JSON.stringify("  first@example.test  "), importedId);
+  setup.prepare("INSERT INTO job_scores (tenant_id,job_id,version,fit_score,breakdown_json,keywords_json,scored_at,criteria_json,trace_json) VALUES ('local',?,1,6,'{}','[]','2026-01-01','{}','{}')").run(JOB);
+  setup.prepare("INSERT INTO job_stage_states (tenant_id,job_id,stage,state,attempt_count,updated_at,metadata_json) VALUES ('local',?,'score','stale',3,'2026-01-01','{\"audit\":\"keep\"}')").run(JOB);
+  setup.prepare("INSERT INTO job_score_staleness (tenant_id,job_id,stale_reason,old_policy_version,new_policy_version,marked_at,resolved) VALUES ('local',?,'synthetic',1,2,'2026-01-01',0)").run(JOB);
+  const originalFact = setup.prepare("SELECT * FROM contact_attributes WHERE attribute_id=?").get(importedId);
+  const originalScore = setup.prepare("SELECT * FROM job_scores WHERE tenant_id='local' AND job_id=?").all(JOB);
+  const originalMarkers = setup.prepare("SELECT * FROM job_score_staleness WHERE tenant_id='local' AND job_id=?").all(JOB);
+  setup.close();
+
+  const base = (await first.client.contact(contactId)).contact;
+  const send = body("send");
+  const outcome = body("outcome");
+  const loseAcknowledgement = async (request: () => Promise<unknown>) => {
+    let accepted: unknown;
+    vi.spyOn(globalThis, "fetch").mockImplementationOnce(async (input, init) => {
+      const response = await authorizedFetch(input, init);
+      expect(response.status).toBe(200);
+      accepted = await response.json();
+      throw new TypeError("Synthetic lost HTTP acknowledgement");
+    });
+    await expect(request()).rejects.toThrow();
+    expect(accepted).toBeDefined();
+    return accepted;
+  };
+  const acceptedSend = await loseAcknowledgement(() => first.client.logOutreachSend("thread", send));
+  const acceptedOutcome = await loseAcknowledgement(() => first.client.recordManualApplicationOutcome(JOB, outcome));
+  expect(await first.client.resetStaleScoresForRescore({ jobKeys: [JOB], limit: 1 }))
+    .toMatchObject({ count: 1, jobKeys: [JOB] });
+  expect((await first.client.contact(contactId)).contact.fingerprint).toBe(base.fingerprint);
+
+  const newer = await first.client.updateContact(contactId, {
+    expectedFingerprint: base.fingerprint, role: "warm_intro",
+    attributes: [{ attributeId: importedId, kind: "email", value: "  first@example.test  " },
+      { kind: "email", value: "newer@example.test" }],
+  });
+  const newerId = newer.contact.attributes.find((fact) => fact.value === "newer@example.test")!.attributeId;
+  const source = new Database(dbPath);
+  source.prepare("UPDATE contact_attributes SET source_kind='user_imported_list', source_ref='synthetic-newer-source', capture_method='csv_import' WHERE attribute_id=?").run(newerId);
+  const newerFact = source.prepare("SELECT * FROM contact_attributes WHERE attribute_id=?").get(newerId);
+  source.close();
+  await stop(first.child);
+  const restarted = await server(dbPath);
+  expect(await restarted.client.logOutreachSend("thread", send)).toEqual(acceptedSend);
+  expect(await restarted.client.recordManualApplicationOutcome(JOB, outcome)).toEqual(acceptedOutcome);
+  await expect(restarted.client.updateContact(contactId, {
+    expectedFingerprint: base.fingerprint, employer: "Draft employer",
+  })).rejects.toMatchObject({ status: 409, responseBody: { error: "contact_revision_conflict" } });
+  const latest = (await restarted.client.contact(contactId)).contact;
+  expect(latest.role).toBe("warm_intro");
+  expect(latest.attributes.find((fact) => fact.attributeId === newerId)?.provenance.sourceRef).toBe("synthetic-newer-source");
+  const recovered = await restarted.client.updateContact(contactId, {
+    expectedFingerprint: latest.fingerprint, employer: "Draft employer",
+  });
+  expect(recovered.contact).toMatchObject({ role: "warm_intro", employer: "Draft employer" });
+  expect(recovered.contact.attributes).toEqual(latest.attributes);
+  expect(await restarted.client.logOutreachSend("thread", send)).toEqual(acceptedSend);
+  expect(await restarted.client.recordManualApplicationOutcome(JOB, outcome)).toEqual(acceptedOutcome);
+  expect(counts(dbPath, "send")).toEqual({ facts: 1, events: 1 });
+  expect(counts(dbPath, "outcome")).toEqual({ facts: 1, events: 1 });
+  const check = new Database(dbPath, { readonly: true });
+  try {
+    expect(check.prepare("SELECT * FROM contact_attributes WHERE attribute_id=?").get(importedId)).toEqual(originalFact);
+    expect(check.prepare("SELECT * FROM contact_attributes WHERE attribute_id=?").get(newerId)).toEqual(newerFact);
+    expect(check.prepare("SELECT * FROM job_scores WHERE tenant_id='local' AND job_id=?").all(JOB)).toEqual(originalScore);
+    expect(check.prepare("SELECT * FROM job_score_staleness WHERE tenant_id='local' AND job_id=?").all(JOB)).toEqual(originalMarkers);
+    expect(check.prepare("SELECT state,metadata_json FROM job_stage_states WHERE tenant_id='local' AND job_id=? AND stage='score'").get(JOB))
+      .toEqual({ state: "pending", metadata_json: '{"audit":"keep"}' });
+    expect(check.prepare("SELECT event_type,COUNT(*) AS count FROM job_events WHERE event_type IN ('ContactUpdated','ScoreRescoreRequested') GROUP BY event_type ORDER BY event_type").all())
+      .toEqual([{ event_type: "ContactUpdated", count: 2 }, { event_type: "ScoreRescoreRequested", count: 1 }]);
+  } finally { check.close(); }
+}, 45_000);
+
 it("keeps a guessable private note fingerprint out of the persisted and streamed event payload", async () => {
   const dbPath = seed();
   const api = await server(dbPath);

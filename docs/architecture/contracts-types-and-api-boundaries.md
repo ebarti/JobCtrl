@@ -35,6 +35,48 @@ selection receipt. The API retains the observed lifecycle revisions with the
 canonical job IDs and checks the cohort before removing any job. The
 ordinary explicit permanent-delete and guarded purge contracts remain separate.
 
+## Contact Edit Authority
+
+`ContactDetail.fingerprint` and the required
+`ContactUpdateRequest.expectedFingerprint` fence replacement edits in
+`apps/api/src/contacts.ts`. A detail read uses one SQLite snapshot of canonical
+contact rows, raw attribute values/identities and complete provenance. The opaque
+SHA-256 base includes tenant/contact identity and the latest durable contact
+publication event identity. It does not depend on projections or timestamp
+uniqueness; same-clock and provenance-only changes invalidate old bases. The
+publication identity also fences retries after a committed save whose reply was
+lost, including no-op edits. No schema migration is introduced.
+
+The update reserves SQLite's writer with `BEGIN IMMEDIATE` before reading and
+comparing the base, then applies changes, records events and reads the resulting
+base before commit. Any failure rolls back that whole transaction. Unchanged
+facts stay in place byte-for-byte; replacement only removes absent facts and
+inserts new/value-edited facts. Optional fact IDs select exact retained rows;
+foreign or repeated IDs fail within the transaction, while callers without IDs
+match exact raw values before normalized values. The writer validates only new
+or changed facts, preserving unchanged stored values outside current input
+limits. HTTP maps a mismatch to 409
+`contact_revision_conflict`, invalid requests to 400 and missing/deleted contacts
+to 404. A fingerprint is an edit fence, not authentication or an outreach thread
+publication version; existing worker writers remain under their own protocols.
+
+The context-owned web hooks handle query access and optimistic rollback. The
+editor pins an edit base and retains its form through conflicts and refetches.
+Reconciliation compares that base, the current draft and the loaded record;
+unchanged draft fields and independently added fact identities take the latest
+values. Competing field or fact edits/deletions require an explicit choice.
+When a draft-changed fact disappeared and new fact IDs appeared, their
+relationship is unknown; the user chooses whether to keep each new fact.
+Changing the draft while choices are open invalidates those choices. The editor
+omits unchanged fields and facts from its update and carries other unchanged
+facts by their identity and exact saved value when replacing a fact list. It
+validates changed facts against current input limits and refuses to convert an
+unsupported kind implicitly. A later conflict requires another review. The draft
+remains local to the open dialog. If a save succeeds after the form changed,
+the editor keeps the newer draft and requires a fresh read and reconciliation;
+it never resubmits automatically. A completion from a closed editor cannot
+change a subsequently opened editor session.
+
 ## Enrichment Retry Ownership
 
 `pipeline/retry.py::reset_retry_stages` owns explicit enrichment resets. The

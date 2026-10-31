@@ -70,6 +70,43 @@ yourself. The current cadence policy belongs to
 [Apply → Outreach Follow-Ups](apply.md#outreach-follow-ups) and is not duplicated
 here.
 
+## Editing A Contact That Changed Elsewhere
+
+An edit is bound to the saved contact you opened. If another tab or client
+commits a change first, **save contact** reports a conflict and keeps every
+entered field in the open editor. The newer role, employer/job links, facts and
+provenance remain saved. Background refreshes do not silently replace your draft
+or grant it permission to overwrite that newer record.
+
+Choose **Load latest contact** to inspect the newer links, role and facts with
+their provenance alongside your draft. Choose **Reconcile changes** to retain
+newer fields and facts you did not edit alongside your independent draft edits.
+When both versions changed the same field or fact, choose which version to keep
+for each conflict before applying those choices. Reconciliation does not save;
+review the resulting form and save deliberately. Another intervening change can
+conflict again. If the draft changes while choices are open, review the choices
+again. When a draft-changed fact disappeared and new facts appeared, the editor
+cannot know whether those new facts replace it; choose whether to keep each one.
+If loading fails, keep the editor open and try loading again.
+
+If you make more edits while a save is in progress, a successful save applies
+the submitted version and keeps the newer edits in the editor. Load the latest
+contact and reconcile those edits before saving again; they are not sent
+automatically.
+
+A successful edit preserves the identity and original provenance of unchanged
+facts, including imported facts. New or value-edited facts record user-entered
+provenance. Contact edits do not replace outreach drafts, reviews or send logs.
+The editor preserves unchanged saved facts, including long imported values and
+unsupported fact types, while you edit other fields or facts. It identifies an
+unsupported type; to change that fact, remove it explicitly and add a supported
+fact. Newly entered or changed fact values must fit the 2,000-character limit
+after surrounding whitespace is trimmed.
+After an uncertain save result, inspect the latest contact before retrying;
+an old edit base cannot overwrite an accepted save. Closing the editor or
+navigating away discards its unsaved draft; it is not a durable draft/history
+feature.
+
 ## When Outreach Changes During Verification
 
 Generation and revision verify the thread state they started from. If another request commits

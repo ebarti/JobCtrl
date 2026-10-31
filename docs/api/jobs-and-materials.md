@@ -360,6 +360,10 @@ Research detail includes distinct source outcomes for a response that is too
 large, a timeout, a failed redirect, a transport failure, or an HTTP error.
 These do not claim that a successfully read page contains no candidates.
 
+Contact updates use the fingerprint from the detail read to reject stale edits
+without replacing newer facts. See the [contact contract](complete-contract.md#contacts)
+for the request and conflict response.
+
 <a id="contact-research"></a>
 <a id="outreach-drafts"></a>
 

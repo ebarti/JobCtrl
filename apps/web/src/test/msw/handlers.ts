@@ -4,8 +4,8 @@ import type {
   ContactCreateRequest,
   ContactImportRequest,
   ContactImportResponse,
-  ContactUpdateRequest,
 } from "@jobctrl/contracts";
+import { ContactUpdateRequestSchema } from "@jobctrl/contracts";
 import { http, HttpResponse } from "msw";
 
 import {
@@ -1176,7 +1176,12 @@ export const handlers = [
     ),
   ),
   http.patch("*/v1/contacts/:contactId", async ({ params, request }) => {
-    const body = (await request.json()) as ContactUpdateRequest;
+    const parsed = ContactUpdateRequestSchema.safeParse(await request.json());
+    if (!parsed.success) return HttpResponse.json({ ok: false, error: "invalid_contact" }, { status: 400 });
+    const body = parsed.data;
+    if (body.expectedFingerprint !== sampleContactDetail.fingerprint) {
+      return HttpResponse.json({ ok: false, error: "contact_revision_conflict" }, { status: 409 });
+    }
     return HttpResponse.json(
       makeContactMutationResponse(
         makeContactDetail({

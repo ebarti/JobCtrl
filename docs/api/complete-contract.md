@@ -1621,12 +1621,12 @@ link signals, and note/body presence flags.
 ## Contacts
 
 The Contact & Outreach context exposes local, loopback-only JSON routes for
-contact records and supervised research. There is still no send or drafting route,
-and nothing here sends anything. Contact-record writes are hosted directly in the
+contact records, supervised research and reviewed outreach drafts. Nothing here
+sends outreach. Contact-record writes are hosted directly in the
 TypeScript API (`apps/api/src/contacts.ts`): they write the canonical
 `contacts` / `contact_attributes` rows, append durable, SSE-visible events to
-`job_events` (`entity_kind = 'contact'`, `entity_ref = <contactId>`), and refresh
-the `contact_projections` read model. The Python worker's
+`job_events` (`entity_kind = 'contact'`, `entity_ref = <contactId>`). List reads
+refresh the `contact_projections` read model; detail reads use canonical rows. The Python worker's
 `SqliteContactRepository` writes the same tables and event types.
 
 Sensitivity: attribute VALUES (names, emails, notes) live only in
@@ -1640,16 +1640,36 @@ fact carries provenance (`sourceKind`, `sourceRef`, `captureMethod`, `capturedAt
   company. Each `ContactSummary` carries `contactId`, `displayName`, `role`,
   `employer`, `jobId`, `attributeCount`, `confirmedCount`, `sourceKinds`,
   `allConfirmed`, and timestamps.
-- `GET /v1/contacts/:contactId` returns a `ContactDetail` — the summary fields
-  plus `attributes[]`, each with its `value` and full `provenance`. An unknown id
-  returns `{ ok: false, error: "contact_not_found" }`.
+- `GET /v1/contacts/:contactId` returns a `ContactDetail`: identity, display
+  name, role, employer/job links, timestamps, `attributes[]` with full
+  provenance, and an opaque `fingerprint` from one canonical read snapshot.
+  Unknown or soft-deleted contacts return HTTP 404 `contact_not_found`.
 - `POST /v1/contacts` creates a contact (`ContactCreateRequest`: `role`,
   optional `employer` / `jobId`, and `attributes[]`). A contact must link to at
   least one of `employer` / `jobId`, or the route returns `invalid_contact`.
   Created facts are tagged `sourceKind = user_entered`.
 - `PATCH /v1/contacts/:contactId` updates a contact's link, role, and/or
-  attributes (`ContactUpdateRequest`). Replacing `attributes` re-tags them as
-  `user_entered`; an unknown id returns `contact_not_found`.
+  attributes (`ContactUpdateRequest`). `expectedFingerprint` is required: send
+  the unchanged `fingerprint` from the contact being edited (64 lowercase hex
+  characters). Missing or malformed bases return HTTP 400 `invalid_contact`.
+  A valid but older or foreign base returns HTTP 409
+  `{ ok: false, error: "contact_revision_conflict", message }`, with no fact,
+  contact or success-event writes. Unknown/deleted contacts return HTTP 404
+  `contact_not_found`. Comparison, replacement and events share one immediate
+  SQLite transaction. A successful response contains the next usable base.
+  Each replacement fact may carry its saved `attributeId`. When its identity and
+  kind match and the saved value equals the input as sent or after trimming the
+  input, the row and its provenance are retained. A foreign or repeated
+  ID returns HTTP 400 without writes. A changed value or kind creates a new
+  user-entered fact only when its kind is supported and its trimmed value is
+  nonempty and at most 2,000 characters. Unchanged stored facts retain their
+  exact values and provenance even if they predate these input limits. For
+  callers omitting IDs, matching checks exact raw values before trimmed values;
+  use IDs to distinguish duplicate facts. Omitted fields remain
+  unchanged; explicit `null` clears a link, with at least one link required.
+  After a conflict or uncertain acknowledgement, read back the contact and
+  reconcile deliberately before sending its new base. Retrying the old base
+  never replays the accepted mutation. There is no automatic merge or history API.
 - `DELETE /v1/contacts/:contactId` soft-deletes a contact and returns
   `{ ok, contactId, deletedAt }`.
 - `POST /v1/contacts/import` previews or imports a contact list. The reviewed

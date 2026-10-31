@@ -600,6 +600,45 @@ then prove unchanged approvals and no extra export rows. Inspect desktop/mobile
 screenshots, page identity, console health, overflow and critical/serious axe
 results. Skipping this production gate is not passing browser evidence.
 
+## Contact Replacement Edit Bases
+
+Use `apps/api/test/contacts.test.ts` and `contact-projection-parity.test.ts` for
+canonical detail reads and stale role/link/whole-fact replacements. Run two real
+SQLite handles and independently started production writers: one shared base
+admits exactly one update, and a barrier after comparison must still exclude a
+second writer before replacement. Count canonical facts and events exactly;
+rejected saves append no success events. Change provenance alone and facts at an
+unchanged contact timestamp; refresh projections without invalidating the base.
+Inject attribute and event insert failures and require complete rollback.
+Discard a committed HTTP acknowledgement, restart the owned API, reject the old
+base again and recover deliberately through a fresh typed-client read.
+
+Preserve imported fact IDs and every provenance column, plus accepted outreach
+drafts/reviews/send logs. Pair these tests with the focused worker repository,
+provenance, projection-parity and offer/outreach tests. The editor/mutation,
+demo and `apps/web/e2e/tests/outreach.spec.ts` regressions cover pinned bases,
+rollback/refetch, retained fields, repeated conflict, explicit reconciliation,
+keyboard recovery and a 390px viewport. Exercise two editors where one changes
+only an employer while the other changes the role and adds a sourced fact: the
+reconciled save must retain the newer role, fact identity and provenance. Require
+explicit choices for competing field edits and edited-versus-deleted facts;
+when changed originals disappear and new fact IDs appear, require choices for
+each new fact without inferring identity. Changing the draft invalidates pending
+choices. Preserve unsupported or overlong saved facts during other edits; reject
+implicit unsupported-kind changes and overlong new values. Round-trip id-less
+raw whitespace without losing identity or provenance, and accept a new value
+whose trimmed length is exactly 2,000. A fixture or type check alone does not
+prove the real API/browser journey. With duplicate kind/value facts and distinct
+provenance, delete the old identity and retain the newer identity exactly; reject
+foreign and repeated IDs without writes and retain value-only caller behavior.
+Interleave a score reset and lost outcome/send-log acknowledgements with contact
+updates, then verify action replay, score retention and fact provenance. Type a
+newer contact edit during a pending save; success, failure and conflict must
+retain it without automatic resubmission. Closing and reopening the editor must
+fence the earlier completion from the new session.
+Use only owned exact-schema synthetic data
+and retain reports under the QA evidence owner.
+
 ## Manual Outcome And Send-Log Retry Identity
 
 Run API `test/action-retry.test.ts` with `application-feedback.test.ts`,

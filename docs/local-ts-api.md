@@ -346,6 +346,8 @@ dispatch does not require this confirmation because it cannot submit.
 Contact facts, reviewed CSV/vCard import, supervised research, candidate
 confirmation, outreach drafts, send logs, and follow-ups share one route family. See
 [Jobs & Materials](api/jobs-and-materials.md#contacts-and-outreach).
+Contact edits require the fingerprint from the detail read; a stale base returns
+409 without replacing newer facts. See the [contact contract](api/complete-contract.md#contacts).
 Research source attempts distinguish acquisition failures from a successful page
 with no candidates; their detailed outcomes and recovery text are returned on
 the research task detail read.
