@@ -59,14 +59,73 @@ flowchart LR
 ### Approval And At-Most-Once Submission
 
 With `applyApprovalRequired` enabled (the default), the Python launcher checks
-the latest `approve_submit` decision inside the atomic claim transaction. A UI,
+the latest `approve_submit` decision and any recorded email binding inside the
+atomic claim transaction. A UI,
 API, or RPC caller cannot bypass that committed decision. Dry-run claims do not
 need approval because browser-layer guards block submission.
 
 Model-driven browser runs are transport-locked and final browser submit remains
 manual. For an exact-approved email candidate, the saga rechecks the active
 capability and records `ApplySubmitIntended` immediately before invoking the
-owned Gmail sender. If the run dies after that checkpoint without a terminal
+owned Gmail sender. Availability transport runs before acquiring the writer.
+Inside `BEGIN IMMEDIATE`, the launcher rechecks freshness and run/stage ownership,
+then validates the latest canonical approval against current sources and the
+outgoing candidate. The claim carries a source binding covering profile version,
+effective URLs, material generation, accepted artifact identities and file hashes.
+It captures that binding inside claim admission, before committing the running
+stage, so another SQLite writer cannot change sources between claim and capture.
+The API approval transaction records `emailApprovalBinding` on the
+`ApplyReviewDecisionRecorded` event joined by the exact decision ID. Version 1
+contains SHA-256 fingerprints of the complete reviewed candidate and all current
+approved material identities, metadata and nonempty file bytes, as well as the
+posting URL and job/posting inputs. The fingerprints
+use fixed-position arrays encoded as compact UTF-8 JSON in API and worker.
+The final reader also checks cover approval and rehearsal evidence and compares
+the complete current email preview with the outgoing recipient, subject, body and
+attachment **and with the fingerprint retained by the approving decision**.
+A later preview with the same recipient and attachment ID cannot replace the
+approved subject/body. Legacy approvals lacking this binding require fresh review.
+A fresh approval for changed inputs cannot authorize an older run.
+The approval request carries the caller's complete reviewed preview; the API
+compares its content, run ID and timestamp with the canonical preview inside
+the decision transaction. Queue approval reasons also expose a changed preview,
+posting fingerprint or accepted-material fingerprint.
+Latest-decision readers in the API, worker and digest conservatively give any
+non-submit decision precedence over submit approval at equal timestamps. Random
+UUID order cannot restore authority after a tied defer/reset; fresh approval at
+a later timestamp resolves the ambiguity. Preliminary review reads used by
+availability exceptions retain `approval_authority_unavailable` on failure.
+Missing, malformed or unavailable authority refuses before intent. This final
+check is unconditional even when claim-time approval waiting is disabled.
+
+`SqliteApplyRunRepository.save` participates in an inherited transaction without
+committing it; the final authorizer owns commit/rollback. The intent retains the
+authorizing decision ID and hashes of source/candidate bindings. A refusal records
+a stable reason without replacing a newer canonical candidate or deleting review
+or material history. An owned, keyed email-authority refusal records its original
+claim. Settlement or interrupted-run recovery restores only that claim's attempt
+under the writer lock when no submit intent exists; agent-reported lookalikes do
+not grant refund authority. Source-lifetime and native-custody recovery commit
+the same authority park with the refunded attempt and stage transition.
+An unchanged refused authority is parked for standing
+polls using a digest of the current review, rehearsal and source binding. A new
+review or source change wakes the job; an explicit single-job retry may also
+proceed. If authority changes during a run, that older refusal does not park the
+new authority. The historical claim and refusal events remain.
+SQLite serializes participating approval writers through intent commit; a review
+committed afterward cannot cancel the already admitted external effect. Final
+authorization captures an immutable attachment byte copy and validates its hash
+against the approved source binding. After saving the pending intent, the
+authorizer rechecks source-file hashes before committing; a detected replacement
+or unavailable file rolls back the intent with `approval_stale_materials`. SQLite
+does not serialize an independent filesystem write after that last hash read and
+before commit. The admitted copy remains the approved bytes in that interval,
+but the file path can already contain different bytes. The saga
+hands the validated byte copy to Gmail's MIME encoder, which does not reopen the
+artifact path. Later path replacement or deletion cannot change the admitted
+attachment. The intent retains its attachment hash, never the private byte copy.
+
+If the run dies after that checkpoint without a terminal
 result, or the provider raises with an ambiguous outcome, JobCtrl parks it in
 `needs_verification` instead of retrying. A run that never reached submit intent
 can return safely to `pending`.
@@ -77,6 +136,24 @@ does not grant browser-submit authority or bypass the owned email sender's exact
 recipient/attachment approval. The Preferences UI keeps that state visibly
 warned.
 :::
+
+### Late Apply Settlement
+
+Local disposition and original-run outcome have separate authority. When the
+same run returns after Skip, settlement records
+`LockReleased` with `stage_preserved` and `late_status`, leaving the canonical
+stage untouched. A stale predecessor cannot write to a successor. For a late
+settlement with submit intent, the Python projector treats even a conflicting
+rehearsal or submitted label as uncertain unless the unique intent precedes the
+exact operation-bound email receipt, which in turn precedes its
+`ApplicationSubmitted` fact. These uncertain runs use the
+existing `manual` lifecycle status with a `needs_verification` result, so readers
+do not mistake a completed run for active work. A completed rehearsal stays a
+dry run. An ordinary legacy cleanup retains its existing fallback behavior.
+The validated late receipt and submitted fact preserve the local Skip. A
+per-tenant projection backfill repairs previously cached late-settlement rows even when the event
+cursor is current. Repair and its marker share the refresh transaction or
+caller savepoint; original events and canonical application state are preserved.
 
 ### Resume Review Drafts
 

@@ -1529,6 +1529,16 @@ verification-code MCP server:
   `approval_stale_materials`, `approval_stale_profile`, or `approval_stale_url`
   before inserting a decision row. Approval records intent only in this slice;
   it does not dispatch the apply worker.
+  For an email preview, include `emailRecipient`, `emailAttachmentArtifactId`
+  and `reviewedEmailCandidate`: the complete `emailApplication` object that was
+  reviewed (recipient, subject, body, attachment ID/name, candidate run ID and
+  recorded timestamp). The transaction compares that exact identity with the
+  current preview; missing or changed identity returns `409
+  approval_stale_email_candidate` without recording approval. Matching recipient
+  and attachment IDs alone cannot approve a replacement subject/body.
+  When decision timestamps tie, a non-submit decision takes precedence over
+  `approve_submit`, independent of random decision ID order. A fresh approval
+  at a later timestamp is required to resolve that conservative refusal.
 - `POST /v1/jobs/:jobKey/repeat-application/override` accepts the displayed
   `evidenceFingerprint`, one `priorJobKey` present in the current matches, a
   10–400 character `reason`, and `confirmedBy` (default `user`). It appends an
@@ -1993,8 +2003,23 @@ Current-version preparation maintenance actions are separate endpoints:
 - `POST /v1/materials/actions/retailor-current-policy` dispatches
   `retailor_current_policy` for selected or bounded eligible jobs and can
   suppress prior active artifacts.
-- `POST /v1/jobs/:jobKey/actions/retry-stage` resets the selected stage. With
-  `runAfter: true`, preparation retries dispatch a job-scoped pipeline workflow
+- `POST /v1/jobs/:jobKey/actions/mark-skipped` atomically records a local Apply
+  stop and `StageSkipped` event, preserving the attempt budget and materials.
+  The response `message` explains that an in-flight submission may still complete;
+  this action does not dispatch cancellation. Job Detail's `applyAudit` exposes
+  `manual_apply_skip` and `submission_intent_recorded` as separate blocker facts;
+  intent detail/source retains original run IDs from canonical event history.
+  Skip retains `manualDisposition: "skip"` and `previousState` in its event.
+  Only a safe explicit reset or manual Applied resolution releases the stop. A
+  prior `needs_verification` remains a `submission_outcome_uncertain` blocker
+  even without an intent receipt.
+- `POST /v1/jobs/:jobKey/actions/retry-stage` resets the selected stage. Apply
+  reset returns `409` (`apply_reset_refused`) without mutation when submit intent exists, or
+  the stage is queued/running, succeeded, needs_verification or a policy-owned
+  skip. Safe pre-intent manual stops can be reset; historical events and accepted
+  artifacts remain. Neither resetAttempts nor runAfter resolves external
+  uncertainty. Mixed Enrich/Apply cohorts reject atomically on an unsafe Apply
+  target. With `runAfter: true`, preparation retries dispatch a job-scoped pipeline workflow
   for the remaining preparation stages (`enrich` -> `score` -> `tailor` ->
   `cover`, starting at the retried stage). `apply` retry still dispatches the
   explicit apply action; retries do not auto-submit applications unless the

@@ -59,6 +59,31 @@ At-most-once chooses the safer failure mode:
 The result may require manual recovery, but it avoids turning uncertainty into
 a duplicate application.
 
+## Local Stops Do Not Resolve External Uncertainty
+
+Manual Skip prevents later targeted, batch and standing claims. Automatic recovery
+events cannot release it: a validated explicit reset binds its release to the
+existing Skip history, and waits for any admitted owner to acknowledge settlement.
+For an owner that died before cleanup, recovery checks the recorded source
+owner lifetime or the exact native completion. A root PID exit alone cannot
+release custody. It preserves Skip until a separate safe reset; missing or
+uncertain custody remains blocked. See [Skip and safe reset](../user/apply.md#skip-and-safe-reset)
+for the recovery command and limits.
+It is a local disposition, not confirmation that an in-flight provider operation
+stopped.
+Claim selection checks it before expensive work and under the claim lock after
+availability refresh. The final intent writer also requires the original run
+and a running stage, so a Skip committed before that boundary prevents intent.
+After intent, one overlapping external attempt may still complete.
+
+All recorded submit intents for the exact tenant and job remain retry blockers,
+regardless of the latest run projection or stage label. Failed settlement,
+connection restart, Skip and generic reset cannot establish that no send occurred.
+The audit keeps the original run IDs inspectable. A retained Needs verification
+stop also survives Skip when its intent receipt is absent. Verify the provider outcome;
+manual Mark Applied can record a confirmed application. There is no generic
+reset-based permission to retry an uncertain submission.
+
 ## Approval Is Bound At The Mutation Boundary
 
 With approval required—the default—the latest Apply Review decision must bind
@@ -70,9 +95,41 @@ The worker checks that binding while atomically claiming work in SQLite. It is
 not only a disabled button in the web app, so a stale page, direct API call,
 standing loop, or concurrent worker cannot bypass the claim-time decision.
 
+The owned email path checks again immediately before durable intent. In one
+SQLite writer transaction it rereads current approval, profile, URLs, accepted
+material and cover binding, rehearsal evidence and email preview, comparing them
+with the run's captured sources and actual outgoing candidate. A second writer
+must commit its authority change before this transaction or wait until intent
+commits. A changed profile or attachment followed by a fresh approval still does
+not authorize a delayed run using the older inputs. Refusals preserve accepted
+history and the claim record, create no intent and call no sender. The owning
+settlement or recovery restores that claim's attempt allowance.
+
+The claim captures source identities before committing. The approval decision
+retains fingerprints of the complete reviewed email and accepted material bytes;
+the final guard checks those fingerprints as well as the claim snapshot. A later
+rehearsal with a different subject/body or a same-generation file replacement
+therefore needs fresh approval, even when recipient and attachment IDs match.
+Recipient/attachment-only historical approvals cannot authorize an email send.
+The final authorizer captures the approved attachment bytes and rechecks source
+files after intent persistence, before commit. A detected replacement rolls back
+the intent. The sender encodes the validated byte copy rather than reopening a
+mutable path, so a later replacement cannot alter the admitted email. The private
+copy is not stored in events; only its hash accompanies the intent.
+Recording approval also compares the complete preview supplied by the caller
+with the current preview. A changed subject/body needs fresh review rather than
+silently becoming the approved message. At tied decision timestamps, defer/reset
+keeps sending blocked regardless of random ID order; a later fresh approval is
+required. Approval-reader failures preserve an approval-authority refusal.
+
 Turning the general approval wait off does not create generic submission
-authority. Browser final submit remains manual, the Gmail sender still requires
-its exact send scope, and repeat-application protection still runs.
+authority. Browser final submit remains manual, and repeat-application protection
+still runs. The Gmail client checks `gmail.send` after intent commits and before
+the HTTP send. If that scope is missing, no HTTP send occurs, but the durable
+intent remains and the attempt is parked in `needs_verification` for manual
+verification, without automatic retry. Once intent commits, later decisions
+cannot retract an admitted message; uncertainty remains a manual-verification
+boundary.
 
 ## Repeat Protection Answers A Different Question
 

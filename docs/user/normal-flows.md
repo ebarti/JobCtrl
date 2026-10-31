@@ -630,11 +630,13 @@ partial, or blocked.
 ```bash
 jobctrl apply --dry-run --limit 1
 jobctrl apply --url https://example.com/job/123 --dry-run
+jobctrl apply --recover-stopped
 ```
 
 The first dry-runs Apply for one eligible job; the second dry-runs a specific job
-by URL. A dry run never submits — it shows what would happen without sending
-anything. A finite `--limit` bounds the number of jobs claimed by that batch,
+by URL. The third checks stopped Apply custody without starting an application or
+resetting Skip. A dry run never submits — it shows what would happen without
+sending anything. A finite `--limit` bounds the number of jobs claimed by that batch,
 including jobs skipped after claim. A URL-targeted batch stays on that job even
 if more workers are configured. Use `--continuous` to keep polling instead.
 

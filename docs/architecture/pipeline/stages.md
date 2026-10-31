@@ -539,6 +539,63 @@ recipient/attachment candidate. Terminal apply outcomes are
 `ApplicationFailed` (including the manual final-submit boundary), or
 `ApplyManualSkip` (manual-ATS skip).
 
+Manual Apply controls are canonical stage state plus durable event history.
+Manual Skip records `manualDisposition: "skip"`; that stop remains active across
+later local labels until a validated explicit reset or manual Applied resolution.
+The explicit reset records `resetAuthority=explicit_safe_apply_reset` and
+`manualSkipReleasedThroughEventId`, bound to the existing Skip event frontier
+under the same writer lock. Automatic reconciliation `StageReset` events and
+replayed older release frontiers cannot release the stop or a subsequent Skip.
+Older reset events without this provenance remain inspectable but cannot
+establish release authority; a fresh safe explicit reset is required.
+Selectors, readiness counts and the locked claim exclude manual Skip and any
+recorded submit intent for the exact tenant/job, independently of latest-run
+projections. Skip records its previous state in the event: a prior
+`needs_verification` remains a separate unresolved stop even without an intent
+receipt. Only retryable `DRY_RUN` skips remain automatically claimable.
+An Apply dispatch snapshots the tenant event frontier under the writer. A later
+manual Skip or explicit reset releasing it fences that dispatch for the affected
+job, including if the workflow had not claimed yet. New targeted requests after
+reset use the reset generation in their workflow identity. An older workflow with
+no frontier is fenced only for jobs with retained manual Skip history; standing
+workflows capture a fresh frontier after completing each poll.
+After availability refresh, admission rechecks the controls under the writer.
+An explicit reset acquires the writer and refuses submit intent, active ownership,
+Applied, Needs verification and nonmanual policy skips. The shared mixed-cohort
+reset rolls back all selected stages on refusal and retains caller transaction
+ownership. Accepted materials and historical events are unchanged.
+
+Skip is a local disposition; it neither dispatches provider cancellation nor
+asserts external completion. Final intent retains the existing run/stage fence
+and rechecks all durable tenant/job submit intents and unresolved skipped
+outcomes under that same writer lock. This also fences an inherited attempt
+that was admitted before earlier submission evidence became visible.
+Settlement holds the writer and rejects a stopped stage or a successor run;
+recovery reads running ownership under the writer as well. Restart recovery and
+manual Applied resolution retain the claimed attempt count. Original-run
+settlement evidence remains visible independently of Skip; the
+[Apply projector](../read-model.md#late-apply-settlement) retains a corroborated
+late email outcome or unresolved submission uncertainty. Durable intent remains
+a retry blocker even if a late terminal event is recorded after a local stop.
+An exact stopped owner can persist its original private agent observations and
+source-bound terminal determination. Skip before final-intent admission returns a
+local stop instead of an application failure; no new submission is authorized.
+
+Any admitted run retains its owner across local stage changes. For a launcher
+claim, reset requires matching `ApplyClaimSettled` or `ApplyCustodyRetired`
+evidence for that exact run and launcher. A stage label or `LockReleased` alone
+does not prove cleanup. Submit intent still blocks retry after settlement.
+
+Normal Apply startup and `apply --recover-stopped` check stopped claims using
+the existing source-owner lifetime or native custody recovery. A root process
+exit is not native descendant proof. Source recovery remains best effort, while
+installed recovery requires the exact native completion. Unknown custody remains
+blocked. Recovery does not reset the job or resolve current/older intent or prior
+Needs verification evidence. If verified native retirement finds an active
+Skip whose exact matching owner was left labeled running, and no conflicting
+intent or outcome exists, it restores the stopped stage in the retirement
+transaction; a separate explicit reset is still required.
+
 **Seven safety invariants, and the mechanisms that enforce them:**
 
 1. **No model-owned final browser commit.** The use case stops ordinary live

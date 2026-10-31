@@ -690,6 +690,88 @@ observed product-path evidence; fixture coverage is not independent runtime QA.
 
 ## Auditability Checks
 
+For Skip during Apply custody, run `test_apply_stopped_owner_recovery.py` and
+`test_apply_crash_custody.py`, with the existing Apply claim, workflow, reset
+and projection selections. A real owned source process and retained child must
+show that root exit alone is not a native completion proof. The source lifetime
+recovery is explicitly best effort, preserves Skip and records its exact claim;
+only a separate safe reset releases the stop. Unknown or untracked custody stays
+blocked. Installed mode requires the actual native completion proof described in
+[Apply Launcher Ownership](../../local-reliability-qa.md#apply-launcher-ownership).
+Exercise native retirement after a saved Skip and stale running relabel using
+the real claim, custody journal and reset writer with synthetic native proof.
+The exact retired owner may restore the stopped stage; unverified custody,
+intent and a successor claim must still refuse reset.
+Current/older intent and prior Needs verification still refuse reset. Preserve
+accepted artifact fingerprints, counts and event/run identity. The
+`apply --recover-stopped` CLI must never launch Apply or reset running work.
+Use actual HTTP Skip/reset readback; fixture-only events do not establish cleanup.
+
+For durable Apply Skip and submit-intent recovery, run locked
+`pytest tests/test_exact_v7_apply_acquire_job_identity.py tests/test_apply_queue_selectors.py tests/test_enrichment_retry.py tests/test_exact_v7_state_reset.py`.
+Use exact-schema synthetic jobs and actual claims, final-intent writer, saga and
+SQLite event persistence with fake sender/browser/agent transports. Cover manual
+Skip from pending/failed/needs_verification across targeted/batch polling,
+approval settings and dry runs; retain an eligible peer and retryable DRY_RUN.
+An independent writer commits Skip during availability refresh and before final
+intent. Post-intent Skip and lost acknowledgement permit at most one fake send;
+restart/stage relabel/reset cannot authorize another. Repeat Needs verification
+without an intent receipt, retaining its prior state through repeated Skip and
+later stage labels. Assert exact intent/sender
+counts, original run identity, preserved artifact fingerprints and late-result
+ownership. Seed an inherited running attempt with an earlier same-job intent,
+including an independent-writer intent committed during agent execution: final
+admission must create no second intent/send, while foreign tenant/job evidence
+cannot block an unchanged safe submission. Compare the real Apply Review and
+Job Detail readers after relabel/restart. Exercise the real CLI manual-failure
+command: active ownership, Skip and uncertainty must produce a nonzero refusal,
+while safe local failure preserves attempts/materials. Settlement must retain
+the claimed attempt count for success, rehearsal, failure and uncertainty.
+Also cover both restart recovery branches and real CLI Mark Applied with an
+existing budget. Run `test_apply_runs_projection_from_events.py` and
+`test/apply-late-settlement.test.ts` for actual claim/saga/fake-sender/Skip/late
+settlement through the Python projector and HTTP readers. Successful original-run
+history must not become a fabricated submit failure; lost acknowledgement stays
+uncertain, Skip and intent still block retry, and accepted artifacts remain
+unchanged. Distinguish confirmed late receipts from lost acknowledgements in the
+real HTTP audit while retaining the same stop and retry fence. Exercise repeated
+Skip after Applied, Needs verification, queued and policy-owned states through
+HTTP and both reset owners; reconstruct identifiable legacy authority and verify
+that a cleared score policy and ordinary safe Skip remain resettable. Also dispatch
+through registered RPC before starting a controlled Temporal worker,
+then Skip and reset. The prior workflow cannot claim, a distinct post-reset
+request can, and a standing loop renews only between completed polls. Include
+legacy histories, independent writer ordering and replay; record loopback listener
+ownership and reap the exact synthetic Temporal child.
+Check already-cached fallback repair without new events, rollback and caller
+transaction ownership, prior terminal outcomes and foreign send evidence.
+For each conflicting late status, intent remains Needs verification unless the
+exact email operation has its validated receipt and subsequent submitted fact;
+unbound, altered, foreign-job/tenant/stage and empty receipts cannot settle it.
+Confirm a matching receipt recorded before the unique intent cannot create a
+submitted fact or repeat-application evidence, including when a pre-intent row
+collides with a later receipt's idempotency key. A valid later receipt settles;
+duplicate intents remain uncertain. Exercise the real writer under its lock and
+repeat the readback after reopening storage.
+The real worker/saga must persist the original owner's private AssistantText,
+ToolUse and terminal determination after pre-intent Skip without recording a
+failure, claiming a peer or admitting a send. A stopped rehearsal with no intent
+retains its actual dry-run result. Repeat after reopening storage and verify that
+private observation text is absent from projected timelines.
+Regress an automatic score-threshold reset after a relabeled manual Skip: no claim
+is admitted until a validated explicit release. Refuse canceled/failed/pending
+resets without the exact original owner settlement, including mixed-cohort RPC
+rollback. Run `test_workflow_apply.py` through registered RPC, Temporal, real
+launcher/use-case/saga and settlement with fake external transports: unchanged
+authority, pre-intent Skip, post-intent Skip and lost acknowledgement, followed by
+connection restart and repeated RPC. Retain exact event/send counts and artifact
+hashes. Open More job actions, activate Skip on running and Needs verification
+jobs, and inspect retained run/intent evidence on desktop/mobile after reload
+and a refused reset. Exercise CLI/registered RPC mixed-cohort rollback and caller-owned
+transactions. API HTTP Skip/reload/reset and focused UI mutation/rollback tests
+must preserve visible active-run and verification evidence. These regressions
+do not establish live-provider or installed-runtime behavior.
+
 For stale score reset and replacement (#1189), run the focused score
 staleness, score atomic-publication and repository tests with the API reset and
 web mutation tests. Use owned synthetic SQLite and fake model authority. Reset
@@ -706,6 +788,145 @@ pending job and independent queued/running owners; limits apply to distinct
 eligible jobs, skipped work is reported, and an event or competing-writer
 failure cannot partially reset the cohort. Repeated preparation sweeps preserve
 approved artifact identity, status and bytes while score authority is stale.
+
+For current approval at owned email intent, run locked
+`pytest tests/test_apply_regressions.py -k owned_email -s` with an owned JUnit path,
+alongside the Apply saga/use-case, approval vocabulary, cover review, posting
+availability and repeat-application regressions. The fixture retains production
+`acquire_job` → `run_job` → use case → saga → final authorizer → SQLite intent →
+settlement/recovery; only external browser, agent, DNS and sender transports are
+synthetic. It does not replace API/RPC/Temporal dispatch or rendered review QA.
+
+Commit independent defer/reset, profile, application/posting URL, material
+generation, same-generation artifact/byte, cover binding and email candidate
+changes after claim. Repeat with claim-time approval waiting enabled and disabled,
+including changed inputs followed by a new approval, tied decision clocks, missing
+authority and read failure. Require zero intent/send on refusal, stable reasons,
+unchanged post-edit review/material history and accepted bytes. An enabled claim
+gate must reject stale complete email bindings across repeated targeted and
+standing polls without consuming attempts. For refusals after claim, require
+owner-scoped, idempotent attempt restoration at settlement and after interrupted
+settlement, including with claim-time approval disabled. Preserve browser claims,
+reject agent-reported or historical unkeyed refund lookalikes, and never refund
+after submit intent. The unchanged control requires one committed intent
+before one fake send, with decision/source/candidate provenance on the intent.
+With approval waiting disabled, exercise real continuous worker and bounded
+managed/continuous workflow batches: one refusal parks unchanged authority with
+no repeated agent, browser, intent or sender work, while another job progresses.
+Change the authority or explicitly request a single-job retry and verify the
+job can run again. Start with no candidate or review at all and verify the
+normal caller requires a dry run for discovery and blocks live browser entry;
+the directly invoked locked saga's refusal still refunds and parks its owner.
+Carry a stale approved candidate through an actual continuous Temporal
+execution: retain its failed batch count, continue only after the same owner's
+refund and settlement, admit a reviewed peer and wake the original job after
+its authority changes. Replay the history;
+mixed failures, missing proof, worker crashes and cleanup failures must still
+end the workflow as failures. Cover authority changed during the earlier run,
+interrupted settlement, and a first newly discovered email candidate. Exercise both ended
+source-lifetime and verified native-custody recovery: the park, owner-checked
+refund and stage transition commit together; intent and successor claims remain
+protected. After a saved refusal, make score stale, close the posting or make
+materials unavailable before Skip; settlement must still read the exact owner's
+authority and restore its attempt without admitting a send. Preserve the changed
+sources and decisions. Use synthetic native proof at the custody seam.
+On Darwin, carry the email-refusal case through the real source-controller
+scope, with real boot/coalition checks and synthetic Apply ports. Repeated
+unchanged polls must stay parked; a peer and changed authority can proceed.
+Retain exact child birth/session evidence and the owned workspace when the
+separate source cleanup probe cannot verify exit; never infer completion from
+the source fleet receipt.
+Direct saga calls without a final email authority, with availability-only or
+malformed authority, or without the same candidate's pinned bytes must refuse
+before intent and sender admission.
+Run the API approval test with `JOBCTRL_MIGRATION_TEST_PYTHON` set to the locked
+worker Python: its synthetic cross-runtime control records a worker-generated
+preview through the actual API and carries that approval through worker claim
+and intent, with unchanged and late-defer cases and a fake sender.
+Run locked `pytest tests/test_material_render_publication.py
+tests/test_tailoring_ownership_race.py tests/test_tailoring_artifact_boundary.py
+tests/test_material_batch_attempt_fencing.py tests/test_direct_material_attempt_fencing.py
+tests/test_approved_material_recovery_ownership.py`.
+Drive competing PDF and Cover activity paths and overlapping tailoring activities
+against one synthetic SQLite workspace. Require distinct attempt paths, preserved
+accepted bytes and source IDs, a writer lock through revalidation/publication,
+no stale aggregate overwrite, and owner-specific stale settlement without an
+extra attempt. Cover changed source bytes/path/generation, render failure, and
+an acknowledgement lost after commit; retain the referenced PDF in that case.
+Run overlapping attempts of the same Temporal activity and workflow run in both
+completion orders. Once the successor starts, require the older attempt to leave
+its publication and terminal stage state untouched. Also recover a committed
+cover while its prior PDF render is paused, preserving the accepted text. Delay
+an older attempt before stage claim and before retry recovery; neither may claim
+or settle the successor's stage, and recovery must stay scoped to its job.
+Repeat with selected and unscoped Tailor and Cover batches, and current-policy
+Tailor, including distinct Temporal and workflow-owner IDs. Require sibling
+jobs and other tenants to retain their work when one attempt is superseded.
+Overlap direct and Temporal material calls in both orders, including failures;
+the displaced direct call returns its stale/skipped result and cannot settle
+or publish over the successor. Also delay direct calls before their stage claim
+and request already-approved artifacts while a workflow-owned stage is running.
+Also reuse approved material through the direct entry points while another
+direct start token is running; preserve its complete stage/event rows, accepted
+bytes and ability to pass the real publication guard.
+Replay an older workflow's Tailor and Cover activity against approved materials
+while a different workflow, another activity of the same run, or a direct
+attempt owns the running replacement. Preserve the complete stage row, start
+events, accepted files, material rows and provenance, and verify the current
+owner still passes the real publication guard. Retain current-owner recovery as
+a positive control.
+Use a second real SQLite connection before and after repository save to prove
+neither writer admission nor intent visibility can cross validation-to-commit.
+Pause repository save containing intent after final authorization, both before
+and after insertion. Overwrite or atomically replace the attachment using an
+independent writer while its metadata update is SQLite-locked: source changes
+must roll back the intent with zero sender/HTTP calls under either approval-wait
+setting. Also replace the file between hash validation and byte capture. Retain
+the production Gmail adapter and MIME encoder with fake HTTP, decode the outgoing
+attachment and compare its hash with the approval. After admission, replacing or
+deleting the source path must not alter those bytes or force a path fallback.
+The last hash read does not lock an independent filesystem writer through the
+SQLite commit. A replacement in that interval can go undetected, although the
+sender still receives the pinned approved bytes; these tests do not prove a
+filesystem-wide atomic current-source check.
+Missing/mutable byte inputs refuse before Gmail access. Repeat acknowledgement
+loss and restart through this byte-bound real adapter with no resend.
+Also gate the first source-binding read during claim: the running stage must
+remain uncommitted and another writer must be excluded. Replace attachment
+bytes/metadata or the accepted tailored-resume identity before claim and after
+claim separately; neither a new snapshot nor an unchanged generation may adopt
+the replacement under older approval. Approve candidate A, change the job title,
+and run another production rehearsal to produce B with the same recipient and
+attachment but different subject/body. A's recorded fingerprint must refuse B
+under both approval-wait settings. The API approval tests also require complete
+fingerprint persistence and atomic refusal when accepted file bytes are unavailable.
+Repeat tied-clock defer/reset using decision IDs both below and above the prior
+approval ID, with approval waiting on and off. API, worker and digest must agree
+on the conservative non-submit precedence. Inject a canonical review-reader
+failure at each preliminary final-intent read, including the read used by
+availability transport: require `approval_authority_unavailable`, zero intent/send
+and no extra attempt. Capture preview A, create rehearsal B, then submit A's full
+preview identity with unchanged recipient/attachment IDs. Require an atomic API
+refusal, preserved decision history and no send; an explicitly reviewed B can
+subsequently be approved and sent through the owned path.
+At the review-session hook, retain the clicked preview across asynchronous
+preparation. Independently replace recipient, subject, body, attachment ID/name,
+rehearsal run or timestamp, including an in-place cache update while refreshing:
+no approval request may adopt the unseen preview. The unchanged control sends
+the complete caller-bound preview, permitting only the exact accepted resume
+render's attachment promotion. An API stale-preview refusal preserves the saved
+draft and accepted render without dispatching automation.
+Fail intent insertion to prove rollback, then exercise lost acknowledgement and
+crash after intent through restart and repeated targeted/standing polls: uncertainty
+stays `needs_verification` with no resend. Emit scenario identities, exact event
+and sender counts, artifact/source hashes and writer ordering for retained QA.
+
+The owning boundaries are
+[`_authorize_posting_before_submit` and `SqliteApplyRunRepository.save`](../../../workers/automation/src/jobctrl/apply/launcher.py),
+[`_handle_email_only_result`](../../../workers/automation/src/jobctrl/domain/apply/process_manager.py)
+and [`_email_application_context`](../../../workers/automation/src/jobctrl/domain/apply/use_cases.py).
+Browser final submit remains manual; Gmail verification, provider receipt
+validation and manual Skip semantics retain their separate contracts.
 
 For interview-history and Apply Review comment recovery, run the focused
 Interviews view, note-form, interview-query and Apply Review session/view tests.

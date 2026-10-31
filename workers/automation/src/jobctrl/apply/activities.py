@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import Any
 
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from jobctrl.domain.identifiers import JobId, canonical_job_id
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -30,6 +33,9 @@ class ApplyActivityInput:
     # ``limit``.  Otherwise ``max(1, limit)`` jobs are processed.
     continuous: bool = False
     auto_apply_loop: bool = False
+    # Bounded batches belonging to a standing workflow are polls, not manual retries.
+    standing_refusal_poll: bool = False
+    dispatch_frontier: int | None = None
 
     def __post_init__(self) -> None:
         if self.job_id is not None:
@@ -44,6 +50,30 @@ class ApplyActivityOutput:
     error: str | None = None
     # Older activity histories have no worker-crash observation.
     worker_crashes: int | None = None
+    # Only refusals with a durable refund and completed owner settlement count.
+    settled_refusals: int | None = None
+
+
+@dataclass(frozen=True)
+class ApplyFrontierInput:
+    tenant_id: str
+    expected_app_dir: str | None = None
+    expected_db_path: str | None = None
+
+
+@activity.defn(name='capture_apply_dispatch_frontier')
+async def capture_apply_dispatch_frontier_activity(payload: ApplyFrontierInput) -> int:
+    """Start the next standing poll only after observing its own writer frontier."""
+    from jobctrl.database import get_connection
+    from jobctrl.infrastructure.apply_controls import capture_apply_dispatch_frontier
+    from jobctrl.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
+    from jobctrl.infrastructure.temporal.runtime_guard import assert_activity_runtime
+
+    assert_activity_runtime(expected_app_dir=payload.expected_app_dir, expected_db_path=payload.expected_db_path)
+    return await run_blocking_with_heartbeat(
+        lambda: capture_apply_dispatch_frontier(get_connection(), tenant_id=payload.tenant_id)[0],
+        starting_message='capturing Apply dispatch frontier',
+    )
 
 
 @activity.defn(name="apply")
@@ -69,7 +99,7 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
         read_min_fit_score,
     )
     from jobctrl.browser_capabilities import require_system_browser_capability
-    from jobctrl.apply.launcher import main as apply_main
+    from jobctrl.apply.launcher import count_settled_email_refusals, main as apply_main
     from jobctrl.apply.batch_outcome import ApplyBatchCleanupIncomplete, ApplyBatchWorkersCrashed
     from jobctrl.apply.ownership import ApplyLauncherBusy, ApplyLauncherCleanupIncomplete, ApplyLauncherRun
 
@@ -90,7 +120,7 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
     from jobctrl.apply.execution import ScopedApplyExecution
     scoped_execution = ScopedApplyExecution() if dedicated_scope else None
 
-    def _run_apply() -> tuple[int, int]:
+    def _run_apply() -> tuple[int, int, int | None]:
         # ``continuous=True`` selects the launcher's run-forever poll mode,
         # which it activates via ``limit == 0``.  Otherwise enforce a floor
         # of one to keep ``limit < 1`` calls from no-oping.
@@ -103,15 +133,27 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
             tenant_id=payload.tenant_id, min_score=min_score, headless=payload.headless, model=payload.model,
             dry_run=payload.dry_run, continuous=payload.continuous, workers=workers, poll_interval=60,
             approval_required=approval_required, workflow_id=workflow_id,
+            standing_refusal_poll=payload.standing_refusal_poll or payload.auto_apply_loop,
+            dispatch_frontier=payload.dispatch_frontier,
         )
         if scoped_execution is not None:
-            return scoped_execution.run(options)
-        options.pop("poll_interval")
-        return apply_main(**options, install_signal_handlers=False, launcher_run=launcher_run)
+            applied, failed = scoped_execution.run(options)
+            owner_id = scoped_execution.identity
+        else:
+            options.pop("poll_interval")
+            applied, failed = apply_main(**options, install_signal_handlers=False, launcher_run=launcher_run)
+            owner_id = launcher_run.identity
+        settled = None
+        if failed and (payload.standing_refusal_poll or payload.auto_apply_loop):
+            try:
+                settled = count_settled_email_refusals(payload.tenant_id, owner_id)
+            except Exception:  # noqa: BLE001 — missing proof must retain the failed outcome
+                logger.warning("Could not verify settled Apply refusals; retaining failed batch status")
+        return applied, failed, settled
 
 
     try:
-        applied, failed = await run_blocking_with_heartbeat(
+        applied, failed, settled_refusals = await run_blocking_with_heartbeat(
             _run_apply,
             starting_message="apply starting",
             progress_message="apply still running",
@@ -131,6 +173,7 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
             failed=int(failed),
             error=None,
             worker_crashes=0,
+            settled_refusals=settled_refusals,
         )
     except ApplyBatchWorkersCrashed as exc:
         return ApplyActivityOutput(

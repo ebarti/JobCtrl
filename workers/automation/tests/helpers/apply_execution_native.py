@@ -82,7 +82,12 @@ if mode == "run":
         requests.append({"request_id": invocation.identity, "scope_id": scope})
     conn = database.get_connection()
     count = conn.execute("SELECT count(*) FROM job_events WHERE job_id=? AND event_type='ApplyManualSkip'", (job,)).fetchone()[0]
-    if count != 2:
-        raise RuntimeError("same-job second native Apply did not reach its real manual boundary")
+    # Manual ATS is policy-owned: a later dispatch must preserve the first
+    # disposition while both native invocations retire their exact scopes.
+    if count != 1:
+        raise RuntimeError("native Apply did not preserve the policy-owned manual skip")
+    stage = conn.execute("SELECT state,error_code FROM job_stage_states WHERE job_id=? AND stage='apply'", (job,)).fetchone()
+    if tuple(stage) != ("skipped", "MANUAL_ATS"):
+        raise RuntimeError("native Apply changed its retained manual-ATS disposition")
     (evidence / "fixed-module-results.json").write_text(json.dumps(requests))
     database.close_thread_connections()

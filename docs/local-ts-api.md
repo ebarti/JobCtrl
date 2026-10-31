@@ -364,6 +364,25 @@ mark-skipped commands are summarized in
 [Operations & Events](api/operations-and-events.md#starting-work).
 Stale-score reset advice is returned and recorded as an executable explicit
 rescore command; the reset itself does not dispatch scoring.
+
+Apply resets refuse recorded intent, Applied and unresolved verification evidence,
+retained policy skips, and unsettled admitted or skipped-queued work independently
+of the current local stage label. A successful explicit reset records its validated
+Skip-history release frontier; automatic `StageReset` events carry no such authority.
+Verified native retirement may restore the stopped stage from a stale running
+label only for the same claim and run with no conflicting outcome or intent.
+That recovery preserves Skip; a separate safe reset releases it.
+Apply dispatch binds a writer-serialized event frontier, and the claim writer
+rejects a job with a later manual Skip or its later authorized reset. A targeted
+request after reset has a distinct workflow generation; an older workflow cannot
+reuse its request authority. Legacy workflows without a frontier remain eligible
+only for jobs without retained manual Skip history. Standing workflows renew the
+frontier between completed polls. Historical local API skips are identified only
+by their exact machine-authored message on an Apply `StageSkipped` event; the
+user-provided reason in the event payload is not interpreted as a marker.
+Historical score-policy skips are recognized from the producer's structured
+score fields and exact generated event message, not a user-provided reason.
+
 Enrichment resets use the synchronous Python application service through
 `reset_enrichment`; its transaction and preservation rules are defined in
 [Enrichment Retry Ownership](architecture/contracts-types-and-api-boundaries.md#enrichment-retry-ownership).

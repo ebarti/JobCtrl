@@ -151,7 +151,7 @@ export function useRetryStageMutation(): UseMutationResult<
   return useMutation<ActionRunResponse, Error, RetryStageVariables, RetryPatchContext>({
     mutationFn: (variables) => api.retryStage(variables.jobId, toRequest(variables)),
     onMutate: async ({ jobId, detailQueryId, stage, runAfter, refreshApplyUrl }) => {
-      if (refreshApplyUrl) return {};
+      if (refreshApplyUrl || stage === "apply") return {};
       const queryKey = jobsKeys.detail(tenantId, detailQueryId ?? jobId);
       await queryClient.cancelQueries({ queryKey, exact: true });
       const query = queryClient.getQueryCache().find({ queryKey, exact: true });

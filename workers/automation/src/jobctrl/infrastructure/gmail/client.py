@@ -9,7 +9,6 @@ import time
 from datetime import datetime
 from email.message import EmailMessage
 from html import unescape
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -127,21 +126,21 @@ class GmailClient:
         to_email: str,
         subject: str,
         body: str,
-        attachment_path: str,
+        attachment_bytes: bytes,
         attachment_name: str,
     ) -> dict[str, str]:
+        if not isinstance(attachment_bytes, bytes) or not attachment_bytes:
+            raise ValueError("Email attachment bytes were not authorized")
         _ensure_send_scope()
         message = EmailMessage()
         message["To"] = to_email
         message["Subject"] = subject
         message.set_content(body)
-        attachment = Path(attachment_path)
-        data = attachment.read_bytes()
         message.add_attachment(
-            data,
+            attachment_bytes,
             maintype="application",
             subtype="pdf",
-            filename=attachment_name or attachment.name,
+            filename=attachment_name,
         )
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii").rstrip("=")
         try:

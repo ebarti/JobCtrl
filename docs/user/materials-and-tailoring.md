@@ -18,6 +18,14 @@ recorded as skipped because the setting is off; existing accepted letters and
 work already generating are preserved. New direct cover-only requests also
 require the setting to be enabled.
 
+Concurrent preparation attempts keep their files separate. If saved materials
+change before an older attempt finishes, that attempt cannot replace the newer
+accepted material; JobCtrl marks it stale when it still owns the work so it can
+be retried with the current sources. A PDF whose save acknowledgement is
+uncertain is kept for inspection rather than deleted.
+If another preparation is still running, reusing the earlier approved material
+leaves that work running and able to save its replacement.
+
 Tailoring keeps as many applicable baseline accomplishments as possible in each
 selected role, up to **Max bullets per role**. The configured maximum is a hard
 cap even when your baseline has more bullets. Tailoring can reorder or rewrite
@@ -62,8 +70,9 @@ for that job, including preparation chained from URL imports and Discover. The
 current Skip is checked again before each new material stage starts. An explicit
 Tailor or Re-tailor action can request materials while Apply remains skipped;
 all score, eligibility, source and review prerequisites still apply.
-Use **Cancel** to stop work already in progress. Resetting the Apply outcome
-allows normal automatic eligibility again. A minimum-score policy skip remains
+Use **Cancel** to stop work already in progress. A safe pre-submission Apply reset
+allows normal automatic eligibility again. Recorded submit intent cannot be
+cleared by reset; see [Skip and safe reset](apply.md#skip-and-safe-reset). A minimum-score policy skip remains
 a separate decision controlled by the score and materials threshold.
 
 A cover letter's factual and quality reviews can run together because they inspect

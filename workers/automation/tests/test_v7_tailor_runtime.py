@@ -40,28 +40,39 @@ _JOB_ID = canonical_job_id("30000000-0000-4000-8000-000000000001")
 
 
 @pytest.fixture()
-def batch_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Real activity/selector/state with a separate connection per worker."""
+def batch_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog):
+    """Real activity/selector/state using the production thread-local connection."""
     from jobctrl import config, database
+    from jobctrl.infrastructure.events import get_default_publisher
+    from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
     from jobctrl.pipeline import runner
+    from jobctrl.scoring import cover_letter
 
     db_path = tmp_path / "batch.db"
     database.init_db(db_path)
-    database.close_connection()
-    local = threading.local()
-    connections = []
+    database.close_connection(db_path)
+    production_get_connection = database.get_connection
+    monkeypatch.setattr(database, "DB_PATH", db_path)
 
-    def connect():
-        if not hasattr(local, "connection"):
-            local.connection = sqlite3.connect(db_path, check_same_thread=False)
-            local.connection.row_factory = sqlite3.Row
-            connections.append(local.connection)
-        return local.connection
+    def connect(*args, **kwargs):
+        return production_get_connection(*args, **kwargs)
 
     monkeypatch.setattr(config, "APP_DIR", tmp_path)
     monkeypatch.setattr(config, "DB_PATH", db_path)
-    for module in (database, runner, tailor_module):
+    for module in (database, runner, tailor_module, cover_letter):
         monkeypatch.setattr(module, "get_connection", connect)
+    bus = get_default_publisher()
+    subscriptions = [
+        ProjectionBuilder(conn_factory=production_get_connection, tenant_id=tenant).subscribe_to(bus)
+        for tenant in (LOCAL_TENANT, _TENANT_A)
+    ]
+    projection_events = []
+
+    def observe(event):
+        conn = production_get_connection()
+        projection_events.append((str(event.tenant_id), event.event_type, conn is connect(), conn.in_transaction))
+
+    subscriptions.append(bus.subscribe(None, observe))
     monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
     monkeypatch.setattr(tailor_module, "_build_pdf_renderer", lambda: object())
     snapshot = _snapshot(_TENANT_A)
@@ -81,9 +92,26 @@ def batch_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         snapshot=snapshot,
         app_dir=str(tmp_path),
         db_path=str(db_path),
+        projection_events=projection_events,
     )
-    for connection in connections:
-        connection.close()
+    for subscription in subscriptions:
+        subscription.unsubscribe()
+    database.close_connection(db_path)
+    assert not [
+        record
+        for phase in ("setup", "call")
+        for record in caplog.get_records(phase)
+        if "ProjectionBuilder failed to refresh" in record.getMessage()
+    ]
+
+
+def _direct_with_connection_cleanup(fn, *args, **kwargs):
+    from jobctrl.database import close_thread_connections
+
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        close_thread_connections()
 
 
 @pytest.mark.asyncio

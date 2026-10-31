@@ -157,10 +157,19 @@ def install() -> None:
                         "scope_id": os.environ["JOBCTRL_APPLY_EXECUTION_SCOPE"]}
             _publish_ready(controls / f"ready-{job}.json", evidence)
             release = controls / f"release-{job}"
+            probe = controls / f"probe-{job}.json"
             deadline = time.monotonic() + 120
             while not release.exists():
                 if browser.handle.poll() is not None:
                     raise RuntimeError("synthetic owned cancellation reached only its listener")
+                if probe.exists():
+                    request = json.loads(probe.read_text())
+                    probe.unlink()
+                    _publish_ready(controls / f"alive-{job}.json", {
+                        "nonce": request["nonce"], "job_id": job, "run_id": run_id,
+                        "worker_id": browser.worker_id, "pid": browser.pid,
+                        "scope_id": evidence["scope_id"],
+                    })
                 if time.monotonic() > deadline:
                     raise TimeoutError("native QA did not release controlled external port")
                 time.sleep(.01)

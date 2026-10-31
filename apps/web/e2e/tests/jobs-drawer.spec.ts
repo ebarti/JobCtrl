@@ -745,3 +745,137 @@ test("keeps the job detail header Tab order aligned with its visual order", asyn
   await page.keyboard.press("Tab");
   await expect(drawer.getByRole("button", { name: "Sections" })).toBeFocused();
 });
+
+test("Job detail exposes local Skip limits on desktop and mobile after reload", async ({ page }, testInfo) => {
+  const prohibited = watchProhibitedProductPathRequests(page);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`/jobs/${encodeURIComponent(QA_PLATFORM_JOB_ID)}?${FILTER_PARAMS}`);
+    const drawer = page.getByRole("article", { name: "Job details" });
+    const moreActions = drawer.getByRole("button", { name: "More job actions" });
+    await moreActions.focus();
+    await moreActions.press("Enter");
+    const skip = page.getByRole("dialog", { name: "Job workflow actions" }).getByRole("button", { name: "Skip", exact: true });
+    await expect(skip).toBeVisible();
+    await skip.focus();
+    await expect(skip).toBeFocused();
+    await expect(skip).toHaveAccessibleDescription(/Skip stops future Apply locally. In-flight submissions may still complete/);
+    await page.reload();
+    await drawer.getByRole("button", { name: "More job actions" }).click();
+    await expect(skip).toHaveAccessibleDescription(/In-flight submissions may still complete/);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+    const screenshotPath = testInfo.outputPath(`local-skip-${width}-after-reload.png`);
+    await page.screenshot({ path: screenshotPath, animations: "disabled" });
+    await testInfo.attach(`local-skip-${width}-after-reload`, { path: screenshotPath, contentType: "image/png" });
+  }
+  expect(prohibited).toEqual([]);
+});
+
+for (const state of ["running", "needs_verification"] as const) {
+  for (const width of [1440, 390]) {
+    test(`local Skip preserves ${state} evidence after mutation, reset refusal and reload at ${width}px`, async ({ page }, testInfo) => {
+      const runId = `owned-skip-${state}-${width}`;
+      const db = new Database(loadE2eDbPath());
+      const saved = ["job_stage_states", "job_events", "apply_run_projections"].map(table => ({
+        table, rows: db.prepare(`SELECT * FROM ${table} WHERE tenant_id='local' AND job_id=?`).all(QA_PLATFORM_JOB_ID) as Record<string, unknown>[],
+      }));
+      try {
+        const event = db.prepare(`INSERT INTO job_events
+          (tenant_id,job_id,identity_version,stage,event_type,payload_json,occurred_at)
+          VALUES ('local',?,1,'apply',?,?,?)`);
+        db.transaction(() => {
+          db.prepare("DELETE FROM job_events WHERE tenant_id='local' AND job_id=? AND stage='apply'").run(QA_PLATFORM_JOB_ID);
+          db.prepare("UPDATE job_stage_states SET state='succeeded' WHERE tenant_id='local' AND job_id=? AND stage!='apply'").run(QA_PLATFORM_JOB_ID);
+          db.prepare("UPDATE job_stage_states SET state=?,retryable=0,attempt_count=1,started_at=?,finished_at=NULL,metadata_json=? WHERE tenant_id='local' AND job_id=? AND stage='apply'")
+            .run(state, new Date().toISOString(), JSON.stringify({ run_id: runId, workflow_id: runId }), QA_PLATFORM_JOB_ID);
+          db.prepare("DELETE FROM apply_run_projections WHERE tenant_id='local' AND job_id=?").run(QA_PLATFORM_JOB_ID);
+          db.prepare(`INSERT INTO apply_run_projections (tenant_id,job_id,run_id,status,started_at)
+            VALUES ('local',?,?,?,?)`).run(QA_PLATFORM_JOB_ID, runId, state === "running" ? "in_progress" : "needs_verification", new Date().toISOString());
+          event.run(QA_PLATFORM_JOB_ID, "ApplyRunStarted", JSON.stringify({ run_id: runId, workflow_id: runId, dry_run: false }), new Date().toISOString());
+          if (state === "needs_verification") {
+            event.run(QA_PLATFORM_JOB_ID, "ApplySubmitIntended", JSON.stringify({ run_id: runId }), new Date().toISOString());
+          }
+        }).immediate();
+        const beforeStage = db.prepare("SELECT * FROM job_stage_states WHERE tenant_id='local' AND job_id=? AND stage='apply'").get(QA_PLATFORM_JOB_ID);
+        const beforeArtifacts = db.prepare("SELECT * FROM job_materials_artifacts WHERE tenant_id='local' AND job_id=?").all(QA_PLATFORM_JOB_ID);
+        const prohibited = watchProhibitedProductPathRequests(page);
+        await page.setViewportSize({ width, height: 900 });
+        const detailUrl = `/jobs/${encodeURIComponent(QA_PLATFORM_JOB_ID)}?${FILTER_PARAMS}`;
+        await page.goto(detailUrl);
+        const drawer = page.getByRole("article", { name: "Job details" });
+        const audit = drawer.getByRole("region", { name: "Job audit triage" });
+        const assertEvidence = async () => {
+          const assessment = drawer.getByRole("button", { name: /^02 · Fit & evidence/ });
+          if (await assessment.getAttribute("aria-expanded") === "false") await assessment.click();
+          if (state === "needs_verification") {
+            await expect(audit.getByText("Submission outcome requires verification", { exact: true })).toBeVisible();
+            await expect(audit.getByText(new RegExp(`Submission intent is recorded for run\\(s\\): ${runId}`))).toBeVisible();
+          }
+          // The actual run history remains inspectable after the independent local stop.
+          const history = drawer.getByRole("button", { name: /^10 · Apply history/ });
+          if (await history.getAttribute("aria-expanded") === "false") await history.click();
+          await expect(drawer.getByRole("link", { name: `Open apply run ${runId} for this job` })).toBeVisible();
+        };
+        await assertEvidence();
+        await drawer.getByRole("button", { name: "More job actions" }).click();
+        const actions = page.getByRole("dialog", { name: "Job workflow actions" });
+        const skip = actions.getByRole("button", { name: "Skip", exact: true });
+        await skip.focus();
+        await expect(skip).toBeFocused();
+        await expect(skip).toHaveAccessibleDescription(/In-flight submissions may still complete/);
+        const skipped = page.waitForResponse(r => r.url().endsWith("/actions/mark-skipped") && r.request().method() === "POST");
+        await skip.press("Enter");
+        expect((await skipped).status()).toBe(200);
+        await page.keyboard.press("Escape");
+        await expect(audit.getByText("Skipped locally", { exact: true })).toBeVisible();
+        await assertEvidence();
+        await page.reload();
+        await assertEvidence();
+        await expect(audit.getByText("Skipped locally", { exact: true })).toBeVisible();
+        // This action has no reset control after the local stop: exercise its real
+        // supported HTTP contract in the same browser session, without dispatching work.
+        const resetStatus = await page.evaluate(async (jobId) => {
+          const response = await fetch(`/v1/jobs/${encodeURIComponent(jobId)}/actions/retry-stage`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ stage: "apply", resetAttempts: true, runAfter: false }),
+          });
+          return response.status;
+        }, QA_PLATFORM_JOB_ID);
+        expect(resetStatus).toBe(409);
+        await expect(audit.getByText("Skipped locally", { exact: true })).toBeVisible();
+        await page.reload();
+        await assertEvidence();
+        await expect(audit.getByText("Skipped locally", { exact: true })).toBeVisible();
+        const current = db.prepare("SELECT state,attempt_count FROM job_stage_states WHERE tenant_id='local' AND job_id=? AND stage='apply'").get(QA_PLATFORM_JOB_ID);
+        expect(current).toEqual({ state: state === "needs_verification" ? "needs_verification" : "skipped", attempt_count: 1 });
+        if (state === "needs_verification") {
+          expect(db.prepare("SELECT * FROM job_stage_states WHERE tenant_id='local' AND job_id=? AND stage='apply'").get(QA_PLATFORM_JOB_ID)).toEqual(beforeStage);
+        }
+        const manualSkips = db.prepare("SELECT payload_json FROM job_events WHERE tenant_id='local' AND job_id=? AND stage='apply' AND event_type='StageSkipped'")
+          .all(QA_PLATFORM_JOB_ID) as Array<{ payload_json: string }>;
+        expect(manualSkips).toHaveLength(1);
+        expect(JSON.parse(manualSkips[0]!.payload_json)).toMatchObject({ manualDisposition: "skip", previousState: state });
+        expect(db.prepare("SELECT * FROM job_materials_artifacts WHERE tenant_id='local' AND job_id=?").all(QA_PLATFORM_JOB_ID)).toEqual(beforeArtifacts);
+        expect(prohibited).toEqual([`POST /v1/jobs/${QA_PLATFORM_JOB_ID}/actions/retry-stage`]);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+        const screenshotPath = testInfo.outputPath(`skip-${state}-${width}-settled.png`);
+        await page.screenshot({ path: screenshotPath, animations: "disabled", fullPage: true });
+        await testInfo.attach(`skip-${state}-${width}-settled`, { path: screenshotPath, contentType: "image/png" });
+        await testInfo.attach("canonical-controls", { body: JSON.stringify({ runId, state: current,
+          events: db.prepare("SELECT event_type,payload_json FROM job_events WHERE tenant_id='local' AND job_id=? AND stage='apply' ORDER BY event_id").all(QA_PLATFORM_JOB_ID) }), contentType: "application/json" });
+      } finally {
+        try {
+          db.transaction(() => {
+            for (const { table, rows } of saved) {
+              db.prepare(`DELETE FROM ${table} WHERE tenant_id='local' AND job_id=?`).run(QA_PLATFORM_JOB_ID);
+              for (const row of rows) {
+                const columns = Object.keys(row);
+                db.prepare(`INSERT INTO ${table} (${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`).run(...columns.map(key => row[key]));
+              }
+            }
+          }).immediate();
+        } finally { db.close(); }
+      }
+    });
+  }
+}

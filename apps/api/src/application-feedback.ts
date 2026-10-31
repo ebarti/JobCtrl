@@ -6,6 +6,7 @@ import { MessageOutcomeDeterminationSchema } from "@jobctrl/contracts";
 import { readArtifactLineAnchors, readDetermination } from "./semantic-determinations.js";
 import crypto from "node:crypto";
 import path from "node:path";
+import { emailApprovalBinding, emailCandidateSha256 } from "./email-approval-binding.js";
 
 import type {
   ApplicationOutcome,
@@ -54,6 +55,7 @@ import {
 import { bindRequirementFitReport, requirementCoverageForArtifact, requirementIdentities, unrecordedRequirementCoverage } from "./requirement-evidence.js";
 import { missingApplicationAttestationFields } from "./application-attestations.js";
 import { buildApplyAudit } from "./apply-audit.js";
+import { readApplyAuditControls } from "./apply-controls.js";
 import { allRows, getRow, type SqliteDatabase } from "./db.js";
 import { ensureJobDetailProjection, refreshProjections } from "./projections.js";
 import { evaluateRepeatApplication } from "./repeat-application.js";
@@ -198,7 +200,7 @@ export function listApplyReviewQueue(db: SqliteDatabase, appDir?: string): Apply
                partial_override_run_id, email_recipient, email_attachment_artifact_id,
                ROW_NUMBER() OVER (
                  PARTITION BY tenant_id, job_id
-                 ORDER BY decided_at DESC, decision_id DESC
+                 ORDER BY decided_at DESC, CASE WHEN decision = 'approve_submit' THEN 0 ELSE 1 END DESC, decision_id DESC
                ) AS row_num
         FROM application_review_decisions
         WHERE tenant_id = ?
@@ -379,14 +381,21 @@ function recordApplyReviewDecisionSnapshot(db: SqliteDatabase, jobLocator: strin
   }
   const emailCandidate =
     request.decision === "approve_submit" ? latestEmailApplicationCandidate(db, jobId) : null;
-  if (emailCandidate) {
+  if (request.decision === "approve_submit" && (emailCandidate || request.reviewedEmailCandidate || request.emailRecipient || request.emailAttachmentArtifactId)) {
     if (
+      !emailCandidate ||
       request.emailRecipient?.toLowerCase() !== emailCandidate.recipient.toLowerCase() ||
-      request.emailAttachmentArtifactId !== emailCandidate.attachmentArtifactId
+      request.emailAttachmentArtifactId !== emailCandidate.attachmentArtifactId ||
+      !request.reviewedEmailCandidate ||
+      request.reviewedEmailCandidate.candidateRunId !== emailCandidate.candidateRunId ||
+      request.reviewedEmailCandidate.recordedAt !== emailCandidate.recordedAt ||
+      emailCandidateSha256(request.reviewedEmailCandidate) !== emailCandidateSha256(emailCandidate)
     ) {
       throw new InputError("approval_stale_email_candidate");
     }
   }
+  const emailBinding = emailCandidate ? emailApprovalBinding(db, jobId, emailCandidate) : null;
+  if (emailCandidate && !emailBinding) throw new InputError("approval_stale_materials");
   const decidedAt = new Date().toISOString();
   const decision: ApplyReviewDecision = {
     decisionId: crypto.randomUUID(),
@@ -434,6 +443,7 @@ function recordApplyReviewDecisionSnapshot(db: SqliteDatabase, jobLocator: strin
       tenantId: DEFAULT_TENANT,
       jobId,
       decisionId: decision.decisionId,
+      emailApprovalBinding: emailBinding,
       coverLetterBinding: safeCoverLetterAccepted(db, jobId, appDir),
       decision: decision.decision,
       reasonPresent: Boolean(decision.reason),
@@ -819,7 +829,30 @@ function reviewQueueItemFromRow(
     const event = getRow<{ payload_json: string }>(db, `SELECT payload_json FROM job_events
       WHERE tenant_id=? AND job_id=? AND event_type='ApplyReviewDecisionRecorded'
         AND json_extract(payload_json, '$.decisionId')=? ORDER BY event_id DESC LIMIT 1`, [DEFAULT_TENANT, jobId, row.decision_id]);
-    const bound = event ? parseJsonRecord(event.payload_json)?.["coverLetterBinding"] : null;
+    const payload = event ? parseJsonRecord(event.payload_json) : null;
+    const emailBinding = payload?.["emailApprovalBinding"] as {
+      version?: number; candidateSha256?: string; postingUrlSha256?: string;
+      postingInputsSha256?: string; materialsSha256?: string;
+    } | null;
+    if ((emailApplication || row.email_recipient || row.email_attachment_artifact_id) && !approvalReasons.length) {
+      if (!emailApplication || emailBinding?.version !== 1) {
+        approvalReasons.push("approval_stale_email_candidate");
+      } else {
+        // A changed candidate can refer to a different attachment; compare the
+        // existing source fingerprints before reporting the candidate mismatch.
+        const current = emailApprovalBinding(db, jobId, emailApplication, { allowUnmatchedAttachment: true });
+        if (!current) approvalReasons.push("approval_stale_materials");
+        else if (emailBinding.postingUrlSha256 !== current.postingUrlSha256) approvalReasons.push("approval_stale_url");
+        else if (emailBinding.materialsSha256 !== current.materialsSha256) approvalReasons.push("approval_stale_materials");
+        else if (emailBinding.candidateSha256 !== current.candidateSha256 ||
+          emailBinding.postingInputsSha256 !== current.postingInputsSha256 ||
+          row.email_recipient?.toLowerCase() !== emailApplication.recipient.toLowerCase() ||
+          row.email_attachment_artifact_id !== emailApplication.attachmentArtifactId) {
+          approvalReasons.push("approval_stale_email_candidate");
+        }
+      }
+    }
+    const bound = payload?.["coverLetterBinding"] ?? null;
     const boundVersion = (bound as { acceptedVersion?: string } | null)?.acceptedVersion ?? null;
     if (boundVersion !== (materialsPreview.coverLetter?.acceptedVersion ?? null)
       || materialsPreview.coverLetterPdfError || (materialsPreview.coverLetter && !materialsPreview.coverLetter.pdfSourceCurrent)) {
@@ -861,6 +894,7 @@ function reviewQueueItemFromRow(
       }
     : null;
   const applyAudit = buildApplyAudit({
+    ...readApplyAuditControls(db, DEFAULT_TENANT, jobId),
     applicationUrl,
     hasResume: Boolean(row.has_resume),
     hasCoverLetter: Boolean(row.has_cover_letter),

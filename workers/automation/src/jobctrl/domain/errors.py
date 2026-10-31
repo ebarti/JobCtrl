@@ -29,6 +29,12 @@ class MissingInputError(JobCtrlError):
     code = "missing_input"
 
 
+class ApplyStoppedLocally(MissingInputError):
+    """The exact Apply owner observed the user's local stop before intent."""
+
+    code = "apply_stopped_locally"
+
+
 class TransientNetworkError(JobCtrlError):
     code = "transient_network"
 
@@ -84,6 +90,7 @@ def to_application_error(exc: Exception) -> ApplicationError:
 
 
 __all__ = [
+    "ApplyStoppedLocally",
     "AttemptBudgetExhaustedError",
     "BudgetExceededError",
     "ConfigurationError",

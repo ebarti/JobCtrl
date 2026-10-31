@@ -8,7 +8,7 @@ register ``apply`` as ``mode="workflow"`` with a clean mapping.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import timedelta
 from typing import Any
 
@@ -23,7 +23,9 @@ with workflow.unsafe.imports_passed_through():
     from jobctrl.apply.activities import (
         ApplyActivityInput,
         ApplyActivityOutput,
+        ApplyFrontierInput,
         apply_activity,
+        capture_apply_dispatch_frontier_activity,
     )
     from jobctrl.apply.batch_outcome import ApplyBatchCounts
     from jobctrl.infrastructure.temporal.finalize import (
@@ -52,6 +54,8 @@ class ApplyWorkflowInput:
     # Settings-controlled standing loop. The workflow id is deterministic and
     # the activity re-reads apply settings at batch time.
     auto_apply_loop: bool = False
+    # None is a pre-upgrade dispatch; it can run jobs without Skip history.
+    dispatch_frontier: int | None = None
 
     def __post_init__(self) -> None:
         if self.job_id is not None:
@@ -69,6 +73,7 @@ class ApplyWorkflowResult:
     # None identifies historical or failed executions with no observation.
     worker_crashes: int | None = None
     counts_known: bool | None = None
+    settled_refusals: int | None = None
 
 
 _APPLY_LIVE_RETRY = RetryPolicy(
@@ -125,10 +130,29 @@ class ApplyWorkflow:
             )
             raise
 
-        if payload.continuous and result.ok:
-            if result.applied + result.failed == 0:
+        handled_refusals = (
+            result.status == "failed" and result.error is None and result.worker_crashes == 0
+            and type(result.failed) is int and result.failed > 0
+            and type(result.settled_refusals) is int and result.settled_refusals == result.failed
+        )
+        continue_refusals = (
+            payload.continuous and handled_refusals
+            and workflow.patched('apply-standing-refusal-continuation-v1')
+        )
+        if payload.continuous and (result.ok or continue_refusals):
+            if result.applied == 0 and (result.failed == 0 or continue_refusals):
                 await workflow.sleep(_APPLY_CONTINUOUS_EMPTY_POLL_DELAY)
-            workflow.continue_as_new(payload)
+            if workflow.patched('apply-standing-dispatch-frontier-v1'):
+                frontier = await workflow.execute_activity(
+                    capture_apply_dispatch_frontier_activity,
+                    ApplyFrontierInput(payload.tenant_id, payload.expected_app_dir, payload.expected_db_path),
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=RetryPolicy(maximum_attempts=3),
+                )
+                workflow.continue_as_new(replace(payload, dispatch_frontier=frontier))
+            legacy_payload = asdict(payload)
+            legacy_payload.pop('dispatch_frontier')
+            workflow.continue_as_new(legacy_payload)
         await emit_workflow_outcome(
             tenant_id=payload.tenant_id,
             workflow_type="ApplyWorkflow",
@@ -145,9 +169,7 @@ class ApplyWorkflow:
         info = workflow.info()
         activity_limit = 25 if payload.continuous else payload.limit
         try:
-            result: ApplyActivityOutput = await workflow.execute_activity(
-                apply_activity,
-                ApplyActivityInput(
+            inputs = ApplyActivityInput(
                     tenant_id=payload.tenant_id,
                     expected_app_dir=payload.expected_app_dir,
                     expected_db_path=payload.expected_db_path,
@@ -161,7 +183,17 @@ class ApplyWorkflow:
                     approval_required=payload.approval_required,
                     continuous=False,
                     auto_apply_loop=payload.auto_apply_loop,
-                ),
+                    standing_refusal_poll=payload.continuous or payload.auto_apply_loop,
+                    dispatch_frontier=payload.dispatch_frontier,
+                )
+            if not workflow.patched('apply-activity-dispatch-frontier-v1'):
+                legacy_inputs = asdict(inputs)
+                legacy_inputs.pop('dispatch_frontier')
+                legacy_inputs.pop('standing_refusal_poll')
+                inputs = legacy_inputs
+            result: ApplyActivityOutput = await workflow.execute_activity(
+                apply_activity,
+                inputs,
                 start_to_close_timeout=(_APPLY_CONTINUOUS_BATCH_TIMEOUT if payload.continuous else _APPLY_TIMEOUT),
                 retry_policy=_APPLY_DRY_RUN_RETRY if payload.dry_run else _APPLY_LIVE_RETRY,
                 heartbeat_timeout=timedelta(seconds=60),
@@ -196,6 +228,7 @@ class ApplyWorkflow:
             # Old activity histories cannot establish that their counts
             # included work from every worker.
             counts_known=getattr(result, "worker_crashes", None) is not None,
+            settled_refusals=getattr(result, "settled_refusals", None),
         )
 
 

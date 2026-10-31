@@ -51,6 +51,30 @@ overrides into the frozen `TailoringLlmPolicy` before constructing
 configuration. Saved profile controls and versioned policy history remain
 canonical inputs, with the existing profile/policy fence at generation commit.
 
+Each resume attempt writes its own text, PDF and diagnostic paths, even when
+two attempts allocated the same generation. Tailor and Cover re-read the
+captured material snapshot in their SQLite writer transaction before publishing;
+a stale result cannot replace a newer accepted row. A cover generation also
+checks that its accepted resume source still has the bytes it read. A stale
+attempt marks its own stage stale only if its exact start event still owns that
+running stage; a successor's state and attempt count remain untouched. Direct
+and workflow-owned calls require their own start event to remain current for
+publication and terminal stage writes. Direct callers receive the existing
+stale/skipped result if another attempt takes ownership. Before claiming, a
+direct call also checks that the latest start has not changed since its initial
+database observation. Approved-artifact recovery checks the current running
+owner and recorded activity identity under the same SQLite writer lock as its
+stage transition. Reusing an approved artifact leaves another execution's
+running stage, start token and publication authority intact, including a direct
+attempt with its own start token. Once a higher numbered attempt of the same
+workflow activity records its
+start, a delayed retry cannot recover or claim over it. The same ownership
+check fences the PDF produced by Cover. Selected, current-policy and unscoped
+material batches carry the activity's Temporal run and attempt separately from
+their workflow owner. Batch retry recovery is job-scoped and skips newer or
+other-activity starts when their activity identity is recorded. Legacy starts
+without that identity retain workflow-owner recovery behavior.
+
 Policy restore is a separate reviewed command. Its tenant, target, expected
 current version, UUIDv4 command identity and user-requested reason bind the
 intent. The SQLite writer checks for a matching receipt before comparing the

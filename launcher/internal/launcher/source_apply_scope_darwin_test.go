@@ -15,13 +15,22 @@ import (
 // The source controller owns the real fleet scope. Its child runs only a
 // synthetic Python Apply probe; boot and coalition reads remain real.
 func TestSourceFleetScopeComposesWithApplyLifetime(t *testing.T) {
+	runSourceFleetScopeProbe(t, "source_apply_scope_probe.py", []string{"source_context", "active_owner_protected", "peer_preserved", "owned_children_cleaned", "same_boot_retry"})
+}
+
+func TestSourceFleetScopeComposesWithEmailRefusal(t *testing.T) {
+	runSourceFleetScopeProbe(t, "source_email_scope_probe.py", []string{"source_context", "email_refusal_recovery"})
+}
+
+func runSourceFleetScopeProbe(t *testing.T, probeName string, required []string) {
+	t.Helper()
 	python := migrationIntegrationPython(t)
 	moduleRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}
 	automation := filepath.Join(filepath.Dir(moduleRoot), "workers", "automation")
-	probe := filepath.Join(automation, "tests", "source_apply_scope_probe.py")
+	probe := filepath.Join(automation, "tests", probeName)
 	root, err := os.MkdirTemp("", "jobctrl-source-apply-owned-")
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +127,7 @@ func TestSourceFleetScopeComposesWithApplyLifetime(t *testing.T) {
 	if err := json.Unmarshal(raw, &result); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"source_context", "active_owner_protected", "peer_preserved", "owned_children_cleaned", "same_boot_retry"} {
+	for _, key := range required {
 		if !result[key] {
 			t.Fatal(fmt.Errorf("source Apply did not prove %s", key))
 		}
