@@ -247,6 +247,15 @@ pair, registry, selector and journal, and that the predecessor can restart in th
 controlled fixture. That result does **not** qualify a direct user upgrade.
 Other version pairs still require their positive upgrade qualification.
 
+A compatible schema-15 update binds its first paired backup to the predecessor.
+Older protocol-2 controllers could instead record the candidate receipt on that
+snapshot. Explicit rollback can use that historical pair only when the completed
+update journal identifies the exact releases and original backup, neither a
+recovery backup nor a cross-schema transition is involved, both signed releases
+declare schema 15, and the pair's files and schema verify. Otherwise rollback
+refuses before restoring data. Installer trust failures include the system
+verifier's diagnostic; investigate that output without bypassing notarization.
+
 The harness resolves that source from GitHub's published stable releases, so the
 source advances automatically after each release. Drafts, prereleases and the
 candidate itself are excluded; for a published historical candidate, only

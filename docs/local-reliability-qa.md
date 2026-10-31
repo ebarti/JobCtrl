@@ -98,7 +98,14 @@ stable releases, then verify the oldest referenced release is eligible for an
 explicit rollback and that the restored database pair matches its recorded
 backup identity and bytes. Check active, controller, journal, prior, live-instance,
 non-stable and foreign preservation while an unreferenced owned stable release
-is pruned. Exercise an independent installed Apply through the owned selector,
+is pruned. For a schema-15 forward update, verify that the initial pair is bound
+to a signed compatible predecessor and that a recovery pair containing later
+candidate writes remains bound to the candidate. Exercise explicit rollback
+from an older controller's candidate-labeled original pair, then refuse a
+missing schema declaration, changed backup, wrong or unfinished journal,
+recovery pair, unsafe path, and cross-schema source before changing live data.
+The protected release gate must also exercise the actual published predecessor.
+Exercise an independent installed Apply through the owned selector,
 then verify the selection lock is released after the controller and helper exit.
 If its exact completion is unavailable, a separate workspace's promotion must
 preserve every candidate release. An exact completed receipt permits ordinary

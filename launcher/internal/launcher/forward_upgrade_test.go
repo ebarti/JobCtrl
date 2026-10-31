@@ -27,6 +27,10 @@ type forwardUpdateFixture struct {
 }
 
 func newForwardUpdateFixture(t *testing.T) forwardUpdateFixture {
+	return newForwardUpdateFixtureWithSourceProtocol(t, 1, false)
+}
+
+func newForwardUpdateFixtureWithSourceProtocol(t *testing.T, sourceProtocol int, sourceDeclaresV15 bool) forwardUpdateFixture {
 	t.Helper()
 	python := migrationIntegrationPython(t)
 	public, private, err := ed25519.GenerateKey(rand.Reader)
@@ -35,9 +39,15 @@ func newForwardUpdateFixture(t *testing.T) forwardUpdateFixture {
 	}
 	setSignedHomebrewTrust(t, public)
 	home, data := t.TempDir(), t.TempDir()
-	old := newSignedHomebrewBootstrapFixtureWithCompatibility(t, private, "forward-prior-0001", 1, 1, "/bin/false", 1, 1)
+	old := newSignedHomebrewBootstrapFixtureWithCompatibility(t, private, "forward-prior-0001", 1, sourceProtocol, "/bin/false", sourceProtocol, sourceProtocol)
+	if sourceDeclaresV15 {
+		old = signBridgeTransitionFixture(t, old, private, "")
+	}
 	candidate := newSignedHomebrewBootstrapFixtureWithCompatibility(t, private, "forward-target-0002", 2, 2, python, 2, 2)
 	candidate = signBridgeTransitionFixture(t, candidate, private, "")
+	if sourceProtocol == 2 {
+		allowOldRetentionRollback(t, &candidate, private)
+	}
 	for _, fixture := range []homebrewBootstrapFixture{old, candidate} {
 		if err := stageHomebrewFixture(home, fixture, public); err != nil {
 			t.Fatal(err)
@@ -79,6 +89,145 @@ c=sqlite3.connect(sys.argv[2]);c.execute('CREATE TABLE t(v TEXT)');c.execute("IN
 		t.Fatal(err)
 	}
 	return forwardUpdateFixture{home, data, python, store, old, candidate, env, ctx}
+}
+
+func seedForwardSchema15(t *testing.T, f forwardUpdateFixture) {
+	t.Helper()
+	upgrade := `import sqlite3,sys
+from jobctrl.infrastructure.migrations.schema_v15 import upgrade_exact_v14_schema_to_v15
+c=sqlite3.connect(sys.argv[1]);upgrade_exact_v14_schema_to_v15(c);c.close()`
+	if output, err := exec.Command(f.python, "-I", "-B", "-c", upgrade, filepath.Join(f.data, "jobctrl.db")).CombinedOutput(); err != nil {
+		t.Fatalf("seed a schema-15 predecessor: %v %s", err, output)
+	}
+}
+
+func TestForwardUpdateSchema15BackupSupportsCompatibleRollback(t *testing.T) {
+	f := newForwardUpdateFixtureWithSourceProtocol(t, 2, true)
+	seedForwardSchema15(t, f)
+	previousStart := startReleaseCommand
+	t.Cleanup(func() { startReleaseCommand = previousStart })
+	startReleaseCommand = func(_ launchContext, receipt release.Receipt, _ string) error {
+		if receipt == f.candidate.receipt {
+			write := `import sqlite3,sys
+c=sqlite3.connect(sys.argv[1]);c.execute("UPDATE candidate_profiles SET personal_full_name='candidate-write' WHERE tenant_id='synthetic'");c.commit();c.close()
+c=sqlite3.connect(sys.argv[2]);c.execute("UPDATE t SET v='candidate-temporal'");c.commit();c.close()`
+			if output, err := exec.Command(f.python, "-I", "-B", "-c", write, filepath.Join(f.data, "jobctrl.db"), filepath.Join(f.data, "temporal.db")).CombinedOutput(); err != nil {
+				t.Fatalf("write candidate data: %v %s", err, output)
+			}
+		} else if receipt != f.old.receipt {
+			t.Fatalf("unexpected release start: %s", receipt.BuildID)
+		}
+		return nil
+	}
+	if err := PromoteStagedRelease(f.home, f.candidate.buildID, "homebrew", f.env, io.Discard); err != nil {
+		t.Fatalf("promote compatible release: %v", err)
+	}
+	journal, err := f.store.ReadJournal()
+	if err != nil || journal.SourceSchemaVersion != 15 || journal.BackupID == "" {
+		t.Fatalf("missing schema-15 transition backup: %#v %v", journal, err)
+	}
+	var pair databasePair
+	if err := decodeStrictRegular(filepath.Join(f.data, "backups", journal.BackupID, "pair.json"), &pair); err != nil {
+		t.Fatal(err)
+	}
+	if pair.ReleaseReceipt != f.old.receipt {
+		t.Fatalf("pre-upgrade backup bound to %s instead of predecessor %s", pair.ReleaseReceipt.BuildID, f.old.buildID)
+	}
+	if err := Run(filepath.Join(f.home, "bin", "jobctrl"), []string{"rollback", "--to", f.old.buildID}, f.env, io.Discard, io.Discard); err != nil {
+		t.Fatalf("roll back to the compatible predecessor: %v", err)
+	}
+	read := `import sqlite3,sys
+c=sqlite3.connect(sys.argv[1]);assert c.execute('PRAGMA user_version').fetchone() == (15,);assert c.execute("SELECT personal_full_name FROM candidate_profiles WHERE tenant_id='synthetic'").fetchone() == ('initial-profile',);c.close()
+c=sqlite3.connect(sys.argv[2]);assert c.execute('SELECT v FROM t').fetchone() == ('initial-temporal',);c.close()`
+	if output, err := exec.Command(f.python, "-I", "-B", "-c", read, filepath.Join(f.data, "jobctrl.db"), filepath.Join(f.data, "temporal.db")).CombinedOutput(); err != nil {
+		t.Fatalf("rollback did not restore the paired predecessor data: %v %s", err, output)
+	}
+}
+
+func TestForwardUpdateSchema15WithoutProvenPredecessorDoesNotAuthorizeRollback(t *testing.T) {
+	for _, source := range []struct {
+		name     string
+		protocol int
+	}{
+		{"protocol 1", 1},
+		{"protocol 2 without signed schema declaration", 2},
+	} {
+		t.Run(source.name, func(t *testing.T) {
+			f := newForwardUpdateFixtureWithSourceProtocol(t, source.protocol, false)
+			seedForwardSchema15(t, f)
+			previousStart := startReleaseCommand
+			t.Cleanup(func() { startReleaseCommand = previousStart })
+			startReleaseCommand = func(_ launchContext, receipt release.Receipt, _ string) error {
+				if receipt != f.candidate.receipt {
+					t.Fatal("started an unproven predecessor")
+				}
+				return nil
+			}
+			if err := PromoteStagedRelease(f.home, f.candidate.buildID, "homebrew", f.env, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			journal, err := f.store.ReadJournal()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var pair databasePair
+			if err := decodeStrictRegular(filepath.Join(f.data, "backups", journal.BackupID, "pair.json"), &pair); err != nil {
+				t.Fatal(err)
+			}
+			if pair.ReleaseReceipt != f.candidate.receipt {
+				t.Fatalf("unproven predecessor acquired a rollback pair: %#v", pair.ReleaseReceipt)
+			}
+			if _, err := retainedPairForReceipt(f.data, f.old.receipt); err == nil {
+				t.Fatal("rollback pair found for predecessor without proof of schema-15 support")
+			}
+		})
+	}
+}
+
+func TestForwardUpdateSchema15RecoveryBackupTracksCandidateWrites(t *testing.T) {
+	f := newForwardUpdateFixtureWithSourceProtocol(t, 2, true)
+	seedForwardSchema15(t, f)
+	previousStart := startReleaseCommand
+	t.Cleanup(func() { startReleaseCommand = previousStart })
+	starts := 0
+	startReleaseCommand = func(_ launchContext, receipt release.Receipt, _ string) error {
+		if receipt != f.candidate.receipt {
+			t.Fatal("forward recovery started the predecessor")
+		}
+		starts++
+		if starts == 1 {
+			write := `import os,sqlite3,sys
+c=sqlite3.connect(sys.argv[1]);c.execute('PRAGMA journal_mode=WAL');c.execute("UPDATE candidate_profiles SET personal_full_name='later-profile' WHERE tenant_id='synthetic'");c.commit()
+c=sqlite3.connect(sys.argv[2]);c.execute('PRAGMA journal_mode=WAL');c.execute("UPDATE t SET v='later-temporal'");c.commit();os._exit(0)`
+			if output, err := exec.Command(f.python, "-I", "-B", "-c", write, filepath.Join(f.data, "jobctrl.db"), filepath.Join(f.data, "temporal.db")).CombinedOutput(); err != nil {
+				t.Fatalf("write candidate data before readiness failure: %v %s", err, output)
+			}
+			return errors.New("synthetic readiness failure")
+		}
+		return nil
+	}
+	if err := PromoteStagedRelease(f.home, f.candidate.buildID, "homebrew", f.env, io.Discard); err == nil || !strings.Contains(err.Error(), "synthetic readiness failure") {
+		t.Fatalf("expected candidate readiness failure: %v", err)
+	}
+	if err := Run(filepath.Join(f.home, "bin", "jobctrl"), []string{"update"}, f.env, io.Discard, io.Discard); err != nil {
+		t.Fatalf("resume forward update: %v", err)
+	}
+	journal, err := f.store.ReadJournal()
+	if err != nil || journal.BackupID == "" || journal.RecoveryBackupID == "" {
+		t.Fatalf("missing initial or recovery backup: %#v %v", journal, err)
+	}
+	for id, expected := range map[string]release.Receipt{journal.BackupID: f.old.receipt, journal.RecoveryBackupID: f.candidate.receipt} {
+		var pair databasePair
+		if err := decodeStrictRegular(filepath.Join(f.data, "backups", id, "pair.json"), &pair); err != nil || pair.ReleaseReceipt != expected {
+			t.Fatalf("backup %s has wrong release identity: %#v %v", id, pair.ReleaseReceipt, err)
+		}
+	}
+	read := `import sqlite3,sys
+c=sqlite3.connect(sys.argv[1]);assert c.execute("SELECT personal_full_name FROM candidate_profiles WHERE tenant_id='synthetic'").fetchone() == ('later-profile',);c.close()
+c=sqlite3.connect(sys.argv[2]);assert c.execute('SELECT v FROM t').fetchone() == ('later-temporal',);c.close()`
+	if output, err := exec.Command(f.python, "-I", "-B", "-c", read, filepath.Join(f.data, "backups", journal.RecoveryBackupID, "jobctrl.db"), filepath.Join(f.data, "backups", journal.RecoveryBackupID, "temporal.db")).CombinedOutput(); err != nil {
+		t.Fatalf("recovery backup lost candidate writes: %v %s", err, output)
+	}
 }
 
 func TestForwardUpdateRefusesBeforeSelectionOrDatabaseMutation(t *testing.T) {
