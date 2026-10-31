@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import httpx
+import pytest
+
+from jobctrl.domain.determinations import DeterminationFailure
 from jobctrl.infrastructure.gmail.auth import GmailAuthError
 from jobctrl.infrastructure.rpc import handlers
+from jobctrl.infrastructure.runtime_identity import RuntimeIdentityMismatch
 
 
 def test_maps_camel_case_params_and_passes_result_through(monkeypatch):
@@ -68,7 +73,6 @@ def test_auth_exceptions_become_safe_typed_failures(monkeypatch):
         "ok": False,
         "status": "unavailable",
         "failureCode": "gmail_auth_required",
-        "message": "Gmail authentication is required; reconnect Gmail and retry.",
     }
 
 
@@ -81,5 +85,50 @@ def test_unexpected_exceptions_do_not_expose_message_content(monkeypatch):
         "ok": False,
         "status": "blocked",
         "failureCode": "gmail_scan_failed",
-        "message": "Gmail feedback scan failed.",
+    }
+
+
+def test_typed_failures_and_progress_pass_through(monkeypatch):
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.gmail.feedback.scan_gmail_feedback",
+        lambda **_kwargs: {"ok": False, "status": "blocked", "failureCode": "budget_denied", "linkedEvidenceCount": 1},
+    )
+    assert handlers.gmail_feedback_scan({}) == {
+        "ok": False,
+        "status": "blocked",
+        "failureCode": "budget_denied",
+        "linkedEvidenceCount": 1,
+    }
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "code"),
+    [
+        (GmailAuthError("private credential path"), "unavailable", "gmail_auth_required"),
+        (httpx.ConnectError("private provider response"), "unavailable", "gmail_transport_error"),
+        (DeterminationFailure("provider_unavailable"), "unavailable", "provider_unavailable"),
+        (DeterminationFailure("budget_denied"), "unavailable", "budget_denied"),
+        (DeterminationFailure("foreign_source_id"), "blocked", "foreign_source_id"),
+        (DeterminationFailure("private unknown cause"), "blocked", "determination_failed"),
+    ],
+)
+def test_typed_scan_exceptions_keep_only_safe_codes(monkeypatch, error, status, code):
+    def raising_scan(**_kwargs):
+        raise error
+
+    monkeypatch.setattr("jobctrl.infrastructure.gmail.feedback.scan_gmail_feedback", raising_scan)
+    assert handlers.gmail_feedback_scan({}) == {
+        "ok": False, "status": status, "failureCode": code,
+    }
+
+
+def test_runtime_mismatch_is_typed_and_does_not_expose_workspace_paths(monkeypatch):
+    def mismatch(**_kwargs):
+        raise RuntimeIdentityMismatch("private workspace path")
+
+    monkeypatch.setattr(handlers, "assert_expected_runtime", mismatch)
+    assert handlers.gmail_feedback_scan({}) == {
+        "ok": False,
+        "status": "blocked",
+        "failureCode": "runtime_mismatch",
     }

@@ -331,7 +331,8 @@ bounded Gmail suggestion flow are summarized in
 [Jobs & Materials](api/jobs-and-materials.md#apply-review-and-outcomes). Gmail scan summaries
 and feedback events carry canonical `jobId` values; the wire fields are defined
 in the [complete contract](api/complete-contract.md). Gmail scan worker failures
-carry a safe `failureCode` through the HTTP route without returning mail text.
+carry safe `failureCode` values and known committed progress through HTTP without
+returning mail text. A lost worker response leaves progress unknown.
 
 Manual outcomes, interview reflections and user-attested send logs use a
 client-provided request identity to return the original result after a retry.

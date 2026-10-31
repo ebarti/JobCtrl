@@ -772,6 +772,18 @@ transactions. API HTTP Skip/reload/reset and focused UI mutation/rollback tests
 must preserve visible active-run and verification evidence. These regressions
 do not establish live-provider or installed-runtime behavior.
 
+For Gmail feedback scan recovery (#1193), run locked
+`pytest tests/test_gmail_feedback.py tests/test_gmail_feedback_scan_handler.py`
+and API `vitest run test/application-feedback.test.ts test/gmail-feedback-progress.test.ts`.
+Use only owned exact-schema SQLite and fake Gmail/model ports. Through the real
+registered RPC and HTTP route, commit one message, fail the next read, inspect
+the safe cause, committed counts and previously accessible suggestion, then
+retry and prove one record per provider message. Cover provider, spend and
+source-binding failures, post-commit notification failure, and failure between
+anchor searches (excluding failed and untouched anchors). Check success,
+failure, progress and events for private-content canaries; a lost response must
+not claim zero progress. The fake provider does not verify live Gmail search.
+
 For stale score reset and replacement (#1189), run the focused score
 staleness, score atomic-publication and repository tests with the API reset and
 web mutation tests. Use owned synthetic SQLite and fake model authority. Reset
