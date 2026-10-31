@@ -644,8 +644,15 @@ def test_unified_apply_reset_releases_only_the_reviewed_skip_frontier(conn):
     event = conn.execute(
         "SELECT event_id,payload_json FROM job_events WHERE job_id=? AND event_type='StageReset'", (PEER,),
     ).fetchone()
-    assert json.loads(event[1]) == {'reset_attempts': False, 'resetAuthority': 'explicit_safe_apply_reset',
-                                  'manualSkipReleasedThroughEventId': between}
+    assert json.loads(event[1]) == {
+        'reset_attempts': False,
+        'resetAuthority': 'explicit_safe_apply_reset',
+        'manualSkipReleasedThroughEventId': between,
+        'jobId': PEER,
+        'stage': 'apply',
+        'level': 'info',
+        'message': 'Retry reset requested for apply',
+    }
     for frontier in (before_skip, between):
         assert not apply_dispatch_allows(conn, tenant_id=LOCAL_TENANT, job_id=PEER, frontier=frontier)
     fresh, _ = capture_apply_dispatch_frontier(conn, tenant_id=LOCAL_TENANT, job_id=PEER)
