@@ -9,6 +9,21 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const launcher = path.join(root, "scripts/dev");
+const cleanupDiagnosticLimit = 4096;
+
+function boundedFixtureDiagnostic(value, limit) {
+  if (value.length <= limit) return value;
+  const marker = " ... [truncated] ... ";
+  const leading = Math.floor((limit - marker.length) / 2);
+  return value.slice(0, leading) + marker + value.slice(-(limit - marker.length - leading));
+}
+
+function fixtureErrorSummary(error) {
+  const summary = error instanceof Error
+    ? `${error.name}${typeof error.code === "string" ? ` (${error.code})` : ""}: ${error.message}`
+    : String(error);
+  return boundedFixtureDiagnostic(summary, 1024);
+}
 
 async function createHarness() {
   const temporaryRoot = await mkdtemp(path.join(tmpdir(), "jobctrl-dev-lifecycle-"));
@@ -261,11 +276,19 @@ wait "$controller_child"
     pid: (name) => readFile(path.join(devDir, "pids", `${name}.pid`), "utf8"),
     logPath: (name) => path.join(devDir, "logs", `${name}.log`),
     async cleanup(priorFailure, originalFailure = primaryFailure) {
-      const failures = priorFailure ? [priorFailure] : [];
+      const failures = [];
+      const diagnostics = [];
+      const cleanupPhases = new Set();
+      const recordCleanupFailure = (phase, error) => {
+        failures.push(error);
+        cleanupPhases.add(phase);
+        diagnostics.push(`${phase}: ${fixtureErrorSummary(error)}`);
+      };
+      if (priorFailure) recordCleanupFailure("prior-cleanup", priorFailure);
       try {
         run("stop", "temporal", "api", "web", "worker", "docs", "demo-api", "demo-web");
       } catch (error) {
-        failures.push(error);
+        recordCleanupFailure("managed-stop", error);
       }
       for (const record of ownedChildren.values()) {
         const { child } = record;
@@ -274,23 +297,25 @@ wait "$controller_child"
           try {
             await waitForChildClose(child);
           } catch (closeError) {
-            failures.push(closeError);
+            recordCleanupFailure("child-close", closeError);
             if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
             await waitForChildClose(child);
           }
-          if (record.error) failures.push(record.error);
+          if (record.error) recordCleanupFailure("child-error", record.error);
         } catch (cleanupError) {
-          failures.push(cleanupError);
+          recordCleanupFailure("child-cleanup", cleanupError);
         }
       }
       if (!failures.length) {
         try { await rm(temporaryRoot, { recursive: true, force: true }); }
-        catch (error) { failures.push(error); }
+        catch (error) { recordCleanupFailure("remove-root", error); }
       }
       if (failures.length) {
+        const primary = originalFailure === undefined ? "none recorded" : fixtureErrorSummary(originalFailure);
+        const message = `Fixture cleanup unverified; retained ${temporaryRoot}\ncleanup phases: ${[...cleanupPhases].join(", ")}\nprimary: ${primary}\n${diagnostics.join("\n")}`;
         throw new AggregateError(
           originalFailure !== undefined ? [originalFailure, ...failures] : failures,
-          `Fixture cleanup unverified; retained ${temporaryRoot}`,
+          boundedFixtureDiagnostic(message, cleanupDiagnosticLimit),
           { cause: originalFailure },
         );
       }
@@ -396,12 +421,16 @@ test("fixture cleanup retains unverified state and closes its original peer", as
     await mkdir(path.dirname(pidFile), { recursive: true });
     const original = `${peer.pid}\n`;
     await writeFile(pidFile, original);
-    const originalFailure = new Error("synthetic test-body failure");
+    const originalFailure = new Error("synthetic test-body failure ".repeat(300));
     await assert.rejects(harness.cleanup(undefined, originalFailure), (error) => {
       assert.ok(error instanceof AggregateError);
       assert.equal(error.errors[0], originalFailure);
       assert.equal(error.cause, originalFailure);
       assert.match(error.message, /Fixture cleanup unverified; retained/);
+      assert.match(error.message, /primary: Error: synthetic test-body failure/);
+      assert.match(error.message, /managed-stop: AssertionError/);
+      assert.match(error.message, /\[truncated\]/);
+      assert.ok(error.message.length <= cleanupDiagnosticLimit);
       return true;
     });
     assert.equal(await readFile(pidFile, "utf8"), original);
