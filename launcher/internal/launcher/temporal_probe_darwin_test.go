@@ -271,6 +271,9 @@ func assertFixturePortsFree(t *testing.T) {
 	for _, port := range []int{7233, 8233, 8766} {
 		listener, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", port))
 		if err != nil {
+			if _, ci := os.LookupEnv("CI"); ci {
+				t.Fatalf("fixed fixture port %d unavailable in CI: %v", port, err)
+			}
 			t.Skipf("fixed fixture port %d unavailable: %v", port, err)
 		}
 		listeners = append(listeners, listener)
