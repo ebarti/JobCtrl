@@ -113,9 +113,10 @@ function trackWriterClose(child: ChildProcess) {
     closed,
     async cleanup() {
       if (didClose || await waitForClose()) return;
-      // Prefer the writer's own completion/disconnect. If a failed assertion
-      // left it waiting for input, close only its original IPC channel.
-      try { if (child.connected) child.disconnect(); } catch { /* Await actual close below. */ }
+      // A writer still waiting for input closes its own database and channel.
+      // Parent-side disconnect can prevent the original close event on Node 22.
+      try { if (child.connected) child.send({ kind: "cancel" }, () => {}); }
+      catch { /* A send failure does not establish close; await it below. */ }
       if (!await waitForClose()) {
         throw new Error("Synthetic contact writer close is unverified; fixture directory retained.");
       }
@@ -177,12 +178,35 @@ describe("contact writer teardown", () => {
     expect(kill).not.toHaveBeenCalled();
   });
 
+  it("cooperatively cancels a waiting writer and observes its original close", async () => {
+    const { app, dbPath } = withTempApp();
+    const contact = (await createContact(app, { employer: "Acme" })).contact!;
+    const db = openDatabase(dbPath);
+    try {
+      const before = canonicalState(db, contact.contactId);
+      const pending = writer(dbPath, contact, "referrer");
+      const lifetime = trackWriterClose(pending.child);
+      const send = vi.spyOn(pending.child, "send");
+      const disconnect = vi.spyOn(pending.child, "disconnect");
+      const kill = vi.spyOn(pending.child, "kill");
+      await pending.wait("ready");
+      await lifetime.cleanup();
+      expect(send).toHaveBeenCalledWith({ kind: "cancel" }, expect.any(Function));
+      expect(pending.child.exitCode).toBe(0);
+      expect(disconnect).not.toHaveBeenCalled();
+      expect(kill).not.toHaveBeenCalled();
+      expect(canonicalState(db, contact.contactId)).toEqual(before);
+    } finally { db.close(); }
+  });
+
   it("attempts every writer after a refusal and retains directories until all close", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-contact-writer-close-"));
     const release = path.join(dir, "release");
     cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
     const child = spawn(process.execPath, ["-e", `
       const fs = require("node:fs");
+      // Deliberately refuse cancellation until the release-file protocol.
+      process.on("message", () => {});
       const timer = setInterval(() => {
         if (fs.existsSync(process.argv[1])) {
           clearInterval(timer);
@@ -199,6 +223,7 @@ describe("contact writer teardown", () => {
       async () => { attempts.push("completed"); await completedLifetime.cleanup(); },
       pendingCleanup,
     );
+    const disconnect = vi.spyOn(child, "disconnect");
     const kill = vi.spyOn(child, "kill");
     const completedKill = vi.spyOn(completed, "kill");
     try {
@@ -210,6 +235,7 @@ describe("contact writer teardown", () => {
       expect(attempts).toEqual(["pending", "completed"]);
       expect(writerCleanups).toEqual([pendingCleanup]);
       expect(fs.existsSync(dir)).toBe(true);
+      expect(disconnect).not.toHaveBeenCalled();
       expect(kill).not.toHaveBeenCalled();
       expect(completedKill).not.toHaveBeenCalled();
     } finally {
