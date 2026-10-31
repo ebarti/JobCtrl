@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import logging
 from dataclasses import asdict, dataclass, is_dataclass
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from temporalio.common import WorkflowIDReusePolicy
@@ -40,6 +40,20 @@ _APPLY_SELECTOR_KEYS = ("jobId", "jobIds", "jobUrl", "jobUrls")
 logger = logging.getLogger(__name__)
 
 
+def reject_discover_preview(stages: Sequence[str], *, dry_run: bool) -> None:
+    """Reject preview requests before Discover's effects can be scheduled."""
+    if dry_run and ("discover" in stages or "all" in stages):
+        raise ValueError("Discover does not support dry runs. Turn off dry run to start a search.")
+
+
+def _reject_requested_discover_preview(params: dict[str, Any], stages: Sequence[str]) -> None:
+    requested = list(stages)
+    if isinstance(params.get("stages"), list):
+        requested.extend(str(stage) for stage in params["stages"])
+    requested.append(str(params.get("stage") or ""))
+    reject_discover_preview(requested, dry_run=bool(params.get("dryRun", False)))
+
+
 @dataclass(frozen=True)
 class StartedWorkflowResult:
     run_id: str
@@ -59,6 +73,7 @@ class StartedWorkflowResult:
 def build_run_stage_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
     tenant_id = _tenant_id(params)
     stages = _stage_list(params)
+    _reject_requested_discover_preview(params, stages)
     apply_selector = _apply_selector(params) if "apply" in stages else None
     if "apply" in stages:
         _require_auto_apply_browser_capability()
@@ -214,6 +229,7 @@ def build_pipeline_workflow_spec(
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
 ) -> WorkflowStartSpec:
+    _reject_requested_discover_preview(params, stages)
     apply_selector = _apply_selector(params, job_id=job_id, job_ids=job_ids) if "apply" in stages else None
     if "apply" in stages:
         _require_auto_apply_browser_capability()

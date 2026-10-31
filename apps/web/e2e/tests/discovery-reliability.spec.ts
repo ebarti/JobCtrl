@@ -107,6 +107,8 @@ test("Discover explains occupied slots and unlocks automatically after the runti
   await expect(preparation.getByRole("link", { name: "Set up a new Discover run" })).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("discover-preparation-continues.png") });
   const discover = page.getByRole("button", { name: "Run Discover" });
+  const dryRun = page.getByRole("checkbox", { name: "Dry run" });
+  await expect(dryRun).not.toBeChecked();
   await expect(discover).toBeDisabled();
   await expect(page.getByRole("group", { name: "Pipeline action tools" }).getByText("waiting", { exact: true })).toBeVisible();
   await expect(discover).toHaveAccessibleDescription(

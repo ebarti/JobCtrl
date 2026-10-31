@@ -34,6 +34,7 @@ is the canonical decision matrix.
 | Theme (light/dark) | **Client** (Zustand+persist) | User preference; not URL-bound; persists across sessions. |
 | Density (compact/regular/comfy) | **Client** (Zustand+persist) | Same. |
 | Desktop navigation expansion | **Client** (Zustand+persist) | User preference; the icon-only or expanded rail choice survives reloads. Mobile navigation remains transient sheet state. |
+| Pipeline stage controls | **Client** (Zustand+persist) | Absent storage defaults Discover to ordinary search; other stages default to dry run. Explicit saved choices survive rehydration, while partial or unreadable saved controls retain the earlier safe Discover default. Recovery reads canonical concurrency without automatically writing settings or replacing unreadable controls; the user reviews the values and selects a Discover mode to recover. No run starts without the user's action. |
 | Tenant identity | **Client** (context fed by Zustand+session in cloud) | Determined by session; not navigation-controlled. |
 | Toast queue | **Client** (Zustand) | Transient, cross-cutting. |
 | Profile data | **Server** (Query) | Fetched, cached, mutation-invalidated. |

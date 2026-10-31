@@ -58,7 +58,7 @@ describe("live Discovery browser routes", () => {
       expect(status.json()).toMatchObject({ connected: false });
       for (const stages of [["discover"], ["score", "discover"]]) {
         const response = await app.inject({
-          method: "POST", url: "/v1/pipeline/actions/run-stage", payload: { stages, limit: 1 },
+          method: "POST", url: "/v1/pipeline/actions/run-stage", payload: { stages, limit: 1, dryRun: false },
         });
         expect(response.statusCode, response.body).toBe(healthy ? 202 : 503);
         if (healthy) {

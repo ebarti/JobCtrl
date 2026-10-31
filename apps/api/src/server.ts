@@ -1466,6 +1466,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!body) {
       return undefined;
     }
+    if (body.dryRun && body.stages.includes("discover")) {
+      void reply.code(400);
+      return {
+        ok: false,
+        error: "discover_preview_unsupported",
+        message: "Discover does not support dry runs. Turn off Dry run to start a search.",
+      };
+    }
     const actions: ActionRunResponse[] = [];
     const firstStage = body.stages[0] as Stage | undefined;
     if (!firstStage) {

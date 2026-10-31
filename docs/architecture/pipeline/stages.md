@@ -18,6 +18,14 @@ scheduling, source-quality feedback, canonical identity, dedupe, protected-sourc
 manual-capture queue entries, and posting hygiene. Scoring and Materials still
 own their own writes.
 
+Discover has no preview workflow. The API and shared workflow-spec builder
+reject a dry-run request containing Discover before dispatch, including when
+Discover would otherwise be a child of a mixed pipeline. The worker honors
+both the scalar stage and stage list when rejecting preview, even if they
+conflict. CLI and local-action
+entry points reject the same request before workspace bootstrap or action-event
+writes. Ordinary searches retain their requested source selection.
+
 At workflow start, Discover creates one immutable execution reference from its
 tenant, deterministic workflow ID, and Temporal run ID. That exact identity is
 threaded through every stage below. Source-run IDs describe observations; they

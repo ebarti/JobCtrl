@@ -1951,6 +1951,12 @@ user can stop the in-flight run without resolving a fake `pipeline` job row.
 to `default`, which omits `--model` and lets the local Claude Code
 configuration choose the active model.
 
+Discover does not support a dry run. A request containing `discover` and
+`dryRun: true`, including when the field is omitted, returns HTTP `400` with
+`error: "discover_preview_unsupported"` before worker dispatch. Send
+`dryRun: false` to start an ordinary Discover search. Mixed-stage requests are
+rejected as a whole; other stages' dry-run behavior is unchanged.
+
 `POST /v1/jobs/:jobKey/actions/run-stage` starts one job-scoped preparation
 pickup without resetting stage state. It accepts the internal preparation
 stages `enrich`, `score`, `tailor`, and `cover`, rejects product-stage starts
