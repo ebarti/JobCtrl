@@ -688,7 +688,39 @@ Then use the actual Discovery path with saved targets and no interpretation
 receipt: board planning is literal and makes no provider call. Fetched results ingest without an additional model pre-filter. Full-posting interpretation/scoring retain model authority and distinct failure handling. Verify the rendered settings have one checkbox per work model, no intake queue and no second approval step.
 Load the profile editor's actual serialized location rows and comma-separated
 work-model codes, including a location-less Remote row. Inspect their paired
-board parameters. Invalid work-model controls must produce a typed planning
+board parameters and the persisted plan on replay. Verify supported boards run
+with no place restriction, and mixed selections containing an unsupported
+Indeed Remote/lookback or Glassdoor Remote/place combination report a partial
+failure after compatible boards finish, without dispatching the incompatible
+unit. Verify the unchanged first-use defaults plan and behave the same way,
+including retry and per-source outcomes. Exercise the actual first-use wizard
+with Remote and a synthetic title: it must save compatible boards, preserve
+the 72-hour lookback, and dispatch only exact synthetic requests. On a wizard
+rerun, verify saved board/lookback choices and other controls are retained,
+incompatible choices preserve the original bytes, and a compatible board edit
+permits a retry. With saved tier or location-label filters that exclude the
+wizard's effective targets, verify the CLI shows the exact filter, declining
+preserves the saved bytes, and explicitly clearing only that filter permits the
+synthetic source and retry to run. Cover filters, boards or Profile targets
+changing during confirmation, and a profile target override. Check that non-day-aligned Remote lookbacks are
+rejected for Glassdoor and ZipRecruiter while day-aligned and non-Remote
+requests keep their existing behavior. Run the full synthetic CLI wizard with
+an existing Profile and both confirmation outcomes: root and child Profile
+rows must remain exact, declined Discovery settings must remain byte-identical,
+and accepted source requests must use the retained Profile targets. Change the
+Profile during setup and create one during first-use prompts to verify neither
+the newer Profile nor the Discovery row is overwritten. Confirm new incompatible profile and Discovery-settings edits are
+rejected before save, with unchanged saved bytes and usable unrelated edits.
+An unsupported fake adapter must fail before its scrape method is called,
+with the typed failure reported after compatible units finish; check that an
+unrelated provider error retains its existing handling.
+Numeric-string lookbacks retain their saved bytes and are normalized for
+execution. Cover separate location-free non-Remote rows and legacy-location
+fallback, and mutate tier and location-label settings after planning to verify
+the source and retry use the frozen values, including frozen absence. Plan
+with queries or locations absent, save a new synthetic Profile target, and
+verify the source and retry still make no search and retain the saved bytes.
+Invalid work-model controls must produce a typed planning
 failure while fetching, scoring and raw source reads remain available. Native
 interruption checks capture stage names from the actual composite executors.
 Verify cleanup of owned intermediate candidates and sidecars after successful

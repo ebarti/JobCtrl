@@ -910,6 +910,14 @@ function executionFailureCopy(
     };
   }
 
+  if (errorCode === "unsupported_remote_search") {
+    return {
+      title: "Remote search needs different boards or targets",
+      description:
+        "Indeed cannot combine Remote with a lookback, and Glassdoor cannot combine Remote with a location. Glassdoor and ZipRecruiter require a Remote lookback in whole days. Deselect the incompatible board or adjust the target and lookback before starting Discover again.",
+    };
+  }
+
   if (errorCode === "reconciled_not_found") {
     return {
       title: "Previous discovery history is unavailable",

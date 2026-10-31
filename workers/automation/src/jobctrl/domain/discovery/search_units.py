@@ -55,12 +55,20 @@ class DiscoverySearchSpec:
     def __post_init__(self) -> None:
         for field_name, value in (
             ("query", self.query),
-            ("provider_location", self.provider_location),
-            ("target_location", self.target_location),
             ("country_indeed", self.country_indeed),
         ):
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{field_name} must be a non-empty string")
+        # An empty location is a literal location-free Remote request, not a
+        # default geography. Keep both sides empty so no mapping widens it.
+        for field_name, value in (
+            ("provider_location", self.provider_location),
+            ("target_location", self.target_location),
+        ):
+            if not isinstance(value, str) or (not value.strip() and not (value == "" and self.remote_only)):
+                raise ValueError(f"{field_name} must be a non-empty string unless remote-only")
+        if (self.provider_location == "") != (self.target_location == ""):
+            raise ValueError("location-free searches must not invent a provider or target location")
         if not self.sites:
             raise ValueError("sites must contain at least one board")
         if len(set(self.sites)) != len(self.sites):

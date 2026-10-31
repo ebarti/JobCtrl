@@ -55,6 +55,7 @@ import { canonicalSourceDisplayName } from "./source-display-names.js";
 import type { SourcePolitenessOutcomes } from "@jobctrl/contracts";
 import { refreshProjections } from "./projections.js";
 import { InputError, resolveJobId } from "./write-model.js";
+import { InvalidSavedTargetSearchError, UnsupportedRemoteSearchInputError, activeTargetRows, effectiveLegacyRemoteTargetRows, guardedTargetRows, hasProfileTargetRows, unsupportedRemoteScope } from "./discovery-targets.js";
 
 export class RoleMatchFeedbackDecisionConflictError extends Error {}
 export class InvalidSavedDiscoverySettingsError extends Error {
@@ -245,6 +246,13 @@ export function readDiscoverySettings(
   return resolvedDiscoverySettings(stored.config, stored.persisted);
 }
 
+export function readDiscoveryTargetAuthority(db: SqliteDatabase): {
+  settings: DiscoverySettings; config: Record<string, unknown>;
+} {
+  const { config } = readDiscoverySearchConfig(db);
+  return { settings: discoverySettingsFromConfig(config), config };
+}
+
 export function writeDiscoverySettings(
   db: SqliteDatabase,
   request: DiscoverySettingsUpdateRequest,
@@ -270,8 +278,30 @@ export function writeDiscoverySettings(
       crawlUserAgentProduct: request.crawlUserAgentProduct ?? current.crawlUserAgentProduct,
       crawlUserAgentContact: request.crawlUserAgentContact ?? current.crawlUserAgentContact,
     };
+    const changedBoards = next.hoursOld !== current.hoursOld
+      ? next.boards : next.boards.filter((board) => !current.boards.includes(board));
+    if (changedBoards.length) {
+      const target = db.prepare(
+        "SELECT experience_target_locations, experience_target_work_models FROM candidate_profiles WHERE tenant_id = ? AND profile_id = ?",
+      ).get(DEFAULT_TENANT, "default") as {
+        experience_target_locations: unknown; experience_target_work_models: unknown;
+      } | undefined;
+      let rows = effectiveLegacyRemoteTargetRows(currentConfig);
+      if (target) {
+        if (typeof target.experience_target_locations !== "string" || typeof target.experience_target_work_models !== "string") {
+          throw new InvalidSavedTargetSearchError();
+        }
+        if (hasProfileTargetRows(target.experience_target_locations, target.experience_target_work_models)) {
+          rows = guardedTargetRows(target.experience_target_locations, target.experience_target_work_models);
+        }
+      }
+      for (const row of activeTargetRows(rows, currentConfig)) {
+        const reason = unsupportedRemoteScope(row, changedBoards, next.hoursOld);
+        if (reason) throw new UnsupportedRemoteSearchInputError(reason);
+      }
+    }
     const now = new Date().toISOString();
-    const config = configFromDiscoverySettings(next, currentConfig);
+    const config = configFromDiscoverySettings(next, currentConfig, stored.persisted && Object.keys(currentConfig).length > 0);
     db.prepare(`
       INSERT INTO discovery_settings (
         tenant_id, search_config_json, created_at, updated_at
@@ -424,6 +454,7 @@ function discoverySettingsFromConfig(config: Record<string, unknown>): Discovery
 function configFromDiscoverySettings(
   settings: DiscoverySettings,
   base: Record<string, unknown> = {},
+  preserveSearchRows = false,
 ): Record<string, unknown> {
   const defaults = recordValue(base.defaults);
   return {
@@ -449,15 +480,14 @@ function configFromDiscoverySettings(
       hours_old: settings.hoursOld,
       results_per_site: settings.resultsPerSite,
     },
-    queries: Array.isArray(base.queries) && base.queries.length > 0
-      ? base.queries
-      : [{ query: "Software Engineer", tier: 1 }],
-    locations: Array.isArray(base.locations) && base.locations.length > 0
-      ? base.locations
-      : [{ label: "remote", location: "Remote", remote: true }],
-    location_accept: Array.isArray(base.location_accept) && base.location_accept.length > 0
-      ? base.location_accept
-      : ["Remote"],
+    ...(preserveSearchRows ? {} : {
+      queries: Array.isArray(base.queries) && base.queries.length > 0
+        ? base.queries : [{ query: "Software Engineer", tier: 1 }],
+      locations: Array.isArray(base.locations) && base.locations.length > 0
+        ? base.locations : [{ label: "remote", location: "Remote", remote: true }],
+      location_accept: Array.isArray(base.location_accept) && base.location_accept.length > 0
+        ? base.location_accept : ["Remote"],
+    }),
   };
 }
 

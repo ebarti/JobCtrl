@@ -462,13 +462,30 @@ the persisted plan of an execution that is retrying. The internal `jobspy:`
 source-ID prefix remains a compatibility identifier for existing local data and
 API selections; it no longer names the provider library.
 
+New Discover plans also retain the resolved board country and the search
+queries and locations for the execution, including an empty search plan.
+Older recorded plans that did not capture a country retain their previous live
+settings fallback; start a new Discover execution to freeze the current country.
+
 ### How target search controls are used
 
 Saving Target search is sufficient to authorize those settings. Discovery executes the saved role titles and location/work-model controls literally; it makes no model query plan and asks for no second interpretation or confirmation. Board country parameters and enabled sources keep their saved values. It does not infer aliases, adjacent titles or geographic scope from prose.
 
 Each location row uses only the work models checked in that row. Multiple checked models produce the board's remote and non-remote parameters as needed; a Remote row with no location searches without a place restriction. Invalid saved work-model controls block Discovery planning with an actionable settings error. They do not prevent fetching, scoring or reading saved sources.
 
-JobStreaming executes the saved title, location, remote and lookback parameters supported by each board. Provider support for location, remote and lookback filters varies by board. JobStreaming emits capability warnings, but JobCtrl currently does not display them. JobCtrl stores fetched listings under exact canonical identity and sends them to full-posting analysis and scoring. Those structured board and company-ATS results use no separate metadata-only intake model or second search confirmation. Direct company ATS adapters may return a whole company feed; full-posting scoring assesses those jobs too.
+For a new CLI workspace, the setup wizard uses LinkedIn and ZipRecruiter for
+Remote searches with its 72-hour lookback. On reruns, it retains the existing
+Profile; saved Profile target roles and location/work-model rows take precedence
+over corresponding wizard-entered Discovery rows. It also retains saved board,
+lookback and other controls while replacing the location and title rows it asks
+you to enter; an incompatible combination is refused before the save. If saved
+tier or location-label filters would exclude all the effective titles or
+locations, the wizard shows each conflicting filter and asks before clearing
+it. Declining leaves the saved Discovery settings unchanged.
+
+Edits that create an unsupported active Remote/board combination or add an active location-free Hybrid or On-site row are refused before saving, with guidance to change the board, target or lookback. Existing saved values and unrelated profile edits are preserved. If a Profile target is cleared, older saved locations may become active and are checked too. Older incompatible settings are checked again before the affected board runs.
+
+JobStreaming executes the saved title, location, remote and lookback parameters supported by each board. Indeed cannot combine Remote with a lookback, and Glassdoor cannot combine Remote with a location. For Remote searches, Glassdoor and ZipRecruiter require a lookback in whole days. Discovery rejects an unsupported board request, lets compatible boards finish, and reports the partial failure with guidance to change the selected boards, target or lookback. The unsaved first-use defaults include Indeed with Remote and a lookback, so they also produce this partial failure until adjusted. A location-free Remote search can use Glassdoor, LinkedIn or ZipRecruiter; the saved board country remains in effect where the provider uses it. JobStreaming may emit other capability warnings, which JobCtrl does not currently display. JobCtrl stores fetched listings under exact canonical identity and sends them to full-posting analysis and scoring. Those structured board and company-ATS results use no separate metadata-only intake model or second search confirmation. Direct company ATS adapters may return a whole company feed; full-posting scoring assesses those jobs too.
 
 Smart Extract treats arbitrary-site cards as links to investigate. Before a link can create a Job, JobCtrl captures the individual posting and records model determinations for page identity, source-bound field extraction, the actual specific role title, description completeness, and compatibility with the saved location/work-model rows. A hiring announcement cannot become a role title merely because it appeared in a feed. The employer comes from the posting, never the source name or URL. Confirmed location mismatches stay outside Jobs with a recorded reason; uncertain identity, missing employer, incomplete content or unknown location compatibility stays in Manual Capture with its original card and determination references. The accepted full capture seeds the posting snapshot and enrichment without a second fetch. Model, spend or validation failures create no unverified Job. Explicit manual URL imports retain their separate user-requested intake behavior.
 

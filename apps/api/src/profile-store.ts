@@ -12,6 +12,8 @@ import type {
 } from "./contracts.js";
 import { ProfileSchema } from "./contracts.js";
 import type { SqliteDatabase } from "./db.js";
+import { readDiscoveryTargetAuthority } from "./discovery-controls.js";
+import { InvalidSavedTargetSearchError, UnsupportedRemoteSearchInputError, activeTargetRows, effectiveLegacyRemoteTargetRows, guardedTargetRows, hasProfileTargetRows, unsupportedRemoteScope } from "./discovery-targets.js";
 
 const TENANT_ID = "local";
 const PROFILE_ID = "default";
@@ -566,6 +568,20 @@ export function writeProfileConfig(
       if (!existing && !profile) {
         throw new ProfileInputError("profile must be initialized before updating style or template settings.");
       }
+      const newRemoteRows = profile ? newGuardedTargetRows(profile, existing) : [];
+      const clearsTarget = profile && existing
+        && typeof existing.experience_target_locations === "string"
+        && typeof existing.experience_target_work_models === "string"
+        && hasProfileTargetRows(existing.experience_target_locations, existing.experience_target_work_models)
+        && !hasProfileTargetRows(profile.experience?.target_locations ?? "", profile.experience?.target_work_models ?? "");
+      if (newRemoteRows.length || clearsTarget) {
+        const { settings, config } = readDiscoveryTargetAuthority(db);
+        const effectiveNewRows = clearsTarget ? effectiveLegacyRemoteTargetRows(config) : newRemoteRows;
+        for (const row of activeTargetRows(effectiveNewRows, config)) {
+          const reason = unsupportedRemoteScope(row, settings.boards, settings.hoursOld);
+          if (reason) throw new UnsupportedRemoteSearchInputError(reason);
+        }
+      }
       if (request.acceptedCandidateInterpretationId) {
         if (request.expectedProfileVersion === undefined || !profile) throw new ProfileInputError("Candidate confirmation requires an authored profile save and its version.");
         const suggestion=db.prepare("SELECT determination_id FROM candidate_interpretation_suggestions WHERE tenant_id=? AND profile_id=? AND profile_version=? AND determination_id=? AND status='pending_confirmation'").get(TENANT_ID,PROFILE_ID,actualVersion,request.acceptedCandidateInterpretationId);
@@ -594,7 +610,7 @@ export function writeProfileConfig(
         // a real change even when the authored profile bytes are unchanged.
         response = readProfileConfig(db);
       }
-    })();
+    }).immediate();
   } catch (error) {
     if (error === NO_PROFILE_CHANGE && previousResponse) {
       return previousResponse;
@@ -605,6 +621,23 @@ export function writeProfileConfig(
     throw new ProfileInputError("profile update did not produce a readable profile.");
   }
   return response;
+}
+
+function newGuardedTargetRows(profile: ProfileShape, existing: ProfileRow | undefined) {
+  const after = guardedTargetRows(profile.experience?.target_locations ?? "", profile.experience?.target_work_models ?? "");
+  if (!after.length) return [];
+  if (existing && (typeof existing.experience_target_locations !== "string"
+    || typeof existing.experience_target_work_models !== "string")) throw new InvalidSavedTargetSearchError();
+  const before = existing ? guardedTargetRows(
+    existing.experience_target_locations as string, existing.experience_target_work_models as string,
+  ).map((row) => JSON.stringify(row)) : [];
+  const added = [];
+  for (const row of after) {
+    const index = before.indexOf(JSON.stringify(row));
+    if (index === -1) added.push(row);
+    else before.splice(index, 1);
+  }
+  return added;
 }
 
 function sameProfileContent(

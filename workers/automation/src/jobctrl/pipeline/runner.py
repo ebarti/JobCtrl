@@ -650,7 +650,7 @@ def _run_discovery_source(
             message=f"Discovery run {run_id} completed",
             occurred_at=completed_at,
         )
-        status = "ok"
+        status = "partial" if isinstance(result, dict) and result.get("unsupported_remote_error") else "ok"
         span.set_attribute("jobctrl.pipeline.source_status", status)
         span.set_attribute("jobctrl.discovery.result.total", counts.total)
         span.set_attribute("jobctrl.discovery.result.new_jobs", counts.new_jobs)
@@ -668,7 +668,7 @@ def _run_discovery_source(
         _record_pipeline_event(
             "discover",
             "StageCompleted",
-            "info",
+            "warn" if status == "partial" else "info",
             f"Discovery source {source} {status}",
             {
                 "source": source,
@@ -682,7 +682,7 @@ def _run_discovery_source(
                         completed=progress_completed + 1,
                         total=progress_total,
                         current_step=label,
-                        message=f"{label} complete",
+                            message=f"{label} partially complete" if status == "partial" else f"{label} complete",
                     )
                     if progress_completed is not None and progress_total is not None
                     else {}
@@ -1603,6 +1603,12 @@ def run_discovery_source_family(
             progress_completed=progress_completed,
             progress_total=progress_total,
         )
+        if result_holder.get("unsupported_remote_error"):
+            from jobctrl.domain.discovery.remote_search import RemoteSearchConfigurationError
+
+            # The partial result and source outcomes have been recorded; make
+            # the incompatible board visible to the workflow as well.
+            raise RemoteSearchConfigurationError(str(result_holder["unsupported_remote_error"]))
         return {
             "family": family,
             "status": status,
@@ -1772,13 +1778,18 @@ def _snapshot_discovery_next_run_settings(search_cfg: dict[str, Any]) -> dict[st
         "boards": boards,
         "results_per_site": int(defaults.get("results_per_site") or 50),
         "hours_old": int(defaults.get("hours_old") or 72),
+        "country_indeed": str(defaults.get("country_indeed", search_cfg.get("country", "usa"))),
+        # Missing arrays mean no searches in this execution, not permission
+        # to adopt queries or locations saved after planning.
+        "queries": search_cfg.get("queries") or [],
+        "locations": search_cfg.get("locations") or [],
         **{
             key: search_cfg.get(key)
             for key in (
-                "queries",
-                "locations",
                 "confirmed_targets",
                 "exact_title_exclusions",
+                "tiers",
+                "location_labels",
             )
         },
     }
@@ -1797,6 +1808,10 @@ def _apply_discovery_next_run_settings(
     defaults = dict(effective.get("defaults") or {})
     defaults["results_per_site"] = int(snapshot.get("results_per_site") or 50)
     defaults["hours_old"] = int(snapshot.get("hours_old") or 72)
+    if "country_indeed" in snapshot:
+        # Recorded older plans lack this field and keep their original live
+        # defaults/top-level-country fallback rather than inventing one.
+        defaults["country_indeed"] = snapshot["country_indeed"]
     effective["defaults"] = defaults
     for key in (
         "queries",
@@ -1805,6 +1820,11 @@ def _apply_discovery_next_run_settings(
         "exact_title_exclusions",
     ):
         if key in snapshot and snapshot[key] is not None:
+            effective[key] = snapshot[key]
+    for key in ("tiers", "location_labels"):
+        # New snapshots freeze the absence of a filter as well as its values.
+        # Old snapshots omit the fields and retain their recorded live fallback.
+        if key in snapshot:
             effective[key] = snapshot[key]
     return effective
 
