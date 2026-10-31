@@ -625,6 +625,26 @@ jobs:
             --release-dir "$RUNNER_TEMP/release" \
             --output "$RUNNER_TEMP/released-upgrade-smoke.json"
 
+      - name: Diagnose a retained predecessor notarization failure
+        if: ${{ failure() && inputs.channel == 'stable' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          if ! fixture_temp="$(node -p 'require("node:fs").realpathSync(require("node:os").tmpdir())')"; then
+            echo "Could not resolve the synthetic fixture directory" >&2
+            exit 1
+          fi
+          found=0
+          for fixture in "$fixture_temp"/jobctrl-released-upgrades-*; do
+            [[ -d "$fixture" && ! -L "$fixture" ]] || continue
+            while IFS= read -r -d '' binary; do
+              found=1
+              echo "Rechecking the retained predecessor with the original notarization requirement"
+              /usr/bin/codesign --verify --strict --check-notarization -R=notarized --verbose=4 "$binary" || echo "Notarization recheck failed (exit $?)"
+            done < <(find "$fixture" -type f -path '*/latest-stable/runtime/staging/*/payload/api/node_modules/better-sqlite3/build/Release/better_sqlite3.node' -print0)
+          done
+          if [[ "$found" = 0 ]]; then echo "No retained predecessor SQLite binary was available for a notarization recheck"; fi
+
       - name: Retain credential-free released-binary proof
         if: ${{ inputs.channel == 'stable' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

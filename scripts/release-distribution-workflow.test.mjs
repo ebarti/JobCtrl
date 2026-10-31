@@ -48,6 +48,30 @@ function assertShellSyntax(label, source) {
   assert.equal(result.status, 0, `${label}: ${result.stderr}`);
 }
 
+test("notarization diagnostics find synthetic payloads under the operating system temporary directory", async (context) => {
+  const { mkdir } = await import("node:fs/promises");
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-notary-diagnostics-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const fixtureTemp = path.join(root, "system-temp"), runnerTemp = path.join(root, "runner-temp");
+  await mkdir(fixtureTemp);
+  await mkdir(runnerTemp);
+  for (const [url, job, step, relative, message] of [
+    [new URL("../.github/workflows/released-acquisition-qa.yml", import.meta.url), "published-upgrade", "Diagnose retained historical notarization failure", "jobctrl-acquisition-upgrades-fixture/from-0.3.0/curl/runtime/staging/digest", "Rechecking the retained synthetic"],
+    [workflowUrl, "verify-released-upgrades", "Diagnose a retained predecessor notarization failure", "jobctrl-released-upgrades-fixture/latest-stable/runtime/staging/digest", "Rechecking the retained predecessor"],
+  ]) {
+    const binary = path.join(fixtureTemp, relative, "payload/api/node_modules/better-sqlite3/build/Release/better_sqlite3.node");
+    await mkdir(path.dirname(binary), { recursive: true });
+    await writeFile(binary, "synthetic");
+    const run = stepRun(loadYaml(url), job, step);
+    const result = spawnSync("/bin/bash", ["-c", run], {
+      encoding: "utf8", env: { ...process.env, TMPDIR: fixtureTemp, RUNNER_TEMP: runnerTemp },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(result.stdout.includes(message), `${step} did not find its retained fixture: ${result.stdout}`);
+    assert.doesNotMatch(result.stdout, /No retained .* SQLite binary/);
+  }
+});
+
 test("release lineage gates reject non-ancestor commits under the system shell", () => {
   const workflow = loadYaml(workflowUrl);
   const guards = [];
