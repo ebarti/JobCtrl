@@ -2,9 +2,9 @@
 # scripts/dev — JobCtrl local dev fleet launcher.
 #
 # Runs or daemonizes the default temporal / api / web / worker fleet plus
-# explicitly selected docs and demo processes. It tracks each by PID file under
-# .dev/pids/, captures stdout+stderr to .dev/logs/, and starts from a clean
-# owned process tree so stale local processes do not survive between launches.
+# explicitly selected docs and demo processes. Per-launch owners retain original
+# child handles, with private receipts under .dev/pids/ and output in .dev/logs/.
+# A stale PID never grants authority to signal another process.
 # Each (re)start rotates the previous run's log to <name>.log.1 instead of
 # truncating it, so a crash traceback survives the next launch.
 #
@@ -13,7 +13,8 @@
 #   scripts/dev start [name...]    Start named processes (or all if none given)
 #   scripts/dev stop  [name...]    Stop named (or all)
 #   scripts/dev restart [name...]  Stop then start
-#   scripts/dev status [name...]   Show pid, alive state, and worker health
+#   scripts/dev status [name...]   Show verified ownership and worker health
+#   scripts/dev forget <name>      Retire unverified metadata without signalling
 #   scripts/dev logs <name>        tail -f the current log (prior run: <name>.log.1)
 #   scripts/dev setup              Install/sync Node and Python dependencies
 #   scripts/dev migrate-credentials Move persistent provider keys into the native store once
@@ -77,39 +78,31 @@ rotate_log() {
   fi
 }
 
-read_pid() {
-  local f
-  f=$(pid_file "$1")
-  [[ -f "$f" ]] || return 1
-  cat "$f"
+process_owner() {
+  local action="$1" name="$2"
+  shift 2
+  python3 -B "$ROOT/scripts/dev-process-owner.py" "$action" "$PID_DIR" "$name" "$@"
 }
 
-is_running() {
-  local pid
-  pid=$(read_pid "$1") || return 1
-  kill -0 "$pid" 2>/dev/null
+process_state() {
+  local result
+  result=$(process_owner state "$1" "${2:-}" || true)
+  echo "${result%% *}"
 }
 
-# Recursive process-tree kill. tsx-watch, vite, and `uv run` all spawn
-# children — killing only the wrapper PID would leave node/python
-# zombies bound to the dev ports.
-kill_tree() {
-  local pid="$1" sig="${2:-TERM}"
-  local children
-  children=$(pgrep -P "$pid" 2>/dev/null || true)
-  for child in $children; do
-    kill_tree "$child" "$sig"
+is_running() { [[ "$(process_state "$1" "${2:-}")" == "up" ]]; }
+
+new_launch_id() { python3 -c 'import secrets; print(secrets.token_hex(32))'; }
+
+wait_for_owner() {
+  local name="$1" launch_id="$2" pid="$3" result i
+  for i in $(seq 1 100); do
+    result=$(process_owner state "$name" "$launch_id" || true)
+    [[ "$result" == "up $pid" ]] && return 0
+    sleep 0.02
   done
-  kill "-$sig" "$pid" 2>/dev/null || true
-}
-
-collect_tree_pids() {
-  local pid="$1"
-  echo "$pid"
-  local child
-  for child in $(pgrep -P "$pid" 2>/dev/null || true); do
-    collect_tree_pids "$child"
-  done
+  echo "dev: $name did not establish its launch ownership; see $(log_file "$name")" >&2
+  return 1
 }
 
 is_alive_pid() {
@@ -119,58 +112,15 @@ is_alive_pid() {
   [[ "$stat" != *Z* ]]
 }
 
-wait_pids_gone() {
-  local pids="$1" ticks="$2" interval="$3"
-  local i target alive
-  for i in $(seq 1 "$ticks"); do
-    alive=0
-    for target in $pids; do
-      if is_alive_pid "$target"; then
-        alive=1
-        break
-      fi
-    done
-    [[ "$alive" -eq 0 ]] && return 0
-    sleep "$interval"
-  done
-  return 1
-}
-
-stop_pid_tree() {
-  local pid="$1"
-  local pids target
-  local wait_ticks="${JOBCTRL_STOP_WAIT_TICKS:-50}"
-  local wait_interval="${JOBCTRL_STOP_WAIT_INTERVAL_SECONDS:-0.1}"
-  local kill_wait_ticks="${JOBCTRL_KILL_WAIT_TICKS:-20}"
-  pids=$(collect_tree_pids "$pid" | awk '/^[0-9]+$/ && $1 > 0 && !seen[$1]++')
-  for target in $pids; do
-    kill -TERM "$target" 2>/dev/null || true
-  done
-
-  # Wait for graceful shutdown before SIGKILL; tests can shorten this.
-  wait_pids_gone "$pids" "$wait_ticks" "$wait_interval" && return 0
-
-  for target in $pids; do
-    kill -KILL "$target" 2>/dev/null || true
-  done
-
-  if ! wait_pids_gone "$pids" "$kill_wait_ticks" "$wait_interval"; then
-    echo "dev: failed to stop process tree rooted at $pid" >&2
+ensure_not_running() {
+  local name="$1" state
+  state=$(process_state "$name")
+  if [[ "$state" == "up" && "${JOBCTRL_DEV_INNER:-}" == "1" ]]; then
+    echo "dev: a previous $name launch is still tracked; stop the earlier development stack before starting." >&2
     return 1
   fi
-}
-
-ensure_not_running() {
-  local name="$1"
-  if is_running "$name"; then
-    if [[ "${JOBCTRL_DEV_INNER:-}" == "1" ]]; then
-      echo "dev: an unverified previous $name process is still tracked; stop the earlier development stack before starting." >&2
-      return 1
-    fi
-    echo "$name: stopping previous process tree (pid $(read_pid "$name"))"
-    stop_one "$name" >/dev/null
-  else
-    rm -f "$(pid_file "$name")"
+  if [[ "$state" != "down" || -e "$(pid_file "$name")" || -e "$PID_DIR/$name.identity.json" ]]; then
+    stop_one "$name"
   fi
 }
 
@@ -294,9 +244,12 @@ start_one() {
   cmd=$(process_shell_command "$name")
   log=$(log_file "$name")
   rotate_log "$log"
-  local pid
-  pid=$(start_detached_command "$cmd" "$log")
-  echo "$pid" > "$(pid_file "$name")"
+  local pid launch_id managed_command
+  launch_id=$(new_launch_id)
+  printf -v managed_command 'exec python3 -B %q launch %q %q %q %q' \
+    "$ROOT/scripts/dev-process-owner.py" "$PID_DIR" "$name" "$launch_id" "$cmd"
+  pid=$(start_detached_command "$managed_command" "$log")
+  wait_for_owner "$name" "$launch_id" "$pid"
   echo "$name: started (pid $pid, logs $log)"
 }
 
@@ -400,19 +353,17 @@ print_binding_summary() {
 
 run_pids=()
 run_names=()
+run_ids=()
 run_cleaned=0
 
 run_cleanup() {
   [[ "$run_cleaned" -eq 0 ]] || return 0
   run_cleaned=1
-  local i name pid
+  local i failed=0
   for i in "${!run_pids[@]}"; do
-    name="${run_names[$i]}"
-    pid="${run_pids[$i]}"
-    if stop_pid_tree "$pid"; then
-      rm -f "$(pid_file "$name")"
-    fi
+    stop_one "${run_names[$i]}" "${run_ids[$i]}" || failed=1
   done
+  return "$failed"
 }
 
 start_run_one() {
@@ -422,40 +373,31 @@ start_run_one() {
     return 1
   fi
   ensure_not_running "$name"
-  local cmd log
+  local cmd log launch_id
   cmd=$(process_shell_command "$name")
   log=$(log_file "$name")
   rotate_log "$log"
+  launch_id=$(new_launch_id)
   (
-    set -o pipefail
     cd "$ROOT"
-    bash -c "$cmd" 2>&1 \
-      | tee -a "$log" \
-      | awk -v name="$name" '{ print "[" name "] " $0; fflush(); }'
+    exec python3 -B "$ROOT/scripts/dev-process-owner.py" launch "$PID_DIR" "$name" "$launch_id" "$cmd" "$log"
   ) &
   local pid=$!
-  echo "$pid" > "$(pid_file "$name")"
   run_names+=("$name")
   run_pids+=("$pid")
+  run_ids+=("$launch_id")
+  wait_for_owner "$name" "$launch_id" "$pid"
   echo "$name: running in foreground (pid $pid, logs $log)"
 }
 
 stop_one() {
-  local name="$1"
+  local name="$1" result
   if ! is_known "$name"; then
     echo "dev: unknown process '$name'" >&2
     return 1
   fi
-  if ! is_running "$name"; then
-    rm -f "$(pid_file "$name")"
-    echo "$name: not running"
-    return 0
-  fi
-  local pid
-  pid=$(read_pid "$name")
-  stop_pid_tree "$pid" || return 1
-  rm -f "$(pid_file "$name")"
-  echo "$name: stopped"
+  result=$(process_owner stop "$name" "${2:-}") || return 1
+  echo "$name: $result"
 }
 
 prepare_runtime() {
@@ -517,7 +459,7 @@ select_default_targets() {
   if schema_is_incompatible; then
     echo "dev: incompatible workspace database; starting the diagnostic API and web interface only."
     if [[ "${JOBCTRL_DEV_INNER:-}" == "1" ]]; then
-      if is_running worker || is_running temporal; then
+      if [[ "$(process_state worker)" != "down" || "$(process_state temporal)" != "down" ]]; then
         echo "dev: stop the unverified earlier development stack before starting diagnostics." >&2
         return 1
       fi
@@ -596,16 +538,20 @@ cmd_run() {
     exec 3>&-
   fi
 
-  local i name pid status
+  local i name pid status state
   while true; do
     for i in "${!run_pids[@]}"; do
       name="${run_names[$i]}"
       pid="${run_pids[$i]}"
-      if ! kill -0 "$pid" 2>/dev/null; then
-        status=0
-        wait "$pid" || status=$?
-        echo "dev: $name exited (status $status); stopping foreground run" >&2
-        run_cleanup
+      state=$(process_state "$name" "${run_ids[$i]}")
+      if [[ "$state" != "up" ]]; then
+        status=1
+        if [[ "$state" == "down" ]]; then
+          status=0
+          wait "$pid" || status=$?
+        fi
+        echo "dev: $name is $state (status $status); stopping foreground run" >&2
+        run_cleanup || exit 1
         exit "$status"
       fi
     done
@@ -739,13 +685,9 @@ cmd_status() {
       return 1
     fi
     local state pid health log
-    if is_running "$n"; then
-      state="up"
-      pid=$(read_pid "$n")
-    else
-      state="down"
-      pid="-"
-    fi
+    read -r state pid < <(process_owner state "$n" || true)
+    state="${state:-unverified}"
+    pid="${pid:--}"
     health="-"
     if [[ "$n" == "api" && "$state" == "up" ]]; then
       health=$(api_health_status)
@@ -754,6 +696,9 @@ cmd_status() {
     fi
     log=$(log_file "$n")
     printf "%-10s %-8s %-8s %-10s %s\n" "$n" "$state" "$pid" "$health" "$log"
+    if [[ "$state" == "unverified" ]]; then
+      echo "dev: $n ownership is unverified; stop and replacement will preserve its record. Review prior processes, then use scripts/dev forget $n for metadata-only recovery." >&2
+    fi
   done
 }
 
@@ -798,7 +743,7 @@ cmd_list() {
 }
 
 cmd_help() {
-  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 main() {
@@ -834,6 +779,10 @@ main() {
     start|restart) cmd_start "$sub" "$@" ;;
     stop)    cmd_stop "$@" ;;
     status)  cmd_status "$@" ;;
+    forget)
+      [[ $# -eq 1 ]] || { echo "dev: forget requires one component name" >&2; return 2; }
+      process_owner forget "$1"
+      ;;
     logs)    cmd_logs "$@" ;;
     setup)   cmd_setup ;;
     migrate-credentials) cmd_migrate_credentials ;;
