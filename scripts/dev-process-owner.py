@@ -279,10 +279,11 @@ def launch(directory: Path, name: str, secret: str, command: str, log: str | Non
                 elif cleanup():
                     try:
                         send(connection, {"state": "stopped"})
-                    finally:
-                        # The stopped receipt settles an interrupted reply;
-                        # never leave a listener alive after verified cleanup.
-                        return 0
+                    except OSError:
+                        pass
+                    # The stopped receipt settles an interrupted reply;
+                    # never leave a listener alive after verified cleanup.
+                    return 0
                 else:
                     send(connection, {"state": "cleanup_failed"})
             except (OSError, ValueError, Unverified):

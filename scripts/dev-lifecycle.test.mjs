@@ -18,6 +18,31 @@ async function createHarness() {
   const fixtureLauncher = path.join(temporaryRoot, "scripts/dev");
   const eventsPath = path.join(temporaryRoot, "events.log");
   const failBuildPath = path.join(temporaryRoot, "fail-build");
+  const ownedChildren = new Map();
+  const trackChild = (child) => {
+    const record = { child, closed: false, error: undefined };
+    record.close = new Promise((resolve) => {
+      child.once("close", () => { record.closed = true; resolve(); });
+    });
+    child.once("error", (error) => { record.error = error; });
+    ownedChildren.set(child, record);
+    return child;
+  };
+  const waitForChildClose = async (child, milliseconds = 5_000) => {
+    const record = ownedChildren.get(child);
+    assert.ok(record, "Only an original fixture child may be awaited");
+    let timer;
+    try {
+      await Promise.race([
+        record.close,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`Owned child did not close; retain ${temporaryRoot}`)), milliseconds);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   await mkdir(binDir, { recursive: true });
   await mkdir(homeDir, { recursive: true });
   await mkdir(path.join(temporaryRoot, "tmp"), { recursive: true });
@@ -151,11 +176,11 @@ exec "$root/scripts/dev" run "$@"
 
   const runForegroundUntilReady = (...args) =>
     new Promise((resolve, reject) => {
-      const child = spawn(fixtureLauncher, args, {
+      const child = trackChild(spawn(fixtureLauncher, args, {
         cwd: homeDir,
         env,
         detached: true,
-      });
+      }));
       const targets = args.length > 1 ? args.slice(1) : ["temporal", "api", "web", "worker"];
       const readiness = {
         temporal: "[temporal] Ready",
@@ -169,15 +194,12 @@ exec "$root/scripts/dev" run "$@"
       let stdout = "";
       let stderr = "";
       let stopping = false;
-      const signalGroup = (signal) => {
-        try {
-          process.kill(-child.pid, signal);
-        } catch (error) {
-          if (error.code !== "ESRCH") throw error;
-        }
+      const signalChild = (signal) => {
+        try { child.kill(signal); }
+        catch (error) { reject(error); }
       };
       const deadline = setTimeout(() => {
-        signalGroup("SIGKILL");
+        signalChild("SIGTERM");
         reject(new Error(`Foreground fixture did not start and stop within 10s:\n${stdout}\n${stderr}`));
       }, 10_000);
       child.stdout.setEncoding("utf8");
@@ -187,9 +209,8 @@ exec "$root/scripts/dev" run "$@"
         if (!stopping && stdout.includes("dev: foreground run active;") &&
             targets.every((name) => stdout.includes(readiness[name]))) {
           stopping = true;
-          // Ctrl-C reaches the foreground process group. Stop as soon as the
-          // supervisor and all synthetic services are ready, then prove cleanup.
-          signalGroup("SIGINT");
+          // The original supervisor handles cancellation and drains its owners.
+          signalChild("SIGINT");
         }
       });
       child.stderr.on("data", (chunk) => { stderr += chunk; });
@@ -214,6 +235,10 @@ exec "$root/scripts/dev" run "$@"
     temporaryRoot,
     devDir,
     binDir,
+    env,
+    trackChild,
+    waitForChildClose,
+    spawnPeer: () => trackChild(spawn("/bin/sleep", ["300"], { cwd: homeDir, env, stdio: "ignore" })),
     events: () => readFile(eventsPath, "utf8"),
     async waitForLaunches(count) {
       let events;
@@ -230,11 +255,31 @@ exec "$root/scripts/dev" run "$@"
     failBuild: () => writeFile(failBuildPath, "fail"),
     pid: (name) => readFile(path.join(devDir, "pids", `${name}.pid`), "utf8"),
     logPath: (name) => path.join(devDir, "logs", `${name}.log`),
-    async cleanup() {
+    async cleanup(priorFailure) {
+      const failures = priorFailure ? [priorFailure] : [];
       try {
         run("stop", "temporal", "api", "web", "worker", "docs", "demo-api", "demo-web");
-      } catch {
-        // The assertion failure is more useful than cleanup output.
+      } catch (error) {
+        failures.push(error);
+      }
+      for (const record of ownedChildren.values()) {
+        const { child } = record;
+        try {
+          if (!record.closed && child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+          try {
+            await waitForChildClose(child);
+          } catch (closeError) {
+            failures.push(closeError);
+            if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+            await waitForChildClose(child);
+          }
+          if (record.error) failures.push(record.error);
+        } catch (cleanupError) {
+          failures.push(cleanupError);
+        }
+      }
+      if (failures.length) {
+        throw new AggregateError(failures, `Fixture cleanup unverified; retained ${temporaryRoot}`);
       }
       await rm(temporaryRoot, { recursive: true, force: true });
     },
@@ -279,7 +324,7 @@ test("an explicit worker start refuses an incompatible database", async () => {
 
 test("a source start does not kill an unverified tracked process", { skip: process.platform !== "darwin" }, async () => {
   const harness = await createHarness();
-  const previous = spawn("/bin/sleep", ["300"], { stdio: "ignore" });
+  const previous = harness.spawnPeer();
   try {
     const pidDir = path.join(harness.temporaryRoot, "dev", "pids");
     await mkdir(pidDir, { recursive: true });
@@ -290,15 +335,38 @@ test("a source start does not kill an unverified tracked process", { skip: proce
     process.kill(previous.pid, 0);
     assert.doesNotMatch(await harness.events(), /launch:/);
   } finally {
-    previous.kill("SIGTERM");
-    await rm(path.join(harness.temporaryRoot, "dev", "pids", "api.pid"), { force: true });
-    await harness.cleanup();
+    let failure;
+    try { await rm(path.join(harness.temporaryRoot, "dev", "pids", "api.pid"), { force: true }); }
+    catch (error) { failure = error; }
+    await harness.cleanup(failure);
+  }
+});
+
+test("fixture cleanup retains unverified state and closes its original peer", async () => {
+  const harness = await createHarness();
+  const peer = harness.spawnPeer();
+  const pidFile = path.join(harness.devDir, "pids", "docs.pid");
+  try {
+    await mkdir(path.dirname(pidFile), { recursive: true });
+    const original = `${peer.pid}\n`;
+    await writeFile(pidFile, original);
+    await assert.rejects(harness.cleanup(), /Fixture cleanup unverified; retained/);
+    assert.equal(await readFile(pidFile, "utf8"), original);
+    assert.ok(peer.exitCode !== null || peer.signalCode !== null);
+  } finally {
+    try {
+      if (peer.exitCode === null && peer.signalCode === null) peer.kill("SIGTERM");
+      await harness.waitForChildClose(peer);
+      harness.run("forget", "docs");
+    } finally {
+      await harness.cleanup();
+    }
   }
 });
 
 test("PID-only records cannot authorize status, stop, or startup replacement", async () => {
   const harness = await createHarness();
-  const peer = spawn("/bin/sleep", ["300"], { stdio: "ignore" });
+  const peer = harness.spawnPeer();
   const pidFile = path.join(harness.devDir, "pids", "docs.pid");
   try {
     await mkdir(path.dirname(pidFile), { recursive: true });
@@ -318,16 +386,17 @@ test("PID-only records cannot authorize status, stop, or startup replacement", a
     process.kill(peer.pid, 0);
     assert.match(harness.run("status", "docs"), /^docs\s+down\s+-/m);
   } finally {
-    peer.kill("SIGTERM");
-    await rm(pidFile, { force: true });
-    await harness.cleanup();
+    let failure;
+    try { await rm(pidFile, { force: true }); }
+    catch (error) { failure = error; }
+    await harness.cleanup(failure);
   }
 });
 
 for (const corruption of ["pid", "identity", "malformed", "missing endpoint"]) {
   test(`a ${corruption} mismatch preserves the unrelated process and original receipt`, async () => {
     const harness = await createHarness();
-    const peer = spawn("/bin/sleep", ["300"], { stdio: "ignore" });
+    const peer = harness.spawnPeer();
     const pidFile = path.join(harness.devDir, "pids", "docs.pid");
     const identityFile = path.join(harness.devDir, "pids", "docs.identity.json");
     let originalPid;
@@ -356,17 +425,19 @@ for (const corruption of ["pid", "identity", "malformed", "missing endpoint"]) {
         assert.deepEqual(await readFile(identityFile), retainedIdentity);
       }
     } finally {
-      if (originalPid) await writeFile(pidFile, originalPid);
-      if (originalIdentity) await writeFile(identityFile, originalIdentity);
-      peer.kill("SIGTERM");
-      await harness.cleanup();
+      let failure;
+      try {
+        if (originalPid) await writeFile(pidFile, originalPid);
+        if (originalIdentity) await writeFile(identityFile, originalIdentity);
+      } catch (error) { failure = error; }
+      await harness.cleanup(failure);
     }
   });
 }
 
 test("a verified source launch stops, restarts normally, and preserves an independent peer", async () => {
   const harness = await createHarness();
-  const peer = spawn("/bin/sleep", ["300"], { stdio: "ignore" });
+  const peer = harness.spawnPeer();
   try {
     harness.run("start", "docs");
     const previous = await harness.pid("docs");
@@ -381,14 +452,57 @@ test("a verified source launch stops, restarts normally, and preserves an indepe
     assert.match(harness.run("status", "docs"), /^docs\s+up\s+\d+/m);
     process.kill(peer.pid, 0);
   } finally {
-    peer.kill("SIGTERM");
+    await harness.cleanup();
+  }
+});
+
+test("verified cleanup exits after a disconnected stop client", { timeout: 30_000 }, async () => {
+  const harness = await createHarness();
+  const ownerScript = path.join(harness.temporaryRoot, "scripts/dev-process-owner.py");
+  const pidDir = path.join(harness.devDir, "pids");
+  await mkdir(pidDir, { recursive: true });
+  const owner = harness.trackChild(spawn("python3", [
+    "-B", ownerScript, "launch", pidDir, "docs", "1".repeat(64), "exec /bin/sleep 300",
+  ], { cwd: harness.temporaryRoot, env: harness.env, stdio: "ignore" }));
+  try {
+    let ready = false;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (/^docs\s+up\s+\d+/m.test(harness.run("status", "docs"))) { ready = true; break; }
+      await delay(20);
+    }
+    assert.ok(ready, `Owner did not become ready (exit ${owner.exitCode})`);
+    const client = spawnSync("python3", ["-B", "-c", `
+import hmac, pathlib, runpy, secrets, socket, sys
+owner = runpy.run_path(sys.argv[1], run_name="stop_client")
+value = owner["receipt"](pathlib.Path(sys.argv[2]), "docs")
+with socket.socket(socket.AF_UNIX) as channel:
+    channel.settimeout(2)
+    endpoint = pathlib.Path(value["socket"])
+    with owner["at_directory"](endpoint.parent):
+        channel.connect(endpoint.name)
+    challenge = secrets.token_hex(32)
+    owner["send"](channel, {"jobctrlSourceOwner": challenge})
+    answer = owner["receive"](channel)
+    assert answer["pid"] == value["pid"]
+    assert hmac.compare_digest(answer["proof"], owner["proof"](value["id"], challenge))
+    owner["send"](channel, {"action": "stop", "proof": owner["proof"](value["id"], challenge + ":stop")})
+    channel.shutdown(socket.SHUT_RDWR)
+`, ownerScript, pidDir], {
+      cwd: harness.temporaryRoot, env: harness.env, encoding: "utf8", timeout: 5_000,
+    });
+    assert.equal(client.error, undefined);
+    assert.equal(client.status, 0, client.stderr);
+    await harness.waitForChildClose(owner);
+    assert.equal(owner.exitCode, 0);
+    assert.match(harness.run("status", "docs"), /^docs\s+down\s+-/m);
+  } finally {
     await harness.cleanup();
   }
 });
 
 test("owned TERM-ignoring descendants stop while an independent peer survives", { timeout: 30_000 }, async () => {
   const harness = await createHarness();
-  const peer = spawn("/bin/sleep", ["300"], { stdio: "ignore" });
+  const peer = harness.spawnPeer();
   const childFile = path.join(harness.temporaryRoot, "owned-child.pid");
   try {
     const command = path.join(harness.binDir, "corepack");
@@ -413,14 +527,13 @@ test("owned TERM-ignoring descendants stop while an independent peer survives", 
     }
     assert.fail("Owned descendant remained live after verified stop");
   } finally {
-    peer.kill("SIGTERM");
     await harness.cleanup();
   }
 });
 
 test("a departed root with a live child reports cleanup failure and can retry after child exit", { timeout: 30_000 }, async () => {
   const harness = await createHarness();
-  const peer = spawn("/bin/sleep", ["300"], { stdio: "ignore" });
+  const peer = harness.spawnPeer();
   const fifo = path.join(harness.temporaryRoot, "owned-child-control");
   let writer;
   try {
@@ -454,9 +567,10 @@ test("a departed root with a live child reports cleanup failure and can retry af
     assert.match(harness.run("stop", "docs"), /docs: stopped/);
     assert.match(harness.run("status", "docs"), /^docs\s+down\s+-/m);
   } finally {
-    if (writer) await writer.close().catch(() => {});
-    peer.kill("SIGTERM");
-    await harness.cleanup();
+    let failure;
+    try { if (writer) await writer.close(); }
+    catch (error) { failure = error; }
+    await harness.cleanup(failure);
   }
 });
 
