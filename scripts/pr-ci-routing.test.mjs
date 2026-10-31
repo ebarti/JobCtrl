@@ -123,12 +123,12 @@ test("trusted proof binds repository, PR, producer, base, head, merge and helper
   assert.equal(proof.base.sha, f.base);
   assert.deepEqual(proof.policy, { commit: f.base, blob: f.git("rev-parse", `${f.base}:scripts/pr-ci-routing.mjs`) });
   assert.deepEqual(names(proof), ["docs"]);
-  assert.equal(Object.keys(proof.contexts).length, 20);
+  assert.equal(Object.keys(proof.contexts).length, 18);
   assert.equal(proof.contexts["Release check"], true);
   assert.equal(proof.contexts["Script unit tests"], true);
   assert.equal(proof.contexts["Build (dead-link gate)"], true);
-  for (const python of ["Python 3.11", "Python 3.12", "Python 3.13"]) assert.equal(proof.contexts[python], false);
-  assert.equal(new Set(Object.values(SUITE_CONTEXTS).flat()).size, 18);
+  for (const python of ["Python / Python 3.12"]) assert.equal(proof.contexts[python], false);
+  assert.equal(new Set(Object.values(SUITE_CONTEXTS).flat()).size, 16);
 });
 
 test("credential ownership tests retain every native adapter OS context", (t) => {
