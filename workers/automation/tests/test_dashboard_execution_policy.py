@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from jobctrl import config
+from jobctrl import config, database
 from jobctrl.infrastructure import setup_probes
 from jobctrl.scoring.tailor import _build_llm_policy
 
@@ -57,13 +57,23 @@ def test_explicit_tailoring_request_stays_ahead_of_legacy_environment_and_saved_
 
 def test_discovery_automation_save_preserves_existing_search_settings(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "jobctrl.db"
-    sqlite3.connect(db_path).close()
     monkeypatch.setattr(config, "DB_PATH", db_path)
 
     existing = config._default_discovery_search_config()
     existing["boards"] = ["glassdoor"]
     existing["automation"] = {"min_fit_score": 9}
-    config._save_discovery_search_config_to_db(existing)
+    # Seed retained settings; an automation edit must preserve their search scope.
+    conn = database.init_db(db_path)
+    try:
+        config._ensure_discovery_settings_table(conn)
+        conn.execute(
+            "INSERT INTO discovery_settings (tenant_id, search_config_json, created_at, updated_at) "
+            "VALUES ('local', ?, '2026-01-01', '2026-01-01')",
+            (json.dumps(existing),),
+        )
+        conn.commit()
+    finally:
+        database.close_connection(db_path)
 
     config.save_discovery_automation_settings(
         auto_apply=True,
