@@ -44,8 +44,11 @@ timeout and creates an environment-empty, new-session child. Verify the startup
 deadline, prompt signal cancellation, bounded status and diagnostic output,
 healthy and error responses, complete probe-scope cleanup, an unrelated live
 peer and the running Temporal component surviving probe cancellation, and an
-ordinary restart after cleanup. The fixture is not evidence of a real Temporal
-freeze.
+ordinary restart after cleanup. Hold the stop control lock before its first
+census and let a probe finish: its exact same-boot completion must remain usable
+after the coalition is reaped, while missing, malformed, mismatched and
+wrong-boot proof still refuses cleanup. The fixture is not evidence of a real
+Temporal freeze.
 
 The bundled native smoke must preserve network isolation across launchd: run its
 native control process outside Seatbelt and select the fixed internal

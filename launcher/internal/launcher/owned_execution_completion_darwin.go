@@ -128,9 +128,11 @@ func readExecutionCompletion(ctx launchContext, id string) (executionCompletion,
 	return completion, validateExecutionCompletion(ctx, completion)
 }
 
-// The lifecycle control lock serializes native publishers. Reuse the same
-// synced temporary-and-rename protocol as the active receipt and stopped
-// registry; an interrupted publication cannot leave a partially written proof.
+// The lifecycle control lock serializes ordinary native publishers. An original
+// probe controller may preserve its joined/zero proof while Stop holds that lock;
+// concurrent publishers can only attest the same exact scope and receipt digest.
+// Reuse the synced temporary-and-rename protocol: interrupted publication cannot
+// leave a partially written proof, and a different scope/digest is refused.
 func publishExecutionCompletion(ctx launchContext, completion executionCompletion) error {
 	dir, err := executionCompletionDirectory(ctx, true)
 	if err != nil {

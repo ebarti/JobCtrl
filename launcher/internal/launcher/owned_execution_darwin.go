@@ -1299,15 +1299,62 @@ func finishTemporalProbeScope(ctx launchContext, scope executionScope) error {
 	}
 	lock, err := acquireLock(controlPath, true)
 	if errors.Is(err, ErrLockHeld) {
-		// Keep the receipt in the ledger for a later stop. The holder may be
-		// stopping this supervisor, so waiting for the lock could deadlock it.
-		return nil
+		// The holder may be stopping this supervisor, so never wait for it.
+		// Preserve the joined/zero proof before deferred bootout can reap the
+		// coalition, even if the holder has not made its first census yet.
+		return preserveTemporalProbeCompletion(ctx, scope)
 	}
 	if err != nil {
 		return err
 	}
 	defer releaseLock(lock)
 	return retireExecutionScopesWithCompletion(ctx, []executionScope{scope}, false, false, false)
+}
+
+// Only the original probe controller calls this after joining its exact helper
+// and verifying zero members. Stop may hold the control lock before its first
+// census. Publishing this scope's same-boot proof cannot admit any new work and
+// lets that later census resolve a reaped coalition without trusting absence.
+func preserveTemporalProbeCompletion(ctx launchContext, scope executionScope) error {
+	boot, err := executionBootSession()
+	if err != nil || boot != scope.BootSession {
+		return errors.Join(errors.New("Temporal probe boot identity changed"), err)
+	}
+	scopes, err := readOwnedExecutionScopes(ctx)
+	if err != nil {
+		return err
+	}
+	active := false
+	for _, current := range scopes {
+		if current.ID == scope.ID {
+			if current != scope {
+				return errors.New("Temporal probe receipt changed before completion")
+			}
+			active = true
+		}
+	}
+	raw, err := json.Marshal(scope)
+	if err != nil {
+		return err
+	}
+	expected := executionCompletionForReceipt(scope, append(raw, '\n'), boot)
+	completion, completionErr := readExecutionCompletion(ctx, scope.ID)
+	if completionErr != nil && !errors.Is(completionErr, os.ErrNotExist) {
+		return completionErr
+	}
+	if errors.Is(completionErr, os.ErrNotExist) {
+		if !active {
+			return errors.New("Temporal probe receipt disappeared without its exact completion")
+		}
+		if err := publishExecutionCompletion(ctx, expected); err != nil {
+			return err
+		}
+		completion, completionErr = readExecutionCompletion(ctx, scope.ID)
+	}
+	if completionErr != nil || completion.Scope != scope || completion.ReceiptSHA256 != expected.ReceiptSHA256 || completion.VerificationBootSession != boot {
+		return errors.Join(errors.New("Temporal probe completion does not match its exact receipt and boot"), completionErr)
+	}
+	return nil
 }
 
 // Called only after an all-instance zero census, with the stop control lock

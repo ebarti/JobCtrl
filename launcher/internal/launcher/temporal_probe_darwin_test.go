@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -858,5 +859,200 @@ func TestStartupFailureReportsCleanupFailure(t *testing.T) {
 	}
 	if err != nil || state.StoppedAt != nil || state.OwnershipVerified {
 		t.Fatalf("cleanup failure claimed stopped proof: %#v, %v", state, err)
+	}
+}
+
+// The cleanup owner has the control lock but has not observed this scope yet.
+// A real joined/zero probe must leave proof before its job can disappear.
+func TestTemporalProbeCompletionPrecedesFirstStopCensus(t *testing.T) {
+	ctx := executionTestContext(t)
+	root := filepath.Dir(ctx.Instance.StatePath)
+	ctx.Instance.ControlPath = filepath.Join(root, "control.lock")
+	ctx.Instance.LockPath = filepath.Join(root, "instance.lock")
+	if err := os.Mkdir(ctx.Instance.StateDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	peer := exec.Command("/bin/sleep", "120")
+	if err := peer.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = peer.Process.Kill(); _ = peer.Wait() }()
+	peerIdentity, err := processStartIdentity(peer.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	joined := false
+	var control *os.File
+	defer func() {
+		cancel()
+		releaseLock(control)
+		if !joined {
+			select {
+			case <-done:
+			case <-time.After(15 * time.Second):
+				t.Error("owned probe controller did not settle during cleanup")
+			}
+		}
+		if err := stop(ctx); err != nil {
+			t.Errorf("final synthetic probe cleanup: %v", err)
+		}
+	}()
+	// A held platform command isolates the native probe lifetime machinery;
+	// public Temporal startup/status are covered by the actual fixture above.
+	go func() {
+		done <- runTemporalProbeInOwnedExecution(parent, ctx, "/bin/sleep", []string{"120"}, io.Discard)
+	}()
+	var scope executionScope
+	var observed []observedProbeProcess
+	for deadline := time.Now().Add(8 * time.Second); ; {
+		scopes, err := readOwnedExecutionScopes(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(scopes) == 1 {
+			scope = scopes[0]
+			members, err := executionMembers(scope.CoalitionIDs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(members) == 2 {
+				for _, member := range members {
+					observed = append(observed, observedProbeProcess{member.PID, member.Identity, member.CoalitionIDs})
+				}
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("probe helper and its actual command did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	control, err = acquireLock(ctx.Instance.ControlPath, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		joined = true
+		var cleanupErr *temporalProbeCleanupError
+		if !errors.Is(err, context.Canceled) || errors.As(err, &cleanupErr) {
+			t.Fatalf("contended probe cleanup did not preserve verified completion: %v", err)
+		}
+	case <-time.After(12 * time.Second):
+		t.Fatal("probe waited on the cleanup owner's control lock")
+	}
+	assertProbeGone(t, observed)
+	completion, err := readExecutionCompletion(ctx, scope.ID)
+	activePath := filepath.Join(root, "executions", scope.ID+".json")
+	raw, readErr := os.ReadFile(activePath)
+	expected := executionCompletionForReceipt(scope, raw, scope.BootSession)
+	if err != nil || readErr != nil || completion.Scope != scope || completion.ReceiptSHA256 != expected.ReceiptSHA256 || completion.VerificationBootSession != scope.BootSession {
+		t.Fatalf("probe returned without exact durable proof while receipt remained active: %v, %v", err, readErr)
+	}
+	proofPath := filepath.Join(root, "completed-executions", scope.ID+".json")
+	proof, err := os.ReadFile(proofPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.WriteFile(proofPath, proof, 0600); err != nil {
+			t.Errorf("restore owned completion control: %v", err)
+		}
+	}()
+	oldCount, oldPIDs, oldBSD := readCoalitionActiveTaskCount, scopedProcessIDs, executionProcessBSDInfo
+	defer func() {
+		readCoalitionActiveTaskCount, scopedProcessIDs, executionProcessBSDInfo = oldCount, oldPIDs, oldBSD
+	}()
+	readCoalitionActiveTaskCount = func(id uint64) (uint64, error) {
+		if id == scope.CoalitionIDs[0] {
+			return 0, syscall.ESRCH // Reaping is not itself completion authority.
+		}
+		return oldCount(id)
+	}
+	censusReads := 0
+	scopedProcessIDs = func() ([]int, error) { censusReads++; return []int{peer.Process.Pid}, nil }
+	executionProcessBSDInfo = func(pid int) ([]byte, error) {
+		if pid == peer.Process.Pid {
+			return nil, syscall.EPERM
+		}
+		return oldBSD(pid)
+	}
+	// This is the lock holder's FIRST census: there is no local witness map.
+	if members, err := inspectOwnedProcesses(ctx, instanceState{}); err != nil || len(members) != 0 || censusReads != 0 {
+		t.Fatalf("durable completion could not resolve the first census: %v, %v", members, err)
+	}
+	for _, fault := range []string{"missing", "wrong-boot", "wrong-receipt", "malformed"} {
+		t.Run(fault, func(t *testing.T) {
+			defer func() {
+				if err := os.WriteFile(proofPath, proof, 0600); err != nil {
+					t.Errorf("restore exact synthetic proof: %v", err)
+				}
+			}()
+			changed := completion
+			switch fault {
+			case "missing":
+				err = os.Remove(proofPath)
+			case "wrong-boot":
+				changed.VerificationBootSession = "00000000-0000-0000-0000-000000000000"
+				if changed.VerificationBootSession == scope.BootSession {
+					changed.VerificationBootSession = "11111111-1111-1111-1111-111111111111"
+				}
+				err = writeJSONAtomic(proofPath, changed)
+			case "wrong-receipt":
+				changed.ReceiptSHA256 = strings.Repeat("0", 64)
+				err = writeJSONAtomic(proofPath, changed)
+			case "malformed":
+				err = os.WriteFile(proofPath, []byte("{}\n"), 0600)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if members, err := inspectOwnedProcesses(ctx, instanceState{}); !errors.Is(err, syscall.EPERM) || len(members) != 0 {
+				t.Fatalf("unproved reaped coalition was accepted: %v, %v", members, err)
+			}
+			if fault != "missing" {
+				before, _ := os.ReadFile(proofPath)
+				if err := preserveTemporalProbeCompletion(ctx, scope); err == nil {
+					t.Fatal("invalid existing completion was overwritten or accepted")
+				}
+				after, _ := os.ReadFile(proofPath)
+				if !bytes.Equal(before, after) {
+					t.Fatal("refused completion changed the owned evidence")
+				}
+			}
+		})
+	}
+	if identity, err := processStartIdentity(peer.Process.Pid); err != nil || identity != peerIdentity {
+		t.Fatal("probe or first-census cleanup affected the unrelated peer")
+	}
+	releaseLock(control)
+	control = nil
+	if err := stop(ctx); err != nil {
+		t.Fatalf("first real Stop could not retire the proved probe: %v", err)
+	}
+	if scopes, err := readOwnedExecutionScopes(ctx); err != nil || len(scopes) != 0 {
+		t.Fatalf("proved probe receipt survived Stop: %v, %v", scopes, err)
+	}
+	readCoalitionActiveTaskCount, scopedProcessIDs, executionProcessBSDInfo = oldCount, oldPIDs, oldBSD
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	writer.Close()
+	stdin := os.Stdin
+	os.Stdin = reader
+	defer func() { os.Stdin = stdin }()
+	if err := runInOwnedExecution(ctx, []string{"__scope-test-command", ctx.Instance.StatePath, ctx.Instance.ID, "stdin", "unused"}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("normal admission after probe cleanup required manual recovery: %v", err)
+	}
+	if err := stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if after, err := os.ReadFile(proofPath); err != nil || !bytes.Equal(proof, after) {
+		t.Fatal("Stop or restart replaced the probe's original completion proof")
 	}
 }
