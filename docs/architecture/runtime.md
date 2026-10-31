@@ -210,6 +210,17 @@ API worker-heartbeat health. Each canonical `JOBCTRL_DIR` has one locked runtime
 registry. Records bind its instance, payload, manifest, PID/start identities,
 process groups and execution scope.
 
+Each Temporal health command runs in its own receipt-bound native execution
+scope, with a three-second host deadline and a bounded diagnostic buffer. The
+startup phase's remaining deadline and shutdown signals also cancel the probe.
+The helper verifies and drains that scope's descendants even if they detach;
+the running Temporal service and other instances remain outside its authority.
+Status marks a live Temporal process unhealthy when its probe fails or times
+out and reports the bounded diagnostic. Unverified probe cleanup fails the
+status command and retains any unverified ownership receipt for inspection and stop. A
+legacy v6 quiescence proof probes the verified old Temporal payload through
+the separately authenticated current controller.
+
 Runtime starts and Python CLI commands execute inside uniquely labeled,
 ephemeral per-user launchd jobs. The launcher records the kernel resource and
 jetsam coalition IDs in a private instance receipt **before authorizing work**.

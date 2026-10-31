@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -1193,7 +1194,7 @@ func TestStartupObservesEarlyChildExitWithoutWaitingForTimeout(t *testing.T) {
 	exits := make(chan componentExit, 1)
 	exits <- componentExit{Name: "temporal", Err: errors.New("fixture exit")}
 	started := time.Now()
-	err := waitForTemporal(launchContext{}, nil, exits, make(chan os.Signal))
+	err := waitForTemporal(launchContext{}, launchContext{}, nil, exits, make(chan os.Signal))
 	if err == nil || !strings.Contains(err.Error(), "fixture exit") {
 		t.Fatalf("early child exit = %v", err)
 	}
@@ -1206,13 +1207,13 @@ func TestTemporalReadinessProbesAHealthyLiveChild(t *testing.T) {
 	previous := temporalHealthProbe
 	t.Cleanup(func() { temporalHealthProbe = previous })
 	called := 0
-	temporalHealthProbe = func(launchContext) error { called++; return nil }
+	temporalHealthProbe = func(context.Context, launchContext, launchContext) error { called++; return nil }
 	process, err := os.FindProcess(os.Getpid())
 	if err != nil {
 		t.Fatal(err)
 	}
 	started := time.Now()
-	if err := waitForTemporal(launchContext{}, &exec.Cmd{Process: process}, make(chan componentExit), make(chan os.Signal)); err != nil {
+	if err := waitForTemporal(launchContext{}, launchContext{}, &exec.Cmd{Process: process}, make(chan componentExit), make(chan os.Signal)); err != nil {
 		t.Fatal(err)
 	}
 	if called != 1 || time.Since(started) > time.Second {
@@ -1223,7 +1224,7 @@ func TestTemporalReadinessProbesAHealthyLiveChild(t *testing.T) {
 func TestStartupSignalIsCleanCancellation(t *testing.T) {
 	signals := make(chan os.Signal, 1)
 	signals <- os.Interrupt
-	if err := waitForTemporal(launchContext{}, nil, make(chan componentExit), signals); !errors.Is(err, errStartupInterrupted) {
+	if err := waitForTemporal(launchContext{}, launchContext{}, nil, make(chan componentExit), signals); !errors.Is(err, errStartupInterrupted) {
 		t.Fatalf("startup signal = %v, want clean interruption", err)
 	}
 }

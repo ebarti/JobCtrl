@@ -38,6 +38,20 @@ No required case may pass by fabricating an ownership flag or a real user's
 coalition ID. Kernel boot identity binds receipt lifetime and is not a reboot
 admission requirement. Use no real user workspace or process.
 
+For Temporal health probe changes, exercise the real helper and public startup
+and status commands with a synthetic health executable that ignores its own
+timeout and creates an environment-empty, new-session child. Verify the startup
+deadline, prompt signal cancellation, bounded status and diagnostic output,
+healthy and error responses, complete probe-scope cleanup, an unrelated live
+peer and the running Temporal component surviving probe cancellation, and an
+ordinary restart after cleanup. Hold the stop control lock before its first
+census and let a probe finish: its exact same-boot completion must remain usable
+after the coalition is reaped, while missing, malformed, mismatched and
+wrong-boot proof still refuses cleanup. Retire a listed receipt between the
+probe's enumeration and open: only its exact durable completion may resolve
+that missing-file race; missing or invalid proof and inspection errors still
+fail. The fixture is not evidence of a real Temporal freeze.
+
 The bundled native smoke must preserve network isolation across launchd: run its
 native control process outside Seatbelt and select the fixed internal
 `JOBCTRL_EXECUTION_QA_SANDBOX=loopback-only-v1` restriction at the authenticated
