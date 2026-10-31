@@ -1571,7 +1571,18 @@ verification-code MCP server:
   same job. The link is nullable and invalid generations are rejected.
 - `POST /v1/outcome-suggestions/:suggestionId/decision` accepts, corrects, or
   ignores a pending suggestion and writes a reviewed outcome for accepted or
-  corrected suggestions.
+  corrected suggestions. It returns `200` with `disposition: "applied"` for a
+  new decision or `"replayed"` for an identical recorded request. A different
+  decision or correction returns `409 outcome_suggestion_conflict`; a historical
+  request whose identity cannot be proved returns `409
+  outcome_suggestion_replay_unverifiable`. Both responses contain the saved
+  `suggestion` and nullable `outcome` and make no new decision. `outcomeKind` is
+  required for `correct` and rejected for other decisions; `ignore` rejects `note` and `occurredAt` because
+  it has no outcome in which to retain them. The decision, optional outcome and
+  private receipt commit together under one SQLite writer reservation. The receipt
+  binds the request, canonical facts and safe event; its digest stays in SQLite's
+  internal index and is never sent in an event or stream. Missing or inconsistent
+  receipt evidence, including earlier decisions without a receipt, is unverifiable.
 - `POST /v1/outcomes/gmail/scan` runs a bounded Gmail feedback scan over known
   application anchors. The request accepts optional `recipientEmail`, `limit`,
   `maxResultsPerAnchor`, and `windowDays` values. The response returns counts
@@ -1629,7 +1640,7 @@ or prep checks, and cannot overwrite later thread/review/reminder state. Fresh
 actions retain those checks. Reflections accept only stored accepted or
 superseded prep generations for the same job. Private note/reflection text stays
 in canonical private history, outside receipt events and conflict errors.
-Suggestion-decision semantics and external delivery authority are unchanged.
+External delivery authority is unchanged.
 
 These routes create `application_review_decisions`,
 `application_repeat_overrides`, `application_repeat_override_consumptions`,

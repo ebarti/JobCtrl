@@ -3,6 +3,7 @@ import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import { outcomesKeys } from "../../operations/outcomesKeys.js";
 import type { JobApplicationOutcomeListResponse, ManualApplicationOutcomeRequest } from "@jobctrl/contracts";
 import { screen, waitFor, within } from "@testing-library/react";
+import { JobCtrlApiError } from "@jobctrl/api-client";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -246,6 +247,7 @@ describe("application outcome components", () => {
     const decideOutcomeSuggestion = vi.fn(
       async (_suggestionId: string, body: { decision: string }) => ({
         ok: true as const,
+        disposition: "applied" as const,
         suggestion: {
           ...sampleApplicationOutcomes.suggestions[0]!,
           status:
@@ -345,10 +347,49 @@ describe("application outcome components", () => {
     ).toBeInTheDocument();
   });
 
+  it("retains a correction across refresh and shows the saved decision on conflict", async () => {
+    const user = userEvent.setup();
+    let rejectDecision!: (error: Error) => void;
+    const decideOutcomeSuggestion = vi.fn(() => new Promise<never>((_resolve, reject) => { rejectDecision = reject; }));
+    const { rerender } = renderWithProviders(
+      <OutcomeSuggestionsPanel suggestions={sampleApplicationOutcomes.suggestions} />,
+      { ports: buildTestPorts({ api: { decideOutcomeSuggestion } }) },
+    );
+    const reason = screen.getByLabelText(/reason/i);
+    const note = screen.getByLabelText(/local note/i);
+    await user.type(reason, "Attempted correction");
+    await user.type(note, "Keep this draft");
+    await user.click(screen.getByRole("button", { name: /^correct suggestion/i }));
+    await waitFor(() => expect(decideOutcomeSuggestion).toHaveBeenCalledTimes(1));
+    rerender(<OutcomeSuggestionsPanel suggestions={[]} />);
+    expect(screen.getByLabelText(/local note/i)).toHaveValue("Keep this draft");
+    const saved = {
+      ...sampleApplicationOutcomes.suggestions[0]!, status: "corrected", decisionReason: "Earlier reason",
+      decidedAt: "2026-05-06T08:40:00Z", decidedOutcomeId: "outcome-1",
+    };
+    const outcome = { outcomeId: "outcome-1", jobKey: saved.jobKey, kind: "offer", source: "email_suggestion",
+      note: "Earlier saved note", occurredAt: "2026-05-06T08:40:00Z", recordedAt: "2026-05-06T08:40:00Z",
+      suggestionId: saved.suggestionId, evidenceId: saved.evidenceId, interviewPrepGeneration: null };
+    await act(async () => rejectDecision(new JobCtrlApiError(409, "Conflict", undefined, {
+      ok: false, error: "outcome_suggestion_conflict", suggestion: saved, outcome,
+    })));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your requested decision was not applied");
+    expect(screen.getByRole("alert")).toHaveTextContent("Requested decision: correct");
+    expect(screen.getByRole("alert")).toHaveTextContent("Saved decision: corrected · Offer");
+    expect(screen.getByRole("alert")).toHaveTextContent("Earlier saved note");
+    expect(screen.getByLabelText(/reason/i)).toHaveValue("Attempted correction");
+    expect(screen.getByLabelText(/local note/i)).toHaveValue("Keep this draft");
+    expect(screen.getByRole("button", { name: /^correct suggestion/i })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.getByText("No pending outcome suggestions.")).toBeInTheDocument();
+    expect(decideOutcomeSuggestion).toHaveBeenCalledTimes(1);
+  });
+
   it("corrects pending outcome suggestions with a selected outcome kind", async () => {
     const user = userEvent.setup();
     const decideOutcomeSuggestion = vi.fn(async () => ({
       ok: true as const,
+      disposition: "applied" as const,
       suggestion: {
         ...sampleApplicationOutcomes.suggestions[0]!,
         status: "corrected" as const,

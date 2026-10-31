@@ -98,6 +98,15 @@ workflow-engine state, not the JobCtrl read model. Generated files are physical
 artifacts whose registered metadata determines whether the product may serve
 them.
 
+Outcome-suggestion review acquires the SQLite writer before reading pending or
+terminal state. The suggestion, optional outcome, decision event and its receipt
+commit as one unit. The private SQLite idempotency index binds the normalized
+request, canonical decision and outcome, and safe event. The event carries only
+safe receipt references and whether the time was supplied; it never carries the
+binding digest, note or reason. Missing or inconsistent historical receipts never
+authorize a guessed replay. Stored outcome kinds must be valid before replay
+verification; display normalization does not prove a canonical value unchanged.
+
 ## Canonical State And Physical Storage
 
 `~/.jobctrl/jobctrl.db` contains canonical rows, the event log, and derived

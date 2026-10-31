@@ -111,6 +111,17 @@ the scan trigger; scan initiation is the `POST` API action listed below. Gmail
 setup and the read/send boundary are documented in
 [Apply](apply.md#gmail-connector-and-sending-boundary).
 
+A suggestion can be decided once. If another review already recorded a different
+decision or correction, the app shows that saved decision and keeps your attempted
+correction visible for review or copying. A retry of the same recorded request
+returns the original result without another outcome. Older decisions may lack
+the information needed to prove that a retry is identical; JobCtrl reports that
+uncertainty instead of claiming the request was applied. A damaged or missing
+decision receipt is also reported as unverifiable. Ignoring a suggestion
+does not record an outcome note or time; the API rejects those unused fields.
+While the app remains open, correction drafts and delayed results stay with
+their original tenant, job and suggestion, even if you navigate away.
+
 Apply-run state and application outcomes answer different questions. Apply
 history records what the automation attempted and whether submission evidence
 exists; outcome history records your reviewed understanding of what followed.

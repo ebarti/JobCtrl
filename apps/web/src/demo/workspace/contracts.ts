@@ -1,4 +1,5 @@
-import type { DomainEventUnion } from "@jobctrl/domain-types";
+import type { DomainEventUnion, OutcomeSuggestionDecidedPayload } from "@jobctrl/domain-types";
+import type { ApplicationOutcome, OutcomeSuggestion, OutcomeSuggestionDecisionRequest } from "@jobctrl/contracts";
 
 import type { MaterializedDemoSeed } from "../clock.js";
 import type {
@@ -53,6 +54,17 @@ export interface DemoWorkspaceEventRecord {
   readonly event: DomainEventUnion;
 }
 
+/** Local-only authority; private request/fact text never enters domain events. */
+export interface DemoSuggestionDecisionReceipt {
+  readonly request: OutcomeSuggestionDecisionRequest;
+  readonly fact: {
+    readonly suggestion: Pick<OutcomeSuggestion, "suggestionId" | "jobKey" | "evidenceId" | "suggestedKind" | "status" | "decidedAt" | "decisionReason" | "decidedOutcomeId">;
+    readonly outcome: ApplicationOutcome | null;
+  };
+  readonly event: OutcomeSuggestionDecidedPayload;
+  readonly eventSequence: number;
+}
+
 /**
  * The complete mutable browser-local aggregate. Its `state` is the sole
  * canonical copy of the P0 projection seed; Query is deliberately a cache,
@@ -81,6 +93,7 @@ export interface DemoWorkspaceSnapshot {
   readonly blobIds: readonly string[];
   readonly state: {
     actionReceipts?: Record<string, { occurredAtOmitted: boolean; outcomeId: string }>;
+    suggestionDecisionReceipts?: Record<string, DemoSuggestionDecisionReceipt>;
     readonly title: string;
     readonly generatedAt: string;
     readonly artifacts: MaterializedDemoSeed["artifacts"];

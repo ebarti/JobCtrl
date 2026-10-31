@@ -207,15 +207,22 @@ reconcile only the optimistic log associated with that request and invalidate
 current reads; they never install a historical thread response. Both optimistic
 insertion and settlement check the initiating thread ID against the current
 cached thread. A replacement thread under the same contact key stays unchanged,
-including when it replaces the cache while query cancellation is pending. Form retry
+including when it replaces the cache while query cancellation is pending. Send-log retry
 payloads live only in component memory, with explicit new-action identity after
-acknowledgement or a deliberate user choice. No external send or suggestion
-terminal-decision authority is introduced.
+acknowledgement or a deliberate user choice. Manual outcomes do not grant
+external sending authority or decide suggestions.
 The app session retains manual outcome and reflection drafts and uncertain
 retry identities separately by tenant and job across top-level navigation,
 keyed drawer changes, nested run detail and cold reads. A delayed acknowledgement
 from a form that has been replaced cannot clear the current owner's draft.
 Reloading discards this in-memory state.
+
+Suggestion corrections use the same app-session owner, scoped by tenant, job
+and suggestion. If another reviewer has already decided, the response shows the
+saved decision and the attempted correction remains available. A late result
+is retained for its original owner rather than clearing a replacement draft.
+The browser-local demo retains a private decision receipt in its workspace;
+permanent deletion of its job removes that receipt with the job's outcomes.
 
 The Gmail feedback scanner searches a recipient and bounded post-application
 window for each known anchor, without employer or outcome keyword filters.

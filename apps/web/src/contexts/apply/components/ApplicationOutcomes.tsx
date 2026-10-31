@@ -1,4 +1,5 @@
 import { useRetryableAction, type RetryableActionRetention } from "../../../shared/lib/useRetryableAction.js";
+import { JobCtrlApiError } from "@jobctrl/api-client";
 import { OfferPanel } from "./OfferPanel.js";
 import {
   APPLICATION_OUTCOME_KINDS,
@@ -9,9 +10,11 @@ import {
   type ManualApplicationOutcomeRequest,
   type OutcomeSuggestion,
   type OutcomeSuggestionDecisionRequest,
+  type OutcomeSuggestionDecisionConflict,
+  type OutcomeSuggestionDecisionResponse,
 } from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import { useJobApplicationOutcomesQuery } from "../../operations/hooks/useJobApplicationOutcomesQuery.js";
 import type { JobId } from "../../operations/types.js";
@@ -57,6 +60,7 @@ interface OutcomeDraftRetention<T> {
 interface OutcomeDraftRetentions {
   manual: OutcomeDraftRetention<ManualOutcomeFormValues>;
   reflection: OutcomeDraftRetention<InterviewReflectionFormValues>;
+  suggestions: SuggestionDraftRetention;
 }
 
 const OutcomeDraftRetentionContext = createContext<OutcomeDraftRetentions | null>(null);
@@ -66,6 +70,7 @@ export function OutcomeDraftRetentionProvider({ children }: { readonly children:
   const [retention] = useState<OutcomeDraftRetentions>(() => ({
     manual: { drafts: new Map(), actions: new Map() },
     reflection: { drafts: new Map(), actions: new Map() },
+    suggestions: createSuggestionDraftRetention(),
   }));
   return <OutcomeDraftRetentionContext.Provider value={retention}>{children}</OutcomeDraftRetentionContext.Provider>;
 }
@@ -84,6 +89,39 @@ interface SuggestionCorrectionFormValues {
   readonly occurredAt: string;
   readonly note: string;
   readonly reason: string;
+}
+
+interface RetainedSuggestionDraft {
+  readonly tenantId: string;
+  readonly suggestion: OutcomeSuggestion;
+  readonly values: SuggestionCorrectionFormValues;
+  readonly pending: symbol | null;
+  readonly requestedDecision: OutcomeSuggestionDecisionRequest["decision"] | null;
+  readonly conflict: OutcomeSuggestionDecisionConflict | null;
+  readonly completion: OutcomeSuggestionDecisionResponse | null;
+  readonly failed: boolean;
+}
+
+interface SuggestionDraftRetention {
+  readonly drafts: Map<string, RetainedSuggestionDraft>;
+  readonly dismissed: Set<string>;
+  readonly subscribe: (listener: () => void) => () => void;
+  readonly getSnapshot: () => number;
+  readonly notify: () => void;
+}
+
+function createSuggestionDraftRetention(): SuggestionDraftRetention {
+  const drafts = new Map<string, RetainedSuggestionDraft>();
+  const dismissed = new Set<string>();
+  const listeners = new Set<() => void>();
+  let revision = 0;
+  return {
+    drafts,
+    dismissed,
+    subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    getSnapshot: () => revision,
+    notify: () => { revision += 1; listeners.forEach((listener) => listener()); },
+  };
 }
 
 interface FeedbackMessage {
@@ -202,7 +240,7 @@ export function JobOutcomePanel({ jobId }: JobOutcomePanelProps) {
           <OfferPanel key={`offer:${jobId}`} jobId={jobId} />
           <ManualOutcomeForm key={`manual-outcome:${jobId}`} jobId={jobId} retention={manualRetention} />
           <OutcomeTimeline outcomes={data.outcomes} />
-          <OutcomeSuggestionsPanel suggestions={pendingSuggestions} />
+          <OutcomeSuggestionsPanel suggestions={pendingSuggestions} jobId={jobId} />
         </>
       ) : null}
     </div>
@@ -643,51 +681,147 @@ export function OutcomeTimeline({ outcomes }: OutcomeTimelineProps) {
 export interface OutcomeSuggestionsPanelProps {
   readonly suggestions: readonly OutcomeSuggestion[];
   readonly interpretationStatus?: {readonly status:"available"|"unavailable"|"not_requested";readonly failureCode:string|null} | undefined;
+  readonly jobId?: JobId;
 }
 
 export function OutcomeSuggestionsPanel({
   suggestions,
   interpretationStatus,
+  jobId,
 }: OutcomeSuggestionsPanelProps) {
-  if (interpretationStatus?.status === "unavailable") return <div className="banner inline" role="status">Email outcome interpretation unavailable: {interpretationStatus.failureCode}. Retry feedback sync after resolving the model or budget failure.</div>;
-  if (!suggestions.length) {
-    return <Empty title="No pending outcome suggestions." />;
+  const tenantId = useTenantId();
+  const shared = useContext(OutcomeDraftRetentionContext);
+  const [localRetention] = useState(createSuggestionDraftRetention);
+  const retention = shared?.suggestions ?? localRetention;
+  useSyncExternalStore(retention.subscribe, retention.getSnapshot, retention.getSnapshot);
+  const currentSuggestions = interpretationStatus?.status === "unavailable" ? [] : suggestions;
+  const visible = new Map<string, OutcomeSuggestion>();
+  for (const suggestion of currentSuggestions) {
+    if (jobId && suggestion.jobKey !== jobId) continue;
+    const key = JSON.stringify([tenantId, suggestion.jobKey, suggestion.suggestionId]);
+    if (!retention.dismissed.has(key)) visible.set(key, suggestion);
   }
+  for (const [key, draft] of retention.drafts) {
+    if (draft.tenantId === tenantId && (!jobId || draft.suggestion.jobKey === jobId) && !retention.dismissed.has(key) && !visible.has(key)) {
+      visible.set(key, draft.suggestion);
+    }
+  }
+  if (interpretationStatus?.status === "unavailable" && !visible.size) return <div className="banner inline" role="status">Email outcome interpretation unavailable: {interpretationStatus.failureCode}. Retry feedback sync after resolving the model or budget failure.</div>;
+  if (!visible.size) return <Empty title="No pending outcome suggestions." />;
   return (
-    <div
-      className="outcome-suggestions"
-      aria-label="Pending outcome suggestions"
-    >
-      {suggestions.map((suggestion) => (
+    <div className="outcome-suggestions" aria-label="Pending outcome suggestions">
+      {interpretationStatus?.status === "unavailable" ? <div className="banner inline" role="status">Email outcome interpretation unavailable: {interpretationStatus.failureCode}. Retry feedback sync after resolving the model or budget failure.</div> : null}
+      {[...visible].map(([key, suggestion]) => (
         <OutcomeSuggestionCard
-          key={suggestion.suggestionId}
+          key={key}
           suggestion={suggestion}
+          tenantId={tenantId}
+          ownerKey={key}
+          retention={retention}
+          retained={retention.drafts.get(key)}
         />
       ))}
     </div>
   );
 }
 
+function decisionConflict(error: unknown, suggestion: OutcomeSuggestion): OutcomeSuggestionDecisionConflict | null {
+  if (!(error instanceof JobCtrlApiError) || error.status !== 409 || !error.responseBody || typeof error.responseBody !== "object") return null;
+  const body = error.responseBody as Partial<OutcomeSuggestionDecisionConflict>;
+  if (body.ok !== false || (body.error !== "outcome_suggestion_conflict" && body.error !== "outcome_suggestion_replay_unverifiable") ||
+      !body.suggestion || body.suggestion.suggestionId !== suggestion.suggestionId || body.suggestion.jobKey !== suggestion.jobKey ||
+      !["accepted", "corrected", "ignored"].includes(body.suggestion.status) ||
+      (body.suggestion.decisionReason !== null && typeof body.suggestion.decisionReason !== "string") ||
+      (body.outcome !== null && (!body.outcome || body.outcome.jobKey !== suggestion.jobKey ||
+        body.outcome.suggestionId !== suggestion.suggestionId || body.outcome.outcomeId !== body.suggestion.decidedOutcomeId ||
+        typeof body.outcome.occurredAt !== "string" || (body.outcome.note !== null && typeof body.outcome.note !== "string") ||
+        !APPLICATION_OUTCOME_KINDS.includes(body.outcome.kind)))) return null;
+  return body as OutcomeSuggestionDecisionConflict;
+}
+
 function OutcomeSuggestionCard({
   suggestion,
+  tenantId,
+  ownerKey,
+  retention,
+  retained,
 }: {
   readonly suggestion: OutcomeSuggestion;
+  readonly tenantId: string;
+  readonly ownerKey: string;
+  readonly retention: SuggestionDraftRetention;
+  readonly retained: RetainedSuggestionDraft | undefined;
 }) {
   const decideSuggestion = useOutcomeSuggestionDecisionMutation();
   const [statusMessage, setStatusMessage] = useState<FeedbackMessage | null>(
     null,
   );
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const defaults = useRef<SuggestionCorrectionFormValues>(retained?.values ?? {
+    outcomeKind: suggestion.suggestedKind, occurredAt: "", note: "", reason: "",
+  });
+  const conflict = retained?.conflict ?? null;
+  const completion = retained?.completion ?? null;
+  const requestedDecision = retained?.requestedDecision ?? null;
+  const busy = decideSuggestion.isPending || retained?.pending != null;
   const suggestionTitleId = `outcome-suggestion-${suggestion.suggestionId}-title`;
   const suggestionContext = `suggestion ${suggestion.suggestionId} (${outcomeLabel(
     suggestion.suggestedKind,
   )}) for ${suggestion.jobKey}`;
+
+  const retainValues = (values: SuggestionCorrectionFormValues) => {
+    const previous = retention.drafts.get(ownerKey);
+    if (previous?.pending) return;
+    retention.drafts.set(ownerKey, {
+      tenantId, suggestion, values: { ...values }, pending: null,
+      requestedDecision: previous?.requestedDecision ?? null,
+      conflict: previous?.conflict ?? null, completion: previous?.completion ?? null, failed: false,
+    });
+    retention.notify();
+  };
+
+  const decide = async (body: OutcomeSuggestionDecisionRequest, values: SuggestionCorrectionFormValues) => {
+    const previous = retention.drafts.get(ownerKey);
+    if (previous?.pending || previous?.conflict || previous?.completion) return;
+    const attempt = Symbol("outcome-decision");
+    setStatusMessage(null);
+    retention.drafts.set(ownerKey, {
+      tenantId, suggestion, values: { ...values }, pending: attempt,
+      requestedDecision: body.decision, conflict: null, completion: null, failed: false,
+    });
+    retention.notify();
+    try {
+      const saved = await decideSuggestion.mutateAsync({ suggestionId: suggestion.suggestionId, jobId: suggestion.jobKey, body });
+      const current = retention.drafts.get(ownerKey);
+      if (current?.pending !== attempt) return;
+      if (mounted.current) retention.drafts.delete(ownerKey);
+      else retention.drafts.set(ownerKey, { ...current, pending: null, completion: saved });
+      retention.notify();
+      if (mounted.current) setStatusMessage({
+        message: saved.disposition === "replayed" ? "Suggestion decision already recorded"
+          : body.decision === "ignore" ? "Suggestion ignored"
+          : body.decision === "accept" ? "Suggestion accepted" : "Suggestion corrected",
+        role: "status",
+      });
+    } catch (error) {
+      const current = retention.drafts.get(ownerKey);
+      if (current?.pending !== attempt) return;
+      const savedConflict = decisionConflict(error, suggestion);
+      retention.drafts.set(ownerKey, { ...current, pending: null, conflict: savedConflict, failed: !savedConflict });
+      retention.notify();
+    }
+  };
+
+  const dismiss = () => {
+    retention.drafts.delete(ownerKey);
+    retention.dismissed.add(ownerKey);
+    retention.notify();
+  };
+
   const form = useForm({
-    defaultValues: {
-      outcomeKind: suggestion.suggestedKind,
-      occurredAt: "",
-      note: "",
-      reason: "",
-    },
+    defaultValues: defaults.current,
+    listeners: { onChange: ({ formApi }) => retainValues({ ...formApi.state.values }) },
     validators: {
       onSubmit: ({ value }) => {
         const result = OutcomeSuggestionDecisionRequestSchema.safeParse(
@@ -710,40 +844,9 @@ function OutcomeSuggestionCard({
         });
         return;
       }
-      try {
-        await decideSuggestion.mutateAsync({
-          suggestionId: suggestion.suggestionId,
-          jobId: suggestion.jobKey,
-          body: result.data,
-        });
-      } catch {
-        return;
-      }
-      setStatusMessage({ message: "Suggestion corrected", role: "status" });
+      await decide(result.data, value);
     },
   });
-
-  const decide = (body: OutcomeSuggestionDecisionRequest) => {
-    setStatusMessage(null);
-    decideSuggestion.mutate(
-      {
-        suggestionId: suggestion.suggestionId,
-        jobId: suggestion.jobKey,
-        body,
-      },
-      {
-        onSuccess: () => {
-          setStatusMessage({
-            message:
-              body.decision === "ignore"
-                ? "Suggestion ignored"
-                : "Suggestion accepted",
-            role: "status",
-          });
-        },
-      },
-    );
-  };
 
   return (
     <article
@@ -761,21 +864,43 @@ function OutcomeSuggestionCard({
           </span>
           <span className="meta">{suggestion.jobKey}</span>
         </span>
-        <StatusBadge tone="info">Pending</StatusBadge>
+        <StatusBadge tone="info">{conflict || completion ? "Already decided" : "Pending"}</StatusBadge>
       </header>
       <p>{suggestion.rationale}</p>
       {suggestion.citations.map((citation, index) => <blockquote key={`${citation.source_id}:${index}`}>{citation.quote}</blockquote>)}
       <p className="meta">{suggestion.determination
         ? `Model: ${suggestion.determination.provider}/${suggestion.determination.model} · Prompt: ${suggestion.determination.prompt_version} · Source: ${suggestion.determination.input_fingerprint}`
         : "No recorded determination"}</p>
+      {conflict ? (
+        <div role="alert" className="banner inline">
+          <p>{conflict.error === "outcome_suggestion_conflict"
+            ? "Your requested decision was not applied."
+            : "The stored decision or earlier request could not be verified."}</p>
+          <p>Requested decision: {requestedDecision}.</p>
+          <p>{conflict.error === "outcome_suggestion_conflict" ? "Saved decision" : "Currently stored decision"}: {conflict.suggestion.status}{conflict.outcome ? ` · ${outcomeLabel(conflict.outcome.kind)} · ${formatDateTime(conflict.outcome.occurredAt)}` : ""}.</p>
+          {conflict.suggestion.decisionReason ? <p>Saved reason: {conflict.suggestion.decisionReason}</p> : null}
+          {conflict.outcome?.note ? <p>Saved note: {conflict.outcome.note}</p> : null}
+          <p>Your correction fields remain below for review or copying.</p>
+          <Button type="button" size="sm" variant="outline" onClick={dismiss}>Dismiss</Button>
+        </div>
+      ) : null}
+      {completion ? (
+        <div role="status" className="banner inline">
+          <p>Your {requestedDecision} decision was recorded while you were away.</p>
+          <p>Saved decision: {completion.suggestion.status}{completion.outcome ? ` · ${outcomeLabel(completion.outcome.kind)} · ${formatDateTime(completion.outcome.occurredAt)}` : ""}.</p>
+          <p>Your correction fields remain below for review or copying.</p>
+          <Button type="button" size="sm" variant="outline" onClick={dismiss}>Dismiss</Button>
+        </div>
+      ) : null}
+      {busy ? <p role="status">Decision in progress.</p> : null}
       <div className="row-actions">
         <Button
           type="button"
           size="sm"
-          disabled={decideSuggestion.isPending}
+          disabled={busy || conflict !== null || completion !== null}
           aria-label={`Accept ${suggestionContext}`}
           onClick={() =>
-            decide({ decision: "accept", reason: "Accepted from review UI." })
+            void decide({ decision: "accept", reason: "Accepted from review UI." }, form.state.values)
           }
         >
           Accept
@@ -784,10 +909,10 @@ function OutcomeSuggestionCard({
           type="button"
           size="sm"
           variant="outline"
-          disabled={decideSuggestion.isPending}
+          disabled={busy || conflict !== null || completion !== null}
           aria-label={`Ignore ${suggestionContext}`}
           onClick={() =>
-            decide({ decision: "ignore", reason: "Ignored from review UI." })
+            void decide({ decision: "ignore", reason: "Ignored from review UI." }, form.state.values)
           }
         >
           Ignore
@@ -801,7 +926,7 @@ function OutcomeSuggestionCard({
           void form.handleSubmit();
         }}
       >
-        <fieldset className="outcome-correction-fieldset">
+        <fieldset className="outcome-correction-fieldset" disabled={busy}>
           <legend>Correct {suggestionContext}</legend>
           <form.Field name="outcomeKind">
             {(field) => (
@@ -818,8 +943,9 @@ function OutcomeSuggestionCard({
                   }))}
                   value={field.state.value}
                   onValueChange={(value) => {
-                    if (value !== null)
+                    if (value !== null) {
                       field.handleChange(value as ApplicationOutcomeKind);
+                    }
                   }}
                 >
                   <SelectTrigger
@@ -895,7 +1021,7 @@ function OutcomeSuggestionCard({
               </Field>
             )}
           </form.Field>
-          {decideSuggestion.isError ? (
+          {(retained?.failed || decideSuggestion.isError) && !conflict ? (
             <div aria-live="assertive" className="danger" role="alert">
               Suggestion decision failed
             </div>
@@ -924,11 +1050,11 @@ function OutcomeSuggestionCard({
                 size="sm"
                 variant="secondary"
                 disabled={
-                  !canSubmit || isSubmitting || decideSuggestion.isPending
+                  !canSubmit || isSubmitting || busy || conflict !== null || completion !== null
                 }
                 aria-label={`Correct ${suggestionContext}`}
               >
-                {isSubmitting || decideSuggestion.isPending
+                {isSubmitting || busy
                   ? "Saving"
                   : "Correct"}
               </Button>

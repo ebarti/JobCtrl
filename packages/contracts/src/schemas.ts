@@ -1489,6 +1489,13 @@ export const OutcomeSuggestionDecisionRequestSchema = z
   .refine((value) => value.decision !== "correct" || value.outcomeKind !== undefined, {
     message: "outcomeKind is required when correcting a suggestion.",
     path: ["outcomeKind"],
+  })
+  .refine((value) => value.decision === "correct" || value.outcomeKind === undefined, {
+    message: "outcomeKind is only used when correcting a suggestion.",
+    path: ["outcomeKind"],
+  })
+  .refine((value) => value.decision !== "ignore" || (value.occurredAt === undefined && value.note === undefined), {
+    message: "An ignored suggestion cannot carry an outcome time or note.",
   });
 export type OutcomeSuggestionDecisionRequest = z.infer<
   typeof OutcomeSuggestionDecisionRequestSchema
@@ -1496,8 +1503,55 @@ export type OutcomeSuggestionDecisionRequest = z.infer<
 
 export interface OutcomeSuggestionDecisionResponse {
   ok: true;
+  disposition: "applied" | "replayed";
   suggestion: OutcomeSuggestion;
   outcome: ApplicationOutcome | null;
+}
+
+export interface OutcomeSuggestionDecisionConflict {
+  ok: false;
+  error: "outcome_suggestion_conflict" | "outcome_suggestion_replay_unverifiable";
+  suggestion: OutcomeSuggestion;
+  outcome: ApplicationOutcome | null;
+}
+
+export type OutcomeDecisionTimeProof = boolean | "invalid";
+
+/** Compare the fields that actually affected the recorded terminal decision. */
+export function compareOutcomeSuggestionDecision(
+  request: OutcomeSuggestionDecisionRequest,
+  suggestion: OutcomeSuggestion,
+  outcome: ApplicationOutcome | null,
+  occurredAtProvided: OutcomeDecisionTimeProof,
+): "replayed" | "conflict" | "unverifiable" {
+  const savedStatus = suggestion.status;
+  if (!suggestion.decidedAt || !["accepted", "corrected", "ignored"].includes(savedStatus)) return "unverifiable";
+  if (savedStatus === "ignored") {
+    if (suggestion.decidedOutcomeId !== null || outcome !== null || occurredAtProvided === true) return "unverifiable";
+  } else {
+    if (!outcome || outcome.outcomeId !== suggestion.decidedOutcomeId ||
+        outcome.suggestionId !== suggestion.suggestionId || outcome.jobKey !== suggestion.jobKey ||
+        outcome.evidenceId !== suggestion.evidenceId || outcome.source !== "email_suggestion" ||
+        (savedStatus === "accepted" && outcome.kind !== suggestion.suggestedKind) ||
+        (occurredAtProvided === false && outcome.occurredAt !== suggestion.decidedAt)) return "unverifiable";
+  }
+  const requestedStatus = request.decision === "accept" ? "accepted"
+    : request.decision === "correct" ? "corrected" : "ignored";
+  if (savedStatus !== requestedStatus || (request.reason ?? null) !== suggestion.decisionReason) {
+    return "conflict";
+  }
+  if (request.decision === "ignore") {
+    return occurredAtProvided === false ? "replayed" : "unverifiable";
+  }
+  if (!outcome) return "unverifiable";
+  const requestedKind = request.decision === "correct" ? request.outcomeKind : suggestion.suggestedKind;
+  if (outcome.kind !== requestedKind || outcome.note !== (request.note ?? null)) return "conflict";
+  const suppliedTime = request.occurredAt !== undefined;
+  if ((suppliedTime && request.occurredAt !== outcome.occurredAt) ||
+      (!suppliedTime && outcome.occurredAt !== suggestion.decidedAt)) return "conflict";
+  const recordedTimeProvided = typeof occurredAtProvided === "boolean" ? occurredAtProvided : null;
+  if (recordedTimeProvided === null) return "unverifiable";
+  return suppliedTime === recordedTimeProvided ? "replayed" : "conflict";
 }
 
 export interface ApplicationOutcomeListResponse {

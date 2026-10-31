@@ -2311,6 +2311,22 @@ describe("application feedback API", () => {
     await app.close();
   });
 
+  it("rejects fields that the selected decision cannot record", async () => {
+    seedOutcomeSuggestion(options.dbPath);
+    const app = buildApp(options);
+    for (const payload of [
+      { decision: "ignore", note: "would be discarded" },
+      { decision: "ignore", occurredAt: "2026-06-01T09:00:00.000Z" },
+      { decision: "accept", outcomeKind: "offer" },
+    ]) {
+      const response = await app.inject({ method: "POST", url: "/v1/outcome-suggestions/suggestion-1/decision", payload });
+      expect(response.statusCode, response.body).toBe(400);
+    }
+    const response = await app.inject({ method: "GET", url: `/v1/jobs/${READY_JOB_ID}/outcomes` });
+    expect(response.json().suggestions[0].status).toBe("pending");
+    await app.close();
+  });
+
   it("returns not found for outcome reads on missing jobs", async () => {
     const app = buildApp(options);
 
@@ -2327,7 +2343,7 @@ describe("application feedback API", () => {
 
   it("accepts outcome suggestions without copying raw note or email body text into events", async () => {
     seedOutcomeSuggestion(options.dbPath);
-    const app = buildApp(options);
+    let app = buildApp(options);
     const privateNote = "private accepted suggestion note";
     const rawBody = "raw confidential email body";
 
@@ -2358,6 +2374,17 @@ describe("application feedback API", () => {
       },
     });
 
+    // Simulate a lost acknowledgement followed by a fresh API process.
+    await app.close();
+    app = buildApp(options);
+    const replay = await app.inject({
+      method: "POST",
+      url: "/v1/outcome-suggestions/suggestion-1/decision",
+      payload: { decision: "accept", note: privateNote, reason: "Confirmation looks linked." },
+    });
+    expect(replay.statusCode, replay.body).toBe(200);
+    expect(replay.json()).toMatchObject({ ok: true, disposition: "replayed", outcome: { outcomeId: acceptedOutcomeId } });
+
     const repeated = await app.inject({
       method: "POST",
       url: "/v1/outcome-suggestions/suggestion-1/decision",
@@ -2367,9 +2394,10 @@ describe("application feedback API", () => {
       },
     });
 
-    expect(repeated.statusCode, repeated.body).toBe(200);
+    expect(repeated.statusCode, repeated.body).toBe(409);
     expect(repeated.json()).toMatchObject({
-      ok: true,
+      ok: false,
+      error: "outcome_suggestion_conflict",
       suggestion: {
         suggestionId: "suggestion-1",
         status: "accepted",
@@ -2395,6 +2423,51 @@ describe("application feedback API", () => {
 
     await app.close();
   });
+
+  it("keeps the private suggestion receipt binding out of persisted and streamed events", async () => {
+    seedOutcomeSuggestion(options.dbPath);
+    const app = buildApp(options);
+    const note = "synthetic private decision note";
+    const reason = "synthetic private decision reason";
+    const response = await app.inject({ method: "POST", url: "/v1/outcome-suggestions/suggestion-1/decision",
+      payload: { decision: "correct", outcomeKind: "interview", note, reason } });
+    expect(response.statusCode, response.body).toBe(200);
+    const db = new Database(options.dbPath);
+    const row = db.prepare("SELECT event_id,payload_json,idempotency_key FROM job_events WHERE event_type='OutcomeSuggestionDecided'").get() as
+      { event_id: number; payload_json: string; idempotency_key: string };
+    db.close();
+    const privateBinding = row.idempotency_key.split(":").at(-1)!;
+    const guess = crypto.createHash("sha256").update(JSON.stringify({ decision: "correct", note, reason })).digest("hex");
+    expect(privateBinding).toMatch(/^[0-9a-f]{64}$/);
+    for (const value of [note, reason, guess, privateBinding, row.idempotency_key]) expect(row.payload_json).not.toContain(value);
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    const address = app.server.address();
+    if (!address || typeof address === "string") throw new Error("Expected owned API address");
+    const abort = new AbortController();
+    try {
+      const stream = await fetch(`http://127.0.0.1:${address.port}/v1/events/stream?tenantId=local&since=0`, { signal: abort.signal });
+      const reader = stream.body?.getReader();
+      if (!reader) throw new Error("Expected owned event stream");
+      let replay = "";
+      const deadline = setTimeout(() => abort.abort(), 5_000);
+      try {
+        while (!replay.includes(`id: ${row.event_id}\n`)) {
+          const next = await reader.read();
+          if (next.done) break;
+          replay += new TextDecoder().decode(next.value, { stream: true });
+        }
+        expect(replay).toContain(`id: ${row.event_id}\n`);
+        expect(replay).toContain("event: OutcomeSuggestionDecided");
+        for (const value of [note, reason, guess, privateBinding, row.idempotency_key]) expect(replay).not.toContain(value);
+      } finally {
+        clearTimeout(deadline);
+        await reader.cancel();
+      }
+    } finally {
+      abort.abort();
+      await app.close();
+    }
+  }, 15_000);
 
   it("blocks direct live dispatch until the current prior-application evidence is explicitly confirmed", async () => {
     const seed = new Database(options.dbPath);
