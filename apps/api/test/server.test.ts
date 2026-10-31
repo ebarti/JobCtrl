@@ -7,6 +7,7 @@ import { seedApplicationUrl } from "./seed-enrichment.js";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { createRetryFixturePythonRuntime } from "./retry-rpc-runtime.js";
 import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
@@ -159,14 +160,14 @@ beforeEach(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-"));
   enrichmentRetryRpc = new SubprocessJsonRpcAdapter({
     appDir: tempDir,
-    pythonRuntime: createSourcePythonRuntime({ environment: { ...process.env, LANGFUSE_DISABLE: "1" } }),
+    pythonRuntime: createRetryFixturePythonRuntime(),
   });
   options = {
     dbPath: path.join(tempDir, "jobctrl.db"),
     configPath: path.join(tempDir, "config.json"),
     providerDispatcher: {
       call: vi.fn(async (method, params) => {
-        if (method === RpcMethods.ResetEnrichment) return enrichmentRetryRpc.call(method, params);
+        if (method === RpcMethods.ResetEnrichment || method === RpcMethods.ResetStages) return enrichmentRetryRpc.call(method, params);
         if (method !== "browser_capabilities_list") throw new Error(`Unexpected provider RPC in API fixture: ${method}`);
         return { jsonrpc: "2.0" as const, id: 1, result: { capabilities: [], detectedBrowsers: [] } };
       }),
@@ -8288,7 +8289,7 @@ describe("local TypeScript API", () => {
     expect(response.json()).toMatchObject({
       ok: true,
       count: 1,
-      jobKeys: ["https://example.com/jobs/failed-score"],
+      jobKeys: [jobIdFor("https://example.com/jobs/failed-score")],
     });
 
     const db = new Database(options.dbPath);
@@ -8353,7 +8354,7 @@ describe("local TypeScript API", () => {
     expect(response.json()).toMatchObject({
       ok: true,
       count: 2,
-      jobKeys: ["https://example.com/jobs/failed-score", secondFailedUrl],
+      jobKeys: [jobIdFor("https://example.com/jobs/failed-score"), jobIdFor(secondFailedUrl)],
       stageCounts: { score: 2 },
       runAfter: true,
       status: "queued",
@@ -8757,7 +8758,7 @@ describe("local TypeScript API", () => {
     expect(response.json()).toMatchObject({
       ok: true,
       count: 1,
-      jobKeys: [jobUrl],
+      jobKeys: [jobIdFor(jobUrl)],
     });
 
     const db = new Database(options.dbPath);

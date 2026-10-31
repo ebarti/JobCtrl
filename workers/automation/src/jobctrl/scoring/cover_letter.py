@@ -304,12 +304,14 @@ def cover_letter_by_id(
             workflow_id=workflow_id,
             temporal_attempt=temporal_attempt,
         )
-        return _skipped_result(
+        result = _skipped_result(
             stable_job_id,
             reason="approved_cover_already_committed",
             url=str(job.get("url") or ""),
             status="already_done",
         )
+        result["message"] = "Approved cover retained. Use explicit re-tailor to create a replacement."
+        return result
     if materials is None or not materials.is_resume_approved:
         return _skipped_result(stable_job_id, reason="missing_approved_resume", url=str(job.get("url") or ""))
     if materials.resume_pdf is None or materials.resume_pdf.status is not ArtifactStatus.APPROVED:
@@ -650,7 +652,7 @@ def _reconcile_existing_approved_cover(
             "cover",
             "StageCompleted",
             tenant_id=tenant_id,
-            message="Cover generation recovered from the committed approved artifact.",
+            message="Cover generation recovered from the committed approved artifact. Use explicit re-tailor to create a replacement.",
             payload={"recoveredAfterActivityReplay": True},
         )
 

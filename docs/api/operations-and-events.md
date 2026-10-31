@@ -26,12 +26,16 @@ The stale-score reset response and its `ScoreRescoreRequested` event provide
 eligible scoring queue; the reset itself does not dispatch scoring.
 
 `POST /v1/jobs/:jobKey/actions/retry-stage` has two distinct commands. A plain
-reset (`runAfter: false`) is local and synchronous. Enrichment resets cross the
+reset (`runAfter: false`) is local and synchronous. Stage resets cross the
 local Python RPC boundary and acknowledge the committed application-service
 transaction with the same `200` reset response; Temporal and a healthy activity
-worker are not required for reset-only. A mixed bulk retry containing Enrich
-uses that same transaction for the complete cohort. See
-[ownership and preservation](../architecture/contracts-types-and-api-boundaries.md#enrichment-retry-ownership).
+worker are not required for reset-only. All bulk retry cohorts use that same
+transaction. If approved materials make a replacement require an explicit
+re-tailor, the reset response explains that and does not dispatch that job;
+bulk responses include its canonical job ID in `retailorRequiredJobKeys`. A stale
+single or bulk selection returns `409 retry_selection_changed` without resetting
+or dispatching that request; refresh the jobs list and review the selection before retrying. See
+[ownership and preservation](../architecture/contracts-types-and-api-boundaries.md#stage-retry-ownership).
 A reset-and-run
 (`runAfter: true`) checks worker readiness before the reset; on
 `503 worker_runtime_unavailable`, the failed/blocked stage and its event history

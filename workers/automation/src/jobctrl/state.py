@@ -1410,14 +1410,17 @@ def _resettable_material_generation(
             FROM job_materials m
             WHERE m.tenant_id = ?
               AND m.job_id = ?
+              AND m.generation = (
+                SELECT MAX(latest.generation) FROM job_materials latest
+                WHERE latest.tenant_id = m.tenant_id AND latest.job_id = m.job_id
+              )
               AND NOT EXISTS (
                 SELECT 1
                 FROM job_materials_artifacts a
                 WHERE a.tenant_id = m.tenant_id
                   AND a.job_id = m.job_id
                   AND a.generation = m.generation
-                  AND a.artifact_type = 'tailored_resume'
-                  AND a.status = 'approved'
+                  AND a.status NOT IN ('candidate', 'rejected')
               )
             ORDER BY m.generation DESC
             LIMIT 1
@@ -1431,6 +1434,11 @@ def _resettable_material_generation(
             FROM job_materials m
             WHERE m.tenant_id = ?
               AND m.job_id = ?
+              AND m.generation = (
+                SELECT MAX(a.generation) FROM job_materials_artifacts a
+                WHERE a.tenant_id = m.tenant_id AND a.job_id = m.job_id
+                  AND a.artifact_type = 'tailored_resume' AND a.status = 'approved'
+              )
               AND EXISTS (
                 SELECT 1
                 FROM job_materials_artifacts a
@@ -1446,8 +1454,8 @@ def _resettable_material_generation(
                 WHERE a.tenant_id = m.tenant_id
                   AND a.job_id = m.job_id
                   AND a.generation = m.generation
-                  AND a.artifact_type = 'cover_letter'
-                  AND a.status = 'approved'
+                  AND a.artifact_type IN ('cover_letter', 'cover_letter_pdf')
+                  AND a.status NOT IN ('candidate', 'rejected')
               )
             ORDER BY m.generation DESC
             LIMIT 1
@@ -1472,10 +1480,10 @@ def _reset_materials_artifacts(
 
     Round-2 review B3. Maps stage → artifact_type subset:
 
-      * ``tailor`` resets only the newest generation that does not already
-        have an approved tailored resume.
+      * ``tailor`` resets only the newest generation containing no approved,
+        suppressed, superseded, or otherwise protected artifact.
       * ``cover`` resets only a generation with an approved resume but no
-        approved cover letter.
+        protected cover letter or cover PDF.
 
     Approved materials remain reviewable until an approved replacement exists.
 
@@ -1504,7 +1512,7 @@ def _reset_materials_artifacts(
     conn.execute(
         f"DELETE FROM job_materials_artifacts "
         f"WHERE tenant_id = ? AND job_id = ? AND generation = ? "
-        f"AND artifact_type IN ({placeholders})",
+        f"AND artifact_type IN ({placeholders}) AND status IN ('candidate', 'rejected')",
         (str(tenant_id), str(job_id), generation, *targets),
     )
     if new_status is not None:
@@ -1518,6 +1526,17 @@ def _reset_materials_artifacts(
         )
 
 
+class StageResetUrl(str):
+    """A backwards-compatible URL carrying the retry's material outcome."""
+
+    retailor_required: bool
+
+    def __new__(cls, url: str, *, retailor_required: bool = False):
+        result = super().__new__(cls, url)
+        result.retailor_required = retailor_required
+        return result
+
+
 def reset_job_stage(
     conn,
     job_url_or_application_url: str,
@@ -1525,7 +1544,7 @@ def reset_job_stage(
     *,
     tenant_id: TenantId = LOCAL_TENANT,
     reset_attempts: bool = False,
-) -> str:
+) -> StageResetUrl:
     """Resolve a locator once, then reset one tenant-scoped job stage.
 
     Args:
@@ -1536,7 +1555,8 @@ def reset_job_stage(
         reset_attempts: Whether to reset that stage's attempt counter.
 
     Returns:
-        The canonical job URL.
+        The canonical job URL, with ``retailor_required`` when replacement
+        needs a deliberate re-tailor rather than a plain retry.
 
     Raises:
         ValueError: If the stage is unknown or the job cannot be found.
@@ -1544,50 +1564,10 @@ def reset_job_stage(
     if stage not in (*STAGE_ORDER, "apply"):
         raise ValueError(f"unknown stage: {stage}")
 
-    if stage in {"enrich", "apply"}:
-        from jobctrl.pipeline.retry import reset_retry_stages
+    from jobctrl.pipeline.retry import reset_retry_stages
 
-        return reset_retry_stages(
-            conn, [(job_url_or_application_url, stage)],
-            tenant_id=tenant_id, reset_attempts=reset_attempts,
-            _allow_apply_only=stage == "apply",
-        )[0]["jobUrl"]
-
-    from jobctrl.infrastructure.job_locators import resolve_job_locator
-
-    identity = resolve_job_locator(conn, str(tenant_id), job_url_or_application_url)
-    if identity is None:
-        raise ValueError(f"no unique matching job found: {job_url_or_application_url}")
-    stable_job_id = canonical_job_id(identity[0])
-    job_url = identity[1]
-    # Reset only the canonical stage-owned aggregate. The retired projection
-    # columns on ``jobs`` are historical migration facts, not write targets.
-    if stage in ("tailor", "cover"):
-        _reset_materials_artifacts(
-            conn,
-            tenant_id=tenant_id,
-            job_id=stable_job_id,
-            stage=stage,
-        )
-    set_stage_state(
-        conn,
-        stable_job_id,
-        stage,
-        "pending",
-        tenant_id=tenant_id,
-        attempt_count=0 if reset_attempts else None,
-        validate_transition=False,  # admin override — reset bypasses normal machine
-    )
-    record_job_event(
-        conn,
-        stable_job_id,
-        stage,
-        # H1 (round-1 review): align with the domain catalog
-        # (`domain/events/orchestration.py::create_stage_reset`).
-        "StageReset",
-        tenant_id=tenant_id,
-        message=f"Retry reset requested for {stage}",
-        payload={"reset_attempts": reset_attempts},
-    )
-    conn.commit()
-    return job_url
+    result = reset_retry_stages(
+        conn, [(job_url_or_application_url, stage)],
+        tenant_id=tenant_id, reset_attempts=reset_attempts,
+    )[0]
+    return StageResetUrl(str(result["jobUrl"]), retailor_required=result.get("retailorRequired") is True)

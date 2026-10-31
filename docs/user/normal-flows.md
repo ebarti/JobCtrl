@@ -202,6 +202,8 @@ outcomes** expands the exact succeeded, skipped, blocked, failed, canceled,
 needs-verification, stale, and unknown counts. An attempt budget that has run
 out is a failed outcome with **attempt budget exhausted** as its reason, not a
 separate lifecycle state. Retrying that failure resets its attempt budget.
+If a bulk retry reports that a selected job or stage changed, refresh the Jobs
+list and review the selection before retrying.
 During an active source crawl, planned source families that have not entered
 their bounded execution batch appear as **waiting**, not unknown. Unknown is
 reserved for a planned family whose lifecycle is still missing after the
@@ -871,7 +873,7 @@ Cross-protocol rollback is refused. See
 | `discover` / `enrich` / `score` / `tailor` / `cover` | Start one stage; `score --rescore` includes eligible jobs that already have a score, across the scoring queue. |
 | `job <url>` | Tailor and/or apply one job (`--tailor`, `--apply`, `--dry-run`). |
 | `apply` | Start apply automation (`--dry-run`, `--url`, `--limit` for a maximum number of claimed jobs, `--continuous` to keep polling for new jobs). Utility modes: `--mark-applied`, `--mark-failed`, `--reset-failed`, and `--gen` (inspection-only dry-run prompt). |
-| `retry <stage> <url>` | Reset one failed stage for one job (`--reset-attempts`, `--run`). Enrich retains accepted content and automatically renews an exhausted stage budget; see [Enrichment](enrichment-and-extraction.md). |
+| `retry <stage> <url>` | Reset one stage for one job (`--reset-attempts`, `--run`). An exhausted budget renews automatically; other counts are retained unless reset explicitly. Accepted materials remain available, and the command reports when a replacement requires explicit re-tailoring. |
 | `action <stage>` | Low-level single-action dispatch with JSON output, for scripts. |
 | `compensation-refresh` | Re-parse posted salaries and refresh market estimates for all jobs or one (`--job-id`, `--observations-json`, `--no-eurotoptech`). |
 | `pipeline-status` / `runs` | Show pipeline stats, or recent apply runs and one run's event timeline (`runs --failed-only`, `--run-id`). |

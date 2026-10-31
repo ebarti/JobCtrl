@@ -2772,7 +2772,7 @@ def reset_failed() -> int:
         try:
             reset_retry_stages(
                 conn, [(str(job_id), "apply")], tenant_id=tenant_id,
-                reset_attempts=True, only_failed=True, _allow_apply_only=True,
+                reset_attempts=True, only_failed=True,
             )
             count += 1
         except ValueError as exc:

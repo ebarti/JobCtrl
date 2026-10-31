@@ -137,7 +137,7 @@ class JsonRpcServer:
                 span.set_status(Status(StatusCode.ERROR, str(exc)))
                 return JsonRpcResponse.failure(
                     request.id,
-                    JsonRpcError(INVALID_PARAMS, str(exc)),
+                    JsonRpcError(INVALID_PARAMS, str(exc), data=exc.data),
                 )
             except Exception as exc:  # noqa: BLE001 — surface as INTERNAL_ERROR
                 logger.exception("Handler %s raised", request.method)
@@ -182,7 +182,7 @@ class JsonRpcServer:
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             return JsonRpcResponse.failure(
                 request.id,
-                JsonRpcError(INVALID_PARAMS, str(exc)),
+                JsonRpcError(INVALID_PARAMS, str(exc), data=exc.data),
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("Workflow handler %s raised while building spec", request.method)
@@ -350,7 +350,11 @@ class JsonRpcServer:
 class _RpcParamError(ValueError):
     """Raise inside a handler to surface ``INVALID_PARAMS``."""
 
+    def __init__(self, message: str, *, data: Any = None) -> None:
+        super().__init__(message)
+        self.data = data
 
-def invalid_params(message: str) -> _RpcParamError:
+
+def invalid_params(message: str, *, data: Any = None) -> _RpcParamError:
     """Helper for handlers to signal a parameter validation failure."""
-    return _RpcParamError(message)
+    return _RpcParamError(message, data=data)
