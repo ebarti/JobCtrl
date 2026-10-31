@@ -393,7 +393,7 @@ def explicit_semantic_ports(monkeypatch):
 def test_generated_headers_reach_anonymous_browser_context(monkeypatch, surface):
     from jobctrl import config
 
-    monkeypatch.setattr(config, "load_saved_search_settings", lambda: {
+    monkeypatch.setattr(config, "load_discovery_crawler_settings", lambda: {
         "crawl_user_agent": {"use_browser_headers": True},
     })
     _allow_fetcher_url_safety(monkeypatch)

@@ -69,6 +69,10 @@ credentials.
 Existing resume-template updates carry an expected active version and fail
 closed on a stale or missing precondition; see [Jobs & Materials](api/jobs-and-materials.md#artifacts-and-resume-templates).
 
+Discovery settings reads and updates report invalid persisted search settings
+instead of replacing them with defaults; see the
+[Discovery controls contract](api/complete-contract.md#discovery-controls).
+
 Target Search can request role suggestions through
 `POST /v1/profile/target-role-suggestions`. The web sends only the last saved
 `profileVersion`; it never sends the current browser form draft. The TypeScript

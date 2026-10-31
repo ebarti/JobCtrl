@@ -35,6 +35,16 @@ five seconds without an edit. A failed save keeps the draft and error visible,
 without repeatedly submitting the unchanged draft. Choose **Save changes** to
 retry, or edit the draft to schedule another attempt.
 
+When no settings or profile targets have been saved, Discovery uses its normal
+first-use defaults. If saved Discovery settings or target-search inputs cannot
+be read or are invalid, Discovery stops before acquisition instead of using
+those defaults. A settings read or save also reports invalid saved settings
+without replacing them. Check workspace access and retry. If data is damaged,
+preserve the workspace and its database companions, then consult
+[Back Up And Restore](data-and-safety.md#back-up-and-restore) for a verified,
+compatible backup. A backup may predate newer changes; inspect it before any
+restore. The installed launcher does not provide a general pair-restore command.
+
 ## Saved Source Review Views
 
 In **Source controls → Source registry**, use **Save as view** to name the

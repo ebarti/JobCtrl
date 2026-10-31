@@ -46,7 +46,7 @@ def test_generation_failure_is_not_silently_replaced_with_legacy_identity(monkey
 
 def test_gateway_keeps_generated_identity_until_next_session(monkeypatch):
     cfg = {"crawl_user_agent": {"use_browser_headers": True}}
-    monkeypatch.setattr(config, "load_saved_search_settings", lambda: cfg)
+    monkeypatch.setattr(config, "load_discovery_crawler_settings", lambda: cfg)
     gateway = PolitenessGateway(rate_limiter=no_sleep_limiter())
     headers = gateway.request_headers
     assert headers["User-Agent"].startswith("Mozilla/")
@@ -63,7 +63,7 @@ def test_gateway_keeps_generated_identity_until_next_session(monkeypatch):
 @pytest.mark.parametrize("enabled", [False, True])
 def test_real_http_requests_use_selected_headers_and_keep_request_semantics(monkeypatch, enabled):
     cfg = {"crawl_user_agent": {"use_browser_headers": enabled, "product": "SyntheticBot", "contact": ""}}
-    monkeypatch.setattr(config, "load_saved_search_settings", lambda: cfg)
+    monkeypatch.setattr(config, "load_discovery_crawler_settings", lambda: cfg)
     seen: list[dict[str, object]] = []
 
     class Handler(BaseHTTPRequestHandler):

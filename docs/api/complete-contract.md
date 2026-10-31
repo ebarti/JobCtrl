@@ -898,6 +898,11 @@ type and policy metadata are visible as columns instead of compact badges:
   dropping the worker search-contract fields stored in the same row. This is
   the scheduling mutation boundary; `/v1/settings` does not own discovery
   cadence.
+- Both routes return `409` with `error: "invalid_saved_search"` for a malformed
+  or structurally invalid saved Discovery settings row. They do not return
+  first-use defaults or replace that row; the response provides recovery
+  guidance without including saved values. A missing row still uses defaults;
+  supported legacy `sites` values remain selected when settings are updated.
 - `GET /v1/discovery/sources` lists source registry entries merged with
   `source_quality_stats`. Each entry also carries the same additive `politeness`
   object as `sourceHealth[]` (robots-disallowed / rate-limited / budget-exhausted

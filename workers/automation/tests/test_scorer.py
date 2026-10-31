@@ -1594,17 +1594,25 @@ def test_owned_existing_score_finishes_with_eligibility_and_owner_fence(
             return original_load(*args, **kwargs)
 
         monkeypatch.setattr(repository, "load", revoke_before_finish)
-    result = scorer_module.score_job_by_id(
-        job_id,
-        repository=repository,
-        profile_snapshot=profile_snapshot,
-        resume_text="Engineer.",
-        criteria=ScoringCriteria(),
-        workflow_id="owned-run",
-        recovery_workflow_id="prepare-auto-local-score-existing",
-        enforce_workflow_ownership=True,
-    )
-    assert result.ok
+    def run_score():
+        return scorer_module.score_job_by_id(
+            job_id,
+            repository=repository,
+            profile_snapshot=profile_snapshot,
+            resume_text="Engineer.",
+            criteria=ScoringCriteria(),
+            workflow_id="owned-run",
+            recovery_workflow_id="prepare-auto-local-score-existing",
+            enforce_workflow_ownership=True,
+        )
+
+    if cancel_before_finish:
+        from jobctrl.infrastructure.preparation_recovery import PreparationReservationLost
+
+        with pytest.raises(PreparationReservationLost):
+            run_score()
+    else:
+        assert run_score().ok
     row = _stage_row(conn, url, "score")
     assert row["state"] == ("canceled" if cancel_before_finish else "succeeded")
     assert row["attempt_count"] == (2 if cancel_before_finish else 3)
