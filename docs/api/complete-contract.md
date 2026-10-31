@@ -696,7 +696,7 @@ schema:
 | `stages` | Ordered `PipelineOperationalStage[]`; each has `stage`, `label`, `scope`, `currentExecution`, `existingBacklog`, `capacity`, `eta`, and `asOf`. |
 | `activeStageCounts` | `null` without fresh runtime telemetry, otherwise positive exact runtime-activity totals grouped by operational stage. These are shared-pool facts, not selected-execution completion proof. |
 | `activeItems` | Oldest-first `PipelineActiveItem[]`, maximum 20. |
-| `activeItemsTotal` | Exact allowlisted active-detail count, or `null` when inventory cannot make an exact statement. |
+| `activeItemsTotal` | Exact allowlisted active-detail count, or `null` when inventory cannot make an exact statement; zero does not establish idle capacity. |
 | `activeItemsTruncated` | Whether safe detail was omitted, or `null` when inventory is unavailable/stale. |
 | `overallEta` | The ETA discriminated union below. |
 
@@ -806,6 +806,9 @@ workers; incomplete status stays unknown. The call counts are reported running
 or unresolved calls, not proof of stopped threads. Optional
 `controlAcceptingWorkers`, `controlRefusingWorkers`, `controlUnknownWorkers`,
 and `controlUnfinishedCalls` describe the separately bounded short-control lane.
+Slot and admission counts aggregate fresh workers; any stale worker makes global
+occupancy and its admission status unknown, so fresh counts are only reported
+observations, not a complete view of all workers.
 Stale/unavailable capacity carries `asOf`,
 `staleAfterSeconds`, nullable `taskQueue`, a bounded `reason`, and the typed
 task-queue observation; it does not expose misleading slot zeros.
@@ -838,14 +841,17 @@ non-reversible operational identifiers, never filesystem paths or raw job URLs.
 returns low/high seconds, `low`/`medium`/`high` confidence, basis
 (`source_rate`, `stage_throughput`, or `cohort_throughput`), sample size,
 timestamp, and caveat. Non-numeric states are `calibrating` (insufficient
-samples or, for `overallEta`, open membership), `paused`
+samples or open membership for an overall or empty selected scope), `paused`
 (worker/budget/blocking/dispatch reason), `stale`, or `unavailable` (including
 no work, unsupported telemetry, unknown scope, or unbounded contention). Every
 numeric estimate requires at least five recent successful samples for each
-relevant remaining stage and fresh usable capacity. `overallEta` additionally
-requires closed execution membership; per-stage and source-family rows can
-estimate their already-known scoped backlog while membership remains open. The
-estimator uses canonical job-stage and pipeline-step durations, falling back to
+relevant remaining stage and fresh usable capacity. A stale peer on the selected
+task queue makes shared contention unbounded even when another worker is fresh.
+`overallEta` additionally requires closed execution membership; per-stage and
+source-family rows can estimate their already-known scoped backlog while
+membership remains open. A selected scope cannot report `no_work` until
+membership closes; positive demand can still receive an estimate before closure.
+The estimator uses canonical job-stage and pipeline-step durations, falling back to
 operational attempt metrics only when the primary source is empty; it never
 blends the two. A source-family estimate may use recent completed-family
 durations even when provider `totalUnits` is null; it does not synthesize a

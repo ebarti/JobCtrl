@@ -197,7 +197,8 @@ It selects the active or draining Discover execution, falling back to the
 latest terminal execution, and combines immutable execution membership,
 pipeline-step and per-job stage projections, fresh worker capacity, approximate
 Temporal task-queue statistics, bounded active-work detail, and a conservative
-typed ETA. It is a current snapshot, not a historical reconstruction endpoint.
+typed ETA. A stale same-queue worker leaves ETA contention unbounded. It is a
+current snapshot, not a historical reconstruction endpoint.
 See [Operations & Events](api/operations-and-events.md#pipeline-operations-snapshot).
 
 ## Discovery Controls

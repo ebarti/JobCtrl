@@ -135,6 +135,21 @@ describe("pipeline operations read model", () => {
     expect(result.activeItemsTruncated).toBe(false);
   });
 
+  it("keeps unselected scope unconfirmed when a fresh idle worker has a stale peer", () => {
+    const fixture = createFixture();
+    insertHeartbeat(fixture, { workerId: "fresh", activeSlots: 0, counts: {}, details: [] });
+    insertHeartbeat(fixture, { workerId: "stale", activeSlots: 1, counts: {}, details: [] });
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET last_seen_at = ? WHERE worker_id = ?")
+      .run(new Date(NOW.getTime() - 60_000).toISOString(), "stale");
+
+    const result = snapshot(fixture);
+    expect(result.capacity).toMatchObject({ status: "available", activeSlots: 0, staleWorkerCount: 1 });
+    expect(result.activeItemsTotal).toBe(0);
+    expect(result.projectionCoverage).toMatchObject({ status: "recovering" });
+    expect(fixture.db.prepare("SELECT COUNT(*) AS count FROM worker_runtime_heartbeats").get())
+      .toMatchObject({ count: 2 });
+  });
+
   it("reports recovering coverage when no selected execution has unavailable telemetry", () => {
     const fixture = createFixture();
 
@@ -160,6 +175,8 @@ describe("pipeline operations read model", () => {
       persistedStepCount: 0,
     });
     expect(result.activeItems).toEqual([]);
+    expect(result.capacity).toMatchObject({ status: "available", activeSlots: 1 });
+    expect(result.activeStageCounts).toEqual([]);
     expect(result.activeItemsTotal).toBe(0);
     expect(result.activeItemsTruncated).toBe(true);
   });
@@ -521,6 +538,94 @@ describe("pipeline operations read model", () => {
       phase: "completed_with_issues",
       currentExecution: { terminal: 1, remaining: 0 },
     });
+  });
+
+  it("keeps zero selected-stage demand provisional until Discover membership closes", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertHeartbeat(fixture, { activeSlots: 0, counts: {}, details: [] });
+
+    const open = snapshot(fixture);
+    expect(open.execution).toMatchObject({ membershipClosed: false });
+    expect(open.projectionCoverage).toMatchObject({ status: "ready" });
+    expectSelectedEtasNotNoWork(open);
+    for (const scope of ["current_execution", "execution_sweep"] as const) {
+      expect(stage(open, "score", scope).eta).toMatchObject({ status: "calibrating", reason: "membership_open" });
+    }
+    expect(stage(open, "score", "global_outside_execution").eta)
+      .toMatchObject({ status: "unavailable", reason: "no_work" });
+
+    insertExecution(fixture, { status: "succeeded" });
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    const closed = snapshot(fixture);
+    expect(closed.execution).toMatchObject({ membershipClosed: true });
+    for (const scope of ["current_execution", "execution_sweep"] as const) {
+      expect(stage(closed, "score", scope).eta).toMatchObject({ status: "unavailable", reason: "no_work" });
+    }
+  });
+
+  it.each([
+    ["observed_this_run", "current_execution"],
+    ["existing_backlog", "execution_sweep"],
+  ] as const)("keeps positive %s stage estimates available before membership closure", (cohort, scope) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    const member = insertMember(fixture, { key: "open-positive-stage", cohort, requiredSteps: ["score"] });
+    insertStageState(fixture, "open-positive-stage", "enrich", "succeeded");
+    insertStageState(fixture, "open-positive-stage", "score", "pending");
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, "in_progress", PREPARATION_RUN_ID);
+    for (let index = 0; index < 5; index += 1) {
+      insertStageState(fixture, `open-positive-history-${index}`, "score", "succeeded", 60_000,
+        new Date(NOW.getTime() - index * 60_000).toISOString());
+    }
+    insertHeartbeat(fixture, {
+      activeSlots: 1, counts: { score_job: 1 },
+      details: [activityDetail("score_job", "op_000000000000000000000025", member.preparationWorkflowId, PREPARATION_RUN_ID)],
+    });
+
+    const result = snapshot(fixture);
+    expect(result.execution).toMatchObject({ membershipClosed: false });
+    expect(result.overallEta).toMatchObject({ status: "calibrating", reason: "membership_open" });
+    expect(stage(result, "score", scope).eta).toMatchObject({ status: "available", sampleSize: 5 });
+  });
+
+  it("keeps zero source demand provisional while retaining positive source-family estimates", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertStep(fixture, { stepKind: "source_planning", itemKey: "open-plan", state: "succeeded", detailCount: 1 });
+    insertStep(fixture, { stepKind: "source_family", itemKey: "open-source", state: "succeeded" });
+    insertHeartbeat(fixture, { activeSlots: 0, counts: {}, details: [] });
+    const zero = snapshot(fixture);
+    expect(zero.execution).toMatchObject({ membershipClosed: false });
+    expect(zero.sourceFamilies?.eta).toMatchObject({ status: "calibrating", reason: "membership_open" });
+    expect(stage(zero, "source_family", "current_execution").eta).toEqual(zero.sourceFamilies?.eta);
+
+    insertStep(fixture, { stepKind: "source_family", itemKey: "next-open-source", state: "running" });
+    // The completed current family and four historical families supply five samples.
+    for (let index = 0; index < 4; index += 1) {
+      insertHistoricalStep(fixture, { stepKind: "source_family", itemKey: `open-source-history-${index}`,
+        durationMs: 60_000, index });
+    }
+    fixture.db.prepare("DELETE FROM worker_runtime_heartbeats WHERE worker_id = 'worker'").run();
+    insertHeartbeat(fixture, {
+      activeSlots: 1, counts: { discovery_source_family: 1 },
+      details: [activityDetail("discovery_source_family", "op_000000000000000000000026", DISCOVER_WORKFLOW_ID)],
+    });
+    const positive = snapshot(fixture);
+    expect(positive.execution).toMatchObject({ membershipClosed: false });
+    expect(positive.sourceFamilies?.eta).toMatchObject({ status: "available", basis: "source_rate", sampleSize: 5 });
+    expect(stage(positive, "source_family", "current_execution").eta).toEqual(positive.sourceFamilies?.eta);
+
+    fixture.db.prepare(
+      "UPDATE pipeline_step_projections SET state='succeeded', finished_at=?, duration_ms=60000 "
+      + "WHERE tenant_id='local' AND discover_workflow_id=? AND discover_run_id=? "
+      + "AND step_kind='source_family' AND item_key='next-open-source'",
+    ).run(NOW.toISOString(), DISCOVER_WORKFLOW_ID, DISCOVER_RUN_ID);
+    insertExecution(fixture, { status: "succeeded" });
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    fixture.db.prepare("DELETE FROM worker_runtime_heartbeats WHERE worker_id = 'worker'").run();
+    insertHeartbeat(fixture, { activeSlots: 0, counts: {}, details: [] });
+    expect(snapshot(fixture).sourceFamilies?.eta).toMatchObject({ status: "unavailable", reason: "no_work" });
   });
 
   it("keeps promoted members current and swept members separate while excluding both from global backlog", () => {
@@ -1345,6 +1450,49 @@ describe("pipeline operations read model", () => {
     if (eta.status === "available") expect(eta.highSeconds).toBeLessThan(1_000);
   });
 
+  it("withholds selected-run and stage ETAs for a stale same-queue peer until it reports fresh again", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "succeeded" });
+    insertMember(fixture, { key: "eta-stale-peer", requiredSteps: ["score"] });
+    insertStageState(fixture, "eta-stale-peer", "enrich", "succeeded");
+    insertStageState(fixture, "eta-stale-peer", "score", "pending");
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    for (let index = 0; index < 5; index += 1) {
+      insertStageState(fixture, `eta-stale-history-${index}`, "score", "succeeded", 60_000,
+        new Date(NOW.getTime() - index * 60_000).toISOString());
+    }
+    insertHeartbeat(fixture, {
+      workerId: "fresh", activeSlots: 1, counts: { score_job: 1 },
+      details: [activityDetail("score_job", "op_000000000000000000000063", unmatchedWorkflowRef("eta-stale"))],
+    });
+    insertHeartbeat(fixture, { workerId: "peer", activeSlots: 0, counts: {}, details: [] });
+
+    const fresh = snapshot(fixture);
+    expect(fresh.projectionCoverage?.status).toBe("ready");
+    expect(fresh.overallEta.status).toBe("available");
+    expect(stage(fresh, "score", "current_execution").eta.status).toBe("available");
+
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET last_seen_at = ? WHERE worker_id = ?")
+      .run(new Date(NOW.getTime() - 60_000).toISOString(), "peer");
+    const stale = snapshot(fixture);
+    expect(stale.capacity).toMatchObject({ status: "available", freshWorkerCount: 1, staleWorkerCount: 1 });
+    expect(stale.overallEta).toMatchObject({ status: "unavailable", reason: "contention_unbounded" });
+    expect(stage(stale, "score", "current_execution").eta)
+      .toMatchObject({ status: "unavailable", reason: "contention_unbounded" });
+
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET last_seen_at = ? WHERE worker_id = ?")
+      .run(NOW.toISOString(), "peer");
+    const recovered = snapshot(fixture);
+    expect(recovered.overallEta.status).toBe("available");
+    expect(stage(recovered, "score", "current_execution").eta.status).toBe("available");
+
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET task_queue = ?, last_seen_at = ? WHERE worker_id = ?")
+      .run("another-queue", new Date(NOW.getTime() - 60_000).toISOString(), "peer");
+    const otherQueue = snapshot(fixture);
+    expect(otherQueue.capacity).toMatchObject({ status: "available", staleWorkerCount: 0 });
+    expect(otherQueue.overallEta.status).toBe("available");
+  });
+
   it("keeps pooled capacity visible but refuses an ETA when multi-worker slots cannot be fully inventoried", () => {
     const fixture = createFixture();
     insertExecution(fixture, { status: "succeeded" });
@@ -1483,8 +1631,20 @@ describe("pipeline operations read model", () => {
 
     const result = snapshot(fixture);
     expect(result.projectionCoverage).toMatchObject({ status: "ready" });
+    expect(result.execution).toMatchObject({ membershipClosed: false });
     expect(result.activeStageCounts).toEqual([{ stage: "tailor", count: 1 }]);
-    expect(stage(result, "tailor", "current_execution").eta).toMatchObject({
+    const openTailor = stage(result, "tailor", "current_execution");
+    expect(openTailor.currentExecution).toMatchObject({ processing: 0, waiting: 0 });
+    expect(openTailor.eta).toMatchObject({ status: "calibrating", reason: "membership_open" });
+
+    insertExecution(fixture, { status: "succeeded" });
+    insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
+    const closed = snapshot(fixture);
+    expect(closed.execution).toMatchObject({ membershipClosed: true });
+    expect(closed.activeStageCounts).toEqual([{ stage: "tailor", count: 1 }]);
+    const closedTailor = stage(closed, "tailor", "current_execution");
+    expect(closedTailor.currentExecution).toMatchObject({ processing: 0, waiting: 0 });
+    expect(closedTailor.eta).toMatchObject({
       status: "unavailable",
       reason: "no_work",
     });
@@ -2064,6 +2224,16 @@ describe("pipeline operations read model", () => {
     expect(result.sourceFamilies?.eta).toMatchObject({
       caveat: "Provider total is unavailable; range uses recent whole-family duration and bounded live capacity.",
     });
+
+    insertHeartbeat(fixture, { workerId: "source-peer", activeSlots: 0, counts: {}, details: [] });
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET last_seen_at = ? WHERE worker_id = ?")
+      .run(new Date(NOW.getTime() - 60_000).toISOString(), "source-peer");
+    const stale = snapshot(fixture);
+    expect(stale.sourceFamilies?.eta).toMatchObject({ status: "unavailable", reason: "contention_unbounded" });
+    expect(stage(stale, "source_family", "current_execution").eta).toEqual(stale.sourceFamilies?.eta);
+    fixture.db.prepare("UPDATE worker_runtime_heartbeats SET last_seen_at = ? WHERE worker_id = ?")
+      .run(NOW.toISOString(), "source-peer");
+    expect(snapshot(fixture).sourceFamilies?.eta.status).toBe("available");
   });
 
   it("withholds source history when global job-stage work is queued before telemetry observes it", () => {

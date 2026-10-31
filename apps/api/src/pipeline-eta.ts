@@ -68,6 +68,8 @@ export interface PipelineEtaEstimatorInput {
   readonly scope: "known" | "unknown";
   /** True until terminal reconciliation has closed the execution's job membership. */
   readonly membershipOpen: boolean;
+  /** A stage may price positive known demand before membership closes; zero remains provisional. */
+  readonly estimateScope?: "overall" | "stage";
   readonly telemetryFresh: boolean;
   readonly workerAvailable: boolean;
   readonly budgetAvailable: boolean;
@@ -199,8 +201,8 @@ export function estimatePipelineEta(input: PipelineEtaEstimatorInput): PipelineE
     ? Math.min(...completeEstimates.map((estimate) => estimate.sampleSize))
     : 0;
 
-  // Membership remains provisional even with sufficient service-time evidence.
-  if (input.membershipOpen) {
+  // Positive stage demand can be priced, but an open membership never proves zero work.
+  if (input.membershipOpen && (input.estimateScope !== "stage" || activeStages.length === 0)) {
     return calibrating(input.asOf, "membership_open", completedSamples);
   }
 
