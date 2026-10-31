@@ -602,7 +602,7 @@ test("Playwright MCP contribution closure matches its dedicated lock and rejects
   await assert.rejects(collect(), /payload npm package closure drifted/);
   await writePackage(core, "playwright-core", coreVersion);
   await writePackage(mcp, "@playwright/mcp", "0.0.0");
-  await assert.rejects(collect(), /payload npm package closure drifted/);
+  await assert.rejects(collect(), /Playwright MCP package identity does not match inventory/);
   await writePackage(mcp, "@playwright/mcp", mcpVersion);
   await mkdir(extra);
   await writePackage(extra, "unexpected-package", "1.0.0");
