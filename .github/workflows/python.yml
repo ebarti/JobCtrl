@@ -18,6 +18,11 @@ on:
       - ".github/workflows/python.yml"
   workflow_dispatch:
   workflow_call:
+    inputs:
+      enabled:
+        description: Run the full suite unless accepted PR scope explicitly excludes it
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -29,6 +34,7 @@ concurrency:
 jobs:
   python:
     name: Python 3.12
+    if: ${{ github.event_name != 'pull_request' || inputs.enabled }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:

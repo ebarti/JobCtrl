@@ -31,7 +31,10 @@ test("native admission binds the required contexts without a planner or final-ga
   for (const [id,suite] of Object.entries(leaves)) {
     const job=pr.jobs[id];
     assert.equal(job.needs, "preflight");
-    assert.equal(job.if, expression("needs.preflight.result == 'success' && needs.preflight.outputs." + suite + " != 'false'"));
+    if (id === "python") {
+      assert.equal(job.if, undefined, "the reusable call must expose its skipped child context");
+      assert.deepEqual(job.with, { enabled: expression("needs.preflight.outputs.python != 'false'") });
+    } else assert.equal(job.if, expression("needs.preflight.result == 'success' && needs.preflight.outputs." + suite + " != 'false'"));
     assert.equal(job.permissions, undefined);
     assert.equal(job.environment, undefined);
     assert.equal(job["continue-on-error"] ?? false, false);
@@ -150,6 +153,9 @@ test("one primary Python result calls the canonical complete locked recipe", () 
   assert.equal(pr.jobs.python.steps, undefined);
   assert.equal(pr.jobs.python["runs-on"], undefined);
   assert.ok(Object.hasOwn(events(owning), "workflow_call"));
+  assert.equal(events(owning).workflow_call.inputs.enabled.type, "boolean");
+  assert.equal(events(owning).workflow_call.inputs.enabled.default, true);
+  assert.equal(job.if, expression("github.event_name != 'pull_request' || inputs.enabled"));
   assert.deepEqual(owning.permissions, { contents: "read" });
   assert.equal(job.strategy, undefined);
   assert.equal(job.name, "Python 3.12");

@@ -428,9 +428,10 @@ jobs:
 
   python:
     needs: preflight
-    if: ${{ needs.preflight.result == 'success' && needs.preflight.outputs.python != 'false' }}
     name: Python
     uses: ./.github/workflows/python.yml
+    with:
+      enabled: ${{ needs.preflight.outputs.python != 'false' }}
 
   docs:
     needs: preflight
