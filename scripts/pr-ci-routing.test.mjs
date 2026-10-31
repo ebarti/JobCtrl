@@ -303,6 +303,16 @@ test("CLI failures leave accepted output bytes and emit no scope notice", (t) =>
   assert.equal(readFileSync(output, "utf8"), "accepted=true\n");
 });
 
+test("CLI executes the accepted helper when invoked through a symlink", (t) => {
+  const f = fixture(t);
+  const linked = join(f.root, "linked-helper.mjs");
+  symlinkSync(helper, linked);
+  const result = cli(f, { source: linked });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(existsSync(result.output), "symlinked invocation must run the CLI");
+  assert.match(readFileSync(result.output, "utf8"), /^docs=true$/m);
+});
+
 test("only the accepted helper runs; changed head code cannot choose its own scope", (t) => {
   const f = fixture(t, ({ write }) => write("scripts/pr-ci-routing.mjs", "throw new Error('candidate helper executed');\n"));
   const result = cli(f);

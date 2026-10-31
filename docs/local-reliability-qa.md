@@ -282,7 +282,12 @@ start, fail readiness, and retry repeatedly. Check current paired snapshots,
 original/recovery backup IDs, exact selection and policy, preserved app inode,
 protected rows and external config/resume bytes. Finalization after the active
 selection write must complete without restarting a healthy candidate. Cover
-same-schema updates and rollback target-start failure separately. Revoke a
+same-schema updates and rollback target-start failure separately. After a
+compatible rollback, re-update to both the same and a later release using the
+retained selector; preserve subsequent application and Temporal writes across
+interruptions before and after selector handoff. Refuse tampered, mismatched, revoked,
+incompatible, or newer-than-target selectors before changing the pair or journal.
+Revoke a
 candidate with live owned writers: pure cleanup must stop them without executing
 the payload or changing the journal/selection, while update and startup still
 refuse the revoked target. Initial

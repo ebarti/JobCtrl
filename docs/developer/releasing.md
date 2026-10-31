@@ -235,6 +235,8 @@ actual released executables before immutable publication. Its ordinary compatibl
 protocol case upgrades from
 **the latest published stable version before the candidate**, rolls back to that
 version with its paired data backup, then explicitly upgrades again. For the
+re-update, the retained newer selector is authenticated independently from the
+rolled-back payload; an incompatible or untrusted selector is refused. For the
 protocol-1/schema-14 to protocol-2/schema-15 transition, it verifies the old
 controller's refusal, interrupts the signed new installer both before and after
 selector handoff, preserves later application and Temporal WAL writes through
