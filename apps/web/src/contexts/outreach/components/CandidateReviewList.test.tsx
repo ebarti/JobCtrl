@@ -56,6 +56,29 @@ describe("<CandidateReviewList>", () => {
     expect(view.queryByText("No contacts found")).toBeNull();
   });
 
+  it("distinguishes failed inference from an accepted empty result", () => {
+    const task = makeResearchTaskDetail({
+      sourceAttempts: [
+        {
+          sourceKind: "public_web_page", sourceRef: "https://acme.example/team",
+          outcome: "provider_unavailable", attemptedAt: "2026-07-06T00:00:00Z",
+          detail: "Model provider unavailable; check provider settings and retry. (provider_unavailable)",
+        },
+        {
+          sourceKind: "public_web_page", sourceRef: "https://acme.example/people",
+          outcome: "invalid_output", attemptedAt: "2026-07-06T00:00:00Z",
+          detail: "Model response could not be verified; retry the research. (field_binding_invalid)",
+        },
+      ],
+    });
+    const view = renderWithProviders(<CandidateReviewList task={task} />);
+    expect(view.getByText("Model provider unavailable")).toBeInTheDocument();
+    expect(view.getByText("Model response could not be verified")).toBeInTheDocument();
+    expect(view.getByText(/check provider settings and retry/i)).toBeInTheDocument();
+    expect(view.queryByText("No contacts found")).toBeNull();
+    expect(view.getAllByText("Dana Hiring-Manager").length).toBeGreaterThan(0);
+  });
+
   it("shows a confirmed note and no confirm action once a candidate is confirmed", () => {
     const confirmed = makeResearchTaskDetail({
       status: "completed",

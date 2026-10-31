@@ -56,6 +56,13 @@ employer or job and may opt into a permitted public source. No public page is
 fetched by default, and login-walled or protected sources stay manual. Source
 outcomes and candidate provenance remain visible even when nothing can be
 fetched. A proposal becomes a contact only after you explicitly confirm it.
+An accepted model decision can report that no contacts were found. A provider
+failure, spending limit, unverifiable response, or page without readable text
+is shown separately with a next step. A failed attempt retains the last accepted
+review and its candidates.
+If an older empty result has no recorded model decision, or its record is
+unavailable, JobCtrl reports that uncertainty instead of claiming no contacts
+were found. Existing proposals remain reviewable.
 If a page is too large, takes too long, cannot be reached, or has a broken
 redirect, the source attempt explains the failure and suggests a next step.
 Those failures do not mean that the page contains no contacts. Previously

@@ -22,7 +22,7 @@ from typing import Protocol
 
 from jobctrl.domain.contact.aggregate import Contact
 from jobctrl.domain.contact.outreach import OutreachThread
-from jobctrl.domain.contact.research import ContactResearchTask
+from jobctrl.domain.contact.research import ContactResearchTask, ResearchSourceAttempt
 from jobctrl.domain.identifiers import ContactId, JobId
 from jobctrl.domain.tenant import TenantId
 
@@ -69,6 +69,7 @@ class ContactResearchTaskRepository(Protocol):
     def save_attempt_if_unproposed(
         self, tenant_id: TenantId, task: ContactResearchTask, *,
         check_cancelled: Callable[[], None] | None = None,
+        new_attempts: tuple[ResearchSourceAttempt, ...] = (),
     ) -> tuple[ContactResearchTask, bool]:
         """Atomically save an activity attempt only until a proposal is published.
 

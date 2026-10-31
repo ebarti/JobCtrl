@@ -6819,6 +6819,11 @@ export const RESEARCH_SOURCE_OUTCOMES = [
   "manual_capture_required",
   "rejected",
   "extraction_failed",
+  "provider_unavailable",
+  "provider_failed",
+  "spend_denied",
+  "invalid_output",
+  "empty_content",
   "response_too_large",
   "acquisition_timeout",
   "redirect_failed",
@@ -6841,6 +6846,7 @@ export interface ContactResearchSourceAttempt {
   outcome: ResearchSourceOutcome | string;
   attemptedAt: string;
   detail: string;
+  determinationId?: string | null;
 }
 
 /** A proposed candidate. `attributes` carry values (served only in the detail DTO). */

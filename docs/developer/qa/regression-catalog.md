@@ -781,6 +781,22 @@ the handed-off failure, and the opened source disclosure must show the actionabl
 guidance while the existing proposal remains visible. This handoff is not proof
 that the worker itself wrote the browser workspace database.
 
+For contact research inference, run locked
+`pytest tests/test_contact_research_inference.py tests/test_contact_research_workflow.py`
+plus the contact API and source-outcome component tests. Use only synthetic
+pages, fake model authorities and owned SQLite. Opposite valid results for the
+same page must yield proposals or an accepted empty decision. Verify receipt
+identity, source spans, contact-lane preflight and cache reuse; reject provider,
+spend, JSON, schema, enum, source and span failures without a lexical substitute.
+An empty fetch is not an empty model decision. An in-flight failure must preserve
+the winning review, record its safe failure and event atomically, refresh an open
+review and report the failing attempt in workflow output. A successful retry
+must clear current failure metadata while retaining prior source attempts. Race
+both completion orders with independent writers. No raw prompts, page text or
+candidate values enter events or determination receipts. Exercise the actual
+activity with Temporal heartbeats, dispatch and replay, including old-format
+activity output and both preflight histories, then inspect the API and UI.
+
 For legacy evidence preservation (#1281), run locked
 `pytest tests/test_legacy_evidence_preservation.py tests/test_legacy_evidence_recovery.py tests/test_semantic_storage.py tests/test_v12_activation.py`
 and the full worker and native launcher suites with this checkout's locked

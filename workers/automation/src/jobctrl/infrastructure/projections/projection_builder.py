@@ -305,6 +305,7 @@ CONTACT_RESEARCH_EVENT_TYPES: frozenset[str] = frozenset(
         "ContactResearchTaskNeedsReview",
         "ContactResearchTaskCompleted",
         "ContactResearchTaskFailed",
+        "ContactResearchSourceAttemptFailed",
     }
 )
 

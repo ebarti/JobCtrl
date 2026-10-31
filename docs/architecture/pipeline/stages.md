@@ -637,10 +637,10 @@ API's `cancelJobAction`.
 `ContactResearchWorkflow` (Contact & Outreach) is not a pipeline stage — it is a
 user-started, supervised run that *proposes* contacts for review. The API mints a
 `taskId`, pre-creates a `queued` task so the UI can read it immediately, then
-dispatches `run_contact_research`. The workflow runs the shared spend preflight,
-then one source-family activity that fetches only policy-permitted, opted-in
+dispatches `run_contact_research`. One source-family activity fetches only policy-permitted, opted-in
 public pages through the merged politeness gateway and extracts candidates with a
-schema-driven LLM call. Candidates land `needs_review`; the user confirms them
+source-bound LLM determination. Each model call uses the shared contact-lane
+spend preflight. Candidates land `needs_review`; the user confirms them
 one at a time (a TypeScript-API state transition), which promotes a candidate
 into a stored `Contact` fact (INV-4).
 
@@ -667,6 +667,22 @@ Rate-limit, budget-exhaustion, and historical robots-denial are recorded as firs
 `ResearchSourceAttempt` outcomes (the provenance of the search), never scrape
 errors. No candidate value ever enters an event or projection — only
 `contact_candidates.attributes_json` holds the proposed names/emails.
+
+Only an accepted empty determination yields `no_candidates`. Empty page content,
+provider unavailability or execution failure, spend denial and invalid output
+produce distinct source outcomes. The source attempt records the determination
+ID; its receipt binds the page fingerprint, model, lane, source identity and source spans without
+storing the page body or contact values. A failed inference publishes no new
+proposals and preserves an accepted review, including when another attempt wins
+while inference is in flight. Existing Temporal histories keep their original
+workflow preflight command; new histories preflight each determination.
+An overlapping failure records a source-attempt event and reports the attempt's
+failure in the workflow while retaining the accepted task's review state.
+A later successful retry clears current failure metadata and retains earlier
+source attempts as history.
+The detail reader validates the joined receipt and does not present a missing,
+foreign or inconsistent receipt, or a historical unrecorded empty result, as
+an accepted empty decision. Existing proposals remain readable.
 
 Each opted-in public page has a 2,000,000-byte response-body limit and a single
 20-second acquisition deadline covering host admission, DNS, redirects, headers

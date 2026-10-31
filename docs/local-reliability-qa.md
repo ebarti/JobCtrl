@@ -541,6 +541,11 @@ eligibility, and an explicit foreground request retains its existing contract.
 
 ## Semantic Determinations
 
+For contact research, follow the
+[inference and acquisition checks](developer/qa/regression-catalog.md#auditability-checks),
+including a synthetic source-bound model decision, its receipt, failure and
+accepted-review preservation through the worker, API and review surface.
+
 For legacy evidence confirmation preservation/recovery, follow the dedicated
 [Auditability Checks](developer/qa/regression-catalog.md#auditability-checks).
 Use exact-schema owned originals and native paired backup metadata, preserve

@@ -350,7 +350,9 @@ Contact edits require the fingerprint from the detail read; a stale base returns
 409 without replacing newer facts. See the [contact contract](api/complete-contract.md#contacts).
 Research source attempts distinguish acquisition failures from a successful page
 with no candidates; their detailed outcomes and recovery text are returned on
-the research task detail read.
+the research task detail read. Model, spend and structural failures are distinct
+from an accepted empty decision. An overlapping failed attempt refreshes the
+open review without replacing its accepted proposals.
 
 <a id="contact-research"></a>
 <a id="outreach-drafts"></a>

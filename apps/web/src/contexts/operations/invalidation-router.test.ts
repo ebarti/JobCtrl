@@ -550,6 +550,10 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     outreachKeys.researchTask(LOCAL_TENANT, "research-2"),
     outreachKeys.researchTaskLists(LOCAL_TENANT),
   ],
+  ContactResearchSourceAttemptFailed: [
+    outreachKeys.researchTask(LOCAL_TENANT, "research-1"),
+    outreachKeys.researchTaskLists(LOCAL_TENANT),
+  ],
   OutreachDraftGenerated: [
     outreachKeys.thread(LOCAL_TENANT, "thread-1"),
     outreachKeys.threads(LOCAL_TENANT),
@@ -709,6 +713,29 @@ describe("invalidationRouter", () => {
     expect(client.getQueryState(digestKey)?.isInvalidated).toBe(true);
     expect(client.getQueryState(otherDigestKey)?.isInvalidated).toBe(false);
     client.clear();
+  });
+
+  it("refreshes an open research review after an overlapping source attempt fails", async () => {
+    const client = new QueryClient();
+    const key = outreachKeys.researchTask(LOCAL_TENANT, "research-1");
+    const before = { candidates: [{ candidateId: "candidate-1" }], sourceAttempts: [{ outcome: "allowed" }] };
+    const after = { ...before, sourceAttempts: [...before.sourceAttempts, { outcome: "provider_unavailable" }] };
+    const queryFn = vi.fn().mockResolvedValue(after);
+    const observer = new QueryObserver(client, { queryKey: key, queryFn, initialData: before, staleTime: Infinity });
+    const unsubscribe = observer.subscribe(() => {});
+    try {
+      const event = eventByType.ContactResearchSourceAttemptFailed;
+      const parsed = parseDomainEvent({ eventType: event.eventType, data: JSON.stringify(event) });
+      expect(parsed.ok).toBe(true);
+      if (!parsed.ok) throw new Error(parsed.reason);
+      invalidationRouter.handle(parsed.envelope as unknown as DomainEventUnion, client);
+      await vi.waitFor(() => expect(client.getQueryData(key)).toEqual(after));
+      expect(queryFn).toHaveBeenCalledTimes(1);
+      expect(client.getQueryData<typeof after>(key)?.candidates).toEqual(before.candidates);
+    } finally {
+      unsubscribe();
+      client.clear();
+    }
   });
 
   it("keeps dry-run completion separate from submission and other runs", () => {
