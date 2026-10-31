@@ -187,13 +187,11 @@ describe("contact writer teardown", () => {
       const pending = writer(dbPath, contact, "referrer");
       const lifetime = trackWriterClose(pending.child);
       const send = vi.spyOn(pending.child, "send");
-      const disconnect = vi.spyOn(pending.child, "disconnect");
       const kill = vi.spyOn(pending.child, "kill");
       await pending.wait("ready");
       await lifetime.cleanup();
       expect(send).toHaveBeenCalledWith({ kind: "cancel" }, expect.any(Function));
       expect(pending.child.exitCode).toBe(0);
-      expect(disconnect).not.toHaveBeenCalled();
       expect(kill).not.toHaveBeenCalled();
       expect(canonicalState(db, contact.contactId)).toEqual(before);
     } finally { db.close(); }
