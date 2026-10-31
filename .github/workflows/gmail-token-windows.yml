@@ -1,16 +1,6 @@
 name: Gmail token Windows privacy
 
 on:
-  pull_request:
-    paths:
-      - "workers/automation/src/jobctrl/infrastructure/gmail/auth.py"
-      - "workers/automation/src/jobctrl/infrastructure/gmail/windows_private_file.py"
-      - "workers/automation/tests/test_gmail_token_atomic.py"
-      - "workers/automation/tests/test_gmail_token_windows_acl.py"
-      - "workers/automation/tests/test_gmail_windows_acl_contract.py"
-      - "workers/automation/pyproject.toml"
-      - "workers/automation/uv.lock"
-      - ".github/workflows/gmail-token-windows.yml"
   workflow_dispatch:
 
 permissions:

@@ -1,15 +1,6 @@
 name: Demo Edge CI
 
 on:
-  pull_request:
-    paths:
-      - "apps/demo-edge/**"
-      - "packages/tsconfig/**"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - ".npmrc"
-      - ".github/workflows/demo-edge.yml"
   workflow_dispatch:
 
 permissions:
