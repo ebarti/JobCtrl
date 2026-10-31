@@ -18,6 +18,7 @@ async function createHarness() {
   const fixtureLauncher = path.join(temporaryRoot, "scripts/dev");
   const eventsPath = path.join(temporaryRoot, "events.log");
   const failBuildPath = path.join(temporaryRoot, "fail-build");
+  let primaryFailure;
   const ownedChildren = new Map();
   const trackChild = (child) => {
     const record = { child, closed: false, error: undefined };
@@ -110,30 +111,33 @@ exec sleep 300
     await copyFile(fakeCorepack, path.join(binDir, name));
   }
   // Product ownership is exercised by the native source-controller tests;
-  // these shell fixtures stay in their own temporary process tree.
+  // these shell fixtures reuse the launch owner in a separate controller namespace.
   await writeFile(path.join(binDir, "go"), `#!/usr/bin/env bash
 set -euo pipefail
 [[ "$1" == "-C" && "$3" == "run" && "$4" == "./cmd/jobctrl-source" ]]
+root="$6"
+controller_dir="$JOBCTRL_DEV_DIR/source-controller"
+mkdir -p "$controller_dir"
 if [[ "$5" == "stop" || "$5" == "switch" ]]; then
-  controller="$JOBCTRL_DEV_DIR/pids/source-controller.pid"
-  if [[ -f "$controller" ]]; then
-    pid=$(cat "$controller")
-    kill -TERM "$pid" 2>/dev/null || true
-    for _ in $(seq 1 100); do
-      kill -0 "$pid" 2>/dev/null || break
-      sleep 0.05
-    done
-    rm -f "$controller"
-  fi
-  exit 0
+  exec python3 -B "$root/scripts/dev-process-owner.py" stop "$controller_dir" api
 fi
 [[ "$5" != "verify" ]] || exit 0
 [[ "$5" == "run" ]]
-root="$6"
 shift 6
 export JOBCTRL_DEV_INNER=1
-echo "$$" > "$JOBCTRL_DEV_DIR/pids/source-controller.pid"
-exec "$root/scripts/dev" run "$@"
+printf -v command 'exec %q run' "$root/scripts/dev"
+for component in "$@"; do printf -v command '%s %q' "$command" "$component"; done
+launch_id=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
+python3 -B "$root/scripts/dev-process-owner.py" launch "$controller_dir" api "$launch_id" "$command" &
+controller_child=$!
+finish() {
+  python3 -B "$root/scripts/dev-process-owner.py" stop "$controller_dir" api
+  wait "$controller_child"
+  exit "$1"
+}
+trap 'finish 130' INT
+trap 'finish 143' TERM
+wait "$controller_child"
 `);
   await chmod(path.join(binDir, "go"), 0o755);
   await writeFile(path.join(binDir, "curl"), "#!/usr/bin/env bash\nexit 1\n");
@@ -238,6 +242,7 @@ exec "$root/scripts/dev" run "$@"
     env,
     trackChild,
     waitForChildClose,
+    recordFailure: (error) => { primaryFailure = error; },
     spawnPeer: () => trackChild(spawn("/bin/sleep", ["300"], { cwd: homeDir, env, stdio: "ignore" })),
     events: () => readFile(eventsPath, "utf8"),
     async waitForLaunches(count) {
@@ -255,7 +260,7 @@ exec "$root/scripts/dev" run "$@"
     failBuild: () => writeFile(failBuildPath, "fail"),
     pid: (name) => readFile(path.join(devDir, "pids", `${name}.pid`), "utf8"),
     logPath: (name) => path.join(devDir, "logs", `${name}.log`),
-    async cleanup(priorFailure) {
+    async cleanup(priorFailure, originalFailure = primaryFailure) {
       const failures = priorFailure ? [priorFailure] : [];
       try {
         run("stop", "temporal", "api", "web", "worker", "docs", "demo-api", "demo-web");
@@ -278,10 +283,17 @@ exec "$root/scripts/dev" run "$@"
           failures.push(cleanupError);
         }
       }
-      if (failures.length) {
-        throw new AggregateError(failures, `Fixture cleanup unverified; retained ${temporaryRoot}`);
+      if (!failures.length) {
+        try { await rm(temporaryRoot, { recursive: true, force: true }); }
+        catch (error) { failures.push(error); }
       }
-      await rm(temporaryRoot, { recursive: true, force: true });
+      if (failures.length) {
+        throw new AggregateError(
+          originalFailure !== undefined ? [originalFailure, ...failures] : failures,
+          `Fixture cleanup unverified; retained ${temporaryRoot}`,
+          { cause: originalFailure },
+        );
+      }
     },
   };
 }
@@ -298,6 +310,9 @@ test("default startup keeps the diagnostic interface when the database needs an 
     assert.match(events, /--filter @jobctrl\/api dev/);
     assert.match(events, /exec vite/);
     assert.doesNotMatch(events, /server start-dev|run jobctrl worker/);
+  } catch (error) {
+    harness.recordFailure(error);
+    throw error;
   } finally {
     await harness.cleanup();
   }
@@ -317,6 +332,9 @@ test("an explicit worker start refuses an incompatible database", async () => {
     assert.match(result.stderr, /workspace database needs a compatible upgrade/);
     assert.doesNotMatch(await harness.events(), /launch:/);
     assert.deepEqual(await readFile(database), before);
+  } catch (error) {
+    harness.recordFailure(error);
+    throw error;
   } finally {
     await harness.cleanup();
   }
@@ -334,11 +352,39 @@ test("a source start does not kill an unverified tracked process", { skip: proce
     assert.match(result.stderr, /process ownership or cleanup could not be verified/);
     process.kill(previous.pid, 0);
     assert.doesNotMatch(await harness.events(), /launch:/);
+  } catch (error) {
+    harness.recordFailure(error);
+    throw error;
   } finally {
     let failure;
     try { await rm(path.join(harness.temporaryRoot, "dev", "pids", "api.pid"), { force: true }); }
     catch (error) { failure = error; }
     await harness.cleanup(failure);
+  }
+});
+
+test("fake source-controller stop ignores legacy PID metadata", async () => {
+  const harness = await createHarness();
+  const peer = harness.spawnPeer();
+  const legacy = path.join(harness.devDir, "pids", "source-controller.pid");
+  try {
+    await mkdir(path.dirname(legacy), { recursive: true });
+    const original = `${peer.pid}\n`;
+    await writeFile(legacy, original);
+    const result = spawnSync(path.join(harness.binDir, "go"), [
+      "-C", path.join(harness.temporaryRoot, "launcher"), "run", "./cmd/jobctrl-source",
+      "stop", harness.temporaryRoot,
+    ], { cwd: harness.temporaryRoot, env: harness.env, encoding: "utf8", timeout: 5_000 });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(await readFile(legacy, "utf8"), original);
+    assert.equal(peer.exitCode, null);
+    assert.equal(peer.signalCode, null);
+  } catch (error) {
+    harness.recordFailure(error);
+    throw error;
+  } finally {
+    await harness.cleanup();
   }
 });
 
@@ -350,17 +396,27 @@ test("fixture cleanup retains unverified state and closes its original peer", as
     await mkdir(path.dirname(pidFile), { recursive: true });
     const original = `${peer.pid}\n`;
     await writeFile(pidFile, original);
-    await assert.rejects(harness.cleanup(), /Fixture cleanup unverified; retained/);
+    const originalFailure = new Error("synthetic test-body failure");
+    await assert.rejects(harness.cleanup(undefined, originalFailure), (error) => {
+      assert.ok(error instanceof AggregateError);
+      assert.equal(error.errors[0], originalFailure);
+      assert.equal(error.cause, originalFailure);
+      assert.match(error.message, /Fixture cleanup unverified; retained/);
+      return true;
+    });
     assert.equal(await readFile(pidFile, "utf8"), original);
     assert.ok(peer.exitCode !== null || peer.signalCode !== null);
+  } catch (error) {
+    harness.recordFailure(error);
+    throw error;
   } finally {
+    let failure;
     try {
       if (peer.exitCode === null && peer.signalCode === null) peer.kill("SIGTERM");
       await harness.waitForChildClose(peer);
       harness.run("forget", "docs");
-    } finally {
-      await harness.cleanup();
-    }
+    } catch (error) { failure = error; }
+    await harness.cleanup(failure);
   }
 });
 
@@ -385,6 +441,9 @@ test("PID-only records cannot authorize status, stop, or startup replacement", a
     assert.match(harness.run("forget", "docs"), /no process was signalled/);
     process.kill(peer.pid, 0);
     assert.match(harness.run("status", "docs"), /^docs\s+down\s+-/m);
+  } catch (error) {
+    harness.recordFailure(error);
+    throw error;
   } finally {
     let failure;
     try { await rm(pidFile, { force: true }); }
@@ -424,6 +483,9 @@ for (const corruption of ["pid", "identity", "malformed", "missing endpoint"]) {
         assert.deepEqual(await readFile(pidFile), retainedPid);
         assert.deepEqual(await readFile(identityFile), retainedIdentity);
       }
+    } catch (error) {
+      harness.recordFailure(error);
+      throw error;
     } finally {
       let failure;
       try {
@@ -451,6 +513,9 @@ test("a verified source launch stops, restarts normally, and preserves an indepe
     harness.run("restart", "docs");
     assert.match(harness.run("status", "docs"), /^docs\s+up\s+\d+/m);
     process.kill(peer.pid, 0);
+  } catch (error) {
+    harness.recordFailure(error);
+    throw error;
   } finally {
     await harness.cleanup();
   }
@@ -495,6 +560,9 @@ with socket.socket(socket.AF_UNIX) as channel:
     await harness.waitForChildClose(owner);
     assert.equal(owner.exitCode, 0);
     assert.match(harness.run("status", "docs"), /^docs\s+down\s+-/m);
+  } catch (error) {
+    harness.recordFailure(error);
+    throw error;
   } finally {
     await harness.cleanup();
   }
@@ -526,6 +594,9 @@ test("owned TERM-ignoring descendants stop while an independent peer survives", 
       await delay(20);
     }
     assert.fail("Owned descendant remained live after verified stop");
+  } catch (error) {
+    harness.recordFailure(error);
+    throw error;
   } finally {
     await harness.cleanup();
   }
@@ -566,6 +637,9 @@ test("a departed root with a live child reports cleanup failure and can retry af
     await delay(100);
     assert.match(harness.run("stop", "docs"), /docs: stopped/);
     assert.match(harness.run("status", "docs"), /^docs\s+down\s+-/m);
+  } catch (error) {
+    harness.recordFailure(error);
+    throw error;
   } finally {
     let failure;
     try { if (writer) await writer.close(); }
@@ -584,6 +658,9 @@ test("source startup does not connect its web app to another responding API", as
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /another API is responding/);
     assert.doesNotMatch(await harness.events(), /launch:/);
+  } catch (error) {
+    harness.recordFailure(error);
+    throw error;
   } finally {
     await harness.cleanup();
   }
@@ -617,6 +694,9 @@ test("source startup shares the installed Temporal path, preserves legacy histor
     assert.match(orphaned.stderr, /orphaned SQLite companions/);
     assert.equal(await readFile(`${native}-wal`, "utf8"), "orphaned companion");
     assert.equal(await readFile(legacy, "utf8"), "legacy history");
+  } catch (error) {
+    harness.recordFailure(error);
+    throw error;
   } finally {
     await harness.cleanup();
   }
@@ -663,6 +743,9 @@ test("detached docs lifecycle starts, reports, and stops the tracked server", as
     const stopped = harness.run("stop", "docs");
     assert.match(stopped, /docs: stopped/);
     assert.match(harness.run("status", "docs"), /^docs\s+down\s+-/m);
+  } catch (error) {
+    harness.recordFailure(error);
+    throw error;
   } finally {
     await harness.cleanup();
   }
@@ -694,6 +777,9 @@ test("demo detached lifecycle owns both API and web processes", { timeout: 30_00
     const finalStatus = harness.run("status", "demo-api", "demo-web");
     assert.match(finalStatus, /^demo-api\s+down\s+-/m);
     assert.match(finalStatus, /^demo-web\s+down\s+-/m);
+  } catch (error) {
+    harness.recordFailure(error);
+    throw error;
   } finally {
     await harness.cleanup();
   }
@@ -706,6 +792,9 @@ test("foreground demo API advances from migrations to the long-lived server", as
     assert.equal(result.status, 130, `${result.stdout}\n${result.stderr}`);
     assert.match(result.stdout, /\[demo-api\] Ready on http:\/\/127\.0\.0\.1:48787\//);
     assert.match(harness.run("status", "demo-api"), /^demo-api\s+down\s+-/m);
+  } catch (error) {
+    harness.recordFailure(error);
+    throw error;
   } finally {
     await harness.cleanup();
   }
@@ -745,6 +834,9 @@ for (const mode of ["run", "start", "restart"]) {
         assert.ok(output.includes(`extension: ${harness.temporaryRoot}/dist/extension`));
         assert.match(output, /chrome:\/\/extensions.*Developer mode.*Load unpacked/);
         assert.match(output, /click Reload.*reload open application tabs/);
+      } catch (error) {
+        harness.recordFailure(error);
+        throw error;
       } finally {
         await harness.cleanup();
       }
@@ -777,6 +869,9 @@ for (const mode of ["run", "start", "restart"]) {
       const events = await harness.events();
       assert.equal(events.split("\n").filter((event) => event.startsWith("build:")).length, 1);
       assert.doesNotMatch(events, /launch:|build-complete/);
+    } catch (error) {
+      harness.recordFailure(error);
+      throw error;
     } finally {
       await harness.cleanup();
     }
@@ -795,6 +890,9 @@ for (const mode of ["run", "start", "restart"]) {
         assert.match(harness.run(mode, ...targets), /demo-web: (started|http:)/);
       }
       assert.doesNotMatch(await harness.waitForLaunches(targets.length), /build:/);
+    } catch (error) {
+      harness.recordFailure(error);
+      throw error;
     } finally {
       await harness.cleanup();
     }
@@ -809,6 +907,9 @@ test("status, stop, list, and help do not build the extension", async () => {
       harness.run(mode);
     }
     assert.equal(await harness.events(), "");
+  } catch (error) {
+    harness.recordFailure(error);
+    throw error;
   } finally {
     await harness.cleanup();
   }
