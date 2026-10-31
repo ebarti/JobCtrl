@@ -60,11 +60,12 @@ const (
 )
 
 var (
-	errUntrackedOwnership = errors.New("this legacy runtime has no durable child-ownership record; recorded processes were checked, but cleanup cannot certify already-detached children. Automatic recovery is unavailable; keep the runtime registry and workspace intact and seek support")
-	ErrAlreadyRunning     = errors.New("an active JobCtrl instance already owns this state directory")
-	ErrPortInUse          = errors.New("a required fixed loopback port is already in use")
-	ErrLockHeld           = errors.New("the JobCtrl instance lock is held")
-	errStartupInterrupted = errors.New("supervisor startup interrupted")
+	errUntrackedOwnership  = errors.New("this legacy runtime has no durable child-ownership record; recorded processes were checked, but cleanup cannot certify already-detached children. Automatic recovery is unavailable; keep the runtime registry and workspace intact and seek support")
+	ErrAlreadyRunning      = errors.New("an active JobCtrl instance already owns this state directory")
+	ErrPortInUse           = errors.New("a required fixed loopback port is already in use")
+	ErrLockHeld            = errors.New("the JobCtrl instance lock is held")
+	errStartupInterrupted  = errors.New("supervisor startup interrupted")
+	errOwnershipInspection = errors.New("cannot verify JobCtrl process ownership")
 )
 
 type commandSpec struct {
@@ -2474,6 +2475,14 @@ func sameRuntimeGeneration(first, second instanceState) bool {
 }
 
 func stop(ctx launchContext) error {
+	err := stopInstance(ctx)
+	if errors.Is(err, errOwnershipInspection) {
+		return fmt.Errorf("%w; resolve the inspection issue and retry the stop operation", err)
+	}
+	return err
+}
+
+func stopInstance(ctx launchContext) error {
 	control, err := acquireLock(ctx.Instance.ControlPath, false)
 	if err != nil {
 		return fmt.Errorf("acquire stop control lock: %w", err)

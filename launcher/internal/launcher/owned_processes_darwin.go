@@ -574,7 +574,7 @@ func discoverScopedProcesses(ctx launchContext, state instanceState, scopes []ex
 			return result, nil
 		}
 		if err != nil && !knownNonzero {
-			return nil, err
+			return nil, fmt.Errorf("%w: %w", errOwnershipInspection, err)
 		}
 		if knownNonzero {
 			if err != nil {
@@ -591,7 +591,7 @@ func discoverScopedProcesses(ctx launchContext, state instanceState, scopes []ex
 			previousEmpty = nil
 		}
 	}
-	return nil, errors.Join(errors.New("process census changed repeatedly during cleanup; retry jobctrl stop"), inspectionErr)
+	return nil, fmt.Errorf("%w: %w", errOwnershipInspection, errors.Join(errors.New("process census remained inconclusive"), inspectionErr))
 }
 
 // An empty PID sample is insufficient: an enumerated parent may fork and
