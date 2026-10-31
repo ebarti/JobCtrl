@@ -334,6 +334,17 @@ until recovery finishes; retries take a fresh stopped-pair backup instead of
 restoring old data. A locally trusted checkout does not impersonate a signed
 release. Unverified older source processes are not migration authority.
 
+The source shell's component records also bind a private per-launch control
+endpoint. A small launch owner retains the original `Popen` and unreaped child
+identity; status and stop authenticate that owner before requesting cleanup.
+The existing original-child/session ownership helper performs termination. No
+recovered PID is signalled, so a birth check followed by a numeric signal is not
+used as cross-process authority. Legacy, changed or unreachable records remain
+unverified and block automatic replacement. An explicit `scripts/dev forget`
+retires only reviewed metadata, without signalling or certifying earlier exit.
+Lost ownership or unverified descendant cleanup remains a visible source-mode
+failure; it does not require a reboot or weaken the native workspace scope.
+
 The current runtime admits only exact schema v15. A stopped v6 database retains
 the Temporal quiescence proof and private v7/v8/v9 intermediates; exact v7 and v8
 start at their next intermediate. Exact v9 transfers application URL authority

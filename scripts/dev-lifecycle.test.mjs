@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, open, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -20,8 +20,10 @@ async function createHarness() {
   const failBuildPath = path.join(temporaryRoot, "fail-build");
   await mkdir(binDir, { recursive: true });
   await mkdir(homeDir, { recursive: true });
+  await mkdir(path.join(temporaryRoot, "tmp"), { recursive: true });
   await mkdir(path.dirname(fixtureLauncher), { recursive: true });
   await copyFile(launcher, fixtureLauncher);
+  await copyFile(path.join(root, "scripts/dev-process-owner.py"), path.join(temporaryRoot, "scripts/dev-process-owner.py"));
   await copyFile(path.join(root, "scripts/dev-schema-check.py"), path.join(temporaryRoot, "scripts/dev-schema-check.py"));
   await mkdir(path.join(temporaryRoot, "workers/automation/src"), { recursive: true });
   await symlink(path.join(root, "workers/automation/src/jobctrl"), path.join(temporaryRoot, "workers/automation/src/jobctrl"));
@@ -115,6 +117,7 @@ exec "$root/scripts/dev" run "$@"
   const env = {
     PATH: `${binDir}:${process.env.PATH ?? ""}`,
     HOME: homeDir,
+    TMPDIR: path.join(temporaryRoot, "tmp"),
     JOBCTRL_USER_ENV_PATH: path.join(temporaryRoot, "missing.env"),
     JOBCTRL_DIR: path.join(temporaryRoot, "app"),
     JOBCTRL_DEV_DIR: devDir,
@@ -209,6 +212,8 @@ exec "$root/scripts/dev" run "$@"
     runResult,
     runForegroundUntilReady,
     temporaryRoot,
+    devDir,
+    binDir,
     events: () => readFile(eventsPath, "utf8"),
     async waitForLaunches(count) {
       let events;
@@ -281,12 +286,176 @@ test("a source start does not kill an unverified tracked process", { skip: proce
     await writeFile(path.join(pidDir, "api.pid"), String(previous.pid));
     const result = harness.runResult("run", "api");
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /unverified previous api process/);
+    assert.match(result.stderr, /process ownership or cleanup could not be verified/);
     process.kill(previous.pid, 0);
     assert.doesNotMatch(await harness.events(), /launch:/);
   } finally {
     previous.kill("SIGTERM");
     await rm(path.join(harness.temporaryRoot, "dev", "pids", "api.pid"), { force: true });
+    await harness.cleanup();
+  }
+});
+
+test("PID-only records cannot authorize status, stop, or startup replacement", async () => {
+  const harness = await createHarness();
+  const peer = spawn("/bin/sleep", ["300"], { stdio: "ignore" });
+  const pidFile = path.join(harness.devDir, "pids", "docs.pid");
+  try {
+    await mkdir(path.dirname(pidFile), { recursive: true });
+    const original = `${peer.pid}\n`;
+    await writeFile(pidFile, original);
+    assert.match(harness.run("status", "docs"), /^docs\s+unverified\s+-/m);
+    for (const mode of ["stop", "stop", "start", "restart", "run"]) {
+      const result = harness.runResult(mode, "docs");
+      assert.notEqual(result.status, 0, `${mode}: ${result.stdout}\n${result.stderr}`);
+      assert.match(result.stderr, /records retained/);
+      assert.match(result.stderr, /scripts\/dev forget docs/);
+      process.kill(peer.pid, 0);
+      assert.equal(await readFile(pidFile, "utf8"), original);
+      assert.doesNotMatch(await harness.events(), /launch:/);
+    }
+    assert.match(harness.run("forget", "docs"), /no process was signalled/);
+    process.kill(peer.pid, 0);
+    assert.match(harness.run("status", "docs"), /^docs\s+down\s+-/m);
+  } finally {
+    peer.kill("SIGTERM");
+    await rm(pidFile, { force: true });
+    await harness.cleanup();
+  }
+});
+
+for (const corruption of ["pid", "identity", "malformed", "missing endpoint"]) {
+  test(`a ${corruption} mismatch preserves the unrelated process and original receipt`, async () => {
+    const harness = await createHarness();
+    const peer = spawn("/bin/sleep", ["300"], { stdio: "ignore" });
+    const pidFile = path.join(harness.devDir, "pids", "docs.pid");
+    const identityFile = path.join(harness.devDir, "pids", "docs.identity.json");
+    let originalPid;
+    let originalIdentity;
+    try {
+      harness.run("start", "docs");
+      originalPid = await readFile(pidFile);
+      originalIdentity = await readFile(identityFile);
+      const identity = JSON.parse(originalIdentity);
+      if (corruption === "pid") await writeFile(pidFile, `${peer.pid}\n`);
+      else if (corruption === "malformed") await writeFile(identityFile, "{broken receipt\n");
+      else {
+        if (corruption === "identity") identity.id = "0".repeat(64);
+        else identity.socket = path.join(harness.temporaryRoot, "missing-control");
+        await writeFile(identityFile, JSON.stringify(identity));
+      }
+      const retainedPid = await readFile(pidFile);
+      const retainedIdentity = await readFile(identityFile);
+      assert.match(harness.run("status", "docs"), /^docs\s+unverified\s+-/m);
+      for (const mode of ["stop", "start"]) {
+        const result = harness.runResult(mode, "docs");
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /records retained/);
+        process.kill(peer.pid, 0);
+        assert.deepEqual(await readFile(pidFile), retainedPid);
+        assert.deepEqual(await readFile(identityFile), retainedIdentity);
+      }
+    } finally {
+      if (originalPid) await writeFile(pidFile, originalPid);
+      if (originalIdentity) await writeFile(identityFile, originalIdentity);
+      peer.kill("SIGTERM");
+      await harness.cleanup();
+    }
+  });
+}
+
+test("a verified source launch stops, restarts normally, and preserves an independent peer", async () => {
+  const harness = await createHarness();
+  const peer = spawn("/bin/sleep", ["300"], { stdio: "ignore" });
+  try {
+    harness.run("start", "docs");
+    const previous = await harness.pid("docs");
+    const refused = harness.runResult("forget", "docs");
+    assert.notEqual(refused.status, 0);
+    assert.equal(await harness.pid("docs"), previous);
+    assert.match(harness.run("stop", "docs"), /docs: stopped/);
+    assert.match(harness.run("stop", "docs"), /docs: not running/);
+    harness.run("start", "docs");
+    assert.match(harness.run("status", "docs"), /^docs\s+up\s+\d+/m);
+    harness.run("restart", "docs");
+    assert.match(harness.run("status", "docs"), /^docs\s+up\s+\d+/m);
+    process.kill(peer.pid, 0);
+  } finally {
+    peer.kill("SIGTERM");
+    await harness.cleanup();
+  }
+});
+
+test("owned TERM-ignoring descendants stop while an independent peer survives", { timeout: 30_000 }, async () => {
+  const harness = await createHarness();
+  const peer = spawn("/bin/sleep", ["300"], { stdio: "ignore" });
+  const childFile = path.join(harness.temporaryRoot, "owned-child.pid");
+  try {
+    const command = path.join(harness.binDir, "corepack");
+    const original = await readFile(command, "utf8");
+    await writeFile(command, original.replace("exec sleep 300", `trap '' TERM\nsleep 300 &\necho "$!" > "${childFile}"\nwait`));
+    harness.run("start", "docs");
+    let childPid;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      try { childPid = Number((await readFile(childFile, "utf8")).trim()); break; }
+      catch { await delay(20); }
+    }
+    assert.ok(childPid > 1);
+    assert.match(harness.run("stop", "docs"), /docs: stopped/);
+    process.kill(peer.pid, 0);
+    assert.match(harness.run("status", "docs"), /^docs\s+down\s+-/m);
+    for (let attempt = 0; attempt < 100; attempt++) {
+      try { process.kill(childPid, 0); } catch (error) {
+        assert.equal(error.code, "ESRCH");
+        return;
+      }
+      await delay(20);
+    }
+    assert.fail("Owned descendant remained live after verified stop");
+  } finally {
+    peer.kill("SIGTERM");
+    await harness.cleanup();
+  }
+});
+
+test("a departed root with a live child reports cleanup failure and can retry after child exit", { timeout: 30_000 }, async () => {
+  const harness = await createHarness();
+  const peer = spawn("/bin/sleep", ["300"], { stdio: "ignore" });
+  const fifo = path.join(harness.temporaryRoot, "owned-child-control");
+  let writer;
+  try {
+    const made = spawnSync("mkfifo", [fifo], { encoding: "utf8" });
+    assert.equal(made.status, 0, made.stderr);
+    writer = await open(fifo, "r+");
+    const command = path.join(harness.binDir, "corepack");
+    const original = await readFile(command, "utf8");
+    await writeFile(command, original.replace("exec sleep 300", `( read -r ignored < "${fifo}" ) &\nexit 0`));
+    // The root exits before its child. The owner must not manufacture new
+    // group authority after reaping that original root.
+    harness.runResult("start", "docs");
+    let failedStatus;
+    for (let attempt = 0; attempt < 30; attempt++) {
+      failedStatus = harness.run("status", "docs");
+      if (/^docs\s+unverified\s+-/m.test(failedStatus)) break;
+      await delay(50);
+    }
+    assert.match(failedStatus, /^docs\s+unverified\s+-/m);
+    const identity = path.join(harness.devDir, "pids", "docs.identity.json");
+    const before = await readFile(identity);
+    const failed = harness.runResult("stop", "docs");
+    assert.notEqual(failed.status, 0);
+    assert.match(failed.stderr, /records retained/);
+    assert.deepEqual(await readFile(identity), before);
+    assert.match(harness.run("status", "docs"), /^docs\s+unverified\s+-/m);
+    process.kill(peer.pid, 0);
+    await writer.close();
+    writer = undefined;
+    await delay(100);
+    assert.match(harness.run("stop", "docs"), /docs: stopped/);
+    assert.match(harness.run("status", "docs"), /^docs\s+down\s+-/m);
+  } finally {
+    if (writer) await writer.close().catch(() => {});
+    peer.kill("SIGTERM");
     await harness.cleanup();
   }
 });
