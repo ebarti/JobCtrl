@@ -8,9 +8,18 @@ import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { fetchPublishedReleases, installArgs, interruptReleaseAtCheckpoint, isKnownLegacyRefusal, runForwardInterruptionMatrix, scenario, selectLatestReleasedVersion, selectUpgradeMode, verifyLegacyRefusal } from "./released-upgrade-smoke.mjs";
 
-import { acquisitionChildEnvironment, assertDisposableBrewFixture, cleanupBrewFixture, prepareScopedWorkspace, runPublishedAcquisitionUpgrades } from "./released-acquisition-upgrade.mjs";
+import { acquisitionChildEnvironment, assertDisposableBrewFixture, cleanupBrewFixture, prepareScopedWorkspace, runPublishedAcquisitionUpgrades, selectAcquisitionSourceVersions } from "./released-acquisition-upgrade.mjs";
 
 const published = (version, day, extra = {}) => ({ tag_name: `v${version}`, published_at: `2026-10-${day}T10:00:00Z`, draft: false, prerelease: false, ...extra });
+
+test("the corrected 0.4.0 qualifies both the accidental latest release and legacy 0.3.1", () => {
+  const releases = [published("0.3.1", "19"), published("0.4.2", "31")];
+  assert.deepEqual(selectAcquisitionSourceVersions(releases, "0.4.0"), ["0.4.2", "0.3.1"]);
+  assert.deepEqual(selectAcquisitionSourceVersions([releases[0]], "0.4.0"), ["0.3.1"]);
+  assert.deepEqual(selectAcquisitionSourceVersions(releases, "0.4.3"), ["0.4.2"]);
+  assert.throws(() => selectAcquisitionSourceVersions([releases[1]], "0.4.0"), /requires the published v0\.3\.1/);
+  assert.throws(() => selectAcquisitionSourceVersions([published("0.3.1", "19", { draft: true }), releases[1]], "0.4.0"), /requires the published v0\.3\.1/);
+});
 
 test("Homebrew acquisition fixture refuses existing installs and cleans all of its own versions", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-brew-fixture-"));
@@ -68,6 +77,13 @@ test("the upgrade source advances to the latest published stable release", () =>
   releases.push(published("0.3.2", "20"));
   assert.equal(selectLatestReleasedVersion(releases, "0.3.3"), "0.3.2");
   assert.equal(selectLatestReleasedVersion(releases, "0.3.2"), "0.3.1", "a published-candidate rerun must still exercise its predecessor");
+});
+
+test("a published historical candidate is qualified against its own predecessor", () => {
+  const releases = [published("0.3.0", "18"), published("0.3.1", "19"), published("0.4.2", "31")];
+  assert.equal(selectLatestReleasedVersion(releases, "0.3.1"), "0.3.0");
+  assert.equal(selectLatestReleasedVersion(releases, "0.4.0"), "0.4.2", "an unpublished correction uses the current stable release");
+  assert.throws(() => selectLatestReleasedVersion([...releases, published("0.3.9", "19")], "0.3.1"), /ambiguous/);
 });
 
 test("missing or malformed stable release metadata fails instead of using a historical fallback", () => {

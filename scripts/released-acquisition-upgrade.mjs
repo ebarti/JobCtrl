@@ -17,6 +17,17 @@ import { fetchPublishedReleases, installArgs, isKnownLegacyRefusal, runForwardIn
 import { establishSourceOwnership } from "./released-source-ownership.mjs";
 
 const readJson = async (file) => JSON.parse(await readFile(file, "utf8"));
+
+// The corrective 0.4.0 follows a briefly published 0.4.2, while 0.3.1 remains
+// a public predecessor. Qualify both transitions rather than letting the newer
+// same-schema predecessor hide the documented legacy refusal.
+export function selectAcquisitionSourceVersions(releases, candidateVersion) {
+  const latest = selectLatestReleasedVersion(releases, candidateVersion);
+  if (candidateVersion !== "0.4.0" || latest === "0.3.1") return [latest];
+  const legacy = releases.filter((release) => release.tag_name === "v0.3.1" && release.draft === false && release.prerelease === false);
+  assert.equal(legacy.length, 1, "v0.4.0 requires the published v0.3.1 predecessor for acquisition qualification");
+  return [latest, "0.3.1"];
+}
 const hash = async (file) => {
   const digest = createHash("sha256");
   for await (const chunk of createReadStream(file)) digest.update(chunk);
@@ -450,23 +461,29 @@ export async function runPublishedAcquisitionUpgrades({ releaseDirectory, output
   assert.equal(await hash(candidate.archive), candidate.descriptor.artifact.sha256);
   await chmod(candidate.installer, 0o700);
   const releases = await fetchPublishedReleases(process.env.JOBCTRL_RELEASE_METADATA_TOKEN);
-  const version = selectLatestReleasedVersion(releases, candidate.descriptor.appVersion);
+  const versions = selectAcquisitionSourceVersions(releases, candidate.descriptor.appVersion);
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "jobctrl-acquisition-upgrades-")));
   const env = acquisitionChildEnvironment(process.env);
-  const old = await publishedSource(version, root, trust, env);
-  assert.ok(old.descriptor.sequence < candidate.descriptor.sequence);
   const started = performance.now();
-  const results = [
-    await curlScenario(old, candidate, path.join(root, "curl"), env),
-    await brewScenario(old, candidate, path.join(root, "homebrew"), env, homebrewSource),
-  ];
-  if (isKnownLegacyRefusal(old, candidate, "forward-schema-15")) {
-    results.push(await curlScenario(old, candidate, path.join(root, "curl-scoped"), env, true));
-    results.push(await brewScenario(old, candidate, path.join(root, "homebrew-scoped"), env, homebrewSource, true));
+  const results = [], sourceBuildIds = {};
+  for (const version of versions) {
+    const old = await publishedSource(version, root, trust, env);
+    assert.ok(old.descriptor.sequence < candidate.descriptor.sequence);
+    sourceBuildIds[version] = old.descriptor.buildId;
+    const sourceRoot = path.join(root, `from-${version}`);
+    const scenarios = [
+      await curlScenario(old, candidate, path.join(sourceRoot, "curl"), env),
+      await brewScenario(old, candidate, path.join(sourceRoot, "homebrew"), env, homebrewSource),
+    ];
+    if (isKnownLegacyRefusal(old, candidate, "forward-schema-15")) {
+      scenarios.push(await curlScenario(old, candidate, path.join(sourceRoot, "curl-scoped"), env, true));
+      scenarios.push(await brewScenario(old, candidate, path.join(sourceRoot, "homebrew-scoped"), env, homebrewSource, true));
+    }
+    scenarios.push(await curlAlreadyMigratedScenario(old, candidate, path.join(sourceRoot, "curl-already-migrated"), env));
+    results.push(...scenarios.map((result) => ({ ...result, sourceVersion: version })));
   }
-  results.push(await curlAlreadyMigratedScenario(old, candidate, path.join(root, "curl-already-migrated"), env));
   const status = results.some((result) => result.status === "expected-refusal") ? "qualified-with-legacy-refusal" : "passed";
-  const report = { schemaVersion: 1, status, sourceBuildId: old.descriptor.buildId, candidateBuildId: candidate.descriptor.buildId, elapsedMs: Math.round(performance.now() - started), results };
+  const report = { schemaVersion: 1, status, sourceBuildId: sourceBuildIds[versions[0]], sourceBuildIds, candidateBuildId: candidate.descriptor.buildId, elapsedMs: Math.round(performance.now() - started), results };
   await writeFile(output, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
   return report;
 }

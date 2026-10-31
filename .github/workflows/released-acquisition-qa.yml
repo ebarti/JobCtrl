@@ -71,7 +71,7 @@ jobs:
             found=1
             echo "Rechecking the retained synthetic 0.3.0 payload with the original notarization requirement"
             /usr/bin/codesign --verify --strict --check-notarization -R=notarized --verbose=4 "$binary" || echo "Notarization recheck failed (exit $?)"
-          done < <(find "$RUNNER_TEMP" -type f -path '*/jobctrl-acquisition-upgrades-*/curl/runtime/staging/*/payload/api/node_modules/better-sqlite3/build/Release/better_sqlite3.node' -print0)
+          done < <(find "$RUNNER_TEMP" -type f -path '*/jobctrl-acquisition-upgrades-*/from-*/curl/runtime/staging/*/payload/api/node_modules/better-sqlite3/build/Release/better_sqlite3.node' -print0)
           if [[ "$found" = 0 ]]; then echo "No retained 0.3.0 SQLite binary was available for a notarization recheck"; fi
 
       - name: Retain synthetic upgrade evidence

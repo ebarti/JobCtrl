@@ -43,6 +43,11 @@ on:
         description: Current channel-pointer SHA-256, or absent for the first promotion
         required: true
         type: string
+      resume_pypi:
+        description: Resume only PyPI for an already published, verified stable release
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   actions: read
@@ -59,6 +64,7 @@ concurrency:
 jobs:
   resolve:
     name: Resolve the audited release identity and protected public trust
+    if: ${{ !inputs.resume_pypi }}
     runs-on: ubuntu-24.04
     environment:
       name: release-verification
@@ -1339,7 +1345,7 @@ jobs:
           cd "$RUNNER_TEMP/release"
           shasum -a 256 -c SHA256SUMS
           test -f jobctrl-release-audit.tar && test ! -L jobctrl-release-audit.tar
-          smoke="$RUNNER_TEMP/smoke-evidence/published-candidate-smoke.json"
+          smoke="$RUNNER_TEMP/smoke-evidence/release/published-candidate-smoke.json"
           test -f "$smoke" && test ! -L "$smoke"
 
       - name: Verify asset digests, enforce immutability, and publish
@@ -1376,7 +1382,7 @@ jobs:
           [[ "$main_relation" = ahead || "$main_relation" = identical ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
           candidate="$RUNNER_TEMP/release"
-          smoke="$RUNNER_TEMP/smoke-evidence/published-candidate-smoke.json"
+          smoke="$RUNNER_TEMP/smoke-evidence/release/published-candidate-smoke.json"
           metadata="$candidate/release-metadata.json"
           archive="$(jq -r '.archive.file' "$metadata")"
           assets=(
@@ -1411,7 +1417,11 @@ jobs:
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
           test "$(GH_TOKEN="$ADMIN_READ_TOKEN" gh api -H 'X-GitHub-Api-Version: 2026-03-10' "repos/$GITHUB_REPOSITORY/immutable-releases" --jq '.enabled')" = true
           if [[ "$(jq -r '.isDraft' "$release")" = true ]]; then
-            gh release edit "$RELEASE_TAG" --draft=false
+            if [[ "$RELEASE_CHANNEL" = stable ]]; then
+              gh release edit "$RELEASE_TAG" --draft=false --latest
+            else
+              gh release edit "$RELEASE_TAG" --draft=false
+            fi
           fi
           immutable=false
           for (( attempt = 0; attempt < 10; attempt++ )); do
@@ -1440,10 +1450,65 @@ jobs:
           done
           gh release verify "$RELEASE_TAG"
 
+  resume-pypi-authority:
+    name: Verify the published release authority for PyPI resumption
+    if: ${{ inputs.resume_pypi && inputs.channel == 'stable' }}
+    runs-on: ubuntu-24.04
+    environment:
+      name: release-verification
+      deployment: false
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      original_run_id: ${{ steps.authority.outputs.original_run_id }}
+      source_commit: ${{ steps.authority.outputs.source_commit }}
+      source_date_epoch: ${{ steps.authority.outputs.source_date_epoch }}
+      release_public_key: ${{ steps.authority.outputs.release_public_key }}
+      release_key_id: ${{ steps.authority.outputs.release_key_id }}
+    steps:
+      - name: Check out the audited recovery workflow
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify the original run, immutable release, and current stable pointer
+        id: authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_SEQUENCE: ${{ inputs.sequence }}
+          EXPECTED_CHANNEL_POINTER_SHA256: ${{ inputs.expected_channel_pointer_sha256 }}
+          JOBCTRL_RELEASE_PUBLIC_KEY: ${{ vars.JOBCTRL_RELEASE_PUBLIC_KEY }}
+          JOBCTRL_RELEASE_KEY_ID: ${{ vars.JOBCTRL_RELEASE_KEY_ID }}
+        run: bash scripts/release-resume-pypi.sh
+
+      - name: Download the original smoke evidence
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: jobctrl-smoke-evidence-${{ steps.authority.outputs.original_run_id }}
+          run-id: ${{ steps.authority.outputs.original_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/original-smoke-evidence
+
+      - name: Bind the immutable release to the original smoke evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          smoke="$RUNNER_TEMP/original-smoke-evidence/release/published-candidate-smoke.json"
+          test -f "$smoke" && test ! -L "$smoke"
+          digest="sha256:$(shasum -a 256 "$smoke" | awk '{print $1}')"
+          gh release view "$RELEASE_TAG" --json isImmutable,assets | jq -e --arg digest "$digest" \
+            '.isImmutable == true and ([.assets[] | select(.name == "published-candidate-smoke.json")] | length == 1 and .[0].digest == $digest)' >/dev/null
+
   pypi-resolve:
     name: Verify the immutable signed stable release for PyPI
-    needs: [resolve, publish-github-release]
-    if: ${{ !cancelled() && needs.resolve.result == 'success' && inputs.channel == 'stable' && needs['publish-github-release'].result == 'success' }}
+    needs: [resolve, publish-github-release, resume-pypi-authority]
+    if: ${{ !cancelled() && inputs.channel == 'stable' && ((!inputs.resume_pypi && needs.resolve.result == 'success' && needs['publish-github-release'].result == 'success') || (inputs.resume_pypi && needs['resume-pypi-authority'].result == 'success')) }}
     runs-on: ubuntu-24.04
     outputs:
       source_commit: ${{ steps.identity.outputs.source_commit }}
@@ -1452,15 +1517,15 @@ jobs:
       contents: read
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}
-      EXPECTED_SOURCE_COMMIT: ${{ needs.resolve.outputs.release_ref }}
-      EXPECTED_SOURCE_DATE_EPOCH: ${{ needs.resolve.outputs.source_date_epoch }}
-      EXPECTED_RELEASE_PUBLIC_KEY: ${{ needs.resolve.outputs.release_public_key }}
-      EXPECTED_RELEASE_KEY_ID: ${{ needs.resolve.outputs.release_key_id }}
+      EXPECTED_SOURCE_COMMIT: ${{ inputs.resume_pypi && needs['resume-pypi-authority'].outputs.source_commit || needs.resolve.outputs.release_ref }}
+      EXPECTED_SOURCE_DATE_EPOCH: ${{ inputs.resume_pypi && needs['resume-pypi-authority'].outputs.source_date_epoch || needs.resolve.outputs.source_date_epoch }}
+      EXPECTED_RELEASE_PUBLIC_KEY: ${{ inputs.resume_pypi && needs['resume-pypi-authority'].outputs.release_public_key || needs.resolve.outputs.release_public_key }}
+      EXPECTED_RELEASE_KEY_ID: ${{ inputs.resume_pypi && needs['resume-pypi-authority'].outputs.release_key_id || needs.resolve.outputs.release_key_id }}
     steps:
       - name: Check out the exact audited source without credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.resolve.outputs.release_ref }}
+          ref: ${{ inputs.resume_pypi && needs['resume-pypi-authority'].outputs.source_commit || needs.resolve.outputs.release_ref }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -1496,8 +1561,8 @@ jobs:
       - name: Verify immutable signed release assets before any dependency execution
         env:
           GH_TOKEN: ${{ github.token }}
-          JOBCTRL_RELEASE_PUBLIC_KEY: ${{ needs.resolve.outputs.release_public_key }}
-          JOBCTRL_RELEASE_KEY_ID: ${{ needs.resolve.outputs.release_key_id }}
+          JOBCTRL_RELEASE_PUBLIC_KEY: ${{ inputs.resume_pypi && needs['resume-pypi-authority'].outputs.release_public_key || needs.resolve.outputs.release_public_key }}
+          JOBCTRL_RELEASE_KEY_ID: ${{ inputs.resume_pypi && needs['resume-pypi-authority'].outputs.release_key_id || needs.resolve.outputs.release_key_id }}
         run: |
           set -euo pipefail
           release_dir="$RUNNER_TEMP/jobctrl-release"
@@ -1670,6 +1735,32 @@ jobs:
             cd "$DIST_DIR"
             shasum -a 256 -c SHA256SUMS
           )
+
+      - name: Recheck live stable identity before PyPI resumption
+        if: ${{ inputs.resume_pypi }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_SEQUENCE: ${{ inputs.sequence }}
+          EXPECTED_SOURCE_COMMIT: ${{ needs.pypi-resolve.outputs.source_commit }}
+          EXPECTED_CHANNEL_POINTER_SHA256: ${{ inputs.expected_channel_pointer_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$RELEASE_SEQUENCE" =~ ^[1-9][0-9]*$ ]]
+          [[ "$EXPECTED_SOURCE_COMMIT" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$EXPECTED_CHANNEL_POINTER_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name')" = "$RELEASE_TAG"
+          release="$RUNNER_TEMP/pypi-resume-release.json"
+          gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,isImmutable,targetCommitish,assets > "$release"
+          jq -e --arg sha "$EXPECTED_SOURCE_COMMIT" '.isDraft == false and .isPrerelease == false and .isImmutable == true and .targetCommitish == $sha' "$release" >/dev/null
+          digest="$(jq -er '[.assets[] | select(.name == "channel-pointer.json")] | if length == 1 then .[0].digest else error("missing or duplicate pointer") end' "$release")"
+          test "$digest" = "sha256:$EXPECTED_CHANNEL_POINTER_SHA256"
+          pointer="$RUNNER_TEMP/pypi-resume-live-pointer.json"
+          curl -fsS --max-time 30 https://releases.jobctrl.dev/v1/stable/darwin-arm64.json -o "$pointer"
+          test "$(shasum -a 256 "$pointer" | awk '{print $1}')" = "$EXPECTED_CHANNEL_POINTER_SHA256"
+          jq -e --arg build "${RELEASE_TAG#v}-$EXPECTED_SOURCE_COMMIT-darwin-arm64" --argjson sequence "$RELEASE_SEQUENCE" \
+            '.channel == "stable" and .buildId == $build and .sequence == $sequence' "$pointer" >/dev/null
 
       - name: Publish verified distributions to PyPI
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2

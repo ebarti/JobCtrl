@@ -251,6 +251,10 @@ use the updated formula, while bundled-installer installations use their signed
 release channel. Pulling source changes does not publish an update to installed
 users.
 
+If you installed the briefly published v0.4.2, v0.4.0 is the later corrected
+release. Use `jobctrl update` for the bundled installation or
+`brew upgrade ebarti/tap/jobctrl` for Homebrew; both retain the existing workspace.
+
 A compatible source checkout and installed app use the same workspace, profile,
 resume and Temporal history. Older installed releases have limits: v0.3.1 supports
 schema 14 and expects Temporal history at `$JOBCTRL_DIR/temporal.db`, not the
@@ -260,7 +264,7 @@ beyond what an older installed release understands; update the installed app whe
 a compatible release is published. Source upgrade and recovery details are in
 [Local Development](../local-development.md#schema-migrations-and-source-updates).
 
-**v0.3.1 upgrade limitation:** v0.4.2 cannot automatically upgrade a normally
+**v0.3.1 upgrade limitation:** v0.4.0 cannot automatically upgrade a normally
 used v0.3.1 workspace because the older runtime did not record enough information
 to verify that all of its child processes stopped. The installer refuses before
 migration and preserves the workspace and installation records. There is no

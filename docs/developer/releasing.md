@@ -104,6 +104,12 @@ no existing pointer. Keep downloaded evidence outside the tracked tree and
 refresh this comparison immediately before dispatch. A changed channel requires
 reconciliation, not a blind retry.
 
+When an authorized version correction is numerically lower than the preceding
+Homebrew formula, advance the formula's `version_scheme` and its validation
+contract so Homebrew recognizes it as an upgrade. A stable publication is
+explicitly marked as the latest GitHub Release after its signed channel and
+Homebrew promotion succeed; prereleases are not marked latest.
+
 Dispatch the workflow **on the tag**, with the tag also supplied as its input:
 
 ```bash
@@ -154,6 +160,42 @@ Confirm the account action, recheck the candidate and current channel, then
 resume the existing run when its source is unchanged. Do not rotate credentials
 or bypass notarization to work around an agreement requirement.
 
+### Resume PyPI after a partially completed release
+
+If the GitHub Release is already public and immutable but its original workflow
+failed before PyPI publication, keep the original release tag and signed assets.
+The workflow has a PyPI-only recovery path; it does not build or sign a new app
+candidate, change the stable pointer, or republish Homebrew. First verify the
+original failed run, its successful signing, upgrade, lifecycle, pointer and
+Homebrew jobs, and the current signed stable pointer. The public immutable
+release must still be the latest stable release and match that pointer.
+
+Merge the reviewed recovery workflow to `main`, then create an annotated
+recovery tag on that reviewed commit. `RUN_ID` is the original failed release
+run ID; the recovery tag is an execution reference, not a new app release:
+
+```bash
+git tag -a vVERSION-pypi-resume.RUN_ID REVIEWED_MAIN_SHA -m 'Resume PyPI publication'
+git push origin refs/tags/vVERSION-pypi-resume.RUN_ID
+gh workflow run release-distribution.yml --repo ebarti/JobCtrl \
+  --ref vVERSION-pypi-resume.RUN_ID \
+  -f release_tag=vVERSION -f channel=stable -F resume_pypi=true \
+  -f sequence=CURRENT_SEQUENCE -f minimum_safe_sequence=EXISTING_FLOOR \
+  -f revoked_build_ids='EXISTING_SORTED_JSON_ARRAY' \
+  -f expected_channel_pointer_sha256=CURRENT_POINTER_SHA256
+```
+
+The recovery authority verifies the reviewed recovery ref, original run and
+its successful gates, immutable release attestation, source lineage, protected
+public key and exact live pointer. It also matches the immutable release's smoke
+evidence to the artifact from that original run. The existing PyPI gate then
+independently verifies the signed release, smoke evidence and source. Immediately
+before upload, the protected PyPI job rechecks the latest release and live pointer.
+Preserve the recovery tag and
+both workflow runs as audit evidence. If the pointer moved, an asset differs,
+or PyPI already contains part of the version, stop and reconcile rather than
+overwriting or blindly retrying.
+
 ## Verify what users receive
 
 Wait for the complete workflow, including PyPI, to succeed. Independently read back:
@@ -190,8 +232,9 @@ protocol-1/schema-14 to protocol-2/schema-15 transition, it verifies the old
 controller's refusal, interrupts the signed new installer both before and after
 selector handoff, preserves later application and Temporal WAL writes through
 forward recovery, and checks that cross-protocol rollback is refused. Both cases check
-real service readiness, retained job data and Temporal history. The explicit
-v0.3.1-to-v0.4.0, v0.4.1, and v0.4.2 exceptions report `qualified-with-legacy-refusal`: they verify
+real service readiness, retained job data and Temporal history. When v0.3.1 is
+the latest stable predecessor, the explicit v0.3.1-to-v0.4.0, v0.4.1, and
+v0.4.2 exceptions report `qualified-with-legacy-refusal`: they verify
 that the real installer refuses an untracked legacy runtime, preserves the data
 pair, registry, selector and journal, and that the predecessor can restart in the
 controlled fixture. That result does **not** qualify a direct user upgrade.
@@ -199,8 +242,9 @@ Other version pairs still require their positive upgrade qualification.
 
 The harness resolves that source from GitHub's published stable releases, so the
 source advances automatically after each release. Drafts, prereleases and the
-candidate itself are excluded; a rerun after publication still tests the previous
-release. Its signed descriptor and artifact hashes must verify against protected
+candidate itself are excluded; for a published historical candidate, only
+releases published before it can be predecessors. Ambiguous publication times
+fail the check. Its signed descriptor and artifact hashes must verify against protected
 release trust, and its signed sequence must precede the candidate's.
 
 Historical source schemas, detailed readiness-fault injection, old failed
@@ -235,6 +279,9 @@ given a real source-ownership witness, exercise both signed acquisition paths
 and the interruption matrix. Those fixtures test supported, scoped migrations;
 they are not a recovery method or proof that a normal v0.3.1 installation can
 upgrade. The report records both the refusal and the scoped successes.
+For the corrected v0.4.0 release, this acquisition gate also runs against
+v0.3.1 when the briefly published v0.4.2 is the latest stable predecessor;
+its report identifies each source version separately.
 The signed binary's
 opt-in test checkpoint can only pause its own process in a marked temporary
 fixture; it never changes migration or release admission decisions.
