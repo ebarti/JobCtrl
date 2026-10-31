@@ -191,7 +191,7 @@ def test_workday_storage_uses_frozen_literal_exclusions(
     conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(config, "load_saved_search_settings", lambda: pytest.fail("must use the run snapshot"))
+    monkeypatch.setattr(config, "load_discovery_control_settings", lambda: pytest.fail("must use the run snapshot"))
     employers = {
         "acme": {
             "name": "Acme",

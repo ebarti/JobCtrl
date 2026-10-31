@@ -150,7 +150,7 @@ func migrateHistoricalTransition(ctx launchContext) error {
 	if err := decodeStrictRegular(filepath.Join(ctx.Instance.StateDir, "backups", journal.BackupID, "pair.json"), &pair); err != nil || pair.ID != journal.BackupID || pair.ReleaseReceipt != *journal.Old {
 		return errors.New("historical update pair does not bind the predecessor")
 	}
-	sourceVersion, err := pairedV14SourceSchemaVersion(pair)
+	sourceVersion, err := pairedV15SourceSchemaVersion(pair)
 	if err != nil || sourceVersion != version {
 		return errors.New("historical update live schema differs from its paired backup")
 	}
@@ -177,10 +177,10 @@ func migrateHistoricalTransition(ctx launchContext) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	path, err := buildSealedV14Candidate(ctx, pair, journal.ID)
+	path, err := buildSealedV15Candidate(ctx, pair, journal.ID)
 	if err != nil {
 		return err
 	}
-	defer cleanupV14Candidate(ctx.Instance.StateDir, journal.ID)
-	return installSealedV14Candidate(ctx, path)
+	defer cleanupV15Candidate(ctx.Instance.StateDir, journal.ID)
+	return installSealedV15Candidate(ctx, path)
 }

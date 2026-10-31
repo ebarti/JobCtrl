@@ -316,7 +316,7 @@ def read_artifact_anchors(connection, *, tenant_id, artifact_id, generation, exp
             envelope is None
             or envelope.kind != "claim_verification"
             or envelope.schema_version != "2"
-            or envelope.prompt_version != "claim-verification-v2"
+            or envelope.prompt_version not in ClaimVerification.compatible_prompt_versions
         ):
             raise DeterminationFailure("artifact_binding_invalid")
         if envelope.entity_id != expected_job_id:

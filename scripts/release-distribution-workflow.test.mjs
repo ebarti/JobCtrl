@@ -48,6 +48,109 @@ function assertShellSyntax(label, source) {
   assert.equal(result.status, 0, `${label}: ${result.stderr}`);
 }
 
+test("notarization diagnostics find synthetic payloads under the operating system temporary directory", async (context) => {
+  const { mkdir } = await import("node:fs/promises");
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-notary-diagnostics-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const fixtureTemp = path.join(root, "system-temp"), runnerTemp = path.join(root, "runner-temp");
+  await mkdir(fixtureTemp);
+  await mkdir(runnerTemp);
+  for (const [url, job, step, relative, message] of [
+    [new URL("../.github/workflows/released-acquisition-qa.yml", import.meta.url), "published-upgrade", "Diagnose retained historical notarization failure", "jobctrl-acquisition-upgrades-fixture/from-0.3.0/curl/runtime/staging/digest", "Rechecking the retained synthetic"],
+    [workflowUrl, "verify-released-upgrades", "Diagnose a retained predecessor notarization failure", "jobctrl-released-upgrades-fixture/latest-stable/runtime/staging/digest", "Rechecking the retained predecessor"],
+  ]) {
+    const binary = path.join(fixtureTemp, relative, "payload/api/node_modules/better-sqlite3/build/Release/better_sqlite3.node");
+    await mkdir(path.dirname(binary), { recursive: true });
+    await writeFile(binary, "synthetic");
+    const run = stepRun(loadYaml(url), job, step);
+    const result = spawnSync("/bin/bash", ["-c", run], {
+      encoding: "utf8", env: { ...process.env, TMPDIR: fixtureTemp, RUNNER_TEMP: runnerTemp },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(result.stdout.includes(message), `${step} did not find its retained fixture: ${result.stdout}`);
+    assert.doesNotMatch(result.stdout, /No retained .* SQLite binary/);
+  }
+});
+
+test("release lineage gates reject non-ancestor commits under the system shell", () => {
+  const workflow = loadYaml(workflowUrl);
+  const guards = [];
+  for (const [jobName, job] of Object.entries(workflow.jobs)) {
+    for (const step of job.steps ?? []) {
+      const lines = (step.run ?? "").split("\n");
+      for (let index = 0; index < lines.length; index += 1) {
+        if (/^\s*main_relation=/.test(lines[index])) {
+          const guard = lines
+            .slice(index + 1)
+            .find((line) => line.includes("$main_relation"))
+            ?.trim();
+          assert.ok(guard, `${jobName}: missing main lineage guard`);
+          guards.push({ jobName, guard });
+        }
+      }
+    }
+  }
+  assert.ok(guards.length > 0, "release workflow must check main lineage");
+  const shell = process.platform === "darwin" ? "/bin/bash" : "bash";
+  for (const { jobName, guard } of guards) {
+    for (const [relation, accepted] of [
+      ["ahead", true], ["identical", true], ["diverged", false],
+      ["behind", false], ["unknown", false], ["", false],
+    ]) {
+      const result = spawnSync(
+        shell,
+        ["-c", `set -euo pipefail\nmain_relation=$1\n${guard}\nprintf accepted`, "release-lineage-test", relation],
+        { encoding: "utf8", env: { ...process.env, BASH_ENV: "" } },
+      );
+      assert.equal(result.status === 0, accepted, `${jobName}: ${JSON.stringify(relation)}: ${result.stderr}`);
+      assert.equal(result.stdout === "accepted", accepted, `${jobName}: unexpected continuation for ${JSON.stringify(relation)}`);
+    }
+  }
+});
+
+test("release workflow input validation fails closed under the system shell", () => {
+  const workflow = loadYaml(workflowUrl);
+  const samples = {
+    JOBCTRL_RELEASE_KEY_ID: ["fixture-key", "invalid key"],
+    R2_ACCOUNT_ID: ["a".repeat(32), "invalid"],
+    R2_BUCKET: ["jobctrl-release", "invalid_bucket"],
+    GITHUB_RUN_ID: ["123", "invalid"],
+    GITHUB_RUN_ATTEMPT: ["1", "invalid"],
+    RELEASE_TAG: ["v0.4.0", "invalid"],
+    RELEASE_SEQUENCE: ["14", "0"],
+    EXPECTED_SOURCE_COMMIT: ["a".repeat(40), "invalid"],
+    EXPECTED_CHANNEL_POINTER_SHA256: ["a".repeat(64), "invalid"],
+  };
+  const shell = process.platform === "darwin" ? "/bin/bash" : "bash";
+  let count = 0;
+  for (const [jobName, job] of Object.entries(workflow.jobs)) {
+    for (const step of job.steps ?? []) {
+      assert.doesNotMatch(
+        step.run ?? "",
+        /^\s*\[\[.*\]\]\s*$/m,
+        `${jobName}: a bare Bash assertion may not stop the system shell`,
+      );
+      for (const line of (step.run ?? "").split("\n")) {
+        const match = line.match(/^\s*\[\[\s*"\$([A-Z0-9_]+)"\s*=~/);
+        if (!match) continue;
+        const name = match[1];
+        assert.ok(samples[name], `${jobName}: add validation samples for ${name}`);
+        count += 1;
+        for (const [value, accepted] of [[samples[name][0], true], [samples[name][1], false]]) {
+          const result = spawnSync(
+            shell,
+            ["-c", `set -euo pipefail\n${name}=$1\n${line.trim()}\nprintf accepted`, "release-input-test", value],
+            { encoding: "utf8", env: { ...process.env, BASH_ENV: "" } },
+          );
+          assert.equal(result.status === 0, accepted, `${jobName}: ${name}=${JSON.stringify(value)}: ${result.stderr}`);
+          assert.equal(result.stdout === "accepted", accepted, `${jobName}: unexpected continuation for ${name}`);
+        }
+      }
+    }
+  }
+  assert.ok(count > 0, "release workflow must validate its inputs");
+});
+
 test("release workflow binds creation, reuse, and final readback to curated notes", async () => {
   const source = await readFile(workflowUrl, "utf8");
   const workflow = loadYaml(workflowUrl);
@@ -231,6 +334,29 @@ test("draft and final publication reject mismatched, absent, and duplicate asset
   assert.ok(publish.indexOf("gh release verify-asset") > publish.indexOf('test "$immutable" = true'));
 });
 
+test("stable promotion waits for real released curl and Homebrew upgrade evidence", () => {
+  const workflow = loadYaml(workflowUrl);
+  const smoke = workflow.jobs["smoke-and-verify"];
+  const names = smoke.steps.map((step) => step.name);
+  const name = "Qualify upgrades through the released curl and Homebrew acquisition paths";
+  const qualification = smoke.steps.find((step) => step.name === name);
+  assert.ok(qualification);
+  assert.equal(qualification.if, "${{ inputs.channel == 'stable' }}");
+  assert.ok(names.indexOf(name) > names.indexOf("Verify the signer-rendered stable formula and write smoke evidence"));
+  assert.ok(names.indexOf(name) < names.indexOf("Seal the smoke-tested formula"));
+  assert.match(qualification.run, /node scripts\/released-acquisition-upgrade\.mjs/);
+  assert.match(qualification.run, /released-acquisition-upgrade\.json/);
+  const sourceBuild = "Build the source ownership fixture controller";
+  assert.ok(names.indexOf(sourceBuild) > names.indexOf("Reassert the audited source without write authority"));
+  assert.ok(names.indexOf(sourceBuild) < names.indexOf(name));
+  assert.match(smoke.steps.find((step) => step.name === sourceBuild).run, /go -C launcher build .*\.\/cmd\/jobctrl-source/);
+  assert.equal(qualification.env.JOBCTRL_RELEASE_QA_SOURCE_BINARY, "${{ runner.temp }}/jobctrl-source-qa");
+  assert.doesNotMatch(qualification.run, /--homebrew-source/, "the release must test a genuine Homebrew-to-Homebrew upgrade");
+  assert.ok(workflow.jobs["promote-channel-pointer"].needs.includes("smoke-and-verify"));
+  assert.match(workflow.jobs["promote-channel-pointer"].if, /needs\['smoke-and-verify'\]\.result == 'success'/);
+  assert.match(smoke.steps.find((step) => step.name === "Upload only credential-free smoke and promotion evidence").with.path, /released-acquisition-upgrade\.json/);
+});
+
 test("Homebrew publishes only the signer-bound formula after its credential-free lifecycle passes", async (context) => {
   const workflow = loadYaml(workflowUrl);
   assert.equal(workflow.jobs["sync-homebrew"], undefined);
@@ -258,6 +384,170 @@ test("Homebrew publishes only the signer-bound formula after its credential-free
   assert.notEqual(check().status, 0);
 });
 
+test("Homebrew lifecycle isolates and trusts only its disposable formula", async (context) => {
+  const workflow = loadYaml(workflowUrl);
+  const step = workflow.jobs["smoke-and-verify"].steps.find(
+    (candidate) => candidate.name === "Audit, install, test, and run the rendered formula lifecycle",
+  );
+  assert.ok(step);
+  assertShellSyntax(step.name, step.run);
+  assert.equal(step.env.XDG_CONFIG_HOME, "${{ runner.temp }}/homebrew-smoke-config");
+  assert.match(step.run, /test "\$\{RUNNER_ENVIRONMENT:-\}" = github-hosted/);
+  assert.match(step.run, /test ! -e "\$formula_bin"/);
+  assert.match(step.run, /test ! -e "\$\(brew --cellar\)\/jobctrl"/);
+  const trap = step.run.indexOf("trap cleanup EXIT");
+  const trust = step.run.indexOf('brew trust --formula "$formula"');
+  const audit = step.run.indexOf('brew audit --strict --formula "$formula"');
+  const untrust = step.run.indexOf('brew untrust --formula "$formula"');
+  const untap = step.run.indexOf('brew untap "$tap_name"');
+  assert.ok(trap >= 0 && trust > trap && audit > trust, "install the cleanup trap and trust the exact formula before auditing it");
+  assert.ok(untrust >= 0 && untap > untrust, "remove the temporary formula trust before removing its tap");
+  assert.doesNotMatch(step.run, /HOMEBREW_NO_REQUIRE_TAP_TRUST/, "the check must not disable Homebrew trust globally");
+
+  const { chmod, mkdir, symlink } = await import("node:fs/promises");
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-formula-guard-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const bin = path.join(root, "bin"), prefix = path.join(root, "prefix"), calls = path.join(root, "calls");
+  await mkdir(bin);
+  await mkdir(path.join(prefix, "bin"), { recursive: true });
+  await mkdir(path.join(prefix, "Cellar"), { recursive: true });
+  await writeFile(calls, "");
+  const brew = path.join(bin, "brew");
+  await writeFile(brew, '#!/bin/bash\ncase "$1" in\n  --prefix) echo "$TASK_BREW_PREFIX" ;;\n  --cellar) echo "$TASK_BREW_PREFIX/Cellar" ;;\n  *) echo "$1" >> "$TASK_BREW_CALLS"; exit 55 ;;\nesac\n');
+  await chmod(brew, 0o755);
+  const run = (runnerEnvironment) => spawnSync("bash", ["-c", step.run], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, RUNNER_TEMP: root, RUNNER_ENVIRONMENT: runnerEnvironment, GITHUB_RUN_ID: "123", TASK_BREW_PREFIX: prefix, TASK_BREW_CALLS: calls },
+  });
+  assert.notEqual(run("self-hosted").status, 0, "refuse a non-disposable runner");
+  const installed = path.join(prefix, "bin", "jobctrl");
+  await writeFile(installed, "preserve");
+  assert.notEqual(run("github-hosted").status, 0, "refuse an existing executable");
+  assert.equal(await readFile(installed, "utf8"), "preserve");
+  await rm(installed);
+  await symlink(path.join(root, "missing"), installed);
+  assert.notEqual(run("github-hosted").status, 0, "refuse a dangling executable symlink");
+  await rm(installed);
+  await mkdir(path.join(prefix, "Cellar", "jobctrl"));
+  assert.notEqual(run("github-hosted").status, 0, "refuse an existing cellar");
+  assert.equal(await readFile(calls, "utf8"), "", "no mutation may occur before all guards pass");
+});
+
+test("final publication reads the smoke evidence from the uploaded artifact layout", async (context) => {
+  const { mkdir, rename, symlink } = await import("node:fs/promises");
+  const workflow = loadYaml(workflowUrl);
+  const upload = workflow.jobs["smoke-and-verify"].steps.find(
+    (step) => step.name === "Upload only credential-free smoke and promotion evidence",
+  );
+  assert.match(upload.with.path, /runner\.temp }}\/release\/published-candidate-smoke\.json/);
+  assert.match(upload.with.path, /runner\.temp }}\/released-acquisition-upgrade\.json/);
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-smoke-layout-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, "release"), { recursive: true });
+  await mkdir(path.join(root, "smoke-evidence", "release"), { recursive: true });
+  const candidate = "signed fixture\n";
+  await writeFile(path.join(root, "release", "candidate"), candidate);
+  await writeFile(path.join(root, "release", "SHA256SUMS"), `${sha256(candidate)}  candidate\n`);
+  await writeFile(path.join(root, "release", "jobctrl-release-audit.tar"), "audit fixture\n");
+  const smoke = path.join(root, "smoke-evidence", "release", "published-candidate-smoke.json");
+  await writeFile(smoke, "{}\n");
+  const run = stepRun(workflow, "publish-github-release", "Verify the signer/package closure and separate smoke evidence");
+  const check = () => spawnSync("bash", ["-c", run], { encoding: "utf8", env: { ...process.env, RUNNER_TEMP: root } });
+  assert.equal(check().status, 0, "accept the actual downloaded artifact layout");
+  await rename(smoke, path.join(root, "smoke-evidence", "published-candidate-smoke.json"));
+  assert.notEqual(check().status, 0, "a root-only file does not satisfy the artifact contract");
+  await symlink(path.join(root, "smoke-evidence", "published-candidate-smoke.json"), smoke);
+  assert.notEqual(check().status, 0, "refuse a linked evidence file");
+});
+
+test("PyPI resumption keeps normal signing and publication gates separate", () => {
+  const workflow = loadYaml(workflowUrl);
+  const dispatch = (workflow.on ?? workflow.true).workflow_dispatch;
+  assert.deepEqual(dispatch.inputs.resume_pypi, {
+    description: "Resume only PyPI for an already published, verified stable release",
+    required: false,
+    default: false,
+    type: "boolean",
+  });
+  assert.equal(workflow.jobs.resolve.if, "${{ !inputs.resume_pypi }}");
+  const authority = workflow.jobs["resume-pypi-authority"];
+  assert.equal(authority.if, "${{ inputs.resume_pypi && inputs.channel == 'stable' }}");
+  assert.deepEqual(authority.permissions, { actions: "read", contents: "read" });
+  assert.equal(authority.steps.find((step) => step.id === "authority").run, "bash scripts/release-resume-pypi.sh");
+  const download = authority.steps.find((step) => step.name === "Download the original smoke evidence");
+  assert.equal(download.with["run-id"], "${{ steps.authority.outputs.original_run_id }}");
+  assert.equal(download.with.name, "jobctrl-smoke-evidence-${{ steps.authority.outputs.original_run_id }}");
+  const gate = workflow.jobs["pypi-resolve"];
+  assert.deepEqual(new Set(gate.needs), new Set(["resolve", "publish-github-release", "resume-pypi-authority"]));
+  assert.match(gate.if, /!inputs\.resume_pypi.*publish-github-release.*success/);
+  assert.match(gate.if, /inputs\.resume_pypi.*resume-pypi-authority.*success/);
+  assert.equal(workflow.jobs["publish-pypi"].environment.name, "pypi");
+  assert.equal(workflow.jobs["publish-pypi"].permissions["id-token"], "write");
+});
+
+test("PyPI recovery binds the immutable release to the original run's smoke evidence", async (context) => {
+  const { chmod, mkdir } = await import("node:fs/promises");
+  const workflow = loadYaml(workflowUrl);
+  const run = stepRun(workflow, "resume-pypi-authority", "Bind the immutable release to the original smoke evidence");
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-pypi-smoke-binding-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, "original-smoke-evidence", "release"), { recursive: true });
+  await mkdir(path.join(root, "bin"));
+  const smoke = path.join(root, "original-smoke-evidence", "release", "published-candidate-smoke.json");
+  const bytes = '{"status":"passed"}\n';
+  await writeFile(smoke, bytes);
+  const gh = path.join(root, "bin", "gh");
+  await writeFile(gh, `#!${process.execPath}\nprocess.stdout.write(JSON.stringify({isImmutable: process.env.TASK_IMMUTABLE === 'true', assets: [{name: 'published-candidate-smoke.json', digest: process.env.TASK_SMOKE_DIGEST}]}));\n`);
+  await chmod(gh, 0o755);
+  const check = (immutable = "true") => spawnSync("bash", ["-c", run], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: `${path.join(root, "bin")}:${process.env.PATH}`, RUNNER_TEMP: root, RELEASE_TAG: "v0.3.5", TASK_IMMUTABLE: immutable, TASK_SMOKE_DIGEST: `sha256:${sha256(bytes)}` },
+  });
+  assert.equal(check().status, 0);
+  assert.notEqual(check("false").status, 0, "a mutable release cannot authorize PyPI");
+  await writeFile(smoke, '{"status":"altered"}\n');
+  assert.notEqual(check().status, 0, "different original evidence cannot authorize PyPI");
+});
+
+test("PyPI recovery refuses a release or pointer that changed before upload", async (context) => {
+  const { chmod, mkdir } = await import("node:fs/promises");
+  const workflow = loadYaml(workflowUrl);
+  const step = workflow.jobs["publish-pypi"].steps.find((candidate) => candidate.name === "Recheck live stable identity before PyPI resumption");
+  assert.equal(step.if, "${{ inputs.resume_pypi }}");
+  assertShellSyntax(step.name, step.run);
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-pypi-final-authority-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, "bin"));
+  const gh = path.join(root, "bin", "gh"), curl = path.join(root, "bin", "curl");
+  await writeFile(gh, `#!${process.execPath}\nconst s=JSON.parse(require('node:fs').readFileSync(process.env.TASK_STATE,'utf8')); const a=process.argv.slice(2); if(a[0]==='api') process.stdout.write(s.latest); else if(a[0]==='release' && a[1]==='view') process.stdout.write(JSON.stringify(s.release)); else process.exit(3);\n`);
+  await writeFile(curl, `#!${process.execPath}\nconst fs=require('node:fs'); const s=JSON.parse(fs.readFileSync(process.env.TASK_STATE,'utf8')); const a=process.argv.slice(2); if(!a.includes('https://releases.jobctrl.dev/v1/stable/darwin-arm64.json')) process.exit(4); fs.writeFileSync(a[a.indexOf('-o')+1],s.pointer);\n`);
+  await chmod(gh, 0o755);
+  await chmod(curl, 0o755);
+  const source = "a".repeat(40);
+  const pointer = `${JSON.stringify({ channel: "stable", sequence: 13, buildId: `0.3.5-${source}-darwin-arm64` })}\n`;
+  const baseline = { latest: "v0.3.5", pointer, release: { isDraft: false, isPrerelease: false, isImmutable: true, targetCommitish: source, assets: [{ name: "channel-pointer.json", digest: `sha256:${sha256(pointer)}` }] } };
+  const cases = [
+    ["current", () => {}, true],
+    ["new latest release", (s) => { s.latest = "v0.5.0"; }, false],
+    ["changed live pointer", (s) => { s.pointer += " "; }, false],
+    ["mutable release", (s) => { s.release.isImmutable = false; }, false],
+    ["wrong source", (s) => { s.release.targetCommitish = "b".repeat(40); }, false],
+  ];
+  for (const [label, mutate, accepted] of cases) {
+    const state = structuredClone(baseline);
+    mutate(state);
+    const dir = path.join(root, label.replaceAll(" ", "-"));
+    await mkdir(dir);
+    const statePath = path.join(dir, "state.json");
+    await writeFile(statePath, JSON.stringify(state));
+    const result = spawnSync("bash", ["-c", step.run], {
+      encoding: "utf8", timeout: 10000,
+      env: { ...process.env, PATH: `${path.join(root, "bin")}:${process.env.PATH}`, TASK_STATE: statePath, RUNNER_TEMP: dir, GITHUB_REPOSITORY: "fixture/repo", RELEASE_TAG: "v0.3.5", RELEASE_SEQUENCE: "13", EXPECTED_SOURCE_COMMIT: source, EXPECTED_CHANNEL_POINTER_SHA256: sha256(pointer) },
+    });
+    assert.equal(result.status === 0, accepted, `${label}: ${result.stderr}`);
+  }
+});
+
 test("final publication shell accepts exact and immutable reruns and refuses altered drafts before publishing", async (context) => {
   const { mkdir, chmod } = await import("node:fs/promises");
   const workflow = loadYaml(workflowUrl);
@@ -267,9 +557,9 @@ test("final publication shell accepts exact and immutable reruns and refuses alt
   const names = ["jobctrl-fixture-darwin-arm64.zip", "jobctrl-installer", "install.sh", "release-descriptor.json", "release-descriptor.json.sig", "channel-pointer.json", "manifest.json", "manifest.sig", "release-keys.json", "release-metadata.json", "SHA256SUMS", "jobctrl-release-audit.tar"];
   const notes = "# Fixture release\n\nTest publication only.\n";
   const ref = "a".repeat(40);
-  for (const scenario of ["new", "immutable rerun", "wrong digest", "missing digest", "missing asset", "unexpected asset"]) {
+  for (const scenario of ["new", "prerelease new", "immutable rerun", "wrong digest", "missing digest", "missing asset", "unexpected asset"]) {
     const root = path.join(temporary, scenario);
-    for (const directory of ["release", "release-notes", "smoke-evidence", "bin"]) await mkdir(path.join(root, directory), { recursive: true });
+    for (const directory of ["release", "release-notes", "smoke-evidence/release", "bin"]) await mkdir(path.join(root, directory), { recursive: true });
     const assets = [];
     for (const name of names) {
       const bytes = name === "release-metadata.json" ? JSON.stringify({ archive: { file: names[0] } }) : `fixture ${name}\n`;
@@ -277,7 +567,7 @@ test("final publication shell accepts exact and immutable reruns and refuses alt
       assets.push({ name, digest: `sha256:${sha256(bytes)}` });
     }
     const smoke = "{}\n";
-    await writeFile(path.join(root, "smoke-evidence", "published-candidate-smoke.json"), smoke);
+    await writeFile(path.join(root, "smoke-evidence", "release", "published-candidate-smoke.json"), smoke);
     await writeFile(path.join(root, "release-notes", "v0.2.1.md"), notes);
     if (scenario === "wrong digest") assets[0].digest = `sha256:${"0".repeat(64)}`;
     if (scenario === "missing digest") delete assets[0].digest;
@@ -287,7 +577,7 @@ test("final publication shell accepts exact and immutable reruns and refuses alt
       assets.push({ name: "published-candidate-smoke.json", digest: `sha256:${sha256(smoke)}` });
       await writeFile(path.join(root, "published"), "yes");
     }
-    await writeFile(path.join(root, "remote.json"), JSON.stringify({ targetCommitish: ref, isPrerelease: false, body: notes, assets }));
+    await writeFile(path.join(root, "remote.json"), JSON.stringify({ targetCommitish: ref, isPrerelease: scenario === "prerelease new", body: notes, assets }));
     const gh = path.join(root, "bin", "gh");
     await writeFile(gh, `#!${process.execPath}
 const fs = require('node:fs');
@@ -321,12 +611,14 @@ if (args[0] === 'api') {
     await chmod(gh, 0o755);
     const result = spawnSync("bash", ["-c", run], {
       encoding: "utf8", timeout: 10000,
-      env: { ...process.env, PATH: `${path.join(root, "bin")}:${process.env.PATH}`, RUNNER_TEMP: root, RELEASE_REF: ref, RELEASE_TAG: "v0.2.1", RELEASE_CHANNEL: "stable", EXPECTED_RELEASE_NOTES_SHA256: sha256(notes), GITHUB_REPOSITORY: "fixture/release", ADMIN_READ_TOKEN: "fixture" },
+      env: { ...process.env, PATH: `${path.join(root, "bin")}:${process.env.PATH}`, RUNNER_TEMP: root, RELEASE_REF: ref, RELEASE_TAG: "v0.2.1", RELEASE_CHANNEL: scenario === "prerelease new" ? "prerelease" : "stable", EXPECTED_RELEASE_NOTES_SHA256: sha256(notes), GITHUB_REPOSITORY: "fixture/release", ADMIN_READ_TOKEN: "fixture" },
     });
-    const accepted = scenario === "new" || scenario === "immutable rerun";
+    const accepted = scenario === "new" || scenario === "prerelease new" || scenario === "immutable rerun";
     assert.equal(result.status === 0, accepted, `${scenario}: ${result.stderr}`);
     const calls = (await readFile(path.join(root, "calls.jsonl"), "utf8")).trim().split("\n").map(JSON.parse);
-    assert.equal(calls.some(args => args[1] === "edit"), scenario === "new", scenario);
+    const edit = calls.find(args => args[1] === "edit");
+    assert.equal(Boolean(edit), scenario === "new" || scenario === "prerelease new", scenario);
+    if (edit) assert.equal(edit.includes("--latest"), scenario === "new", scenario);
     assert.equal(calls.filter(args => args[1] === "verify-asset").length, accepted ? names.length + 1 : 0, scenario);
     assert.equal(calls.some(args => args[1] === "download"), false);
   }

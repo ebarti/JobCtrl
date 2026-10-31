@@ -100,7 +100,7 @@ def test_tailor_stage_fails_pipeline_when_quality_gate_fails(monkeypatch):
         lambda **_kwargs: {"approved": 0, "failed": 2, "errors": 0, "elapsed": 0.1},
     )
 
-    with pytest.raises(runner.LlmTransientError, match="2 tailored resume"):
+    with pytest.raises(runner.MaterialRejectedError, match="2 tailored resume"):
         runner._run_tailor()
 
 
@@ -112,6 +112,17 @@ def test_tailor_stage_errors_pipeline_when_tailoring_errors(monkeypatch):
 
     with pytest.raises(runner.LlmTransientError, match="1 tailoring error"):
         runner._run_tailor()
+
+
+@pytest.mark.parametrize("status,expected", [
+    ("failed_validation", runner.MaterialRejectedError), ("error", runner.LlmTransientError),
+])
+def test_cover_stage_preserves_content_and_provider_failure_classification(monkeypatch, status, expected):
+    monkeypatch.setattr(runner, "get_connection", lambda: None)
+    monkeypatch.setattr("jobctrl.database.get_jobs_by_stage", lambda **_kwargs: [{"url": "https://example.com/job"}])
+    monkeypatch.setattr("jobctrl.scoring.cover_letter.cover_letter_by_url", lambda *_args, **_kwargs: {"status": status})
+    with pytest.raises(expected):
+        runner._run_cover()
 
 
 def test_discover_source_progress_does_not_round_active_work_to_zero():
@@ -148,6 +159,7 @@ def test_smart_extract_sites_infer_search_type_from_query_placeholder() -> None:
 
     assert runner._smart_extract_sites((source,)) == [
         {
+            "source_id": source.source_id,
             "name": "WelcomeToTheJungle",
             "url": "https://www.welcometothejungle.com/en/jobs?query={query_encoded}",
             "type": "search",

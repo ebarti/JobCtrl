@@ -1,4 +1,5 @@
 import { act } from "react";
+import { waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
@@ -29,7 +30,7 @@ describe("useResetStaleScoresForRescoreMutation", () => {
       ok: true as const,
       count: 1,
       jobKeys: ["job-stale"],
-      nextAction: "jobctrl run score --rescore",
+      nextAction: "jobctrl score --rescore",
     };
     const resetStaleScoresForRescore = vi.fn(async () => response);
     const { result } = renderHookWithProviders(() => useResetStaleScoresForRescoreMutation(), {
@@ -46,18 +47,31 @@ describe("useResetStaleScoresForRescoreMutation", () => {
     });
   });
 
-  it("optimistically clears stale metadata and rolls back on API failure", async () => {
-    const resetStaleScoresForRescore = vi.fn(async () => {
-      throw new Error("network down");
-    });
+  it("keeps the accepted score and stage unchanged while a reset is pending or fails", async () => {
+    let rejectRequest!: (error: Error) => void;
+    const resetStaleScoresForRescore = vi.fn(() => new Promise<never>((_resolve, reject) => {
+      rejectRequest = reject;
+    }));
     const { result, queryClient } = renderHookWithProviders(() => useResetStaleScoresForRescoreMutation(), {
       ports: buildTestPorts({ api: { resetStaleScoresForRescore } }),
     });
     queryClient.setQueryData(jobsKeys.detail(LOCAL_TENANT, "job-stale"), makeJobDetail(staleJob));
     queryClient.setQueryData(jobsKeys.lists(LOCAL_TENANT), makeJobsPage([staleJob]));
 
+    let request!: Promise<unknown>;
     await act(async () => {
-      await expect(result.current.mutateAsync({ jobKeys: ["job-stale"] })).rejects.toThrow("network down");
+      request = result.current.mutateAsync({ jobKeys: ["job-stale"] });
+      await waitFor(() => expect(resetStaleScoresForRescore).toHaveBeenCalled());
+    });
+
+    const pendingDetail = queryClient.getQueryData<ReturnType<typeof makeJobDetail>>(
+      jobsKeys.detail(LOCAL_TENANT, "job-stale"),
+    );
+    expect(pendingDetail?.job.currentState).toBe("stale");
+    expect(pendingDetail?.job.scoreStaleness).toEqual(staleJob.scoreStaleness);
+    await act(async () => {
+      rejectRequest(new Error("network down"));
+      await expect(request).rejects.toThrow("network down");
     });
 
     const detail = queryClient.getQueryData<ReturnType<typeof makeJobDetail>>(
@@ -67,12 +81,12 @@ describe("useResetStaleScoresForRescoreMutation", () => {
     expect(detail?.job.currentState).toBe("stale");
   });
 
-  it("optimistically moves stale Discover rows back to pending while preserving the product stage", async () => {
+  it("does not guess a stage change before the server returns its selected cohort", async () => {
     const response = {
       ok: true as const,
       count: 1,
       jobKeys: ["job-stale"],
-      nextAction: "jobctrl run score --rescore",
+      nextAction: "jobctrl score --rescore",
     };
     const resetStaleScoresForRescore = vi.fn(async () => response);
     const { result, queryClient } = renderHookWithProviders(() => useResetStaleScoresForRescoreMutation(), {
@@ -88,7 +102,7 @@ describe("useResetStaleScoresForRescoreMutation", () => {
       jobsKeys.detail(LOCAL_TENANT, "job-stale"),
     );
     expect(detail?.job.currentStage).toBe("discover");
-    expect(detail?.job.currentState).toBe("pending");
-    expect(detail?.job.scoreStaleness.isStale).toBe(false);
+    expect(detail?.job.currentState).toBe("stale");
+    expect(detail?.job.scoreStaleness).toEqual(staleJob.scoreStaleness);
   });
 });

@@ -540,6 +540,13 @@ truthfulness-gate outcome) and `<DraftClaimProvenanceList>` (claim → fact
 bindings), and the full **generation history** so a re-draft never hides a prior
 generation (INV-5). Approve stays disabled until the gates pass; editing opens the
 `revise-draft-form`, which submits a new generation that re-runs the gates.
+The revision mutation checks the worker's publication identity against the target
+thread and the matching submitted draft in its readback. A historical text match
+alone does not confirm the operation. If the acknowledgement is missing,
+malformed, times out or returns a server error, the recipient/job-owned editor retains
+submitted versions and later typing, exposes the unknown outcome, and requires
+a deliberate thread-history review before another submission. The earlier
+request can still complete after a read; no mutation is replayed automatically.
 **Copy-to-send goes through the `ClipboardPort`** (`usePorts().clipboard`, via
 `<CopyDraftButton>`, enabled only for an approved draft) — a user-initiated
 clipboard write, never `navigator.clipboard` directly and never a network send.

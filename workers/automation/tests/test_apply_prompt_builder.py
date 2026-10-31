@@ -324,7 +324,7 @@ def test_default_mcp_config_includes_only_inspection_connectors(monkeypatch) -> 
     apply_tools = config["mcpServers"]["apply_tools"]
     assert apply_tools["command"] == sys.executable
     assert apply_tools["args"] == ["-m", "jobctrl.infrastructure.apply_tools.mcp_server"]
-    assert apply_tools["env"]["JOBCTRL_APPLY_CDP_ENDPOINT"] == "http://localhost:9222"
+    assert apply_tools["env"]["JOBCTRL_APPLY_CDP_ENDPOINT"] == "http://127.0.0.1:9222"
     assert apply_tools["env"]["JOBCTRL_APPLY_APPROVED_APPLICATION_URL"] == "https://apply.example.com/job"
     assert apply_tools["env"]["JOBCTRL_APPLY_UPLOAD_DIR"] == "/tmp/worker-0"
     assert "JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS" not in apply_tools["env"]
@@ -450,7 +450,7 @@ def test_bundled_mcp_config_uses_only_signed_payload_commands(
     playwright = config["mcpServers"]["playwright"]
     assert playwright["command"] == str(wrapper.resolve())
     assert playwright["args"] == [
-        "--cdp-endpoint=http://localhost:9222",
+        "--cdp-endpoint=http://127.0.0.1:9222",
         f"--viewport-size={jobctrl_config.DEFAULTS['viewport']}",
     ]
     for name, module in (("apply_tools", "jobctrl.infrastructure.apply_tools.mcp_server"),):

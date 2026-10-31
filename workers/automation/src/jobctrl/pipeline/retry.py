@@ -34,6 +34,7 @@ def reset_retry_stages(
     tenant_id: TenantId = LOCAL_TENANT,
     reset_attempts: bool = False,
     only_failed: bool = False,
+    _allow_apply_only: bool = False,
 ) -> list[dict[str, str]]:
     """Reset one Enrich job or an API bulk cohort containing Enrich atomically.
 
@@ -45,7 +46,9 @@ def reset_retry_stages(
         return []
     if any(stage not in STAGE_ORDER for _, stage in targets):
         raise ValueError("unknown retry stage")
-    if not any(stage == "enrich" for _, stage in targets):
+    if not any(stage == "enrich" for _, stage in targets) and not (
+        _allow_apply_only and all(stage == "apply" for _, stage in targets)
+    ):
         raise ValueError("this reset service requires an enrichment target")
 
     owned = not conn.in_transaction
@@ -72,6 +75,11 @@ def reset_retry_stages(
             ).fetchone()
             if only_failed and (row is None or row[0] not in {"failed", "exhausted"}):
                 raise ValueError("retry target changed; refresh and retry")
+            release_payload = {}
+            if stage == "apply":
+                from jobctrl.infrastructure.apply_controls import explicit_apply_reset_payload
+
+                release_payload = explicit_apply_reset_payload(conn, tenant_id=tenant_id, job_id=job_id)
             clear_attempts = reset_attempts or (row is not None and row[0] == "exhausted")
             now = utc_now()
             if stage == "enrich":
@@ -99,7 +107,7 @@ def reset_retry_stages(
             record_job_event(
                 conn, job_id, stage, "StageReset", tenant_id=tenant_id,
                 message=f"Retry reset requested for {stage}",
-                payload={"reset_attempts": clear_attempts}, occurred_at=now,
+                payload={"reset_attempts": clear_attempts, **release_payload}, occurred_at=now,
                 publisher=events,
             )
             results.append({"jobId": str(job_id), "jobUrl": identity[1], "stage": stage})

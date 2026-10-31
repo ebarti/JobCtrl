@@ -1,3 +1,4 @@
+import { JobCtrlApiError } from "@jobctrl/api-client";
 import type {
   TailoringPolicyRevisionListQuery,
   TailoringPolicyRollbackResponse,
@@ -57,7 +58,7 @@ describe("TailoringPolicyHistoryPanel", () => {
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", {
-        name: "Restore tailoring policy version 4",
+        name: "Restore version 4 of tailoring policy",
       }),
     ).not.toBeInTheDocument();
     expect(await axe(view.container)).toHaveNoViolations();
@@ -121,13 +122,17 @@ describe("TailoringPolicyHistoryPanel", () => {
     await screen.findByRole("article", { name: "Version 1" });
     await user.click(
       screen.getByRole("button", {
-        name: "Restore tailoring policy version 1",
+        name: "Restore version 1 of tailoring policy",
       }),
     );
 
+    expect(screen.getByText(/current version 4 → configuration from version 1/i)).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Review policy restore" })).getByText(/Reason: user requested/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Confirm restore" }));
     await waitFor(() =>
       expect(rollbackTailoringPolicy).toHaveBeenCalledWith({
-        targetVersion: 1,
+        targetVersion: 1, expectedCurrentVersion: 4,
+        commandId: expect.any(String), reasonCode: "user_requested",
       }),
     );
     expect(rescoreJob).not.toHaveBeenCalled();
@@ -144,7 +149,7 @@ describe("TailoringPolicyHistoryPanel", () => {
             async () => sampleTailoringPolicyRevisionList,
           ),
           rollbackTailoringPolicy: vi.fn(async () => {
-            throw new Error("The policy restore could not be completed.");
+            throw new JobCtrlApiError(422, "Unprocessable Entity", "The policy restore could not be completed.");
           }),
         },
       }),
@@ -153,10 +158,11 @@ describe("TailoringPolicyHistoryPanel", () => {
     await screen.findByRole("article", { name: "Version 2" });
     await user.click(
       screen.getByRole("button", {
-        name: "Restore tailoring policy version 2",
+        name: "Restore version 2 of tailoring policy",
       }),
     );
 
+    await user.click(screen.getByRole("button", { name: "Confirm restore" }));
     expect(
       await screen.findByText("Policy restore failed"),
     ).toBeInTheDocument();
@@ -164,4 +170,50 @@ describe("TailoringPolicyHistoryPanel", () => {
       screen.getByText("The policy restore could not be completed."),
     ).toBeInTheDocument();
   });
+  it("keeps a command identity on uncertain failure and creates a new one only after stale review", async () => {
+    const user = userEvent.setup();
+    const restore = vi.fn()
+      .mockRejectedValueOnce(new Error("Response lost"))
+      .mockRejectedValueOnce(new JobCtrlApiError(409, "Conflict", "stale", { error: "tailoring_policy_stale_review" }))
+      .mockResolvedValueOnce(sampleTailoringPolicyRollback);
+    renderWithProviders(<TailoringPolicyHistoryPanel />, {
+      ports: buildTestPorts({ api: {
+        tailoringPolicyRevisions: vi.fn(async () => sampleTailoringPolicyRevisionList),
+        rollbackTailoringPolicy: restore,
+      } }),
+    });
+    await screen.findByRole("article", { name: "Version 1" });
+    await user.click(screen.getByRole("button", { name: "Restore version 1 of tailoring policy" }));
+    await user.click(screen.getByRole("button", { name: "Confirm restore" }));
+    expect(await screen.findByText("Policy restore outcome not confirmed")).toBeInTheDocument();
+    expect(screen.getByText("The restore may have completed. Retry this request to confirm the result, or check policy history.")).toBeInTheDocument();
+    expect(await screen.findByText("Response lost")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Confirm restore" }));
+    expect(await screen.findByText("Policy changed since review")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm restore" })).not.toBeInTheDocument();
+    expect(restore.mock.calls[1]?.[0]).toEqual(restore.mock.calls[0]?.[0]);
+    await user.click(screen.getByRole("button", { name: "Restore version 1 of tailoring policy" }));
+    await user.click(screen.getByRole("button", { name: "Confirm restore" }));
+    await waitFor(() => expect(restore).toHaveBeenCalledTimes(3));
+    expect(restore.mock.calls[2]?.[0].commandId).not.toBe(restore.mock.calls[0]?.[0].commandId);
+  });
+
+  it("does not call an uncertain server error a failed restore", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<TailoringPolicyHistoryPanel />, {
+      ports: buildTestPorts({ api: {
+        tailoringPolicyRevisions: vi.fn(async () => sampleTailoringPolicyRevisionList),
+        rollbackTailoringPolicy: vi.fn(async () => {
+          throw new JobCtrlApiError(500, "Server Error", "Response unavailable", undefined, true);
+        }),
+      } }),
+    });
+    await screen.findByRole("article", { name: "Version 1" });
+    await user.click(screen.getByRole("button", { name: "Restore version 1 of tailoring policy" }));
+    await user.click(screen.getByRole("button", { name: "Confirm restore" }));
+    expect(await screen.findByText("Policy restore outcome not confirmed")).toBeInTheDocument();
+    expect(screen.queryByText("Policy restore failed")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirm restore" })).toBeEnabled();
+  });
+
 });

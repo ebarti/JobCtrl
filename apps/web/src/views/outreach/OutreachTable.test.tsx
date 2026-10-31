@@ -39,7 +39,7 @@ describe("<OutreachTable>", () => {
       />,
     );
     await user.click(
-      screen.getByRole("button", { name: "Open contact Dana Reyes" }),
+      screen.getByRole("button", { name: "Open contact Dana Reyes: View details" }),
     );
     expect(onOpenContact).toHaveBeenCalledWith("contact-1");
   });
@@ -61,7 +61,7 @@ describe("<OutreachTable>", () => {
       within(list).getByText("1 of 3 facts confirmed"),
     ).toBeInTheDocument();
     expect(
-      within(list).getByRole("button", { name: "Open contact Dana Reyes" }),
+      within(list).getByRole("button", { name: "Open contact Dana Reyes: View details" }),
     ).not.toHaveClass("row-activation-focus-only");
   });
 });

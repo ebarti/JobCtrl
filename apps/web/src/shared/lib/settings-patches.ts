@@ -58,6 +58,9 @@ export function patchSettingsResponse(
       current.effectiveSettings.analysisLegs,
       body.analysisLegs,
     ),
+    defaultLlmModel: persistedValue(current.effectiveSettings.defaultLlmModel, body.defaultLlmModel),
+    codexReasoningEfforts: persistedValue(current.effectiveSettings.codexReasoningEfforts,
+      body.codexReasoningEfforts ? Object.fromEntries(Object.entries({ ...current.settings.codexReasoningEfforts, ...body.codexReasoningEfforts }).filter((entry): entry is [string, string] => entry[1] !== null)) : undefined),
     tailoringGeneratorModels: persistedValue(
       current.effectiveSettings.tailoringGeneratorModels,
       body.tailoringGeneratorModels,
@@ -66,6 +69,8 @@ export function patchSettingsResponse(
       current.effectiveSettings.tailoringJudgeModel,
       body.tailoringJudgeModel,
     ),
+    resumeVoicePolish: persistedValue(current.effectiveSettings.resumeVoicePolish, body.resumeVoicePolish),
+    coverLetterGeneration: persistedValue(current.effectiveSettings.coverLetterGeneration, body.coverLetterGeneration),
     applyMaxBudgetUsd: persistedValue(
       current.effectiveSettings.applyMaxBudgetUsd,
       body.applyMaxBudgetUsd,
@@ -99,12 +104,16 @@ export function patchSettingsResponse(
         : {}),
       ...(body.dailyBudgetUsd !== undefined ? { dailyBudgetUsd: body.dailyBudgetUsd } : {}),
       ...(body.analysisLegs !== undefined ? { analysisLegs: body.analysisLegs } : {}),
+      ...(body.defaultLlmModel !== undefined ? { defaultLlmModel: body.defaultLlmModel } : {}),
+      codexReasoningEfforts: effectiveSettings.codexReasoningEfforts.value,
       ...(body.tailoringGeneratorModels !== undefined
         ? { tailoringGeneratorModels: body.tailoringGeneratorModels }
         : {}),
       ...(body.tailoringJudgeModel !== undefined
         ? { tailoringJudgeModel: body.tailoringJudgeModel }
         : {}),
+      ...(body.resumeVoicePolish !== undefined ? { resumeVoicePolish: body.resumeVoicePolish } : {}),
+      ...(body.coverLetterGeneration !== undefined ? { coverLetterGeneration: body.coverLetterGeneration } : {}),
       ...(body.applyMaxBudgetUsd !== undefined
         ? { applyMaxBudgetUsd: body.applyMaxBudgetUsd }
         : {}),

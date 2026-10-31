@@ -30,6 +30,7 @@ export function AutosaveUndoController<TValues>({
   const undoStackRef = useRef<TValues[]>([]);
   const suppressHistoryOnceRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSubmittedValuesRef = useRef<string | null>(null);
   const restoreValuesRef = useRef(restoreValues);
   const setStatusMessageRef = useRef(setStatusMessage);
   const submitRef = useRef(submit);
@@ -43,6 +44,7 @@ export function AutosaveUndoController<TValues>({
   useEffect(() => {
     clearAutosaveTimer(timerRef);
     undoStackRef.current = [];
+    lastSubmittedValuesRef.current = null;
     currentSerializedRef.current = serializedValues;
     currentValuesRef.current = cloneValues(values);
   }, [resetToken]);
@@ -59,17 +61,41 @@ export function AutosaveUndoController<TValues>({
     }
 
     clearAutosaveTimer(timerRef);
-    if (!isDirty || isSubmitting) {
+    if (!isDirty) {
+      lastSubmittedValuesRef.current = null;
+      return undefined;
+    }
+    if (isSubmitting || serializedValues === lastSubmittedValuesRef.current) {
       return undefined;
     }
 
     timerRef.current = setTimeout(() => {
+      // The form may handle a failed submit without rejecting its promise.
+      // Attempt each unchanged draft only once automatically; explicit Save
+      // remains available and a different draft may schedule another attempt.
+      lastSubmittedValuesRef.current = serializedValues;
       setStatusMessageRef.current("autosaving changes");
-      void submitRef.current();
+      void submitRef.current().catch(() => {
+        setStatusMessageRef.current("Could not autosave changes. Your draft is still unsaved; try again.");
+      });
     }, AUTOSAVE_DELAY_MS);
 
     return () => clearAutosaveTimer(timerRef);
   }, [isDirty, isSubmitting, serializedValues, values]);
+
+  useEffect(() => {
+    const formElement = formRef.current;
+    if (!formElement) {
+      return undefined;
+    }
+    const onSubmit = (event: Event) => {
+      if (event.target !== formElement) return;
+      clearAutosaveTimer(timerRef);
+      lastSubmittedValuesRef.current = currentSerializedRef.current;
+    };
+    formElement.addEventListener("submit", onSubmit);
+    return () => formElement.removeEventListener("submit", onSubmit);
+  }, [formRef]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

@@ -1,0 +1,39 @@
+name: Gmail token Windows privacy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gmail-token-windows-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  private-token:
+    name: Synthetic Gmail token ACL (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: 0.11.7
+          enable-cache: true
+          cache-dependency-glob: workers/automation/uv.lock
+      - name: Install locked worker dependencies
+        run: uv --project workers/automation sync --locked --all-extras
+      - name: Exercise synthetic token replacement and native DACL
+        env:
+          LANGFUSE_DISABLE: "1"
+          JOBCTRL_DIR: ${{ runner.temp }}/jobctrl-gmail-token-qa
+          JOBCTRL_RUNTIME_MODE: source
+        # These tests use their own tmp_path and fake OAuth ports. The shared
+        # worker conftest initializes a database through a Unix-only dependency.
+        run: uv --project workers/automation run --locked --all-extras pytest -q --noconftest workers/automation/tests/test_gmail_token_atomic.py workers/automation/tests/test_gmail_token_windows_acl.py workers/automation/tests/test_gmail_windows_acl_contract.py

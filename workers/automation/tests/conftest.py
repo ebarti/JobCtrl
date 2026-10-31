@@ -83,6 +83,21 @@ def source_runtime_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def close_test_agent_runtimes(monkeypatch):
+    """Release loop-bound SDK resources before each test's sandbox is removed."""
+    from jobctrl.infrastructure.llm.agent_runtime_pool import close_agent_runtimes
+    from jobctrl.infrastructure.materials import letter_reviews
+
+    # A new test is an explicit new process-owner scope, after the prior drain.
+    monkeypatch.setattr(letter_reviews, "_pool", None)
+    yield
+    from jobctrl.infrastructure.materials.letter_reviews import close_letter_reviews
+
+    close_letter_reviews()
+    close_agent_runtimes()
+
+
+@pytest.fixture(autouse=True)
 def reset_apply_dashboard_state() -> None:
     """Keep the module-level apply dashboard state from leaking across tests."""
     from jobctrl.apply import dashboard
@@ -133,3 +148,13 @@ def require_explicit_model_ports(monkeypatch, request):
         raise DeterminationFailure("provider_unavailable")
 
     monkeypatch.setattr(LlmAdapter, "chat_json", unavailable)
+
+
+@pytest.fixture(autouse=True)
+def isolate_observed_provider_availability():
+    """Availability evidence belongs to one process scenario, not the test suite."""
+    from jobctrl.infrastructure.llm.provider_availability import reset_provider_availability
+
+    reset_provider_availability()
+    yield
+    reset_provider_availability()

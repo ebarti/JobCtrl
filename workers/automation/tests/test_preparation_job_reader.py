@@ -116,3 +116,37 @@ def test_load_rejects_url_shaped_job_id(conn: sqlite3.Connection) -> None:
             _TENANT_A,
             JobId(_POSTING_URL),
         )
+
+
+def test_load_uses_latest_canonical_tenant_score_for_review_gates(conn: sqlite3.Connection) -> None:
+    from jobctrl.domain.materials.adversarial import should_run_adversarial_review
+
+    for tenant in (_TENANT_A, _TENANT_B):
+        _seed_target(conn, tenant_id=tenant, full_description="Canonical JD")
+    conn.execute("UPDATE jobs SET fit_score = 1")
+    for tenant, version, grade in ((_TENANT_A, 1, 10), (_TENANT_A, 2, 8), (_TENANT_B, 99, 6)):
+        conn.execute(
+            """INSERT INTO job_scores (
+                tenant_id, job_id, version, fit_score, breakdown_json,
+                keywords_json, scored_at, criteria_json, trace_json
+            ) VALUES (?, ?, ?, ?, '{}', '[]', '2026-10-01', '{}', '{}')""",
+            (str(tenant), str(_JOB_ID), version, grade),
+        )
+    reader = SqlitePreparationTargetReader(conn)
+    current = reader.load(_TENANT_A, _JOB_ID)
+    other = reader.load(_TENANT_B, _JOB_ID)
+    assert current["fit_score"] == 8
+    assert current["score_version"] == 2
+    assert should_run_adversarial_review(current)
+    assert other["fit_score"] == 6
+    assert other["score_version"] == 99
+    assert not should_run_adversarial_review(other)
+
+
+def test_unscored_target_does_not_reuse_legacy_fit_grade(conn: sqlite3.Connection) -> None:
+    _seed_target(conn, tenant_id=_TENANT_A, full_description="Canonical JD")
+    conn.execute("UPDATE jobs SET fit_score = 10")
+    target = SqlitePreparationTargetReader(conn).load(_TENANT_A, _JOB_ID)
+    assert target is not None
+    assert target["fit_score"] is None
+    assert target["score_version"] is None

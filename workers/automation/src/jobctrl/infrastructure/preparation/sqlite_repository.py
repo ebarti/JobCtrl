@@ -35,6 +35,8 @@ class SqlitePreparationTargetReader:
                 j.site,
                 j.strategy,
                 j.discovered_at,
+                current_score.fit_score,
+                current_score.version AS score_version,
                 je.current_status AS enrichment_status,
                 je.full_description,
                 je.application_url,
@@ -44,6 +46,14 @@ class SqlitePreparationTargetReader:
             LEFT JOIN job_enrichments je
               ON je.tenant_id = j.tenant_id
              AND je.job_id = j.job_id
+            LEFT JOIN job_scores current_score
+              ON current_score.tenant_id = j.tenant_id
+             AND current_score.job_id = j.job_id
+             AND current_score.version = (
+                 SELECT MAX(version) FROM job_scores score_version
+                 WHERE score_version.tenant_id = j.tenant_id
+                   AND score_version.job_id = j.job_id
+             )
             LEFT JOIN jobctrl_deleted_jobs deleted
               ON deleted.tenant_id = j.tenant_id
              AND deleted.job_id = j.job_id

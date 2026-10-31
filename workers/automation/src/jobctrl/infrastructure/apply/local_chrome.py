@@ -10,6 +10,7 @@ adapter without touching the use cases.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from pathlib import Path
 
 from jobctrl.apply import chrome as _chrome
@@ -23,11 +24,10 @@ log = logging.getLogger(__name__)
 class LocalChromeAdapter:
     """``BrowserPort`` implementation backed by a local Chrome process.
 
-    ``launch`` invokes ``chrome.launch_chrome`` (which sets up the
-    isolated profile, kills any zombie process on the port, then
-    spawns Chrome with remote debugging on the requested CDP port).
-    ``cleanup`` invokes ``chrome.cleanup_worker`` (kill process tree
-    on Unix / taskkill /T on Windows). Both calls are idempotent.
+    ``launch`` starts Chrome with an OS-assigned endpoint and joins its
+    private profile receipt to the exact launched browser identity. The
+    returned session carries the actual verified port. Cleanup selects only
+    that session's original owned process handle.
 
     The adapter is stateless — each ``launch`` call creates a brand
     new ``BrowserSession`` value object and the underlying
@@ -53,6 +53,8 @@ class LocalChromeAdapter:
             dry_run=config.dry_run,
             approved_application_url=config.approved_application_url,
         )
+        actual_port, browser_ws = _chrome.get_worker_endpoint(config.worker_id, proc)
+        config = replace(config, cdp_port=actual_port)
         log.info(
             "LocalChromeAdapter.launch: worker_id=%d port=%d pid=%d headless=%s",
             config.worker_id,
@@ -65,6 +67,7 @@ class LocalChromeAdapter:
             pid=proc.pid,
             worker_dir=str(worker_dir),
             handle=proc,
+            browser_ws_url=browser_ws,
             dry_run_evidence=(
                 lambda port=config.cdp_port: _chrome.get_dry_run_cdp_guard_evidence(port)
             )

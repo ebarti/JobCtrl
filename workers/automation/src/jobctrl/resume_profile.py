@@ -88,12 +88,24 @@ def get_required_education_entry_ids(profile: dict) -> list[str]:
 
 
 def get_required_skill_category_ids(profile: dict) -> list[str]:
-    """Return the required skill category IDs."""
+    """Return mandatory categories, including owners of individually pinned skills."""
     rules = get_resume_master(profile).get("tailoring_rules", {})
     ids = rules.get("required_skill_category_ids")
-    if isinstance(ids, list) and ids:
-        return ids
-    return [entry.get("id", "") for entry in get_skill_categories(profile) if entry.get("id")]
+    known_ids = [entry.get("id", "") for entry in get_skill_categories(profile) if entry.get("id")]
+    required_ids = list(ids) if isinstance(ids, list) and ids else list(known_ids)
+    skill_pins = get_required_skills_by_category_id(profile)
+    required_ids.extend(ident for ident in known_ids if ident in skill_pins and ident not in required_ids)
+    return required_ids
+
+
+def get_selected_skill_categories(profile: dict, tailored_payload: dict) -> list[dict]:
+    """Render mandatory categories plus model-selected known categories in source order."""
+    selected_ids = set(get_required_skill_category_ids(profile))
+    selected_ids.update(
+        update.get("id") for update in tailored_payload.get("skill_category_updates", [])
+        if isinstance(update, dict) and isinstance(update.get("id"), str)
+    )
+    return [category for category in get_skill_categories(profile) if category.get("id") in selected_ids]
 
 
 def get_required_bullets_by_experience_id(profile: dict) -> dict[str, list[str]]:
@@ -306,6 +318,7 @@ def _normalize_achievement_evidence(item: dict) -> dict:
         "evidence_strength": strength,
         "claim_confidence": confidence,
         "user_confirmed": bool(item.get("user_confirmed", False)),
+        **({"confirmation_review_required": True} if item.get("confirmation_review_required") else {}),
         "tags": _text_list(item.get("tags")),
     }
 
@@ -361,6 +374,11 @@ def experience_updates_by_id(tailored_payload: dict) -> dict:
         str(update.get("id", "")).strip(): {
             **update,
             _MANDATORY_BULLET_OVERFLOW_KEY: preserve_accepted_overflow,
+            "_jobctrl_baseline_selection_recorded": isinstance(tailored_payload.get("experience_omissions"), list),
+            "_jobctrl_baseline_omission_proposals": [
+                row for row in tailored_payload.get("experience_omissions", ())
+                if isinstance(row, dict) and row.get("experience_entry_id") == str(update.get("id", "")).strip()
+            ],
         }
         for update in tailored_payload.get("experience_updates") or []
         if isinstance(update, dict) and update.get("id")
@@ -370,12 +388,28 @@ def experience_updates_by_id(tailored_payload: dict) -> dict:
 def tailored_experience_bullets(entry: dict, update: dict, profile: dict) -> list[str]:
     """Return bullets allowed by policy, with required baseline bullets preserved."""
     policy = get_tailoring_policy(profile)
-    source = update.get("bullets") if policy["allow_achievement_rewriting"] and isinstance(update, dict) else None
+    baseline = entry.get("bullets", [])
+    entry_id = str(entry.get("id", ""))
+    required = get_required_bullets_by_experience_id(profile).get(entry_id, [])
+    source = update.get("bullets") if isinstance(update, dict) else None
+    if not policy["allow_achievement_rewriting"] and isinstance(source, list):
+        # New selection can keep exact authored strings; legacy exports retain
+        # their prior baseline fallback. Neither path permits a rewrite.
+        if not update.get("_jobctrl_baseline_selection_recorded") or any(
+            str(bullet).strip() not in baseline for bullet in source
+        ):
+            source = None
+    if source == [] and not required:
+        baseline_ids = {f"experience:{entry_id}:source:{index}" for index, bullet in enumerate(baseline)
+                        if str(bullet).strip()}
+        omitted_ids = {row.get("evidence_id") for row in update.get("_jobctrl_baseline_omission_proposals", ())
+                       if isinstance(row, dict) and row.get("reason") == "clearly_inapplicable"}
+        if baseline_ids and baseline_ids == omitted_ids:
+            return []  # accepted only after independent quality review of these proposals
     if not isinstance(source, list) or not source:
-        source = entry.get("bullets", [])
+        source = baseline
 
     bullets = [str(bullet).strip() for bullet in source if str(bullet).strip()]
-    required = get_required_bullets_by_experience_id(profile).get(str(entry.get("id", "")), [])
     seen = {_normalize_text(bullet) for bullet in bullets}
     for bullet in required:
         normalized = _normalize_text(bullet)

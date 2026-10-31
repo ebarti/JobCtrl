@@ -236,18 +236,7 @@ def test_upload_file_to_current_input_refuses_cross_origin_page(monkeypatch, tmp
             {"id": 4, "result": {}},
         ]
     )
-    monkeypatch.setattr(
-        "jobctrl.infrastructure.apply_tools.mcp_server.urlopen",
-        lambda *_args, **_kwargs: _FakeHttpResponse(
-            [
-                {
-                    "type": "page",
-                    "url": "https://attacker.example/upload",
-                    "webSocketDebuggerUrl": "ws://localhost/devtools/page/1",
-                }
-            ]
-        ),
-    )
+    monkeypatch.setattr(apply_tools_mcp, "_first_page_ws_url", lambda _endpoint: "ws://127.0.0.1:9222/devtools/page/1")
     monkeypatch.setitem(
         sys.modules,
         "websocket",
@@ -302,18 +291,7 @@ def test_upload_file_to_current_input_uploads_visible_same_origin_input(monkeypa
             {"id": 7, "result": {}},
         ]
     )
-    monkeypatch.setattr(
-        "jobctrl.infrastructure.apply_tools.mcp_server.urlopen",
-        lambda *_args, **_kwargs: _FakeHttpResponse(
-            [
-                {
-                    "type": "page",
-                    "url": "https://apply.example.com/job/form",
-                    "webSocketDebuggerUrl": "ws://localhost/devtools/page/1",
-                }
-            ]
-        ),
-    )
+    monkeypatch.setattr(apply_tools_mcp, "_first_page_ws_url", lambda _endpoint: "ws://127.0.0.1:9222/devtools/page/1")
     monkeypatch.setitem(
         sys.modules,
         "websocket",
@@ -791,7 +769,7 @@ class _FakeCaptchaCdpWebSocket:
 
 
 def _install_fake_cdp(monkeypatch, ws: _FakeCdpWebSocket) -> None:
-    monkeypatch.setattr(apply_tools_mcp, "urlopen", lambda _url, timeout: _FakeCdpResponse())
+    monkeypatch.setattr(apply_tools_mcp, "_first_page_ws_url", lambda _endpoint: "ws://127.0.0.1:9222/devtools/page/1")
     monkeypatch.setitem(
         sys.modules,
         "websocket",
@@ -801,7 +779,7 @@ def _install_fake_cdp(monkeypatch, ws: _FakeCdpWebSocket) -> None:
 
 def _install_fake_captcha_cdp(monkeypatch, detection: dict) -> _FakeCaptchaCdpWebSocket:
     ws = _FakeCaptchaCdpWebSocket(detection)
-    monkeypatch.setattr(apply_tools_mcp, "urlopen", lambda _url, timeout: _FakeCdpResponse())
+    monkeypatch.setattr(apply_tools_mcp, "_first_page_ws_url", lambda _endpoint: "ws://127.0.0.1:9222/devtools/page/1")
     monkeypatch.setitem(
         sys.modules,
         "websocket",

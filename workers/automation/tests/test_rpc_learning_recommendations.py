@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from jobctrl.database import close_connection, init_db
+from jobctrl.database import close_connection, get_connection, init_db
 from jobctrl.domain.materials.policy import TailoringPolicy
 from jobctrl.domain.rpc.messages import INVALID_PARAMS, JsonRpcRequest
 from jobctrl.domain.tenant import LOCAL_TENANT
@@ -244,6 +244,7 @@ def test_explicit_policy_rollback_appends_once_and_replays(
 ) -> None:
     db_path = tmp_path / "jobctrl.db"
     conn = init_db(db_path)
+    _seed_recommendation_sources(conn)
     policy_repository = SqliteTailoringPolicyRepository(conn)
     original = _tailoring_policy()
     policy_repository.save(original)
@@ -276,6 +277,9 @@ def test_explicit_policy_rollback_appends_once_and_replays(
     params = {
         "tenantId": "local",
         "targetVersion": 1,
+        "expectedCurrentVersion": 3,
+        "commandId": "11111111-1111-4111-8111-111111111111",
+        "reasonCode": "user_requested",
         "expectedAppDir": "/tmp/jobctrl",
         "expectedDbPath": "/tmp/jobctrl/jobctrl.db",
     }
@@ -295,7 +299,10 @@ def test_explicit_policy_rollback_appends_once_and_replays(
     assert first_result["rollbackOfVersion"] == 1
     assert first_result["rollbackReasonCode"] == "user_requested"
     assert first_result["learnedRules"] == []
-    assert replay_result == first_result
+    assert replay_result == {**first_result, "replayed": True}
+    assert first_result["currentVersion"] == 4
+    assert first_result["expectedCurrentVersion"] == 3
+    assert not first_result["replayed"]
     assert runtime_expectations == [
         {
             "expected_app_dir": "/tmp/jobctrl",
@@ -314,6 +321,35 @@ def test_explicit_policy_rollback_appends_once_and_replays(
     assert accepted_policy.learned_tailoring_rules.to_dict() == {
         "fact_handling": "require_source_match"
     }
+    # Reopen the database and dispatcher before accepting a recommendation.
+    close_connection(db_path)
+    conn = get_connection(db_path)
+    policy_repository = SqliteTailoringPolicyRepository(conn)
+    server = JsonRpcServer(workflow_starter=_stub_starter)
+    register_default_handlers(server, canceler=_stub_canceler)
+    derived = server.dispatch(JsonRpcRequest(method="rederive_learning_recommendations", params={"tenantId": "local"}, id=5))
+    assert derived is not None
+    recommendation_id = derived.to_dict()["result"]["recommendationIds"][0]
+    accepted = server.dispatch(JsonRpcRequest(method="review_learning_recommendation", params={
+        "tenantId": "local", "recommendationId": recommendation_id, "decision": "accepted",
+    }, id=6))
+    assert accepted is not None and accepted.to_dict()["result"]["policyVersion"] == 5
+    delayed = server.dispatch(JsonRpcRequest(method="rollback_tailoring_policy", params=params, id=7))
+    assert delayed is not None
+    assert delayed.to_dict()["result"] == {**first_result, "currentVersion": 5, "replayed": True}
+    assert policy_repository.get_current(LOCAL_TENANT).version == 5
+    assert [p.version for p in policy_repository.list_history(LOCAL_TENANT)] == [5, 4, 3, 2, 1]
+    stale = server.dispatch(JsonRpcRequest(method="rollback_tailoring_policy", params={
+        **params, "commandId": "22222222-2222-4222-8222-222222222222",
+    }, id=8))
+    assert stale is not None and stale.to_dict()["error"]["message"] == "tailoring_policy_stale_review"
+    for missing in ("tenantId", "targetVersion", "expectedCurrentVersion", "commandId", "reasonCode"):
+        invalid = {key: value for key, value in params.items() if key != missing}
+        response = server.dispatch(JsonRpcRequest(method="rollback_tailoring_policy", params=invalid, id=9))
+        assert response is not None and response.to_dict()["error"]["code"] == INVALID_PARAMS
+    conflicting = server.dispatch(JsonRpcRequest(method="rollback_tailoring_policy", params={**params, "targetVersion": 2}, id=10))
+    assert conflicting is not None and conflicting.to_dict()["error"]["message"] == "tailoring_policy_command_conflict"
+    assert len(policy_repository.list_history(LOCAL_TENANT)) == 5
     close_connection(db_path)
 
 

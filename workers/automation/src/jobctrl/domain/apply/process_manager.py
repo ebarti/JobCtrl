@@ -43,18 +43,19 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
-from contextlib import nullcontext
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
 from jobctrl.domain.apply.aggregate import ApplyRun
+from jobctrl.domain.errors import ApplyStoppedLocally
 from jobctrl.domain.apply.value_objects import (
     Applied,
     ApplyPrompt,
     BrowserWorkerConfig,
     DryRunComplete,
     EmailOnlyApplication,
+    EMAIL_AUTHORITY_REFUSAL_EVENT,
     Failed,
     Manual,
     SubmissionResult,
@@ -62,10 +63,14 @@ from jobctrl.domain.apply.value_objects import (
 from jobctrl.domain.ports.apply import (
     AgentResult,
     ApplyRunRepository,
+    ApplyRunWriteConflict,
     AutonomousAgentPort,
     BrowserPort,
     BrowserSession,
     EmailApplicationCandidate,
+    EmailApplicationAuthorization,
+    EmailApplicationOperation,
+    EmailApplicationSendResult,
     EmailApplicationSenderPort,
 )
 
@@ -109,6 +114,30 @@ class EmailApplicationContext:
     attachment_path: str
     approved_recipient_email: str = ""
     approved_attachment_artifact_id: str = ""
+    source_binding: Mapping[str, Any] | None = None
+    profile_version: int | None = None
+
+
+class EmailApprovalRefused(Exception):
+    """Stable, non-private reason from the final canonical authority reader."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(reason)
+
+
+class EmailIntentPersistenceFailed(Exception):
+    """The owning transaction rolled back before attempting its commit."""
+
+
+def _record_email_authority_refusal(run: ApplyRun, reason: str) -> ApplyRun:
+    return run.record_event(
+        event_type=EMAIL_AUTHORITY_REFUSAL_EVENT,
+        occurred_at=_utc_now(),
+        level="warn",
+        message="Owned email approval did not authorize this attempt.",
+        payload={"reason": reason, "submission_channel": "email"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +174,7 @@ class ApplySaga:
         email_sender: EmailApplicationSenderPort | None = None,
         timeout_seconds: int | None = None,
         submission_authorizer: Callable[[], None] | None = None,
-        availability_authorizer: Callable[[str, str, str, str], Any] | None = None,
+        email_intent_authorizer: Callable[..., Any] | None = None,
     ) -> None:
         self._browser = browser_port
         self._agent = agent_port
@@ -157,7 +186,7 @@ class ApplySaga:
         # commit externally, the composition root must re-authorize the
         # capability. The model-driven browser remains transport-locked.
         self._submission_authorizer = submission_authorizer or (lambda: None)
-        self._availability_authorizer = availability_authorizer or (lambda tenant_id, job_id, posting_url, run_id: nullcontext())
+        self._email_intent_authorizer = email_intent_authorizer
 
     # ------------------------------------------------------------------
     # Public API
@@ -168,7 +197,7 @@ class ApplySaga:
         *,
         apply_run: ApplyRun,
         browser_config: BrowserWorkerConfig,
-        prompt: ApplyPrompt,
+        prompt: ApplyPrompt | Callable[[BrowserSession], ApplyPrompt],
         model: str,
         material_version: str = "",
         materials_generation: int | str | None = None,
@@ -229,6 +258,7 @@ class ApplySaga:
             # 1. Launch browser
             try:
                 session = self._browser.launch(browser_config)
+                browser_config = session.config
                 browser_launched = True
                 run = run.record_event(
                     event_type="BrowserLaunched",
@@ -277,9 +307,10 @@ class ApplySaga:
 
             # 3. Drive the agent
             try:
+                resolved_prompt = prompt(session) if callable(prompt) else prompt
                 agent_invoked = True
                 agent_result: AgentResult = self._agent.submit_application(
-                    prompt=prompt,
+                    prompt=resolved_prompt,
                     browser=session,
                     model=model,
                     dry_run=browser_config.dry_run,
@@ -332,8 +363,14 @@ class ApplySaga:
 
             # 4. Fold agent events into the aggregate timeline
             for raw_event in agent_result.events:
+                event_type = str(raw_event.get("event_type", "AgentEvent"))
+                if event_type == EMAIL_AUTHORITY_REFUSAL_EVENT:
+                    # Agent observations cannot manufacture a trusted refund receipt.
+                    event_type = "AgentReportedEmailAuthorityRefusal"
+                elif event_type == "ApplyEmailAuthorityParked":
+                    event_type = "AgentReportedEmailAuthorityParked"
                 run = run.record_event(
-                    event_type=str(raw_event.get("event_type", "AgentEvent")),
+                    event_type=event_type,
                     occurred_at=str(raw_event.get("occurred_at") or _utc_now()),
                     level=str(raw_event.get("level", "info")),
                     message=raw_event.get("message"),
@@ -503,6 +540,7 @@ class ApplySaga:
 
         candidate = _build_email_application_candidate(result.recipient_email, context)
         candidate_payload = _candidate_payload(candidate, run_id=str(run.run_id), duration_ms=duration_ms)
+        before_candidate = run
         run = run.record_event(
             event_type="EmailApplicationCandidateRecorded",
             occurred_at=_utc_now(),
@@ -529,6 +567,7 @@ class ApplySaga:
                     "attachment_artifact_id": candidate.attachment_artifact_id,
                 },
             )
+            run = _record_email_authority_refusal(run, "email_application_approval_required")
             return run, Manual(reason="email_application_approval_required")
 
         if self._email_sender is None:
@@ -560,8 +599,31 @@ class ApplySaga:
                 retryable=True,
             )
 
+        persisting_intent = False
+        operation = EmailApplicationOperation(
+            tenant_id=str(run.tenant_id), job_id=str(run.job_id), run_id=str(run.run_id),
+            intent_id=f"email:{run.run_id}", material_version=str(material_version or ""),
+            candidate_fingerprint=candidate.fingerprint(),
+        )
+        intent_admission_started = False
         try:
-            with self._availability_authorizer(str(run.tenant_id), str(run.job_id), posting_url, str(run.run_id)):
+            if self._email_intent_authorizer is None:
+                raise EmailApprovalRefused("approval_authority_unavailable")
+            authorization = self._email_intent_authorizer(
+                str(run.tenant_id), str(run.job_id), posting_url, str(run.run_id), candidate, context,
+            )
+            with authorization as authority:
+                if (
+                    not isinstance(authority, EmailApplicationAuthorization)
+                    or not isinstance(authority.candidate, EmailApplicationCandidate)
+                    or not isinstance(authority.candidate.attachment_bytes, bytes)
+                    or not authority.candidate.attachment_bytes
+                    or replace(authority.candidate, attachment_bytes=None) != candidate
+                ):
+                    raise EmailApprovalRefused("approval_authority_unavailable")
+                candidate = authority.candidate
+                evidence = authority.evidence
+                persisting_intent = True
                 intended_at = _utc_now()
                 intended_run = run.record_event(
                     event_type="ApplySubmitIntended",
@@ -575,19 +637,76 @@ class ApplySaga:
                         "material_version": str(material_version or ""),
                         "submission_channel": "email",
                         "intended_at": intended_at,
+                        **evidence,
+                        "operation": asdict(operation),
                     },
                 )
-                self._repository.save(intended_run)
+                intent_admission_started = True
+                self._repository.admit_email_intent(intended_run)
+            if not self._repository.email_intent_durable(intended_run):
+                # An authorizer may leave the intent in a caller-owned
+                # transaction. Never commit it or send against that uncertainty.
+                raise ApplyRunWriteConflict("Email intent is not durably committed")
             run = intended_run
+        except ApplyStoppedLocally:
+            run = run.record_event(
+                event_type="ApplySubmissionBlocked", occurred_at=_utc_now(), level="info",
+                message="Apply was skipped locally before this attempt recorded submission intent.",
+                payload={"reason": "local_apply_skip", "submission_channel": "email"},
+            )
+            return run, Manual(reason="local_apply_skip")
+        except EmailApprovalRefused as exc:
+            run = before_candidate.record_event(
+                event_type="ApplySubmissionBlocked", occurred_at=_utc_now(), level="warn",
+                message="Current exact application approval is required before sending.",
+                payload={"reason": exc.reason, "submission_channel": "email"},
+            )
+            run = _record_email_authority_refusal(run, exc.reason)
+            return run, Failed(error=exc.reason, retryable=True)
+        except EmailIntentPersistenceFailed:
+            message = "Application intent could not be committed; no send was admitted."
+            run = before_candidate.record_event(
+                event_type="ApplySubmissionBlocked", occurred_at=_utc_now(), level="warn",
+                message=message, payload={"reason": "apply_intent_persistence_failed", "submission_channel": "email"},
+            )
+            return run, Failed(error=f"APPLY_INTENT_PERSISTENCE_FAILED: {message}", retryable=True)
+        except ApplyRunWriteConflict:
+            # Another invocation already owns the intent. Do not fabricate a
+            # failed aggregate whose sequence could consume the owner's receipt.
+            raise
         except Exception:  # noqa: BLE001 - freshness/intent ownership port
-            run = run.record_event(event_type="ApplySubmissionBlocked", occurred_at=_utc_now(), level="warn",
-                                   message="Check availability or inspect the employer posting before retrying.",
-                                   payload={"reason": "posting_availability_unverified", "submission_channel": "email"})
-            return run, Failed(error="POSTING_AVAILABILITY_UNVERIFIED: check availability or inspect the employer posting", retryable=True)
+            if intent_admission_started:
+                try:
+                    if self._repository.email_intent_matches(intended_run):
+                        # The intent may have committed before its acknowledgement
+                        # was lost. Keep that immutable child in the failed checkpoint.
+                        run = intended_run
+                    else:
+                        run = before_candidate
+                except Exception:
+                    # Without a trustworthy read, only recovery may settle/park
+                    # the original operation; do not invent a competing history.
+                    raise ApplyRunWriteConflict("Email intent requires recovery") from None
+                run = run.record_event(
+                    event_type="ApplySubmissionBlocked", occurred_at=_utc_now(), level="warn",
+                    message="owned email intent persistence could not be verified",
+                    payload={"reason": "email_intent_unverified", "submission_channel": "email"},
+                )
+                return run, Failed(error="email_send_outcome_ambiguous", retryable=False)
+            reason = "apply_intent_persistence_failed" if persisting_intent else "posting_availability_unverified"
+            message = ("Application intent could not be committed; no send was admitted." if persisting_intent
+                       else "Check availability or inspect the employer posting before retrying.")
+            run = before_candidate.record_event(
+                event_type="ApplySubmissionBlocked", occurred_at=_utc_now(), level="warn",
+                message=message, payload={"reason": reason, "submission_channel": "email"},
+            )
+            return run, Failed(error=f"{reason.upper()}: {message}", retryable=True)
 
         try:
-            send_result = self._email_sender.send_email_application(candidate)
-        except Exception as exc:  # noqa: BLE001 - translate provider failures into terminal apply state
+            send_result = self._email_sender.send_email_application(candidate, operation=operation)
+            if type(send_result) is not EmailApplicationSendResult or not send_result.confirms(operation):
+                raise ValueError("email_send_invalid_confirmation")
+        except Exception:  # noqa: BLE001 - all post-intent failures are ambiguous
             run = run.record_event(
                 event_type="EmailApplicationSendFailed",
                 occurred_at=_utc_now(),
@@ -595,11 +714,10 @@ class ApplySaga:
                 message="email application outcome is ambiguous after sender error",
                 payload={
                     "reason": "email_send_outcome_ambiguous",
-                    "provider_error": str(exc)[:500],
                 },
             )
             return run, Failed(
-                error=f"email_send_outcome_ambiguous:{str(exc)[:120]}",
+                error="email_send_outcome_ambiguous",
                 retryable=False,
             )
 
@@ -609,8 +727,7 @@ class ApplySaga:
             level="info",
             message="email application sent by owned adapter",
             payload={
-                "recipient": candidate.recipient_email,
-                "attachment_artifact_id": candidate.attachment_artifact_id,
+                "operation": asdict(operation),
                 "provider": send_result.provider,
                 "message_id": send_result.message_id,
                 "thread_id": send_result.thread_id,

@@ -84,7 +84,7 @@ export function saveOfferTerms(
         )
         .get(TENANT, jobId);
       if (!current.currentTerms && !milestone)
-        recordManualApplicationOutcome(db, jobId, { kind: "offer" });
+        recordManualApplicationOutcome(db, jobId, { requestId: randomUUID(), kind: "offer" });
       return readOffer(db, jobId);
     })
     .immediate();

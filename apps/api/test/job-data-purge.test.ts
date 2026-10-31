@@ -331,6 +331,48 @@ function seedHeartbeat(fixture: Fixture, databasePath: string, lastSeenAt: strin
 }
 
 describe("guarded production job-data purge", () => {
+  it("retains operational Discovery allowance on ordinary deletion and clears it only with the execution ledger", () => {
+    const fixture = createFixture();
+    const original = inspectJobDataPurge({ appDir: fixture.appDir });
+    const db = openDatabase(fixture.dbPath);
+    try {
+      const insert = db.prepare(
+        `INSERT INTO job_events (
+          tenant_id, job_id, identity_version, stage, event_type, occurred_at,
+          payload_json, entity_kind, entity_ref
+        ) VALUES ('local', NULL, 1, 'discover', ?, ?, ?, ?, ?)`,
+      );
+      for (const eventType of ["DiscoveryResultPlanFrozen", "DiscoveryNewJobAdmitted"]) {
+        insert.run(eventType, NOW, JSON.stringify({
+          discovery_workflow_id: DISCOVER_WORKFLOW_ID,
+          discovery_run_id: DISCOVER_RUN_ID,
+          canonical_job_id: JOB_ID,
+        }), eventType === "DiscoveryNewJobAdmitted" ? "discovery_admission" : null,
+        eventType === "DiscoveryNewJobAdmitted" ? JOB_ID : null);
+      }
+      expect(inspectJobDataPurge({ appDir: fixture.appDir }).jobOperationRows).toBe(original.jobOperationRows + 2);
+      db.prepare("DELETE FROM jobs WHERE tenant_id='local' AND job_id=?").run(JOB_ID);
+      expect(db.prepare("SELECT COUNT(*) FROM job_events WHERE event_type IN ('DiscoveryNewJobAdmitted','DiscoveryResultPlanFrozen')").pluck().get()).toBe(2);
+    } finally {
+      db.close();
+    }
+    const result = executeJobDataPurge({ appDir: fixture.appDir });
+    expect(result).toMatchObject({ jobsDeleted: 0, noOp: false });
+    const after = openDatabase(fixture.dbPath);
+    const backup = new Database(result.databaseBackupPath!, { readonly: true });
+    try {
+      expect(after.prepare("SELECT COUNT(*) FROM job_events WHERE event_type IN ('DiscoveryNewJobAdmitted','DiscoveryResultPlanFrozen')").pluck().get()).toBe(0);
+      expect(backup.prepare("SELECT COUNT(*) FROM job_events WHERE event_type IN ('DiscoveryNewJobAdmitted','DiscoveryResultPlanFrozen')").pluck().get()).toBe(2);
+      expect(after.prepare("SELECT COUNT(*) FROM candidate_profiles").pluck().get()).toBe(1);
+      expect(after.prepare("SELECT COUNT(*) FROM discovery_settings").pluck().get()).toBe(1);
+      expect(after.prepare("SELECT COUNT(*) FROM job_events WHERE event_type='SourceStateChanged'").pluck().get()).toBe(1);
+    } finally {
+      after.close();
+      backup.close();
+    }
+    expect(inspectJobDataPurge({ appDir: fixture.appDir }).jobOperationRows).toBe(0);
+  });
+
   it("backs up and purges the complete Job graph and generated files while preserving profile and search data", () => {
     const fixture = createFixture();
     const plan = inspectJobDataPurge({ appDir: fixture.appDir });

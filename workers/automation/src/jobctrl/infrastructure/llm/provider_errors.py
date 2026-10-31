@@ -114,6 +114,7 @@ class ProviderFailureEnvelope:
     http_status: int | None = None
     trace_id: str | None = None
     span_id: str | None = None
+    post_terminal_failure: bool = False
 
     def __post_init__(self) -> None:
         # Provider/model values are configuration-derived but still cross an
@@ -159,6 +160,8 @@ class ProviderFailureEnvelope:
         ):
             if value is not None:
                 result[key] = value
+        if self.post_terminal_failure:
+            result["post_terminal_failure"] = True
         return result
 
     def telemetry_attributes(self) -> dict[str, str | bool | int]:
@@ -180,6 +183,8 @@ class ProviderFailureEnvelope:
             attributes["jobctrl.llm.failure.provider_code"] = self.codex_error_code
         if self.http_status is not None:
             attributes["jobctrl.llm.failure.http_status"] = self.http_status
+        if self.post_terminal_failure:
+            attributes["jobctrl.llm.failure.post_terminal_failure"] = True
         return attributes
 
 
@@ -188,7 +193,7 @@ class ProviderCallError(LlmFailure):
 
     def __init__(self, envelope: ProviderFailureEnvelope) -> None:
         self.envelope = envelope
-        super().__init__(envelope.code)
+        super().__init__(envelope.code, retryable=envelope.retryable)
         self.args = (
             f"LLM provider call failed: {envelope.provider}/{envelope.operation} {envelope.category}:{envelope.code}",
         )
@@ -248,6 +253,75 @@ def provider_exception_error(
             retryable=retryable,
         )
     )
+
+
+def raise_on_claude_failure(messages: list, *, model: str, operation: str) -> None:
+    """Reject a failed native or kit result after accounting and before parsing."""
+    post_terminal_failure = getattr(messages, "post_terminal_failure", False) is True
+    for message in messages:
+        if type(message).__name__ != "ResultMessage":
+            continue
+        subtype = getattr(message, "subtype", None)
+        known = {
+            "error_during_execution": ("provider_turn", "provider_unavailable", True),
+            "error_max_turns": ("provider_turn", "claude_max_turns", False),
+            "error_max_structured_output_retries": ("provider_response", "schema_validation_failed", False),
+            "error_max_budget_usd": ("budget", "budget_denied", False),
+        }
+        details = known.get(subtype) if isinstance(subtype, str) else None
+        if details is None and not getattr(message, "is_error", False):
+            continue
+        # The pinned SDK defines this field only for an error-bearing
+        # "success" subtype; do not turn budget/schema failures into outages.
+        status = (
+            _safe_http_status(getattr(message, "api_error_status", None))
+            if subtype == "success" and getattr(message, "is_error", False) else None
+        )
+        category, code, retryable = details or (
+            "provider_turn", "claude_result_failed", status == 429 or (status is not None and status >= 500),
+        )
+        raise ProviderCallError(ProviderFailureEnvelope(
+            provider="claude", model=model, operation=operation, category=category,
+            error_type="claude_result_error", code=code, retryable=retryable,
+            additional_detail_code=subtype if details is not None else None, http_status=status,
+            post_terminal_failure=post_terminal_failure,
+        ))
+
+    # The kit also rejects assistant errors and invalid structured responses.
+    # Retain only the SDK's fixed error tags, never the kit's free-form text.
+    for message in messages:
+        if type(message).__name__ != "AssistantMessage":
+            continue
+        native_error = getattr(message, "error", None)
+        if not native_error:
+            continue
+        known_assistant_errors = {
+            "authentication_failed", "billing_error", "rate_limit", "invalid_request", "server_error", "unknown",
+        }
+        tag = native_error if isinstance(native_error, str) and native_error in known_assistant_errors else None
+        status = 429 if tag == "rate_limit" else 503 if tag == "server_error" else None
+        raise ProviderCallError(ProviderFailureEnvelope(
+            provider="claude", model=model, operation=operation, category="provider_turn",
+            error_type="claude_assistant_error", code="unauthorized" if tag == "authentication_failed" else "claude_assistant_failed",
+            retryable=status is not None, additional_detail_code=tag, http_status=status,
+            post_terminal_failure=post_terminal_failure,
+        ))
+
+    if getattr(messages, "kit_succeeded", True) is False:
+        structured = getattr(messages, "kit_structured", False)
+        raise ProviderCallError(ProviderFailureEnvelope(
+            provider="claude", model=model, operation=operation,
+            category="provider_response" if structured else "provider_turn", error_type="claude_kit_error",
+            code="schema_validation_failed" if structured else "claude_result_failed", retryable=False,
+            post_terminal_failure=post_terminal_failure,
+        ))
+
+    if post_terminal_failure:
+        raise ProviderCallError(ProviderFailureEnvelope(
+            provider="claude", model=model, operation=operation, category="provider_cleanup",
+            error_type="claude_post_terminal_failure", code="claude_post_terminal_failure", retryable=True,
+            post_terminal_failure=True,
+        ))
 
 
 def codex_protocol_error(*, model: str, operation: str, code: str, retryable: bool) -> ProviderCallError:

@@ -6,7 +6,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 import threading
 from typing import Any, Callable
 
-from jobctrl.domain.errors import LlmTransientError
+from jobctrl.domain.errors import LlmTransientError, MissingInputError, SourceUnavailableError
 from jobctrl.domain.identifiers import JobId
 from jobctrl.infrastructure.preparation_recovery import PreparationReservationLost
 
@@ -34,6 +34,18 @@ def run_material_jobs(
             return run_one(job_id)
         except PreparationReservationLost:
             return {"job_id": str(job_id), "status": "skipped", "reason": "reservation_lost"}
+        except (MissingInputError, SourceUnavailableError) as error:
+            # Availability is refreshed after cohort selection and before the
+            # item claims its stage. A changed prerequisite belongs to this
+            # member; finish its peers without claiming a stage we do not own.
+            if cancel_event is not None and cancel_event.is_set():
+                raise
+            return {
+                "job_id": str(job_id),
+                "status": "skipped" if isinstance(error, MissingInputError) else "error",
+                "reason": error.code,
+                "error": error.code,
+            }
 
     if worker_count == 1:
         results: list[tuple[JobId, dict[str, Any]]] = []

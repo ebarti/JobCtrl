@@ -1,4 +1,7 @@
-import type { ApplyReviewApprovalGateReason } from "@jobctrl/contracts";
+import { JobCtrlApiError } from "@jobctrl/api-client";
+import { ContactAttributeInputSchema, ContactUpdateRequestSchema, ManualApplicationOutcomeRequestSchema, ResumeTemplateDefaultSelectionRequestSchema, ResumeTemplateVersionSaveRequestSchema } from "@jobctrl/contracts";
+import type { ApplyReviewApprovalGateReason, ContactDetail } from "@jobctrl/contracts";
+import { demoContactFingerprint } from "./contact-fingerprint.js";
 import {
   LOCAL_TENANT,
   createContactCreated,
@@ -42,8 +45,9 @@ import {
 } from "@jobctrl/domain-types";
 
 import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
+import { DEMO_RESCORE_UNAVAILABLE_MESSAGE } from "./capabilities.js";
 import type { ApiClientResponse } from "./contracts.js";
-import { matchingDemoJobKeys } from "./job-filter.js";
+import { isActiveDemoJob, matchingDemoJobKeys } from "./job-filter.js";
 import {
   purgeDemoJobProjections,
   recomputeDemoOperationalProjections,
@@ -54,6 +58,7 @@ import {
   type DemoWorkspaceMutationContext,
   type DemoWorkspaceSnapshot,
 } from "./workspace/index.js";
+import { captureLifecycleRevisions, changedLifecycleJobs } from "./workspace/lifecycleRevisions.js";
 
 export interface DemoCommandClock {
   now(): Date;
@@ -62,6 +67,25 @@ export interface DemoCommandClock {
 export interface DemoLocalCommandExecutorOptions {
   readonly clock?: DemoCommandClock;
   readonly createId?: (prefix: string) => string;
+}
+
+interface DemoPermanentDeleteSelection {
+  workspaceId: string;
+  resetEpoch: number;
+  revision: number;
+  jobRevisions: ReadonlyMap<string, number>;
+  jobKeys: string[];
+  expiresAt: number;
+}
+
+interface DemoPermanentDeleteObservation {
+  workspaceId: string;
+  resetEpoch: number;
+  revision: number;
+  jobRevisions: ReadonlyMap<string, number>;
+  jobKeys: string[];
+  allMatchingAllowed: boolean;
+  expiresAt: number;
 }
 
 const systemClock: DemoCommandClock = { now: () => new Date() };
@@ -144,6 +168,8 @@ export class DemoCommandPersistenceError extends Error {
 export class DemoLocalCommandExecutor {
   private readonly clock: DemoCommandClock;
   private readonly createId: (prefix: string) => string;
+  private readonly permanentDeleteSelections = new Map<string, DemoPermanentDeleteSelection>();
+  private readonly permanentDeleteObservations = new Map<string, DemoPermanentDeleteObservation>();
 
   constructor(
     private readonly workspace: DemoWorkspaceRepository,
@@ -153,23 +179,141 @@ export class DemoLocalCommandExecutor {
     this.createId = options.createId ?? defaultId;
   }
 
+  observePermanentDeleteSelection(
+    snapshot: DemoWorkspaceSnapshot,
+    matchingJobKeys: readonly string[],
+    visibleJobKeys: readonly string[],
+  ): string | null {
+    if (matchingJobKeys.length === 0) return null;
+    const now = this.clock.now().getTime();
+    for (const [id, observation] of this.permanentDeleteObservations) {
+      if (observation.expiresAt <= now) this.permanentDeleteObservations.delete(id);
+    }
+    if (this.permanentDeleteObservations.size >= 64) return null;
+    const allMatchingAllowed = matchingJobKeys.length <= 5000;
+    const observationId = crypto.randomUUID();
+    const jobKeys = [...(allMatchingAllowed ? matchingJobKeys : visibleJobKeys)];
+    this.permanentDeleteObservations.set(observationId, {
+      workspaceId: snapshot.workspaceId,
+      resetEpoch: snapshot.resetEpoch,
+      revision: snapshot.revision,
+      jobKeys,
+      jobRevisions: captureLifecycleRevisions(snapshot, jobKeys),
+      allMatchingAllowed,
+      expiresAt: now + 60_000,
+    });
+    return observationId;
+  }
+
+  async preparePermanentDeleteSelection(
+    request: Parameters<ApiClientPort["preparePermanentDeleteSelection"]>[0],
+  ): ReturnType<ApiClientPort["preparePermanentDeleteSelection"]> {
+    const observation = this.permanentDeleteObservations.get(request.observationId);
+    this.permanentDeleteObservations.delete(request.observationId);
+    const snapshot = await this.workspace.snapshot();
+    const now = this.clock.now().getTime();
+    if (!observation || observation.expiresAt <= now || observation.workspaceId !== snapshot.workspaceId
+      || observation.resetEpoch !== snapshot.resetEpoch
+      || (!observation.allMatchingAllowed && request.selections.some((selection) => selection.allMatching))) {
+      throw permanentDeleteSelectionConflict();
+    }
+    for (const [id, selection] of this.permanentDeleteSelections) {
+      if (selection.expiresAt <= now) this.permanentDeleteSelections.delete(id);
+    }
+    if (this.permanentDeleteSelections.size >= 64) {
+      throw permanentDeleteSelectionConflict();
+    }
+    const allMatching = request.selections.some((selection) => selection.allMatching);
+    if (allMatching && request.selections.some((selection) => !selection.allMatching)) {
+      throw permanentDeleteSelectionConflict();
+    }
+    const matchingKeys = [...new Set(request.selections.flatMap((selection) =>
+      selectJobKeys(snapshot, selection as unknown as Record<string, unknown>),
+    ))];
+    const jobKeys = allMatching ? observation.jobKeys : matchingKeys;
+    const observedKeys = new Set(observation.jobKeys);
+    const currentMatching = new Set(matchingKeys);
+    const changedJobs = changedLifecycleJobs(snapshot, observation.revision, observation.jobRevisions, jobKeys);
+    if (jobKeys.length > 5000 || changedJobs === null) {
+      throw permanentDeleteSelectionConflict();
+    }
+    const changedJobKeys = new Set(changedJobs);
+    const expected = request.expected;
+    if (request.selections.some((selection) => !selection.allMatching) && !expected) {
+      throw permanentDeleteSelectionConflict();
+    }
+    if (expected && new Set(expected.map((entry) => entry.jobKey)).size !== expected.length) {
+      throw permanentDeleteSelectionConflict();
+    }
+    const expectedByKey = new Map((expected ?? []).map((entry) => [entry.jobKey, entry] as const));
+    const explicit = new Set(request.selections.filter((selection) => !selection.allMatching)
+      .flatMap((selection) => selection.jobKeys));
+    const conflicts: string[] = [];
+    for (const jobKey of jobKeys) {
+      const job = snapshot.state.readModel.jobs.details[jobKey]?.job;
+      const expectedJob = expectedByKey.get(jobKey);
+      if (!observedKeys.has(jobKey) || !currentMatching.has(jobKey)
+        || changedJobKeys.has(jobKey)
+        || !job || (!job.deletedAt && !job.hiddenAt)
+        || (explicit.has(jobKey) && (!expectedJob || expectedJob.deletedAt !== job.deletedAt || expectedJob.hiddenAt !== job.hiddenAt))) {
+        conflicts.push(jobKey);
+      }
+    }
+    if (conflicts.length) {
+      const changed = new Set(conflicts);
+      throw permanentDeleteSelectionConflict(conflicts, jobKeys.filter((key) => !changed.has(key)));
+    }
+    const selectionId = crypto.randomUUID();
+    this.permanentDeleteSelections.set(selectionId, {
+      workspaceId: snapshot.workspaceId,
+      resetEpoch: snapshot.resetEpoch,
+      revision: snapshot.revision,
+      jobRevisions: captureLifecycleRevisions(snapshot, jobKeys),
+      jobKeys,
+      expiresAt: now + 60_000,
+    });
+    return { ok: true, selectionId, jobKeys };
+  }
+
+  dispose(): void {
+    this.permanentDeleteSelections.clear();
+    this.permanentDeleteObservations.clear();
+  }
+
   async execute<TMethod extends DemoBrowserLocalCommand>(
     method: TMethod,
     args: Parameters<ApiClientPort[TMethod]>,
   ): Promise<ApiClientResponse<TMethod>> {
+    const selectionId = method === "permanentlyDeleteJobs"
+      ? stringValue(record(args[0]).selectionId)
+      : null;
+    const selection = selectionId ? this.permanentDeleteSelections.get(selectionId) : undefined;
+    if (selectionId) this.permanentDeleteSelections.delete(selectionId);
     const current = await this.workspace.snapshot();
+    const update = method === "updateContact" ? ContactUpdateRequestSchema.parse(args[1]) : null;
+    const source = update ? requireMapValue(current.state.readModel.contacts.details, String(args[0])).contact : null;
+    const sourceFingerprint = source ? await demoContactFingerprint(source) : null;
     let response: unknown;
     const now = this.clock.now().toISOString();
     const commit = await this.workspace.mutate(
       (draft, context) => {
-        response = this.apply(method, args as unknown[], draft, context, now);
+        if (update && (update.expectedFingerprint !== sourceFingerprint ||
+          JSON.stringify(requireMapValue(draft.state.readModel.contacts.details, String(args[0])).contact) !== JSON.stringify(source))) {
+          throw new JobCtrlApiError(409, "Conflict", "This contact changed. Review the latest contact before retrying your draft.", { error: "contact_revision_conflict" });
+        }
+        response = this.apply(method, args as unknown[], draft, context, now, selection);
       },
       { expectedResetEpoch: current.resetEpoch },
     );
     if (commit.kind !== "committed") {
       throw new DemoCommandPersistenceError();
     }
-    return structuredClone(response) as ApiClientResponse<TMethod>;
+    const result = structuredClone(response);
+    if (method === "createContact" || method === "updateContact" || method === "confirmContactCandidate") {
+      const detail = result as { contact: ContactDetail };
+      detail.contact.fingerprint = await demoContactFingerprint(detail.contact);
+    }
+    return result as ApiClientResponse<TMethod>;
   }
 
   private apply(
@@ -178,6 +322,7 @@ export class DemoLocalCommandExecutor {
     draft: DemoWorkspaceSnapshot,
     context: DemoWorkspaceMutationContext,
     now: string,
+    selection?: DemoPermanentDeleteSelection,
   ): unknown {
     switch (method) {
       case "acknowledgeDigest": {
@@ -744,10 +889,15 @@ export class DemoLocalCommandExecutor {
         return { ok: true, thread, reply, feedbackSignal };
       }
       case "saveResumeTemplate": {
-        const body = record(args[0]);
+        const parsed = ResumeTemplateVersionSaveRequestSchema.safeParse(args[0]);
+        if (!parsed.success) throw new JobCtrlApiError(400, "Bad Request", `Invalid resume template save request: ${parsed.error.issues[0]?.message ?? "Invalid input."}`);
+        const body = parsed.data;
         const templateId = stringValue(body.templateId) ?? this.createId("template");
         const templates = draft.state.readModel.materials.resumeTemplates.templates;
         const existingIndex = templates.findIndex((template) => template.templateId === templateId);
+        if (body.templateId && (existingIndex < 0 || templates[existingIndex]?.activeVersion.versionId !== body.expectedVersionId)) {
+          throw new JobCtrlApiError(409, "Conflict", "The template changed. Review the latest version before saving.");
+        }
         const previous = existingIndex >= 0 ? templates[existingIndex]! : templates[0]!;
         const base = structuredClone(previous);
         const versionId = this.createId("template-version");
@@ -769,6 +919,7 @@ export class DemoLocalCommandExecutor {
           },
         });
         if (existingIndex >= 0) {
+          mutableMap(draft.state.readModel.materials.templateDetails)[JSON.stringify(["version", templateId, previous.activeVersion.versionId])] = { ok: true, template: structuredClone(previous) };
           templates[existingIndex] = base;
         } else {
           templates.push(base);
@@ -784,16 +935,26 @@ export class DemoLocalCommandExecutor {
         return { ok: true, template: base };
       }
       case "setDefaultResumeTemplate": {
-        const body = record(args[0]);
-        const templateId = requiredString(body.templateId, "templateId");
-        const template = requireById(draft.state.readModel.materials.resumeTemplates.templates, "templateId", templateId);
-        const requestedVersionId = stringValue(body.versionId);
-        if (requestedVersionId && requestedVersionId !== template.activeVersion.versionId) {
-          throw new TypeError(`Demo resume template version ${requestedVersionId} was not found.`);
+        const parsed = ResumeTemplateDefaultSelectionRequestSchema.safeParse(args[0]);
+        if (!parsed.success) throw new JobCtrlApiError(400, "Bad Request", `Invalid resume template default request: ${parsed.error.issues[0]?.message ?? "Invalid input."}`);
+        const body = parsed.data;
+        const templateId = body.templateId;
+        const template = draft.state.readModel.materials.resumeTemplates.templates.find((item) => item.templateId === templateId);
+        const requestedVersionId = body.versionId;
+        const expectedActiveVersionId = body.expectedActiveVersionId;
+        if (expectedActiveVersionId && expectedActiveVersionId !== template?.activeVersion.versionId) {
+          throw new JobCtrlApiError(409, "Conflict", "The template changed. Review the latest version before saving.");
         }
-        const metadata = templateMetadata(template, "profile_default");
+        if (!template) throw new JobCtrlApiError(400, "Bad Request", `Resume template not found: ${templateId}`);
+        const selected = requestedVersionId && requestedVersionId !== template.activeVersion.versionId
+          ? draft.state.readModel.materials.templateDetails[JSON.stringify(["version", templateId, requestedVersionId])]?.template
+          : template;
+        if (!selected) {
+          throw new JobCtrlApiError(400, "Bad Request", `Demo resume template version ${requestedVersionId} was not found.`);
+        }
+        const metadata = templateMetadata(selected, "profile_default");
         draft.state.readModel.materials.resumeTemplates.defaultTemplate = metadata;
-        draft.state.readModel.materials.resumeTemplates.effectiveDefaultVersion = template.activeVersion;
+        draft.state.readModel.materials.resumeTemplates.effectiveDefaultVersion = selected.activeVersion;
         refreshDefaultTemplateConsumers(draft, metadata);
         context.appendDomainEvent(atTime(createResumeTemplateDefaultChanged(LOCAL_TENANT, {
           templateId: metadata.templateId,
@@ -838,7 +999,18 @@ export class DemoLocalCommandExecutor {
       case "recordManualApplicationOutcome": {
         const jobKey = requiredString(args[0], "jobKey");
         requireMapValue(draft.state.readModel.jobs.details, jobKey);
-        const body = record(args[1]);
+        const body = ManualApplicationOutcomeRequestSchema.parse(args[1]);
+        const key = JSON.stringify([jobKey, body.interviewPrepGeneration === undefined ? "manual-outcome" : "interview-reflection", body.requestId]);
+        const receipts = draft.state.actionReceipts ??= {};
+        const receipt = receipts[key];
+        if (receipt) {
+          const outcome = draft.state.readModel.analytics.outcomes.outcomes.find((outcome) => outcome.outcomeId === receipt.outcomeId && outcome.jobKey === jobKey);
+          if (!outcome || receipt.occurredAtOmitted !== (body.occurredAt === undefined)
+            || outcome.kind !== body.kind || outcome.note !== (body.note ?? null)
+            || outcome.interviewPrepGeneration !== (body.interviewPrepGeneration ?? null)
+            || (body.occurredAt !== undefined && outcome.occurredAt !== body.occurredAt)) throw new Error("This request identity conflicts with a recorded action. Start a new action.");
+          return { ok: true, outcome };
+        }
         const kind = requiredOneOf(
           body.kind,
           [
@@ -852,7 +1024,7 @@ export class DemoLocalCommandExecutor {
           jobKey,
           kind,
           source: "manual" as const,
-          note: stringValue(body.note),
+          note: body.note ?? null,
           occurredAt: stringValue(body.occurredAt) ?? now,
           recordedAt: now,
           suggestionId: null,
@@ -861,6 +1033,7 @@ export class DemoLocalCommandExecutor {
         };
         draft.state.readModel.analytics.outcomes.outcomes.push(outcome as never);
         requireMapValue(draft.state.readModel.analytics.jobOutcomes, jobKey).outcomes.push(outcome as never);
+        receipts[key] = { occurredAtOmitted: body.occurredAt === undefined, outcomeId: outcome.outcomeId };
         recomputeDemoOutcomeProjections(draft);
         context.appendDomainEvent(atTime(createApplicationOutcomeRecorded(LOCAL_TENANT, {
           jobKey,
@@ -979,6 +1152,31 @@ export class DemoLocalCommandExecutor {
       case "unhideJobs":
       case "permanentlyDeleteJobs": {
         const body = record(args[0]);
+        if (method === "permanentlyDeleteJobs" && body.selectionId !== undefined) {
+          const keys = arrayValue(body.jobKeys).map(String);
+          const reviewedKeys = new Set(selection?.jobKeys);
+          if (!selection || body.allMatching === true || selection.expiresAt <= this.clock.now().getTime()
+            || selection.workspaceId !== draft.workspaceId || selection.resetEpoch !== draft.resetEpoch
+            || keys.length !== selection.jobKeys.length
+            || new Set(keys).size !== keys.length || keys.some((key) => !reviewedKeys.has(key))) {
+            throw permanentDeleteSelectionConflict();
+          }
+          const changedJobs = changedLifecycleJobs(draft, selection.revision, selection.jobRevisions, keys);
+          if (changedJobs === null) throw permanentDeleteSelectionConflict();
+          const changedJobKeys = new Set(changedJobs);
+          const conflicts: string[] = [];
+          for (const jobKey of keys) {
+            const job = draft.state.readModel.jobs.details[jobKey]?.job;
+            if (!job || (!job.deletedAt && !job.hiddenAt)
+              || changedJobKeys.has(jobKey)) {
+              conflicts.push(jobKey);
+            }
+          }
+          if (conflicts.length) {
+            const changed = new Set(conflicts);
+            throw permanentDeleteSelectionConflict(conflicts, keys.filter((key) => !changed.has(key)));
+          }
+        }
         return this.applyJobMutation(
           method,
           selectJobKeys(draft, body),
@@ -1008,28 +1206,15 @@ export class DemoLocalCommandExecutor {
           job.scoreVersion = (job.scoreVersion ?? 0) + 1;
           job.scoredAt = now;
           job.scoreCorrection = correction;
-          job.scoreCriteria = job.scoreCriteria
-            ? { ...job.scoreCriteria, criteriaVersion: `demo-policy-${newPolicyVersion}` }
-            : job.scoreCriteria;
           job.scoreTrace = job.scoreTrace
             ? {
                 ...job.scoreTrace,
-                scoringPolicyId: `demo:scoring-policy-${newPolicyVersion}`,
-                scoringPolicyVersion: newPolicyVersion,
                 correctionHistory: [...job.scoreTrace.correctionHistory, correction],
               }
             : job.scoreTrace;
-          job.scoreStaleness = {
-            isStale: false,
-            staleReason: null,
-            currentPolicyVersion: newPolicyVersion,
-            targetPolicyVersion: newPolicyVersion,
-            markedAt: null,
-            pendingExplicitRescore: false,
-          };
         });
         for (const comparable of draft.state.readModel.jobs.list.items) {
-          if (comparable.jobKey === jobKey || comparable.scoreVersion === null) continue;
+          if (comparable.jobKey === jobKey || comparable.scoreVersion === null || comparable.scoreCorrection !== null) continue;
           updateJobCopies(draft, comparable.jobKey, (job) => {
             job.scoreStaleness = {
               isStale: true,
@@ -1073,32 +1258,55 @@ export class DemoLocalCommandExecutor {
         return requireMapValue(draft.state.readModel.jobs.details, jobKey);
       }
       case "resetStaleScoresForRescore": {
+        const nextAction = DEMO_RESCORE_UNAVAILABLE_MESSAGE;
         const body = record(args[0]);
         const requested = arrayValue(body.jobKeys).map(String);
-        const candidates = draft.state.readModel.jobs.list.items.filter((job) =>
-          job.scoreStaleness.isStale && (requested.length === 0 || requested.includes(job.jobKey)),
-        );
+        const candidates: typeof draft.state.readModel.jobs.list.items = [];
+        const skippedActiveJobKeys: string[] = [];
+        const alreadyPendingJobKeys: string[] = [];
+        for (const job of draft.state.readModel.jobs.list.items) {
+          if (!isActiveDemoJob(job) || !job.scoreStaleness.isStale || (requested.length && !requested.includes(job.jobKey))) continue;
+          const detail = requireMapValue(draft.state.readModel.jobs.details, job.jobKey);
+          const state = detail.stages.find((stage) => stage.stage === "score")?.state ??
+            (job.currentStage === "score" ? job.currentState : null);
+          if (state === "running" || state === "queued") skippedActiveJobKeys.push(job.jobKey);
+          else if (state === "pending") alreadyPendingJobKeys.push(job.jobKey);
+          else candidates.push(job);
+        }
         const limit = numberValue(body.limit) ?? 0;
         const selected = limit > 0 ? candidates.slice(0, limit) : candidates;
         for (const job of selected) {
           const staleness = structuredClone(job.scoreStaleness);
           updateJobCopies(draft, job.jobKey, (candidate) => {
-            candidate.currentState = "pending";
-            candidate.nextAction = "Run an explicit browser-local rescore rehearsal.";
+            if (candidate.currentStage === "score") candidate.currentState = "pending";
+            candidate.nextAction = nextAction;
+          });
+          const stages = requireMapValue(draft.state.readModel.jobs.details, job.jobKey).stages;
+          const scoreStage = stages.find((stage) => stage.stage === "score");
+          if (scoreStage) Object.assign(scoreStage, {
+            state: "pending", attemptCount: 0, startedAt: null, finishedAt: null, durationMs: null,
+            errorCode: null, errorMessage: null, retryable: true, blockedBy: [], nextAction: null, updatedAt: now,
+          });
+          else stages.push({
+            stage: "score", state: "pending", attemptCount: 0, maxAttempts: 5,
+            startedAt: null, updatedAt: now, finishedAt: null, durationMs: null,
+            errorCode: null, errorMessage: null, retryable: true, blockedBy: [], nextAction: null,
           });
           context.appendDomainEvent(atTime(createScoreRescoreRequested(LOCAL_TENANT, {
             jobId: job.jobKey,
             staleReason: staleness.staleReason ?? "scoring_policy_changed",
             oldPolicyVersion: staleness.currentPolicyVersion ?? 0,
             newPolicyVersion: staleness.targetPolicyVersion ?? 0,
-            nextAction: "jobctrl run score --rescore",
+            nextAction,
           }), now));
         }
         return {
           ok: true,
           count: selected.length,
           jobKeys: selected.map((job) => job.jobKey),
-          nextAction: "jobctrl run score --rescore",
+          nextAction,
+          skippedActiveJobKeys,
+          alreadyPendingJobKeys,
         };
       }
       case "cancelWorkflowRun": {
@@ -1192,6 +1400,7 @@ export class DemoLocalCommandExecutor {
           };
         });
         const contact = {
+          fingerprint: (draft.revision + 1).toString(16).padStart(64, "0"),
           contactId,
           displayName: attributes.find((attribute) => attribute.kind === "name")?.value ?? "",
           role: body.role ?? "other",
@@ -1227,7 +1436,7 @@ export class DemoLocalCommandExecutor {
       }
       case "updateContact": {
         const contactId = requiredString(args[0], "contactId");
-        const body = record(args[1]);
+        const body = ContactUpdateRequestSchema.parse(args[1]);
         const detail = requireMapValue(draft.state.readModel.contacts.details, contactId);
         const contact = detail.contact;
         const employer = Object.hasOwn(body, "employer") ? trimmedStringValue(body.employer) : contact.employer;
@@ -1244,23 +1453,43 @@ export class DemoLocalCommandExecutor {
         let attributes = contact.attributes;
         if (Object.hasOwn(body, "attributes")) {
           changedFields.push("attributes");
+          const inputs = body.attributes ?? [];
+          const byId = new Map(contact.attributes.map((attribute) => [attribute.attributeId, attribute]));
+          const specified = new Set<string>();
+          for (const input of inputs) {
+            if (input.attributeId === undefined) continue;
+            if (!byId.has(input.attributeId) || specified.has(input.attributeId)) {
+              throw new JobCtrlApiError(400, "Bad Request", "Contact fact identity is invalid or repeated.", { error: "invalid_contact" });
+            }
+            specified.add(input.attributeId);
+          }
           const remaining = new Map<string, typeof contact.attributes>();
           for (const attribute of contact.attributes) {
-            const key = `${attribute.kind} ${attribute.value}`;
+            if (specified.has(attribute.attributeId)) continue;
+            const key = JSON.stringify([attribute.kind, attribute.value]);
             const bucket = remaining.get(key);
             if (bucket) bucket.push(attribute);
             else remaining.set(key, [attribute]);
           }
-          attributes = arrayValue(body.attributes).flatMap((rawAttribute, index) => {
-            const input = record(rawAttribute);
-            const kind = requiredTrimmedString(input.kind, `attributes[${index}].kind`);
-            const value = requiredTrimmedString(input.value, `attributes[${index}].value`);
-            const kept = remaining.get(`${kind} ${value}`)?.shift();
-            if (kept) return [structuredClone(kept)];
+          attributes = inputs.map((input, index) => {
+            const kind = input.kind;
+            const value = input.value.trim();
+            const rawKey = JSON.stringify([kind, input.value]);
+            const normalizedKey = JSON.stringify([kind, value]);
+            const kept = input.attributeId !== undefined
+              ? byId.get(input.attributeId)
+              : remaining.get(rawKey)?.shift() ??
+                (rawKey !== normalizedKey ? remaining.get(normalizedKey)?.shift() : undefined);
+            if (kept && kept.kind === kind &&
+                (kept.value === input.value || kept.value === value)) return structuredClone(kept);
+            const parsed = ContactAttributeInputSchema.safeParse({ kind, value: input.value });
+            if (!parsed.success) {
+              throw new JobCtrlApiError(400, "Bad Request", "Contact fact is invalid.", { error: "invalid_contact" });
+            }
             const attribute = {
               attributeId: this.createId(`contact-attribute-${index + 1}`),
-              kind,
-              value,
+              kind: parsed.data.kind,
+              value: parsed.data.value,
               provenance: {
                 sourceKind: "user_entered" as const,
                 sourceRef: "user_entered",
@@ -1271,10 +1500,11 @@ export class DemoLocalCommandExecutor {
               },
             } as typeof contact.attributes[number];
             createdAttributes.push(attribute);
-            return [attribute];
+            return attribute;
           });
         }
         Object.assign(contact, {
+          fingerprint: (draft.revision + 1).toString(16).padStart(64, "0"),
           displayName: attributes.find((attribute) => attribute.kind === "name")?.value ?? "",
           role,
           employer,
@@ -1336,6 +1566,7 @@ export class DemoLocalCommandExecutor {
           ?? attributes.find((attribute) => attribute.kind === "title")?.value
           ?? "Synthetic confirmed contact";
         const contact = {
+          fingerprint: (draft.revision + 1).toString(16).padStart(64, "0"),
           contactId,
           displayName,
           role: record(args[2]).role ?? candidate.role,
@@ -1616,6 +1847,14 @@ export class DemoLocalCommandExecutor {
     if (!permanent) recomputeDemoOutcomeProjections(draft);
     return { ok: true, count: jobKeys.length, jobKeys };
   }
+}
+
+function permanentDeleteSelectionConflict(conflictingJobKeys?: string[], unprocessedJobKeys?: string[]): JobCtrlApiError {
+  return new JobCtrlApiError(409, "Conflict", "The removed job selection changed. Refresh and select the jobs again.", {
+    ok: false,
+    error: "permanent_delete_selection_conflict",
+    ...(conflictingJobKeys ? { deletedJobKeys: [], conflictingJobKeys, unprocessedJobKeys: unprocessedJobKeys ?? [] } : {}),
+  });
 }
 
 function defaultId(prefix: string): string {

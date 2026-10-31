@@ -7,7 +7,7 @@ import { JOB_SORT_FIELDS, JobListQuerySchema } from "../src/contracts.js";
 import { createRetainedDatabase, openDatabase } from "../src/db.js";
 import { jobQueryMetrics, jobQuerySelection } from "../src/job-list-query.js";
 import { listJobs, matchingJobKeys } from "../src/read-model.js";
-import { hasExactV14SchemaManifest } from "../src/schema-manifest.js";
+import { hasExactV15SchemaManifest } from "../src/schema-manifest.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp } from "../src/server.js";
 import { initializeExactDatabase } from "./exact-schema.js";
@@ -73,7 +73,7 @@ describe("SQLite job query index", () => {
     writer.prepare("UPDATE job_list_projections SET title='Actual source change' WHERE tenant_id='local' AND job_id=?").run(id(0));
     expect(listJobs(db, query({ q: "Actual source change" })).items.map((job) => job.jobKey)).toEqual([id(0)]);
     expect(jobQueryMetrics(db).refreshes).toBe(2);
-    expect(hasExactV14SchemaManifest(db)).toBe(true);
+    expect(hasExactV15SchemaManifest(db)).toBe(true);
   });
 
   it("uses postings before literal checks for selective and zero-candidate searches", () => {
@@ -172,7 +172,7 @@ describe("SQLite job query index", () => {
     }
     expect(jobQueryMetrics(db).refreshes).toBe(1);
     expect(jobQueryMetrics(db).indexedRows).toBe(60);
-    expect(hasExactV14SchemaManifest(db)).toBe(true);
+    expect(hasExactV15SchemaManifest(db)).toBe(true);
   });
 
   it("uses indexed locale ordinals, canonical tenant joins and trigram membership in SQL", () => {
@@ -410,7 +410,7 @@ describe("SQLite job query index", () => {
     expect(() => listJobs(db, query())).toThrow("synthetic cold build failure");
     expect(db.inTransaction).toBe(false);
     expect(db.prepare("SELECT name FROM sqlite_temp_master WHERE name LIKE 'job_query_%'").all()).toEqual([]);
-    expect(hasExactV14SchemaManifest(db)).toBe(true);
+    expect(hasExactV15SchemaManifest(db)).toBe(true);
     spy.mockRestore();
     expect(listJobs(db, query()).pagination.total).toBe(12);
   });
@@ -459,7 +459,7 @@ describe("SQLite job query index", () => {
       .toEqual([{ discovered_at: null }]);
   });
 
-  it("closes retained resources and re-admits replacement files against exact v14", () => {
+  it("closes retained resources and re-admits replacement files against exact v15", () => {
     const { dbPath, directory } = seed();
     const owner = createRetainedDatabase(dbPath);
     cleanups.push(owner.close);
@@ -481,11 +481,11 @@ describe("SQLite job query index", () => {
     expect(() => owner.open()).toThrow();
     expect(next.open).toBe(false);
     initializeExactDatabase(dbPath);
-    expect(hasExactV14SchemaManifest(owner.open())).toBe(true);
+    expect(hasExactV15SchemaManifest(owner.open())).toBe(true);
     const invalid = new Database(dbPath);
     invalid.exec("CREATE TABLE forbidden_extra(value TEXT)");
     invalid.close();
-    expect(() => owner.open()).toThrow("exact v14");
+    expect(() => owner.open()).toThrow("exact v15");
   });
 
   it("keeps the HTTP query connection until app close", async () => {

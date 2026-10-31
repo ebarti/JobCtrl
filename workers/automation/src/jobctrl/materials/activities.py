@@ -10,13 +10,17 @@ from typing import Any
 from temporalio import activity
 
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
+from jobctrl.domain.determinations import serialized_determination_failure
 from jobctrl.domain.errors import (
     AttemptBudgetExhaustedError,
     JobCtrlError,
     LlmTransientError,
+    MATERIAL_REJECTION_STATUSES,
+    MaterialRejectedError,
     to_application_error,
 )
 from jobctrl.domain.identifiers import JobId, canonical_job_id
+from jobctrl.infrastructure.preparation_recovery import MaterialActivityAttempt
 from jobctrl.infrastructure.temporal.pipeline_step_lifecycle import (
     PipelineStepScope,
     begin_pipeline_step_attempt,
@@ -79,7 +83,11 @@ class TailorJobActivityInput:
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     workflow_id: str | None = None
 
+    explicit_material_request: bool = False
+
     def __post_init__(self) -> None:
+        if type(self.explicit_material_request) is not bool:
+            raise ValueError("explicit_material_request must be a boolean")
         object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
 
 
@@ -104,20 +112,20 @@ async def tailor_activity(payload: TailorActivityInput) -> TailorActivityOutput:
         expected_app_dir=payload.expected_app_dir,
         expected_db_path=payload.expected_db_path,
     )
-    if activity.info().attempt > 1 and payload.workflow_id:
-        _reconcile_activity_retry(
-            tenant_id=payload.tenant_id,
-            workflow_id=payload.workflow_id,
-            stage="tailor",
-            expected_app_dir=payload.expected_app_dir,
-            expected_db_path=payload.expected_db_path,
-        )
-
+    info = activity.info()
+    payload = replace(payload, workflow_id=payload.workflow_id or info.workflow_run_id)
+    temporal_attempt = MaterialActivityAttempt(info.activity_id, info.attempt, info.workflow_run_id)
     cancel_event = threading.Event()
     try:
+        if info.attempt > 1 and payload.workflow_id:
+            _reconcile_activity_retry(
+                tenant_id=payload.tenant_id, workflow_id=payload.workflow_id, stage="tailor",
+                expected_app_dir=payload.expected_app_dir, expected_db_path=payload.expected_db_path,
+                job_ids=payload.job_ids, temporal_attempt=temporal_attempt,
+            )
         if payload.current_policy_only:
             result = await run_blocking_with_heartbeat(
-                lambda: _run_current_policy_tailoring(payload, cancel_event=cancel_event),
+                lambda: _run_current_policy_tailoring(payload, cancel_event=cancel_event, temporal_attempt=temporal_attempt),
                 starting_message="current-policy tailor starting",
                 progress_message="current-policy tailor still running",
                 on_cancel=cancel_event.set,
@@ -133,7 +141,7 @@ async def tailor_activity(payload: TailorActivityInput) -> TailorActivityOutput:
 
         if payload.job_ids:
             result = await run_blocking_with_heartbeat(
-                lambda: _run_selected_tailoring(payload, cancel_event=cancel_event),
+                lambda: _run_selected_tailoring(payload, cancel_event=cancel_event, temporal_attempt=temporal_attempt),
                 starting_message="selected tailor starting",
                 progress_message="selected tailor still running",
                 on_cancel=cancel_event.set,
@@ -182,6 +190,7 @@ async def tailor_activity(payload: TailorActivityInput) -> TailorActivityOutput:
                     "cancel_event": cancel_event,
                     "suppress_existing_artifacts": payload.suppress_existing_artifacts,
                     "allow_low_fit_override": payload.allow_low_fit_override,
+                    "temporal_attempt": temporal_attempt,
                 },
                 mode="workflow",
                 pass_number=1,
@@ -219,6 +228,7 @@ def _run_current_policy_tailoring(
     payload: TailorActivityInput,
     *,
     cancel_event: threading.Event | None = None,
+    temporal_attempt: MaterialActivityAttempt | None = None,
 ) -> dict[str, Any]:
     from jobctrl.database import get_connection
     from jobctrl.pipeline.current_policy_selectors import tailoring_current_policy_job_ids
@@ -230,13 +240,16 @@ def _run_current_policy_tailoring(
         limit=payload.limit,
         job_ids=payload.job_ids,
     )
-    return _run_selected_tailoring(replace(payload, job_ids=job_ids, limit=0), cancel_event=cancel_event)
+    return _run_selected_tailoring(
+        replace(payload, job_ids=job_ids, limit=0), cancel_event=cancel_event, temporal_attempt=temporal_attempt,
+    )
 
 
 def _run_selected_tailoring(
     payload: TailorActivityInput,
     *,
     cancel_event: threading.Event | None = None,
+    temporal_attempt: MaterialActivityAttempt | None = None,
 ) -> dict[str, Any]:
     from jobctrl.domain.tenant import TenantId
     from jobctrl.scoring.tailor import tailor_job_by_id
@@ -283,6 +296,8 @@ def _run_selected_tailoring(
             tailor_judge_model=payload.tailor_judge_model,
             workflow_id=payload.workflow_id,
             cancel_event=cancel_event,
+            explicit_material_request=not bool(payload.recovery_workflow_id),
+            **({"temporal_attempt": temporal_attempt} if temporal_attempt is not None else {}),
             **({"recovery_workflow_id": payload.recovery_workflow_id} if payload.recovery_workflow_id else {}),
         )
 
@@ -345,17 +360,18 @@ async def tailor_job_activity(payload: TailorJobActivityInput) -> TailorJobActiv
     """Tailor one canonical JobId for ``JobPreparationWorkflow``."""
     from jobctrl.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
 
-    owned_payload = replace(payload, workflow_id=activity.info().workflow_run_id)
-    if activity.info().attempt > 1:
-        _reconcile_activity_retry(
-            tenant_id=payload.tenant_id,
-            workflow_id=owned_payload.workflow_id or "",
-            stage="tailor",
-        )
+    info = activity.info()
+    owned_payload = replace(payload, workflow_id=info.workflow_run_id)
+    temporal_attempt = MaterialActivityAttempt(info.activity_id, info.attempt, info.workflow_run_id)
     cancel_event = threading.Event()
     try:
+        if info.attempt > 1:
+            _reconcile_activity_retry(
+                tenant_id=payload.tenant_id, workflow_id=owned_payload.workflow_id or "",
+                stage="tailor", job_id=payload.job_id, temporal_attempt=temporal_attempt,
+            )
         result = await run_blocking_with_heartbeat(
-            lambda: _tailor_one_job(owned_payload, cancel_event=cancel_event),
+            lambda: _tailor_one_job(owned_payload, cancel_event=cancel_event, temporal_attempt=temporal_attempt),
             starting_message="tailor-job starting",
             progress_message="tailor-job still running",
             on_cancel=cancel_event.set,
@@ -364,7 +380,12 @@ async def tailor_job_activity(payload: TailorJobActivityInput) -> TailorJobActiv
         status = str(result.get("status") or "error")
         if status == "exhausted":
             raise AttemptBudgetExhaustedError(str(result.get("error") or "Tailor durable attempt budget exhausted"))
+        if status in MATERIAL_REJECTION_STATUSES:
+            raise MaterialRejectedError(str(result.get("error") or f"Tailoring ended with status {status}"))
         if status not in {"approved", "skipped", "not_eligible", "already_done"}:
+            failure = serialized_determination_failure(result.get("error"))
+            if failure is not None and not failure.retryable:
+                raise failure
             raise LlmTransientError(str(result.get("error") or f"Tailoring ended with status {status}"))
         materials = result.get("materials")
         generation = getattr(materials, "generation", None)
@@ -384,6 +405,7 @@ def _tailor_one_job(
     payload: TailorJobActivityInput,
     *,
     cancel_event: threading.Event | None = None,
+    temporal_attempt: MaterialActivityAttempt | None = None,
 ) -> dict[str, Any]:
     from jobctrl.domain.tenant import TenantId
     from jobctrl.scoring.tailor import tailor_job_by_id
@@ -398,10 +420,12 @@ def _tailor_one_job(
         llm_model=payload.llm_model,
         suppress_existing_artifacts=payload.suppress_existing_artifacts,
         allow_low_fit_override=payload.allow_low_fit_override,
+        explicit_material_request=payload.explicit_material_request,
         tailor_models=payload.tailor_models,
         tailor_judge_model=payload.tailor_judge_model,
         workflow_id=payload.workflow_id,
         cancel_event=cancel_event,
+        **({"temporal_attempt": temporal_attempt} if temporal_attempt is not None else {}),
     )
 
 
@@ -426,6 +450,7 @@ class CoverActivityInput:
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     workflow_id: str | None = None
     recovery_workflow_id: str | None = None
+    allow_low_fit_override: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "job_ids", _canonical_job_ids(self.job_ids))
@@ -447,8 +472,13 @@ class CoverLetterActivityInput:
     validation_mode: str = "normal"
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     workflow_id: str | None = None
+    allow_low_fit_override: bool = False
+
+    explicit_material_request: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.explicit_material_request) is not bool:
+            raise ValueError("explicit_material_request must be a boolean")
         object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
 
 
@@ -499,20 +529,20 @@ async def cover_activity(payload: CoverActivityInput) -> CoverActivityOutput:
         expected_app_dir=payload.expected_app_dir,
         expected_db_path=payload.expected_db_path,
     )
-    if activity.info().attempt > 1 and payload.workflow_id:
-        _reconcile_activity_retry(
-            tenant_id=payload.tenant_id,
-            workflow_id=payload.workflow_id,
-            stage="cover",
-            expected_app_dir=payload.expected_app_dir,
-            expected_db_path=payload.expected_db_path,
-        )
-
+    info = activity.info()
+    payload = replace(payload, workflow_id=payload.workflow_id or info.workflow_run_id)
+    temporal_attempt = MaterialActivityAttempt(info.activity_id, info.attempt, info.workflow_run_id)
     cancel_event = threading.Event()
     try:
+        if info.attempt > 1 and payload.workflow_id:
+            _reconcile_activity_retry(
+                tenant_id=payload.tenant_id, workflow_id=payload.workflow_id, stage="cover",
+                expected_app_dir=payload.expected_app_dir, expected_db_path=payload.expected_db_path,
+                job_ids=payload.job_ids, temporal_attempt=temporal_attempt,
+            )
         if payload.job_ids:
             result = await run_blocking_with_heartbeat(
-                lambda: _run_selected_cover(payload, cancel_event=cancel_event),
+                lambda: _run_selected_cover(payload, cancel_event=cancel_event, temporal_attempt=temporal_attempt),
                 starting_message="selected cover starting",
                 progress_message="selected cover still running",
                 on_cancel=cancel_event.set,
@@ -552,6 +582,9 @@ async def cover_activity(payload: CoverActivityInput) -> CoverActivityOutput:
                     "llm_model": payload.llm_model,
                     "workflow_id": payload.workflow_id,
                     "cancel_event": cancel_event,
+                    "allow_low_fit_override": payload.allow_low_fit_override,
+                    "tenant_id": payload.tenant_id,
+                    "temporal_attempt": temporal_attempt,
                 },
                 mode="workflow",
                 pass_number=1,
@@ -589,6 +622,7 @@ def _run_selected_cover(
     payload: CoverActivityInput,
     *,
     cancel_event: threading.Event | None = None,
+    temporal_attempt: MaterialActivityAttempt | None = None,
 ) -> dict[str, Any]:
     from jobctrl.domain.tenant import TenantId
     from jobctrl.scoring.cover_letter import cover_letter_by_id
@@ -627,6 +661,9 @@ def _run_selected_cover(
             tenant_id=TenantId(payload.tenant_id),
             workflow_id=payload.workflow_id,
             cancel_event=cancel_event,
+            allow_low_fit_override=payload.allow_low_fit_override,
+            explicit_material_request=not bool(payload.recovery_workflow_id),
+            **({"temporal_attempt": temporal_attempt} if temporal_attempt is not None else {}),
             **({"recovery_workflow_id": payload.recovery_workflow_id} if payload.recovery_workflow_id else {}),
         )
 
@@ -684,24 +721,30 @@ async def cover_letter_activity(payload: CoverLetterActivityInput) -> CoverLette
     """Generate one cover letter by canonical JobId for ``JobPreparationWorkflow``."""
     from jobctrl.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
 
-    owned_payload = replace(payload, workflow_id=activity.info().workflow_run_id)
-    if activity.info().attempt > 1:
-        _reconcile_activity_retry(
-            tenant_id=payload.tenant_id,
-            workflow_id=owned_payload.workflow_id or "",
-            stage="cover",
-        )
+    info = activity.info()
+    owned_payload = replace(payload, workflow_id=info.workflow_run_id)
+    temporal_attempt = MaterialActivityAttempt(info.activity_id, info.attempt, info.workflow_run_id)
     cancel_event = threading.Event()
     try:
+        if info.attempt > 1:
+            _reconcile_activity_retry(
+                tenant_id=payload.tenant_id, workflow_id=owned_payload.workflow_id or "",
+                stage="cover", job_id=payload.job_id, temporal_attempt=temporal_attempt,
+            )
         result = await run_blocking_with_heartbeat(
-            lambda: _cover_one_job(owned_payload, cancel_event=cancel_event),
+            lambda: _cover_one_job(owned_payload, cancel_event=cancel_event, temporal_attempt=temporal_attempt),
             starting_message="cover-letter starting",
             progress_message="cover-letter still running",
             on_cancel=cancel_event.set,
             activity_name="cover_letter",
         )
         status = str(result.get("status") or "error")
+        if status in MATERIAL_REJECTION_STATUSES:
+            raise MaterialRejectedError(str(result.get("error") or f"Cover ended with status {status}"))
         if status not in {"ok", "skipped", "already_done"}:
+            failure = serialized_determination_failure(result.get("error"))
+            if failure is not None and not failure.retryable:
+                raise failure
             raise LlmTransientError(str(result.get("error") or f"Cover ended with status {status}"))
         return CoverLetterActivityOutput(
             status=status,
@@ -719,6 +762,7 @@ def _cover_one_job(
     payload: CoverLetterActivityInput,
     *,
     cancel_event: threading.Event | None = None,
+    temporal_attempt: MaterialActivityAttempt | None = None,
 ) -> dict[str, Any]:
     from jobctrl.domain.tenant import TenantId
     from jobctrl.scoring.cover_letter import cover_letter_by_id
@@ -731,6 +775,9 @@ def _cover_one_job(
         tenant_id=TenantId(payload.tenant_id),
         workflow_id=payload.workflow_id,
         cancel_event=cancel_event,
+        allow_low_fit_override=payload.allow_low_fit_override,
+        explicit_material_request=payload.explicit_material_request,
+        **({"temporal_attempt": temporal_attempt} if temporal_attempt is not None else {}),
     )
 
 
@@ -741,23 +788,44 @@ def _reconcile_activity_retry(
     stage: str,
     expected_app_dir: str | None = None,
     expected_db_path: str | None = None,
+    job_id: JobId | None = None,
+    job_ids: tuple[JobId, ...] = (),
+    temporal_attempt: MaterialActivityAttempt | None = None,
 ) -> None:
     from jobctrl.database import get_connection
     from jobctrl.infrastructure.preparation_recovery import (
         RecoverPreparationStateInput,
+        assert_material_activity_attempt_not_superseded,
+        material_activity_may_recover,
         recover_preparation_state_rows,
     )
+    from jobctrl.infrastructure.materials.unit_of_work import SqliteUnitOfWork
 
-    recover_preparation_state_rows(
-        get_connection(),
-        RecoverPreparationStateInput(
-            tenant_id=tenant_id,
-            workflow_id=workflow_id,
-            stage=stage,
-            expected_app_dir=expected_app_dir,
-            expected_db_path=expected_db_path,
-        ),
+    conn = get_connection()
+    recovery = RecoverPreparationStateInput(
+        tenant_id=tenant_id,
+        workflow_id=workflow_id,
+        stage=stage,
+        expected_app_dir=expected_app_dir,
+        expected_db_path=expected_db_path,
+        job_ids=(str(job_id),) if job_id is not None else tuple(str(value) for value in job_ids),
     )
+    if temporal_attempt is None:
+        recover_preparation_state_rows(conn, recovery)
+        return
+    with SqliteUnitOfWork(conn):
+        if job_id is not None:
+            assert_material_activity_attempt_not_superseded(
+                conn, tenant_id=tenant_id, job_id=str(job_id), stage=stage,
+                workflow_id=workflow_id, attempt=temporal_attempt,
+            )
+        recover_preparation_state_rows(
+            conn, recovery, commit=False,
+            recovery_guard=lambda current_job_id: material_activity_may_recover(
+                conn, tenant_id=tenant_id, job_id=current_job_id, stage=stage,
+                workflow_id=workflow_id, attempt=temporal_attempt,
+            ),
+        )
 
 
 @activity.defn(name="render_pdf")

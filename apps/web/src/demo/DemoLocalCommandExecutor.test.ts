@@ -52,6 +52,11 @@ async function harness(store: DemoWorkspaceStore = new InMemoryDemoWorkspaceStor
   return { adapter, repository };
 }
 
+function requireObservationId(value: string | null): string {
+  if (!value) throw new Error("Expected a reviewable deletion observation.");
+  return value;
+}
+
 type LocalCase = readonly [
   (typeof DEMO_BROWSER_LOCAL_COMMANDS)[number],
   (api: ApiClientPort, repository: DemoWorkspaceRepository) => Promise<unknown>,
@@ -100,7 +105,7 @@ const EXPECTED_RESPONSE_KEYS = {
   unhideJob: ["count", "jobKeys", "ok"],
   unhideJobs: ["count", "jobKeys", "ok"],
   correctScore: JOB_DETAIL_RESPONSE_KEYS,
-  resetStaleScoresForRescore: ["count", "jobKeys", "nextAction", "ok"],
+  resetStaleScoresForRescore: ["alreadyPendingJobKeys", "count", "jobKeys", "nextAction", "ok", "skippedActiveJobKeys"],
   cancelWorkflowRun: ACTION_RESPONSE_KEYS,
   updateProfile: ["ok", "profile", "profileVersion", "style", "templateText"],
   updateSettings: ["effectiveSettings", "ok", "paths", "settings"],
@@ -190,7 +195,7 @@ const LOCAL_CASES = [
   }],
   ["setDefaultResumeTemplate", (api) => api.setDefaultResumeTemplate({ templateId: "demo-template" })],
   ["setJobResumeTemplate", (api) => api.setJobResumeTemplate(JOB, { templateId: "demo-template" })],
-  ["recordManualApplicationOutcome", (api) => api.recordManualApplicationOutcome(JOB, { kind: "interview", occurredAt: NOW, note: "Synthetic outcome", interviewPrepGeneration: 1 })],
+  ["recordManualApplicationOutcome", (api) => api.recordManualApplicationOutcome(JOB, { requestId: "11720000-0000-4000-8000-000000000001", kind: "interview", occurredAt: NOW, note: "Synthetic outcome", interviewPrepGeneration: 1 })],
   ["decideOutcomeSuggestion", async (api, repository) => {
     await repository.mutate((draft) => {
       const suggestion = {
@@ -228,7 +233,7 @@ const LOCAL_CASES = [
   ["updateProfile", (api) => api.updateProfile({ templateText: "Updated bundled template" })],
   ["updateSettings", (api) => api.updateSettings({ dailyBudgetUsd: 12, workerActivitySlots: 8 })],
   ["createContact", (api) => api.createContact({ role: "recruiter", employer: "Demo Workshop", attributes: [{ kind: "name", value: "Synthetic contact" }] })],
-  ["updateContact", (api) => api.updateContact("contact-demo-hiring-partner", { role: "hiring_manager" })],
+  ["updateContact", async (api) => api.updateContact("contact-demo-hiring-partner", { expectedFingerprint: (await api.contact("contact-demo-hiring-partner")).contact.fingerprint, role: "hiring_manager" })],
   ["deleteContact", (api) => api.deleteContact("contact-demo-hiring-partner", { reason: "Demo cleanup" })],
   ["confirmContactCandidate", (api) => api.confirmContactCandidate("research-demo-hiring-partner", "candidate-demo-hiring-partner", { role: "recruiter" })],
   ["approveOutreachDraft", (api) => api.approveOutreachDraft("thread-demo", "outreach-draft-candidate")],
@@ -241,6 +246,62 @@ const LOCAL_CASES = [
 ] as const satisfies readonly LocalCase[];
 
 describe("DemoLocalCommandExecutor", () => {
+  it("retains manual action receipts across demo reopen, conflicts on changed payload, and permits a new identity", async () => {
+    const store = new InMemoryDemoWorkspaceStore();
+    const first = await harness(store);
+    const body = { requestId: "11720000-0000-4000-8000-000000000003", kind: "interview" as const, note: "" };
+    const original = await first.adapter.recordManualApplicationOutcome(JOB, body);
+    expect(await first.adapter.recordManualApplicationOutcome(JOB, { ...body, note: "  " })).toEqual(original);
+    await expect(first.adapter.recordManualApplicationOutcome(JOB, { ...body, note: "A different note" })).rejects.toThrow(/identity conflicts/);
+    const next = await first.adapter.recordManualApplicationOutcome(JOB, { ...body, requestId: "11720000-0000-4000-8000-000000000004" });
+    expect(next.outcome.outcomeId).not.toBe(original.outcome.outcomeId);
+    const reopened = await harness(store);
+    expect(await reopened.adapter.recordManualApplicationOutcome(JOB, body)).toEqual(original);
+    expect(reopened.repository.snapshotNow().eventLog.filter((entry) => entry.event.eventType === "ApplicationOutcomeRecorded" && entry.event.payload.outcomeId === original.outcome.outcomeId)).toHaveLength(1);
+  });
+
+
+  it("explains unavailable demo rescore consistently across the reset result, job and event", async () => {
+    const { adapter, repository } = await harness();
+    const jobId = "job-fabrikam-systems";
+    const previous = repository.snapshotNow().state.readModel.jobs.details[jobId]!.job;
+    expect(DEMO_CAPABILITY_MANIFEST.rescoreJob.class).toBe("unavailable");
+    expect(DEMO_CAPABILITY_MANIFEST.rescoreJobsNotOnCurrentScoringPolicy.class).toBe("unavailable");
+    await expect(adapter.rescoreJob(jobId, { dryRun: false })).rejects.toMatchObject({
+      code: "demo_capability_not_implemented",
+    });
+    const initialDetail = await adapter.job(jobId);
+    expect(initialDetail.job.nextAction).toBe("Rescoring is unavailable in the demo.");
+    expect(initialDetail.stages).toContainEqual(expect.objectContaining({
+      stage: "score", nextAction: "Rescoring is unavailable in the demo.",
+    }));
+    const historicalRun = await adapter.workflowRun("run-failed-quality-gate");
+    expect(historicalRun.events).toContainEqual(expect.objectContaining({
+      eventType: "WorkflowFailed", message: "Rescoring is unavailable in the demo.",
+    }));
+    const response = await adapter.resetStaleScoresForRescore({
+      limit: 1,
+      jobKeys: [jobId],
+    });
+    expect(response).toMatchObject({
+      count: 1,
+      nextAction: "Rescoring is unavailable in the demo.",
+    });
+    const snapshot = repository.snapshotNow();
+    const detail = snapshot.state.readModel.jobs.details[jobId]!.job;
+    expect(detail).toMatchObject({ currentState: "pending", nextAction: response.nextAction });
+    expect(detail.scoreStaleness).toEqual(previous.scoreStaleness);
+    expect(detail.fitScore).toEqual(previous.fitScore);
+    expect(snapshot.state.readModel.jobs.list.items.find((job) => job.jobKey === jobId)).toMatchObject({
+      currentState: "pending", nextAction: response.nextAction,
+    });
+    expect(snapshot.eventLog).toContainEqual(expect.objectContaining({
+      event: expect.objectContaining({
+        eventType: "ScoreRescoreRequested",
+        payload: expect.objectContaining({ nextAction: response.nextAction }),
+      }),
+    }));
+  });
 
   it("preserves the reviewed profile, Required pin and event history when accepting cleanup cannot persist", async () => {
     const store = new QuotaOnNextTransactionStore();
@@ -407,6 +468,286 @@ describe("DemoLocalCommandExecutor", () => {
     expect(snapshot.state.readModel.jobs.details[activeKey!]).toBeDefined();
     expect(snapshot.state.readModel.jobs.details[deletedKey!]).toBeUndefined();
     expect(snapshot.state.readModel.jobs.details[hiddenKey!]).toBeUndefined();
+  });
+
+  it("refuses the entire reviewed removal when a selected job is restored after preparation", async () => {
+    const { adapter, repository } = await harness();
+    const [deletedKey, hiddenKey] = repository.snapshotNow().state.readModel.jobs.list.items
+      .slice(0, 2).map((job) => job.jobKey);
+    await adapter.deleteJob(deletedKey!);
+    await adapter.hideJob(hiddenKey!);
+    const before = repository.snapshotNow();
+    const expected = [deletedKey!, hiddenKey!].map((jobKey) => {
+      const job = before.state.readModel.jobs.details[jobKey]!.job;
+      return { jobKey, deletedAt: job.deletedAt, hiddenAt: job.hiddenAt };
+    });
+    const observation = await adapter.reviewableJobs({ deleted: "all" });
+    const selection = await adapter.preparePermanentDeleteSelection({
+      observationId: requireObservationId(observation.observationId),
+      selections: [{ allMatching: false, jobKeys: [deletedKey!, hiddenKey!] }],
+      expected,
+    });
+    expect(repository.snapshotNow().revision).toBe(before.revision);
+    await adapter.restoreJob(deletedKey!);
+    const afterRestore = repository.snapshotNow();
+    await expect(adapter.permanentlyDeleteJobs({
+      allMatching: false,
+      jobKeys: selection.jobKeys,
+      selectionId: selection.selectionId,
+    })).rejects.toMatchObject({ status: 409, responseBody: {
+      error: "permanent_delete_selection_conflict",
+      deletedJobKeys: [],
+      conflictingJobKeys: [deletedKey],
+      unprocessedJobKeys: [hiddenKey],
+    } });
+    expect(repository.snapshotNow()).toEqual(afterRestore);
+    expect(repository.snapshotNow().state.readModel.jobs.details[deletedKey!]).toBeDefined();
+    expect(repository.snapshotNow().state.readModel.jobs.details[hiddenKey!]).toBeDefined();
+    repository.dispose();
+  });
+
+  it("freezes all-matching removed selections and makes a successful receipt single-use", async () => {
+    const { adapter, repository } = await harness();
+    const [first, second] = repository.snapshotNow().state.readModel.jobs.list.items
+      .slice(0, 2).map((job) => job.jobKey);
+    await adapter.deleteJob(first!);
+    const request = {
+      selections: [{ allMatching: true, jobKeys: [], filter: {
+        q: "", deleted: "deleted" as const, applyStatus: "all" as const, source: "", company: "",
+      } }],
+    };
+    const observation = await adapter.reviewableJobs({ deleted: "deleted" });
+    const stale = await adapter.preparePermanentDeleteSelection({ ...request, observationId: requireObservationId(observation.observationId) });
+    expect(stale.jobKeys).toContain(first);
+    expect(stale.jobKeys).not.toContain(second);
+    await adapter.deleteJob(second!);
+    await expect(adapter.permanentlyDeleteJobs({
+      allMatching: false, jobKeys: stale.jobKeys, selectionId: stale.selectionId,
+    })).resolves.toMatchObject({ ok: true, count: 1, jobKeys: [first] });
+    expect(repository.snapshotNow().state.readModel.jobs.details[second!]).toBeDefined();
+    await expect(adapter.permanentlyDeleteJobs({
+      allMatching: false, jobKeys: stale.jobKeys, selectionId: stale.selectionId,
+    })).rejects.toMatchObject({ status: 409 });
+    const freshObservation = await adapter.reviewableJobs({ deleted: "deleted" });
+    const fresh = await adapter.preparePermanentDeleteSelection({ ...request, observationId: requireObservationId(freshObservation.observationId) });
+    expect(fresh.jobKeys).toEqual(expect.arrayContaining([second]));
+    expect(fresh.jobKeys).not.toContain(first);
+    await expect(adapter.permanentlyDeleteJobs({
+      allMatching: false, jobKeys: fresh.jobKeys, selectionId: fresh.selectionId,
+    })).resolves.toMatchObject({ ok: true, count: fresh.jobKeys.length });
+    await expect(adapter.permanentlyDeleteJobs({
+      allMatching: false, jobKeys: fresh.jobKeys, selectionId: fresh.selectionId,
+    })).rejects.toMatchObject({ status: 409 });
+    repository.dispose();
+  });
+
+  it("rejects stale displayed state before issuing a deletion receipt", async () => {
+    const { adapter, repository } = await harness();
+    const jobKey = repository.snapshotNow().state.readModel.jobs.list.items[0]!.jobKey;
+    await adapter.deleteJob(jobKey);
+    const job = repository.snapshotNow().state.readModel.jobs.details[jobKey]!.job;
+    const expected = { jobKey, deletedAt: job.deletedAt, hiddenAt: job.hiddenAt };
+    const observation = await adapter.reviewableJobs({ deleted: "all" });
+    await adapter.restoreJob(jobKey);
+    const afterRestore = repository.snapshotNow();
+    await expect(adapter.preparePermanentDeleteSelection({
+      observationId: requireObservationId(observation.observationId),
+      selections: [{ allMatching: false, jobKeys: [jobKey] }],
+      expected: [expected],
+    })).rejects.toMatchObject({ status: 409 });
+    expect(repository.snapshotNow()).toEqual(afterRestore);
+    repository.dispose();
+  });
+
+  it("reports changed and unprocessed members when a mixed cohort changes before preparation", async () => {
+    const { adapter, repository } = await harness();
+    const [deletedKey, hiddenKey] = repository.snapshotNow().state.readModel.jobs.list.items
+      .slice(0, 2).map((job) => job.jobKey);
+    await adapter.deleteJob(deletedKey!);
+    await adapter.hideJob(hiddenKey!);
+    const observed = await adapter.reviewableJobs({ deleted: "all" });
+    const expected = [deletedKey!, hiddenKey!].map((jobKey) => {
+      const job = observed.items.find((item) => item.jobKey === jobKey)!;
+      return { jobKey, deletedAt: job.deletedAt, hiddenAt: job.hiddenAt };
+    });
+    await adapter.unhideJob(hiddenKey!);
+    const before = repository.snapshotNow();
+    await expect(adapter.preparePermanentDeleteSelection({
+      observationId: requireObservationId(observed.observationId),
+      selections: [{ allMatching: false, jobKeys: [deletedKey!, hiddenKey!] }],
+      expected,
+    })).rejects.toMatchObject({ status: 409, responseBody: {
+      error: "permanent_delete_selection_conflict",
+      deletedJobKeys: [],
+      conflictingJobKeys: [hiddenKey],
+      unprocessedJobKeys: [deletedKey],
+    } });
+    expect(repository.snapshotNow()).toEqual(before);
+    expect(repository.snapshotNow().state.readModel.jobs.details[deletedKey!]).toBeDefined();
+    expect(repository.snapshotNow().state.readModel.jobs.details[hiddenKey!]).toBeDefined();
+    adapter.dispose(); repository.dispose();
+  });
+
+  it("keeps job browsing available when no removed jobs exist or observation capacity is full", async () => {
+    const repository = new DemoWorkspaceRepository({
+      store: new InMemoryDemoWorkspaceStore(),
+      createWorkspaceId: () => "workspace-observation-capacity",
+    });
+    await repository.initialize();
+    let now = Date.parse(NOW);
+    const adapter = new DemoApiClientAdapter(repository, {
+      clock: { now: () => new Date(now) },
+    });
+    const active = await adapter.reviewableJobs({ deleted: "active" });
+    expect(active.observationId).toBeNull();
+    expect(active.items.length).toBeGreaterThan(0);
+
+    const jobKey = active.items[0]!.jobKey;
+    await adapter.deleteJob(jobKey);
+    for (let index = 0; index < 64; index += 1) {
+      expect((await adapter.reviewableJobs({ deleted: "deleted" })).observationId).toBeTruthy();
+    }
+    const full = await adapter.reviewableJobs({ deleted: "deleted" });
+    expect(full.observationId).toBeNull();
+    expect(full.items.some((job) => job.jobKey === jobKey)).toBe(true);
+    now += 60_000;
+    expect((await adapter.reviewableJobs({ deleted: "deleted" })).observationId).toBeTruthy();
+    adapter.dispose();
+    repository.dispose();
+  });
+
+  it("rejects a noncanonical alias in a guarded selection without mutating any job", async () => {
+    const { adapter, repository } = await harness();
+    const jobKey = repository.snapshotNow().state.readModel.jobs.list.items[0]!.jobKey;
+    await adapter.deleteJob(jobKey);
+    const observed = await adapter.reviewableJobs({ deleted: "deleted" });
+    const job = observed.items.find((item) => item.jobKey === jobKey)!;
+    const before = repository.snapshotNow();
+    await expect(adapter.preparePermanentDeleteSelection({
+      observationId: requireObservationId(observed.observationId),
+      selections: [{ allMatching: false, jobKeys: [job.url] }],
+      expected: [{ jobKey: job.url, deletedAt: job.deletedAt, hiddenAt: job.hiddenAt }],
+    })).rejects.toMatchObject({ status: 409 });
+    expect(repository.snapshotNow()).toEqual(before);
+    repository.dispose();
+  });
+
+  it("rejects restore and re-delete before preparation even when the timestamps collide", async () => {
+    const { adapter, repository } = await harness();
+    const jobKey = repository.snapshotNow().state.readModel.jobs.list.items[0]!.jobKey;
+    await adapter.deleteJob(jobKey);
+    const observed = await adapter.reviewableJobs({ deleted: "all" });
+    const job = observed.items.find((item) => item.jobKey === jobKey)!;
+    const expected = { jobKey, deletedAt: job.deletedAt, hiddenAt: job.hiddenAt };
+    await adapter.restoreJob(jobKey);
+    await adapter.deleteJob(jobKey); // The test clock deliberately does not advance.
+    expect(repository.snapshotNow().state.readModel.jobs.details[jobKey]!.job.deletedAt).toBe(expected.deletedAt);
+    const before = repository.snapshotNow();
+    await expect(adapter.preparePermanentDeleteSelection({
+      observationId: requireObservationId(observed.observationId),
+      selections: [{ allMatching: false, jobKeys: [jobKey] }],
+      expected: [expected],
+    })).rejects.toMatchObject({ status: 409 });
+    expect(repository.snapshotNow()).toEqual(before);
+    repository.dispose();
+  });
+
+  it("preserves a reviewed selection across unrelated lifecycle writes in another tab", async () => {
+    const store = new InMemoryDemoWorkspaceStore();
+    const { adapter, repository } = await harness(store);
+    const otherRepository = new DemoWorkspaceRepository({ store });
+    await otherRepository.initialize();
+    const otherAdapter = new DemoApiClientAdapter(otherRepository, { clock: { now: () => new Date(NOW) } });
+    const [selected, unrelated] = repository.snapshotNow().state.readModel.jobs.list.items
+      .slice(0, 2).map((job) => job.jobKey);
+    await adapter.deleteJob(selected!);
+    const observation = await adapter.reviewableJobs({ deleted: "all" });
+    const job = observation.items.find((item) => item.jobKey === selected)!;
+    await otherAdapter.hideJob(unrelated!);
+    const selection = await adapter.preparePermanentDeleteSelection({
+      observationId: requireObservationId(observation.observationId),
+      selections: [{ allMatching: false, jobKeys: [selected!] }],
+      expected: [{ jobKey: selected!, deletedAt: job.deletedAt, hiddenAt: job.hiddenAt }],
+    });
+    await otherAdapter.unhideJob(unrelated!);
+    await expect(adapter.permanentlyDeleteJobs({
+      allMatching: false, jobKeys: selection.jobKeys, selectionId: selection.selectionId,
+    })).resolves.toMatchObject({ ok: true, count: 1, jobKeys: [selected] });
+    expect(repository.snapshotNow().state.readModel.jobs.details[unrelated!]).toBeDefined();
+    adapter.dispose(); otherAdapter.dispose(); otherRepository.dispose(); repository.dispose();
+  });
+
+  it("rejects a legacy writer's same-value ABA even after a newer writer commits", async () => {
+    const store = new InMemoryDemoWorkspaceStore();
+    const { adapter, repository } = await harness(store);
+    const [selected, unrelated] = repository.snapshotNow().state.readModel.jobs.list.items
+      .slice(0, 2).map((job) => job.jobKey);
+    await adapter.deleteJob(selected!);
+    const observation = await adapter.reviewableJobs({ deleted: "all" });
+    const job = observation.items.find((item) => item.jobKey === selected)!;
+    for (const deletedAt of [null, job.deletedAt]) {
+      await store.transact((current, transaction) => {
+        const draft = structuredClone(current!);
+        draft.state.readModel.jobs.details[selected!]!.job.deletedAt = deletedAt;
+        draft.state.readModel.jobs.list.items.find((item) => item.jobKey === selected)!.deletedAt = deletedAt;
+        transaction.putSnapshot({ ...draft, revision: draft.revision + 1 });
+      });
+    }
+    await adapter.hideJob(unrelated!); // New writer detects the legacy checkpoint gap.
+    await expect(adapter.preparePermanentDeleteSelection({
+      observationId: requireObservationId(observation.observationId),
+      selections: [{ allMatching: false, jobKeys: [selected!] }],
+      expected: [{ jobKey: selected!, deletedAt: job.deletedAt, hiddenAt: job.hiddenAt }],
+    })).rejects.toMatchObject({ status: 409 });
+    expect((await repository.snapshot()).state.readModel.jobs.details[selected!]).toBeDefined();
+    adapter.dispose(); repository.dispose();
+  });
+
+  it("consumes changed receipts and rejects expired or disposed selections", async () => {
+    const repository = new DemoWorkspaceRepository({
+      store: new InMemoryDemoWorkspaceStore(),
+      createWorkspaceId: () => "workspace-delete-test",
+    });
+    await repository.initialize();
+    let now = Date.parse(NOW);
+    let id = 0;
+    const adapter = new DemoApiClientAdapter(repository, {
+      clock: { now: () => new Date(now) },
+      createId: (prefix) => `${prefix}-${++id}`,
+    });
+    const [first, second] = repository.snapshotNow().state.readModel.jobs.list.items
+      .slice(0, 2).map((job) => job.jobKey);
+    await adapter.deleteJob(first!);
+    await adapter.deleteJob(second!);
+    const current = repository.snapshotNow();
+    const expected = [first!, second!].map((jobKey) => {
+      const job = current.state.readModel.jobs.details[jobKey]!.job;
+      return { jobKey, deletedAt: job.deletedAt, hiddenAt: job.hiddenAt };
+    });
+    const request = { selections: [{ allMatching: false, jobKeys: [first!, second!] }], expected };
+    const observation = await adapter.reviewableJobs({ deleted: "all" });
+    const changed = await adapter.preparePermanentDeleteSelection({ ...request, observationId: requireObservationId(observation.observationId) });
+    await expect(adapter.permanentlyDeleteJobs({
+      allMatching: false, jobKeys: [first!], selectionId: changed.selectionId,
+    })).rejects.toMatchObject({ status: 409 });
+    await expect(adapter.permanentlyDeleteJobs({
+      allMatching: false, jobKeys: changed.jobKeys, selectionId: changed.selectionId,
+    })).rejects.toMatchObject({ status: 409 });
+    const expiryObservation = await adapter.reviewableJobs({ deleted: "all" });
+    const expired = await adapter.preparePermanentDeleteSelection({ ...request, observationId: requireObservationId(expiryObservation.observationId) });
+    now += 60_000;
+    await expect(adapter.permanentlyDeleteJobs({
+      allMatching: false, jobKeys: expired.jobKeys, selectionId: expired.selectionId,
+    })).rejects.toMatchObject({ status: 409 });
+    const disposalObservation = await adapter.reviewableJobs({ deleted: "all" });
+    const disposed = await adapter.preparePermanentDeleteSelection({ ...request, observationId: requireObservationId(disposalObservation.observationId) });
+    adapter.dispose();
+    await expect(adapter.permanentlyDeleteJobs({
+      allMatching: false, jobKeys: disposed.jobKeys, selectionId: disposed.selectionId,
+    })).rejects.toMatchObject({ status: 409 });
+    expect(repository.snapshotNow().state.readModel.jobs.details[first!]).toBeDefined();
+    expect(repository.snapshotNow().state.readModel.jobs.details[second!]).toBeDefined();
+    repository.dispose();
   });
 
   it("uses legacy hidden compatibility for all-matching demo unhide", async () => {
@@ -624,6 +965,71 @@ describe("DemoLocalCommandExecutor", () => {
     expect(snapshot.revision).toBe(before.revision + 4);
   });
 
+  it("keeps contact edits independent of score reset and outcome retry in a reopened demo", async () => {
+    const store = new InMemoryDemoWorkspaceStore();
+    const { adapter, repository } = await harness(store);
+    const contactId = "contact-demo-hiring-partner";
+    const scoreJob = "job-fabrikam-systems";
+    await repository.mutate((draft) => {
+      const fact = draft.state.readModel.contacts.details[contactId]!.contact.attributes[0]!;
+      fact.value = "  Synthetic imported title  ";
+      fact.provenance = { ...fact.provenance, sourceKind: "user_imported_list", sourceRef: "synthetic-source" };
+    });
+    const base = (await adapter.contact(contactId)).contact;
+    const scoreBefore = repository.snapshotNow().state.readModel.jobs.details[scoreJob]!.job;
+    expect(await adapter.resetStaleScoresForRescore({ jobKeys: [scoreJob], limit: 1 }))
+      .toMatchObject({ count: 1, jobKeys: [scoreJob] });
+    const afterReset = repository.snapshotNow().state.readModel.jobs.details[scoreJob]!;
+    expect(afterReset.job).toMatchObject({ fitScore: scoreBefore.fitScore, scoreVersion: scoreBefore.scoreVersion,
+      scoredAt: scoreBefore.scoredAt, scoreCriteria: scoreBefore.scoreCriteria, scoreTrace: scoreBefore.scoreTrace,
+      scoreStaleness: scoreBefore.scoreStaleness });
+    const outcome = { requestId: "11720000-0000-4000-8000-000000000009", kind: "interview" as const, note: "Synthetic outcome" };
+    const accepted = await adapter.recordManualApplicationOutcome(JOB, outcome);
+    expect((await adapter.contact(contactId)).contact.fingerprint).toBe(base.fingerprint);
+    const imported = base.attributes[0]!;
+    const newer = await adapter.updateContact(contactId, { expectedFingerprint: base.fingerprint,
+      role: "warm_intro", attributes: [
+        ...base.attributes.map(({ attributeId, kind, value }) => ({ attributeId, kind, value })),
+        { kind: "note", value: "New synthetic fact" },
+      ] });
+    const added = newer.contact.attributes.find((fact) => fact.value === "New synthetic fact")!;
+    await expect(adapter.updateContact(contactId, { expectedFingerprint: base.fingerprint, employer: "Draft employer" }))
+      .rejects.toMatchObject({ status: 409 });
+    const latest = (await adapter.contact(contactId)).contact;
+    const saved = await adapter.updateContact(contactId, { expectedFingerprint: latest.fingerprint, employer: "Draft employer" });
+    expect(saved.contact).toMatchObject({ employer: "Draft employer", role: "warm_intro" });
+    expect(saved.contact.attributes.find((fact) => fact.attributeId === imported.attributeId)).toEqual(imported);
+    expect(saved.contact.attributes.find((fact) => fact.attributeId === added.attributeId)).toEqual(added);
+    expect(repository.snapshotNow().state.readModel.jobs.details[scoreJob]).toEqual(afterReset);
+    const reopened = await harness(store);
+    expect(await reopened.adapter.recordManualApplicationOutcome(JOB, outcome)).toEqual(accepted);
+    expect((await reopened.adapter.contact(contactId)).contact.attributes).toEqual(saved.contact.attributes);
+    expect(reopened.repository.snapshotNow().eventLog.filter((entry) => entry.event.eventType === "ApplicationOutcomeRecorded"))
+      .toHaveLength(1);
+  });
+
+  it("fences canonical demo changes and supports previously saved contacts without edit tokens", async () => {
+    const { adapter, repository } = await harness();
+    const contactId = "contact-demo-hiring-partner";
+    await repository.mutate((draft) => {
+      delete (draft.state.readModel.contacts.details[contactId]!.contact as Partial<{ fingerprint: string }>).fingerprint;
+    });
+    const before = (await adapter.contact(contactId)).contact;
+    expect(before.fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    await repository.mutate((draft) => {
+      draft.state.readModel.contacts.details[contactId]!.contact.attributes[0]!.provenance.sourceRef = "newer-source";
+    });
+    const accepted = repository.snapshotNow();
+    await expect(adapter.updateContact(contactId, { expectedFingerprint: before.fingerprint, role: "referrer" }))
+      .rejects.toMatchObject({ status: 409 });
+    expect(repository.snapshotNow()).toEqual(accepted);
+    const latest = (await adapter.contact(contactId)).contact;
+    const next = await adapter.updateContact(contactId, { expectedFingerprint: latest.fingerprint, role: "referrer" });
+    expect(next.contact.fingerprint).not.toBe(latest.fingerprint);
+    expect((await adapter.contact(contactId)).contact).toEqual(next.contact);
+    expect(next.contact.attributes).toEqual(latest.attributes);
+  });
+
   it("updates contact attributes with retain-or-create identity and provenance semantics", async () => {
     const { adapter, repository } = await harness();
     await repository.mutate((draft) => {
@@ -638,6 +1044,7 @@ describe("DemoLocalCommandExecutor", () => {
       };
     });
     const request = {
+      expectedFingerprint: (await adapter.contact("contact-demo-hiring-partner")).contact.fingerprint,
       role: "hiring_manager" as const,
       attributes: [
         { kind: "title" as const, value: "Synthetic hiring partner" },
@@ -645,7 +1052,8 @@ describe("DemoLocalCommandExecutor", () => {
       ],
     };
     const first = await adapter.updateContact("contact-demo-hiring-partner", request);
-    const replay = await adapter.updateContact("contact-demo-hiring-partner", request);
+    await expect(adapter.updateContact("contact-demo-hiring-partner", request)).rejects.toMatchObject({ status: 409 });
+    const replay = await adapter.updateContact("contact-demo-hiring-partner", { ...request, expectedFingerprint: first.contact.fingerprint });
     expect(first.contact.attributes).toEqual([
       {
         attributeId: "contact-demo-role",
@@ -692,6 +1100,92 @@ describe("DemoLocalCommandExecutor", () => {
       "ContactAttributeRecorded",
       "ContactUpdated",
     ]);
+  });
+
+  it("retains the selected duplicate fact and rejects invalid identity claims", async () => {
+    const { adapter, repository } = await harness();
+    const contactId = "contact-demo-hiring-partner";
+    await repository.mutate((draft) => {
+      const contact = draft.state.readModel.contacts.details[contactId]!.contact;
+      const duplicate = structuredClone(contact.attributes[0]!);
+      duplicate.attributeId = "contact-demo-duplicate";
+      duplicate.provenance.sourceRef = "synthetic-second-source";
+      contact.attributes.push(duplicate);
+    });
+    const base = (await adapter.contact(contactId)).contact;
+    const selected = base.attributes.find((fact) => fact.attributeId === "contact-demo-duplicate")!;
+    const saved = await adapter.updateContact(contactId, { expectedFingerprint: base.fingerprint,
+      attributes: [{ attributeId: selected.attributeId, kind: "title", value: selected.value }] });
+    expect(saved.contact.attributes).toEqual([selected]);
+    const normalized = await adapter.updateContact(contactId, { expectedFingerprint: saved.contact.fingerprint,
+      attributes: [{ attributeId: selected.attributeId, kind: "title", value: `${selected.value} ` }] });
+    expect(normalized.contact.attributes).toEqual([selected]);
+    const accepted = repository.snapshotNow();
+    for (const attributes of [
+      [{ attributeId: selected.attributeId, kind: "title" as const, value: selected.value },
+        { attributeId: selected.attributeId, kind: "title" as const, value: selected.value }],
+      [{ attributeId: "foreign-fact", kind: "title" as const, value: selected.value }],
+    ]) {
+      await expect(adapter.updateContact(contactId, { expectedFingerprint: normalized.contact.fingerprint, attributes }))
+        .rejects.toMatchObject({ status: 400 });
+      expect(repository.snapshotNow()).toEqual(accepted);
+    }
+  });
+
+  it("retains id-less raw values and distinct sourced identities before normalized matches", async () => {
+    const { adapter, repository } = await harness();
+    const contactId = "contact-demo-hiring-partner";
+    const value = "synthetic@example.test";
+    const raw = `  ${value}  `;
+    await repository.mutate((draft) => {
+      const contact = draft.state.readModel.contacts.details[contactId]!.contact;
+      const original = contact.attributes[0]!;
+      contact.attributes = ["raw-one", "raw-two", "normalized"].map((attributeId, index) => ({
+        ...structuredClone(original), attributeId, kind: "email", value: index < 2 ? raw : value,
+        provenance: { ...original.provenance, sourceKind: "user_imported_list", sourceRef: `synthetic-${index}` },
+      }));
+    });
+    const base = (await adapter.contact(contactId)).contact;
+    const mixed = await adapter.updateContact(contactId, { expectedFingerprint: base.fingerprint, attributes: [
+      { kind: "email", value: raw }, { kind: "email", value: raw },
+      { attributeId: "normalized", kind: "email", value },
+    ] });
+    expect(mixed.contact.attributes).toEqual(base.attributes);
+    const idless = await adapter.updateContact(contactId, { expectedFingerprint: mixed.contact.fingerprint,
+      attributes: base.attributes.map(({ kind, value: factValue }) => ({ kind, value: factValue })) });
+    expect(idless.contact.attributes).toEqual(base.attributes);
+  });
+
+  it("retains a long sourced fact and validates new values after trimming", async () => {
+    const { adapter, repository } = await harness();
+    const contactId = "contact-demo-hiring-partner";
+    const long = "L".repeat(2001);
+    await repository.mutate((draft) => {
+      const fact = draft.state.readModel.contacts.details[contactId]!.contact.attributes[0]!;
+      fact.value = long;
+      fact.provenance = { ...fact.provenance, sourceKind: "user_imported_list", sourceRef: "synthetic-long-import" };
+    });
+    const base = (await adapter.contact(contactId)).contact;
+    const original = base.attributes[0]!;
+    const saved = await adapter.updateContact(contactId, { expectedFingerprint: base.fingerprint, attributes: [
+      { attributeId: original.attributeId, kind: original.kind, value: long },
+      { kind: "note", value: `${"N".repeat(2000)} ` },
+    ] });
+    expect(saved.contact.attributes.find((fact) => fact.attributeId === original.attributeId)).toEqual(original);
+    expect(saved.contact.attributes.find((fact) => fact.value === "N".repeat(2000))).toBeDefined();
+    const idless = await adapter.updateContact(contactId, { expectedFingerprint: saved.contact.fingerprint,
+      attributes: saved.contact.attributes.map(({ kind, value }) => ({ kind, value })) });
+    expect(idless.contact.attributes).toEqual(saved.contact.attributes);
+    const accepted = repository.snapshotNow();
+    for (const fact of [
+      { attributeId: original.attributeId, kind: original.kind, value: "X".repeat(2001) },
+      { kind: "unsupported_new", value: "synthetic" },
+      { kind: "note", value: "   " },
+    ]) {
+      await expect(adapter.updateContact(contactId, { expectedFingerprint: idless.contact.fingerprint, attributes: [fact] }))
+        .rejects.toMatchObject({ status: 400 });
+      expect(repository.snapshotNow()).toEqual(accepted);
+    }
   });
 
   it("confirms candidate evidence exactly once and completes the owning research task", async () => {
@@ -838,8 +1332,8 @@ describe("DemoLocalCommandExecutor", () => {
 
   it("synchronizes manual and suggested outcomes globally and per job without replay duplication", async () => {
     const { adapter, repository } = await harness();
-    const manual = await adapter.recordManualApplicationOutcome(JOB, {
-      kind: "recruiter_reply",
+    const manual = await adapter.recordManualApplicationOutcome(JOB, { requestId: "11720000-0000-4000-8000-000000000001",
+      kind: "interview",
       occurredAt: NOW,
       note: "Synthetic reply",
       interviewPrepGeneration: 2,
@@ -899,7 +1393,7 @@ describe("DemoLocalCommandExecutor", () => {
     const snapshot = repository.snapshotNow();
     const corrected = snapshot.state.readModel.jobs.details[JOB]!.job;
     const comparable = snapshot.state.readModel.jobs.list.items.filter(
-      (job) => job.jobKey !== JOB && job.scoreVersion !== null,
+      (job) => job.jobKey !== JOB && job.scoreVersion !== null && job.scoreCorrection === null,
     );
     expect(corrected).toMatchObject({
       fitScore: 9,
@@ -911,16 +1405,11 @@ describe("DemoLocalCommandExecutor", () => {
         rationale: "Reviewed synthetic evidence",
         correctedAt: NOW,
       },
-      scoreStaleness: {
-        isStale: false,
-        currentPolicyVersion: 4,
-        targetPolicyVersion: 4,
-        pendingExplicitRescore: false,
-      },
+      scoreStaleness: previous.scoreStaleness,
     });
     expect(corrected.scoreTrace).toMatchObject({
-      scoringPolicyId: "demo:scoring-policy-4",
-      scoringPolicyVersion: 4,
+      scoringPolicyId: previous.scoreTrace?.scoringPolicyId,
+      scoringPolicyVersion: previous.scoreTrace?.scoringPolicyVersion,
     });
     expect(corrected.scoreTrace?.correctionHistory.at(-1)).toMatchObject({ correctedScore: 9, correctedAt: NOW });
     expect(comparable.length).toBeGreaterThan(0);
@@ -938,13 +1427,135 @@ describe("DemoLocalCommandExecutor", () => {
       fitScore: 9,
       scoreVersion: previousVersion + 1,
       scoredAt: NOW,
-      scoreTrace: { scoringPolicyVersion: 4 },
+      scoreTrace: { scoringPolicyVersion: previous.scoreTrace?.scoringPolicyVersion },
     });
     expect(snapshot.state.readModel.dashboard.summary.preparation).toMatchObject({
       currentScoringPolicyVersion: 4,
       outdatedScoreCount: comparable.length,
     });
     expect(snapshot.state.readModel.dashboard.digest.staleScores.count).toBe(comparable.length);
+  });
+
+  it("keeps existing staleness and score source when correcting an already-stale score", async () => {
+    const { adapter, repository } = await harness();
+    await adapter.correctScore(JOB, { correctedScore: 9, reason: "Synthetic first correction" });
+    const before = repository.snapshotNow();
+    const stale = before.state.readModel.jobs.list.items.find((job) =>
+      job.jobKey !== JOB && job.scoreVersion !== null && job.scoreStaleness.isStale,
+    )!;
+    expect(stale).toBeDefined();
+    await adapter.correctScore(stale.jobKey, { correctedScore: 8, reason: "Synthetic second correction" });
+    const after = repository.snapshotNow();
+    const corrected = after.state.readModel.jobs.details[stale.jobKey]!.job;
+    expect(corrected.scoreStaleness).toEqual(stale.scoreStaleness);
+    expect(corrected.scoreTrace?.scoringPolicyId).toBe(stale.scoreTrace?.scoringPolicyId);
+    expect(corrected.scoreTrace?.scoringPolicyVersion).toBe(stale.scoreTrace?.scoringPolicyVersion);
+    expect(corrected.scoreCriteria).toEqual(stale.scoreCriteria);
+    expect(after.state.readModel.dashboard.digest.staleScores.count).toBe(
+      after.state.readModel.jobs.list.items.filter((job) => job.scoreStaleness.isStale).length,
+    );
+  });
+
+  it("does not reset an active score and reports when to retry", async () => {
+    const { adapter, repository } = await harness();
+    const jobKey = "job-fabrikam-systems";
+    await repository.mutate((draft) => {
+      const detail = draft.state.readModel.jobs.details[jobKey]!;
+      detail.job.currentState = "running";
+      detail.stages.find((stage) => stage.stage === "score")!.state = "running";
+      draft.state.readModel.jobs.list.items.find((job) => job.jobKey === jobKey)!.currentState = "running";
+    });
+    const before = repository.snapshotNow();
+    const response = await adapter.resetStaleScoresForRescore({ jobKeys: [jobKey], limit: 0 });
+    expect(response).toMatchObject({ count: 0, jobKeys: [], skippedActiveJobKeys: [jobKey] });
+    const after = repository.snapshotNow();
+    expect(after.state.readModel.jobs.details[jobKey]).toEqual(before.state.readModel.jobs.details[jobKey]);
+    expect(after.state.readModel.jobs.details[jobKey]!.job.scoreStaleness.isStale).toBe(true);
+  });
+
+  it("keeps hidden and deleted stale jobs out of bounded and explicit resets", async () => {
+    const { adapter, repository } = await harness();
+    const hidden = JOB;
+    const deleted = "job-contoso-reliability";
+    const active = "job-fabrikam-systems";
+    await repository.mutate((draft) => {
+      const template = draft.state.readModel.jobs.details[active]!;
+      for (const [jobKey, deletedAt, hiddenAt, scoreState] of [
+        [hidden, null, NOW, "running"],
+        [deleted, NOW, null, "stale"],
+      ] as const) {
+        const summary = draft.state.readModel.jobs.list.items.find((job) => job.jobKey === jobKey)!;
+        const detail = draft.state.readModel.jobs.details[jobKey]!;
+        for (const job of [summary, detail.job]) {
+          job.deletedAt = deletedAt;
+          job.hiddenAt = hiddenAt;
+          job.scoreStaleness = structuredClone(template.job.scoreStaleness);
+        }
+        const stage = detail.stages.find((item) => item.stage === "score");
+        if (stage) stage.state = scoreState;
+        else detail.stages.push({ ...structuredClone(template.stages.find((item) => item.stage === "score")!), state: scoreState });
+      }
+    });
+    const before = repository.snapshotNow();
+    expect(await adapter.resetStaleScoresForRescore({ jobKeys: [], limit: 1 })).toMatchObject({
+      count: 1, jobKeys: [active], skippedActiveJobKeys: [], alreadyPendingJobKeys: [],
+    });
+    expect(await adapter.resetStaleScoresForRescore({ jobKeys: [hidden, deleted], limit: 1 })).toMatchObject({
+      count: 0, jobKeys: [], skippedActiveJobKeys: [], alreadyPendingJobKeys: [],
+    });
+    const after = repository.snapshotNow();
+    expect(after.state.readModel.jobs.details[hidden]).toEqual(before.state.readModel.jobs.details[hidden]);
+    expect(after.state.readModel.jobs.details[deleted]).toEqual(before.state.readModel.jobs.details[deleted]);
+    expect(after.eventLog.filter((entry) => entry.event.eventType === "ScoreRescoreRequested")).toHaveLength(1);
+
+    await repository.mutate((draft) => {
+      for (const [jobKey, property] of [[hidden, "hiddenAt"], [deleted, "deletedAt"]] as const) {
+        draft.state.readModel.jobs.list.items.find((job) => job.jobKey === jobKey)![property] = null;
+        draft.state.readModel.jobs.details[jobKey]!.job[property] = null;
+      }
+    });
+    expect(await adapter.resetStaleScoresForRescore({ jobKeys: [hidden, deleted], limit: 1 })).toMatchObject({
+      count: 1, jobKeys: [deleted], skippedActiveJobKeys: [hidden],
+    });
+  });
+
+  it.each(["closed", "expired", "removed", "location_incompatible"] as const)(
+    "excludes a %s posting from the active stale-score cohort", async (activeState) => {
+      const { adapter, repository } = await harness();
+      const active = "job-fabrikam-systems";
+      await repository.mutate((draft) => {
+        const template = draft.state.readModel.jobs.details[active]!;
+        const summary = draft.state.readModel.jobs.list.items.find((job) => job.jobKey === JOB)!;
+        const detail = draft.state.readModel.jobs.details[JOB]!;
+        for (const job of [summary, detail.job]) {
+          job.activeState = activeState;
+          job.scoreStaleness = structuredClone(template.job.scoreStaleness);
+        }
+        const stage = detail.stages.find((item) => item.stage === "score");
+        if (stage) stage.state = "stale";
+        else detail.stages.push({ ...structuredClone(template.stages.find((item) => item.stage === "score")!), state: "stale" });
+      });
+      const before = repository.snapshotNow().state.readModel.jobs.details[JOB];
+      expect(await adapter.resetStaleScoresForRescore({ jobKeys: [], limit: 1 })).toMatchObject({ count: 1, jobKeys: [active] });
+      expect(await adapter.resetStaleScoresForRescore({ jobKeys: [JOB], limit: 1 })).toMatchObject({ count: 0, jobKeys: [] });
+      expect(repository.snapshotNow().state.readModel.jobs.details[JOB]).toEqual(before);
+    },
+  );
+
+  it("reports an already pending stale score on a repeated reset", async () => {
+    const { adapter, repository } = await harness();
+    const jobKey = "job-fabrikam-systems";
+    const first = await adapter.resetStaleScoresForRescore({ jobKeys: [jobKey], limit: 1 });
+    expect(first).toMatchObject({ count: 1, jobKeys: [jobKey] });
+    const afterFirst = repository.snapshotNow();
+    expect(afterFirst.state.readModel.jobs.details[jobKey]!.stages.find((stage) => stage.stage === "score")?.state)
+      .toBe("pending");
+    expect(afterFirst.state.readModel.jobs.details[jobKey]!.job.scoreStaleness.isStale).toBe(true);
+    const second = await adapter.resetStaleScoresForRescore({ jobKeys: [jobKey], limit: 1 });
+    expect(second).toMatchObject({ count: 0, jobKeys: [], alreadyPendingJobKeys: [jobKey] });
+    const afterSecond = repository.snapshotNow();
+    expect(afterSecond.state.readModel.jobs.details[jobKey]).toEqual(afterFirst.state.readModel.jobs.details[jobKey]);
+    expect(afterSecond.eventLog.filter((entry) => entry.event.eventType === "ScoreRescoreRequested")).toHaveLength(1);
   });
 
   it("cancels a workflow atomically and replays without duplicate terminal evidence", async () => {
@@ -1027,6 +1638,7 @@ describe("DemoLocalCommandExecutor", () => {
     });
     const saved = await adapter.saveResumeTemplate({
       templateId: template.templateId,
+      expectedVersionId: template.activeVersion.versionId,
       displayName: "Revised bundled template",
       theme: template.activeVersion.theme,
       layout: template.activeVersion.layout,
@@ -1080,6 +1692,50 @@ describe("DemoLocalCommandExecutor", () => {
     expect(snapshot.eventLog.find((entry) => entry.event.eventType === "JobHidden")?.event).toMatchObject({
       payload: { jobId: JOB, reason: "Synthetic privacy choice", hiddenAt: NOW },
     });
+  });
+
+  it("refuses a stale demo template update and retains the winning version", async () => {
+    const { adapter, repository } = await harness();
+    const original = repository.snapshotNow().state.readModel.materials.resumeTemplates.templates[0]!;
+    const body = { templateId: original.templateId, expectedVersionId: original.activeVersion.versionId,
+      displayName: "Synthetic winning version", theme: original.activeVersion.theme, layout: original.activeVersion.layout };
+    const winner = await adapter.saveResumeTemplate(body);
+    await expect(adapter.saveResumeTemplate({ ...body, displayName: "Synthetic stale draft" })).rejects.toMatchObject({ status: 409 });
+    const current = repository.snapshotNow().state.readModel.materials.resumeTemplates.templates.find((item) => item.templateId === original.templateId);
+    expect(current).toMatchObject({ displayName: "Synthetic winning version", activeVersion: { versionId: winner.template.activeVersion.versionId } });
+    await expect(adapter.setDefaultResumeTemplate({ templateId: original.templateId, versionId: original.activeVersion.versionId,
+      expectedActiveVersionId: original.activeVersion.versionId })).rejects.toMatchObject({ status: 409 });
+    const selected = await adapter.setDefaultResumeTemplate({ templateId: original.templateId, versionId: original.activeVersion.versionId,
+      expectedActiveVersionId: winner.template.activeVersion.versionId });
+    expect(selected.defaultTemplate.templateVersionId).toBe(original.activeVersion.versionId);
+  });
+
+  it("rejects invalid template default preconditions and malformed template saves without changing the workspace", async () => {
+    const { adapter, repository } = await harness();
+    const original = repository.snapshotNow().state.readModel.materials.resumeTemplates.templates[0]!;
+    const before = repository.snapshotNow();
+    const invalidDefaults = [
+      { templateId: original.templateId, expectedActiveVersionId: 42 },
+      { templateId: original.templateId, expectedActiveVersionId: null },
+      { templateId: original.templateId, expectedActiveVersionId: " " },
+      { templateId: original.templateId, expectedActiveVersionID: original.activeVersion.versionId },
+    ];
+    for (const body of invalidDefaults) {
+      await expect(adapter.setDefaultResumeTemplate(body as unknown as Parameters<ApiClientPort["setDefaultResumeTemplate"]>[0])).rejects.toMatchObject({ status: 400 });
+    }
+    await expect(adapter.setDefaultResumeTemplate({ templateId: "missing-synthetic-template" })).rejects.toMatchObject({ status: 400 });
+    await expect(adapter.setDefaultResumeTemplate({ templateId: "missing-synthetic-template", expectedActiveVersionId: "synthetic-version" })).rejects.toMatchObject({ status: 409 });
+    await expect(adapter.setDefaultResumeTemplate({ templateId: original.templateId, versionId: "missing-synthetic-version" })).rejects.toMatchObject({ status: 400 });
+    const invalidTheme = { displayName: "Synthetic template", theme: { ...original.activeVersion.theme, fontScale: 2 }, layout: {} };
+    const invalidThemeError = await adapter.saveResumeTemplate(invalidTheme).then(() => null, (error: unknown) => error);
+    expect(invalidThemeError).toMatchObject({ status: 400, message: expect.stringMatching(/^Invalid resume template save request:/) });
+    expect(invalidThemeError).toMatchObject({ message: expect.not.stringMatching(/current version/i) });
+    await expect(adapter.saveResumeTemplate({ templateId: original.templateId, displayName: "Synthetic template", theme: original.activeVersion.theme, layout: {} }))
+      .rejects.toMatchObject({ status: 400, message: expect.stringMatching(/current version/i) });
+    const after = repository.snapshotNow();
+    expect(after.revision).toBe(before.revision);
+    expect(after.eventLog).toEqual(before.eventLog);
+    expect(after.state.readModel.materials.resumeTemplates).toEqual(before.state.readModel.materials.resumeTemplates);
   });
 
   it("cascades permanent job deletion and contact deletion without dangling read models", async () => {

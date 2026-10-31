@@ -70,10 +70,10 @@ test("Homebrew render uses the exact signed curl ZIP identity without a toolchai
   await writeFile(formulaPath, rendered.formula);
   assert.equal(validateRenderedHomebrewFormula({ formula: rendered.formula, descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }), true);
   assert.match(rendered.formula, /url "https:\/\/releases\.jobctrl\.dev\/v1\/artifacts\/stable-build-0000042\/jobctrl-2\.0\.0-darwin-arm64\.zip"/);
-  assert.match(rendered.formula, /^\s*version_scheme 1$/m);
+  assert.match(rendered.formula, /^\s*version_scheme 2$/m);
   assert.match(
     rendered.formula,
-    /  version "2\.0\.0"\n  sha256 "a{64}"\n  license "AGPL-3\.0-only"\n  version_scheme 1/,
+    /  version "2\.0\.0"\n  sha256 "a{64}"\n  license "AGPL-3\.0-only"\n  version_scheme 2/,
     "the canonical formula header must follow Homebrew's audited stanza order",
   );
   assert.match(rendered.formula, /JOBCTRL_MANIFEST_SHA256 = "b{64}"/);
@@ -86,11 +86,12 @@ test("Homebrew render uses the exact signed curl ZIP identity without a toolchai
   assert.match(rendered.formula, /bin\.install_symlink bootstrap\/"jobctrl"/);
   assert.doesNotMatch(rendered.formula, /Pathname\.new\(Dir\.home\)/);
   assert.match(rendered.formula, /Open3\.capture2e/);
-  assert.match(rendered.formula, /"--verify",\s*"--deep",\s*"--strict",\s*"--check-notarization",\s*"-R=notarized"/);
-  assert.match(rendered.formula, /def verify_notarized_executable!/);
-  assert.match(rendered.formula, /"--assess",\s*"--type",\s*"execute",\s*"--verbose=4"/);
+  assert.match(rendered.formula, /"--verify",\s*"--strict",\s*"-R=#\{DEVELOPER_ID_REQUIREMENT\}"/);
+  assert.match(rendered.formula, /def verify_developer_id_executable!/);
+  assert.doesNotMatch(rendered.formula, /--check-notarization|\/usr\/sbin\/spctl/);
   assert.doesNotMatch(rendered.formula, /context:primary-signature/);
-  assert.match(rendered.formula, /source=Notarized Developer ID/);
+  assert.match(rendered.formula, /certificate 1\[field\.1\.2\.840\.113635\.100\.6\.2\.6\] exists/);
+  assert.match(rendered.formula, /certificate leaf\[field\.1\.2\.840\.113635\.100\.6\.1\.13\] exists/);
   assert.match(rendered.formula, /managed_headless_shell/);
   assert.doesNotMatch(rendered.formula, /depends_on|^\s*head\s+|git clone/);
   assert.deepEqual(
@@ -100,6 +101,17 @@ test("Homebrew render uses the exact signed curl ZIP identity without a toolchai
   );
   assert.deepEqual(rendered.publicationInputs, releasePublicationInputs({ descriptorRaw, descriptorUrl }));
   await execFileAsync("/usr/bin/ruby", ["-c", formulaPath]);
+  const caveatsDriver = `class Formula
+    def self.method_missing(*); end
+    def self.test; end
+    def version; ENV.fetch("JOBCTRL_TEST_VERSION"); end
+  end
+  load ARGV.fetch(0)
+  print Jobctrl.new.caveats`;
+  const caveatsFor = async (version) => (await execFileAsync("/usr/bin/ruby", ["-e", caveatsDriver, formulaPath], { env: { ...process.env, JOBCTRL_TEST_VERSION: version } })).stdout;
+  assert.match(await caveatsFor("0.4.0"), /Upgrades from normally used JobCtrl 0\.3\.1 workspaces are currently\s+blocked/);
+  assert.match(await caveatsFor("0.4.1"), /Upgrades from normally used JobCtrl 0\.3\.1 workspaces are currently\s+blocked/);
+  assert.doesNotMatch(await caveatsFor("0.4.3"), /Upgrades from normally used JobCtrl 0\.3\.1/);
 });
 
 test("Homebrew promotion verification fails closed without P6 signature and published-asset smoke evidence", async () => {
@@ -154,7 +166,7 @@ test("Homebrew promotion verification fails closed without P6 signature and publ
       'desc "Local-first job search mission control: discover, score, tailor, apply"',
       'desc "Tampered JobCtrl formula"',
     ),
-    rendered.formula.replace('    verify_notarized_executable!(buildpath/"launcher/jobctrl-installer")\n', ""),
+    rendered.formula.replace('    verify_developer_id_executable!(buildpath/"launcher/jobctrl-installer")\n', ""),
   ];
   for (const mutatedFormula of mutations) {
     assert.notEqual(mutatedFormula, rendered.formula);
@@ -213,34 +225,38 @@ test("Homebrew trust verification rejects empty or wrong trust, wrong domains, t
   );
 });
 
-test("Homebrew formula validation rejects a render that omits launcher or Chromium notarization gates", async () => {
+test("Homebrew formula validation rejects a render that omits strict Developer ID gates or invokes live notarization in the sandbox", async () => {
   const descriptorRaw = `${JSON.stringify(stableDescriptor(), null, 2)}\n`;
   const signed = signedStableFixture(descriptorRaw);
   const signatureRaw = `${JSON.stringify(signed.signature, null, 2)}\n`;
   const descriptorUrl = stableDescriptorUrl();
   const rendered = await renderHomebrewFormula({ descriptorRaw, signatureRaw, descriptorUrl, trust: signed.trust });
   assert.throws(
-    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace("  version_scheme 1\n", ""), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
-    /version_scheme 1/,
+    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace("  version_scheme 2\n", ""), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
+    /version_scheme 2/,
   );
   assert.throws(
-    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace('verify_notarized_executable!(buildpath/"launcher/jobctrl")', ""), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
+    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace('verify_developer_id_executable!(buildpath/"launcher/jobctrl")', ""), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
     /launcher\/jobctrl/,
   );
   assert.throws(
-    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace('gatekeeper_output.exclude?("source=Notarized Developer ID")', "true"), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
-    /gatekeeper_status/,
+    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace("certificate 1[field.1.2.840.113635.100.6.2.6] exists", "true"), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
+    /certificate 1/,
   );
   assert.throws(
-    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace("!gatekeeper_status.success? || ", ""), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
-    /gatekeeper_status/,
+    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace("certificate leaf[field.1.2.840.113635.100.6.1.13] exists", "true"), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
+    /certificate leaf/,
   );
   assert.throws(
-    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace('"--check-notarization",', '"--notarization-unchecked",'), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
+    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace('"--strict",', '"--not-strict",'), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
     /security call/,
   );
   assert.throws(
     () => validateRenderedHomebrewFormula({ formula: rendered.formula.replaceAll("managed_headless_shell", "chromium_headless"), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
     /managed_headless_shell/,
+  );
+  assert.throws(
+    () => validateRenderedHomebrewFormula({ formula: `${rendered.formula}\ndef forbidden_live_check; system "/usr/sbin/spctl"; end\n`, descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
+    /normal-user bootstrap/,
   );
 });

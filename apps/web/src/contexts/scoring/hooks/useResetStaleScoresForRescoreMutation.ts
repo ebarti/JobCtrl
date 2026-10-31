@@ -1,15 +1,10 @@
-import type {
-  JobDetail,
-  JobSummary,
-  PaginatedResponse,
-  ResetStaleScoresForRescoreResponse,
-} from "@jobctrl/contracts";
-import type { TenantId } from "@jobctrl/domain-types";
+import type { ResetStaleScoresForRescoreResponse } from "@jobctrl/contracts";
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 
 import { createOptimisticMutation } from "../../../shared/lib/createOptimisticMutation.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
+import { useToastStore } from "../../../shared/stores/toasts.js";
 import { dashboardKeys } from "../../operations/dashboardKeys.js";
 import { jobsKeys } from "../../operations/jobsKeys.js";
 import type { JobId } from "../../operations/types.js";
@@ -19,15 +14,6 @@ export interface ResetStaleScoresForRescoreVariables {
   readonly limit?: number;
 }
 
-const freshScoreStaleness: JobSummary["scoreStaleness"] = {
-  isStale: false,
-  staleReason: null,
-  currentPolicyVersion: null,
-  targetPolicyVersion: null,
-  markedAt: null,
-  pendingExplicitRescore: false,
-};
-
 export function useResetStaleScoresForRescoreMutation(): UseMutationResult<
   ResetStaleScoresForRescoreResponse,
   Error,
@@ -36,21 +22,13 @@ export function useResetStaleScoresForRescoreMutation(): UseMutationResult<
   const tenantId = useTenantId();
   const { api } = usePorts();
   const queryClient = useQueryClient();
-  return useMutation(
-    createOptimisticMutation<
+  return useMutation({
+    ...createOptimisticMutation<
       ResetStaleScoresForRescoreResponse,
       ResetStaleScoresForRescoreVariables
     >(queryClient, {
       mutationFn: ({ jobKeys = [], limit = 0 }) =>
         api.resetStaleScoresForRescore({ jobKeys: [...jobKeys], limit }),
-      optimisticUpdates: (variables) => [
-        {
-          queryKey: jobsKeys.lists(tenantId),
-          exact: false,
-          patch: patchJobsPage,
-        },
-        ...detailPatchSpecs(tenantId, variables.jobKeys ?? []),
-      ],
       settle: (variables, data) => {
         const jobKeys = data?.jobKeys.length
           ? data.jobKeys
@@ -64,62 +42,18 @@ export function useResetStaleScoresForRescoreMutation(): UseMutationResult<
         ];
       },
     }),
-  );
-}
-
-function detailPatchSpecs(tenantId: TenantId, jobKeys: readonly JobId[]) {
-  return jobKeys.map((jobKey) => ({
-    queryKey: jobsKeys.detail(tenantId, jobKey),
-    patch: patchJobDetail,
-  }));
-}
-
-function patchJobsPage(
-  current: unknown,
-  variables: ResetStaleScoresForRescoreVariables,
-): unknown {
-  if (!isJobsPage(current)) return current;
-  return {
-    ...current,
-    items: current.items.map((job) => patchJobSummary(job, variables)),
-  };
-}
-
-function patchJobDetail(
-  current: unknown,
-  variables: ResetStaleScoresForRescoreVariables,
-): unknown {
-  if (!isJobDetail(current)) return current;
-  return {
-    ...current,
-    job: patchJobSummary(current.job, variables),
-  };
-}
-
-function patchJobSummary(
-  job: JobSummary,
-  variables: ResetStaleScoresForRescoreVariables,
-): JobSummary {
-  const selected = variables.jobKeys?.length ? variables.jobKeys.includes(job.jobKey) : true;
-  if (!selected || !job.scoreStaleness.isStale) {
-    return job;
-  }
-  return {
-    ...job,
-    scoreStaleness: freshScoreStaleness,
-    currentState: job.currentState === "stale" ? "pending" : job.currentState,
-  };
-}
-
-function isJobDetail(value: unknown): value is JobDetail {
-  return value !== null && typeof value === "object" && "job" in value;
-}
-
-function isJobsPage(value: unknown): value is PaginatedResponse<JobSummary> {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    "items" in value &&
-    Array.isArray((value as PaginatedResponse<JobSummary>).items)
-  );
+    onSuccess: (data) => {
+      const active = data.skippedActiveJobKeys?.length ?? 0;
+      const pending = data.alreadyPendingJobKeys?.length ?? 0;
+      if (!active && !pending) return;
+      const summary = `${data.count} ${data.count === 1 ? "score was" : "scores were"} reset.`;
+      const activeMessage = active
+        ? ` ${active} ${active === 1 ? "score has" : "scores have"} queued or running work or a recorded owner. Check score activity; wait for scoring to finish, then retry reset if still stale.`
+        : "";
+      const pendingMessage = pending
+        ? ` ${pending} ${pending === 1 ? "score is" : "scores are"} already pending. Continue scoring and retry if still stale.`
+        : "";
+      useToastStore.getState().toast({ variant: "info", message: summary + activeMessage + pendingMessage });
+    },
+  });
 }

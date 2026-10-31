@@ -401,7 +401,7 @@ These are proposed acceptance requirements, not observed feature results.
 | Projections/events | Define derived review shapes, watermarks, transaction rollback and sanitized invalidations. Keep posting text/policy detail at the canonical owner rather than unbounded event/log payloads. Update the data/events/projections owner. |
 | API/contracts | Specify tenant-bound paginated read contracts, evidence/error/staleness shapes and separate optional command semantics. Update shared types and the owning API references; test isolation and canonical-state preservation. |
 | Client/UI | Implement a separate rejected-observation view with partial-history labels and source/policy evidence inspection. Preserve Jobs lifecycle vocabulary and accepted artifact review; prove read-only behavior and failed-refresh preservation in synthetic browser/API QA. |
-| Owning documentation/delivery | Update Discovery/user/API/storage/projection documentation and navigation only in the separately authorized implementation. This investigation changes one page only. Independent review and QA must validate compatible contracts before any production feature claim. |
+| Owning documentation/delivery | Update Discovery/user/API/storage/projection documentation and navigation only in the separately authorized implementation. This investigation changes one page only. Product QA must validate compatible contracts before any production feature claim. |
 
 [title]: https://github.com/ebarti/JobCtrl/blob/315aa323848bbd8da2ed95bccbb47f0fe685d27f/workers/automation/src/jobctrl/discovery/title_filter.py#L240
 [location]: https://github.com/ebarti/JobCtrl/blob/315aa323848bbd8da2ed95bccbb47f0fe685d27f/workers/automation/src/jobctrl/infrastructure/discovery/location_filter.py#L286

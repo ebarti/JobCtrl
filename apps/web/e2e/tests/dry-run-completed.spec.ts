@@ -80,6 +80,7 @@ test("DryRunCompleted alone refreshes apply history without submitting the job",
       await expect(page.locator(".connection-pill")).toContainText("Live", {
         timeout: 10_000,
       });
+      await page.getByRole("button", { name: /· Apply history/ }).click();
       await expect(run.getByText("in_progress", { exact: true })).toBeVisible();
     });
     const originalUrl = page.url();

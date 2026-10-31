@@ -1,7 +1,7 @@
 // Test-only process entry point. Assert ownership before importing/building the
 // API: buildApp normalizes its database immediately, before listen hooks run.
 import { createRequire } from "node:module";
-import { BrowserCapabilityIds, RpcMethods, RenderCoverLetterPdfParamsSchema } from "@jobctrl/contracts";
+import { BrowserCapabilityIds, RpcMethods, RenderCoverLetterPdfParamsSchema, RollbackTailoringPolicyParamsSchema } from "@jobctrl/contracts";
 import { SubprocessJsonRpcAdapter } from "../src/json-rpc-adapter.js";
 import { createSourcePythonRuntime } from "../src/python-runtime.js";
 import type { CredentialStore } from "../src/credentials.js";
@@ -32,7 +32,13 @@ const unavailable = async () => {
 };
 const providerDispatcher: JsonRpcDispatcher = {
   call: async (method, params: Record<string, unknown>) =>
-    method === RpcMethods.RenderCoverLetterPdf
+    method === RpcMethods.RollbackTailoringPolicy && process.env["JOBCTRL_E2E_POLICY_RPC"] === "1"
+      ? (async () => {
+          await assertIsolatedE2eWorkspace();
+          assertExpectedWorkspace(config);
+          return coverRendererDispatcher.call(RpcMethods.RollbackTailoringPolicy, RollbackTailoringPolicyParamsSchema.parse(params));
+        })()
+      : method === RpcMethods.RenderCoverLetterPdf
       ? (async () => {
           await assertIsolatedE2eWorkspace();
           assertExpectedWorkspace(config);

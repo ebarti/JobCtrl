@@ -15,7 +15,7 @@ vi.mock("../src/read-model.js", async (importOriginal) => ({
   getJobDetail,
 }));
 
-import { hasExactV14SchemaManifest } from "../src/schema-manifest.js";
+import { hasExactV15SchemaManifest } from "../src/schema-manifest.js";
 import { buildApp } from "../src/server.js";
 import { initializeExactDatabase } from "./exact-schema.js";
 
@@ -104,7 +104,7 @@ describe("score correction exact-current identity", () => {
             event_type: "ScoreCorrected",
           }),
         ]);
-        expect(hasExactV14SchemaManifest(db)).toBe(true);
+        expect(hasExactV15SchemaManifest(db)).toBe(true);
       } finally {
         db.close();
       }
@@ -126,7 +126,7 @@ describe("score correction exact-current identity", () => {
       try {
         expect(resetDb.prepare(
           "SELECT resolved FROM job_score_staleness WHERE tenant_id = 'local' AND job_id = ?",
-        ).get(COMPARABLE_JOB_ID)).toEqual({ resolved: 1 });
+        ).get(COMPARABLE_JOB_ID)).toEqual({ resolved: 0 });
         expect(resetDb.prepare(
           "SELECT state, attempt_count FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'score'",
         ).get(COMPARABLE_JOB_ID)).toEqual({ state: "pending", attempt_count: 0 });
@@ -136,7 +136,7 @@ describe("score correction exact-current identity", () => {
           identity_version: 1,
           event_type: "ScoreRescoreRequested",
         }));
-        expect(hasExactV14SchemaManifest(resetDb)).toBe(true);
+        expect(hasExactV15SchemaManifest(resetDb)).toBe(true);
       } finally {
         resetDb.close();
       }

@@ -48,7 +48,7 @@ describe("<RunsTable>", () => {
     ).toBeInTheDocument();
 
     const links = screen.getAllByRole("link", {
-      name: /Open workflow .* in Temporal Web UI/i,
+      name: /Open in Temporal: workflow /i,
     });
     expect(links).toHaveLength(2);
     expect(links[0]?.getAttribute("href")).toBe(
@@ -101,7 +101,7 @@ describe("<RunsTable>", () => {
     renderTable({ onOpenRun });
 
     const activationButton = screen.getByRole("button", {
-      name: `Open run ${sampleWorkflowRun.title} ${sampleWorkflowRun.workflowId}`,
+      name: `Open run ${sampleWorkflowRun.title} ${sampleWorkflowRun.workflowId}: View details`,
     });
     await user.click(activationButton);
 
@@ -158,7 +158,7 @@ describe("<RunsTable>", () => {
     ).toBeInTheDocument();
     expect(
       run.getByRole("button", {
-        name: `Open run ${sampleWorkflowRun.title} ${sampleWorkflowRun.workflowId}`,
+        name: `Open run ${sampleWorkflowRun.title} ${sampleWorkflowRun.workflowId}: View details`,
       }),
     ).not.toHaveClass("row-activation-focus-only");
   });

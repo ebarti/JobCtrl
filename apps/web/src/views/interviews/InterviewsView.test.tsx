@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useInterviewDraftStore } from "../../contexts/materials/stores/interview-drafts.js";
 import { interviewKeys } from "../../contexts/operations/interviewKeys.js";
-import type { SaveInterviewQuestionNoteRequest } from "@jobctrl/contracts";
+import type { InterviewQuestionNote, SaveInterviewQuestionNoteRequest } from "@jobctrl/contracts";
 import { interviewsSearchSchema } from "../../routes/-interviews.search.js";
 import { sampleInterviewCatalogResponse, makeQuestionPrep } from "../../test/fixtures/interviews.js";
 import { makeJobDetail, sampleInterviewPrep } from "../../test/fixtures/projections.js";
@@ -169,6 +169,94 @@ describe("native interview library", () => {
     await screen.findByText(/Generation 22 · failed/);
     expect(screen.getAllByRole("region", { name: "Interview preparation" })[0]).toHaveTextContent("generation 2");
     expect(screen.queryByText("No interview prep generated.")).not.toBeInTheDocument();
+  });
+
+  it("retries the failed history pages without changing preparation, context, selection or note drafts", async () => {
+    const user = userEvent.setup();
+    const accepted = makeQuestionPrep();
+    const note: InterviewQuestionNote = { jobId: "job-1", questionId: "B11", revision: 21, noteText: "Saved synthetic note", factualSupport: "unverified_user_statement", editStatus: "user_edited", sourceGeneration: null, bindings: null, updatedAt: "2026-10-01T12:00:00Z" };
+    let prepPageTwoReads = 0;
+    let notePageTwoReads = 0;
+    const prepHistory = vi.fn<ReturnType<typeof buildTestPorts>["api"]["interviewPrepHistory"]>(async (_jobId, input) => {
+      const page = Number(input?.page ?? 1);
+      if (page === 2 && ++prepPageTwoReads <= 2) throw new Error("history unavailable");
+      return { ok: true as const, jobId: "job-1", generations: [page === 1 ? accepted : { ...accepted, generation: 1, status: "superseded" as const }], page, pageSize: 20, total: 21 };
+    });
+    const notes = vi.fn<ReturnType<typeof buildTestPorts>["api"]["interviewNotes"]>(async (_jobId, input) => {
+      const page = Number(input?.page ?? 1);
+      if (input?.history && page === 2 && ++notePageTwoReads <= 2) throw new Error("history unavailable");
+      return { ok: true as const, jobId: "job-1", notes: [page === 2 ? { ...note, revision: 1, noteText: "Older synthetic note" } : note], page, pageSize: 20, total: 21 };
+    });
+    const generate = vi.fn(async () => { throw new Error("Unexpected generation"); });
+    const save = vi.fn(async () => { throw new Error("Unexpected note save"); });
+    renderInterviews("/interviews?card=B11&job=job-1", buildTestPorts({ api: {
+      job: async () => makeJobDetail(undefined, { interviewPrep: accepted }),
+      interviewPrepHistory: prepHistory,
+      interviewNotes: notes,
+      generateInterviewPrep: generate,
+      saveInterviewNote: save,
+    } }));
+
+    await screen.findByText("Page 1; 21 generations");
+    const noteInput = await screen.findByRole("textbox", { name: "Notes for B11" });
+    await waitFor(() => expect(noteInput).toHaveValue("Saved synthetic note"));
+    await user.click(within(screen.getByRole("navigation", { name: "Interview questions" })).getByRole("link", { name: /TS09/ }));
+    await user.click(screen.getByRole("button", { name: "Add question to preparation" }));
+    await user.click(screen.getByRole("button", { name: "Move TS09 earlier" }));
+    await user.click(within(screen.getByRole("navigation", { name: "Interview questions" })).getByRole("link", { name: /B11/ }));
+    const criteria = screen.getByRole("textbox", { name: "Known interview criteria (one per line)" });
+    await user.clear(criteria); await user.type(criteria, "Keep this context");
+    const currentNote = screen.getByRole("textbox", { name: "Notes for B11" });
+    await user.clear(currentNote); await user.type(currentNote, "Keep this draft");
+    await user.click(screen.getByText("Saved note revision history"));
+    await screen.findByText("Page 1; 21 revisions");
+
+    await user.click(screen.getByRole("button", { name: "Older generations" }));
+    await user.click(await screen.findByRole("button", { name: "Retry loading preparation history" }));
+    await waitFor(() => expect(prepPageTwoReads).toBe(2));
+    expect(await screen.findByRole("button", { name: "Retry loading preparation history" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Older note revisions" }));
+    await user.click(await screen.findByRole("button", { name: "Retry loading note history" }));
+    await waitFor(() => expect(notePageTwoReads).toBe(2));
+    expect(await screen.findByRole("button", { name: "Retry loading note history" })).toBeEnabled();
+
+    const retained = () => {
+      expect(criteria).toHaveValue("Keep this context");
+      expect(currentNote).toHaveValue("Keep this draft");
+      expect(screen.getAllByRole("region", { name: "Interview preparation" })[0]).toHaveTextContent("generation 2");
+      expect(within(screen.getByRole("list", { name: "Selected question order" })).getAllByRole("listitem")[0]).toHaveTextContent(sampleInterviewCatalogResponse.catalog.questions.find((card) => card.id === "TS09")!.title);
+    };
+    retained();
+    await user.click(screen.getByRole("button", { name: "Retry loading preparation history" }));
+    await screen.findByText("Page 2; 21 generations");
+    await user.click(screen.getByRole("button", { name: "Retry loading note history" }));
+    await screen.findByText("Older synthetic note");
+    retained();
+    expect(prepHistory.mock.calls.filter(([, input]) => Number(input?.page) === 2)).toEqual([
+      ["job-1", { page: 2, pageSize: 20 }],
+      ["job-1", { page: 2, pageSize: 20 }],
+      ["job-1", { page: 2, pageSize: 20 }],
+    ]);
+    expect(notes.mock.calls.filter(([, input]) => input?.history === true && Number(input.page) === 2)).toEqual([
+      ["job-1", { questionId: "B11", history: true, page: 2, pageSize: 20 }],
+      ["job-1", { questionId: "B11", history: true, page: 2, pageSize: 20 }],
+      ["job-1", { questionId: "B11", history: true, page: 2, pageSize: 20 }],
+    ]);
+    expect(generate).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("offers a real history retry when there is no accepted preparation", async () => {
+    const user = userEvent.setup();
+    const history = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce({ ok: true, jobId: "job-1", generations: [], page: 1, pageSize: 20, total: 0 });
+    renderInterviews("/interviews?card=B11&job=job-1", buildTestPorts({ api: {
+      job: async () => makeJobDetail(undefined, { interviewPrep: null }), interviewPrepHistory: history,
+    } }));
+    const retry = await screen.findByRole("button", { name: "Retry loading preparation history" });
+    expect(screen.queryByText(/last accepted preparation remains above/)).not.toBeInTheDocument();
+    await user.click(retry);
+    await screen.findByText("Page 1; 0 generations");
+    expect(history).toHaveBeenCalledTimes(2);
   });
 
   it("binds a new note to the matching retained card and preserves text on provenance rejection", async () => {

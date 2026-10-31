@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { checkA11y, injectAxe } from "axe-playwright";
 import { loadE2eDbPath } from "../fixtures/e2e-state.js";
 
@@ -53,6 +53,90 @@ test.afterEach(() => {
   }
 });
 
+async function openSelect(trigger: Locator) {
+  // Keyboard opening leaves selection to the explicit option action below.
+  await trigger.focus();
+  await trigger.press("ArrowDown");
+  await expect(trigger).toHaveAttribute("aria-expanded", "true");
+}
+
+async function openOutcomes(page: Page) {
+  await expect(page.locator("#job-detail-outcomes > .configuration-section__header [data-slot='collapsible-trigger']"))
+    .toHaveAttribute("aria-expanded", "false");
+  await page.getByRole("button", { name: "Sections", exact: true }).click();
+  await page.getByRole("navigation", { name: "Job detail sections" })
+    .getByRole("button", { name: "Application outcomes", exact: true }).click();
+  return page.getByRole("region", { name: "Offer terms and decisions" });
+}
+
+test("section jumps keep keyboard focus without stealing a later selection", async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  const db = new Database(loadE2eDbPath());
+  db.prepare(
+    "INSERT INTO jobs(tenant_id,job_id,url,title,company) VALUES('local',?,'https://synthetic.example/offer-focus-qa','Offer focus QA','Synthetic Employer')",
+  ).run(JOB);
+  db.close();
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(`/jobs/${JOB}`);
+  await expect(page).toHaveTitle(/JobCtrl/);
+  await page.addStyleTag({
+    // Keep the real closing transition pending long enough to exercise an
+    // immediate subsequent user interaction deterministically.
+    content: ".job-detail-sections-menu[data-closed] { animation-duration: 1500ms !important; }",
+  });
+
+  const sections = page.getByRole("button", { name: "Sections", exact: true });
+  const menu = page.locator(".job-detail-sections-menu");
+  const jump = page.getByRole("navigation", { name: "Job detail sections" })
+    .getByRole("button", { name: "Application outcomes", exact: true });
+  const disclosure = page.locator("#job-detail-outcomes > .configuration-section__header [data-slot='collapsible-trigger']");
+  await sections.click();
+  await jump.focus();
+  await page.keyboard.press("Enter");
+  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  await expect(disclosure).toBeFocused();
+  await expect(menu).toHaveCount(0);
+  await expect(disclosure).toBeFocused();
+
+  await disclosure.click();
+  await sections.click();
+  await jump.click();
+  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  await expect(menu).toHaveAttribute("data-closed", "");
+  await page.getByText("Record actual offer terms", { exact: true }).click();
+  const amount = page.getByLabel("Amount 1", { exact: true });
+  await amount.click();
+  await expect(amount).toBeFocused();
+  await amount.evaluate((element) => {
+    element.addEventListener("blur", () => {
+      element.setAttribute("data-test-focus-lost", "true");
+    }, { once: true });
+  });
+  await expect(menu).toHaveCount(0);
+  await expect(amount).toBeFocused();
+  await expect(amount).not.toHaveAttribute("data-test-focus-lost", "true");
+
+  await sections.click();
+  await jump.click();
+  await expect(menu).toHaveAttribute("data-closed", "");
+  const timeBase = page.getByRole("combobox", { name: "Time base 1" });
+  await openSelect(timeBase);
+  await expect(menu).toHaveCount(0);
+  await expect(timeBase).toHaveAttribute("aria-expanded", "true");
+  await page.getByRole("option", { name: "year", exact: true }).click();
+  await expect(timeBase.locator("[data-slot=select-value]")).toHaveText("year");
+
+  await sections.click();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(sections).toBeFocused();
+  expect(errors).toEqual([]);
+});
+
 test("actual offer terms, decisions and corrections through Job Detail", async ({
   page,
 }) => {
@@ -71,7 +155,7 @@ test("actual offer terms, decisions and corrections through Job Detail", async (
   await page.goto(`/jobs/${JOB}`);
   await expect(page).toHaveTitle(/JobCtrl/);
   await expect(page).toHaveURL(new RegExp(`/jobs/${JOB}(?:[?]|$)`));
-  const panel = page.getByRole("region", { name: "Offer terms and decisions" });
+  const panel = await openOutcomes(page);
   await expect(
     panel.getByText("No actual offer terms recorded."),
   ).toBeVisible();
@@ -80,7 +164,7 @@ test("actual offer terms, decisions and corrections through Job Detail", async (
   await panel
     .getByLabel("Currency 1 (three-letter code; blank if unknown)")
     .fill("EUR");
-  await panel.getByRole("combobox", { name: "Time base 1" }).click();
+  await openSelect(panel.getByRole("combobox", { name: "Time base 1" }));
   await page.getByRole("option", { name: "year", exact: true }).click();
   await panel
     .getByLabel("Offer source reference")
@@ -123,10 +207,17 @@ test("actual offer terms, decisions and corrections through Job Detail", async (
   await expect(
     panel.getByText("Offer decision: accepted", { exact: true }),
   ).toBeVisible();
-  await panel.getByText("Correct offer decision", { exact: true }).click();
-  await panel
-    .getByRole("combobox", { name: "Offer decision", exact: true })
-    .click();
+  // Saving retains the open form and its draft until an explicit review.
+  // Clicking the renamed summary would close the preserved decision form.
+  await expect(
+    panel.getByRole("combobox", { name: "Offer decision", exact: true }),
+  ).toBeVisible();
+  await expect(
+    panel.getByRole("button", { name: "Save offer decision" }),
+  ).toBeDisabled();
+  await openSelect(
+    panel.getByRole("combobox", { name: "Offer decision", exact: true }),
+  );
   await page.getByRole("option", { name: "declined", exact: true }).click();
   await panel
     .getByLabel("Decision source reference")
@@ -140,6 +231,37 @@ test("actual offer terms, decisions and corrections through Job Detail", async (
     .getByLabel("Decision correction reason")
     .fill("Corrected the synthetic decision");
   await panel
+    .getByRole("button", {
+      name: "Keep draft and review latest offer",
+      exact: true,
+    })
+    .click();
+  await expect(
+    panel.getByText(
+      "Review your retained draft against the latest offer and attest again.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    panel
+      .getByRole("combobox", { name: "Offer decision", exact: true })
+      .locator("[data-slot=select-value]"),
+  ).toHaveText("declined");
+  await expect(panel.getByLabel("Decision source reference")).toHaveValue(
+    "Synthetic correction",
+  );
+  await expect(panel.getByLabel("Decision evidence or your attestation")).toHaveValue(
+    "I declined these exact terms. The earlier attestation was incorrect.",
+  );
+  await expect(panel.getByLabel("Decision correction reason")).toHaveValue(
+    "Corrected the synthetic decision",
+  );
+  await expect(
+    panel.getByRole("checkbox", {
+      name: "I attest to this offer decision on the current terms.",
+    }),
+  ).not.toBeChecked();
+  await panel
     .getByRole("checkbox", {
       name: "I attest to this offer decision on the current terms.",
     })
@@ -149,6 +271,7 @@ test("actual offer terms, decisions and corrections through Job Detail", async (
     panel.getByText("Offer decision: declined", { exact: true }),
   ).toBeVisible();
   await page.reload();
+  await openOutcomes(page);
   await expect(
     panel.getByText("Offer decision: declined", { exact: true }),
   ).toBeVisible();
@@ -178,10 +301,11 @@ test("actual offer terms, decisions and corrections through Job Detail", async (
   }, JOB);
   expect(contactResponse.status).toBe(200);
   await page.reload();
+  await openOutcomes(page);
   await page.getByText("Draft an offer communication", { exact: true }).click();
-  await page
-    .getByRole("combobox", { name: "Offer recipient", exact: true })
-    .click();
+  await openSelect(
+    page.getByRole("combobox", { name: "Offer recipient", exact: true }),
+  );
   await page
     .getByRole("option", { name: "Synthetic Offer Recruiter", exact: true })
     .click();

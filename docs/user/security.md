@@ -148,8 +148,19 @@ completion. A selected extension disconnect can fail its acquisition; it does
 not trigger another transport for that fetch. The next acquisition setup may
 select anonymous access if the bounded status probe reports unavailable.
 
-Capture requires a click and sends the active page URL/visible text to the local
-API. If the stack is down, the extension holds a bounded local queue. Autofill
+Capture requires a click. Before sending the active page URL/visible text to the
+local API, the extension stores it in its local queue. The queue holds up to 25
+pending captures. Pending captures remain until JobCtrl acknowledges
+each one or you choose **Clear queue**; saving a pairing token and the passage
+of time do not remove them. If synchronization times out or JobCtrl has not
+confirmed an import or dismissal, the capture stays queued. A retry after
+re-pairing waits for any in-flight sync, then uses the new token. A full queue
+refuses a new capture and
+reports that the current page was not saved. Reconnect and choose **Sync queued
+captures** to retry pending captures, then save the current page again, or
+explicitly clear them. An unreadable queue is preserved
+and reported; **Clear queue** discards its stored contents. A capture already
+being sent when you clear the queue cannot be recalled from JobCtrl. Autofill
 has page access on ordinary HTTP(S) sites so it is not coupled to a fixed ATS
 host list, but its content script stays passive until **Review autofill** is
 clicked. Only then does it read the current form and receive whitelisted profile
@@ -376,7 +387,7 @@ or verify that login.
 | Secret | Boundary |
 | --- | --- |
 | Provider/runtime keys | Native OS credential store for guided persistent setup; inherited environment for ephemeral use; legacy `.env` until migrated. Never SQLite. |
-| Codex login | Stable `$JOBCTRL_DIR/codex_home/auth.json`, separate from SQLite and the normal Codex home. Valid normal CLI auth may be reused once only when this file is absent; existing isolated auth is never overwritten. Prompt-driven reads are limited to `codex_home/workspace/` plus the exact canonical Codex executable required to start the app server—not its package directory or sibling files. |
+| Codex login | Stable `$JOBCTRL_DIR/codex_home/auth.json`, separate from SQLite and the normal Codex home. Valid normal CLI auth may be reused once only when this file is absent; only `auth.json` is copied, and existing isolated auth is never overwritten. Generation chats are ephemeral. Overlapping app-server clients share temporary SQLite metadata and SQLite logs until the last client closes; their text logs remain independently temporary. An exclusive owner lease protects live stores during abandoned-store reclamation. Prompt-driven reads are limited to the private project rooted at `codex_home/workspace/` plus the exact canonical Codex executable required to start the app server—not its package directory or sibling files. Configuration discovery stops at that generated project boundary. |
 | Claude/Google web entries | Native OS credential store for API keys; `config.json` for cloud activation flags/non-secret identifiers; AWS, Google, and Azure credential files remain in their vendor stores. Status only is returned. |
 | CAPTCHA key | `CAPSOLVER_API_KEY` saved from Settings to the native OS credential store, or supplied by the environment; read by the owned local solver, not the model. |
 | Job-site passwords | Optional local profile value typed through a focused-field credential tool, never returned to the model. |
@@ -397,6 +408,9 @@ extension-pairing changes do not require that restart. Provider
 replacement is atomic from the web contract; native reads for presence,
 rollback, or migration stay internal and never cross the HTTP boundary. Windows uses Credential Manager and Linux uses Secret Service. Unavailable or
 locked stores are reported without falling back to plaintext persistence.
+API credential updates share an OS-user lock and a temporary helper identity
+record containing no credential values. Later saves wait for a surviving helper
+to exit; the separate plaintext migration has its own ownership rules.
 
 ## Runtime And Supply-Chain Boundary
 

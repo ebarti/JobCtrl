@@ -20,6 +20,15 @@ browser behavior, and visual consistency catch different failures.
 
 - Colocated Vitest/RTL/MSW tests prove selectors, query keys, hooks, mutations,
   forms, components, rollback, and critical/serious axe checks.
+- For a bounded API request and retained Outreach revision, run
+  `apps/api/test/api-client-timeout.test.ts` and the Outreach revision form and
+  hook tests. Use synthetic stalled header, success-body and error-body streams;
+  also exercise missing or mismatched publication identity, a matching historical
+  draft, and a server error after a committed revision using
+  `apps/api/test/outreach-postcommit-failure.test.ts`. Verify an
+  unconfirmed write retains both submitted and later text, settles pending state,
+  requires deliberate review and never automatically resubmits. Explicit 4xx
+  conflicts retain their conflict handling.
 - Type-level tests prove the public inferred shapes of read hooks and contracts.
 - The boundary lint proves the documented context/view dependency direction,
   Operations read-kernel access, browser-capability ports, and context-owned

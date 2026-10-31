@@ -31,6 +31,7 @@ import {
   TAILORING_FEEDBACK_SIGNAL_STATUSES,
   TAILORING_FEEDBACK_SOURCE_KINDS,
   TailoringPolicyLearnedRuleSchema,
+  TailoringPolicyRestoreCommandIdSchema,
 } from "./schemas.js";
 import {
   ScreeningAnswersParamsSchema, ScreeningAnswersResultSchema,
@@ -257,7 +258,12 @@ export type LearningRecommendationReviewResponse = z.infer<
 >;
 
 export const TailoringPolicyRollbackRequestSchema = z
-  .object({ targetVersion: z.number().int().positive() })
+  .object({
+    targetVersion: z.number().int().positive(),
+    expectedCurrentVersion: z.number().int().positive(),
+    commandId: TailoringPolicyRestoreCommandIdSchema,
+    reasonCode: z.literal("user_requested"),
+  })
   .strict();
 export type TailoringPolicyRollbackRequest = z.infer<
   typeof TailoringPolicyRollbackRequestSchema
@@ -269,7 +275,11 @@ export const TailoringPolicyRollbackResponseSchema = z
     context: z.literal("materials"),
     policyKind: z.literal("tailoring_rule"),
     version: z.number().int().positive(),
-    status: z.literal("current"),
+    status: z.enum(["current", "superseded"]),
+    currentVersion: z.number().int().positive(),
+    replayed: z.boolean(),
+    expectedCurrentVersion: z.number().int().positive(),
+    commandId: TailoringPolicyRestoreCommandIdSchema,
     learnedRules: z.array(TailoringPolicyLearnedRuleSchema).max(5),
     sourceReviewId: z.null(),
     sourceRecommendationId: z.null(),
@@ -551,16 +561,18 @@ const reviewFailure = (failure: EndpointDispatchFailure): EndpointFailureRespons
   message: "The learning recommendation review could not be completed.",
 });
 
-const rollbackFailure = (failure: EndpointDispatchFailure): EndpointFailureResponse => ({
-  status:
-    failure.kind === "transport"
-      ? 503
-      : failure.kind === "rpc" && failure.error.code === JsonRpcErrorCodes.InvalidParams
-        ? 409
-        : 502,
-  error: "tailoring_policy_rollback_failed",
-  message: "The tailoring policy rollback could not be completed.",
-});
+const rollbackFailure = (failure: EndpointDispatchFailure): EndpointFailureResponse => {
+  if (failure.kind === "rpc" && failure.error.code === JsonRpcErrorCodes.InvalidParams) {
+    if (failure.error.message === "tailoring_policy_stale_review") {
+      return { status: 409, error: "tailoring_policy_stale_review", message: "The current policy changed. Review the latest history before restoring." };
+    }
+    if (failure.error.message === "tailoring_policy_command_conflict") {
+      return { status: 409, error: "tailoring_policy_command_conflict", message: "This restore command is already bound to a different review." };
+    }
+    return { status: 409, error: "tailoring_policy_rollback_failed", message: "The tailoring policy restore could not be completed." };
+  }
+  return { status: failure.kind === "transport" ? 503 : 502, error: "tailoring_policy_rollback_failed", message: "The tailoring policy rollback could not be completed." };
+};
 
 const interviewQuestionPath = defineEndpointPath({
   route: "/v1/interviews/questions/:questionId",
@@ -806,19 +818,31 @@ export const ENDPOINTS = {
       params: ({ request }, context) => ({
         tenantId: context.tenantId,
         targetVersion: request.targetVersion,
+        expectedCurrentVersion: request.expectedCurrentVersion,
+        commandId: request.commandId,
+        reasonCode: request.reasonCode,
         expectedAppDir: context.appDir,
         expectedDbPath: context.dbPath,
       }),
       paramsSchema: RollbackTailoringPolicyParamsSchema,
       result: RollbackTailoringPolicyResultSchema,
       response: ({ request, result }) =>
-        result.rollbackOfVersion === request.targetVersion
+        result.rollbackOfVersion === request.targetVersion &&
+        result.expectedCurrentVersion === request.expectedCurrentVersion &&
+        result.commandId === request.commandId &&
+        result.rollbackReasonCode === request.reasonCode &&
+        result.policyVersion === request.expectedCurrentVersion + 1 &&
+        result.currentVersion >= result.policyVersion
           ? {
               ok: true,
               context: result.context,
               policyKind: result.policyKind,
               version: result.policyVersion,
-              status: "current",
+              status: result.policyVersion === result.currentVersion ? "current" : "superseded",
+              currentVersion: result.currentVersion,
+              replayed: result.replayed,
+              expectedCurrentVersion: result.expectedCurrentVersion,
+              commandId: result.commandId,
               learnedRules: result.learnedRules,
               sourceReviewId: null,
               sourceRecommendationId: null,

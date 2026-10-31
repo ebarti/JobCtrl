@@ -10,7 +10,7 @@ import {
 } from "@tanstack/react-router";
 import { axe } from "jest-axe";
 import { http, HttpResponse } from "msw";
-import { render, waitFor } from "@testing-library/react";
+import { fireEvent, render, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { jobsSearchSchema } from "../../routes/-jobs.search.js";
@@ -71,7 +71,9 @@ describe("<JobDetailDrawer> a11y", () => {
         ),
       ).not.toBeNull(),
     );
-    const results = await axe(view.container);
-    expect(results).toHaveNoViolations();
+    expect(await axe(view.container)).toHaveNoViolations();
+    fireEvent.click(view.getByRole("button", { name: "Sections" }));
+    fireEvent.click(await view.findByRole("button", { name: "Expand all" }));
+    expect(await axe(view.container)).toHaveNoViolations();
   });
 });

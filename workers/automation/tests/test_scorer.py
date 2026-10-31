@@ -173,10 +173,12 @@ def determination_ports(monkeypatch):
     from jobctrl.domain.job_snapshot import build_jd_snapshot
 
     original = scorer_module._build_use_case
+    repositories = []
 
     def build(**kwargs):
         llm = kwargs.get("llm_port")
         repo = Repository()
+        repositories.append(repo)
         kwargs["determination_dependencies"] = dict(
             llm=llm,
             repository=repo,
@@ -188,6 +190,7 @@ def determination_ports(monkeypatch):
         )
 
         def interpreted(job):
+            requirements = _employer_analysis(str(job["url"]), job_id=JobId(str(job["job_id"])), job=job).canonical.requirements
             interpreter = ModelJobInterpreter(
                 llm=ClassificationModel(),
                 repository=repo,
@@ -197,12 +200,14 @@ def determination_ports(monkeypatch):
                 lane="enrichment",
                 preflight=lambda: None,
             )
-            return interpreter.interpret(
+            result, envelope = interpreter.interpret(
                 entity_id=job["job_id"],
                 posting=Source(source_id="posting", text=build_jd_snapshot(job)),
                 fields=[],
-                requirements=[],
-            )[0]
+                requirements=[Source(source_id=row.id, text=row.evidence_span) for row in requirements],
+            )
+            result._determination_id = envelope.determination_id
+            return result
 
         kwargs["job_interpretation_reader"] = interpreted
         kwargs["confirmed_preferences_reader"] = lambda snapshot, criteria: [
@@ -211,6 +216,7 @@ def determination_ports(monkeypatch):
         return original(**kwargs)
 
     monkeypatch.setattr(scorer_module, "_build_use_case", build)
+    return repositories
 
 
 def _job_id(url: str) -> JobId:
@@ -497,7 +503,7 @@ def test_score_job_by_url_repairs_existing_score_stage_state(
             "experience_fit": 1,
             "role_fit": 1,
             "keywords": [],
-            "reasoning": "should not be called",
+            "reasoning": "Target-specific decision.",
         }
     )
     monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
@@ -1145,7 +1151,7 @@ def test_run_scoring_fails_before_llm_when_employer_analysis_fails(
             "experience_fit": 8,
             "role_fit": 9,
             "keywords": ["python"],
-            "reasoning": "should not be called",
+            "reasoning": "Target-specific decision.",
         }
     )
     monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
@@ -1209,8 +1215,39 @@ def test_run_scoring_records_safe_per_leg_causes_when_analysis_ensemble_fails(
     assert "private raw output" not in stage_row["error_message"]
 
 
-def test_run_scoring_reuses_same_content_score_for_duplicate_jobs(
-    conn: sqlite3.Connection, profile_snapshot, monkeypatch
+@pytest.mark.parametrize("code", [
+    "mismatched_value", "non_verbatim_quote", "schema_violation", "provider_unavailable", "provider_error",
+])
+def test_employer_analysis_keeps_typed_failure_through_score_and_temporal(
+    conn: sqlite3.Connection, profile_snapshot, monkeypatch, code,
+) -> None:
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.domain.errors import LlmTransientError, to_application_error
+    from jobctrl.scoring.activities import _raise_on_failure
+
+    url = "https://example.test/typed-analysis-failure"
+    _seed_pending_job(conn, url)
+    llm = _ScriptedLlm({"score": 9, "keywords": [], "reasoning": "not called"})
+    monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
+    outcome = scorer_module.run_scoring(
+        profile_snapshot=profile_snapshot, repository=SqliteScoreRepository(conn), llm_port=llm,
+        resume_text="Synthetic profile", analyze_use_case=_FailingAnalyzeUseCase(DeterminationFailure(code)),
+    )
+    assert outcome["errors"] == 1
+    assert llm.calls == 0
+    stage = _stage_row(conn, url, "score")
+    assert stage["state"] == ("failed" if code == "provider_error" else "blocked")
+    assert stage["error_code"] == "SEMANTIC_" + code.upper()
+    assert stage["error_message"] == "semantic_determination:" + code
+    with pytest.raises(DeterminationFailure) as error:
+        _raise_on_failure("score", {"status": "failed", "error": stage["error_message"]}, LlmTransientError)
+    temporal_error = to_application_error(error.value)
+    assert temporal_error.type == code
+    assert temporal_error.non_retryable == (code != "provider_error")
+
+
+def test_run_scoring_binds_each_same_content_job_to_its_own_model_decision(
+    conn: sqlite3.Connection, profile_snapshot, monkeypatch, determination_ports
 ) -> None:
     description = "Lead security engineering, compliance, identity, and platform risk. " * 8
     first_url = "https://www.linkedin.com/jobs/view/1"
@@ -1249,7 +1286,7 @@ def test_run_scoring_reuses_same_content_score_for_duplicate_jobs(
             "experience_fit": 3,
             "role_fit": 3,
             "keywords": ["security"],
-            "reasoning": "would diverge if called",
+            "reasoning": "Independent target decision.",
         },
     )
 
@@ -1264,15 +1301,26 @@ def test_run_scoring_reuses_same_content_score_for_duplicate_jobs(
     assert summary["scored"] == 2
     assert summary["errors"] == 0
     assert sorted(summary["scoredJobIds"]) == sorted([str(_job_id(first_url)), str(_job_id(duplicate_url))])
-    assert llm.calls == 1
+    assert llm.calls == 2
     first_score = repo.load(LOCAL_TENANT, _job_id(first_url))
     duplicate_score = repo.load(LOCAL_TENANT, _job_id(duplicate_url))
-    assert first_score is not None and first_score.fit_score.value == 1
-    assert duplicate_score is not None and duplicate_score.fit_score.value == 1
+    assert first_score is not None and duplicate_score is not None
+    assert first_score.job_id == _job_id(first_url)
+    assert duplicate_score.job_id == _job_id(duplicate_url)
+    assert first_score.trace.determination_id and duplicate_score.trace.determination_id
+    assert first_score.trace.determination_id != duplicate_score.trace.determination_id
+    assert first_score.trace.profile_inputs["posting_hash"] != duplicate_score.trace.profile_inputs["posting_hash"]
+    assert {first_score.breakdown.technical_fit, duplicate_score.breakdown.technical_fit} == {3, 9}
+    determination_repository = determination_ports[-1]
+    for target in (first_score, duplicate_score):
+        key = ("local", "score", str(target.job_id), str(target.version), "scoring")
+        receipt_id = determination_repository.bindings[key]
+        assert receipt_id == target.trace.determination_id
+        assert determination_repository.rows[("local", receipt_id)].entity_id == str(target.job_id)
 
 
-def test_run_scoring_reuses_existing_same_content_score_without_llm(
-    conn: sqlite3.Connection, profile_snapshot, monkeypatch
+def test_run_scoring_does_not_copy_existing_same_content_job_receipt(
+    conn: sqlite3.Connection, profile_snapshot, monkeypatch, determination_ports
 ) -> None:
     description = "Lead security engineering, compliance, identity, and platform risk. " * 8
     scored_url = "https://www.linkedin.com/jobs/view/scored"
@@ -1319,7 +1367,7 @@ def test_run_scoring_reuses_existing_same_content_score_without_llm(
             "experience_fit": 3,
             "role_fit": 3,
             "keywords": ["security"],
-            "reasoning": "should not be called",
+            "reasoning": "Target-specific decision.",
         }
     )
 
@@ -1332,9 +1380,19 @@ def test_run_scoring_reuses_existing_same_content_score_without_llm(
 
     assert summary["scored"] == 1
     assert summary["errors"] == 0
-    assert second_llm.calls == 0
+    assert second_llm.calls == 1
+    existing_score = repo.load(LOCAL_TENANT, _job_id(scored_url))
     pending_score = repo.load(LOCAL_TENANT, _job_id(pending_url))
-    assert pending_score is not None and pending_score.fit_score.value == 1
+    assert existing_score is not None and pending_score is not None
+    assert pending_score.job_id == _job_id(pending_url)
+    assert pending_score.trace.determination_id != existing_score.trace.determination_id
+    assert pending_score.breakdown.technical_fit == 3
+    assert existing_score.breakdown.technical_fit == 9
+    determination_repository = determination_ports[-1]
+    key = ("local", "score", str(pending_score.job_id), str(pending_score.version), "scoring")
+    receipt_id = determination_repository.bindings[key]
+    assert receipt_id == pending_score.trace.determination_id
+    assert determination_repository.rows[("local", receipt_id)].entity_id == str(pending_score.job_id)
 
 
 def test_run_scoring_records_failure_state_when_llm_returns_garbage(
@@ -1536,17 +1594,25 @@ def test_owned_existing_score_finishes_with_eligibility_and_owner_fence(
             return original_load(*args, **kwargs)
 
         monkeypatch.setattr(repository, "load", revoke_before_finish)
-    result = scorer_module.score_job_by_id(
-        job_id,
-        repository=repository,
-        profile_snapshot=profile_snapshot,
-        resume_text="Engineer.",
-        criteria=ScoringCriteria(),
-        workflow_id="owned-run",
-        recovery_workflow_id="prepare-auto-local-score-existing",
-        enforce_workflow_ownership=True,
-    )
-    assert result.ok
+    def run_score():
+        return scorer_module.score_job_by_id(
+            job_id,
+            repository=repository,
+            profile_snapshot=profile_snapshot,
+            resume_text="Engineer.",
+            criteria=ScoringCriteria(),
+            workflow_id="owned-run",
+            recovery_workflow_id="prepare-auto-local-score-existing",
+            enforce_workflow_ownership=True,
+        )
+
+    if cancel_before_finish:
+        from jobctrl.infrastructure.preparation_recovery import PreparationReservationLost
+
+        with pytest.raises(PreparationReservationLost):
+            run_score()
+    else:
+        assert run_score().ok
     row = _stage_row(conn, url, "score")
     assert row["state"] == ("canceled" if cancel_before_finish else "succeeded")
     assert row["attempt_count"] == (2 if cancel_before_finish else 3)

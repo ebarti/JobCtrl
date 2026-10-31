@@ -61,7 +61,7 @@ def test_discovery_automation_save_preserves_existing_search_settings(tmp_path, 
     monkeypatch.setattr(config, "DB_PATH", db_path)
 
     existing = config._default_discovery_search_config()
-    existing["boards"] = ["greenhouse"]
+    existing["boards"] = ["glassdoor"]
     existing["automation"] = {"min_fit_score": 9}
     config._save_discovery_search_config_to_db(existing)
 
@@ -75,7 +75,7 @@ def test_discovery_automation_save_preserves_existing_search_settings(tmp_path, 
         "auto_apply": True,
         "apply_approval_required": False,
     }
-    assert config._load_discovery_search_config_from_db()["boards"] == ["greenhouse"]
+    assert config._load_discovery_search_config_from_db()["boards"] == ["glassdoor"]
 
 
 def test_disabling_discovery_automation_keeps_approval_fail_closed(tmp_path, monkeypatch) -> None:

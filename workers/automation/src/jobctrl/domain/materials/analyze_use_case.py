@@ -8,9 +8,9 @@ The application-layer orchestrator for Phase 1 (sits beside
   2. Cache short-circuit (D-11/D-12): if an analysis already exists for the same
      ``(snapshot_hash, PROMPT_VERSION, SDK_SET_VERSION)`` cache key and
      ``force`` is False, return it — never re-reason on re-tailor.
-  3. Run the 3-SDK merge+synthesize ensemble (grounding-gated + synthesized
-     inside the runner), surfacing partial failures (D-08).
-  4. Re-validate the synthesized canonical's grounding (defense in depth) and
+  3. Run the admitted-provider ensemble: promote a sole verified draft, or
+     synthesize multiple admitted drafts, surfacing partial failures (D-08).
+  4. Re-validate the canonical's grounding (defense in depth) and
      persist a new generation, superseding prior ones (D-13).
   5. Publish ``EmployerAnalyzed`` (Python factory + ``job_events`` row so the
      read-side projection rebuilds and the SSE router fans out).
@@ -154,13 +154,20 @@ class AnalyzeJobUseCase:
         verification_ids = {}
 
         def verify_prose(analysis):
-            lines = self._analysis_lines(analysis)
+            # The existing gate supplies exact posting excerpts, never model
+            # support decisions. Referencing them avoids copying those bytes.
+            grounded = ground_and_snap(analysis, jd_snapshot)
+            lines = self._analysis_lines(grounded)
+            excerpts = dict.fromkeys(
+                row.evidence_span for row in [*grounded.requirements, *grounded.keywords]
+            )
             result, envelope = self._claim_verifier.verify(
                 artifact_kind="employer_analysis",
                 entity_id=str(job_id),
                 lines=lines,
                 evidence=[],
                 requirements=[Source(source_id="posting", text=jd_snapshot)],
+                supporting_spans=[Source(source_id="posting", text=text) for text in excerpts],
                 rubric={
                     "process_narration": "Describe only employer needs and ideal candidate capabilities. No narration about models, drafts, experts, reconciliation or the analysis process.",
                     "support": "Employer statements and target-role requirements must rest on the posting. Candidate fact claims have no personal evidence.",
@@ -176,7 +183,7 @@ class AnalyzeJobUseCase:
         outcome = await self._run_ensemble(jd_snapshot, verify_prose=verify_prose, entity_id=str(job_id))
         verify_prose(outcome.canonical)
 
-        # Defense in depth: re-validate the synthesized canonical's grounding AND
+        # Defense in depth: re-validate the canonical's grounding AND
         # snap its evidence spans to verbatim JD text before persistence (the
         # runner already grounds+snaps, but persistence is the hard boundary —
         # never persist a fabricated span, and the persisted spans must be

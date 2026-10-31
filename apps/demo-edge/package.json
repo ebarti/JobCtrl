@@ -11,11 +11,11 @@
     "migrate:local": "wrangler d1 migrations apply DEMO_TELEMETRY_DB --local --config wrangler.api.jsonc"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "0.18.0",
+    "@cloudflare/vitest-pool-workers": "0.23.0",
     "@jobctrl/tsconfig": "workspace:*",
     "@types/node": "^25.6.0",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.11",
-    "wrangler": "4.107.0"
+    "vitest": "^4.1.12",
+    "wrangler": "4.151.1"
   }
 }

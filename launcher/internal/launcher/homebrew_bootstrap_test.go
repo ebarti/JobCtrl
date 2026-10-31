@@ -29,18 +29,17 @@ import (
 // boundary authenticates its descriptor and payload; everything after that
 // point is the real first-install, selector, and common promotion code.
 func TestHomebrewBootstrapSignedFirstRunFastPathAndCompatibleUpgrade(t *testing.T) {
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skip("python3 is required for the common promotion fixture")
-	}
+	python := migrationIntegrationPython(t)
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	setSignedHomebrewTrust(t, public)
 
-	initial := newSignedHomebrewBootstrapFixture(t, private, "stable-homebrew-build-0001", 1, 1, python)
-	upgrade := newSignedHomebrewBootstrapFixture(t, private, "stable-homebrew-build-0002", 2, 2, python)
+	initial := newSignedHomebrewBootstrapFixtureWithCompatibility(t, private, "stable-homebrew-build-0001", 1, 2, python, 2, 2)
+	initial = signBridgeTransitionFixture(t, initial, private, "")
+	upgrade := newSignedHomebrewBootstrapFixtureWithCompatibility(t, private, "stable-homebrew-build-0002", 2, 2, python, 2, 2)
+	upgrade = signBridgeTransitionFixture(t, upgrade, private, "")
 	formulaRoot := t.TempDir()
 	formulaExecutable := writeHomebrewBootstrapFormula(t, formulaRoot, initial)
 	runtimeHome, stateHome := t.TempDir(), t.TempDir()
@@ -115,7 +114,7 @@ func TestHomebrewBootstrapSignedFirstRunFastPathAndCompatibleUpgrade(t *testing.
 	writeHomebrewBootstrapFormula(t, formulaRoot, upgrade)
 	bootstrapped, err = maybeHomebrewBootstrap(formulaExecutable, []string{"status"}, environment, &stdout, &stderr)
 	if !bootstrapped || err != nil {
-		t.Fatalf("compatible protocol-changing Homebrew upgrade = bootstrapped:%v err:%v stdout=%q stderr=%q", bootstrapped, err, stdout.String(), stderr.String())
+		t.Fatalf("signed protocol-2 Homebrew upgrade = bootstrapped:%v err:%v stdout=%q stderr=%q", bootstrapped, err, stdout.String(), stderr.String())
 	}
 	if installerCalls != 2 {
 		t.Fatalf("upgrade installer calls = %d, want 2", installerCalls)
@@ -275,6 +274,12 @@ func setSignedHomebrewTrust(t *testing.T, public ed25519.PublicKey) {
 	t.Helper()
 	previousChannel, previousKey := releaseChannel, releaseTrustKeyBase64
 	t.Cleanup(func() { releaseChannel, releaseTrustKeyBase64 = previousChannel, previousKey })
+	// These fixtures use shell stand-ins. The dedicated boundary test checks the
+	// actual notarization arguments and failure ordering; the release gate runs
+	// the real signed binaries against Apple's verifier.
+	previousCodeSign := homebrewCodeSignCommand
+	t.Cleanup(func() { homebrewCodeSignCommand = previousCodeSign })
+	homebrewCodeSignCommand = func(_ string, _ ...string) (string, error) { return "", nil }
 	releaseChannel = "stable"
 	releaseTrustKeyBase64 = base64.StdEncoding.EncodeToString(public)
 	if policy, err := AcquisitionBuildPolicy(); err != nil || policy.ExpectedChannel != "stable" || policy.AllowUnsignedLocal || !policy.AllowNetwork {
@@ -283,13 +288,17 @@ func setSignedHomebrewTrust(t *testing.T, public ed25519.PublicKey) {
 }
 
 func newSignedHomebrewBootstrapFixture(t *testing.T, private ed25519.PrivateKey, buildID string, sequence uint64, launcherRuntimeProtocol int, python string) homebrewBootstrapFixture {
+	return newSignedHomebrewBootstrapFixtureWithCompatibility(t, private, buildID, sequence, launcherRuntimeProtocol, python, 1, 2)
+}
+
+func newSignedHomebrewBootstrapFixtureWithCompatibility(t *testing.T, private ed25519.PrivateKey, buildID string, sequence uint64, launcherRuntimeProtocol int, python string, minimum, maximum int) homebrewBootstrapFixture {
 	t.Helper()
 	payloadRoot, manifest := verifiedPayloadFixture(t)
 	launcher := "#!/bin/sh\nif [ \"$1\" = start ] && [ -n \"${JOBCTRL_TEST_START_MARKER:-}\" ]; then\n  printf '%s %s\\n' \"$1\" \"${2:-}\" > \"$JOBCTRL_TEST_START_MARKER\"\nfi\nexit 0\n"
 	if err := os.WriteFile(filepath.Join(payloadRoot, "launcher", "jobctrl"), []byte(launcher), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	runtime := strings.Replace(validRuntimeManifest, `"launcherProtocol":1`, fmt.Sprintf(`"launcherProtocol":%d`, launcherRuntimeProtocol), 1)
+	runtime := strings.Replace(validRuntimeManifest, `"launcherProtocol":2`, fmt.Sprintf(`"launcherProtocol":%d`, launcherRuntimeProtocol), 1)
 	if err := os.WriteFile(filepath.Join(payloadRoot, "launcher", "runtime-manifest.json"), []byte(runtime), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +312,7 @@ func newSignedHomebrewBootstrapFixture(t *testing.T, private ed25519.PrivateKey,
 	}
 	manifest.BuildID = buildID
 	manifest.ReleaseChannel = "stable"
-	manifest.LauncherCompatibility.Minimum, manifest.LauncherCompatibility.Maximum = 1, 2
+	manifest.LauncherCompatibility.Minimum, manifest.LauncherCompatibility.Maximum = minimum, maximum
 	manifest.Signing.ManifestKeyID = "jobctrl-release-v1"
 	manifest.Signing.CodeSigning = "developer-id"
 	manifest.Signing.Notarized = true
@@ -422,7 +431,22 @@ func authenticatedHomebrewFixtureInstaller(t *testing.T, public ed25519.PublicKe
 		if _, err := VerifyDistributionPayload(fixture.payloadRoot, DistributionTrust{PublicKeys: map[string]ed25519.PublicKey{"jobctrl-release-v1": public}, ExpectedChannel: "stable"}); err != nil {
 			return "", fmt.Errorf("authenticate signed Homebrew payload: %w", err)
 		}
-		if err := stageHomebrewFixture(home, fixture, public); err != nil {
+		// A retry may reacquire the same immutable release. Reuse it only after
+		// authenticating its retained receipt and complete payload inventory.
+		if retained, err := readInstalledReceipt(home, fixture.buildID); err == nil {
+			if retained != fixture.receipt {
+				return "", errors.New("staged fixture receipt changed")
+			}
+			store, err := release.Open(home)
+			if err != nil {
+				return "", err
+			}
+			if _, err := verifyInstalledReleaseForExecution(store, retained); err != nil {
+				return "", err
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		} else if err := stageHomebrewFixture(home, fixture, public); err != nil {
 			return "", err
 		}
 		return "staged " + fixture.buildID, nil
@@ -545,11 +569,12 @@ func preseedUnsignedHomebrewRelease(t *testing.T, home string, fixture homebrewB
 
 func seedHomebrewSQLitePair(t *testing.T, python, state string) {
 	t.Helper()
-	for _, name := range []string{"jobctrl.db", "temporal.db"} {
-		code := "import pathlib,sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('create table t(v)'); c.execute('insert into t values (1)'); c.execute('PRAGMA user_version=14') if pathlib.Path(sys.argv[1]).name == 'jobctrl.db' else None; c.commit()"
-		if output, err := exec.Command(python, "-c", code, filepath.Join(state, name)).CombinedOutput(); err != nil {
-			t.Fatalf("seed %s: %v %s", name, err, output)
-		}
+	code := `import sqlite3,sys
+from jobctrl.infrastructure.migrations.schema_v15 import create_exact_v15_schema
+c=sqlite3.connect(sys.argv[1]);create_exact_v15_schema(c);c.commit();c.close()
+c=sqlite3.connect(sys.argv[2]);c.execute('CREATE TABLE t(v)');c.execute('INSERT INTO t VALUES (1)');c.commit();c.close()`
+	if output, err := exec.Command(python, "-I", "-B", "-c", code, filepath.Join(state, "jobctrl.db"), filepath.Join(state, "temporal.db")).CombinedOutput(); err != nil {
+		t.Fatalf("seed exact schema-15 pair: %v %s", err, output)
 	}
 }
 

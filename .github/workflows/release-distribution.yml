@@ -43,6 +43,11 @@ on:
         description: Current channel-pointer SHA-256, or absent for the first promotion
         required: true
         type: string
+      resume_pypi:
+        description: Resume only PyPI for an already published, verified stable release
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   actions: read
@@ -59,6 +64,7 @@ concurrency:
 jobs:
   resolve:
     name: Resolve the audited release identity and protected public trust
+    if: ${{ !inputs.resume_pypi }}
     runs-on: ubuntu-24.04
     environment:
       name: release-verification
@@ -89,7 +95,7 @@ jobs:
           test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"
           test "$GITHUB_SHA" = "$head_sha"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$head_sha...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$head_sha"
 
       - name: Require explicit revocations, protected trust, and blocked tracked policy
@@ -110,7 +116,7 @@ jobs:
           printf %s "$JOBCTRL_RELEASE_PUBLIC_KEY" | base64 --decode > "$RUNNER_TEMP/release-public-key"
           test "$(wc -c < "$RUNNER_TEMP/release-public-key" | tr -d ' ')" = 32
           test "$(base64 -w0 < "$RUNNER_TEMP/release-public-key")" = "$JOBCTRL_RELEASE_PUBLIC_KEY"
-          [[ "$JOBCTRL_RELEASE_KEY_ID" =~ ^[A-Za-z0-9._-]+$ ]]
+          [[ "$JOBCTRL_RELEASE_KEY_ID" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "Invalid JOBCTRL_RELEASE_KEY_ID" >&2; exit 1; }
           test "$(jq -r '.manifestSigning.keyId' packaging/distribution/signing-policy.json)" = "$JOBCTRL_RELEASE_KEY_ID"
           sha="$(git rev-parse HEAD)"
           source_date_epoch="$(git show -s --format=%ct HEAD)"
@@ -137,7 +143,7 @@ jobs:
           test "$(jq -r '.appleSigning.teamIdStatus' packaging/distribution/signing-policy.json)" = unprovisioned
 
       - name: Retain the exact audited release notes
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: jobctrl-release-notes-${{ github.run_id }}
           path: ${{ runner.temp }}/release-notes
@@ -156,7 +162,7 @@ jobs:
       EXPECTED_RELEASE_NOTES_SHA256: ${{ needs.resolve.outputs.release_notes_sha256 }}
     steps:
       - name: Download the exact audited release notes
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: jobctrl-release-notes-${{ github.run_id }}
           path: ${{ runner.temp }}/release-notes
@@ -185,7 +191,7 @@ jobs:
           test "$GH_REPO" = "$GITHUB_REPOSITORY"
           test "$(gh repo view "$GH_REPO" --json nameWithOwner --jq '.nameWithOwner')" = "$GITHUB_REPOSITORY"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
           release="$RUNNER_TEMP/preflight-release.json"
           error="$RUNNER_TEMP/preflight-release.err"
@@ -222,12 +228,12 @@ jobs:
           persist-credentials: false
 
       - name: Set up pinned build runtimes
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.21.1
 
       - name: Set up pinned uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: 0.11.7
 
@@ -238,7 +244,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$RELEASE_REF"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Install locked workspace dependencies
@@ -289,7 +295,7 @@ jobs:
           )
 
       - name: Retain the prepared candidate
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: jobctrl-prepared-candidate-${{ github.run_id }}
           path: ${{ runner.temp }}/prepared-candidate
@@ -324,7 +330,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up the pinned finalizer runtime
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.21.1
 
@@ -334,7 +340,7 @@ jobs:
           python-version: "3.12.10"
 
       - name: Download the prepared candidate
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: jobctrl-prepared-candidate-${{ github.run_id }}
           path: ${{ runner.temp }}/prepared-candidate
@@ -346,7 +352,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$RELEASE_REF"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Verify checkout-rooted release authority and the prepared handoff
@@ -507,7 +513,7 @@ jobs:
           rm -f "$RUNNER_TEMP/jobctrl-developer-id.p12" "$RUNNER_TEMP/jobctrl-notary-key.p8" "$RUNNER_TEMP/original-keychains.txt" "$RUNNER_TEMP/original-default-keychain.txt"
 
       - name: Upload the signed candidate for a fresh packaging job
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: jobctrl-signed-candidate-raw-${{ github.run_id }}
           path: ${{ runner.temp }}/release
@@ -525,7 +531,7 @@ jobs:
       SOURCE_DATE_EPOCH: ${{ needs.resolve.outputs.source_date_epoch }}
     steps:
       - name: Download the raw signed candidate
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: jobctrl-signed-candidate-raw-${{ github.run_id }}
           path: ${{ runner.temp }}/release
@@ -570,7 +576,7 @@ jobs:
           test -s "$RUNNER_TEMP/release/jobctrl-release-audit.tar"
 
       - name: Upload the publication-ready signed candidate
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: jobctrl-release-candidate-${{ github.run_id }}
           path: ${{ runner.temp }}/release
@@ -578,10 +584,10 @@ jobs:
           retention-days: 14
 
   verify-released-upgrades:
-    name: Verify released upgrades and rollback before publication
+    name: Qualify the latest stable transition
     needs: [resolve, sign, package-signed-candidate]
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 40
     permissions:
       actions: read
       contents: read
@@ -593,15 +599,12 @@ jobs:
           persist-credentials: false
 
       - name: Set up pinned Node for released-binary verification
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.21.1
 
-      - name: Install locked verification dependencies
-        run: corepack pnpm install --frozen-lockfile
-
       - name: Download the signed candidate before publication
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: jobctrl-release-candidate-${{ github.run_id }}
           path: ${{ runner.temp }}/release
@@ -611,9 +614,10 @@ jobs:
           cd "$RUNNER_TEMP/release"
           shasum -a 256 -c SHA256SUMS
 
-      - name: Verify real released upgrades, failed readiness, and paired rollback
+      - name: Verify the latest stable transition and its reported outcome
         if: ${{ inputs.channel == 'stable' }}
         env:
+          JOBCTRL_RELEASE_METADATA_TOKEN: ${{ github.token }}
           JOBCTRL_RELEASE_PUBLIC_KEY: ${{ needs.resolve.outputs.release_public_key }}
           JOBCTRL_RELEASE_KEY_ID: ${{ needs.resolve.outputs.release_key_id }}
         run: |
@@ -621,9 +625,29 @@ jobs:
             --release-dir "$RUNNER_TEMP/release" \
             --output "$RUNNER_TEMP/released-upgrade-smoke.json"
 
+      - name: Diagnose a retained predecessor notarization failure
+        if: ${{ failure() && inputs.channel == 'stable' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          if ! fixture_temp="$(node -p 'require("node:fs").realpathSync(require("node:os").tmpdir())')"; then
+            echo "Could not resolve the synthetic fixture directory" >&2
+            exit 1
+          fi
+          found=0
+          for fixture in "$fixture_temp"/jobctrl-released-upgrades-*; do
+            [[ -d "$fixture" && ! -L "$fixture" ]] || continue
+            while IFS= read -r -d '' binary; do
+              found=1
+              echo "Rechecking the retained predecessor with the original notarization requirement"
+              /usr/bin/codesign --verify --strict --check-notarization -R=notarized --verbose=4 "$binary" || echo "Notarization recheck failed (exit $?)"
+            done < <(find "$fixture" -type f -path '*/latest-stable/runtime/staging/*/payload/api/node_modules/better-sqlite3/build/Release/better_sqlite3.node' -print0)
+          done
+          if [[ "$found" = 0 ]]; then echo "No retained predecessor SQLite binary was available for a notarization recheck"; fi
+
       - name: Retain credential-free released-binary proof
         if: ${{ inputs.channel == 'stable' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: jobctrl-released-upgrade-evidence-${{ github.run_id }}
           path: ${{ runner.temp }}/released-upgrade-smoke.json
@@ -647,13 +671,13 @@ jobs:
       EXPECTED_RELEASE_NOTES_SHA256: ${{ needs.resolve.outputs.release_notes_sha256 }}
     steps:
       - name: Download the immutable signed candidate
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: jobctrl-release-candidate-${{ github.run_id }}
           path: ${{ runner.temp }}/release
 
       - name: Download the exact audited release notes
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: jobctrl-release-notes-${{ github.run_id }}
           path: ${{ runner.temp }}/release-notes
@@ -704,7 +728,7 @@ jobs:
           }
           require_curated_release_notes "$notes"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
           release="$RUNNER_TEMP/release"
           draft="$RUNNER_TEMP/release-draft.json"
@@ -758,7 +782,7 @@ jobs:
         run: |
           set -euo pipefail
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Publish checksum-checked immutable candidate assets to R2
@@ -772,10 +796,10 @@ jobs:
           set -euo pipefail
           test -n "$AWS_ACCESS_KEY_ID"
           test -n "$AWS_SECRET_ACCESS_KEY"
-          [[ "$R2_ACCOUNT_ID" =~ ^[a-f0-9]{32}$ ]]
-          [[ "$R2_BUCKET" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]]
-          [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ ]]
-          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[0-9]+$ ]]
+          [[ "$R2_ACCOUNT_ID" =~ ^[a-f0-9]{32}$ ]] || { echo "Invalid R2_ACCOUNT_ID" >&2; exit 1; }
+          [[ "$R2_BUCKET" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]] || { echo "Invalid R2_BUCKET" >&2; exit 1; }
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ ]] || { echo "Invalid GITHUB_RUN_ID" >&2; exit 1; }
+          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[0-9]+$ ]] || { echo "Invalid GITHUB_RUN_ATTEMPT" >&2; exit 1; }
           r2_endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           release="$RUNNER_TEMP/release"
           # Cloudflare can cache a first-read 404 longer than this bounded
@@ -843,6 +867,7 @@ jobs:
     name: Smoke public assets and verify the native and Homebrew lifecycles
     needs: [resolve, sign, package-signed-candidate, publish-immutable]
     runs-on: macos-15
+    timeout-minutes: 90
     permissions:
       actions: read
       contents: read
@@ -859,9 +884,15 @@ jobs:
           persist-credentials: false
 
       - name: Set up pinned Node for public verification
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.21.1
+
+      - name: Set up pinned Go for the synthetic source ownership fixture
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.4"
+          cache-dependency-path: launcher/go.mod
 
       - name: Install locked public-verification dependencies
         run: corepack pnpm install --frozen-lockfile
@@ -873,11 +904,14 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$RELEASE_REF"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
+      - name: Build the source ownership fixture controller
+        run: go -C launcher build -o "$RUNNER_TEMP/jobctrl-source-qa" ./cmd/jobctrl-source
+
       - name: Download the signed candidate metadata
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: jobctrl-release-candidate-${{ github.run_id }}
           path: ${{ runner.temp }}/release
@@ -931,27 +965,49 @@ jobs:
             --trust "$release/release-keys.json"
           ruby -c "$release/jobctrl.rb"
 
+      - name: Qualify upgrades through the released curl and Homebrew acquisition paths
+        if: ${{ inputs.channel == 'stable' }}
+        env:
+          JOBCTRL_RELEASE_QA_SOURCE_BINARY: ${{ runner.temp }}/jobctrl-source-qa
+          JOBCTRL_RELEASE_METADATA_TOKEN: ${{ github.token }}
+          JOBCTRL_RELEASE_PUBLIC_KEY: ${{ needs.resolve.outputs.release_public_key }}
+          JOBCTRL_RELEASE_KEY_ID: ${{ needs.resolve.outputs.release_key_id }}
+        run: |
+          node scripts/released-acquisition-upgrade.mjs \
+            --release-dir "$RUNNER_TEMP/release" \
+            --output "$RUNNER_TEMP/released-acquisition-upgrade.json"
+
       - name: Audit, install, test, and run the rendered formula lifecycle
         if: ${{ inputs.channel == 'stable' }}
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
+          XDG_CONFIG_HOME: ${{ runner.temp }}/homebrew-smoke-config
           JOBCTRL_RUNTIME_HOME: ${{ runner.temp }}/homebrew-runtime
           JOBCTRL_DIR: ${{ runner.temp }}/homebrew-runtime/state
         run: |
           set -euo pipefail
           release="$RUNNER_TEMP/release"
           tap_name="jobctrl/release-smoke-${GITHUB_RUN_ID}"
+          test "${RUNNER_ENVIRONMENT:-}" = github-hosted
+          formula_bin="$(brew --prefix)/bin/jobctrl"
+          test ! -e "$formula_bin"
+          test ! -L "$formula_bin"
+          test ! -e "$(brew --cellar)/jobctrl"
+          test ! -L "$(brew --cellar)/jobctrl"
           brew tap-new --no-git "$tap_name"
           tap_repo="$(brew --repository "$tap_name")"
           install -m 0644 "$release/jobctrl.rb" "$tap_repo/Formula/jobctrl.rb"
           formula="$tap_name/jobctrl"
-          formula_bin="$(brew --prefix)/bin/jobctrl"
           cleanup() {
             "$formula_bin" stop >/dev/null 2>&1 || true
             brew uninstall --formula "$formula" >/dev/null 2>&1 || true
+            brew untrust --formula "$formula" >/dev/null 2>&1 || true
             brew untap "$tap_name" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
+          # Homebrew may load the formula in a child process without the
+          # fully qualified command-line name that grants implicit trust.
+          brew trust --formula "$formula"
           brew audit --strict --formula "$formula"
           brew install --formula "$formula"
           brew test "$formula"
@@ -973,7 +1029,7 @@ jobs:
 
       - name: Upload the smoke-tested formula
         if: ${{ inputs.channel == 'stable' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: jobctrl-homebrew-verified-${{ github.run_id }}
           path: ${{ runner.temp }}/jobctrl-verified
@@ -981,12 +1037,13 @@ jobs:
           retention-days: 14
 
       - name: Upload only credential-free smoke and promotion evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: jobctrl-smoke-evidence-${{ github.run_id }}
           path: |
             ${{ runner.temp }}/release/published-candidate-smoke.json
             ${{ runner.temp }}/release/homebrew-promotion-evidence.json
+            ${{ runner.temp }}/released-acquisition-upgrade.json
           if-no-files-found: error
           retention-days: 14
 
@@ -1007,7 +1064,7 @@ jobs:
       EXPECTED_FORMULA_SHA256: ${{ needs.sign.outputs.formula_sha256 }}
     steps:
       - name: Download the exact verified formula
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: jobctrl-homebrew-verified-${{ github.run_id }}
           path: ${{ runner.temp }}/jobctrl-verified
@@ -1025,7 +1082,7 @@ jobs:
         run: |
           set -euo pipefail
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Require the protected Homebrew tap deploy key
@@ -1059,7 +1116,7 @@ jobs:
         run: |
           set -euo pipefail
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Commit synchronized formula
@@ -1096,7 +1153,7 @@ jobs:
       EXPECTED_SIGNER_POINTER_SHA256: ${{ needs.sign.outputs.channel_pointer_sha256 }}
     steps:
       - name: Download the untouched signer/package candidate
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: jobctrl-release-candidate-${{ github.run_id }}
           path: ${{ runner.temp }}/release
@@ -1188,7 +1245,7 @@ jobs:
         run: |
           set -euo pipefail
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Atomically promote one R2 channel pointer with compare-and-swap
@@ -1203,8 +1260,8 @@ jobs:
           set -euo pipefail
           test -n "$AWS_ACCESS_KEY_ID"
           test -n "$AWS_SECRET_ACCESS_KEY"
-          [[ "$R2_ACCOUNT_ID" =~ ^[a-f0-9]{32}$ ]]
-          [[ "$R2_BUCKET" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]]
+          [[ "$R2_ACCOUNT_ID" =~ ^[a-f0-9]{32}$ ]] || { echo "Invalid R2_ACCOUNT_ID" >&2; exit 1; }
+          [[ "$R2_BUCKET" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]] || { echo "Invalid R2_BUCKET" >&2; exit 1; }
           r2_endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           pointer="$RUNNER_TEMP/release/channel-pointer.json"
           destination="v1/$RELEASE_CHANNEL/darwin-arm64.json"
@@ -1260,7 +1317,7 @@ jobs:
           jq -n --arg status "$status" --arg priorSha256 "$prior_sha" --arg priorEtag "$etag" --arg expectedPriorSha256 "$EXPECTED_CHANNEL_POINTER_SHA256" --arg newPointerSha256 "$pointer_sha" --arg result "$promotion_result" --arg readbackSha256 "$readback_sha" --arg channel "$RELEASE_CHANNEL" --argjson sequence "$next_sequence" '{schemaVersion: 1, channel: $channel, prior: {httpStatus: $status, sha256: $priorSha256, etag: $priorEtag}, expectedPriorSha256: $expectedPriorSha256, newPointer: {sha256: $newPointerSha256, sequence: $sequence}, result: $result, readbackSha256: $readbackSha256}' > "$RUNNER_TEMP/channel-promotion-evidence.json"
 
       - name: Retain channel-promotion evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: jobctrl-channel-promotion-${{ github.run_id }}
           path: ${{ runner.temp }}/channel-promotion-evidence.json
@@ -1285,19 +1342,19 @@ jobs:
       EXPECTED_RELEASE_NOTES_SHA256: ${{ needs.resolve.outputs.release_notes_sha256 }}
     steps:
       - name: Download the untouched signer/package candidate
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: jobctrl-release-candidate-${{ github.run_id }}
           path: ${{ runner.temp }}/release
 
       - name: Download credential-free smoke evidence
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: jobctrl-smoke-evidence-${{ github.run_id }}
           path: ${{ runner.temp }}/smoke-evidence
 
       - name: Download the exact audited release notes
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: jobctrl-release-notes-${{ github.run_id }}
           path: ${{ runner.temp }}/release-notes
@@ -1308,7 +1365,7 @@ jobs:
           cd "$RUNNER_TEMP/release"
           shasum -a 256 -c SHA256SUMS
           test -f jobctrl-release-audit.tar && test ! -L jobctrl-release-audit.tar
-          smoke="$RUNNER_TEMP/smoke-evidence/published-candidate-smoke.json"
+          smoke="$RUNNER_TEMP/smoke-evidence/release/published-candidate-smoke.json"
           test -f "$smoke" && test ! -L "$smoke"
 
       - name: Verify asset digests, enforce immutability, and publish
@@ -1342,10 +1399,10 @@ jobs:
           }
           require_curated_release_notes "$notes"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
           candidate="$RUNNER_TEMP/release"
-          smoke="$RUNNER_TEMP/smoke-evidence/published-candidate-smoke.json"
+          smoke="$RUNNER_TEMP/smoke-evidence/release/published-candidate-smoke.json"
           metadata="$candidate/release-metadata.json"
           archive="$(jq -r '.archive.file' "$metadata")"
           assets=(
@@ -1376,11 +1433,15 @@ jobs:
             require_asset_digest "$release" "$asset"
           done
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
           test "$(GH_TOKEN="$ADMIN_READ_TOKEN" gh api -H 'X-GitHub-Api-Version: 2026-03-10' "repos/$GITHUB_REPOSITORY/immutable-releases" --jq '.enabled')" = true
           if [[ "$(jq -r '.isDraft' "$release")" = true ]]; then
-            gh release edit "$RELEASE_TAG" --draft=false
+            if [[ "$RELEASE_CHANNEL" = stable ]]; then
+              gh release edit "$RELEASE_TAG" --draft=false --latest
+            else
+              gh release edit "$RELEASE_TAG" --draft=false
+            fi
           fi
           immutable=false
           for (( attempt = 0; attempt < 10; attempt++ )); do
@@ -1409,10 +1470,65 @@ jobs:
           done
           gh release verify "$RELEASE_TAG"
 
+  resume-pypi-authority:
+    name: Verify the published release authority for PyPI resumption
+    if: ${{ inputs.resume_pypi && inputs.channel == 'stable' }}
+    runs-on: ubuntu-24.04
+    environment:
+      name: release-verification
+      deployment: false
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      original_run_id: ${{ steps.authority.outputs.original_run_id }}
+      source_commit: ${{ steps.authority.outputs.source_commit }}
+      source_date_epoch: ${{ steps.authority.outputs.source_date_epoch }}
+      release_public_key: ${{ steps.authority.outputs.release_public_key }}
+      release_key_id: ${{ steps.authority.outputs.release_key_id }}
+    steps:
+      - name: Check out the audited recovery workflow
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify the original run, immutable release, and current stable pointer
+        id: authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_SEQUENCE: ${{ inputs.sequence }}
+          EXPECTED_CHANNEL_POINTER_SHA256: ${{ inputs.expected_channel_pointer_sha256 }}
+          JOBCTRL_RELEASE_PUBLIC_KEY: ${{ vars.JOBCTRL_RELEASE_PUBLIC_KEY }}
+          JOBCTRL_RELEASE_KEY_ID: ${{ vars.JOBCTRL_RELEASE_KEY_ID }}
+        run: bash scripts/release-resume-pypi.sh
+
+      - name: Download the original smoke evidence
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: jobctrl-smoke-evidence-${{ steps.authority.outputs.original_run_id }}
+          run-id: ${{ steps.authority.outputs.original_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/original-smoke-evidence
+
+      - name: Bind the immutable release to the original smoke evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          smoke="$RUNNER_TEMP/original-smoke-evidence/release/published-candidate-smoke.json"
+          test -f "$smoke" && test ! -L "$smoke"
+          digest="sha256:$(shasum -a 256 "$smoke" | awk '{print $1}')"
+          gh release view "$RELEASE_TAG" --json isImmutable,assets | jq -e --arg digest "$digest" \
+            '.isImmutable == true and ([.assets[] | select(.name == "published-candidate-smoke.json")] | length == 1 and .[0].digest == $digest)' >/dev/null
+
   pypi-resolve:
     name: Verify the immutable signed stable release for PyPI
-    needs: [resolve, publish-github-release]
-    if: ${{ !cancelled() && needs.resolve.result == 'success' && inputs.channel == 'stable' && needs['publish-github-release'].result == 'success' }}
+    needs: [resolve, publish-github-release, resume-pypi-authority]
+    if: ${{ !cancelled() && inputs.channel == 'stable' && ((!inputs.resume_pypi && needs.resolve.result == 'success' && needs['publish-github-release'].result == 'success') || (inputs.resume_pypi && needs['resume-pypi-authority'].result == 'success')) }}
     runs-on: ubuntu-24.04
     outputs:
       source_commit: ${{ steps.identity.outputs.source_commit }}
@@ -1421,20 +1537,20 @@ jobs:
       contents: read
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}
-      EXPECTED_SOURCE_COMMIT: ${{ needs.resolve.outputs.release_ref }}
-      EXPECTED_SOURCE_DATE_EPOCH: ${{ needs.resolve.outputs.source_date_epoch }}
-      EXPECTED_RELEASE_PUBLIC_KEY: ${{ needs.resolve.outputs.release_public_key }}
-      EXPECTED_RELEASE_KEY_ID: ${{ needs.resolve.outputs.release_key_id }}
+      EXPECTED_SOURCE_COMMIT: ${{ inputs.resume_pypi && needs['resume-pypi-authority'].outputs.source_commit || needs.resolve.outputs.release_ref }}
+      EXPECTED_SOURCE_DATE_EPOCH: ${{ inputs.resume_pypi && needs['resume-pypi-authority'].outputs.source_date_epoch || needs.resolve.outputs.source_date_epoch }}
+      EXPECTED_RELEASE_PUBLIC_KEY: ${{ inputs.resume_pypi && needs['resume-pypi-authority'].outputs.release_public_key || needs.resolve.outputs.release_public_key }}
+      EXPECTED_RELEASE_KEY_ID: ${{ inputs.resume_pypi && needs['resume-pypi-authority'].outputs.release_key_id || needs.resolve.outputs.release_key_id }}
     steps:
       - name: Check out the exact audited source without credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.resolve.outputs.release_ref }}
+          ref: ${{ inputs.resume_pypi && needs['resume-pypi-authority'].outputs.source_commit || needs.resolve.outputs.release_ref }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Set up pinned Node for the tracked release verifier
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.21.1
 
@@ -1445,7 +1561,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_COMMIT"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$EXPECTED_SOURCE_COMMIT...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$EXPECTED_SOURCE_COMMIT"
           test "$(gh release view "$RELEASE_TAG" --json isImmutable --jq '.isImmutable')" = true
           gh release verify "$RELEASE_TAG"
@@ -1465,8 +1581,8 @@ jobs:
       - name: Verify immutable signed release assets before any dependency execution
         env:
           GH_TOKEN: ${{ github.token }}
-          JOBCTRL_RELEASE_PUBLIC_KEY: ${{ needs.resolve.outputs.release_public_key }}
-          JOBCTRL_RELEASE_KEY_ID: ${{ needs.resolve.outputs.release_key_id }}
+          JOBCTRL_RELEASE_PUBLIC_KEY: ${{ inputs.resume_pypi && needs['resume-pypi-authority'].outputs.release_public_key || needs.resolve.outputs.release_public_key }}
+          JOBCTRL_RELEASE_KEY_ID: ${{ inputs.resume_pypi && needs['resume-pypi-authority'].outputs.release_key_id || needs.resolve.outputs.release_key_id }}
         run: |
           set -euo pipefail
           release_dir="$RUNNER_TEMP/jobctrl-release"
@@ -1545,7 +1661,7 @@ jobs:
           python-version: "3.12.13"
 
       - name: Set up pinned uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: 0.11.7
 
@@ -1556,7 +1672,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$RELEASE_REF"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Set up only the exact locked release-build dependencies
@@ -1590,7 +1706,7 @@ jobs:
           )
 
       - name: Upload only built package bytes
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: jobctrl-pypi-distributions-${{ github.run_id }}
           path: ${{ runner.temp }}/jobctrl-pypi-dists
@@ -1611,7 +1727,7 @@ jobs:
       id-token: write
     steps:
       - name: Download only built distributions
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: jobctrl-pypi-distributions-${{ github.run_id }}
           path: ${{ runner.temp }}/jobctrl-pypi-dists
@@ -1627,7 +1743,7 @@ jobs:
           tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$tag_sha...main" --jq '.status')"
           test "$EXPECTED_SOURCE_COMMIT" = "$tag_sha"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh release view "$RELEASE_TAG" --json isImmutable --jq '.isImmutable')" = true
           test -f "$DIST_DIR/SHA256SUMS" && test ! -L "$DIST_DIR/SHA256SUMS"
           packages="$DIST_DIR/packages"
@@ -1639,6 +1755,32 @@ jobs:
             cd "$DIST_DIR"
             shasum -a 256 -c SHA256SUMS
           )
+
+      - name: Recheck live stable identity before PyPI resumption
+        if: ${{ inputs.resume_pypi }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_SEQUENCE: ${{ inputs.sequence }}
+          EXPECTED_SOURCE_COMMIT: ${{ needs.pypi-resolve.outputs.source_commit }}
+          EXPECTED_CHANNEL_POINTER_SHA256: ${{ inputs.expected_channel_pointer_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid RELEASE_TAG" >&2; exit 1; }
+          [[ "$RELEASE_SEQUENCE" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid RELEASE_SEQUENCE" >&2; exit 1; }
+          [[ "$EXPECTED_SOURCE_COMMIT" =~ ^[a-f0-9]{40}$ ]] || { echo "Invalid EXPECTED_SOURCE_COMMIT" >&2; exit 1; }
+          [[ "$EXPECTED_CHANNEL_POINTER_SHA256" =~ ^[a-f0-9]{64}$ ]] || { echo "Invalid EXPECTED_CHANNEL_POINTER_SHA256" >&2; exit 1; }
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name')" = "$RELEASE_TAG"
+          release="$RUNNER_TEMP/pypi-resume-release.json"
+          gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,isImmutable,targetCommitish,assets > "$release"
+          jq -e --arg sha "$EXPECTED_SOURCE_COMMIT" '.isDraft == false and .isPrerelease == false and .isImmutable == true and .targetCommitish == $sha' "$release" >/dev/null
+          digest="$(jq -er '[.assets[] | select(.name == "channel-pointer.json")] | if length == 1 then .[0].digest else error("missing or duplicate pointer") end' "$release")"
+          test "$digest" = "sha256:$EXPECTED_CHANNEL_POINTER_SHA256"
+          pointer="$RUNNER_TEMP/pypi-resume-live-pointer.json"
+          curl -fsS --max-time 30 https://releases.jobctrl.dev/v1/stable/darwin-arm64.json -o "$pointer"
+          test "$(shasum -a 256 "$pointer" | awk '{print $1}')" = "$EXPECTED_CHANNEL_POINTER_SHA256"
+          jq -e --arg build "${RELEASE_TAG#v}-$EXPECTED_SOURCE_COMMIT-darwin-arm64" --argjson sequence "$RELEASE_SEQUENCE" \
+            '.channel == "stable" and .buildId == $build and .sequence == $sequence' "$pointer" >/dev/null
 
       - name: Publish verified distributions to PyPI
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2

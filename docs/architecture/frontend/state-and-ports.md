@@ -45,14 +45,26 @@ is the canonical decision matrix.
 | Saved resume review draft | **Server** (Query) | The apply-context reconciler publishes create/save/seed/render/reply responses to the initiating tenant/job key. Draft identity and base generation precede revision/state/time ordering; threads, replies and feedback signals merge independently by their IDs. |
 | Unsaved resume review edits | **Apply-owned mounted session** | `useApplyReviewSession` owns the document, autosave, submitted/saved baselines, render attempts, accepted comparison and approval preparation. Document identities compare the normalized persistence form, so acknowledging equivalent pasted blocks stops autosave without replacing the live editor; later text, formatting or undo B stays dirty. Saved text includes unnumbered pasted paragraphs alongside anchored lines. Materials renders controlled state; comment-only updates do not reset focus or selection. Tenant/job changes replace the session; replacement drafts reset document identity independently of revision counters. Every cache publication obeys the current material source fence; the session's own accepted render can retain its original base after promotion. |
 | Pending resume comment seeds | **Apply-owned mounted session** | Seed payloads and publisher callbacks bind to the initiating text/PDF material IDs. A material switch discards incompatible retained seeds before a replacement draft loads; delayed callbacks cannot attach foreign pins. Materials publishes empty pin lists too, so an empty source never replays an earlier payload. |
+| Manual outcome and reflection drafts | **Apply-owned app session** | Separate in-memory drafts and uncertain retry identities by tenant and job. The app route retains them across top-level navigation, keyed drawers, nested run detail, and cold tenant reads. Switching owners restores only that owner's input; a late acknowledgement from an unmounted form leaves its original action available for safe retry. Reloading clears this state. |
 | Interviews filters, graph/list mode, selected card, and optional canonical job | **URL** | The library view is bookmarkable and remains distinct from generated prep; navigation and browser Back/Forward use this state. |
 | Interviews Questions/Sources perspective, author drill-down, graph pan/zoom, and inspector tab | **Component** (`useState` / tabs) | Transient exploration controls; they do not shadow URL-owned card/job/filters, accepted evidence selections, or private drafts. |
 | Installed interview catalog and job prep/history/notes | **Server** (Query) | Public Operations read hooks use the API port; catalog browsing does not require a job/worker/provider. |
 | Unsaved interview question selection/order, context, and note text | **Materials session store + Form library state** | TanStack Form validates mutations; a tenant/job/question-keyed in-memory Zustand store preserves drafts through navigation. Dirty edits survive delayed responses, save failures, and revision conflicts; a newer query result cannot overwrite them. Personal text is not persisted in browser storage or URL state. |
+| Manual outcome, reflection and send-log retry | **Mounted form session** | Each form retains the submitted payload and request identity in memory until acknowledgement or an explicit new action. Send-log reconciliation updates only the initiating thread; current thread reads remain authoritative. See the [retry contract](../../api/complete-contract.md#manual-action-retry-contract). |
 | Artifacts list / detail | **Server** (Query) | Same. |
 | Apply run live timeline | **Server** (Query) — appended via `setQueryData` from SSE | High-frequency; see §7.5. |
-| Resume import wizard step state (uploaded file metadata, parsed draft) | **Client** (Zustand+persist) | Cross-step, refresh-safe, but not URL-bound (the URL identifies *which step*, not *the data*). |
-| Form drafts (profile, settings) | **Form library state** (TanStack Form) | Profile and resume style stay object-valued until the existing string-valued update request; validation does not replace the edited object with normalized schema output. Owned by the form until submit; mutates the server via the mutation hook. Direct Profile Plate edits with an unambiguous semantic owner project into this same draft rather than creating a second profile store. |
+| Resume import wizard selection and options | **Client** (Zustand + browser storage) | The filename and PDF are accepted together only after a successful storage write; pending reads and failed replacements cannot publish a stale choice. Current-version tabs compare and update the versioned record in a single IndexedDB read-write transaction, including a tombstone for cleanup. A stale snapshot or unavailable transaction fails closed and offers recovery. The earlier v1 key is read-only and separately recoverable; older tabs cannot erase the v2 record, but still need reloading because they cannot coordinate v1 writes with each other. Selection and options survive navigation, refresh, and Cancel, until explicit removal or successful import cleanup. In-flight and completed imports within a tab are matched by exact source and options; successful removal retires completed-request authority without bypassing an in-flight request. Request identity and returned drafts stay in session memory and are not staged into Profile. The URL identifies the step, not its data. |
+| Form drafts (profile, settings) | **Form library state** (TanStack Form) | Profile and resume style stay object-valued until the existing string-valued update request; validation does not replace the edited object with normalized schema output. Owned by the form until submit; mutates the server via the mutation hook. The shared Profile, Cost and capacity, and Discovery Automation autosave controller attempts an unchanged dirty snapshot once after five seconds; an explicit Save or a different draft can retry, and an in-flight submit does not erase newer edits. Apply and Discovery runtime forms keep a tenant-scoped, non-refetchable acknowledged baseline in the QueryClient: successful reads and their own save responses advance it, while optimistic writes and rollbacks do not; newer edits remain pending. Within one QueryClient, runtime writes for the same tenant and panel are ordered across remounts, and saves write only deliberately edited fields so an unacknowledged commit cannot be overwritten by a stale draft. Direct Profile Plate edits with an unambiguous semantic owner project into this same draft rather than creating a second profile store. |
+
+Contact creation and model-policy editors pause during their saves; contact
+edits retain newer typing and fence closed or reopened sessions. Provider setup
+forms clear only acknowledged unchanged write-only inputs and preserve newer
+drafts across provider-status updates. Offer forms retain
+their drafts across canonical revisions and require an explicit fresh-read
+reconciliation before retrying with the new IDs. Template drafts stay scoped
+to tenant and template; reconciliation keeps edited fields over a freshly read
+version. Template updates and the UI's default selection bind the expected
+active version at the API boundary.
 | Connection status to API (the inline "live"/"offline" status) | **Server** (Query: `useHealthQuery({ refetchInterval: ... })`) | Polling the health endpoint, not a manual `useState`. |
 
 ### 5.2 URL ↔ Query Cache Binding
@@ -160,6 +172,7 @@ hitting the network and gives a clear seam for cloud evolution.
 | Port | Purpose | Local-mode adapter | Hosted-mode adapter (named, not built) |
 |---|---|---|---|
 | `ApiClientPort` | HTTP requests against `apps/api` | `JobCtrlApiClient` from `@jobctrl/api-client` | Transport with hosted authentication when implemented |
+| `RequestIdentityPort` | Create an identity for each deliberate manual action | `BrowserRequestIdentityAdapter` (UUID) | Same adapter |
 | `EventStreamPort` | Subscribe to a stream of `DomainEvent`s | `SseEventStreamAdapter` (`new EventSource(...)`) | `WebSocketEventStreamAdapter` (if SSE proves limiting at scale) or same SSE adapter behind CDN with edge buffering |
 | `StoragePort` | Persist client preferences and wizard drafts | `LocalStorageAdapter` (browser `localStorage`) | `IndexedDbAdapter` (when client-side cache exceeds 5 MB) |
 | `SessionPort` | Resolve `TenantId` and `UserId` for the current request | `LocalSessionAdapter` (returns `LOCAL_TENANT` + a stub user) | `JwtSessionAdapter` (Auth0 / Cognito; reads JWT, exposes `useSession()`) |
@@ -183,6 +196,7 @@ React context:
 // shared/providers/ports.tsx
 const PortsContext = createContext<{
   api: ApiClientPort;
+  requestIdentity: RequestIdentityPort;
   eventStream: EventStreamPort;
   storage: StoragePort;
   session: SessionPort;

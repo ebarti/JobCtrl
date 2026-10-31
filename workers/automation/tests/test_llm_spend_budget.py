@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from temporalio.exceptions import ApplicationError
+from temporalio.testing import ActivityEnvironment
 
 from jobctrl.database import init_db
 from jobctrl.llm import (
@@ -89,7 +90,7 @@ async def test_check_spend_budget_raises_non_retryable_budget_exceeded(
     record_llm_spend(lane="scoring", input_tokens=1, output_tokens=1, estimated_usd=1.0)
 
     with pytest.raises(ApplicationError) as exc_info:
-        await check_spend_budget(SpendBudgetInput(lane="scoring"))
+        await ActivityEnvironment().run(check_spend_budget, SpendBudgetInput(lane="scoring"))
 
     assert exc_info.value.type == "budget_exceeded"
     assert exc_info.value.non_retryable is True

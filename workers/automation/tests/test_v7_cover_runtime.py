@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import threading
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
+from temporalio.testing import ActivityEnvironment
 
 from jobctrl.database import init_db
 from jobctrl.domain.identifiers import JobId, canonical_job_id
@@ -30,6 +33,7 @@ from jobctrl.domain.scoring.value_objects import (
 )
 from jobctrl.domain.tenant import TenantId
 from jobctrl.infrastructure.materials import SqliteMaterialsRepository
+from jobctrl.infrastructure.preparation_recovery import MaterialActivityAttempt
 from jobctrl.infrastructure.scoring import SqliteScoreRepository
 from jobctrl.materials import activities as activities_module
 from jobctrl.materials.activities import CoverLetterActivityInput
@@ -120,7 +124,13 @@ class _CancelingCoverLlm(_CoverLlm):
 
 @pytest.fixture()
 def conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
+    # This fixture tests cover generation after the user opts in.
+    cover_config = tmp_path / "cover-settings.json"
+    cover_config.write_text('{"cover_letter_generation":true}')
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(cover_config))
     monkeypatch.setattr("jobctrl.llm.enforce_spend_budget", lambda **kwargs: None)
+    # The real runner and its review/usage threads share one process DB identity.
+    monkeypatch.setattr("jobctrl.database.DB_PATH", tmp_path / "jobctrl-v7.db")
     connection = init_db(tmp_path / "jobctrl-v7.db")
     monkeypatch.setattr(cover_letter_module, "get_connection", lambda: connection)
     monkeypatch.setattr(cover_letter_module, "COVER_LETTER_DIR", tmp_path / "cover-letters")
@@ -380,6 +390,7 @@ def test_cover_default_runner_fences_cancellation_before_artifact_or_terminal_wr
 def test_cover_job_replay_closes_running_state_from_committed_approved_artifact(
     conn: sqlite3.Connection,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _seed_target(conn, tenant_id=_TENANT_A)
     _seed_eligible_score(conn, tenant_id=_TENANT_A)
@@ -387,6 +398,13 @@ def test_cover_job_replay_closes_running_state_from_committed_approved_artifact(
     _seed_stage_rows(conn, tenant_id=_TENANT_A)
     repository = SqliteMaterialsRepository(conn)
     llm = _CoverLlm()
+    env = ActivityEnvironment()
+    env.info = replace(env.info, workflow_run_id="owned-cover-replay-run", attempt=1)
+    attempt = MaterialActivityAttempt(env.info.activity_id, env.info.attempt, env.info.workflow_run_id)
+    prior_attempts = conn.execute(
+        "SELECT attempt_count FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()[0]
     first = cover_letter_module.cover_letter_by_id(
         _JOB_ID,
         tenant_id=_TENANT_A,
@@ -394,26 +412,43 @@ def test_cover_job_replay_closes_running_state_from_committed_approved_artifact(
         repository=repository,
         llm_port=llm,
         pdf_renderer=_PdfRenderer(),
+        workflow_id=env.info.workflow_run_id,
+        temporal_attempt=attempt,
     )
     assert first["status"] == "ok"
+    materials_sql = "SELECT * FROM job_materials_artifacts WHERE tenant_id = ? AND job_id = ? ORDER BY artifact_type"
+    scope = (str(_TENANT_A), str(_JOB_ID))
+    artifacts = conn.execute(materials_sql, scope).fetchall()
+    artifacts_before = [tuple(row) for row in artifacts]
+    bytes_before = {Path(row["path"]): Path(row["path"]).read_bytes() for row in artifacts if Path(row["path"]).is_file()}
+    # Model the interrupted first execution, including its real Temporal start
+    # identity and completed-count basis, rather than an unrelated direct read.
     conn.execute(
         """
         UPDATE job_stage_states
-        SET state = 'running'
+        SET state = 'running', attempt_count = ?, finished_at = NULL, duration_ms = NULL,
+            metadata_json = ?
         WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'
         """,
-        (str(_TENANT_A), str(_JOB_ID)),
+        (prior_attempts, json.dumps({"activityOwner": env.info.workflow_run_id,
+                                    "attemptCountBasis": "completed"}), *scope),
     )
     conn.commit()
 
-    replay = cover_letter_module.cover_letter_by_id(
-        _JOB_ID,
-        tenant_id=_TENANT_A,
-        snapshot=_snapshot(_TENANT_A),
-        repository=repository,
-        llm_port=llm,
-        pdf_renderer=_PdfRenderer(),
-    )
+    async def inline(blocking, **_):
+        return blocking()
+
+    monkeypatch.setattr("jobctrl.database.get_connection", lambda: conn)
+    monkeypatch.setattr("jobctrl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat", inline)
+    env.info = replace(env.info, attempt=2)
+
+    async def retry_activity():
+        return await env.run(
+            activities_module.cover_letter_activity,
+            CoverLetterActivityInput(tenant_id=str(_TENANT_A), job_id=_JOB_ID),
+        )
+
+    replay = asdict(asyncio.run(retry_activity()))
 
     assert replay["status"] == "already_done"
     assert replay["reason"] == "approved_cover_already_committed"
@@ -426,6 +461,12 @@ def test_cover_job_replay_closes_running_state_from_committed_approved_artifact(
         (str(_TENANT_A), str(_JOB_ID)),
     ).fetchone()
     assert state["state"] == "succeeded"
+    assert conn.execute(
+        "SELECT attempt_count FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'",
+        scope,
+    ).fetchone()[0] == prior_attempts + 1
+    assert [tuple(row) for row in conn.execute(materials_sql, scope)] == artifacts_before
+    assert {path: path.read_bytes() for path in bytes_before} == bytes_before
 
 
 def test_cover_by_id_skips_missing_approved_materials_before_llm_or_artifact_work(
@@ -880,3 +921,121 @@ def test_cover_activity_wires_the_canonical_job_id_entrypoint(
     assert activities_module._cover_one_job(payload)["reason"] == "missing_approved_resume"
     assert seen["job_id"] == _JOB_ID
     assert seen["tenant_id"] == _TENANT_A
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("allow_override", [False, True])
+@pytest.mark.parametrize("fit_score", [1, 6])
+@pytest.mark.parametrize("hard_blocked", [False, True])
+async def test_manual_low_fit_preparation_keeps_cover_exception_and_hard_gates(
+    conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    allow_override: bool, fit_score: int, hard_blocked: bool,
+) -> None:
+    from jobctrl.preparation import workflow as prep_workflow
+
+    _seed_target(conn, tenant_id=_TENANT_A)
+    _seed_eligible_score(
+        conn, tenant_id=_TENANT_A, fit_score=fit_score,
+        eligibility=EligibilityAssessment(
+            status="blocked" if hard_blocked else "eligible",
+            hard_blockers=("Work authorization required.",) if hard_blocked else (),
+        ),
+    )
+    _seed_approved_resume(conn, tmp_path, tenant_id=_TENANT_A)
+    llm = _CoverLlm()
+    canonical_cover = cover_letter_module.cover_letter_by_id
+
+    def synthetic_ports(job_id, **kwargs):
+        return canonical_cover(
+            job_id, **kwargs, snapshot=_snapshot(_TENANT_A),
+            repository=SqliteMaterialsRepository(conn), llm_port=llm,
+            pdf_renderer=_PdfRenderer(),
+        )
+
+    monkeypatch.setattr(cover_letter_module, "cover_letter_by_id", synthetic_ports)
+
+    async def execute(activity_fn, payload, **_kwargs):
+        if activity_fn.__name__ == "cover_letter_activity":
+            return activities_module._cover_one_job(payload)
+        return {"status": "approved" if activity_fn.__name__ == "tailor_job_activity" else "ok"}
+
+    monkeypatch.setattr(prep_workflow.workflow, "execute_activity", execute)
+    result = await prep_workflow.JobPreparationWorkflow()._execute_steps(
+        prep_workflow.JobPreparationInput(
+            tenant_id=str(_TENANT_A), job_id=_JOB_ID, steps=["tailor", "cover", "pdf"],
+            target_version="1", idempotency_key="preparation:manual-low-fit",
+            min_score=7, allow_low_fit_override=allow_override,
+        )
+    )
+    materials = SqliteMaterialsRepository(conn).load_current_approved(_TENANT_A, _JOB_ID)
+    assert materials is not None
+    if allow_override and not hard_blocked:
+        assert result.steps_completed == ["tailor", "cover", "pdf"]
+        assert result.steps_skipped == []
+        assert materials.cover_letter is not None and materials.cover_letter_pdf is not None
+        assert llm.calls == 1
+    else:
+        assert result.steps_completed == ["tailor"]
+        assert result.steps_skipped == ["cover"]
+        assert materials.cover_letter is None
+        assert llm.calls == 0
+    assert SqliteScoreRepository(conn).load(_TENANT_A, _JOB_ID).fit_score.value == fit_score
+
+
+@pytest.mark.parametrize("allow_override", [False, True])
+def test_selected_cover_batch_forwards_the_admitted_low_fit_exception(
+    monkeypatch: pytest.MonkeyPatch, allow_override: bool,
+) -> None:
+    seen: list[dict] = []
+
+    def generate(job_id, **kwargs):
+        assert job_id == _JOB_ID
+        seen.append(kwargs)
+        return {"status": "ok", "generated": 1}
+
+    monkeypatch.setattr(cover_letter_module, "cover_letter_by_id", generate)
+    result = activities_module._run_selected_cover(
+        activities_module.CoverActivityInput(
+            tenant_id=str(_TENANT_A), job_ids=(_JOB_ID,), min_score=7,
+            allow_low_fit_override=allow_override,
+        )
+    )
+    assert result["stages"][0]["generated"] == 1
+    assert len(seen) == 1
+    assert seen[0]["min_score"] == 7
+    assert seen[0]["allow_low_fit_override"] is allow_override
+
+
+@pytest.mark.asyncio
+async def test_legacy_cover_activity_payload_defaults_to_no_low_fit_exception() -> None:
+    from temporalio.converter import DataConverter
+
+    converter = DataConverter.default
+    payloads = await converter.encode([{"tenant_id": "local", "job_id": str(_JOB_ID), "min_score": 7}])
+    [decoded] = await converter.decode(payloads, [CoverLetterActivityInput])
+    assert decoded.min_score == 7
+    assert decoded.allow_low_fit_override is False
+
+
+@pytest.mark.parametrize("retryable", [True, False])
+def test_cover_persists_provider_failure_retry_authority(conn, tmp_path, retryable):
+    from jobctrl.domain.ports.llm import LlmFailure
+
+    class TypedFailureLlm(_CoverLlm):
+        def chat_json(self, *args, **kwargs):
+            raise LlmFailure("turn_failed", retryable=retryable)
+
+    _seed_target(conn, tenant_id=_TENANT_A)
+    _seed_eligible_score(conn, tenant_id=_TENANT_A)
+    _seed_approved_resume(conn, tmp_path, tenant_id=_TENANT_A)
+    result = cover_letter_module.cover_letter_by_id(
+        _JOB_ID, tenant_id=_TENANT_A, snapshot=_snapshot(_TENANT_A),
+        repository=SqliteMaterialsRepository(conn), llm_port=TypedFailureLlm(), pdf_renderer=_PdfRenderer(),
+    )
+    assert result["status"] == "error"
+    row = conn.execute(
+        "SELECT state,error_code,retryable FROM job_stage_states WHERE tenant_id=? AND job_id=? AND stage='cover'",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()
+    code = "PROVIDER_ERROR" if retryable else "PROVIDER_NON_RETRYABLE"
+    assert tuple(row) == ("failed", code, int(retryable))

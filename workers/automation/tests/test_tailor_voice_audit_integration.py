@@ -365,7 +365,7 @@ def _claim_mapping(bullet: str, *, summary: str) -> list[dict[str, object]]:
             "claim_label": "evidence_reframed",
             "coverage_edge_ids": ["edge_req_latency_ev_latency_direct"],
             "requirement_ids": ["req_latency"],
-            "evidence_ids": ["ev_latency"],
+            "evidence_ids": ["ev_latency", "experience:acme_swe:source:0"],
             "non_requirement_reason": "",
             "review_required": False,
         },
@@ -449,7 +449,7 @@ def _approved_llm(payload: str, *, final_judge: str | None = None) -> _ScriptedL
     return _ScriptedLlm([payload, _judge_pass(), final_judge or _judge_pass()])
 
 
-def _use_case(materials_repo, provenance_repo, llm, publisher, voice, *, verdict="pass") -> TailorResumeUseCase:
+def _use_case(materials_repo, provenance_repo, llm, publisher, voice, *, verdict="pass", voice_skip_reason="no_voice_port") -> TailorResumeUseCase:
     from tests.determination_fakes import review_ports, JobInterpreter
 
     verifier, quality = review_ports(quality_source=llm, verdict=verdict)
@@ -468,6 +468,7 @@ def _use_case(materials_repo, provenance_repo, llm, publisher, voice, *, verdict
         requirement_fit_repository=_FakeRequirementFitRepo(_requirement_fit_report()),
         publisher=publisher,
         voice=voice,
+        voice_skip_reason=voice_skip_reason,
         llm_policy=TailoringLlmPolicy(candidate_models=("fake",), judge_model="fake"),
     )
 
@@ -633,7 +634,7 @@ def test_gate_grounding_and_shipped_fit_persist_with_lifecycle_labels(tmp_path: 
     assert saved is not None
     experience = next(row for row in saved.bullets if row.section == "experience" and "#" in row.bullet_id)
     assert "req_latency" in experience.requirement_ids
-    assert all(evidence_id == "ev_latency" for evidence_id in experience.evidence_ids)
+    assert experience.evidence_ids == ("ev_latency", "experience:acme_swe:source:0")
 
 
 def test_voiced_bullet_is_recorded_as_voice_transform(tmp_path: Path) -> None:
@@ -944,3 +945,30 @@ def test_lenient_mode_still_requires_claim_verification_and_quality(tmp_path):
     assert outcome.status == "approved"
     assert len(use_case._claim_verifier._llm.calls) == 1
     assert len(use_case._quality_judge._llm.calls) == 1
+
+
+def test_disabled_extra_polish_keeps_reviewed_text_and_receipt_identity(tmp_path):
+    provenance = _FakeProvenanceRepo()
+    llm = _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY))
+    case = _use_case(
+        _FakeMaterialsRepo(), provenance, llm, _RecordingPublisher(), None,
+        voice_skip_reason="optional_voice_polish_disabled",
+    )
+    outcome = case.execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
+    assert outcome.status == "approved"
+    assert len(case._claim_verifier._llm.calls) == 1
+    assert len(case._quality_judge._llm.calls) == 1
+    saved = provenance.load(LOCAL_TENANT, JOB_ID)
+    assert saved.voice.ran is False and saved.voice.accepted is False
+    assert saved.voice.reason == "optional_voice_polish_disabled"
+    assert saved.voice.model == ""
+    judge = outcome.report["tailoring_quality"]["final_judge"]
+    assert saved.voice.final_judge["determination_id"] == judge["determination_id"]
+    assert saved.voice.final_judge["verdict"] == judge["verdict"] == "PASS"
+    assert saved.voice.final_judge["review_history"]
+    experience = next(row for row in saved.bullets if row.section == "experience" and "#" in row.bullet_id)
+    assert experience.generated_text == _GENERATOR_BULLET
+    assert all(row.transform_type is not TransformType.VOICE for row in saved.bullets)
+    artifact = next(a for a in outcome.materials.artifacts if a.type.value == "tailored_resume")
+    assert artifact.metadata["voice_pass"]["reason"] == "optional_voice_polish_disabled"
+    assert _GENERATOR_BULLET in Path(outcome.text_path).read_text()

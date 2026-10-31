@@ -22,7 +22,7 @@ from jobctrl.domain.scoring.value_objects import (
     fit_band_for_score,
 )
 
-REQUIREMENT_FIT_FORMULA_VERSION = "requirement-fit-v1"
+REQUIREMENT_FIT_FORMULA_VERSION = "requirement-fit-v2-scoped"
 MUST_HAVE_TIER_MULTIPLIER = 1.25
 NICE_TO_HAVE_TIER_MULTIPLIER = 1.0
 TRANSFERABLE_FIT_VALUE = 0.6
@@ -57,11 +57,12 @@ def resolve_requirement_fit_report(report: RequirementFitReport) -> RequirementF
     must_awarded = sum(item.contribution.awarded_points for item in must_haves)
     must_have_coverage = 0.0 if must_total <= 0 else must_awarded / must_total
 
-    blocker_count = sum(1 for item in assessments if item.fit.kind == "blocked")
+    blocker_count = sum(1 for item in assessments if item.contribution.scope == "resume" and item.fit.kind == "blocked")
     missing_high_weight_count = sum(
         1
         for item in assessments
-        if item.fit.kind in {"missing", "blocked"}
+        if item.contribution.scope == "resume"
+        and item.fit.kind in {"missing", "blocked"}
         and item.weight >= MISSING_HIGH_WEIGHT_THRESHOLD
     )
     summary = RequirementFitSummary(
@@ -70,7 +71,7 @@ def resolve_requirement_fit_report(report: RequirementFitReport) -> RequirementF
         blocker_count=blocker_count,
         missing_high_weight_count=missing_high_weight_count,
     )
-    resolved_score = _score_from_weighted_fit(weighted_fit, blocker_count=blocker_count)
+    resolved_score = _score_from_weighted_fit(weighted_fit, blocker_count=blocker_count) if total_points > 0 else None
     return replace(
         report,
         formula_version=REQUIREMENT_FIT_FORMULA_VERSION,
@@ -133,7 +134,8 @@ def requirement_fit_value(status: RequirementFitStatus) -> float:
 def _assessment_with_contribution(
     assessment: RequirementFitAssessment,
 ) -> RequirementFitAssessment:
-    max_points = assessment.weight * _tier_multiplier(assessment.tier)
+    scope = assessment.contribution.scope
+    max_points = assessment.weight * _tier_multiplier(assessment.tier) if scope == "resume" else 0.0
     fit_value = requirement_fit_value(assessment.fit)
     awarded_points = max_points * fit_value
     return replace(
@@ -143,6 +145,8 @@ def _assessment_with_contribution(
             awarded_points=round(awarded_points, 4),
             weighted_impact=round(awarded_points, 4),
             rationale=_contribution_rationale(assessment, fit_value),
+            scope=scope,
+            scope_source_id=assessment.contribution.scope_source_id,
         ),
     )
 
@@ -167,6 +171,8 @@ def _contribution_rationale(
     assessment: RequirementFitAssessment,
     fit_value: float,
 ) -> str:
+    if assessment.contribution.scope != "resume":
+        return f"Recorded {assessment.contribution.scope} condition; assessed separately from capability fit."
     if assessment.fit.kind == "matched":
         return (
             f"{assessment.fit.strength or 'matched'} profile evidence covers "

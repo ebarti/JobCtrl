@@ -56,11 +56,19 @@ def generate(*, check=False):
 
         for call in calls:
             args = {item.arg: item.value for item in call.keywords}
-            register(resolve(args["kind"]), {
+            schema = resolve(args["schema"])
+            # A provider response may narrow diagnostics without withdrawing
+            # historically accepted results from the canonical read contract.
+            result_schema = getattr(schema, "stored_result_schema", schema)
+            contract = {
                 "schemaVersion": resolve(args["schema_version"]),
                 "promptVersion": resolve(args["prompt_version"]),
-                "schema": resolve(args["schema"]).model_json_schema(),
-            })
+                "schema": result_schema.model_json_schema(),
+            }
+            compatible = getattr(result_schema, "compatible_prompt_versions", ())
+            if compatible:
+                contract["compatiblePromptVersions"] = list(compatible)
+            register(resolve(args["kind"]), contract)
     from jobctrl.domain.apply.terminal_report import ApplyTerminalReport, PROMPT_VERSION
 
     register("apply_terminal_report", {

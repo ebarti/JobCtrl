@@ -4,7 +4,7 @@ The politeness gateway is the single choke point every outbound fetch —
 ``urllib``, the JobStreaming invocation boundary, and every Playwright
 navigation — routes through. Each source's :class:`SourcePolicy` defines the
 per-host rate limit +
-concurrency cap + per-run request budget, stamps an honest user-agent, and
+concurrency cap + per-run request budget, stamps the configured request identity, and
 records rate-limit / budget-exhaustion as first-class
 *outcomes* (never scrape errors).
 
@@ -18,8 +18,10 @@ co-locates ``ScrapedJobPosting`` with ``JobBoardScraperPort``).
 from __future__ import annotations
 
 import importlib.metadata
+import threading
+from collections.abc import Mapping
 from contextlib import AbstractContextManager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Protocol
 
@@ -68,7 +70,7 @@ class HonestUserAgent:
     """The product's single outbound identity (owner decision D1).
 
     Replaces the four divergent UA literals scattered across the fetch paths.
-    Never impersonates a browser on a surface the product controls.
+    Used by default, and whenever optional generated browser headers are off.
     """
 
     product: str
@@ -105,7 +107,7 @@ def default_honest_user_agent() -> HonestUserAgent:
 class PolitenessDecision:
     """The gateway's verdict for one prospective fetch or navigation.
 
-    ``allowed`` gates the fetch. ``user_agent`` is the honest UA the caller
+    ``allowed`` gates the fetch. ``user_agent`` is the selected UA the caller
     must stamp (``urllib`` header / Playwright context). ``outcome`` is the
     recordable reason; ``retry_after_seconds`` carries a honored ``Retry-After``
     when the limiter deferred; ``reason`` is a human-readable detail.
@@ -116,6 +118,7 @@ class PolitenessDecision:
     user_agent: str
     retry_after_seconds: float | None = None
     reason: str | None = None
+    request_headers: Mapping[str, str] = field(default_factory=dict)
 
 
 class RunBudget(Protocol):
@@ -175,12 +178,14 @@ class RateLimiterPort(Protocol):
         min_interval_seconds: float,
         max_concurrency: int,
         timeout_seconds: float | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> AbstractContextManager[None]:
         """Acquire a per-host slot, blocking to honor min-interval + concurrency.
 
         The slot is held for the duration of the ``with`` block (one fetch or
         navigation) and released on exit. An optional timeout bounds both
         admission and pacing; expiry raises TimeoutError without outbound work.
+        An optional cancellation event interrupts admission and pacing.
         """
         ...
 
@@ -216,7 +221,12 @@ class PolitenessGatewayPort(Protocol):
 
     @property
     def user_agent(self) -> str:
-        """The honest ``User-Agent`` header value stamped on every fetch."""
+        """The selected ``User-Agent`` header value stamped on every fetch."""
+        ...
+
+    @property
+    def request_headers(self) -> Mapping[str, str]:
+        """The session identity, including generated client hints when enabled."""
         ...
 
     def new_run_budget(self, max_requests: int) -> RunBudget:
@@ -248,6 +258,9 @@ class PolitenessGatewayPort(Protocol):
         url: str,
         policy: SourcePolicy,
         budget: RunBudget,
+        *,
+        timeout_seconds: float | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> AbstractContextManager[PolitenessDecision]:
         """Context manager wrapping exactly one fetch or navigation.
 
@@ -256,5 +269,6 @@ class PolitenessGatewayPort(Protocol):
         yields the :class:`PolitenessDecision`. On exit it releases the slot. A
         disallowed / budget-exhausted decision yields ``allowed=False`` and
         acquires no slot, so the caller records the outcome and skips.
+        Optional deadline and cancellation parameters bound waiting for the slot.
         """
         ...

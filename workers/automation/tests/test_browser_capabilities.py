@@ -828,6 +828,9 @@ def test_enabled_auto_apply_launch_uses_a_clean_owned_profile_without_host_copy(
         def poll(self) -> None:
             return None
 
+    monkeypatch.setattr(chrome, "_chrome_procs", {})
+    monkeypatch.setattr(chrome, "_chrome_identities", {})
+    monkeypatch.setattr(chrome, "_chrome_endpoints", {})
     enable_system_browser_capability("auto-apply-browser", browser_executable, app_dir=tmp_path)
     worker_root = tmp_path / "apply-workers"
     monkeypatch.setattr(chrome.config, "CHROME_WORKER_DIR", worker_root)
@@ -841,13 +844,18 @@ def test_enabled_auto_apply_launch_uses_a_clean_owned_profile_without_host_copy(
         "get_chrome_user_data",
         lambda: (_ for _ in ()).throw(AssertionError("host profile must not be read")),
     )
-    monkeypatch.setattr(chrome, "_kill_on_port", lambda _port: None)
+    monkeypatch.setattr(chrome, "_require_available_cdp_port", lambda _port: None)
     monkeypatch.setattr(chrome, "_suppress_restore_nag", lambda _profile: None)
-    monkeypatch.setattr(chrome.subprocess, "Popen", lambda *_args, **_kwargs: _FakeProcess())
+    def spawn(command, **_kwargs):
+        profile = Path(next(arg.split("=", 1)[1] for arg in command if arg.startswith("--user-data-dir=")))
+        (profile / "DevToolsActivePort").write_text("49994\n/devtools/browser/ready")
+        assert "--remote-debugging-port=0" in command
+        return _FakeProcess()
+    monkeypatch.setattr(chrome.subprocess, "Popen", spawn)
     monkeypatch.setattr(
         chrome,
         "_cdp_json",
-        lambda _port, _path: {"webSocketDebuggerUrl": "ws://ready"},
+        lambda _port, _path: {"webSocketDebuggerUrl": "ws://127.0.0.1:49994/devtools/browser/ready"},
     )
     monkeypatch.setattr(chrome.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(
@@ -862,9 +870,14 @@ def test_enabled_auto_apply_launch_uses_a_clean_owned_profile_without_host_copy(
         approved_application_url="https://apply.example.com/job",
     )
 
-    profile = worker_root / "worker-4"
+    profiles = list(worker_root.iterdir())
+    assert len(profiles) == 1
+    profile = profiles[0]
+    assert profile.name.startswith("worker-4-")
+    assert profile.stat().st_mode & 0o077 == 0
     assert (profile / "Default").is_dir()
-    assert list(profile.iterdir()) == [profile / "Default"]
+    assert {item.name for item in profile.iterdir()} == {"Default", "DevToolsActivePort"}
+    assert chrome.get_worker_endpoint(4, chrome._chrome_procs[4])[0] == 49994
 
 
 def test_standing_apply_loop_rechecks_capability_before_the_next_candidate(monkeypatch: pytest.MonkeyPatch) -> None:

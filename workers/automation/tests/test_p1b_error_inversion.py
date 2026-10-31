@@ -25,7 +25,7 @@ from temporalio.exceptions import (
     TimeoutError as TemporalTimeoutError,
     TimeoutType,
 )
-from .temporal_env import time_skipping_env
+from .temporal_env import local_env, time_skipping_env
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from jobctrl.database import init_db
@@ -50,12 +50,15 @@ from jobctrl.infrastructure.temporal.run_in_activity import (
     shutdown_activity_executors,
 )
 from jobctrl.materials.activities import (
+    CoverLetterActivityInput,
+    CoverLetterActivityOutput,
     TailorActivityInput,
     TailorActivityOutput,
     TailorJobActivityInput,
     TailorJobActivityOutput,
     tailor_activity,
     tailor_job_activity,
+    cover_letter_activity,
 )
 from jobctrl.pipeline import runner as pipeline_runner
 from jobctrl.scoring.activities import ScoreActivityInput, ScoreActivityOutput, score_activity
@@ -117,10 +120,77 @@ class _P1bTailorJobHarness:
         )
 
 
+@workflow.defn(name="P1bCoverJobHarness")
+class _P1bCoverJobHarness:
+    @workflow.run
+    async def run(self, payload: CoverLetterActivityInput) -> CoverLetterActivityOutput:
+        return await workflow.execute_activity(
+            cover_letter_activity, payload,
+            start_to_close_timeout=timedelta(minutes=5), retry_policy=_P1B_RETRY,
+        )
+
+
 _cooperative_observed_cancel = threading.Event()
 _ignore_cancel_released = threading.Event()
 _timeout_ignore_cancel_released = threading.Event()
 _timeout_observed_cancel = threading.Event()
+_drain_started = threading.Event()
+_drain_cancel_observed = threading.Event()
+_drain_released = threading.Event()
+
+
+@workflow.defn(name="P1bCancellationHeartbeatWorkflow")
+class _P1bCancellationHeartbeatWorkflow:
+    def __init__(self) -> None:
+        self._stop = False
+
+    @workflow.signal
+    def stop(self) -> None:
+        self._stop = True
+
+    @workflow.run
+    async def run(self) -> str:
+        handle = workflow.start_activity(
+            _p1b_cancellation_heartbeat_activity,
+            start_to_close_timeout=timedelta(seconds=15),
+            heartbeat_timeout=timedelta(seconds=1),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+            cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+        )
+        await workflow.wait_condition(lambda: self._stop)
+        handle.cancel()
+        try:
+            await handle
+        except (asyncio.CancelledError, CancelledError):
+            return "handoff canceled"
+        except ActivityError as error:
+            if isinstance(error.cause, CancelledError):
+                return "handoff canceled"
+            raise
+        raise AssertionError("the activity must acknowledge cancellation")
+
+
+@activity.defn(name="p1b_cancellation_heartbeat_activity")
+async def _p1b_cancellation_heartbeat_activity() -> str:
+    stop = threading.Event()
+
+    def blocking() -> str:
+        _drain_started.set()
+        if not stop.wait(timeout=5):
+            raise AssertionError("cancellation was not delivered")
+        _drain_cancel_observed.set()
+        if not _drain_released.wait(timeout=5):
+            raise AssertionError("test did not release cleanup")
+        return "stopped"
+
+    return await run_blocking_with_heartbeat(
+        blocking,
+        starting_message="owned cancellation heartbeat test",
+        poll_interval=0.1,
+        on_cancel=stop.set,
+        cancel_wait_seconds=5,
+        activity_name="owned-cancellation-drain",
+    )
 
 
 @workflow.defn(name="P1bRunInActivityWorkflow")
@@ -144,7 +214,9 @@ class _P1bRunInActivityTimeoutWorkflow:
             _p1b_timeout_capacity_activity,
             block,
             start_to_close_timeout=(timedelta(milliseconds=200) if block else timedelta(seconds=5)),
-            heartbeat_timeout=timedelta(milliseconds=100),
+            # This fixture exercises start-to-close cancellation. Its heartbeat
+            # deadline must not race the 200ms start-to-close deadline.
+            heartbeat_timeout=timedelta(seconds=10),
             retry_policy=RetryPolicy(maximum_attempts=1),
         )
 
@@ -292,6 +364,43 @@ async def test_tailor_job_durable_attempt_exhaustion_is_non_retryable() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stage,status", [
+    ("tailor", "failed_judge"), ("tailor", "failed_validation"),
+    ("tailor", "failed_adversarial_review"), ("cover", "failed_validation"),
+])
+async def test_rejected_material_does_not_restart_its_whole_generation_budget(stage, status):
+    attempts = 0
+
+    def rejected(*_args, **_kwargs):
+        nonlocal attempts
+        attempts += 1
+        return {"status": status, "error": "Bounded source-bound review rejected the draft"}
+
+    queue = f"p1b-material-rejected-{uuid.uuid4()}"
+    input_type = TailorJobActivityInput if stage == "tailor" else CoverLetterActivityInput
+    harness = _P1bTailorJobHarness if stage == "tailor" else _P1bCoverJobHarness
+    activity_fn = tailor_job_activity if stage == "tailor" else cover_letter_activity
+    runtime_fn = "_tailor_one_job" if stage == "tailor" else "_cover_one_job"
+    payload = input_type(
+        tenant_id="local", job_id=JobId("00000000-0000-4000-8000-000000000001"),
+    )
+    with patch(f"jobctrl.materials.activities.{runtime_fn}", side_effect=rejected):
+        async with time_skipping_env() as env:
+            async with Worker(
+                env.client, task_queue=queue, workflows=[harness],
+                activities=[activity_fn], workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                with pytest.raises(WorkflowFailureError) as caught:
+                    await env.client.execute_workflow(
+                        harness.run, payload,
+                        id=f"p1b-material-rejected-wf-{uuid.uuid4()}", task_queue=queue,
+                    )
+    error = _application_error_from_failure(caught.value)
+    assert attempts == 1
+    assert error.type == "material_rejected" and error.non_retryable is True
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("case", _ACTIVITY_CASES, ids=lambda case: case.name)
 async def test_activity_wrapper_configuration_error_is_non_retryable(case: _ActivityCase) -> None:
     attempts = 0
@@ -387,6 +496,45 @@ async def test_run_in_activity_cancel_event_stops_cooperative_thread() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("environment_factory", [time_skipping_env, local_env], ids=["time-skipping", "local"])
+async def test_cancellation_drain_keeps_heartbeating_until_thread_stops(environment_factory) -> None:
+    """A live-consumer handoff must cancel rather than expire during cleanup."""
+    for gate in (_drain_started, _drain_cancel_observed, _drain_released):
+        gate.clear()
+    queue = f"cancel-heartbeat-{uuid.uuid4()}"
+    try:
+        async with environment_factory() as env:
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[_P1bCancellationHeartbeatWorkflow],
+                activities=[_p1b_cancellation_heartbeat_activity],
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                handle = await env.client.start_workflow(
+                    _P1bCancellationHeartbeatWorkflow.run,
+                    id=f"cancel-heartbeat-wf-{uuid.uuid4()}",
+                    task_queue=queue,
+                )
+                assert await asyncio.to_thread(_drain_started.wait, 5)
+                await handle.signal(_P1bCancellationHeartbeatWorkflow.stop)
+                assert await asyncio.to_thread(_drain_cancel_observed.wait, 5)
+                # Longer than the heartbeat, shorter than the bounded drain.
+                # The activity stays alive until its blocking thread settles.
+                await asyncio.sleep(2.5)
+                _drain_released.set()
+                assert await asyncio.wait_for(handle.result(), 5) == "handoff canceled"
+                history = await handle.fetch_history()
+                assert sum(event.HasField("activity_task_canceled_event_attributes")
+                           for event in history.events) == 1
+                assert not any(event.HasField("activity_task_timed_out_event_attributes")
+                               for event in history.events)
+    finally:
+        _drain_released.set()
+        shutdown_activity_executors()
+
+
+@pytest.mark.asyncio
 async def test_run_in_activity_records_abandoned_thread_when_cancel_ignored(
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
@@ -464,6 +612,9 @@ async def test_start_to_close_timeout_rotates_capacity_for_next_activity() -> No
                 workflows=[_P1bRunInActivityTimeoutWorkflow],
                 activities=[_p1b_timeout_capacity_activity],
                 workflow_runner=UnsandboxedWorkflowRunner(),
+                # Timeout cancellation is delivered by a heartbeat response.
+                # Keep the fixture's delivery cadence independent of SDK defaults.
+                max_heartbeat_throttle_interval=timedelta(milliseconds=20),
             ):
                 with pytest.raises(WorkflowFailureError) as exc_info:
                     await env.client.execute_workflow(

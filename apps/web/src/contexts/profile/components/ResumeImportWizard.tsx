@@ -111,14 +111,10 @@ export function ResumeImportWizard() {
                 <span
                   className="resume-import-step-link__number"
                   data-typography="metadata"
-                  aria-hidden="true"
                 >
                   {String(index + 1).padStart(2, "0")}
                 </span>
-                <span
-                  className="resume-import-step-link__copy"
-                  aria-hidden="true"
-                >
+                <span className="resume-import-step-link__copy">
                   <strong data-typography="control">
                     <span className="resume-import-step-link__label">
                       {step.label}
@@ -137,7 +133,6 @@ export function ResumeImportWizard() {
                 key={step.key}
                 to={step.to}
                 className="resume-import-step-link"
-                aria-label={`Step ${index + 1}: ${step.label}`}
                 aria-current={active ? "step" : undefined}
                 data-active={active || undefined}
                 data-complete={index < activeStepIndex || undefined}
@@ -149,11 +144,11 @@ export function ResumeImportWizard() {
                 key={step.key}
                 className="resume-import-step-link"
                 role="link"
-                aria-label={`Step ${index + 1}: ${step.label}, unavailable until a PDF is selected`}
                 aria-disabled="true"
                 data-unavailable
               >
                 {content}
+                <span className="sr-only">Unavailable until a PDF is selected</span>
               </span>
             );
           })}

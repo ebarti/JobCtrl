@@ -28,7 +28,7 @@ export function JobRunTimelineWorkspace({
   jobId,
   runId,
 }: JobRunTimelineWorkspaceProps) {
-  const { data: run, isLoading, error } = useWorkflowRunDetailQuery(runId);
+  const { data: run, isLoading, error } = useWorkflowRunDetailQuery(runId, jobId);
   const message = error instanceof Error ? error.message : null;
 
   return (
@@ -161,7 +161,7 @@ export function JobRunTimelineWorkspace({
       >
         <div className="job-run-workspace__timeline">
           <Section title="Timeline">
-            <ApplyRunTimeline runId={runId} events={run?.events ?? []} />
+            <ApplyRunTimeline jobId={jobId} runId={runId} events={run?.events ?? []} applyEvents={run?.applyEvents ?? []} />
           </Section>
         </div>
       </RouteWorkspace>
