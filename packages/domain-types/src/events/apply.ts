@@ -269,6 +269,8 @@ export interface OutcomeSuggestionDecidedPayload {
   readonly outcomeKind: ApplicationOutcomeKindValue | null;
   readonly notePresent: boolean;
   readonly reasonPresent: boolean;
+  readonly decisionRequestVersion?: 1 | 2;
+  readonly occurredAtProvided?: boolean;
 }
 
 export type OutcomeSuggestionDecided = DomainEvent<

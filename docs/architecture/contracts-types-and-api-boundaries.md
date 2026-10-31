@@ -30,6 +30,12 @@ Gmail feedback scan summaries and `ApplicationEmailFeedbackIngested` payloads
 use canonical `jobId` across Python, REST contracts, domain events, and web
 invalidation. Posting and application URLs are search hints, never identity.
 
+Outcome-suggestion decision requests and their applied/replayed or conflict
+results are shared contracts. API and demo verify their local receipt against the
+recorded decision, private canonical outcome fields and safe event before comparing
+a retry. Missing or inconsistent receipts fail as unverifiable. Events contain
+presence metadata, never the private note, reason or private binding digest.
+
 Reviewed permanent deletion uses a process-local observation and a single-use
 selection receipt. The API retains the observed lifecycle revisions with the
 canonical job IDs and checks the cohort before removing any job. The

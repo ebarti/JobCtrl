@@ -709,6 +709,7 @@ export const handlers = [
           };
     return HttpResponse.json({
       ok: true,
+      disposition: "applied",
       suggestion: {
         ...baseSuggestion,
         status,
