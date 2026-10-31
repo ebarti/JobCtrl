@@ -332,7 +332,9 @@ existing contact Outreach read for current thread state. See the
 
 `POST /v1/outcomes/gmail/scan` returns bounded evidence and suggestion summaries
 with canonical `jobId` values. It never returns raw message bodies. Scan events
-use that same identity to invalidate the matching outcome detail.
+use that same identity to invalidate the matching outcome detail. Worker-side
+failures include a safe `failureCode`; invalid input returns 400, and Gmail or
+model unavailability returns 503. Previously stored evidence is preserved.
 
 The latest accepted artifact remains reviewable while a replacement is being
 generated. Failed or rejected attempts stay in the audit history.

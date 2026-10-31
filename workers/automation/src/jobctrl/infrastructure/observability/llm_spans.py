@@ -115,6 +115,7 @@ def llm_generation_span(
         capture_content = (
             os.environ.get("JOBCTRL_TRACE_CONTENT", "").strip().lower() in {"1", "true", "yes"}
             and span.is_recording()
+            and (request is None or request.kind not in {"message_link", "message_outcome"})
         )
         if capture_content:
             request_body = {"messages": messages}

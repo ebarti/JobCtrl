@@ -19,18 +19,18 @@ export type GmailFeedbackScanner = (
 
 export class GmailFeedbackScanError extends Error {
   readonly statusCode: number;
+  readonly failureCode: string | undefined;
 
-  constructor(message: string, statusCode: number) {
+  constructor(message: string, statusCode: number, failureCode?: string) {
     super(message);
     this.name = "GmailFeedbackScanError";
     this.statusCode = statusCode;
+    this.failureCode = failureCode;
   }
 }
 
 // Runs the bounded Gmail outcome scan through the long-lived JSON-RPC worker
 // child instead of a bespoke one-shot subprocess with stdout line-parsing.
-// Auth failures still travel as { ok: false, message } inside the result so
-// the status mapping below stays behavior-identical.
 export function createWorkerGmailFeedbackScanner(dispatcher: JsonRpcDispatcher): GmailFeedbackScanner {
   return async (input, context) => {
     let response: Awaited<ReturnType<JsonRpcDispatcher["call"]>>;
@@ -45,28 +45,27 @@ export function createWorkerGmailFeedbackScanner(dispatcher: JsonRpcDispatcher):
         : {}),
       ...(input.windowDays !== undefined ? { windowDays: Number(input.windowDays) } : {}),
       });
-    } catch (error) {
+    } catch {
       // Transport-level failures (spawn/write errors, the request timeout,
       // child exit) reject instead of returning a JSON-RPC error envelope;
       // keep them on the route's typed error path.
-      const message = `Gmail feedback scan failed: ${error instanceof Error ? error.message : String(error)}`;
-      throw new GmailFeedbackScanError(message, gmailFeedbackErrorStatus(message));
+      throw new GmailFeedbackScanError("Gmail feedback worker transport failed.", 500, "rpc_transport_error");
     }
     if (response.error) {
-      // The RPC server hides handler exceptions behind a generic "Internal
-      // error" message with the cause in error.data; the handler converts
-      // scan failures to ok:false, so this path is dispatch-level only.
-      const message =
-        optionalText(response.error.data) ?? optionalText(response.error.message) ?? "Gmail feedback scan failed.";
-      throw new GmailFeedbackScanError(message, gmailFeedbackErrorStatus(message));
+      // RPC error data may contain private source or provider text.
+      throw new GmailFeedbackScanError("Gmail feedback worker dispatch failed.", 500, "rpc_dispatch_error");
     }
     const parsed = response.result;
     if (!isRecord(parsed)) {
       throw new GmailFeedbackScanError("Worker response was not a JSON object.", 500);
     }
     if (parsed.ok === false) {
-      const message = optionalText(parsed.message) ?? "Gmail feedback scan failed.";
-      throw new GmailFeedbackScanError(message, gmailFeedbackErrorStatus(message));
+      const code = safeFailureCode(parsed.failureCode);
+      const statusCode = INVALID_FAILURES.has(code) ? 400 : UNAVAILABLE_FAILURES.has(code) ? 503 : 500;
+      const message = code === "gmail_auth_required"
+        ? "Gmail authentication is required; reconnect Gmail and retry."
+        : `Gmail feedback scan failed (${code}).`;
+      throw new GmailFeedbackScanError(message, statusCode, code);
     }
     return sanitizeGmailFeedbackScanResponse(parsed);
   };
@@ -104,14 +103,23 @@ export function sanitizeGmailFeedbackScanResponse(output: unknown): GmailOutcome
   };
 }
 
-function gmailFeedbackErrorStatus(message: string): number {
-  if (/recipient email|input must be a JSON object|application hints/i.test(message)) {
-    return 400;
-  }
-  if (/gmail auth|oauth|token|credentials|unauth/i.test(message)) {
-    return 503;
-  }
-  return 500;
+const INVALID_FAILURES = new Set(["invalid_recipient", "invalid_scan_options", "invalid_search"]);
+const UNAVAILABLE_FAILURES = new Set([
+  "gmail_auth_required", "gmail_timeout", "gmail_transport_error", "gmail_rate_limited",
+  "gmail_provider_unavailable", "gmail_provider_error", "provider_unavailable", "budget_denied",
+]);
+const BLOCKED_FAILURES = new Set([
+  "gmail_scan_failed", "provider_error", "provider_non_retryable", "malformed_json", "schema_violation",
+  "source_schema_violation", "foreign_source_id", "inconsistent_verdict", "missing_evidence_citation",
+  "non_verbatim_quote", "mismatched_value", "duplicate_source_id", "cache_binding_invalid",
+  "cache_lock_unavailable", "persistence_error", "configuration_invalid", "message_identity_changed",
+  "message_recipient_changed",
+]);
+
+function safeFailureCode(value: unknown): string {
+  return typeof value === "string" &&
+    (INVALID_FAILURES.has(value) || UNAVAILABLE_FAILURES.has(value) || BLOCKED_FAILURES.has(value))
+    ? value : "gmail_scan_failed";
 }
 
 function numberValue(value: unknown): number {
@@ -124,10 +132,6 @@ function textValue(value: unknown, name: string): string {
     return value;
   }
   throw new GmailFeedbackScanError(`Worker response missing ${name}.`, 500);
-}
-
-function optionalText(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value : null;
 }
 
 function arrayValue(value: unknown): unknown[] {

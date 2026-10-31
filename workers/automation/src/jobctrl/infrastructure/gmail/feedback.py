@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import re
 import sqlite3
 import sys
 from dataclasses import dataclass
@@ -22,7 +21,7 @@ from jobctrl.infrastructure.migrations.schema_manifest import (
 )
 from jobctrl.domain.events.base import DomainEvent
 from jobctrl.domain.ports.events import EventHandler, EventPublisher, Subscription
-from jobctrl.infrastructure.gmail.client import GmailClient
+from jobctrl.infrastructure.gmail.client import GmailClient, GmailFeedbackInputError, validate_feedback_recipient
 from jobctrl.state import record_job_event
 
 TENANT_ID = "local"
@@ -34,18 +33,19 @@ MAX_LIMIT = 100
 MAX_RESULTS_PER_ANCHOR = 20
 MAX_WINDOW_DAYS = 180
 
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
 
 class GmailFeedbackError(RuntimeError):
     """Raised when a bounded feedback scan cannot run safely."""
+
+
+class GmailFeedbackRecipientError(GmailFeedbackError):
+    """A scan has no valid recipient for its bounded search."""
 
 
 class GmailFeedbackClient(Protocol):
     def search_feedback_emails(
         self,
         *,
-        query: str,
         to_email: str,
         after: datetime,
         before: datetime,
@@ -135,8 +135,12 @@ def scan_gmail_feedback(
         gmail = client or GmailClient()
         ensure_application_feedback_tables(conn)
         recipient = (recipient_email or _profile_email(conn)).strip().lower()
-        if not recipient or not _EMAIL_RE.match(recipient):
-            raise GmailFeedbackError("Gmail feedback scan requires a recipient email or candidate profile email.")
+        try:
+            validate_feedback_recipient(recipient)
+        except GmailFeedbackInputError:
+            raise GmailFeedbackRecipientError(
+                "Gmail feedback scan requires a recipient email or candidate profile email."
+            ) from None
 
         from jobctrl.infrastructure.determinations import determination_dependencies, SqliteDeterminationRepository
         from jobctrl.domain.feedback.message_interpretation import ModelMessageInterpreter
@@ -165,9 +169,7 @@ def scan_gmail_feedback(
         for anchor in anchors:
             after = anchor.anchor_at
             before = anchor.anchor_at + timedelta(days=bounded_window_days)
-            query = ""
             metadata_items = gmail.search_feedback_emails(
-                query=query,
                 to_email=recipient,
                 after=after,
                 before=before,
@@ -322,7 +324,6 @@ def scan_gmail_feedback(
                         "kind": classification.kind,
                         "confidence": classification.confidence,
                         "determinationId": outcome_envelope.determination_id,
-                        "citations": [citation.model_dump() for citation in outcome.citations],
                     }
                 )
 

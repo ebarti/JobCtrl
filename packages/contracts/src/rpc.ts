@@ -835,9 +835,7 @@ export const GmailFeedbackScanParamsSchema = z
 export type GmailFeedbackScanParams = z.infer<typeof GmailFeedbackScanParamsSchema>;
 
 // The scan result deliberately passes through: the TS caller sanitizes the
-// payload field-by-field, and auth failures travel as { ok: false, message }
-// so the route's status mapping stays behavior-identical to the old
-// subprocess protocol.
+// payload field-by-field and maps safe failure codes to the HTTP response.
 export const GmailFeedbackScanResultSchema = z.object({ ok: z.boolean() }).passthrough();
 export type GmailFeedbackScanResult = z.infer<typeof GmailFeedbackScanResultSchema>;
 

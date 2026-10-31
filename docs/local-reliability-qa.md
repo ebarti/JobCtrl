@@ -474,6 +474,27 @@ inspection; never signal an unrelated process. Verify responses and lock
 records contain no submitted values. Never probe a
 real native credential store for this regression.
 
+## Gmail Feedback Scan Contract
+
+Run locked worker Ruff and pytest for `test_gmail_feedback_client_contract.py`,
+`test_gmail_feedback.py`, `test_gmail_feedback_scan_handler.py`,
+`test_gmail_connector.py`, `test_gmail_feedback_v10_anchors.py`,
+`test_gmail_feedback_privacy.py`, and `test_llm_spans.py`; run API
+type checking and `gmail-feedback-integration.test.ts` with the locked worker
+interpreter. The latter exercises the HTTP route and registered Python RPC with
+the real Gmail client, synthetic model decisions, and an in-memory HTTP
+transport. Use only an owned synthetic database and mailbox responses.
+
+Verify empty anchors issue no search; recipient, time and result limits hold;
+opposite source-bound decisions control linking; duplicate messages remain
+deduplicated; and provider/model failures preserve existing evidence and expose
+safe typed codes without mail content. This does not establish live Gmail
+coverage or model accuracy.
+Inspect HTTP logs and exported spans with content tracing both enabled and
+disabled. Gmail recipients, query strings and message bodies must remain
+absent; unrelated concurrent HTTP and model tracing must retain their normal
+behavior, and local determination receipts must remain source-bound.
+
 ## Saved Posting Availability Product QA
 
 This is risk 3 work: evidence freshness, durable claims and reviewed submission

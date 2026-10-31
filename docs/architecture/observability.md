@@ -69,6 +69,10 @@ Langfuse instance for LLM tracing. The wiring lives under
   runtime paths and exception messages remain excluded. This opt-in sends private
   request/output text to the configured tracing destination and does not alter
   model, effort, spend admission, review requirements or determination authority.
+  Gmail feedback's message-link and message-outcome determinations never capture
+  mail input or output, even when content tracing is enabled. Gmail feedback
+  search and message reads emit content-free operation spans; their HTTP query
+  and message URL are excluded from automatic HTTP spans and transport logs.
 
 ## Span Sources
 
