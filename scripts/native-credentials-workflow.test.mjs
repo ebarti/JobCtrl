@@ -42,6 +42,13 @@ test("native credential CI builds only the required native dependency and exerci
     assert.match(step.run, /uv --project workers\/automation run --locked --no-default-groups --no-dev python scripts\/native-credentials-host\.py/);
   }
 
+  assert.ok(paths.includes("scripts/test_native_credentials_host.py"));
+  const diagnostics = steps.find((step) => step.name === "Verify secret-free native harness diagnostics");
+  assert.ok(diagnostics, "the fake diagnostic guard must be present");
+  assert.equal(diagnostics.if, undefined, "diagnostic contracts must run on every host");
+  assert.equal(diagnostics.run, "uv --project workers/automation run --locked --no-default-groups --no-dev python scripts/test_native_credentials_host.py");
+  assert.ok(steps.indexOf(diagnostics) > steps.findIndex((step) => step.name === "Install adapter test dependencies"));
+
   const python = steps.find((step) => step.id === "python");
   assert.match(python.uses, /^actions\/setup-python@/);
   const ownership = steps.find((step) => step.name === "Exercise fake credential batch ownership");
@@ -50,4 +57,5 @@ test("native credential CI builds only the required native dependency and exerci
   assert.match(ownership.run, /test\/credential-mutation-lock\.test\.ts/);
   assert.match(ownership.run, /serializes independent stores before rollback and keeps the newer successful value/);
   assert.ok(steps.indexOf(ownership) > steps.findIndex((step) => step.name === "Install adapter test dependencies"));
+  assert.ok(steps.indexOf(diagnostics) < steps.indexOf(ownership));
 });

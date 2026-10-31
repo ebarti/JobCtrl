@@ -23,6 +23,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PHASE = "setup"
+PHASE_STARTED = time.monotonic()
+PHASE_NAMES = {
+    "setup", "migration_runtime", "api_set", "api_delete", "api_list", "initial_native_read",
+    "cross_runtime_readback", "windows_acl_setup", "migration_setup", "migration",
+    "migration_result", "migration_source_readback", "migration_acl_readback",
+    "migration_native_readback", "migration_marker", "migration_once",
+    "runtime_precedence", "windows_acl_rollback", "cleanup_native_delete",
+    "cleanup_native_read", "cleanup_daemon", "cleanup_files",
+}
 spec = importlib.util.spec_from_file_location(
     "native_credentials_host_under_test",
     ROOT / "workers/automation/src/jobctrl/native_credentials.py",
@@ -31,6 +40,161 @@ assert spec and spec.loader
 native = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = native
 spec.loader.exec_module(native)
+
+
+class NativeHostProofFailure(RuntimeError):
+    def __init__(self, primary: dict | None, cleanup: list[dict]) -> None:
+        super().__init__("Native host proof failed")
+        self.primary = primary
+        self.cleanup = cleanup
+
+
+def set_phase(phase: str) -> None:
+    global PHASE, PHASE_STARTED
+    if phase not in PHASE_NAMES:
+        raise ValueError("Native QA phase is not recognized")
+    PHASE = phase
+    PHASE_STARTED = time.monotonic()
+
+
+def error_type(error: BaseException | None) -> str:
+    name = type(error).__name__
+    return name if name in {
+        "AssertionError", "FileNotFoundError", "JSONDecodeError", "NativeCredentialError",
+        "NativeCredentialMigrationError", "OSError", "PermissionError", "RuntimeError",
+        "TimeoutExpired", "TypeError", "ValueError",
+    } else "None" if error is None else "OtherError"
+
+
+def failure(error: BaseException) -> dict:
+    return {"phase": PHASE, "elapsedMs": round((time.monotonic() - PHASE_STARTED) * 1000),
+            "errorType": error_type(error), "causeType": error_type(error.__cause__)}
+
+
+WINDOWS_PHASES = {
+    "script_started", "module_load", "module_loaded", "compilation", "compiled",
+    "input_parsing", "input_parsed", "native_call", "native_returned", "script_exit",
+}
+WINDOWS_PHASE_PREFIX = "JOBCTRL_NATIVE_QA_PHASE:"
+
+
+def windows_phases(stderr: str | bytes | None) -> list[dict]:
+    text = stderr.decode("utf-8", errors="replace") if isinstance(stderr, bytes) else stderr or ""
+    phases = []
+    for line in text.splitlines():
+        prefix, separator, timing = line.rpartition(":")
+        if not separator or not prefix.startswith(WINDOWS_PHASE_PREFIX):
+            continue
+        phase = prefix[len(WINDOWS_PHASE_PREFIX):]
+        if phase in WINDOWS_PHASES and timing.isascii() and timing.isdecimal() and len(timing) <= 16:
+            phases.append({"phase": phase, "elapsedMs": int(timing)})
+    return phases
+
+
+def instrument_windows_script(script: str) -> str:
+    def mark(phase: str) -> str:
+        return f"Write-JobCtrlQaPhase '{phase}'"
+
+    # Exact anchors fail closed if the product script changes. Only fixed
+    # stderr markers are added; request bytes, native calls and exits stay intact.
+    replacements = (
+        (' Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Utility\\Microsoft.PowerShell.Utility.psd1" -ErrorAction Stop',
+         "module_load", "module_loaded"),
+        (" Add-Type -TypeDefinition $source -ErrorAction Stop", "compilation", "compiled"),
+        (" $data = [Console]::In.ReadToEnd() | ConvertFrom-Json;", "input_parsing", "input_parsed"),
+    )
+    for anchor, before, after in replacements:
+        if script.count(anchor) != 1:
+            raise RuntimeError("Native Windows QA diagnostic boundary changed")
+        script = script.replace(anchor, f" {mark(before)}\n{anchor}\n {mark(after)};", 1)
+    for anchor in (
+        "if (-not [JobCtrlCred]::CredWrite([ref]$credential,0))",
+        "if ([JobCtrlCred]::CredDelete($target,1,0))",
+        "if (-not [JobCtrlCred]::CredRead($target,1,0,[ref]$pointer))",
+    ):
+        if script.count(anchor) != 1:
+            raise RuntimeError("Native Windows QA diagnostic boundary changed")
+        script = script.replace(anchor, f"{mark('native_call')}; {anchor}", 1)
+    anchor = " try { if($data.operation -eq 'inspect')"
+    if script.count(anchor) != 1:
+        raise RuntimeError("Native Windows QA diagnostic boundary changed")
+    script = script.replace(anchor, f" {mark('native_returned')}\n{anchor}", 1)
+    # These markers run after conditional Win32-error checks. Do not place
+    # diagnostic calls between a failed native call and GetLastWin32Error().
+    script = script.replace("exit ", f"{mark('script_exit')}; exit ")
+    preamble = r"""
+$jobctrlQaClock = [Diagnostics.Stopwatch]::StartNew()
+function Write-JobCtrlQaPhase([string]$jobctrlPhase) {
+  [Console]::Error.WriteLine('JOBCTRL_NATIVE_QA_PHASE:' + $jobctrlPhase + ':' + $jobctrlQaClock.ElapsedMilliseconds)
+}
+Write-JobCtrlQaPhase 'script_started'
+"""
+    return preamble + script
+
+
+def native_run(command: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+    if not command or command[-1] != native.WINDOWS_CREDENTIAL_SCRIPT:
+        return subprocess.run(command, **kwargs)
+    instrumented = [*command[:-1], instrument_windows_script(command[-1])]
+    started = time.monotonic()
+    stderr = None
+    error = None
+    try:
+        result = subprocess.run(instrumented, **kwargs)
+        stderr = result.stderr
+        return result
+    except (OSError, subprocess.SubprocessError) as caught:
+        error = caught
+        stderr = getattr(caught, "stderr", None)
+        raise
+    finally:
+        print(json.dumps({"phase": PHASE, "windowsPhases": windows_phases(stderr),
+                          "elapsedMs": round((time.monotonic() - started) * 1000),
+                          "errorType": error_type(error)}), file=sys.stderr, flush=True)
+
+
+def cleanup_owned_target(store, key: str, daemon) -> list[dict]:
+    failures = []
+    try:
+        set_phase("cleanup_native_delete")
+        store.delete(key)
+        set_phase("cleanup_native_read")
+        assert store.read(key) is None, "Synthetic native credential cleanup failed"
+    except Exception as error:
+        failures.append(failure(error))
+    if daemon is not None:
+        try:
+            set_phase("cleanup_daemon")
+            daemon.terminate()
+            try:
+                daemon.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                daemon.kill()
+                daemon.wait(timeout=5)
+        except Exception as error:
+            failures.append(failure(error))
+    return failures
+
+
+def failure_diagnostic(error: Exception) -> dict:
+    # TemporaryDirectory cleanup can also raise while the proof is unwinding.
+    # Recover its typed context without serializing any exception messages.
+    proof = error
+    seen = set()
+    while proof is not None and not isinstance(proof, NativeHostProofFailure) and id(proof) not in seen:
+        seen.add(id(proof))
+        proof = proof.__context__
+    if isinstance(proof, NativeHostProofFailure):
+        primary, cleanup = proof.primary, list(proof.cleanup)
+        if proof is not error:
+            cleanup.append(failure(error))
+    elif PHASE == "cleanup_files":
+        primary, cleanup = None, [failure(error)]
+    else:
+        primary, cleanup = failure(error), []
+    first = primary or cleanup[0]
+    return {"platform": platform.system(), "status": "failed", **first,
+            "primaryFailure": primary, "cleanupFailures": cleanup}
 
 
 def windows_acl(path: Path, *, restrict: bool = False) -> str:
@@ -92,7 +256,6 @@ def assert_windows_acl_preserved(before: str, after: str) -> None:
 
 
 def main() -> int:
-    global PHASE
     parser = argparse.ArgumentParser()
     parser.add_argument("--linux-session", action="store_true")
     args = parser.parse_args()
@@ -109,7 +272,7 @@ def main() -> int:
     ) if key in os.environ}
     os.environ.clear()
     os.environ.update(safe_env)
-    store = native.NativeCredentialStore(service=service)
+    store = native.NativeCredentialStore(service=service, run=native_run)
     daemon = None
     with tempfile.TemporaryDirectory(prefix="jobctrl-native-host-") as directory:
         owned = Path(directory)
@@ -159,8 +322,7 @@ def main() -> int:
                     time.sleep(0.1)
 
         def api(operation: str, value: str | None = None, *, expect_failure: bool = False) -> dict:
-            global PHASE
-            PHASE = f"api_{operation}"
+            set_phase(f"api_{operation}")
             payload = {"service": service, "configPath": str(owned / "config.json"), "operation": operation, "value": value}
             result = subprocess.run(
                 [shutil.which("node") or "node", str(ROOT / "apps/api/node_modules/tsx/dist/cli.mjs"), str(ROOT / "apps/api/test/native-credentials-host.ts")],
@@ -177,14 +339,16 @@ def main() -> int:
             response = json.loads(result.stdout)
             return response
 
+        primary_failure = None
+        cleanup_failures = []
         try:
             # Verify the real migration lock runtime before writing a credential.
-            PHASE = "migration_runtime"
+            set_phase("migration_runtime")
             from jobctrl import config
 
             assert config.APP_DIR == owned
             assert config.get_config_path() == owned / "config.json"
-            PHASE = "initial_native_read"
+            set_phase("initial_native_read")
             assert store.read(key) is None, "Synthetic target must start absent"
             # Cross-runtime exactness, including quote/backslash/Unicode and hex-looking ASCII.
             maximum_ascii = {"Darwin": 128, "Windows": 1280, "Linux": 8000}[platform.system()]
@@ -193,7 +357,7 @@ def main() -> int:
                 entry = next(item for item in response["credentials"] if item["key"] == key)
                 assert entry["configured"] is True
                 assert response["store"]["requiresWorkerRestart"] is True
-                PHASE = "cross_runtime_readback"
+                set_phase("cross_runtime_readback")
                 assert store.read(key) == value, "API writer / Python reader exactness"
             oversize = {"Darwin": "é" * 65, "Windows": "é" * 1281, "Linux": "é" * 4096}[platform.system()]
             api("set", oversize, expect_failure=True)
@@ -212,29 +376,29 @@ def main() -> int:
             value = "synthetic-migration-" + secrets.token_hex(20)
             source = owned / ".env"
             source.write_bytes(f"KEEP=untouched\r\n{key}='{value}'\r\n".encode("utf-8"))
-            PHASE = "windows_acl_setup" if platform.system() == "Windows" else "migration_setup"
+            set_phase("windows_acl_setup" if platform.system() == "Windows" else "migration_setup")
             acl_before = windows_acl(source, restrict=True) if platform.system() == "Windows" else None
             marker = owned / "migration.json"
-            PHASE = "migration"
+            set_phase("migration")
             result = native.migrate_persistent_env_credentials([source], marker, store=store)
-            PHASE = "migration_result"
+            set_phase("migration_result")
             assert not result.already_completed
-            PHASE = "migration_source_readback"
+            set_phase("migration_source_readback")
             assert source.read_bytes() == b"KEEP=untouched\r\n"
             if acl_before is not None:
-                PHASE = "migration_acl_readback"
+                set_phase("migration_acl_readback")
                 assert_windows_acl_preserved(acl_before, windows_acl(source))
-            PHASE = "migration_native_readback"
+            set_phase("migration_native_readback")
             assert store.read(key) == value, "Migrated credential must survive source removal"
-            PHASE = "migration_marker"
+            set_phase("migration_marker")
             assert value not in marker.read_text(encoding="utf-8")
-            PHASE = "migration_once"
+            set_phase("migration_once")
             assert native.migrate_persistent_env_credentials([source], marker, store=store).already_completed
             response = api("list")
             assert value not in json.dumps(response)
             assert next(item for item in response["credentials"] if item["key"] == key)["configured"] is True
             env = {name: "synthetic-inherited" for name in native.PROVIDER_SECRET_KEYS}
-            PHASE = "runtime_precedence"
+            set_phase("runtime_precedence")
             native.load_native_credential_fallbacks(env=env, store=store)
             assert env[key] == "synthetic-inherited"
             env[key] = ""
@@ -243,7 +407,7 @@ def main() -> int:
             api("delete")
             assert store.read(key) is None
             if acl_before is not None:
-                PHASE = "windows_acl_rollback"
+                set_phase("windows_acl_rollback")
                 original = f"KEEP=untouched\r\n{key}='{value}'\r\n".encode("utf-8")
                 source.write_bytes(original)
                 write_marker = native._write_marker
@@ -264,18 +428,13 @@ def main() -> int:
                 assert source.read_bytes() == original
                 assert_windows_acl_preserved(acl_before, windows_acl(source))
                 assert store.read(key) is None
+        except Exception as error:
+            primary_failure = failure(error)
         finally:
-            try:
-                store.delete(key)
-                assert store.read(key) is None, "Synthetic native credential cleanup failed"
-            finally:
-                if daemon is not None:
-                    daemon.terminate()
-                    try:
-                        daemon.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        daemon.kill()
-                        daemon.wait(timeout=5)
+            cleanup_failures = cleanup_owned_target(store, key, daemon)
+        set_phase("cleanup_files")
+        if primary_failure or cleanup_failures:
+            raise NativeHostProofFailure(primary_failure, cleanup_failures)
     print(json.dumps({"platform": platform.system(), "nativeStore": store.kind, "status": "passed", "apiPythonParity": True, "migration": True, "cleanup": True}))
     return 0
 
@@ -284,11 +443,6 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as error:
-        # Native command output and credential-bearing assertion operands stay private.
-        diagnostic = {"platform": platform.system(), "status": "failed", "phase": PHASE, "errorType": type(error).__name__}
-        if isinstance(error, native.NativeCredentialError):
-            # Only fixed public error categories, never command output or values.
-            diagnostic["timedOut"] = isinstance(error.__cause__, subprocess.TimeoutExpired)
-            diagnostic["osError"] = isinstance(error.__cause__, OSError)
-        print(json.dumps(diagnostic), file=sys.stderr)
+        # Never serialize exception messages, request bytes, or raw command output.
+        print(json.dumps(failure_diagnostic(error)), file=sys.stderr)
         raise SystemExit(1) from None
