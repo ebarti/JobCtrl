@@ -279,8 +279,11 @@ routes do not require an extension heartbeat: worker-ready, eligible requests
 dispatch with the extension offline and return the normal `202`
 queued/accepted response, while worker readiness
 (`503 worker_runtime_unavailable`), stage eligibility, and authorization gates
-still apply. Each acquisition setup then prefers the connected extension after
-a bounded status probe and otherwise selects guarded public HTTP or anonymous
+still apply. Discover requests with `dryRun: true` (including the HTTP default)
+are rejected with `400 discover_preview_unsupported` before dispatch; explicitly
+send `dryRun: false` to start an ordinary search. Each acquisition setup then
+prefers the connected extension after a bounded status probe and otherwise
+selects guarded public HTTP or anonymous
 Playwright; a fetch failure never switches transport. Top-level `enrich`,
 including mixed-stage requests containing it, is rejected with `400` by the
 request schema; Discovery owns the pipeline enrichment drain.

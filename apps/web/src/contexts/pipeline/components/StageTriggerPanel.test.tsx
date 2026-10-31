@@ -1,9 +1,10 @@
 import {
   DEFAULT_PIPELINE_LLM_MODEL,
+  type RunPipelineStagesRequest,
   type PipelineStageRunResponse,
 } from "@jobctrl/contracts";
 import { userEvent } from "@testing-library/user-event";
-import { screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DemoFeatureFlagAdapter } from "../../../demo/ports.js";
@@ -55,18 +56,226 @@ describe("StageTriggerPanel", () => {
     useStageTriggerStore.getState().reset();
   });
 
-  it("defaults to the Discover tab with dry-run enabled", async () => {
-    renderWithProviders(<StageTriggerPanel />);
+  it("defaults a fresh Discover panel to a selectable search while Apply remains a dry run", async () => {
+    const user = userEvent.setup();
+    const runPipelineStages = vi.fn();
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({ api: { runPipelineStages } }),
+    });
 
     const limit = screen.getByLabelText("Limit");
     expect(limit).toHaveAttribute("data-slot", "input");
     expect(limit).toHaveAttribute("data-typography", "control");
     const dryRun = screen.getByRole("checkbox", { name: "Dry run" });
     expect(dryRun).toHaveAttribute("data-slot", "checkbox");
+    expect(dryRun).not.toBeChecked();
+    const run = await screen.findByRole("button", { name: "Run Discover" });
+    expect(run).toHaveAttribute("data-slot", "button");
+    expect(run).toBeEnabled();
+    expect(runPipelineStages).not.toHaveBeenCalled();
+    for (const stage of ["score", "tailor", "cover", "apply"] as const) {
+      expect(useStageTriggerStore.getState().configs[stage].dryRun).toBe(true);
+    }
+
+    await user.click(screen.getByRole("tab", { name: "Apply" }));
+    expect(screen.getByRole("checkbox", { name: "Dry run" })).toBeChecked();
+    expect(runPipelineStages).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])("restores a saved Discover dry-run choice (%s) without dispatch", async (savedDryRun) => {
+    window.localStorage.setItem("jh:stage-trigger-config", JSON.stringify({
+      version: 3,
+      state: {
+        activeStage: "discover",
+        configs: {
+          discover: { dryRun: savedDryRun, limit: "42", discoverySourceIds: ["jobspy:indeed"] },
+          apply: { dryRun: true },
+        },
+      },
+    }));
+    await useStageTriggerStore.persist.rehydrate();
+    const runPipelineStages = vi.fn();
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({ api: { runPipelineStages } }),
+    });
+
+    const checkbox = screen.getByRole("checkbox", { name: "Dry run" });
+    const run = await screen.findByRole("button", { name: "Run Discover" });
+    if (savedDryRun) {
+      expect(checkbox).toBeChecked();
+      expect(run).toBeDisabled();
+      expect(run).toHaveAccessibleDescription(
+        "Discover does not support dry runs. Turn off Dry run to start a search.",
+      );
+    } else {
+      expect(checkbox).not.toBeChecked();
+      expect(run).toBeEnabled();
+    }
+    expect(useStageTriggerStore.getState().configs.discover).toMatchObject({
+      dryRun: savedDryRun, limit: "42", discoverySourceIds: ["jobspy:indeed"],
+    });
+    expect(useStageTriggerStore.getState().configs.apply.dryRun).toBe(true);
+    expect(runPipelineStages).not.toHaveBeenCalled();
+  });
+
+  it("retains a safe Discover mode when existing saved controls lack a Discover record", async () => {
+    window.localStorage.setItem("jh:stage-trigger-config", JSON.stringify({
+      version: 3,
+      state: { activeStage: "discover", configs: { apply: { dryRun: true, limit: "17" } } },
+    }));
+    await useStageTriggerStore.persist.rehydrate();
+    expect(useStageTriggerStore.getState().configs.discover.dryRun).toBe(true);
+    expect(useStageTriggerStore.getState().configs.apply).toMatchObject({ dryRun: true, limit: "17" });
+    expect(useStageTriggerStore.getState().storageRecoveryRequired).toBe(true);
+  });
+
+  it("explains recovery without replacing unreadable controls or dispatching", async () => {
+    const user = userEvent.setup();
+    const runPipelineStages = vi.fn();
+    const defaultSettings = {
+      ...sampleSettingsResponse,
+      effectiveSettings: {
+        ...sampleSettingsResponse.effectiveSettings,
+        pipelineInternalConcurrency: {
+          ...sampleSettingsResponse.effectiveSettings.pipelineInternalConcurrency,
+          source: "default" as const,
+        },
+      },
+    };
+    const settings = vi.fn(async () => defaultSettings);
+    const updateSettings = vi.fn(async () => defaultSettings);
+    const storageKey = "jh:stage-trigger-config";
+    window.localStorage.setItem(storageKey, "{");
+    await useStageTriggerStore.persist.rehydrate();
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({ api: { runPipelineStages, settings, updateSettings } }),
+    });
+
+    const run = await screen.findByRole("button", { name: "Run Discover" });
+    expect(screen.getByRole("checkbox", { name: "Dry run" })).toBeChecked();
+    expect(run).toBeDisabled();
+    expect(run).toHaveAccessibleDescription(
+      "Discover does not support dry runs. Turn off Dry run to start a search.",
+    );
+    expect(screen.getByText(/Some saved pipeline controls could not be read/)).toBeVisible();
+    await waitFor(() => expect(settings).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Dry run" })).not.toHaveAttribute("aria-disabled", "true"));
+    expect(screen.getByLabelText("Internal concurrency")).toHaveValue(3);
+    expect(window.localStorage.getItem(storageKey)).toBe("{");
+    fireEvent.submit(run.closest("form")!);
+    expect(runPipelineStages).not.toHaveBeenCalled();
+    expect(updateSettings).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("checkbox", { name: "Dry run" }));
+    expect(run).toBeEnabled();
+    expect(screen.queryByText(/Some saved pipeline controls could not be read/)).not.toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem(storageKey) ?? "null")).toMatchObject({
+      state: { configs: { discover: { dryRun: false }, apply: { dryRun: true } } },
+    });
+    expect(runPipelineStages).not.toHaveBeenCalled();
+    expect(updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("restores saved concurrency before recovering and running Discover", async () => {
+    const user = userEvent.setup();
+    let resolveSettings!: (value: typeof sampleSettingsResponse) => void;
+    const pendingSettings = new Promise<typeof sampleSettingsResponse>((resolve) => { resolveSettings = resolve; });
+    const settings = vi.fn(() => pendingSettings);
+    const updateSettings = vi.fn(async () => sampleSettingsResponse);
+    const runPipelineStages = vi.fn(async (request: RunPipelineStagesRequest): Promise<PipelineStageRunResponse> => ({
+      ok: true, action: "run_stage", status: "queued", jobKey: "pipeline", count: 0,
+      command: request, actions: [],
+    }));
+    const storageKey = "jh:stage-trigger-config";
+    window.localStorage.setItem(storageKey, "{");
+    await useStageTriggerStore.persist.rehydrate();
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({ api: { settings, updateSettings, runPipelineStages } }),
+    });
+
+    const run = await screen.findByRole("button", { name: "Run Discover" });
+    const dryRun = screen.getByRole("checkbox", { name: "Dry run" });
+    await waitFor(() => expect(settings).toHaveBeenCalled());
     expect(dryRun).toBeChecked();
-    expect(
-      await screen.findByRole("button", { name: "Run Discover" }),
-    ).toHaveAttribute("data-slot", "button");
+    expect(dryRun).toHaveAttribute("aria-disabled", "true");
+    expect(dryRun).toHaveAccessibleDescription("Loading the saved concurrency setting before continuing.");
+    expect(screen.getByLabelText("Internal concurrency")).toBeDisabled();
+    expect(run).toBeDisabled();
+    expect(window.localStorage.getItem(storageKey)).toBe("{");
+    await user.click(dryRun);
+    expect(dryRun).toBeChecked();
+    fireEvent.submit(run.closest("form")!);
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(runPipelineStages).not.toHaveBeenCalled();
+
+    await act(async () => resolveSettings(sampleSettingsResponse));
+    await waitFor(() => expect(dryRun).not.toHaveAttribute("aria-disabled", "true"));
+    expect(screen.getByLabelText("Internal concurrency")).toHaveValue(3);
+    expect(window.localStorage.getItem(storageKey)).toBe("{");
+    expect(updateSettings).not.toHaveBeenCalled();
+    await user.click(dryRun);
+    expect(run).toBeEnabled();
+    expect(JSON.parse(window.localStorage.getItem(storageKey) ?? "null")).toMatchObject({
+      state: { internalConcurrency: "3", configs: { discover: { dryRun: false }, apply: { dryRun: true } } },
+    });
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(runPipelineStages).not.toHaveBeenCalled();
+
+    await user.click(run);
+    await waitFor(() => expect(runPipelineStages).toHaveBeenCalledOnce());
+    expect(updateSettings).toHaveBeenCalledExactlyOnceWith({ pipelineInternalConcurrency: 3 });
+    expect(runPipelineStages).toHaveBeenCalledWith(expect.objectContaining({
+      stages: ["discover"], dryRun: false, workers: 3,
+    }));
+  });
+
+  it.each([null, "false", 0])("keeps an invalid saved Discover mode blocked (%s)", async (invalidDryRun) => {
+    window.localStorage.setItem("jh:stage-trigger-config", JSON.stringify({
+      version: 3,
+      state: { activeStage: "discover", configs: { discover: { dryRun: invalidDryRun, limit: "42" } } },
+    }));
+    await useStageTriggerStore.persist.rehydrate();
+    expect(useStageTriggerStore.getState().configs.discover).toMatchObject({ dryRun: true, limit: "42" });
+    renderWithProviders(<StageTriggerPanel />);
+    expect(screen.getByRole("checkbox", { name: "Dry run" })).toBeChecked();
+    expect(await screen.findByRole("button", { name: "Run Discover" })).toBeDisabled();
+  });
+
+  it("preserves preview intent and enables ordinary search only after the user turns it off", async () => {
+    const user = userEvent.setup();
+    const runPipelineStages = vi.fn(async (request: RunPipelineStagesRequest): Promise<PipelineStageRunResponse> => ({
+      ok: true, action: "run_stage", status: "queued", jobKey: "pipeline", count: 0,
+      command: request, actions: [],
+    }));
+    const updateSettings = vi.fn(async () => sampleSettingsResponse);
+    useStageTriggerStore.getState().patchStageConfig("discover", {
+      dryRun: true,
+      discoverySourceIds: ["jobspy:indeed"],
+    });
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({ api: { runPipelineStages, updateSettings } }),
+    });
+
+    const button = await screen.findByRole("button", { name: "Run Discover" });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAccessibleDescription(
+      "Discover does not support dry runs. Turn off Dry run to start a search.",
+    );
+    const savesBefore = updateSettings.mock.calls.length;
+    fireEvent.submit(button.closest("form")!);
+    expect(runPipelineStages).not.toHaveBeenCalled();
+    expect(updateSettings).toHaveBeenCalledTimes(savesBefore);
+    expect(useStageTriggerStore.getState().configs.discover).toMatchObject({
+      dryRun: true, discoverySourceIds: ["jobspy:indeed"],
+    });
+
+    await user.click(screen.getByRole("checkbox", { name: "Dry run" }));
+    expect(button).toBeEnabled();
+    await user.click(button);
+    await waitFor(() => expect(runPipelineStages).toHaveBeenCalledOnce());
+    expect(runPipelineStages).toHaveBeenCalledWith(expect.objectContaining({
+      stages: ["discover"], dryRun: false, sourceIds: ["jobspy:indeed"],
+    }));
   });
 
   it("disables unavailable demo runs and offers supported next steps", async () => {
@@ -130,6 +339,7 @@ describe("StageTriggerPanel", () => {
 
   it.each(["offline", "connected", "unavailable"] as const)("allows Discovery with %s extension status", async (status) => {
     const user = userEvent.setup();
+    useStageTriggerStore.getState().patchStageConfig("discover", { dryRun: false });
     const runPipelineStages = vi.fn(async (): Promise<PipelineStageRunResponse> => ({
       ok: true,
       action: "run_stage",
@@ -176,6 +386,7 @@ describe("StageTriggerPanel", () => {
 
   it("rechecks worker runtime health immediately before dispatching a stage run", async () => {
     const user = userEvent.setup();
+    useStageTriggerStore.getState().patchStageConfig("discover", { dryRun: false });
     const runPipelineStages = vi.fn();
     const health = vi
       .fn()
@@ -363,7 +574,7 @@ describe("StageTriggerPanel", () => {
     expect(
       screen.getByRole("button", { name: /^Sources: / }),
     ).toHaveAccessibleDescription("2 sources selected");
-    await user.click(screen.getByRole("checkbox", { name: "Dry run" }));
+    expect(screen.getByRole("checkbox", { name: "Dry run" })).not.toBeChecked();
     await user.click(
       await screen.findByRole("button", { name: "Run Discover" }),
     );
@@ -449,11 +660,13 @@ describe("StageTriggerPanel", () => {
     expect(
       useStageTriggerStore.getState().configs.discover.discoverySourceIds,
     ).toEqual(["jobspy:linkedin"]);
+    expect(useStageTriggerStore.getState().configs.discover.dryRun).toBe(true);
     expect(useStageTriggerStore.getState().internalConcurrency).toBe("7");
   });
 
   it("shows a stop control for queued pipeline stage runs", async () => {
     const user = userEvent.setup();
+    useStageTriggerStore.getState().patchStageConfig("discover", { dryRun: false });
     const cancelWorkflowRun = vi.fn(async (runId: string) => ({
       ok: true as const,
       runId,
@@ -476,7 +689,7 @@ describe("StageTriggerPanel", () => {
           workers: 1,
           minScore: 7,
           validationMode: "normal" as const,
-          dryRun: true,
+          dryRun: false,
           rescore: false,
           retailor: false,
           headless: false,
@@ -502,7 +715,7 @@ describe("StageTriggerPanel", () => {
               workers: 1,
               minScore: 7,
               validationMode: "normal",
-              dryRun: true,
+              dryRun: false,
               rescore: false,
               retailor: false,
               headless: false,
@@ -643,6 +856,7 @@ describe("StageTriggerPanel", () => {
 
   it("does not start a Pipeline action when shared concurrency cannot be saved", async () => {
     const user = userEvent.setup();
+    useStageTriggerStore.getState().patchStageConfig("discover", { dryRun: false });
     const runPipelineStages = vi.fn();
     const updateSettings = vi.fn(async () => {
       throw new Error("settings unavailable");
@@ -683,6 +897,7 @@ describe("StageTriggerPanel", () => {
 
   it("shows a live starting status while the worker request is pending", async () => {
     const user = userEvent.setup();
+    useStageTriggerStore.getState().patchStageConfig("discover", { dryRun: false });
     const runPipelineStages = vi.fn(
       () => new Promise<PipelineStageRunResponse>(() => undefined),
     );
@@ -701,6 +916,7 @@ describe("StageTriggerPanel", () => {
 
   it("replaces the local starting label with the latest backend stage event", async () => {
     const user = userEvent.setup();
+    useStageTriggerStore.getState().patchStageConfig("discover", { dryRun: false });
     const runPipelineStages = vi.fn(
       () => new Promise<PipelineStageRunResponse>(() => undefined),
     );
@@ -955,6 +1171,7 @@ describe("StageTriggerPanel", () => {
 
   it("surfaces failed worker action responses", async () => {
     const user = userEvent.setup();
+    useStageTriggerStore.getState().patchStageConfig("discover", { dryRun: false });
     const runPipelineStages = vi.fn(
       async (): Promise<PipelineStageRunResponse> => ({
         ok: true as const,
@@ -968,7 +1185,7 @@ describe("StageTriggerPanel", () => {
           workers: 1,
           minScore: 7,
           validationMode: "normal" as const,
-          dryRun: true,
+          dryRun: false,
           rescore: false,
           retailor: false,
           headless: false,
@@ -993,7 +1210,7 @@ describe("StageTriggerPanel", () => {
               workers: 1,
               minScore: 7,
               validationMode: "normal",
-              dryRun: true,
+              dryRun: false,
               rescore: false,
               retailor: false,
             },

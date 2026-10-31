@@ -29,6 +29,7 @@ from jobctrl.workflow_specs import (
     build_apply_workflow_spec,
     build_compensation_refresh_workflow_spec,
     build_run_stage_workflow_spec,
+    reject_discover_preview,
     start_workflow_spec_and_wait_sync,
     workflow_result_to_dict,
 )
@@ -730,6 +731,14 @@ def _render_run_timeline(run: dict, limit: int = 8) -> Panel | None:
     )
 
 
+def _check_discover_preview(stages: list[str], *, dry_run: bool) -> None:
+    try:
+        reject_discover_preview(stages, dry_run=dry_run)
+    except ValueError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
+
+
 def _run_stage_command(
     stage: str,
     *,
@@ -744,6 +753,7 @@ def _run_stage_command(
     tailor_judge_model: str | None = None,
 ) -> None:
     """Run a single pipeline stage through the shared orchestrator."""
+    _check_discover_preview([stage], dry_run=dry_run)
     _bootstrap()
 
     _check_tier2_stage(stage)
@@ -1355,9 +1365,9 @@ def run(
     ),
 ) -> None:
     """Run one or more pipeline stages in order."""
-    _bootstrap()
-
     stage_list = stages if stages else ["all"]
+    _check_discover_preview(stage_list, dry_run=dry_run)
+    _bootstrap()
 
     # Validate stage names
     for s in stage_list:

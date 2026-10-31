@@ -214,7 +214,11 @@ describe("PipelinesView", () => {
     expect(within(tools).getByLabelText("Limit")).toBeInTheDocument();
     expect(within(tools).getByLabelText("Internal concurrency")).toBeInTheDocument();
     expect(within(tools).getByLabelText("Sources")).toBeInTheDocument();
-    expect(within(tools).getByRole("checkbox", { name: "Dry run" })).toBeChecked();
+    expect(within(tools).getByRole("checkbox", { name: "Dry run" })).not.toBeChecked();
+    await user.click(within(tools).getByRole("checkbox", { name: "Dry run" }));
+    expect(within(tools).getByRole("button", { name: "Run Discover" })).toBeDisabled();
+    await user.click(within(tools).getByRole("checkbox", { name: "Dry run" }));
+    expect(within(tools).getByRole("button", { name: "Run Discover" })).toBeEnabled();
 
     await user.click(within(tools).getByRole("tab", { name: "Apply" }));
 
@@ -724,6 +728,7 @@ describe("PipelinesView", () => {
 
   it("preserves incomplete previous-run history and offers a safe new Discover run", async () => {
     const user = userEvent.setup();
+    useStageTriggerStore.getState().patchStageConfig("discover", { dryRun: false });
     useStageTriggerStore.getState().setActiveStage("apply");
     await renderPipelineOperations(pipelinesIncompleteProjectionSnapshot);
 
@@ -893,6 +898,7 @@ describe("PipelinesView", () => {
 
   it("explains missing Temporal history and clearly reports that no work is active", async () => {
     const user = userEvent.setup();
+    useStageTriggerStore.getState().patchStageConfig("discover", { dryRun: false });
     const pipelineOperations = vi.fn(async () => pipelinesFailedHistorySnapshot);
     const runPipelineStages = vi.fn();
     useStageTriggerStore.getState().setActiveStage("apply");
@@ -1342,6 +1348,7 @@ describe("PipelinesView", () => {
 
   it("explains that a closed draining run needs a new Discover run instead of resume", async () => {
     const user = userEvent.setup();
+    useStageTriggerStore.getState().patchStageConfig("discover", { dryRun: false });
     const runPipelineStages = vi.fn();
     useStageTriggerStore.getState().setActiveStage("apply");
     const pipelineOperations = vi.fn(async () => ({
@@ -1542,6 +1549,7 @@ describe("PipelinesView", () => {
   );
 
   it("explains background work and automatically enables Discover after its next idle observation", async () => {
+    useStageTriggerStore.getState().patchStageConfig("discover", { dryRun: false });
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     try {
       const capacity = pipelinesDiscoveringSnapshot.capacity;
@@ -1790,6 +1798,7 @@ describe("PipelinesView", () => {
 
   it("blocks Discover but preserves other pipeline actions when the operations read fails", async () => {
     const user = userEvent.setup();
+    useStageTriggerStore.getState().patchStageConfig("discover", { dryRun: false });
     const pipelineOperations = vi.fn(async () => {
       throw new Error("Operations snapshot failed.");
     });

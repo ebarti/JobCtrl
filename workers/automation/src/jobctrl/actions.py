@@ -24,6 +24,7 @@ from jobctrl.workflow_specs import (
     build_apply_workflow_spec,
     build_profile_import_workflow_spec,
     build_run_stage_workflow_spec,
+    reject_discover_preview,
     start_workflow_spec_and_wait_sync,
     workflow_result_to_dict,
 )
@@ -95,6 +96,22 @@ def run_local_action(request: LocalActionRequest) -> LocalActionResult:
             job_url=request.job_url,
             dry_run=request.dry_run,
             error=f"Unknown action stage: {request.stage}",
+        )
+
+    try:
+        reject_discover_preview([request.stage], dry_run=request.dry_run)
+    except ValueError as exc:
+        return LocalActionResult(
+            ok=False,
+            action_id=action_id,
+            stage=request.stage,
+            status="failed",
+            started_at=started_at,
+            finished_at=utc_now(),
+            duration_ms=int((perf_counter() - start) * 1000),
+            job_url=request.job_url,
+            dry_run=request.dry_run,
+            error=str(exc),
         )
 
     apply_job_id: str | None = None

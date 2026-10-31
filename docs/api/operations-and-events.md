@@ -25,6 +25,11 @@ The stale-score reset response and its `ScoreRescoreRequested` event provide
 `jobctrl score --rescore` as `nextAction`. That explicit command operates on the
 eligible scoring queue; the reset itself does not dispatch scoring.
 
+Discover does not support preview. A global request containing Discover with
+`dryRun: true` returns `400 discover_preview_unsupported` before dispatch,
+including mixed-stage requests. Because the HTTP default is `true`, explicitly
+send `dryRun: false` for an ordinary search.
+
 `POST /v1/jobs/:jobKey/actions/retry-stage` has two distinct commands. A plain
 reset (`runAfter: false`) is local and synchronous. Enrichment resets cross the
 local Python RPC boundary and acknowledge the committed application-service
