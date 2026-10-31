@@ -77,6 +77,7 @@ def _write_discovery_automation_settings(
 ) -> None:
     db_path = tmp_path / "jobctrl.db"
     with sqlite3.connect(db_path) as conn:
+        config._ensure_discovery_settings_table(conn)
         conn.execute('CREATE TABLE job_events (event_id INTEGER PRIMARY KEY, tenant_id TEXT)')
     monkeypatch.setattr(config, "DB_PATH", db_path)
     monkeypatch.setattr(config, "APP_DIR", tmp_path)
