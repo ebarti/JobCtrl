@@ -140,7 +140,11 @@ model policy, and the shared spend ceiling remain in
 <WorkflowSurfacePanel surface="web">
 
 Open Pipelines, choose the `Discover` tab, set the run limit, internal
-concurrency, optional source selection, and dry-run mode, then start the run.
+concurrency and optional source selection, then start the run. Discover does
+not support a dry run. When no pipeline controls are saved, **Dry run** starts
+off; a saved choice stays unchanged. If it is checked, turn it off to enable an
+ordinary search. If saved controls cannot be read, review the displayed values
+before changing the setting.
 The source picker accepts up to 50 sources; leave it on **All runnable sources**
 to use the complete enabled registry.
 
@@ -160,6 +164,9 @@ Start the same Discover workflow from the terminal:
 ```bash
 jobctrl run discover
 ```
+
+`jobctrl discover --dry-run` and `jobctrl run --dry-run` when Discover is
+selected are rejected before a workflow starts. Omit `--dry-run` to search.
 
 The CLI uses the same optional transport selection. An offline extension does
 not prevent dispatch; public-source restrictions and worker readiness still

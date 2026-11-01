@@ -16,6 +16,7 @@ from jobctrl.pipeline.workflow import JobPipelineWorkflowResult
 from jobctrl.domain.rpc.messages import JsonRpcRequest
 from jobctrl.infrastructure.rpc.handlers import register_default_handlers
 from jobctrl.infrastructure.rpc.server import JsonRpcServer
+import jobctrl.workflow_specs as workflow_specs
 root = Path(os.environ["JOBCTRL_DIR"])
 assert (root / ".rpc-workflow-owned").is_file()
 control = root / "rpc-control.json"
@@ -23,6 +24,7 @@ trace = root / "rpc-trace.jsonl"
 def record(kind, **data):
     with trace.open("a") as file:
         file.write(json.dumps(dict(kind=kind, at=datetime.now(timezone.utc).isoformat(), **data)) + "\n")
+record("runtime", workflowSpecsPath=str(Path(workflow_specs.__file__).resolve()))
 def mode():
     return json.loads(control.read_text()).get("mode", "success")
 class Handle:

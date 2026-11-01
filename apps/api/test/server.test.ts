@@ -9040,7 +9040,7 @@ describe("local TypeScript API", () => {
     const response = await app.inject({
       method: "POST",
       url: stage === "discover" ? "/v1/pipeline/actions/run-stage" : `/v1/jobs/${jobIdFor(jobUrl)}/actions/run-stage`,
-      payload: stage === "discover" ? { stages: ["discover"], dryRun: true } : { stage: "enrich" },
+      payload: stage === "discover" ? { stages: ["discover"], dryRun: false } : { stage: "enrich" },
     });
     expect(response.statusCode, response.body).toBe(202);
     expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ stage }), expect.anything());
@@ -9051,7 +9051,7 @@ describe("local TypeScript API", () => {
     const dispatch = vi.fn(async () => ({ status: "queued" }));
     const app = buildApp({ ...options, actionDispatcher: dispatch, requireHealthyWorkerForActions: true });
     const response = await app.inject({
-      method: "POST", url: "/v1/pipeline/actions/run-stage", payload: { stages: ["discover"], dryRun: true },
+      method: "POST", url: "/v1/pipeline/actions/run-stage", payload: { stages: ["discover"], dryRun: false },
     });
     expect(response.statusCode, response.body).toBe(503);
     expect(response.json()).toMatchObject({ error: "worker_runtime_unavailable" });
@@ -14464,7 +14464,7 @@ describe("enforcing route to registered worker handoffs", () => {
     const observations: unknown[] = [];
     try {
       const sourceIds = ["jobspy:linkedin", "jobspy:indeed"];
-      const response = await app.inject({ method: "POST", url: "/v1/pipeline/actions/run-stage", payload: { stages: ["discover"], sourceIds, workers: 2, limit: 25 } });
+      const response = await app.inject({ method: "POST", url: "/v1/pipeline/actions/run-stage", payload: { stages: ["discover"], sourceIds, workers: 2, limit: 25, dryRun: false } });
       observations.push({ status: response.statusCode, body: response.json() });
       expect(response.statusCode, response.body).toBe(202);
       expect(fixture.rows().find(row => row.kind === "request")).toMatchObject({ request: { params: { sourceIds } } });
@@ -14486,7 +14486,7 @@ describe("enforcing route to registered worker handoffs", () => {
       observations.push({ transmittedBeforeInvalidInputs: transmittedRequests, transmittedAfterInvalidInputs: fixture.rows().filter(row => row.kind === "request").length });
       expect(fixture.rows().filter(row => row.kind === "start")).toHaveLength(1);
       fixture.mode("invalid_ack");
-      const malformed = await app.inject({ method: "POST", url: "/v1/pipeline/actions/run-stage", payload: { stages: ["discover"], sourceIds } });
+      const malformed = await app.inject({ method: "POST", url: "/v1/pipeline/actions/run-stage", payload: { stages: ["discover"], sourceIds, dryRun: false } });
       observations.push({ malformedAckStatus: malformed.statusCode, body: malformed.json() });
       expect(malformed.statusCode).toBeGreaterThanOrEqual(500);
     } finally { fixture.retain("discover", observations); await app.close(); await fixture.adapter.close(); }

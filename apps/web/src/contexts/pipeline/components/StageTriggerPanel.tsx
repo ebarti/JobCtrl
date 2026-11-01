@@ -570,7 +570,9 @@ export function StageTriggerPanel({
   );
   const unavailableReasonId = useId();
   const blockedReasonId = useId();
+  const discoverPreviewReasonId = useId();
   const discoveryExtensionReasonId = useId();
+  const recoverySettingsReasonId = useId();
   const runStages = useRunPipelineStagesMutation();
   const [submittedStage, setSubmittedStage] = useState<Stage | null>(null);
   const [submittedAt, setSubmittedAt] = useState<number | null>(null);
@@ -582,9 +584,15 @@ export function StageTriggerPanel({
   const internalConcurrency = useStageTriggerStore(
     (state) => state.internalConcurrency,
   );
+  const storageRecoveryRequired = useStageTriggerStore(
+    (state) => state.storageRecoveryRequired,
+  );
   const setInternalConcurrency = useStageTriggerStore(
     (state) => state.setInternalConcurrency,
   );
+  const [awaitingRecoveryConcurrency, setAwaitingRecoveryConcurrency] =
+    useState(storageRecoveryRequired);
+  const previousStorageRecovery = useRef(false);
   const synchronizedInternalConcurrency = useRef(false);
   const persistedActiveStage = useStageTriggerStore(
     (state) => state.activeStage,
@@ -596,6 +604,7 @@ export function StageTriggerPanel({
     : "discover";
   const stageRunBlockReason = stageRunBlockReasons[activeStage] ?? null;
   const config = useStageTriggerStore((state) => state.configs[activeStage]);
+  const discoverPreviewUnsupported = activeStage === "discover" && config.dryRun;
   const setActiveStage = useStageTriggerStore((state) => state.setActiveStage);
   const patchStageConfig = useStageTriggerStore(
     (state) => state.patchStageConfig,
@@ -657,9 +666,23 @@ export function StageTriggerPanel({
         "JobCtrl automation worker health is unavailable.");
 
   useEffect(() => {
+    if (storageRecoveryRequired && !previousStorageRecovery.current) {
+      previousStorageRecovery.current = true;
+      synchronizedInternalConcurrency.current = false;
+      setAwaitingRecoveryConcurrency(true);
+    } else if (!storageRecoveryRequired) {
+      previousStorageRecovery.current = false;
+    }
     if (!settings.data || synchronizedInternalConcurrency.current) return;
     synchronizedInternalConcurrency.current = true;
     const canonical = settings.data.settings.pipelineInternalConcurrency;
+    if (storageRecoveryRequired || awaitingRecoveryConcurrency) {
+      // The fallback is not a saved choice. Restore the canonical value
+      // locally without writing either settings or the unreadable bytes.
+      setInternalConcurrency(String(canonical));
+      setAwaitingRecoveryConcurrency(false);
+      return;
+    }
     const local = boundedInternalConcurrency(internalConcurrency);
     if (
       settings.data.effectiveSettings.pipelineInternalConcurrency.source ===
@@ -671,9 +694,11 @@ export function StageTriggerPanel({
     }
     setInternalConcurrency(String(canonical));
   }, [
+    awaitingRecoveryConcurrency,
     internalConcurrency,
     setInternalConcurrency,
     settings.data,
+    storageRecoveryRequired,
     updateInternalConcurrency,
   ]);
 
@@ -703,7 +728,7 @@ export function StageTriggerPanel({
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!runAvailability.available || stageRunBlockReason) return;
+    if (!runAvailability.available || stageRunBlockReason || discoverPreviewUnsupported || awaitingRecoveryConcurrency) return;
     const workers = boundedInternalConcurrency(internalConcurrency);
     setInternalConcurrency(String(workers));
     try {
@@ -751,6 +776,21 @@ export function StageTriggerPanel({
         <strong>{labelForStage(activeStage)}</strong>
       </div>
 
+      {storageRecoveryRequired ? (
+        <p className="status-line" data-typography="body" role="status">
+          Some saved pipeline controls could not be read. Review the displayed values.
+          Changing Discover&apos;s Dry run setting replaces the unreadable saved controls;
+          if storage is unavailable, changes last only for this session.
+        </p>
+      ) : null}
+      {awaitingRecoveryConcurrency ? (
+        <p id={recoverySettingsReasonId} className="status-line" data-typography="body" role="status">
+          {settings.isError
+            ? "Could not load the saved concurrency setting. Reload this page to retry."
+            : "Loading the saved concurrency setting before continuing."}
+        </p>
+      ) : null}
+
       <div className="stage-trigger-grid">
         {controls.limit ? (
           <Field className="field">
@@ -781,7 +821,7 @@ export function StageTriggerPanel({
               max={16}
               type="number"
               aria-describedby={fieldId("workers-help")}
-              disabled={settings.isPending}
+              disabled={settings.isPending || awaitingRecoveryConcurrency}
               value={internalConcurrency}
               onBlur={() => {
                 const workers = boundedInternalConcurrency(internalConcurrency);
@@ -1029,6 +1069,10 @@ export function StageTriggerPanel({
             id={fieldId("dry-run")}
             name="dry-run"
             checked={config.dryRun}
+            disabled={activeStage === "discover" && storageRecoveryRequired && awaitingRecoveryConcurrency}
+            aria-describedby={activeStage === "discover" && storageRecoveryRequired && awaitingRecoveryConcurrency
+              ? recoverySettingsReasonId
+              : undefined}
             onCheckedChange={(checked) => patchConfig({ dryRun: checked })}
           />
           <FieldLabel htmlFor={fieldId("dry-run")}>Dry run</FieldLabel>
@@ -1082,6 +1126,11 @@ export function StageTriggerPanel({
           </Field>
         ) : null}
       </div>
+      {discoverPreviewUnsupported ? (
+        <p id={discoverPreviewReasonId} className="status-line" data-typography="body">
+          Discover does not support dry runs. Turn off Dry run to start a search.
+        </p>
+      ) : null}
 
       {controls.discoverySource && runAvailability.available ? (
         <p
@@ -1108,15 +1157,21 @@ export function StageTriggerPanel({
               ? unavailableReasonId
               : stageRunBlockReason
                 ? blockedReasonId
-                : controls.discoverySource
-                  ? discoveryExtensionReasonId
-                  : undefined
+                : discoverPreviewUnsupported
+                  ? discoverPreviewReasonId
+                  : awaitingRecoveryConcurrency
+                    ? recoverySettingsReasonId
+                  : controls.discoverySource
+                    ? discoveryExtensionReasonId
+                    : undefined
           }
           disabled={
             runStages.isPending ||
             workerUnhealthy ||
             !runAvailability.available ||
-            Boolean(stageRunBlockReason)
+            Boolean(stageRunBlockReason) ||
+            discoverPreviewUnsupported ||
+            awaitingRecoveryConcurrency
           }
           type="submit"
         >
