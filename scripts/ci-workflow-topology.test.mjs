@@ -162,6 +162,9 @@ test("pristine candidate privacy precedes installation; independent diagnostics 
   assert.equal(build.if,expression("inputs.web"));
   assert.ok(frontend.steps.indexOf(build)<frontend.steps.indexOf(parallel));
   assert.equal(parallel.env.CI_ROUTES_READY,expression("steps.production.outcome == 'success'"));
+  const laneArtifact=frontend.steps.find(step=>step.name==="Retain the independent frontend lane logs and outcomes");
+  assert.equal(laneArtifact.with.name,"frontend-lanes-${{ inputs.e2e && 'browser' || 'frontend' }}-${{ github.run_attempt }}",
+    "the two reusable calls must retain distinct immutable artifacts");
   assert.equal(frontend.steps.filter(step=>step.run?.includes("pnpm install")).length,1);
   assert.equal(frontend.steps.filter(step=>step.run?.includes("playwright install --with-deps chromium")).length,1);
 });
