@@ -7,6 +7,7 @@ import type {
 } from "@jobctrl/contracts";
 import { IconDeviceFloppy, IconStar } from "@tabler/icons-react";
 import { JobCtrlApiError } from "@jobctrl/api-client";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type JSX } from "react";
 
 import { ResumeStandalonePlateEditor } from "../../materials/components/ResumeAuditPins.js";
@@ -16,8 +17,11 @@ import { Input } from "../../../shared/ui/input.js";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "../../../shared/ui/select.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import {
+  hasTemplateReadAfter,
+  UnconfirmedTemplateDefaultError,
   useSaveResumeTemplateMutation,
   useSetDefaultResumeTemplateMutation,
+  type ResumeTemplateReadFence,
 } from "../hooks/useResumeTemplateMutations.js";
 import { useResumeTemplatesQuery } from "../hooks/useResumeTemplatesQuery.js";
 
@@ -114,6 +118,13 @@ interface TemplateDraft {
   readonly dirty: boolean;
 }
 
+interface DefaultFailure {
+  readonly message: string;
+  readonly templateId: string;
+  readonly versionId: string;
+  readonly readFence: ResumeTemplateReadFence | null;
+}
+
 function templateDraft(template: ResumeTemplateSummary): TemplateDraft {
   return {
     template,
@@ -168,6 +179,7 @@ function draftKey(tenantId: string, templateId: string): string {
 export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePanelProps): JSX.Element {
   const tenantId = useTenantId();
   const templatesQuery = useResumeTemplatesQuery();
+  const queryClient = useQueryClient();
   const saveTemplate = useSaveResumeTemplateMutation();
   const setDefaultTemplate = useSetDefaultResumeTemplateMutation();
   const templates = templatesQuery.data?.templates ?? [];
@@ -176,8 +188,9 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
   const [drafts, setDrafts] = useState<Record<string, TemplateDraft>>({});
   const [accepted, setAccepted] = useState<Record<string, ResumeTemplateSummary>>({});
   const [savingTenants, setSavingTenants] = useState<Set<string>>(() => new Set());
+  const [defaultWrites, setDefaultWrites] = useState<Set<string>>(() => new Set());
   const [saveErrors, setSaveErrors] = useState<Record<string, string | null>>({});
-  const [saveDefaultErrors, setSaveDefaultErrors] = useState<Record<string, string | null>>({});
+  const [defaultFailures, setDefaultFailures] = useState<Record<string, DefaultFailure | null>>({});
   const [conflicts, setConflicts] = useState<Record<string, boolean>>({});
   const [reviewingTenants, setReviewingTenants] = useState<Set<string>>(() => new Set());
   const observedTemplates = useRef<Record<string, ResumeTemplateSummary>>({});
@@ -219,12 +232,27 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
     [theme],
   );
   const saveError = saveErrors[tenantId] ?? null;
-  const defaultError = saveDefaultErrors[tenantId] ?? (setDefaultTemplate.error instanceof Error ? setDefaultTemplate.error.message : null);
-  const selectedTemplateCanBeDefault = Boolean(activeTemplate);
+  const defaultFailure = defaultFailures[tenantId] ?? null;
+  const defaultReadUnconfirmed = defaultWrites.has(tenantId) || !templatesQuery.data ||
+    templatesQuery.isFetching || templatesQuery.isRefetchError;
+  const pinnedDefault = templatesQuery.data?.defaultTemplate;
+  const effectiveDefault = pinnedDefault ?? templatesQuery.data?.builtInDefault;
+  const failureConfirmed = Boolean(defaultFailure?.readFence && !defaultReadUnconfirmed && !templatesQuery.isError &&
+    hasTemplateReadAfter(queryClient, tenantId, defaultFailure.readFence) && pinnedDefault?.templateId === defaultFailure.templateId &&
+    pinnedDefault.templateVersionId === defaultFailure.versionId);
+  const defaultError = failureConfirmed ? null : defaultFailure?.message ?? null;
+  const selectedTemplateCanBeDefault = Boolean(activeTemplate) && !defaultReadUnconfirmed;
   const selectedTemplateIsDefault =
-    activeTemplate && templatesQuery.data?.defaultTemplate?.templateId === activeTemplate.templateId
-    && templatesQuery.data.defaultTemplate.templateVersionId === activeTemplate.activeVersion.versionId;
-  const isSaving = savingTenants.has(tenantId) || reviewingTenants.has(tenantId) || setDefaultTemplate.isPending;
+    !defaultReadUnconfirmed && activeTemplate && pinnedDefault?.templateId === activeTemplate.templateId
+    && pinnedDefault.templateVersionId === activeTemplate.activeVersion.versionId;
+  const isSaving = savingTenants.has(tenantId) || reviewingTenants.has(tenantId) || defaultWrites.has(tenantId);
+  const isSettingDefault = defaultWrites.has(tenantId) && !savingTenants.has(tenantId);
+  useEffect(() => {
+    if (!failureConfirmed || !defaultFailure) return;
+    setDefaultFailures((previous) => previous[tenantId] === defaultFailure
+      ? { ...previous, [tenantId]: null }
+      : previous);
+  }, [defaultFailure, failureConfirmed, tenantId]);
   const needsReview = Boolean((key && conflicts[key]) || (draft?.dirty && activeTemplate && (
     draft.template.activeVersion.versionId !== activeTemplate.activeVersion.versionId
     || draft.template.displayName !== activeTemplate.displayName
@@ -265,13 +293,13 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
     }));
   };
   const saveCurrent = (makeDefault: boolean) => {
-    if (!theme || !displayName.trim() || !activeTemplate || needsReview || isSaving) return;
+    if (!theme || !displayName.trim() || !activeTemplate || needsReview || isSaving || (makeDefault && defaultReadUnconfirmed)) return;
     const sourceKey = draftKey(tenantId, activeTemplate.templateId);
     const submittedTemplate = activeTemplate;
     const editableTemplateId = activeTemplate?.builtIn ? undefined : activeTemplate?.templateId;
     setSavingTenants((previous) => new Set(previous).add(tenantId));
     setSaveErrors((previous) => ({ ...previous, [tenantId]: null }));
-    setSaveDefaultErrors((previous) => ({ ...previous, [tenantId]: null }));
+    if (makeDefault) setDefaultWrites((previous) => new Set(previous).add(tenantId));
     void saveTemplate.mutateAsync({
       body: {
         templateId: editableTemplateId,
@@ -305,7 +333,17 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
       });
       if (defaultConflict) setConflicts((previous) => ({ ...previous, [savedKey]: true }));
       setSelections((previous) => new Map(previous).set(tenantId, saved.template.templateId));
-      if (error) setSaveDefaultErrors((previous) => ({ ...previous, [tenantId]: error.message }));
+      if (makeDefault) {
+        setDefaultFailures((previous) => ({
+          ...previous,
+          [tenantId]: error ? {
+            message: error.message,
+            templateId: saved.template.templateId,
+            versionId: saved.template.activeVersion.versionId,
+            readFence: error instanceof UnconfirmedTemplateDefaultError ? error.readFence : null,
+          } : null,
+        }));
+      }
     }).catch((error: unknown) => {
       if (error instanceof JobCtrlApiError && error.status === 409) {
         setConflicts((previous) => ({ ...previous, [sourceKey]: true }));
@@ -313,6 +351,31 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
       setSaveErrors((previous) => ({ ...previous, [tenantId]: error instanceof Error ? error.message : String(error) }));
     }).finally(() => {
       setSavingTenants((previous) => { const next = new Set(previous); next.delete(tenantId); return next; });
+      if (makeDefault) setDefaultWrites((previous) => { const next = new Set(previous); next.delete(tenantId); return next; });
+    });
+  };
+
+  const chooseDefault = (templateId: string, versionId: string, expectedActiveVersionId: string) => {
+    if (isSaving || needsReview || defaultReadUnconfirmed) return;
+    setDefaultWrites((previous) => new Set(previous).add(tenantId));
+    void setDefaultTemplate.mutateAsync({ templateId, versionId, expectedActiveVersionId }).then(() => {
+      setDefaultFailures((previous) => ({ ...previous, [tenantId]: null }));
+    }).catch((error: unknown) => {
+      const cause = error instanceof UnconfirmedTemplateDefaultError ? error.cause : error;
+      if (cause instanceof JobCtrlApiError && cause.status === 409) {
+        setConflicts((previous) => ({ ...previous, [draftKey(tenantId, templateId)]: true }));
+      }
+      setDefaultFailures((previous) => ({
+        ...previous,
+        [tenantId]: {
+          message: `Default change was not confirmed. Check the current default before retrying. ${error instanceof Error ? error.message : String(error)}`,
+          templateId,
+          versionId,
+          readFence: error instanceof UnconfirmedTemplateDefaultError ? error.readFence : null,
+        },
+      }));
+    }).finally(() => {
+      setDefaultWrites((previous) => { const next = new Set(previous); next.delete(tenantId); return next; });
     });
   };
 
@@ -355,6 +418,10 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
         <div className="resume-template-controls-title">
           <strong>Template settings</strong>
           <span>Typography, spacing, and page layout</span>
+          {activeTemplate ? <span>Selected saved version: {activeTemplate.activeVersion.versionNumber}</span> : null}
+          {effectiveDefault ? (
+            <span>{defaultReadUnconfirmed ? "Last read default" : "Default"}: {effectiveDefault.templateName}, version {effectiveDefault.templateVersionNumber}{pinnedDefault ? "" : " (built-in)"}</span>
+          ) : null}
         </div>
         <div className="resume-template-actions">
           <Button
@@ -367,7 +434,7 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
             {savingTenants.has(tenantId) ? "saving" : "save version"}
           </Button>
           <Button
-            disabled={!theme || isSaving || needsReview || !displayName.trim()}
+            disabled={!theme || isSaving || needsReview || !displayName.trim() || defaultReadUnconfirmed}
             size="sm"
             type="button"
             variant="outline"
@@ -383,21 +450,11 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
             variant="ghost"
             onClick={() => {
               if (!activeTemplate) return;
-              setDefaultTemplate.mutate({
-                templateId: activeTemplate.templateId,
-                versionId: activeTemplate.activeVersion.versionId,
-                expectedActiveVersionId: activeTemplate.activeVersion.versionId,
-              }, {
-                onError: (error) => {
-                  if (error instanceof JobCtrlApiError && error.status === 409) {
-                    setConflicts((previous) => ({ ...previous, [draftKey(tenantId, activeTemplate.templateId)]: true }));
-                  }
-                },
-              });
+              chooseDefault(activeTemplate.templateId, activeTemplate.activeVersion.versionId, activeTemplate.activeVersion.versionId);
             }}
           >
             <IconStar aria-hidden="true" data-icon="inline-start" />
-            {setDefaultTemplate.isPending ? "setting" : "set default"}
+            {isSettingDefault ? "setting" : "set default"}
           </Button>
           {selectedTemplateIsDefault ? (
             <span className="resume-template-default-status" role="status">
@@ -561,21 +618,11 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
       {acknowledged && activeTemplate && acknowledged.activeVersion.versionId !== activeTemplate.activeVersion.versionId ? (
         <div role="group" aria-label="Saved template version">
           <p>Saved version {acknowledged.activeVersion.versionNumber} is available. The current version is {activeTemplate.activeVersion.versionNumber}.</p>
-          <Button type="button" variant="outline" disabled={isSaving || needsReview} onClick={() => {
-            setSaveDefaultErrors((previous) => ({ ...previous, [tenantId]: null }));
-            setDefaultTemplate.reset();
-            setDefaultTemplate.mutate({
-              templateId: acknowledged.templateId,
-              versionId: acknowledged.activeVersion.versionId,
-              expectedActiveVersionId: activeTemplate.activeVersion.versionId,
-            }, {
-              onError: (error) => {
-                if (error instanceof JobCtrlApiError && error.status === 409) {
-                  setConflicts((previous) => ({ ...previous, [draftKey(tenantId, activeTemplate.templateId)]: true }));
-                }
-              },
-            });
-          }}>Set saved version {acknowledged.activeVersion.versionNumber} as default</Button>
+          <Button type="button" variant="outline" disabled={isSaving || needsReview || defaultReadUnconfirmed || (
+            pinnedDefault?.templateId === acknowledged.templateId && pinnedDefault.templateVersionId === acknowledged.activeVersion.versionId
+          )} onClick={() => chooseDefault(acknowledged.templateId, acknowledged.activeVersion.versionId, activeTemplate.activeVersion.versionId)}>
+            Set saved version {acknowledged.activeVersion.versionNumber} as default
+          </Button>
         </div>
       ) : null}
       {needsReview && activeTemplate ? (
@@ -594,7 +641,17 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
         </div>
       ) : null}
       {templatesQuery.isLoading ? <div className="banner inline">Loading resume templates.</div> : null}
-      {saveError || defaultError ? <div className="banner inline">{saveError ?? defaultError}</div> : null}
+      {templatesQuery.data && templatesQuery.isFetching ? <div className="banner inline">Refreshing resume templates.</div> : null}
+      {templatesQuery.isError ? (
+        <div className="banner inline" role="alert">
+          Could not refresh templates. Check the current default before changing it.
+          <Button size="sm" type="button" variant="outline" onClick={() => { void templatesQuery.refetch(); }}>
+            retry templates
+          </Button>
+        </div>
+      ) : null}
+      {saveError ? <div className="banner inline">{saveError}</div> : null}
+      {defaultError ? <div className="banner inline">{defaultError}</div> : null}
     </div>
   );
 

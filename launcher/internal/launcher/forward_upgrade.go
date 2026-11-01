@@ -103,11 +103,12 @@ func promoteForwardUpdate(ctx launchContext, build, source string, output io.Wri
 	if old.runtime.LauncherProtocol != 1 && old.runtime.LauncherProtocol != 2 {
 		return true, errors.New("unsupported predecessor controller; preserve the installation and workspace")
 	}
+	sourceSelectorMatches := forwardSourceSelectorMatches(store, active, old, verifiedCandidate)
 	if !resuming {
-		if active.SelectorBuildID != active.Receipt.BuildID || !selectorMatchesEvidence(store.Home, old) {
+		if !sourceSelectorMatches {
 			return true, errors.New("source selector differs from its authenticated immutable release")
 		}
-	} else if !selectorMatchesEvidence(store.Home, old) && !selectorMatchesEvidence(store.Home, verifiedCandidate) {
+	} else if !sourceSelectorMatches && !selectorMatchesEvidence(store.Home, verifiedCandidate) {
 		return true, errors.New("interrupted update selector differs from both authenticated releases")
 	}
 	// All SQLite helpers come from the authenticated new payload. Do not invoke
@@ -165,6 +166,16 @@ func promoteForwardUpdate(ctx launchContext, build, source string, output io.Wri
 	pairReceipt := active.Receipt
 	if version == 15 {
 		pairReceipt = candidate
+		// The first backup of an already-v15 workspace belongs to its active
+		// predecessor only if that signed release declares the v15 contract
+		// and can be supervised by this controller. A later backup may contain
+		// writes made by the candidate and must never authorize an old rollback.
+		if journal.BackupID == "" && journal.SourceSchemaVersion == 15 && journal.State == release.MetadataVerified &&
+			old.runtime.LauncherProtocol == 2 && protocolSupports(old.distribution, launcherProtocol) {
+			if _, err := readBridgeSchemaContract(old, 14); err == nil {
+				pairReceipt = active.Receipt
+			}
+		}
 	}
 	pair, err := snapshotPair(ctx, pairReceipt)
 	if err != nil {
@@ -238,6 +249,25 @@ func promoteForwardUpdate(ctx launchContext, build, source string, output io.Wri
 	cleanupV15Candidate(ctx.Instance.StateDir, journal.ID)
 	_, err = fmt.Fprintf(output, "JobCtrl %s is active. Live workspace data was preserved.\n", candidate.BuildID)
 	return true, err
+}
+
+// A compatible rollback may intentionally keep a newer public selector while
+// selecting an older payload. Authenticate that selector independently; never
+// replace it with an older candidate or admit an incompatible controller.
+func forwardSourceSelectorMatches(store *release.Store, active release.Active, old, candidate verifiedRelease) bool {
+	if active.SelectorBuildID == active.Receipt.BuildID {
+		return selectorMatchesEvidence(store.Home, old)
+	}
+	selector, err := readInstalledReceipt(store.Home, active.SelectorBuildID)
+	if err != nil || selector.BuildID != active.SelectorBuildID || selector.Channel != active.Receipt.Channel || selector.Sequence < active.Receipt.Sequence || selector.Sequence > candidate.receipt.Sequence {
+		return false
+	}
+	verified, err := verifyInstalledReleaseForExecution(store, selector)
+	if err != nil || verified.runtime.LauncherProtocol != launcherProtocol ||
+		!protocolSupports(old.distribution, verified.runtime.LauncherProtocol) || !protocolSupports(candidate.distribution, verified.runtime.LauncherProtocol) {
+		return false
+	}
+	return selectorMatchesEvidence(store.Home, verified)
 }
 
 func selectorMatchesEvidence(home string, verified verifiedRelease) bool {
