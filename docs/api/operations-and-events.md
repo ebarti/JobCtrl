@@ -325,6 +325,10 @@ an event row never silently replaces the event view with a job redirect.
 `GET /v1/health` distinguishes API process health from worker readiness. A
 command that requires the worker must fail clearly when the JSON-RPC/Temporal
 path is unavailable; the API must not manufacture a successful queued state.
+`llmSpend.status` is `incomplete` while a provider usage receipt is pending or
+unresolved. Spend and token totals are then null, not a known zero; the digest
+budget also carries the incomplete status.
+
 If startup finds an incompatible database version or schema manifest, a
 diagnostic-only API returns HTTP 503 with `database_migration_required` for
 supported older versions or `database_schema_incompatible` otherwise. It

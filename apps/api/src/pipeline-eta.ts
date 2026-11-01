@@ -72,7 +72,7 @@ export interface PipelineEtaEstimatorInput {
   readonly estimateScope?: "overall" | "stage";
   readonly telemetryFresh: boolean;
   readonly workerAvailable: boolean;
-  readonly budgetAvailable: boolean;
+  readonly budgetAvailable: boolean | null;
   readonly blocked: boolean;
   readonly dispatchObserved: boolean;
   /** Fresh runtime proves work exists even when durable projection coverage is incomplete. */
@@ -114,7 +114,7 @@ export type PipelineEtaEstimate =
     }
   | {
       readonly status: "unavailable";
-      readonly reason: "no_work" | "telemetry_stale" | "unsupported" | "unknown_scope" | "contention_unbounded";
+      readonly reason: "no_work" | "telemetry_stale" | "unsupported" | "unknown_scope" | "contention_unbounded" | "accounting_incomplete";
       readonly asOf: string;
     };
 
@@ -179,6 +179,7 @@ export function estimatePipelineEta(input: PipelineEtaEstimatorInput): PipelineE
 
   // A pause is more useful than a numeric range when the current cohort cannot progress.
   if (!input.workerAvailable) return paused(input.asOf, "worker_unavailable");
+  if (input.budgetAvailable === null) return unavailable(input.asOf, "accounting_incomplete");
   if (!input.budgetAvailable) return paused(input.asOf, "budget_exceeded");
   if (input.blocked) return paused(input.asOf, "blocked");
   if (!input.dispatchObserved) return paused(input.asOf, "no_dispatch");

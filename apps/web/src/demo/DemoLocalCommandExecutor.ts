@@ -1372,10 +1372,11 @@ export class DemoLocalCommandExecutor {
         if (dailyBudgetUsd !== null) {
           const spend = draft.state.readModel.dashboard.health.llmSpend;
           spend.dailyBudgetUsd = dailyBudgetUsd;
-          spend.remainingUsd = Math.max(0, dailyBudgetUsd - spend.estimatedUsd);
+          spend.remainingUsd = spend.estimatedUsd === null ? null : Math.max(0, dailyBudgetUsd - spend.estimatedUsd);
           const digestBudget = draft.state.readModel.dashboard.digest.budget;
           digestBudget.dailyBudgetUsd = dailyBudgetUsd;
-          digestBudget.remainingUsd = Math.max(0, dailyBudgetUsd - digestBudget.estimatedUsd);
+          digestBudget.remainingUsd = digestBudget.estimatedUsd === null
+            ? null : Math.max(0, dailyBudgetUsd - digestBudget.estimatedUsd);
         }
         recomputeDemoOperationalProjections(draft);
         return draft.state.readModel.settings;

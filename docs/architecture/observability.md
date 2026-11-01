@@ -54,7 +54,9 @@ Langfuse instance for LLM tracing. The wiring lives under
   never additional billed token categories. Unknown counters stay absent.
   Only the known process-reuse boolean and start/reuse counts are copied from
   kit metadata; private runtime paths and arbitrary SDK metadata stay excluded.
-  Usage observed before terminal provider failure or cancellation is retained.
+  Usage observed before terminal provider failure or cancellation is recorded
+  once or retained as an unresolved private receipt if the spend write fails.
+  Such a failure does not replace the original provider error or cancellation.
   Typed provider failures add
   bounded `jobctrl.llm.failure.*` dimensions for provider, model, operation,
   category, type, code, retryability, and an allowlisted provider code or HTTP
@@ -159,10 +161,11 @@ even though they share the `llm.<model>` span name. Because the legs run inside
 the enclosing pipeline-stage / JSON-RPC span (OTel context propagates through the
 `asyncio.run` + `asyncio.gather` fan-out), Langfuse aggregates their token usage
 and cost onto the surrounding analysis trace — the per-analysis cost rollup —
-without extra plumbing. Instrumentation never changes control flow: an SDK error
-is recorded on the span and re-raised into the existing per-leg
-retry/partial-failure path, and missing SDK usage degrades to a span without
-token counts rather than fabricating them.
+without extra plumbing. Tracing preserves SDK failures and never fabricates
+token counts. The shared spend-accounting boundary rejects a nominally successful
+call when a usage report has unknown required counts; it retains the observed
+values as unresolved. A completely absent usage report contributes no invented
+counts to the span or ledger.
 
 ## Trace Propagation And Startup
 

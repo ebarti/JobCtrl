@@ -875,7 +875,7 @@ Cross-protocol rollback is refused. See
 | `action <stage>` | Low-level single-action dispatch with JSON output, for scripts. |
 | `compensation-refresh` | Re-parse posted salaries and refresh market estimates for all jobs or one (`--job-id`, `--observations-json`, `--no-eurotoptech`). |
 | `pipeline-status` / `runs` | Show pipeline stats, or recent apply runs and one run's event timeline (`runs --failed-only`, `--run-id`). |
-| `digest` | Print the local daily digest; it sends no notifications. Only `--acknowledge` marks it reviewed (`--json`, `--min-fit-score`). |
+| `digest` | Print the local daily digest; it sends no notifications. Incomplete spend is shown as unknown. Only `--acknowledge` marks it reviewed (`--json`, `--min-fit-score`). |
 | `capability list` / `enable` / `disable` | Inspect or change optional browser capabilities, for example `capability enable auto-apply-browser --browser-path <path>`. |
 | `credentials migrate` | Move allowlisted provider secrets from legacy `.env` files into the native credential store. |
 | `gmail-auth` | Connect Gmail for verification codes, outcome lookup, and approved email applications. |
@@ -890,8 +890,10 @@ identity. Hidden, closed and deleted jobs are excluded from those counts. New
 matches use the last review time and the configured high-fit threshold, which
 `--min-fit-score` can override for one read. Follow-ups use saved application
 outcomes and the seven-day threshold. Reading the digest does not advance its
-review time; `--acknowledge` records it with a review event. If the digest cannot
-refresh or read its data, the command fails instead of reporting zero counts.
+review time; `--acknowledge` records it with a review event. Pending or
+unresolved model usage leaves the other digest sections available and marks
+the budget incomplete, with unknown spend and remaining amounts. Other failed
+refreshes or reads fail instead of reporting zero counts.
 
 
 ## Semantic Determination Authority

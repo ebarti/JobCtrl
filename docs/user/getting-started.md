@@ -307,7 +307,13 @@ Rollback keeps a compatible launcher for recovery while restoring the older
 application. Homebrew commands preserve that selection until you explicitly run
 `jobctrl update` again. If an older updater reports a failed candidate and cannot
 restart its previous release, recovery depends on the transition state and the
-available compatible controller. The installer and formula also handle an
+available compatible controller. If rollback or recovery reports unresolved
+provider-usage accounting, preserve the current database pair, pre-rollback and
+other backups, journal and spend receipts, and inspect the accounting. A late
+refusal may follow a pair replacement, and retry depends on the transition
+state. See
+[Data, Privacy & Safety](data-and-safety.md#back-up-and-restore) for details.
+The installer and formula also handle an
 installation you have never started. If an existing database/history pair is
 incomplete, updating refuses
 to replace it; preserve those files and recover the pair before retrying.

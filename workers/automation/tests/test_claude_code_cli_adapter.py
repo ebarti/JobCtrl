@@ -555,6 +555,8 @@ def test_private_connector_tools_stay_denied_even_when_configured() -> None:
 
 
 def test_adapter_records_llm_spend_from_sdk_usage(monkeypatch, tmp_path) -> None:
+    from jobctrl.llm import _utc_spend_day
+
     monkeypatch.setattr("subprocess.Popen", _FakePopen)
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr("jobctrl.llm.record_llm_spend", lambda **kwargs: calls.append(kwargs))
@@ -580,6 +582,7 @@ def test_adapter_records_llm_spend_from_sdk_usage(monkeypatch, tmp_path) -> None
             "output_tokens": 1,
             "estimated_usd": 0.0,
             "model": "opus",
+                "day": _utc_spend_day(),
             "lane": "apply",
         }
     ]
@@ -790,6 +793,139 @@ def test_timeout_keeps_usage_received_before_process_hangs(monkeypatch, tmp_path
         )
 
     assert [(call["input_tokens"], call["output_tokens"], call["lane"]) for call in calls] == [(4, 3, "apply")]
+
+
+@pytest.mark.parametrize("status", ["failed", "dry_run_complete"])
+def test_apply_result_keeps_unresolved_usage_when_ledger_fails(monkeypatch, tmp_path, status):
+    import jobctrl.database as database
+    from jobctrl.infrastructure.llm.spend_observation import SpendAccountingUnresolved, require_resolved_spend
+
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "jobctrl.db")
+    monkeypatch.setattr("jobctrl.llm.enforce_spend_budget", lambda _lane: None)
+    monkeypatch.setattr("jobctrl.llm.record_llm_spend", lambda **kwargs: (_ for _ in ()).throw(OSError("sink")))
+
+    class Process(_StreamPopen):
+        messages = (*_browser_messages(), _terminal_message(_report(status, reason="unsafe_page")))
+
+    monkeypatch.setattr("subprocess.Popen", Process)
+    adapter = ClaudeCodeCliAdapter(log_dir=tmp_path, app_dir=tmp_path)
+    if status == "failed":
+        result = adapter.submit_application(prompt=ApplyPrompt(text="synthetic", mcp_config={}),
+                                            browser=_session(), model="default", dry_run=True)
+        assert result.submission_result.kind == "failed"
+        assert result.submission_result.error == "unsafe_page"
+    else:
+        with pytest.raises(OSError, match="sink"):
+            adapter.submit_application(prompt=ApplyPrompt(text="synthetic", mcp_config={}),
+                                       browser=_session(), model="default", dry_run=True)
+    with pytest.raises(SpendAccountingUnresolved):
+        require_resolved_spend()
+
+
+def test_apply_rechecks_for_abandoned_peer_before_spawning(monkeypatch, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    import jobctrl.database as database
+    import jobctrl.llm as accounting
+    from jobctrl.infrastructure.llm.spend_observation import SpendAccountingUnresolved, SpendObservation
+
+    db_path = tmp_path / "jobctrl.db"
+    monkeypatch.setattr(database, "DB_PATH", db_path)
+    database.init_db(db_path)
+    peer = SpendObservation(day="2026-01-01", lane="scoring", provider="google", model="synthetic")
+    checked, proceed, spawned = threading.Event(), threading.Event(), threading.Event()
+
+    def preflight(_lane):
+        accounting.read_llm_spend()
+        checked.set()
+        assert proceed.wait(5)
+
+    def spawn(*args, **kwargs):
+        spawned.set()
+        raise AssertionError("provider process must not start")
+
+    monkeypatch.setattr(accounting, "enforce_spend_budget", preflight)
+    monkeypatch.setattr(claude_code_cli, "_claude_supports_budget_flag", lambda *args, **kwargs: False)
+    monkeypatch.setattr("jobctrl.apply.ownership.spawn_owned_apply_process", spawn)
+    adapter = ClaudeCodeCliAdapter(log_dir=tmp_path, app_dir=tmp_path)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        pending = executor.submit(adapter.submit_application, prompt=ApplyPrompt(text="synthetic", mcp_config={}),
+                                  browser=_session(), model="default", dry_run=True)
+        try:
+            assert checked.wait(5)
+            peer.close(unresolved=True)
+        finally:
+            proceed.set()
+        with pytest.raises(SpendAccountingUnresolved):
+            pending.result(timeout=5)
+    assert not spawned.is_set()
+    database.close_connection(db_path)
+
+
+@pytest.mark.parametrize("status", ["failed", "dry_run_complete"])
+@pytest.mark.parametrize("usage", [{"input_tokens": 12}, {"output_tokens": 7}])
+def test_apply_partial_terminal_usage_is_unresolved_without_zero_fill(monkeypatch, tmp_path, status, usage):
+    import sqlite3
+    import jobctrl.database as database
+    import jobctrl.llm as accounting
+    from jobctrl.infrastructure.llm.spend_observation import SpendAccountingUnresolved
+
+    db_path = tmp_path / "jobctrl.db"
+    monkeypatch.setattr(database, "DB_PATH", db_path)
+    database.init_db(db_path)
+    monkeypatch.setattr(accounting, "enforce_spend_budget", lambda _lane: accounting.read_llm_spend())
+    terminal = _terminal_message(_report(status, reason="unsafe_page"))
+    terminal["usage"] = usage
+
+    class Process(_StreamPopen):
+        messages = (*_browser_messages(), terminal)
+
+    monkeypatch.setattr("subprocess.Popen", Process)
+    adapter = ClaudeCodeCliAdapter(log_dir=tmp_path, app_dir=tmp_path)
+    if status == "failed":
+        result = adapter.submit_application(prompt=ApplyPrompt(text="synthetic", mcp_config={}),
+                                            browser=_session(), model="default", dry_run=True)
+        assert result.submission_result.kind == "failed"
+        assert result.submission_result.error == "unsafe_page"
+        assert result.token_usage is None
+    else:
+        with pytest.raises(SpendAccountingUnresolved):
+            adapter.submit_application(prompt=ApplyPrompt(text="synthetic", mcp_config={}),
+                                       browser=_session(), model="default", dry_run=True)
+    with sqlite3.connect(db_path) as raw:
+        assert raw.execute("SELECT COUNT(*) FROM llm_spend").fetchone() == (0,)
+    receipt = next((tmp_path / ".jobctrl.db.llm-spend-pending").glob("*.jsonl"))
+    observed = json.loads(receipt.read_text().splitlines()[1])
+    assert observed["input_tokens"] == usage.get("input_tokens")
+    assert observed["output_tokens"] == usage.get("output_tokens")
+    with pytest.raises(SpendAccountingUnresolved):
+        accounting.read_llm_spend()
+    database.close_connection(db_path)
+
+
+def test_apply_missing_reported_cost_uses_existing_token_estimate(monkeypatch, tmp_path):
+    import jobctrl.database as database
+    import jobctrl.llm as accounting
+
+    db_path = tmp_path / "jobctrl.db"
+    monkeypatch.setattr(database, "DB_PATH", db_path)
+    database.init_db(db_path)
+    monkeypatch.setattr(accounting, "enforce_spend_budget", lambda _lane: accounting.read_llm_spend())
+    terminal = _terminal_message(_report())
+    terminal.pop("total_cost_usd")
+
+    class Process(_StreamPopen):
+        messages = (*_browser_messages(), terminal)
+
+    monkeypatch.setattr("subprocess.Popen", Process)
+    result = ClaudeCodeCliAdapter(log_dir=tmp_path, app_dir=tmp_path).submit_application(
+        prompt=ApplyPrompt(text="synthetic", mcp_config={}), browser=_session(),
+        model="claude-synthetic", dry_run=True,
+    )
+    assert result.token_usage is None
+    assert accounting.read_llm_spend()["estimated_usd"] == accounting.estimate_llm_cost_usd(
+        input_tokens=1, output_tokens=1, model="claude-synthetic",
+    )
+    database.close_connection(db_path)
 
 
 def test_adapter_active_process_registry_kills_registered_process(monkeypatch) -> None:

@@ -244,6 +244,23 @@ does not mean this auxiliary/history data is empty.
 The exact-v10 `job_application_locators` table is Job-owned and cascades with
 its Job. The exact-v11 lane-scoped `llm_spend` ledger contains no Job or run
 reference; it is a separate authority that the purge fingerprints and preserves.
+Before a model call, a private receipt is created beside the database under
+`.jobctrl.db.llm-spend-pending` (using the actual database filename). It holds
+only observation metadata and provider-reported usage, never prompt or output
+content. A confirmed `llm_spend` write removes it; a failed or interrupted write
+leaves it for inspection. Because the aggregate has no per-observation identity,
+an uncertain commit is never automatically replayed. Active receipts are locked
+so they do not serialize worker admission; abandoned receipts block new model
+calls and make spend totals incomplete across health and digest readers.
+Receipt creation rechecks for abandoned peers under the same gate as peer
+release, while still allowing concurrent, genuinely active calls.
+Native rollback and interrupted-transition recovery check the receipt authority
+after managed shutdown and before restoring a database pair or starting an
+older release. An absent, empty or safe gate-only directory permits recovery;
+an unsettled or unverifiable authority stops it without parsing, replaying or
+removing receipts. The first check precedes the recovery milestone; later checks
+may refuse after a pair replacement, so the current pair and earlier backup
+must both be preserved. The directory lies outside paired database snapshots.
 
 Post-commit reporting distinguishes optional compaction from preservation and
 integrity verification. If `VACUUM` or its checkpoints fail but all purge

@@ -183,7 +183,9 @@ class AntigravityAnalysisAdapter:
             outcome = await call_antigravity_runtime(
                 factory=agent_factory, config=config, types=types_module, model=self._model,
                 prompt=jd_snapshot, output_schema=JobAnalysis.model_json_schema(),
-                record_usage=lambda i, o: record("", input_tokens=i, output_tokens=o),
+                record_usage=lambda i, o, unresolved_usage=None: record(
+                    "", input_tokens=i, output_tokens=o, unresolved_usage=unresolved_usage,
+                ),
             )
             input_tokens, output_tokens = _usage_from_metadata(outcome.usage)
             record("", input_tokens=input_tokens, output_tokens=output_tokens)
@@ -205,7 +207,7 @@ class AntigravityAnalysisAdapter:
 
 def _optional_int(value: Any) -> int | None:
     """Coerce an SDK usage field to ``int``, or ``None`` when absent/unparseable."""
-    if value is None:
+    if value is None or isinstance(value, bool) or not isinstance(value, (int, str)):
         return None
     try:
         return int(value)
@@ -223,8 +225,11 @@ def _usage_from_metadata(usage_metadata: Any) -> tuple[int | None, int | None]:
     if usage_metadata is None:
         return None, None
     prompt = _optional_int(getattr(usage_metadata, "prompt_token_count", None))
-    candidates = _optional_int(getattr(usage_metadata, "candidates_token_count", None)) or 0
-    return prompt, (candidates or None)
+    candidates = _optional_int(getattr(usage_metadata, "candidates_token_count", None))
+    return (
+        prompt if prompt is not None and prompt >= 0 else None,
+        candidates if candidates is not None and candidates >= 0 else None,
+    )
 
 
 __all__ = [

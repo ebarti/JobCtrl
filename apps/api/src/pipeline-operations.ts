@@ -263,7 +263,8 @@ export function buildPipelineOperationsSnapshot(
   const generatedAt = now.toISOString();
   const tenantId = options.tenantId ?? DEFAULT_TENANT;
   const telemetry = readWorkerRuntimeTelemetry(options.dbPath, { now });
-  const budgetAvailable = readLlmSpendHealth(options.dbPath, options.configPath, now).status !== "over_budget";
+  const budgetStatus = readLlmSpendHealth(options.dbPath, options.configPath, now).status;
+  const budgetAvailable = budgetStatus === "incomplete" ? null : budgetStatus === "ok";
   const capacity = buildCapacity(telemetry, selectedInternalParallelism(db, tenantId));
   const activeStageCounts = buildActiveStageCounts(telemetry);
   const freshness = buildFreshness(telemetry);
@@ -1617,7 +1618,7 @@ function buildStages(input: {
   globalCounts: Map<(typeof OPERATIONAL_STAGES)[number], PipelineStageCounts>;
   globalRetryability: GlobalRetryability;
   telemetry: WorkerRuntimeTelemetrySnapshot;
-  budgetAvailable: boolean;
+  budgetAvailable: boolean | null;
   generatedAt: string;
   now: Date;
   runtimeAttribution: SelectedRuntimeAttribution;
@@ -1745,7 +1746,7 @@ function buildGlobalStages(
   capacity: PipelineCapacity,
   generatedAt: string,
   telemetry: WorkerRuntimeTelemetrySnapshot,
-  budgetAvailable: boolean,
+  budgetAvailable: boolean | null,
   now: Date,
 ): PipelineOperationalStage[] {
   const noSelection: SelectedExecution = {
@@ -1794,7 +1795,7 @@ function sourceFamilyProgress(
   globalQueuedOrRunningDemand: boolean,
   generatedAt: string,
   telemetry: WorkerRuntimeTelemetrySnapshot,
-  budgetAvailable: boolean,
+  budgetAvailable: boolean | null,
   now: Date,
   runtimeAttribution: SelectedRuntimeAttribution,
   projectionCoverage: PipelineProjectionCoverage,
@@ -1845,7 +1846,7 @@ function estimateSourceFamilyEta(input: {
   providerProgress: DiscoveryProviderProgress | null;
   generatedAt: string;
   telemetry: WorkerRuntimeTelemetrySnapshot;
-  budgetAvailable: boolean;
+  budgetAvailable: boolean | null;
   now: Date;
   runtimeAttribution: SelectedRuntimeAttribution;
   projectionCoverage: PipelineProjectionCoverage;
@@ -2231,7 +2232,7 @@ function buildEtaInput(
   globalCounts: Map<(typeof OPERATIONAL_STAGES)[number], PipelineStageCounts>,
   globalRetryability: GlobalRetryability,
   telemetry: WorkerRuntimeTelemetrySnapshot,
-  budgetAvailable: boolean,
+  budgetAvailable: boolean | null,
   generatedAt: string,
   now: Date,
   runtimeAttribution: SelectedRuntimeAttribution,
@@ -2289,7 +2290,7 @@ function stageEtaInput(
   counts: PipelineStageCounts,
   selected: SelectedExecution,
   telemetry: WorkerRuntimeTelemetrySnapshot,
-  budgetAvailable: boolean,
+  budgetAvailable: boolean | null,
   generatedAt: string,
   now: Date,
   retryableRemaining = 0,
@@ -2344,7 +2345,7 @@ function stageEtaInput(
 function basicEtaInput(
   selected: SelectedExecution,
   telemetry: WorkerRuntimeTelemetrySnapshot,
-  budgetAvailable: boolean,
+  budgetAvailable: boolean | null,
   generatedAt: string,
   runtimeWork = runtimeActiveWork(telemetry),
 ) {
@@ -2372,7 +2373,7 @@ function estimateForStage(
   counts: PipelineStageCounts,
   selected: SelectedExecution,
   telemetry: WorkerRuntimeTelemetrySnapshot,
-  budgetAvailable: boolean,
+  budgetAvailable: boolean | null,
   generatedAt: string,
   now: Date,
   retryableRemaining = 0,

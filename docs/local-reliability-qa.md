@@ -478,6 +478,42 @@ owned spend ledger once, and previously accepted material to remain intact.
 Also cover a receipt observed during cancellation cleanup and cancellation
 before any receipt.
 
+For observed-spend recovery, use fake Claude and Google SDK streams and an owned
+synthetic database. Fail and cancel after provider usage appears, including
+Claude assistant usage before a terminal message. Inject insert, pre-commit and
+post-commit failures and reopen the workspace in a fresh process. Known usage
+must be recorded once or remain explicitly unresolved without automatic replay;
+check the lane and provider/model receipt, original error or cancellation,
+repeated callbacks, concurrently active calls, health/digest null totals and
+the unchanged accepted artifact. Retain known counts across a later partial
+snapshot, and refuse zero-filling when either required count is unknown. Race
+both span and Apply admission against peer abandonment between preflight and
+receipt creation, including release of the peer lock under the shared gate.
+Read the real Python digest CLI with an active and an abandoned receipt in an
+exact-schema synthetic workspace. Require the other digest sections to remain
+available, budget amounts to stay null, receipts to remain unchanged, and a
+genuinely empty ledger to retain known zero. Fence a complete budget snapshot
+against concurrent receipt creation while leaving normal active-peer admission
+available. Preserve the API's database-upgrade diagnostic precedence.
+In owned synthetic native rollback and interrupted-recovery fixtures, stop the
+controlled runtime first and verify that an abandoned or shutdown-created
+receipt, malformed or linked authority, unreadable directory, or busy gate
+preserves the current pair, pre-rollback backup, journal, and receipt and prevents
+older startup. Exercise a receipt produced before the recovery milestone,
+simulate reconciliation by archiving only the owned synthetic receipt, and
+verify retry; interrupt immediately before and after the milestone and verify
+the selector gate and existing
+uncertainty fence. A late refusal may follow pair replacement. Missing, empty and
+safe lock-only authorities must allow clean rollback and recovery. A test-only
+stop or file-handle seam does not prove host process cleanup or that unrelated
+processes have closed their database handles.
+Exercise the pinned Google SDK's actual Conversation and ChatResponse with a
+synthetic step connection: distinguish a missing output count from an explicit
+zero, retain earlier known steps, reject an unavailable or replaced step source
+and inconsistent aggregate, preserve failures/cancellation, and keep concurrent
+lanes isolated. SDK-internal aggregate zero-filling is not proof of a zero.
+Never use provider credentials or real calls.
+
 Use a configured provider only in an owned synthetic workspace. Repeat calls
 through the production LlmPort and inspect actual kit process-start/reuse
 metadata and distinct conversation IDs. A reused Python adapter object is not

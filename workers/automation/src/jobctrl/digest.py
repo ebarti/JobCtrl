@@ -87,7 +87,22 @@ def build_digest(
     generated_at = _format_utc_timestamp(_utc_now(now))
     since = read_digest_state(conn)["lastAcknowledgedAt"]
     threshold = _normalize_threshold(min_fit_score)
-    budget_status = budget or read_spend_budget_status(lane="discovery")
+    if budget is None:
+        from jobctrl.infrastructure.llm.spend_observation import SpendAccountingUnresolved
+        from jobctrl.infrastructure.scoring.criteria_provider import read_daily_budget_usd
+
+        daily_budget = read_daily_budget_usd(default=25.0)
+        try:
+            budget = read_spend_budget_status(lane="discovery", daily_budget_usd=daily_budget, require_complete=True)
+        except SpendAccountingUnresolved:
+            budget_payload = {
+                "status": "incomplete", "estimatedUsd": None, "dailyBudgetUsd": float(daily_budget),
+                "remainingUsd": None, "unlimited": daily_budget <= 0,
+            }
+        else:
+            budget_payload = _budget_payload(budget)
+    else:
+        budget_payload = _budget_payload(budget)
     from jobctrl.infrastructure.materials.company_briefings import CompanyBriefingRepository
     briefings = CompanyBriefingRepository(conn).summaries(now=_utc_now(now))
     return {
@@ -106,7 +121,7 @@ def build_digest(
             "thresholdDays": FOLLOW_UP_THRESHOLD_DAYS,
             "dayBoundary": DAY_BOUNDARY,
         },
-        "budget": _budget_payload(budget_status),
+        "budget": budget_payload,
         "companyBriefings": briefings,
         "deepLinks": _deep_links(since=since),
     }

@@ -405,6 +405,8 @@ The precedence and filter details remain in the
 Use `GET /v1/health` before starting work that needs Temporal and the Python
 worker. See [Operations & Events](api/operations-and-events.md#health-and-json-rpc)
 for the readiness boundary.
+Health and digest return an `incomplete` spend status while model usage is
+pending or unresolved; their numeric spend totals are null in that state.
 
 ## Settings And Credentials
 

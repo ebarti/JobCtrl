@@ -142,6 +142,7 @@ Unless a row says otherwise, every path below is relative to JOBCTRL_DIR
 | Path | Contents |
 | --- | --- |
 | `jobctrl.db` plus `-wal` / `-shm` | Profile, jobs, discovery settings, events, projections, artifact metadata, review drafts, contacts, private offer terms/decisions and sources, and workflows. Treat all three files as one database. |
+| `.jobctrl.db.llm-spend-pending/` | Private pending or unresolved provider-usage receipts. They contain model, lane and reported token counts, without prompts or completions. Keep them with the workspace when investigating incomplete accounting. |
 | `temporal.db` plus `-wal` / `-shm` | Shared Temporal history for new workspaces; earlier source workspaces may retain `temporal/temporal.db`. Treat the history and `jobctrl.db` as one pair. |
 | `config.json` | Non-secret Settings values: general controls, provider configuration metadata, preferred model IDs, compensation source policy, and browser-adoption metadata. No API keys or feed contents. |
 | `.env` | Legacy/plaintext provider credentials used by remaining compatibility paths. Not encrypted at rest. |
@@ -193,6 +194,17 @@ The two files are one restore unit: never restore just one of them. The
 launcher has no restore command for these pairs; updates and rollbacks write and
 restore their own, as described in
 [Update, Roll Back, Or Remove JobCtrl](getting-started.md#update-roll-back-or-remove-jobctrl).
+The pair does not include pending or unresolved spend receipts; preserve those
+separately and reconcile accounting when restoring a different database version.
+After stopping managed processes, rollback and transition recovery check that
+no spend receipt remains before restoring a pair or starting an older release.
+If accounting is unresolved or its receipt directory cannot be verified, JobCtrl
+stops before the next restore or startup step. A late refusal can happen after
+the current database pair was replaced. Preserve the current pair, pre-rollback
+and other paired backups, journal, and receipts; compare the receipts with the
+ledger and provider records. Whether recovery can be retried depends on the
+transition state. An absent, empty, or safe lock-only receipt directory does not
+block recovery.
 
 When a release promotion performs automatic release cleanup, JobCtrl keeps
 releases referenced by paired backups in the current workspace `backups/` and
@@ -229,8 +241,10 @@ anything; `--output` takes a file or directory. This is an application-database
 snapshot, not a stopped and verified application/Temporal backup pair. It is
 not sufficient to restore a workspace with workflow history. Preserve the live
 databases and their WAL/SHM companions; do not delete companions or replace one
-database in isolation. The source checkout does not currently offer a paired
-restore command. See [Local Development](../local-development.md#schema-migrations-and-source-updates)
+database in isolation. The snapshot does not include pending or unresolved
+spend receipts; preserve those separately and reconcile accounting when
+restoring a different database version. The source checkout does not currently
+offer a paired restore command. See [Local Development](../local-development.md#schema-migrations-and-source-updates)
 for automatic source upgrades and recovery limitations.
 
 After restoring or replacing a database, restart JobCtrl (or rerun
