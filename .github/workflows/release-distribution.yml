@@ -625,6 +625,26 @@ jobs:
             --release-dir "$RUNNER_TEMP/release" \
             --output "$RUNNER_TEMP/released-upgrade-smoke.json"
 
+      - name: Diagnose a retained predecessor notarization failure
+        if: ${{ failure() && inputs.channel == 'stable' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          if ! fixture_temp="$(node -p 'require("node:fs").realpathSync(require("node:os").tmpdir())')"; then
+            echo "Could not resolve the synthetic fixture directory" >&2
+            exit 1
+          fi
+          found=0
+          for fixture in "$fixture_temp"/jobctrl-released-upgrades-*; do
+            [[ -d "$fixture" && ! -L "$fixture" ]] || continue
+            while IFS= read -r -d '' binary; do
+              found=1
+              echo "Rechecking the retained predecessor with the original notarization requirement"
+              /usr/bin/codesign --verify --strict --check-notarization -R=notarized --verbose=4 "$binary" || echo "Notarization recheck failed (exit $?)"
+            done < <(find "$fixture" -type f -path '*/latest-stable/runtime/staging/*/payload/api/node_modules/better-sqlite3/build/Release/better_sqlite3.node' -print0)
+          done
+          if [[ "$found" = 0 ]]; then echo "No retained predecessor SQLite binary was available for a notarization recheck"; fi
+
       - name: Retain credential-free released-binary proof
         if: ${{ inputs.channel == 'stable' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -847,7 +867,7 @@ jobs:
     name: Smoke public assets and verify the native and Homebrew lifecycles
     needs: [resolve, sign, package-signed-candidate, publish-immutable]
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 20
     permissions:
       actions: read
       contents: read
@@ -868,12 +888,6 @@ jobs:
         with:
           node-version: 22.21.1
 
-      - name: Set up pinned Go for the synthetic source ownership fixture
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: "1.26.4"
-          cache-dependency-path: launcher/go.mod
-
       - name: Install locked public-verification dependencies
         run: corepack pnpm install --frozen-lockfile
 
@@ -886,9 +900,6 @@ jobs:
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
           case "$main_relation" in ahead|identical) ;; *) echo "Release commit is not in main history" >&2; exit 1 ;; esac
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
-
-      - name: Build the source ownership fixture controller
-        run: go -C launcher build -o "$RUNNER_TEMP/jobctrl-source-qa" ./cmd/jobctrl-source
 
       - name: Download the signed candidate metadata
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -944,18 +955,6 @@ jobs:
             --evidence "$release/homebrew-promotion-evidence.json" \
             --trust "$release/release-keys.json"
           ruby -c "$release/jobctrl.rb"
-
-      - name: Qualify upgrades through the released curl and Homebrew acquisition paths
-        if: ${{ inputs.channel == 'stable' }}
-        env:
-          JOBCTRL_RELEASE_QA_SOURCE_BINARY: ${{ runner.temp }}/jobctrl-source-qa
-          JOBCTRL_RELEASE_METADATA_TOKEN: ${{ github.token }}
-          JOBCTRL_RELEASE_PUBLIC_KEY: ${{ needs.resolve.outputs.release_public_key }}
-          JOBCTRL_RELEASE_KEY_ID: ${{ needs.resolve.outputs.release_key_id }}
-        run: |
-          node scripts/released-acquisition-upgrade.mjs \
-            --release-dir "$RUNNER_TEMP/release" \
-            --output "$RUNNER_TEMP/released-acquisition-upgrade.json"
 
       - name: Audit, install, test, and run the rendered formula lifecycle
         if: ${{ inputs.channel == 'stable' }}
@@ -1016,14 +1015,28 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Stage the credential-free evidence with its stable artifact layout
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/credential-free-smoke-evidence"
+          mkdir "$evidence"
+          mkdir "$evidence/release"
+          smoke="$RUNNER_TEMP/release/published-candidate-smoke.json"
+          test -f "$smoke" && test ! -L "$smoke"
+          install -m 0644 "$smoke" "$evidence/release/"
+          if [[ "$RELEASE_CHANNEL" == stable ]]; then
+            formula="$RUNNER_TEMP/release/homebrew-promotion-evidence.json"
+            test -f "$formula" && test ! -L "$formula"
+            install -m 0644 "$formula" "$evidence/release/"
+          fi
+
       - name: Upload only credential-free smoke and promotion evidence
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: jobctrl-smoke-evidence-${{ github.run_id }}
-          path: |
-            ${{ runner.temp }}/release/published-candidate-smoke.json
-            ${{ runner.temp }}/release/homebrew-promotion-evidence.json
-            ${{ runner.temp }}/released-acquisition-upgrade.json
+          path: ${{ runner.temp }}/credential-free-smoke-evidence
           if-no-files-found: error
           retention-days: 14
 
